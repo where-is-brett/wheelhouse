@@ -97,6 +97,26 @@ test('the quick brief carries the five lines byte for byte', () => {
   assert.throws(() => renderBrief({ fields: fields('quick'), pluginRoot, implementText: `${FIVE_LINES}\n\nPush it.` }), /\/implement/);
 });
 
+test('a plan waits for the foreman: the session ends its turn and builds when woken with build', () => {
+  // The lane's numbered steps, each on one line.
+  const steps = (lane) => afterOverride(render(lane)).split('\n').filter((line) => /^\d+\. /.test(line));
+  for (const lane of ['small', 'feature']) {
+    const all = steps(lane);
+    const plan = all.findIndex((s) => /superpowers:writing-plans/.test(s));
+    const wait = all.findIndex((s) => /end your turn without building/.test(s));
+    const build = all.findIndex((s) => /superpowers:(executing-plans|subagent-driven-development)/.test(s));
+    assert.ok(plan >= 0 && wait === plan + 1 && build === wait + 1, `${lane}: plan, then wait, then build`);
+    assert.match(all[wait], /woken with `build`/, lane);
+    assert.match(all[wait], /clashes, pace and dependencies/, lane);
+    assert.doesNotMatch(all[plan], /go on to building/, `${lane}: the plan step does not send it straight to building`);
+    assert.doesNotMatch(afterOverride(render(lane)), /If you are told the foreman is checking/, lane);
+  }
+  // In the feature lane, each slice's plan waits the same way.
+  assert.match(steps('feature').find((s) => /slice n\+1/.test(s)), /woken with `build`/);
+  // The quick lane has no plan, and builds at once.
+  assert.doesNotMatch(afterOverride(render('quick')), /`build`|end your turn without building/);
+});
+
 test("Matt's code-review runs with Wheelhouse's reviewer in the quick and bug lanes", () => {
   for (const lane of ['quick', 'bug']) {
     const rest = afterOverride(render(lane));

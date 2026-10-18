@@ -6,7 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { runWatcher, healthFile, lockFile, projectConfig } from '../../../scripts/watcher/main.js';
+import { runWatcher, healthFile, lockFile, projectConfig, cliOptions } from '../../../scripts/watcher/main.js';
+import { recordHandled } from '../../../scripts/watcher/handled.js';
+import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { makeWaker, readWake, wakesDir, outboxFile, spawnDetached } from '../../../scripts/watcher/waker.js';
 import { readCursor, writeCursor } from '../../../scripts/watcher/core.js';
 import { LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
@@ -373,4 +375,33 @@ test('until the configuration is read, the watcher wakes and starts nothing, ask
   assert.equal(asks, 7, 'asked once more, then kept');
   assert.equal(calls.length, 1);
   assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 1);
+}));
+
+test('the command line gives the watcher the handled ids and the foreman its tools', () => withHome(async () => {
+  const options = cliOptions(P);
+  assert.equal(options.project, P);
+  assert.deepEqual(options.wakerOptions, { foremanTools: foremanTools() });
+  assert.deepEqual(options.handled(), new Set(), 'none yet');
+  recordHandled(P, ['ev-1']);
+  assert.deepEqual(options.handled(), new Set(['ev-1']), 'read afresh at each call');
+
+  // Through the loop: an incident the foreman wrote while handling a wake goes
+  // to the digest, and wakes no one.
+  const c = clock();
+  const quietWaker = fakeWaker();
+  await runWatcher({
+    project: P, config: config(), observe: looker().observe, waker: quietWaker, handled: options.handled, loops: 6, now: c.now, sleep: c.sleep, log: quiet,
+  });
+  assert.deepEqual(quietWaker.wakes, []);
+  assert.deepEqual(readCursor(P).held.digest.map((e) => [e.id, e.handled]), [['ev-1', true]]);
+
+  // A foreman the watcher starts gets exactly the tools.
+  fs.rmSync(path.dirname(healthFile(P)), { recursive: true });
+  checkout();
+  const { calls, wakerOptions } = starter();
+  await runWatcher({
+    project: P, config: config(), observe: looker().observe, wakerOptions: { ...wakerOptions, ...options.wakerOptions }, loops: 5, now: c.now, sleep: c.sleep, log: quiet,
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--allowedTools', ...foremanTools()]);
 }));

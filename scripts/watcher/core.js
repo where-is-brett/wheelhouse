@@ -51,12 +51,23 @@
 // Every event's id is made from its inputs alone, so a watcher restarted from
 // its cursor makes the same ids again and the cursor's `seen` list stops any of
 // them waking twice:
-//   - a state event's own id (work-ready, amended, answer, incident);
+//   - a state event's own id (work-ready, amended, answer, incident, build);
 //   - a question's own id (question, extra-plan);
 //   - `<type>:<work>:<head>` for a PR's events;
 //   - a change of state with no id of its own (stop, clash, the brief's events,
-//     stuck with no status) carries the count of the observation before it,
-//     which only ever rises, so a clock set back can never repeat one.
+//     plan-ready, stuck with no status) carries the count of the observation
+//     before it, which only ever rises, so a clock set back can never repeat one.
+//
+// The two wakes around a plan (ruling R76). A feature's status phase arriving
+// at `ready-to-build` (from any other phase, from no status, or first seen
+// there) is `plan-ready` for the foreman, which checks the plan for clashes,
+// pace and dependencies. The foreman then records a `feature` event at step
+// `building`, which is `build` for that feature's session: only then does it
+// build. Each slice's plan in the feature lane goes the same way.
+//
+// Work that starts with no approval (rulings R60 and R78): quick and bug work
+// that no one is shown first. Its plain `work` event is `work-ready`; any other
+// work is ready only with the director's signed `approve-work`.
 // Only the cursor's reader and writer touch the disk.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -71,9 +82,9 @@ export const DIGEST_CAP = 200;
 
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
-  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered',
+  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready',
 ]);
-export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'brief-changed', 'answer']);
+export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'brief-changed', 'answer', 'build']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -201,6 +212,9 @@ const isOver = (f) => isPlain(f) && isPlain(f.status)
   && typeof f.status.tokens === 'number' && typeof f.appetite === 'number'
   && f.status.tokens > f.appetite;
 
+// The lanes whose work starts with no approval when no one is shown it first.
+const STARTS_UNAPPROVED = Object.freeze(['quick', 'bug']);
+
 const workOfQuestion = (id) => (typeof id === 'string' ? /^q-([a-z0-9-]+)-[0-9]+$/.exec(id)?.[1] : undefined);
 
 // The events from state: every one in the observation is after the cursor; only signed clicks count as actions.
@@ -209,7 +223,9 @@ function stateEvents(next, out) {
     if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
     const { id, kind, data } = e;
     if (kind === 'work') {
-      if (data.lane === 'quick' && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: 'quick' } });
+      if (STARTS_UNAPPROVED.includes(data.lane) && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: data.lane } });
+    } else if (kind === 'feature') {
+      if (data.step === 'building' && typeof data.work === 'string') out.push({ type: 'build', work: data.work, id, detail: { slice: data.slice ?? null } });
     } else if (kind === 'incident') {
       out.push({ type: 'incident', id, detail: { incident: data.id, what: data.what } });
     } else if (kind === 'action' && e.verified === true) {
@@ -267,6 +283,13 @@ function featureEvents(prev, next, settled, out) {
         work,
         id: `progress:${work}:${status.updatedAt}`,
         detail: { phase: status.phase, task: status.task, fixRound: status.fixRound, waitingOn: status.waitingOn, tokens: status.tokens },
+      });
+    }
+
+    // A plan arriving: the phase is ready-to-build now and was not when last seen.
+    if (status?.phase === 'ready-to-build' && ps?.phase !== 'ready-to-build') {
+      out.push({
+        type: 'plan-ready', work, id: `plan-ready:${work}:${anchor}`, detail: { phase: status.phase, task: status.task, slice: status.slice },
       });
     }
 

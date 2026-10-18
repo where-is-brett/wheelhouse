@@ -117,18 +117,22 @@ test('work is taken in order of place, then age', () => {
   assert.deepEqual(found.hold, [{ work: 'late', why: 'pace' }]);
 });
 
-test('small and feature work never starts without an approval', () => {
+test('small and feature work never starts without an approval; quick work and bugs need one only when shown first', () => {
   const unapproved = (w) => ({ ...w, approved: false });
   const work = worksOf(
-    unapproved(mkWork('s1', 'small', 1)), unapproved(mkWork('f1', 'feature', 2)), unapproved(mkWork('b1', 'bug', 3)),
+    unapproved(mkWork('s1', 'small', 1)), unapproved(mkWork('f1', 'feature', 2)), unapproved(mkWork('b-quiet', 'bug', 3)),
     unapproved(mkWork('q-quiet', 'quick', 4)), unapproved(mkWork('q-seen', 'quick', 5, { visible: true })),
-    mkWork('s2', 'small', 6),
+    unapproved(mkWork('b-seen', 'bug', 6, { visible: true })),
   );
   const found = next({ work });
-  assert.deepEqual(found.start, ['q-quiet', 's2']);
+  assert.deepEqual(found.start, ['b-quiet', 'q-quiet']);
   assert.deepEqual(found.hold, [
-    { work: 's1', why: 'unapproved' }, { work: 'f1', why: 'unapproved' }, { work: 'b1', why: 'unapproved' }, { work: 'q-seen', why: 'unapproved' },
+    { work: 's1', why: 'unapproved' }, { work: 'f1', why: 'unapproved' }, { work: 'q-seen', why: 'unapproved' }, { work: 'b-seen', why: 'unapproved' },
   ]);
+
+  // Approved, each starts in its turn.
+  const approved = worksOf(mkWork('s2', 'small', 1), { ...mkWork('b-seen', 'bug', 2, { visible: true }), approved: true });
+  assert.deepEqual(next({ work: approved }).start, ['s2', 'b-seen']);
 });
 
 test('work whose dependencies have not merged waits', () => {
