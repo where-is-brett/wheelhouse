@@ -47,8 +47,11 @@ const MARKETPLACE_NAME = `wheelhouse-probe-${MARKETPLACE_KEY}`;
 const PLUGIN_ID = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 
 // The two releases. Their shas are filled in once the plugin repository exists.
-const RELEASE_A = { label: 'A', tag: 'v1', version: '1.0.0', sha: null };
-const RELEASE_B = { label: 'B', tag: 'v2', version: '2.0.0', sha: null };
+// `ref` is what the marketplace entry names. A's ref is a branch the plugin
+// repository leaves pointing at B, so installing A shows that `sha` beats `ref`.
+const BRANCH_AT_B = 'release-line';
+const RELEASE_A = { label: 'A', tag: 'v1', ref: BRANCH_AT_B, version: '1.0.0', sha: null };
+const RELEASE_B = { label: 'B', tag: 'v2', ref: 'v2', version: '2.0.0', sha: null };
 
 const home = os.homedir();
 // Claude Code keeps its folder at ~/.claude unless CLAUDE_CONFIG_DIR says otherwise.
@@ -177,6 +180,8 @@ function makePluginRepository() {
     git(dir, ['tag', release.tag]);
     release.sha = git(dir, ['rev-parse', 'HEAD']);
   }
+  // HEAD is at B: leave a branch there, for A's entry to name as its ref.
+  git(dir, ['branch', BRANCH_AT_B]);
   return { dir, url: pathToFileURL(dir).href };
 }
 
@@ -200,13 +205,15 @@ function describeInstall(projectDir) {
 }
 
 // Every version folder of the scratch plugin in the cache: whether it carries
-// an `.orphaned_at` marker, and which release its RELEASE.txt says it holds.
+// an `.orphaned_at` marker (and what the marker says), and which release its
+// RELEASE.txt says it holds.
 function cacheState() {
   let names = [];
   try { names = fs.readdirSync(PLUGIN_CACHE); } catch { /* no folder yet */ }
   return Object.fromEntries(names.map((version) => {
     const folder = path.join(PLUGIN_CACHE, version);
-    return [version, { orphaned: fs.existsSync(path.join(folder, '.orphaned_at')), release: readText(path.join(folder, 'RELEASE.txt')) }];
+    const marker = path.join(folder, '.orphaned_at');
+    return [version, { orphaned: fs.existsSync(marker), orphanedAt: readText(marker), release: readText(path.join(folder, 'RELEASE.txt')) }];
   }));
 }
 
@@ -335,7 +342,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 function pointMarketplaceAt(release) {
   const file = path.join(marketplace.dir, '.claude-plugin', 'marketplace.json');
   const manifest = readJson(file);
-  manifest.plugins[0].source = { source: 'url', url: pluginRepository.url, ref: release.tag, sha: release.sha };
+  manifest.plugins[0].source = { source: 'url', url: pluginRepository.url, ref: release.ref, sha: release.sha };
   fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
   git(marketplace.dir, ['commit', '--quiet', '--all', '-m', `Point at release ${release.label}`]);
 }
@@ -360,7 +367,7 @@ async function installAt(label, project) {
 async function moveTo(release, label, project) {
   keepGoing();
   pointMarketplaceAt(release);
-  await note(`${label}: marketplace pointed at`, { release: release.label, ref: release.tag, sha: release.sha });
+  await note(`${label}: marketplace pointed at`, { release: release.label, ref: release.ref, sha: release.sha });
   await claude(`${label}: marketplace update`, ['plugin', 'marketplace', 'update', MARKETPLACE_NAME], project.dir);
   await claude(`${label}: plugin update`, ['plugin', 'update', PLUGIN_ID, '--scope', 'project', '--json'], project.dir);
   let info = describeInstall(project.dir);
@@ -401,14 +408,22 @@ try {
   pluginRepository = makePluginRepository();
   marketplace = await makeScratchMarketplace({
     name: MARKETPLACE_KEY,
-    plugins: [{ name: PLUGIN_NAME, source: { source: 'url', url: pluginRepository.url, ref: RELEASE_A.tag, sha: RELEASE_A.sha } }],
+    plugins: [{ name: PLUGIN_NAME, source: { source: 'url', url: pluginRepository.url, ref: RELEASE_A.ref, sha: RELEASE_A.sha } }],
   });
   await note('scratch', {
     project: project.dir,
     marketplace: marketplace.dir,
     plugin: pluginRepository.dir,
-    releaseA: { tag: RELEASE_A.tag, sha: RELEASE_A.sha, version: RELEASE_A.version },
-    releaseB: { tag: RELEASE_B.tag, sha: RELEASE_B.sha, version: RELEASE_B.version },
+    releaseA: { tag: RELEASE_A.tag, ref: RELEASE_A.ref, sha: RELEASE_A.sha, version: RELEASE_A.version },
+    releaseB: { tag: RELEASE_B.tag, ref: RELEASE_B.ref, sha: RELEASE_B.sha, version: RELEASE_B.version },
+  });
+  const branchHead = git(pluginRepository.dir, ['rev-parse', BRANCH_AT_B]);
+  await note('A is pinned by a ref that points at B', {
+    ref: RELEASE_A.ref,
+    refPointsAt: branchHead,
+    refPointsAtB: branchHead === RELEASE_B.sha,
+    shaOfA: RELEASE_A.sha,
+    meaning: 'if A installs, `sha` was used and `ref` was not',
   });
 
   keepGoing();
@@ -451,15 +466,33 @@ try {
   // 5. Test 2: forward to B again, delete A's cached folder (standing in for
   // the 14-day clean-up), then back to A.
   await moveTo(RELEASE_B, 'forward to B again', project);
+  const afterForwardAgain = cacheState();
+  await note('cache after forward to B again (orphan markers and their contents)', afterForwardAgain);
+  await check('forward to B again: A is orphaned again', afterForwardAgain[RELEASE_A.version]?.orphaned === true, afterForwardAgain);
+  await check('forward to B again: B is no longer marked orphaned', afterForwardAgain[RELEASE_B.version]?.orphaned === false, afterForwardAgain);
   keepGoing();
-  const folderA = path.join(PLUGIN_CACHE, RELEASE_A.version);
-  // Only a version folder inside the scratch marketplace's own cache folder.
-  if (path.basename(SCRATCH_CACHE) !== MARKETPLACE_NAME || !folderA.startsWith(SCRATCH_CACHE + path.sep)) {
+  // A's folder is the one Claude Code recorded at A's first install, and it
+  // must be a version folder inside the scratch marketplace's own cache folder.
+  const recordedFolderA = first.entry?.installPath;
+  const expectedFolderA = path.join(PLUGIN_CACHE, RELEASE_A.version);
+  if (!recordedFolderA || path.resolve(recordedFolderA) !== path.resolve(expectedFolderA)) {
+    throw new Error(`A's folder was recorded as ${recordedFolderA}, not ${expectedFolderA}: stopping before anything is deleted`);
+  }
+  const folderA = recordedFolderA;
+  if (path.basename(SCRATCH_CACHE) !== MARKETPLACE_NAME || !fs.existsSync(SCRATCH_CACHE)) {
+    throw new Error(`The scratch cache folder ${SCRATCH_CACHE} is not as expected: stopping before anything is deleted`);
+  }
+  if (!fs.existsSync(folderA)) {
+    throw new Error(`A's cached folder ${folderA} does not exist before it is deleted: stopping, as a re-fetch could not be shown`);
+  }
+  const realCache = fs.realpathSync(SCRATCH_CACHE);
+  const realFolderA = fs.realpathSync(folderA);
+  if (!realFolderA.startsWith(realCache + path.sep) || !folderA.startsWith(SCRATCH_CACHE + path.sep)) {
     throw new Error(`Refusing to delete ${folderA}: it is not inside the scratch marketplace's cache folder`);
   }
+  await check("A's cached folder exists before it is deleted", true, { folder: folderA, cache: cacheState() });
   const pointsAtA = installedEntries().some((one) => one.installPath === folderA);
   await check("A's cached folder is not the one the install now uses", !pointsAtA, installedEntries());
-  await check("A's cached folder exists before it is deleted", fs.existsSync(folderA), cacheState());
   await fs.promises.rm(folderA, { recursive: true, force: true });
   await note("A's cached folder deleted", { folder: folderA, cache: cacheState() });
   await check("A's cached folder is gone", !fs.existsSync(folderA), cacheState());
