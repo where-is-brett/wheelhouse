@@ -86,7 +86,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_ROOT } from './tools.js';
 import {
-  ForemanError, NO_PLAN, PLANS_WHILE_HELD, checkoutOf, clashFor, featureOf, haltOf, laneOf, loadConfig, loadViews, oneLine, openPrWait, pausedBy, planOf, projectHere,
+  ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, checkoutOf, clashFor, featureOf, haltOf, laneOf, loadConfig, loadViews, oneLine, openPrWait, pausedBy, planOf, projectHere,
   queueToStart, slotFor, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
@@ -175,7 +175,13 @@ function optionsOf(found, recommendation) {
     const at = text.indexOf('=');
     const label = at < 0 ? '' : text.slice(0, at).trim();
     if (label === '') refuse(`--option "${oneLine(text, 60)}" is written as "<label>=<what it means>"`);
-    return { label, says: text.slice(at + 1).trim() };
+    const says = text.slice(at + 1).trim();
+    // Wake read prints an option's words whole on one line, so a command in them is never cut.
+    if (says === '') refuse(`--option "${oneLine(text, 60)}" says nothing after its "="`);
+    if (/[^\S ]| {2}/.test(says) || says.length > SAYS_CHARS) {
+      refuse(`--option "${label}" must say what it means on one line, with single spaces, in at most ${SAYS_CHARS} characters`);
+    }
+    return { label, says };
   });
   if (options.length < 2) refuse('Give two or more options, each with --option "<label>=<what it means>"');
   if (new Set(options.map((o) => o.label)).size !== options.length) refuse('Each option needs its own label');

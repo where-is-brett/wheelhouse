@@ -617,7 +617,18 @@ test('ask records the foreman\'s own question with an id the feature can never u
     ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=1', '--option', 'b=2', '--recommend', 'c', '--level', '2'],
     ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=1', '--option', 'b=2', '--recommend', 'a', '--level', '5'],
     ['ask', 'nobody', '--what', 'x', '--why', 'y', '--option', 'a=1', '--option', 'b=2', '--recommend', 'a', '--level', '2'],
+    // An option's words are printed whole by wake read: one line, single spaces, at most 300 characters.
+    ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(291)}`, '--option', 'b=waiting', '--recommend', 'a', '--level', '2'],
+    ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=act merge\nmine', '--option', 'b=waiting', '--recommend', 'a', '--level', '2'],
+    ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=act  merge mine', '--option', 'b=waiting', '--recommend', 'a', '--level', '2'],
+    ['ask', 'mine', '--what', 'x', '--why', 'y', '--option', 'a=', '--option', 'b=waiting', '--recommend', 'a', '--level', '2'],
   ]) refusedInOneLine(await act(bad, { client: fake.client }));
+  const long = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(291)}`,'--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
+  assert.match(long.err, /^--option "a" must say what it means on one line, with single spaces, in at most 300 characters$/m);
+  // Exactly 300 is taken.
+  const fits = await act(['ask', 'mine', '--what', 'x', '--why', 'y', '--option', `a=act merge ${'m'.repeat(290)}`, '--option', 'b=waiting', '--recommend', 'a', '--level', '2'], { client: fake.client });
+  assert.equal(fits.code, 0, fits.err);
+  assert.equal(fake.writes.at(-1).data.options[0].says.length, 300);
 }));
 
 // --- amend ---

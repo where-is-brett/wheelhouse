@@ -13,8 +13,11 @@
 //     read the brief's goal, done lines and appetite from (ruling R84), once
 //     its hash is checked against the approval's (R97); an extra plan's start
 //     names its title and parent (R99). The rulings in force are listed by id
-//     under the starts, for `--ruling`. While STOP or an incident holds, starts
-//     and builds wait, and a merge waits unless it is an incident's fix.
+//     under the starts, for `--ruling`. Every open pull request ready to merge,
+//     as the watcher's cursor last saw it, is listed with `act merge`, so a
+//     merge held earlier is offered again. While STOP or an incident holds,
+//     starts and builds wait, and so does a merge: under STOP every one, during
+//     an incident all but its recorded fix.
 //     For each `plan-ready` the plan's files are read and
 //     checked for clashes against the running features' recorded files and
 //     the configuration's hot files.
@@ -62,12 +65,13 @@ import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
 import { helperClient } from '../host/helper-client.js';
-import { PACE, questionIdOf } from '../lib/build-loop.js';
+import { PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { stopState } from '../lib/stop.js';
 import { projectConfig } from '../watcher/main.js';
 import { inWorktreesFolder, plainWorktreePath } from '../watcher/sources.js';
+import { readCursor } from '../watcher/core.js';
 import { readWake, watcherDir, watcherFolder } from '../watcher/waker.js';
 
 // A refusal, said to the foreman as one plain line.
@@ -201,15 +205,41 @@ export function documentOf(project, views, work) {
 // What holds back every start and go-ahead (ruling R95): STOP, or an open
 // incident. Null when neither holds.
 export function haltOf(views, { stopped = () => stopState().on } = {}) {
-  if (stopped()) return { why: 'STOP is on', fixes: [] };
+  if (stopped()) return { why: 'STOP is on', fixes: [], stop: true };
   const open = Array.isArray(views?.incidents?.open) ? views.incidents.open.filter(isPlain) : [];
   if (open.length === 0) return null;
   const ids = open.map((i) => oneLine(i.id, 40));
   return {
     why: `${ids.length === 1 ? 'incident' : 'incidents'} ${ids.join(', ')} ${ids.length === 1 ? 'is' : 'are'} open`,
     fixes: open.flatMap((i) => (Array.isArray(i.fixes) ? i.fixes.filter(Number.isInteger) : [])),
+    stop: false,
   };
 }
+
+// Why pull request `pr` may not merge while `halt` holds, or null when it may:
+// under STOP nothing merges; during an incident, only its recorded fix does.
+export function mergeWait(halt, pr) {
+  if (halt === null) return null;
+  if (halt.stop) return `${halt.why}, and nothing merges while it is`;
+  return halt.fixes.includes(pr) ? null : `${halt.why}, and only an incident's fix merges`;
+}
+
+// The open pull requests ready to merge as the watcher last saw them, from its
+// own cursor: CI green on the head, a clean review, mergeable. `merge-ready` is
+// raised once per head, so a merge held by STOP or an incident, or a fix whose
+// merge-ready came before its incident-fix click, is offered again from here.
+export function readyPrs(project) {
+  const prs = readCursor(project).prev?.prs;
+  if (!isPlain(prs)) return [];
+  return Object.entries(prs)
+    .filter(([key, p]) => /^[1-9][0-9]{0,9}$/.test(key) && isPlain(p) && typeof p.work === 'string' && SLUG.test(p.work)
+      && p.ci === 'success' && p.review === 'clean' && p.mergeable === 'yes')
+    .map(([key, p]) => ({ pr: Number(key), work: p.work, head: p.head }))
+    .sort((a, b) => a.pr - b.pr);
+}
+
+// The longest an option's words may be (`act ask`), so wake read always prints them whole.
+export const SAYS_CHARS = 300;
 
 // The feature's worktree from its record, when it is a feature worktree of the
 // project: inside the checkout's .claude/worktrees/, with a real feature folder.
@@ -333,14 +363,16 @@ function eventLine(e, ctx) {
       const q = ctx.views?.questions?.[d.questionId]?.question?.data;
       const asked = typeof q?.what === 'string' ? ` ("${oneLine(q.what, 100)}")` : '';
       const says = Array.isArray(q?.options) ? q.options.find((o) => isPlain(o) && o.label === d.label)?.says : undefined;
-      const chosen = typeof says === 'string' ? `, which says: ${oneLine(says, 300)}` : ', whose words can\'t be read: ask the director: act ask';
-      return `${head}: the director answered your question ${oneLine(d.questionId, 60)}${asked}: "${oneLine(d.label, 60)}"${chosen}. Act on it.`;
+      const answered = `${head}: the director answered your question ${oneLine(d.questionId, 60)}${asked}: "${oneLine(d.label, 60)}"`;
+      if (typeof says !== 'string') return `${answered}, but that option's words can't be read. Ask the director: act ask`;
+      return `${answered}, which says: ${oneLine(says, SAYS_CHARS)}. Act on it.`;
     }
     case 'merge-ready': {
-      const halt = ctx.halt;
-      const frozen = halt !== null && !halt.fixes.includes(e.pr);
-      return said(`pull request #${e.pr} at ${short(d.head)}`, frozen ? `It waits: ${halt.why}, and merges wait but for an incident's fix` : `Next: act merge ${work}`);
+      const wait = mergeWait(ctx.halt, e.pr);
+      return said(`pull request #${e.pr} at ${short(d.head)}`, wait !== null ? `It waits: ${wait}` : `Next: act merge ${work}`);
     }
+    case 'lift-incident': return said(`incident ${d.incident} is over`, 'Pull requests ready to merge are listed in the queue below');
+    case 'incident-fix': return said(`pull request #${d.pr} is the fix for incident ${d.incident}`, 'When it is ready to merge, the queue below lists it');
     case 'report': return said('it has ended, and its report is written', `Next: act close ${work}`);
     case 'stuck': return said(`no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`, 'Ask the director: act ask');
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
@@ -443,6 +475,16 @@ function queueLines(ctx) {
       : `- ${verb} ${id}: waits: ${wait}.`);
   }
   for (const id of toBuild.pause) lines.push(`- pause ${id}: the five-hour window is tight. Next: act pause ${id}`);
+
+  // Pull requests ready to merge, but for those this wake's merge-ready lines name.
+  const raised = new Set(ctx.events.filter((e) => e.type === 'merge-ready').map((e) => e.pr));
+  for (const { pr, work, head } of readyPrs(ctx.project)) {
+    if (raised.has(pr)) continue;
+    const wait = mergeWait(ctx.halt, pr);
+    lines.push(wait === null
+      ? `- merge ${work}: pull request #${pr} at ${short(head)} is ready to merge. Next: act merge ${work}`
+      : `- merge ${work}: pull request #${pr} is ready to merge, but waits: ${wait}.`);
+  }
   const q = toBuild;
 
   const steps = Object.entries(views.features).filter(([, f]) => isPlain(f?.data));
@@ -482,10 +524,10 @@ export async function readWakeLines({
   }
   const unknown = missing.length > 0 ? missing.join('; ').replace(/^./, (c) => c.toLowerCase()) : null;
   const halt = haltOf(read?.views ?? null, { stopped });
-  const ctx = {
-    project, config, views: read?.views ?? null, now, unknown, halt,
-  };
   const events = Array.isArray(wake.events) ? wake.events.filter(isPlain) : [];
+  const ctx = {
+    project, config, views: read?.views ?? null, now, unknown, halt, events,
+  };
   const digest = Array.isArray(wake.digest) ? wake.digest : [];
   const dropped = Number.isInteger(wake.dropped) && wake.dropped > 0 ? wake.dropped : 0;
 

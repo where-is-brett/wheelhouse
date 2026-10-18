@@ -39,7 +39,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 
 - **A wake may repeat.** Every command is safe to run again, and says what is done already. Run them anyway.
 - **A refusal is never retried.** If it says "Nothing to do", do nothing. Otherwise, `act ask`.
-- **A `Hold:` line** means STOP or an incident. Start nothing and give no go-ahead; the lines already say what waits.
+- **A `Hold:` line** means STOP or an incident. Start nothing and give no go-ahead; the lines already say what waits. Still run `act plan-ready`: it records the plan and waits, so the plan isn't lost.
 - **Shape 2:** when `act start` prints `START feature W <worktree>`, end your reply with that line, word for word.
 - **You talk to no one:** not the front desk, the director or a feature session. Questions go through `act ask`.
 

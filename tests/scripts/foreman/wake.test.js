@@ -10,6 +10,7 @@ import { main, measures, measuresFile, readWakeLines, recordDone } from '../../.
 import { foremanCommands } from '../../../scripts/foreman/tools.js';
 import { briefHash } from '../../../scripts/feature/files.js';
 import { setStop } from '../../../scripts/lib/stop.js';
+import { writeCursor } from '../../../scripts/watcher/core.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import {
   P, T0, config, emptyViews, fakeClient, featureView, project, wakeFile, workView, worktree,
@@ -220,7 +221,7 @@ test('wake read: while STOP or an incident holds, it says so at the top, and not
   assert.match(text, /^- start a \(small\): approved\. It waits: incident site-down is open\.$/m);
   assert.match(text, /^- build f: waits: incident site-down is open\.$/m);
   assert.match(text, /^- plan-ready p: plan plans\/p\.md, 1 file\. It waits: incident site-down is open\. Next: act plan-ready p$/m);
-  assert.match(text, /^- merge-ready m: pull request #6 at aaaaaaaaaaaa\. It waits: incident site-down is open, and merges wait but for an incident's fix$/m);
+  assert.match(text, /^- merge-ready m: pull request #6 at aaaaaaaaaaaa\. It waits: incident site-down is open, and only an incident's fix merges$/m);
   assert.match(text, /^- merge-ready x: pull request #7 at bbbbbbbbbbbb\. Next: act merge x$/m);
   // A feature's end is closed, whatever holds (R94).
   assert.match(text, /^- report m: it has ended, and its report is written\. Next: act close m$/m);
@@ -230,12 +231,61 @@ test('wake read: while STOP or an incident holds, it says so at the top, and not
   setStop({ by: 'prompt' });
   const stopped = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
   assert.match(stopped, /^Hold: STOP is on\. Start nothing and give no go-ahead: act start, plan-ready, build and resume wait or refuse, and no pull request merges\.$/m);
-  assert.match(stopped, /^- merge-ready x: pull request #7 at bbbbbbbbbbbb\. It waits: STOP is on, and merges wait but for an incident's fix$/m);
+  assert.match(stopped, /^- merge-ready x: pull request #7 at bbbbbbbbbbbb\. It waits: STOP is on, and nothing merges while it is$/m);
   // With neither, no hold line.
   const plain = (await readWakeLines({
     file, project: P, client: fakeClient({ views: emptyViews() }).client, now, stopped: () => false,
   })).lines.join('\n');
   assert.doesNotMatch(plain, /^Hold:/m);
+}));
+
+test('wake read lists every pull request ready to merge, so a merge held by an incident is offered again once its fix is recorded or it is lifted', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  for (const [w, pr] of [['m', 6], ['x', 7]]) {
+    views.work[w] = workView(w);
+    views.features[w] = featureView(w, { step: 'building', worktree: worktree(checkout, w, { pr: { pr, plan: 'a.md' } }) });
+  }
+  const ready = (work, head) => ({ work, head, ci: 'success', review: 'clean', mergeable: 'yes' });
+  // The watcher's own cursor: #6 and #7 ready (their merge-ready went by during the incident), #8 not yet.
+  writeCursor(P, {
+    seen: [],
+    prev: {
+      seq: 4, features: {}, testMerges: [], prs: { 6: ready('m', 'a'.repeat(40)), 7: ready('x', 'b'.repeat(40)), 8: { ...ready('cart', 'c'.repeat(40)), ci: 'pending' } },
+    },
+    held: null,
+  });
+  let n = 0;
+  const read = async (events, { incidents = [] } = {}) => {
+    views.incidents = { open: incidents };
+    n += 1;
+    const file = wakeFile(path.join(checkout, 'w'), `wake-${n}`, { events });
+    return (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
+  };
+  const incident = (fixes) => [{ id: 'site-down', what: 'The site is down', at: '2026-10-19T08:00:00.000Z', fixes }];
+
+  // During the incident, both wait.
+  const during = await read([], { incidents: incident([]) });
+  assert.match(during, /^- merge m: pull request #6 is ready to merge, but waits: incident site-down is open, and only an incident's fix merges\.$/m);
+  assert.match(during, /^- merge x: pull request #7 is ready to merge, but waits: incident site-down is open, and only an incident's fix merges\.$/m);
+  assert.doesNotMatch(during, /cart|#8/);
+
+  // The fix's click comes after its merge-ready: the fix is offered, the other still waits.
+  const fixed = await read([ev('incident-fix', null, 'ev-fix', { incident: 'site-down', pr: 7 }, { pr: 7 })], { incidents: incident([7]) });
+  assert.match(fixed, /^- incident-fix: pull request #7 is the fix for incident site-down\. When it is ready to merge, the queue below lists it$/m);
+  assert.match(fixed, /^- merge x: pull request #7 at bbbbbbbbbbbb is ready to merge\. Next: act merge x$/m);
+  assert.match(fixed, /^- merge m: pull request #6 is ready to merge, but waits: /m);
+
+  // Once lifted, every held merge is offered.
+  const lifted = await read([ev('lift-incident', null, 'ev-lift', { incident: 'site-down' })]);
+  assert.match(lifted, /^- lift-incident: incident site-down is over\. Pull requests ready to merge are listed in the queue below$/m);
+  assert.match(lifted, /^- merge m: pull request #6 at aaaaaaaaaaaa is ready to merge\. Next: act merge m$/m);
+  assert.match(lifted, /^- merge x: pull request #7 at bbbbbbbbbbbb is ready to merge\. Next: act merge x$/m);
+
+  // A merge-ready line in the same wake isn't listed twice.
+  const raised = await read([ev('merge-ready', 'm', 'mr', { head: 'a'.repeat(40) }, { pr: 6 })]);
+  assert.equal(raised.match(/Next: act merge m/g).length, 1);
+  assert.match(raised, /^- merge-ready m: /m);
 }));
 
 test('wake read falls back to the views kept on disk when the helper gives none, and says so', () => withHome(async (home) => {
@@ -287,7 +337,8 @@ test('wake read: an answer to the foreman\'s own question is the foreman\'s to a
   const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
   // The chosen option's words go with it, so the foreman can run them.
   assert.match(text, /^- answer b1: the director answered your question q-b1-1000001 \("b1 is stuck: close it\?"\): "Close it", which says: act close b1\. Act on it\.$/m);
-  assert.match(text, /^- answer b3: the director answered your question q-b3-1000001 \("Merge\?"\): "Yes", whose words can't be read: ask the director: act ask\. Act on it\.$/m);
+  assert.match(text, /^- answer b3: the director answered your question q-b3-1000001 \("Merge\?"\): "Yes", but that option's words can't be read\. Ask the director: act ask$/m);
+  assert.doesNotMatch(text, /^- answer b3: .*Act on it/m);
   assert.match(text, /^- answer b2: q-b2-3 answered "Yes"\. Nothing to do: the watcher wakes its session\.$/m);
   assert.match(text, /^- resume mine: waits: no building slot is free \(pace\)\.$/m);
   assert.doesNotMatch(text, /^- resume (hers|old)/m);

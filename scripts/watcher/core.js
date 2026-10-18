@@ -51,7 +51,8 @@
 // Every event's id is made from its inputs alone, so a watcher restarted from
 // its cursor makes the same ids again and the cursor's `seen` list stops any of
 // them waking twice:
-//   - a state event's own id (work-ready, amended, answer, incident, build);
+//   - a state event's own id (work-ready, amended, answer, incident,
+//     lift-incident, incident-fix, build);
 //   - a question's own id (question, extra-plan);
 //   - `<type>:<work>:<head>` for a PR's events;
 //   - a change of state with no id of its own (stop, clash, the brief's events,
@@ -91,7 +92,7 @@ export const DIGEST_CAP = 200;
 
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
-  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report',
+  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
 ]);
 export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'brief-changed', 'answer', 'build']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
@@ -249,6 +250,12 @@ function stateEvents(next, out) {
         out.push({
           type: 'answer', work: workOfQuestion(data.questionId), id, detail: { questionId: data.questionId, label: data.label, ...(foreman ? { foreman } : {}) },
         });
+      } else if (data.action === 'lift-incident') {
+        // A merge held while the incident was open is raised once per head, so
+        // the foreman hears the lift and reads the ready pull requests again.
+        out.push({ type: 'lift-incident', id, detail: { incident: data.incident } });
+      } else if (data.action === 'incident-fix') {
+        out.push({ type: 'incident-fix', pr: data.pr, id, detail: { incident: data.incident, pr: data.pr } });
       }
     }
   }

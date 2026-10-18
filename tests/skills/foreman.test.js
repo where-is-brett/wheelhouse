@@ -145,6 +145,9 @@ test('the lines the skill acts on are ones the scripts print', () => {
   assert.match(body, /Ask the director: act ask/);
   assert.match(body, /"which says: …"/);
   assert.match(body, /`Hold:` line/);
+  // Under a hold plan-ready is still run: it records the plan and waits (R95), and the wake says so.
+  assert.match(body, /`Hold:` line[^\n]*Still run `act plan-ready`/);
+  assert.ok(WAKE_JS.includes("It waits: ${wait}`}. Next: act plan-ready ${work}"));
   // A refusal that needs nothing says so; the skill keys on those words.
   assert.match(body, /"Nothing to do"/);
   assert.ok(ACT_JS.includes('Nothing to do until it is over'));

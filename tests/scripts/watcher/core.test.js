@@ -626,6 +626,22 @@ test('a plan that is ready wakes the foreman once per arrival, not at every obse
   assert.deepEqual(diff(observation(), observation({ features: { 'login-page': feature({ status: null }) } })).filter((e) => e.type === 'plan-ready'), []);
 });
 
+test('a verified incident lift or incident fix wakes the foreman, with the click\'s own id; an unverified one does not', () => {
+  const events = [
+    action('ev-lift', { action: 'lift-incident', incident: 'bad-deploy' }),
+    action('ev-fix', { action: 'incident-fix', incident: 'bad-deploy', pr: 9 }),
+    action('ev-lift-forged', { action: 'lift-incident', incident: 'bad-deploy' }, false),
+    action('ev-fix-forged', { action: 'incident-fix', incident: 'bad-deploy', pr: 9 }, false),
+  ];
+  const routed = route(diff(observation(), observation({ events }), { handled: new Set() }));
+  assert.deepEqual(routed.foreman.map((e) => [e.type, e.id]), [['lift-incident', 'ev-lift'], ['incident-fix', 'ev-fix']]);
+  assert.deepEqual(routed.foreman[0].detail, { incident: 'bad-deploy' });
+  assert.equal(routed.foreman[1].pr, 9);
+  assert.deepEqual(routed.foreman[1].detail, { incident: 'bad-deploy', pr: 9 });
+  assert.deepEqual(routed.features, {});
+  assert.deepEqual(routed.digest, []);
+});
+
 test('a feature whose phase arrives at done wakes the foreman once with report, to close it (R94)', () => {
   const at = (phase, over = {}) => feature({ status: status({ phase, ...over }) });
   let cursor = { seen: [], prev: observation({ features: { 'login-page': at('pr-open') } }) };
