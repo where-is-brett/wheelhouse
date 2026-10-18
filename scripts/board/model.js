@@ -11,7 +11,7 @@ const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-const NO_STATE = 'There is no state for this project on this computer yet';
+export const NO_STATE = 'There is no state for this project on this computer yet';
 const NO_BUILD_LOOP = 'The build loop isn\'t running yet';
 const NO_USAGE = 'Usage counts aren\'t on yet';
 const NO_HEALTH = 'How the project stands couldn\'t be read';

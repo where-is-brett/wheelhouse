@@ -98,8 +98,9 @@ async function ask(client, project, waitMs) {
 // is under a day old; otherwise asked of the helper (within 2 seconds) and kept. A helper
 // that can't answer leaves an older cache in use; with none, the answer is null. A helper that
 // was too slow is not waited on again for ten minutes. `client` is for a caller that has its own;
-// it should carry the same time limit.
-export async function readHostFacts(project, { client, address, now = () => new Date(), waitMs = HELPER_WAIT_MS } = {}) {
+// it should carry the same time limit. With `ask: false` the helper isn't asked, and the cache
+// is used whatever its age (the status line, which can't wait).
+export async function readHostFacts(project, { client, address, now = () => new Date(), waitMs = HELPER_WAIT_MS, ask: asking = true } = {}) {
   let file;
   let tried;
   try {
@@ -111,7 +112,7 @@ export async function readHostFacts(project, { client, address, now = () => new 
   const at = now().getTime();
   const cached = readCache(file);
   if (cached && cached.at <= at && at - cached.at < HOST_FACTS_MAX_AGE_MS) return cached.facts;
-  if (triedLately(tried, at)) return cached?.facts ?? null;
+  if (!asking || triedLately(tried, at)) return cached?.facts ?? null;
   const { facts, late } = await ask(client ?? helperClient({ address, timeout: waitMs }), project, waitMs);
   if (facts) {
     writeCache(file, at, facts);

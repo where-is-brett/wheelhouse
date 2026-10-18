@@ -45,14 +45,19 @@ export function windowsFrom(input) {
   return windows;
 }
 
-// The line to print for the folder the session works in (`workspace.current_dir`).
-// Task 13 swaps this for glanceLine(loadBoardInputs(folder)); until then it is the name.
-function lineFor(folder) {
-  return FALLBACK;
+// The glance for the folder the session works in (`workspace.current_dir`), from files only:
+// the board's inputs are read offline, so the helper is never asked. Outside a Wheelhouse
+// project the line is the name. The board's scripts are loaded here, not at the top, so a
+// failure to load them costs the glance and never the allowance's record.
+async function lineFor(folder, now) {
+  if (folder === null) return FALLBACK;
+  const [{ loadBoardInputs }, { glanceLine }] = await Promise.all([import('./board/inputs.js'), import('./board/render.js')]);
+  const inputs = await loadBoardInputs({ cwd: folder, now: () => now, offline: true });
+  return inputs?.model ? glanceLine(inputs.model) : FALLBACK;
 }
 
 // Records the allowance, then returns the line. Each part fails on its own.
-export function statusLine(raw, now = new Date()) {
+export async function statusLine(raw, now = new Date()) {
   let input = null;
   try {
     input = JSON.parse(raw);
@@ -67,7 +72,7 @@ export function statusLine(raw, now = new Date()) {
   }
   try {
     const folder = typeof input?.workspace?.current_dir === 'string' ? input.workspace.current_dir : null;
-    return lineFor(folder);
+    return await lineFor(folder, now);
   } catch {
     return FALLBACK;
   }
@@ -90,11 +95,7 @@ function main() {
   process.stdin.on('data', (chunk) => chunks.push(chunk));
   process.stdin.on('error', () => finish(FALLBACK));
   process.stdin.on('end', () => {
-    try {
-      finish(statusLine(Buffer.concat(chunks).toString('utf8')));
-    } catch {
-      finish(FALLBACK);
-    }
+    statusLine(Buffer.concat(chunks).toString('utf8')).then(finish, () => finish(FALLBACK));
   });
 }
 

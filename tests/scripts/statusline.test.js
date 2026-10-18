@@ -87,3 +87,19 @@ test('a share outside 0 to 100 is dropped rather than recorded', () => withHome(
   runScript(JSON.stringify({ rate_limits: { five_hour: { used_percentage: 0, resets_at: 1738425600 }, seven_day: { used_percentage: 100, resets_at: 1738857600 } } }), home);
   assert.deepEqual(allowance().windows.map((w) => w.percentUsed), [0, 100]);
 }));
+
+test('in a Wheelhouse project the line is the glance, with the share just recorded', () => withHome((home) => {
+  const repo = path.join(home, 'repo');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  const project = path.join(home, 'projects', 'owner__name');
+  fs.mkdirSync(path.join(project, 'views'), { recursive: true });
+  fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({
+    folder: repo, remoteUrl: 'https://example.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {},
+  }));
+  fs.writeFileSync(path.join(project, 'views', 'waiting.json'), JSON.stringify([{ id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Approve it' } }]));
+  fs.writeFileSync(path.join(home, 'STOP'), '');
+  const resetsAt = Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60;
+  const result = runScript(JSON.stringify({ workspace: { current_dir: repo }, rate_limits: { seven_day: { used_percentage: 41.2, resets_at: resetsAt } } }), home);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), 'Wheelhouse · 1 waiting · week 41% · STOP on');
+}));

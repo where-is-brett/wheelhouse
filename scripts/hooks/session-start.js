@@ -129,12 +129,19 @@ export function featureSlug(cwd) {
 
 // The views as the last sync left them on disk, when the helper cannot give them.
 // While views are being replaced the old ones sit in `views.old` for a moment (or for good
-// after a crash), so that folder is read when `views` is not there.
-function localViews(project) {
+// after a crash), so that folder is read when `views` is not there. `names` null reads
+// every view there (the board's inputs).
+export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'unconfirmed', 'damaged']) {
   const base = path.join(wheelhouseHome(), 'projects', project, 'views');
   const dir = fs.existsSync(base) ? base : `${base}.old`;
   const out = {};
-  for (const name of ['rulebook', 'levels', 'waiting', 'unconfirmed', 'damaged']) {
+  let wanted = names;
+  try {
+    wanted ??= fs.readdirSync(dir).filter((n) => /^[A-Za-z][A-Za-z0-9-]*\.json$/.test(n)).map((n) => n.slice(0, -'.json'.length));
+  } catch {
+    return null;
+  }
+  for (const name of wanted) {
     try {
       out[name] = JSON.parse(fs.readFileSync(path.join(dir, `${name}.json`), 'utf8'));
     } catch { /* missing */ }
