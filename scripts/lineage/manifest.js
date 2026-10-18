@@ -15,7 +15,7 @@ import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 export const MANIFEST_PATH = 'lineage/manifest.json';
 export const MODELS = 'the routing table in .claude/wheelhouse.json';
 // The marketplace Wheelhouse installs the pinned copies through.
-const MARKETPLACE = 'wheelhouse';
+export const MARKETPLACE = 'wheelhouse';
 
 // The pins (check 24) and what Wheelhouse uses of each upstream. Paths are relative to
 // the upstream's repository root.
