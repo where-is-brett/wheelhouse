@@ -4,6 +4,7 @@ import path from 'node:path';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
 import { verify, readEnrolled } from './signing.js';
+import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
@@ -139,6 +140,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // and whose content hash it names, so it confirms that exact event alone.
   const byId = new Map(sorted.map((e) => [e.id, e]));
   const confirmed = new Set();
+  const confirmations = [];
   for (const e of sorted) {
     if (e.kind !== 'confirmation' || typeof e.data?.confirms !== 'string' || typeof e.data?.confirmsHash !== 'string') continue;
     const target = byId.get(e.data.confirms);
@@ -149,7 +151,10 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     } catch {
       continue;
     }
-    if (hash === e.data.confirmsHash) confirmed.add(target.id);
+    if (hash === e.data.confirmsHash) {
+      confirmed.add(target.id);
+      confirmations.push({ target, event: e });
+    }
   }
 
   // Rulebook
@@ -175,7 +180,15 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     const out = {};
     const all = sorted.filter((e) => e.kind === kind && isPlainKey(e.data?.key));
     for (const e of all) {
-      if (confirmed.has(e.id)) out[e.data.key] = { key: e.data.key, id: e.id, at: e.at, value: e.data.value };
+      if (!confirmed.has(e.id)) continue;
+      const entry = { key: e.data.key, id: e.id, at: e.at, value: e.data.value };
+      if (kind === 'setting') {
+        // A setting may end on its own (until) and remembers the accepted value it replaced.
+        const prior = out[e.data.key];
+        if (typeof e.data.until === 'string') entry.until = e.data.until;
+        entry.before = prior ? { value: prior.value, ...(prior.until === undefined ? {} : { until: prior.until }) } : null;
+      }
+      out[e.data.key] = entry;
     }
     for (const e of all) {
       if (confirmed.has(e.id)) continue;
@@ -208,6 +221,43 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
 
+  // Launch blockers, shortcuts taken and decisions told.
+  const blockers = latestPerKey(sorted.filter((e) => e.kind === 'blocker'), (e) => e.data?.key);
+  const risks = latestPerKey(sorted.filter((e) => e.kind === 'risk'), (e) => e.data?.key);
+  const decisions = sorted.filter((e) => e.kind === 'decision').reverse().slice(0, 50)
+    .map((e) => ({ id: e.id, at: e.at, data: e.data }));
+
+  // Cards shown to the director, from verified records only. A code held by two different
+  // questions is ambiguous, so neither is kept. A card is spent once a later verified record
+  // carries its question or confirms the one event its confirm line names.
+  const shownRecords = sorted.filter((e) => e.kind === 'shown' && verify(e, enrolled)
+    && typeof e.data?.code === 'string' && typeof e.data?.question === 'string' && Array.isArray(e.data?.options));
+  const answeredBy = sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
+  const spentBy = (shownEvent) => {
+    if (answeredBy.some((e) => byOrder(shownEvent, e) < 0 && e.data.question === shownEvent.data.question)) return true;
+    const named = /Confirm ([a-z-]+) (\S+): "/.exec(shownEvent.data.question);
+    return named !== null && confirmations.some((c) => byOrder(shownEvent, c.event) < 0
+      && c.target.id === named[2] && c.target.kind === named[1]);
+  };
+  // Only live records take part: not spent, and younger than REPLY_CODE_DAYS. The latest live
+  // record holds its code, and two live records with different questions clash. A code with no
+  // live record shows its latest record, so a reply can be told why the code can't be used.
+  const nowMs = now().getTime();
+  const isLive = (e) => !spentBy(e) && !(nowMs - Date.parse(e.at) >= REPLY_CODE_DAYS * 24 * 60 * 60 * 1000);
+  const questionsByCode = new Map();
+  for (const e of shownRecords.filter(isLive)) {
+    const questions = questionsByCode.get(e.data.code) ?? new Set();
+    questions.add(e.data.question);
+    questionsByCode.set(e.data.code, questions);
+  }
+  const clashing = [...questionsByCode].filter(([, questions]) => questions.size > 1).map(([code]) => code);
+  const shown = {};
+  const hold = (e) => { shown[e.data.code] = { id: e.id, at: e.at, question: e.data.question, options: e.data.options, spent: spentBy(e) }; };
+  shownRecords.forEach(hold);
+  shownRecords.filter(isLive).forEach(hold);
+  for (const code of clashing) delete shown[code];
+  const clashes = clashing.map((code) => `a shown code held by two different questions: ${code}`);
+
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
@@ -223,7 +273,11 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     reviews,
     ...buildLoopViews(sorted, enrolled),
     unconfirmed,
-    damaged: [...damaged, ...repeated],
+    blockers,
+    risks,
+    decisions,
+    shown,
+    damaged: [...damaged, ...repeated, ...clashes],
     status: {
       builtAt: now().toISOString(),
       waitingCount: waiting.length,
@@ -234,13 +288,14 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   };
 }
 
-// Reads the clone and writes views/*.json beside it, outside the clone.
-export async function writeViews(project, { now = () => new Date() } = {}) {
-  const dir = stateDir(project);
+// Reads the clone and writes views/*.json beside it, outside the clone. `dir` and `out`
+// name another clone of events and its views folder, such as the profile's.
+export async function writeViews(project, {
+  now = () => new Date(), dir = stateDir(project), out = path.join(wheelhouseHome(), 'projects', project, 'views'),
+} = {}) {
   const damaged = [];
   const events = listEvents(dir, { report: () => {}, skipped: damaged });
   const views = buildViews(events, readEnrolled(), { damaged, now });
-  const out = path.join(wheelhouseHome(), 'projects', project, 'views');
   // Built whole in a new folder, which then takes the old one's place. The old folder is
   // renamed aside first because Windows will not rename over a folder that has files in it.
   // Between the two renames there is no `views` folder, only `views.old` (a reader that

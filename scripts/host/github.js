@@ -24,6 +24,14 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
   const R = ['--repo', repo];
   const ask = async (args, input) => json(args, await call(args, input));
 
+  async function ciRead(sha) {
+    const answer = await ask(['api', 'graphql', '-f', `query=${CI_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `sha=${sha}`]);
+    // A GraphQL answer can carry errors with a 200; that is not the absence of checks.
+    if ((Array.isArray(answer?.errors) && answer.errors.length > 0) || answer?.data === null || typeof answer?.data !== 'object') throw new Error('GitHub could not read the commit\'s checks');
+    const rollup = answer?.data?.repository?.object?.statusCheckRollup;
+    return { sha, state: rollup ? (ROLLUP[rollup.state] ?? 'pending') : 'none' };
+  }
+
   return {
     async defaultBranch() {
       const answer = await ask(['repo', 'view', repo, '--json', 'defaultBranchRef']);
@@ -50,12 +58,25 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       return { headSha: pr.headRefOid, ...(typeof pr.headRefName === 'string' ? { headRef: pr.headRefName } : {}), ...(typeof pr.baseRefName === 'string' ? { baseRef: pr.baseRefName } : {}), mergeable: MERGEABLE[pr.mergeable] ?? 'unknown', state: STATE[pr.state] ?? 'unknown', ...(typeof pr.body === 'string' ? { body: pr.body } : {}) };
     },
 
+    async branchHead(branch) {
+      return (await ask(['api', `repos/${repo}/branches/${encodeURIComponent(branch)}`]))?.commit?.sha;
+    },
+
     async ciState(sha) {
-      const answer = await ask(['api', 'graphql', '-f', `query=${CI_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `sha=${sha}`]);
-      // A GraphQL answer can carry errors with a 200; that is not the absence of checks.
-      if ((Array.isArray(answer?.errors) && answer.errors.length > 0) || answer?.data === null || typeof answer?.data !== 'object') throw new Error('GitHub could not read the commit\'s checks');
-      const rollup = answer?.data?.repository?.object?.statusCheckRollup;
-      return { sha, state: rollup ? (ROLLUP[rollup.state] ?? 'pending') : 'none' };
+      return ciRead(sha);
+    },
+
+    async hasCi(sha, branch) {
+      if ((await ciRead(sha)).state !== 'none') return true;
+      // Workflows that run only on pull requests leave no check on the branch's head, and a
+      // head just pushed has none yet: the workflows folder says whether CI is set up.
+      const { code, stdout, stderr } = await attempt(['api', `repos/${repo}/contents/.github/workflows?ref=${encodeURIComponent(branch)}`]);
+      if (code === 0) {
+        const files = json(['api', 'contents'], stdout);
+        return Array.isArray(files) && files.length > 0;
+      }
+      if (/\b404\b|not found/i.test(`${stderr}\n${stdout}`)) return false;
+      throw new Error('GitHub could not say whether the project has CI workflows');
     },
 
     // A refusal (the head has moved, the branch is protected, a check failed)

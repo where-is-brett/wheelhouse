@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { readInput, answer, findRepoRoot, projectOf, hookMain } from '../../../scripts/hooks/kit.js';
+import { readInput, answer, findRepoRoot, projectOf, hookMain, readSmallText, SMALL_FILE_BYTES } from '../../../scripts/hooks/kit.js';
 import { managedDir, lockedProjects } from '../../../scripts/protection/managed.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 
@@ -285,9 +285,10 @@ const cmd = (name) => ({ type: 'command', command: `node "\${CLAUDE_PLUGIN_ROOT}
 test('hooks.json names a script that exists for every hook', () => {
   const file = JSON.parse(fs.readFileSync(path.join(ROOT, 'hooks', 'hooks.json'), 'utf8'));
   assert.deepEqual(file, {
+    modules: ['./register.ts'],
     hooks: {
       SessionStart: [{ matcher: 'startup|resume|compact|clear|fork', hooks: [cmd('session-start')] }],
-      UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge')] }],
+      UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge'), cmd('board-context')] }],
       PreToolUse: [
         { matcher: '*', hooks: [{ ...cmd('stop-guard'), onFailure: 'block' }] },
         { matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Bash|PowerShell|Monitor|WebFetch|ListMcpResourcesTool|ReadMcpResourceTool|mcp__.*', hooks: [{ ...cmd('tool-guard'), onFailure: 'block' }] },
@@ -427,4 +428,36 @@ test('a worktree inside a Locked project whose .git file was rewritten is still 
       fs.rmSync(base, { recursive: true, force: true });
     }
   });
+});
+
+test('readSmallText reads a small regular file and nothing else', { skip: process.platform === 'win32' ? 'no FIFOs on Windows' : false }, () => {
+  const dir = temp('wh-kit-small-');
+  try {
+    const file = path.join(dir, 'HEAD');
+    fs.writeFileSync(file, 'ref: refs/heads/main\n');
+    assert.equal(readSmallText(file), 'ref: refs/heads/main\n');
+    // A FIFO with no writer is not waited on.
+    const fifo = path.join(dir, 'fifo');
+    execFileSync('mkfifo', [fifo]);
+    assert.equal(readSmallText(fifo), null);
+    assert.equal(readSmallText(dir), null);
+    assert.equal(readSmallText(path.join(dir, 'absent')), null);
+    fs.writeFileSync(path.join(dir, 'big'), 'x'.repeat(SMALL_FILE_BYTES + 1));
+    assert.equal(readSmallText(path.join(dir, 'big')), null);
+    assert.equal(readSmallText(path.join(dir, 'big'), SMALL_FILE_BYTES + 1).length, SMALL_FILE_BYTES + 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readSmallText reads a small regular file on every system', () => {
+  const dir = temp('wh-kit-small-');
+  try {
+    fs.writeFileSync(path.join(dir, 'commondir'), '../..\n');
+    assert.equal(readSmallText(path.join(dir, 'commondir')), '../..\n');
+    fs.writeFileSync(path.join(dir, 'empty'), '');
+    assert.equal(readSmallText(path.join(dir, 'empty')), '');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

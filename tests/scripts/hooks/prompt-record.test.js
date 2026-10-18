@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { decide, sendPending } from '../../../scripts/hooks/prompt-record.js';
+import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
-import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
+import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -29,7 +29,7 @@ async function withHome(fn) {
 }
 
 function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, refuse = false } = {}) {
-  const calls = { write: [], record: [], prState: [] };
+  const calls = { write: [], record: [], profileRecord: [], prState: [] };
   const no = { ok: false, refused: 'no' };
   return {
     calls,
@@ -37,6 +37,9 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
     state: {
       write: async (b) => { calls.write.push(b); return refuse ? no : { ok: true }; },
       record: async (b) => { calls.record.push(b); return refuse ? no : { ok: true }; },
+    },
+    profile: {
+      record: async (b) => { calls.profileRecord.push(b); return refuse ? no : { ok: true }; },
     },
   };
 }
@@ -50,8 +53,8 @@ const input = (answers, { multi = false, response = true, options = BUTTONS } = 
 const deps = (client) => ({ client, now: () => NOW, projectOf: () => ({ project: P }) });
 const kinds = (c) => c.calls.record.map((r) => r.event.kind);
 
-function keepEvent(event) {
-  const file = path.join(stateDir(P), eventPath(event));
+function keepEvent(event, dir = stateDir(P)) {
+  const file = path.join(dir, eventPath(event));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(event));
 }
@@ -162,8 +165,25 @@ test('Explain more and Not now record only the answer', async () => {
   });
 });
 
+test('Lift STOP while STOP is off records only the answer', async () => {
+  await withHome(async () => {
+    const c = fake();
+    let lifted = 0;
+    await decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(c), liftStop: () => { lifted += 1; } });
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 1);
+    assert.equal(lifted, 0);
+    // The STOP state is read through the injected reader when one is given.
+    const on = fake();
+    await decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(on), liftStop: () => { lifted += 1; }, stopState: () => ({ on: true }) });
+    assert.deepEqual(on.calls.record.map((r) => r.event.data.action), ['lift-stop']);
+    assert.equal(lifted, 1);
+  });
+});
+
 test('one failing question does not stop the rest', async () => {
   await withHome(async () => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     c.prState = async () => { throw new Error('x'); };
     await decide(input({ [approvalLine(7, FULL)]: 'Approve', [`${LIFT_STOP}`]: 'Lift STOP' }), deps(c));
@@ -174,6 +194,7 @@ test('one failing question does not stop the rest', async () => {
 
 test('a record the helper cannot take is kept and sent later, oldest first', async () => {
   await withHome(async (home) => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const refusing = fake({ refuse: true });
     await decide(input({ [LIFT_STOP]: 'Lift STOP' }), deps(refusing));
     const folder = path.join(home, 'projects', P, 'pending');
@@ -315,6 +336,7 @@ test('a pending file that will not parse is moved to bad/', async () => {
 
 test('a lift that throws leaves no record behind', async () => {
   await withHome(async (home) => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     await decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(c), liftStop: () => { throw new Error('x'); } });
     assert.equal(one(c), 0);
@@ -326,6 +348,7 @@ test('a lift that throws leaves no record behind', async () => {
 
 test('a signed record is written down before it is sent and stays when the helper never answers', async () => {
   await withHome(async (home) => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     c.state.record = () => new Promise(() => {});
     c.state.write = () => new Promise(() => {});
@@ -341,6 +364,7 @@ test('a signed record is written down before it is sent and stays when the helpe
 
 test('signed records go before the plain answers', async () => {
   await withHome(async () => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     const order = [];
     c.state.record = async () => { order.push('record'); return { ok: true }; };
@@ -361,6 +385,56 @@ test('sendPending stops between records once its deadline has passed and keeps t
     assert.deepEqual(seen, [1]);
     assert.equal(result.sent, 1);
     assert.equal(fs.readdirSync(folder).length, 2);
+  });
+});
+
+test('a Confirm line naming a profile setting records the confirmation through the profile', async () => {
+  await withHome(async (home) => {
+    const setting = makeEvent({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep it short' }, now: () => NOW });
+    keepEvent(setting, profileDir());
+    const c = fake();
+    await decide(input({ [`${confirmLine(setting)}?`]: 'Confirm' }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 1);
+    const [rec] = c.calls.profileRecord;
+    assert.equal(rec.event.kind, 'confirmation');
+    assert.equal(rec.event.data.confirms, setting.id);
+    assert.ok(rec.event.sig);
+    assert.equal(c.calls.write.length, 1, 'the answer itself goes to the project\'s state');
+
+    // One the helper does not take is kept, and sent through the profile later.
+    const refusing = fake({ refuse: true });
+    await decide(input({ [confirmLine(setting)]: 'Confirm' }), deps(refusing));
+    const folder = path.join(home, 'projects', P, 'pending');
+    const kept = fs.readdirSync(folder).map((f) => JSON.parse(fs.readFileSync(path.join(folder, f), 'utf8')));
+    assert.deepEqual(kept.map((k) => k.route).sort(), ['profile-record', 'write']);
+    const later = fake();
+    await sendPending(P, later);
+    assert.equal(later.calls.profileRecord.length, 1);
+    assert.equal(later.calls.record.length, 0);
+    assert.deepEqual(fs.readdirSync(folder), []);
+  });
+});
+
+test('a Confirm line that matches events in both the state and the profile records nothing', async () => {
+  await withHome(async () => {
+    // The same event in both.
+    const setting = makeEvent({ kind: 'setting', data: { key: 'briefing', value: 'short' }, now: () => NOW });
+    keepEvent(setting);
+    keepEvent(setting, profileDir());
+    // A card naming a state ruling and a profile setting at once.
+    const ruling = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
+    keepEvent(ruling);
+    const other = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build' }, now: () => NOW });
+    keepEvent(other, profileDir());
+    const c = fake();
+    await decide(input({
+      [confirmLine(setting)]: 'Confirm',
+      [`${confirmLine(ruling)} and ${confirmLine(other)}`]: 'Confirm',
+    }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 2);
   });
 });
 
@@ -390,6 +464,85 @@ test('Approve on a card with approveWorkLine records approve-work with the lane,
     assert.equal(c.calls.prState.length, 0);
     assert.equal(c.calls.write.length, 2);
   });
+});
+
+const CODED = ['Approve', 'Lift STOP', 'Explain more', 'Not now'].map((label) => ({ label }));
+const coded = (answers, { multi = false } = {}) => {
+  const asked = input(answers, { multi });
+  asked.tool_input.questions = asked.tool_input.questions.map((q) => ({ ...q, options: CODED }));
+  return asked;
+};
+
+test('a card with a set line and its code becomes a signed shown record; one with a wrong code does not', async () => {
+  await withHome(async (home) => {
+    const line = approvalLine(12, FULL);
+    const code = replyCode(line);
+    const good = `Pull request 12 changes the sign-in.\n${line}\n${replyCodeLine(code)}`;
+    const wrong = `${approvalLine(13, FULL)}\n${replyCodeLine(code)}`;
+    const none = `${LIFT_STOP}`;
+    const c = fake();
+    await decide(coded({ [good]: 'Not now', [wrong]: 'Not now', [none]: 'Not now' }), deps(c));
+    const shown = c.calls.record.filter((r) => r.event.kind === 'shown');
+    assert.equal(shown.length, 1);
+    assert.deepEqual(shown[0].event.data, { code, question: good, options: CODED.map((b) => b.label) });
+    assert.equal(shown[0].project, P);
+    assert.ok(shown[0].event.sig);
+    assert.equal(c.calls.write.length, 3);
+
+    // A click that earns a record sorts after the card's shown record, so it spends the code.
+    const click = fake();
+    await decide(coded({ [good]: 'Approve' }), deps(click));
+    assert.deepEqual(kinds(click), ['shown', 'approval']);
+    const [s, a] = click.calls.record.map((r) => r.event);
+    assert.ok(s.at < a.at);
+
+    // A multi-select card, or one already in the shown view with this question, writes no shown record.
+    const multi = fake();
+    await decide(coded({ [good]: ['Approve'] }, { multi: true }), deps(multi));
+    assert.equal(multi.calls.record.length, 0);
+    const views = path.join(home, 'projects', P, 'views');
+    fs.mkdirSync(views, { recursive: true });
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: NOW.toISOString(), question: good, options: ['Approve', 'Not now'], spent: false } }));
+    const again = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(again));
+    assert.equal(again.calls.record.length, 0);
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: NOW.toISOString(), question: 'Another?', options: ['A', 'B'], spent: false } }));
+    const other = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(other));
+    assert.deepEqual(kinds(other), ['shown']);
+    // A held record for this question that is spent, or out of date, gives way to a new one.
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: NOW.toISOString(), question: good, options: ['Approve', 'Not now'], spent: true } }));
+    const spent = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(spent));
+    assert.deepEqual(kinds(spent), ['shown']);
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: '2026-10-01T00:00:00.000Z', question: good, options: ['Approve', 'Not now'], spent: false } }));
+    const old = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(old));
+    assert.deepEqual(kinds(old), ['shown']);
+  });
+});
+
+test('a shown record the helper cannot take is kept pending like every signed record', async () => {
+  await withHome(async () => {
+    const line = LIFT_STOP;
+    const q = `${line}\n${replyCodeLine(replyCode(line))}`;
+    const c = fake({ refuse: true });
+    await decide(coded({ [q]: 'Not now' }), deps(c));
+    const folder = path.join(stateDir(P), '..', 'pending');
+    const kept = fs.readdirSync(folder).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')));
+    assert.deepEqual(kept.filter((k) => k.route === 'record').map((k) => k.body.event.kind), ['shown']);
+  });
+});
+
+// The build loop's own labels earn records from a click only: their lines aren't set lines yet.
+const CLICK_ONLY = ['Change it', 'End it', 'Merge the fix'];
+
+test('every label the prompt record can sign for is in SIGNED_LABELS, or one the build loop answers by click only', () => {
+  const source = fs.readFileSync(new URL('../../../scripts/hooks/prompt-record.js', import.meta.url), 'utf8');
+  const handled = [...source.matchAll(/label === '([^']+)'/g)].map((m) => m[1]);
+  assert.ok(handled.length >= 5);
+  assert.deepEqual([...new Set(handled)].filter((l) => !CLICK_ONLY.includes(l)).sort(), [...SIGNED_LABELS].sort());
+  assert.ok(CLICK_ONLY.every((l) => handled.includes(l)));
 });
 
 test('Approve on a work card records nothing when the work, its lane or its document is not what the card says', async () => {
