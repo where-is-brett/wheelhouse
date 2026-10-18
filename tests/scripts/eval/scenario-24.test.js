@@ -68,16 +68,19 @@ test('scenario 24 has the shape run.js and the harness expect', () => {
   assert.deepEqual(Object.keys(scenario.variants).sort(), ['with', 'without']);
 });
 
-test('setup writes a two-task plan, the settings that allow its commands, and a brief that starts with the override only in the with variant', async () => {
+test('setup writes a two-task plan, the local settings that allow git and node, and a brief that starts with the override only in the with variant', async () => {
   for (const variant of ['with', 'without']) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scenario-24-'));
     await scenario.setup(dir, variant);
     const plan = fs.readFileSync(path.join(dir, 'docs', 'superpowers', 'plans', '2026-10-18-greetings.md'), 'utf8');
     assert.equal([...plan.matchAll(/^### Task \d+:/gm)].length, 2);
-    const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
-    for (const rule of ['Bash(git add *)', 'Bash(git commit *)', 'Bash(node *)']) assert.ok(settings.permissions.allow.includes(rule), rule);
+    // The allow rules are in the local settings: headless claude ignores allow rules in .claude/settings.json.
+    assert.ok(!fs.existsSync(path.join(dir, '.claude', 'settings.json')));
+    const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8'));
+    for (const rule of ['Bash(git *)', 'Bash(node *)']) assert.ok(settings.permissions.allow.includes(rule), rule);
     const brief = fs.readFileSync(path.join(dir, '.wheelhouse', 'feature', 'brief.md'), 'utf8');
     assert.match(brief, /docs\/superpowers\/plans\/2026-10-18-greetings\.md/);
+    assert.match(brief, /each shell command on its own/);
     if (variant === 'with') {
       assert.ok(brief.startsWith(override.trimEnd()), 'the override is the brief\'s first section');
     } else {

@@ -23,12 +23,21 @@ const override = fs.readFileSync(fileURLToPath(new URL('../../../templates/brief
 const PLAN = 'docs/superpowers/plans/2026-10-18-greetings.md';
 const PLAN_FILES = ['greet.js', 'farewell.js'];
 
-// The commands the plan needs, allowed in the scratch project's own settings.
-const SETTINGS = {
-  permissions: {
-    allow: ['Bash(git add *)', 'Bash(git commit *)', 'Bash(git status *)', 'Bash(git log *)', 'Bash(git diff *)', 'Bash(git show *)', 'Bash(git branch *)', 'Bash(git rev-parse *)', 'Bash(node *)'],
-  },
-};
+// What the session may run without asking, in the scratch project's own local
+// settings. The project is a throwaway repository with no remote, so every git
+// subcommand and node are allowed. The rules must be in .claude/settings.local.json:
+// tried on Claude Code 2.1.302, `claude -p` honours allow rules there (and from
+// --settings and --allowedTools), but ignores allow rules in .claude/settings.json.
+const ALLOWED = ['Bash(git *)', 'Bash(node *)'];
+
+function settings() {
+  const allow = [...ALLOWED];
+  try {
+    // Superpowers' own helper scripts, from the installed folder (subagent-driven-development runs one).
+    allow.push(`Bash(${locateSuperpowers()}/skills/*)`);
+  } catch { /* Superpowers is not installed here; the run itself will say so */ }
+  return { permissions: { allow } };
+}
 
 const plan = `# Greetings Implementation Plan
 
@@ -56,6 +65,8 @@ const plan = `# Greetings Implementation Plan
 const feature = `# Brief: greetings
 
 The feature is two small text helpers, \`greet.js\` and \`farewell.js\`. The plan is at \`${PLAN}\`; build it.
+
+Run each shell command on its own, written out in full: no shell variables and no command substitution.
 `;
 
 // Superpowers 7.0.0's own hand-offs, from its wording: writing-plans' closing
@@ -123,7 +134,7 @@ export default {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, content, 'utf8');
     };
-    write('.claude/settings.json', JSON.stringify(SETTINGS, null, 2) + '\n');
+    write('.claude/settings.local.json', JSON.stringify(settings(), null, 2) + '\n');
     write(PLAN, plan);
     write('.wheelhouse/feature/brief.md', variant === 'with' ? `${override.trimEnd()}\n\n---\n\n${feature}` : feature);
   },
@@ -137,7 +148,7 @@ export default {
     without: { get pluginDirs() { return [locateSuperpowers()]; } },
   },
 
-  // Edits are accepted; the commands the plan needs are allowed by the scratch project's settings.
+  // Edits are accepted; git and node are allowed by the scratch project's local settings.
   permissionMode: 'acceptEdits',
   maxTurns: 40,
 
