@@ -21,6 +21,7 @@ import { makeEvent, listEvents, confirmationFor, CONFIRMABLE_KINDS } from '../st
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine } from '../state/card-lines.js';
 import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
 import { localViews } from './session-start.js';
+import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -165,8 +166,9 @@ export async function sendKept(api, left, { file, body, route }) {
 
 // The shown records a card asks for: one for each single-choice question that carries exactly
 // one set line and the line with that line's reply code, whatever was clicked, unless the shown
-// view already holds the code for this question. The options are the card's own labels.
-function shownFor(project, input) {
+// view already holds the code, live (unspent and in date at `at`), for this question. The
+// options are the card's own labels.
+function shownFor(project, input, at) {
   const questions = input.tool_input?.questions;
   if (!Array.isArray(questions)) return [];
   const held = localViews(project, ['shown'])?.shown;
@@ -178,7 +180,8 @@ function shownFor(project, input) {
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
-    if (held && Object.hasOwn(held, code) && held[code]?.question === q.question) continue;
+    const was = held && Object.hasOwn(held, code) ? held[code] : null;
+    if (was?.question === q.question && was.spent === false && at.getTime() - Date.parse(was.at) < REPLY_CODE_DAYS * DAY) continue;
     out.push({ kind: 'shown', data: { code, question: q.question, options: q.options.map((o) => o?.label) } });
   }
   return out;
@@ -198,10 +201,12 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // go first and are dated a millisecond before the clicks, so a record a click earns sorts
   // after its card's shown record and spends the code.
   const queued = [];
-  const shownAt = new Date(now().getTime() - 1);
+  const at = now();
+  const clock = () => at;
+  const shownAt = new Date(at.getTime() - 1);
   let cards = [];
   try {
-    cards = shownFor(project, input);
+    cards = shownFor(project, input, at);
   } catch {
     // No reply codes this time; the clicks are still recorded.
   }
@@ -215,8 +220,8 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const click of out) {
     if (!click.signable) continue;
     try {
-      const got = await earned({ project, ...click, client: api, now, left });
-      if (got) queued.push(keepEarned(project, got, { now, liftStop }));
+      const got = await earned({ project, ...click, client: api, now: clock, left });
+      if (got) queued.push(keepEarned(project, got, { now: clock, liftStop }));
     } catch {
       // One question failing does not stop the rest; a lift that did not happen leaves no record.
     }

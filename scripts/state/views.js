@@ -4,6 +4,7 @@ import path from 'node:path';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, CONFIRMABLE_KINDS } from './events.js';
 import { verify, readEnrolled } from './signing.js';
+import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
@@ -144,13 +145,6 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // carries its question or confirms the one event its confirm line names.
   const shownRecords = sorted.filter((e) => e.kind === 'shown' && verify(e, enrolled)
     && typeof e.data?.code === 'string' && typeof e.data?.question === 'string' && Array.isArray(e.data?.options));
-  const questionsByCode = new Map();
-  for (const e of shownRecords) {
-    const questions = questionsByCode.get(e.data.code) ?? new Set();
-    questions.add(e.data.question);
-    questionsByCode.set(e.data.code, questions);
-  }
-  const clashing = [...questionsByCode].filter(([, questions]) => questions.size > 1).map(([code]) => code);
   const answeredBy = sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
   const spentBy = (shownEvent) => {
     if (answeredBy.some((e) => byOrder(shownEvent, e) < 0 && e.data.question === shownEvent.data.question)) return true;
@@ -158,11 +152,23 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     return named !== null && confirmations.some((c) => byOrder(shownEvent, c.event) < 0
       && c.target.id === named[2] && c.target.kind === named[1]);
   };
-  const shown = {};
-  for (const e of shownRecords) {
-    if (clashing.includes(e.data.code)) continue;
-    shown[e.data.code] = { id: e.id, at: e.at, question: e.data.question, options: e.data.options, spent: spentBy(e) };
+  // Only live records take part: not spent, and younger than REPLY_CODE_DAYS. The latest live
+  // record holds its code, and two live records with different questions clash. A code with no
+  // live record shows its latest record, so a reply can be told why the code can't be used.
+  const nowMs = now().getTime();
+  const isLive = (e) => !spentBy(e) && !(nowMs - Date.parse(e.at) >= REPLY_CODE_DAYS * 24 * 60 * 60 * 1000);
+  const questionsByCode = new Map();
+  for (const e of shownRecords.filter(isLive)) {
+    const questions = questionsByCode.get(e.data.code) ?? new Set();
+    questions.add(e.data.question);
+    questionsByCode.set(e.data.code, questions);
   }
+  const clashing = [...questionsByCode].filter(([, questions]) => questions.size > 1).map(([code]) => code);
+  const shown = {};
+  const hold = (e) => { shown[e.data.code] = { id: e.id, at: e.at, question: e.data.question, options: e.data.options, spent: spentBy(e) }; };
+  shownRecords.forEach(hold);
+  shownRecords.filter(isLive).forEach(hold);
+  for (const code of clashing) delete shown[code];
   const clashes = clashing.map((code) => `a shown code held by two different questions: ${code}`);
 
   const merges = sorted.filter((e) => e.kind === 'merge');

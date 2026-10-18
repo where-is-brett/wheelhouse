@@ -32,7 +32,7 @@ async function withHome(fn) {
   }
 }
 
-function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, refuse = false } = {}) {
+function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, refuse = false, takes = false } = {}) {
   const calls = { write: [], record: [], profileRecord: [], prState: [] };
   const no = { ok: false, refused: 'no' };
   return {
@@ -40,7 +40,12 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
     prState: async (b) => { calls.prState.push(b); return pr; },
     state: {
       write: async (b) => { calls.write.push(b); return refuse ? no : { ok: true }; },
-      record: async (b) => { calls.record.push(b); return refuse ? no : { ok: true }; },
+      record: async (b) => {
+        calls.record.push(b);
+        // As the helper does: a record it takes is written into the state clone at once.
+        if (takes && !refuse) keepEvent(b.event);
+        return refuse ? no : { ok: true };
+      },
     },
     profile: {
       record: async (b) => { calls.profileRecord.push(b); return refuse ? no : { ok: true }; },
@@ -141,8 +146,8 @@ test('an option the card did not offer records nothing', async () => {
     const code = replyCode(line);
     const c = fake();
     assert.deepEqual(await replyRecord({ project: P, text: `${code} Confirm`, client: c, now: () => LATER }), { made: false, says: 'That card doesn\'t offer Confirm' });
-    assert.deepEqual(await replyRecord({ project: P, text: `${code} explain MORE`, client: c, now: () => LATER }), { made: false, says: 'Nothing to record for Explain more' });
-    assert.deepEqual(await replyRecord({ project: P, text: `${code} Not now.`, client: c, now: () => LATER }), { made: false, says: 'Nothing to record for Not now' });
+    assert.deepEqual(await replyRecord({ project: P, text: `${code} explain MORE`, client: c, now: () => LATER }), { made: false, says: 'That option doesn\'t need a reply code' });
+    assert.deepEqual(await replyRecord({ project: P, text: `${code} Not now.`, client: c, now: () => LATER }), { made: false, says: 'That option doesn\'t need a reply code' });
     assert.equal(c.calls.record.length + c.calls.write.length + c.calls.prState.length, 0);
   });
 });
@@ -186,7 +191,7 @@ test('a reply earns exactly the record the click would have', async () => {
     const folder = path.join(stateDir(P), '..', 'pending');
     const kept = fs.readdirSync(folder).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')));
     assert.deepEqual(kept.map((k) => [k.route, k.body.event.data.action, k.body.event.data.step]), [['record', 'runbook', 2]]);
-    assert.ok(!JSON.stringify(kept).includes('dO'));
+    assert.deepEqual(kept[0].body.event.data, { action: 'runbook', step: 2, question: cardOf(line), label: 'Do it' });
   });
 });
 
@@ -207,5 +212,87 @@ test('a reply to an approval card checks the pull request\'s head as a click doe
     fs.writeFileSync(stopFile(), '{}');
     await replyRecord({ project: P, text: `${replyCode(line)} Approve`, client: moved, now: () => LATER });
     assert.equal(fs.existsSync(stopFile()), true);
+  });
+});
+
+test('two replies in a row, or a click then a reply, record once while the views on disk are old', async () => {
+  await withHome(async (home) => {
+    const replied = path.join(home, 'projects', P, 'replied');
+    const reply = (line, client, label = 'Do it') => replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client, now: () => LATER });
+
+    // The helper took the first reply's record into the clone; no views were written since.
+    const one = runbookLine(1);
+    await show(cardOf(one));
+    const first = fake({ takes: true });
+    assert.equal((await reply(one, first)).made, true);
+    fs.rmSync(replied, { recursive: true, force: true });
+    const second = fake({ takes: true });
+    assert.deepEqual(await reply(one, second), { made: false, says: 'That code has been used' });
+    assert.equal(second.calls.record.length, 0);
+
+    // The first reply's record is still kept in pending/, the helper not having taken it.
+    const two = runbookLine(2);
+    await show(cardOf(two));
+    assert.equal((await reply(two, fake({ refuse: true }))).made, true);
+    fs.rmSync(replied, { recursive: true, force: true });
+    const after = fake();
+    assert.deepEqual(await reply(two, after), { made: false, says: 'That code has been used' });
+    assert.equal(after.calls.record.length, 0);
+
+    // Two replies at once: the card's marker lets one through.
+    const four = runbookLine(4);
+    await show(cardOf(four));
+    const both = fake();
+    const results = await Promise.all([reply(four, both), reply(four, both)]);
+    assert.deepEqual(results.map((r) => r.made).sort(), [false, true]);
+    assert.equal(both.calls.record.length, 1);
+
+    // A click on the card, taken by the helper, then a reply.
+    const pr = approvalLine(12, FULL);
+    await show(cardOf(pr));
+    await decide(card(cardOf(pr), 'Approve'), deps(fake({ takes: true }), LATER));
+    const late = fake();
+    assert.deepEqual(await reply(pr, late, 'Approve'), { made: false, says: 'That code has been used' });
+    assert.equal(late.calls.record.length + late.calls.prState.length, 0);
+
+    // A reply that earns nothing lets the card go, so it can be answered again.
+    const pr13 = approvalLine(13, FULL);
+    await show(cardOf(pr13));
+    const moved = fake({ pr: { ok: true, result: { headSha: '1'.repeat(40), state: 'open' } } });
+    assert.equal((await reply(pr13, moved, 'Approve')).made, false);
+    assert.equal((await reply(pr13, fake(), 'Approve')).made, true);
+  });
+});
+
+test('a line that repeats gets a working code on each new card, and two waiting cards sharing it are refused', async () => {
+  await withHome(async () => {
+    const reply = (client, now = LATER) => replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client, now: () => now, liftStop: () => {} });
+    // The first lift-STOP card is used.
+    await show(cardOf(LIFT_STOP, 'STOP went on at noon.'));
+    assert.equal((await reply(fake({ takes: true }))).made, true);
+    await writeViews(P, { now: () => LATER });
+    // A later card with the same line and other words answers to the same code.
+    const second = new Date(LATER.getTime() + DAY);
+    const c = fake();
+    await decide(card(cardOf(LIFT_STOP, 'STOP went on again at six.'), 'Not now'), deps(c, second));
+    for (const r of c.calls.record) keepEvent(r.event);
+    assert.equal(c.calls.record.filter((r) => r.event.kind === 'shown').length, 1);
+    const out = await reply(fake({ takes: true }), new Date(second.getTime() + 1000));
+    assert.deepEqual(out, { made: true, says: 'Recorded: Lift STOP' });
+
+    // The same card again, after its record was used, gets a new shown record that works.
+    await writeViews(P, { now: () => second });
+    const again = fake();
+    await decide(card(cardOf(LIFT_STOP, 'STOP went on again at six.'), 'Not now'), deps(again, new Date(second.getTime() + 2000)));
+    assert.equal(again.calls.record.filter((r) => r.event.kind === 'shown').length, 1);
+    for (const r of again.calls.record) keepEvent(r.event);
+    assert.equal((await reply(fake({ takes: true }), new Date(second.getTime() + 3000))).made, true);
+
+    // Two waiting cards with one line and different words are refused.
+    const step = runbookLine(5);
+    await show(cardOf(step, 'Harm is live.'));
+    await show(cardOf(step, 'Harm is live again.'));
+    const two = await replyRecord({ project: P, text: `${replyCode(step)} Do it`, client: fake(), now: () => LATER });
+    assert.match(two.says, /two cards/);
   });
 });

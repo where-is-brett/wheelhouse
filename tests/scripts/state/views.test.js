@@ -445,6 +445,27 @@ test('two shown records with one code and different questions are both left out 
   });
 });
 
+test('only live shown records hold a code or clash: a spent or expired one gives way to a later card', async () => {
+  await withHome(() => {
+    // Spent, then a later card with the same code and other words: no clash, the later card holds it.
+    const used = ev('shown', 1, shownData('K7M2', 'STOP went on at noon.'));
+    const lift = ev('action', 2, { action: 'lift-stop', question: used.data.question, label: 'Lift STOP' });
+    const later = ev('shown', 3, shownData('K7M2', 'STOP went on again.'));
+    const v = build([used, lift, later]);
+    assert.equal(v.shown.K7M2.id, later.id);
+    assert.equal(v.shown.K7M2.spent, false);
+    assert.deepEqual(v.damaged, []);
+    // Expired, then a later card: the later card holds it.
+    const old = makeEvent({ kind: 'shown', data: shownData('P3Q4', 'Old card?'), now: () => new Date('2026-10-01T00:00:00.000Z') });
+    const fresh = ev('shown', 4, shownData('P3Q4', 'New card?'));
+    const w = build([old, fresh]);
+    assert.equal(w.shown.P3Q4.id, fresh.id);
+    assert.deepEqual(w.damaged, []);
+    // With no live record, the latest one is shown, as used.
+    assert.equal(build([used, lift]).shown.K7M2.spent, true);
+  });
+});
+
 test('an accepted setting keeps its until and the accepted value it replaced', async () => {
   await withHome(() => {
     const s1 = ev('setting', 1, { key: 'quiet', value: true, until: '2026-11-01T00:00:00.000Z' });

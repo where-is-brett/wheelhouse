@@ -5,12 +5,22 @@
 // prompt record's own code, and nothing else. A plain "yes" never counts. The bridge, run by
 // the mod outside the sandbox, calls replyRecord. The message's text is only parsed: it is
 // never written anywhere, and only the card's own spelling of the option is used.
+//
+// A code is good once. The shown view is built here from the state clone, which the helper
+// writes each record into, so a record taken a moment ago spends its card at once; a signed
+// record still kept in pending/ that answers the card spends it too. And before anything is
+// signed the card is claimed with a marker of its own, projects/<project>/replied/<shown id>,
+// made only if it doesn't exist, so two replies at once can't both get through.
+import fs from 'node:fs';
+import path from 'node:path';
 import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-record.js';
-import { withinBudget, BUDGET_MS } from '../hooks/pending.js';
-import { localViews } from '../hooks/session-start.js';
+import { withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift } from '../lib/stop.js';
 import { stateDir } from '../lib/paths.js';
+import { listEvents } from '../state/events.js';
+import { buildViews } from '../state/views.js';
+import { readEnrolled } from '../state/signing.js';
 import { CODE_ALPHABET, RUNBOOK_TITLES, setLineOf, replyCode } from '../state/card-lines.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 
@@ -50,10 +60,55 @@ function recordedAs(made, question) {
 
 const no = (says) => ({ made: false, says });
 
+// The shown view and its damage, built from the state clone as writeViews builds them.
+function shownNow(project, now) {
+  const damaged = [];
+  const events = listEvents(stateDir(project), { report: () => {}, skipped: damaged });
+  const views = buildViews(events, readEnrolled(), { damaged, now });
+  return { shown: views.shown, damaged: views.damaged };
+}
+
+// Whether a signed record kept in pending/, not yet taken by the helper, answers the card: it
+// carries the card's question, or confirms the event the card's confirm line names.
+function answeredInPending(project, question) {
+  const named = /^Confirm [a-z-]+ (\S+): "/m.exec(question)?.[1];
+  let names;
+  try {
+    names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json'));
+  } catch {
+    return false;
+  }
+  return names.some((name) => {
+    try {
+      const { route, body } = JSON.parse(fs.readFileSync(path.join(pendingDir(project), name), 'utf8'));
+      const event = body?.event;
+      if ((route !== 'record' && route !== 'profile-record') || !isRecord(event) || event.kind === 'shown') return false;
+      return event.data?.question === question || (named !== undefined && event.kind === 'confirmation' && event.data?.confirms === named);
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Claims the card for this reply: the marker's path when this reply made it, null when
+// another reply made it first.
+function claim(project, id) {
+  const folder = path.join(stateDir(project), '..', 'replied');
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, id);
+  try {
+    fs.closeSync(fs.openSync(file, 'wx'));
+    return file;
+  } catch (error) {
+    if (error?.code === 'EEXIST') return null;
+    throw error;
+  }
+}
+
 // replyRecord({ project, text, client, now, liftStop, budget }) -> { made, says }
-// Finds the code in the shown view the last sync wrote, refuses it when it is unknown, used,
-// out of date, held by two cards or answered with an option its card didn't offer, then signs,
-// keeps and sends what a click on that option would have earned.
+// Finds the code in the shown view built from the state clone, refuses it when it is unknown,
+// used, out of date, held by two cards or answered with an option its card didn't offer, claims
+// the card, then signs, keeps and sends what a click on that option would have earned.
 export async function replyRecord({ project, text, client, now = () => new Date(), liftStop = defaultLift, budget = BUDGET_MS } = {}) {
   const reply = parseReply(text);
   if (!reply) return no('That isn\'t a reply code and an option, so nothing was recorded');
@@ -62,7 +117,12 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   } catch {
     return no('That project isn\'t known here');
   }
-  const views = localViews(project, ['shown', 'damaged']);
+  let views;
+  try {
+    views = shownNow(project, now);
+  } catch {
+    return no('The cards shown can\'t be read yet');
+  }
   const shown = isRecord(views?.shown) ? views.shown : null;
   if (!shown) return no('The cards shown can\'t be read yet');
   const { code } = reply;
@@ -75,7 +135,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   // A shown record names its code by its one set line; anything else is not a card's code.
   const line = setLineOf(card.question);
   if (line === null || replyCode(line) !== code) return no('No card has that code');
-  if (card.spent !== false) return no('That code has been used');
+  if (card.spent !== false || answeredInPending(project, card.question)) return no('That code has been used');
   const age = now().getTime() - Date.parse(card.at);
   if (!Number.isFinite(age) || age < 0) return no('That code\'s card can\'t be dated, so it can\'t be used');
   if (age >= REPLY_CODE_DAYS * DAY) return no(`That code has run out: a code lasts ${REPLY_CODE_DAYS} days`);
@@ -83,19 +143,29 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   const offered = card.options.filter((o) => typeof o === 'string' && fold(o) === fold(reply.label));
   if (offered.length !== 1) return no(`That card doesn't offer ${reply.label}`);
   const [label] = offered;
-  if (!SIGNED_LABELS.includes(label)) return no(`Nothing to record for ${label}`);
+  if (!SIGNED_LABELS.includes(label)) return no('That option doesn\'t need a reply code');
+  if (typeof card.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(card.id)) return no('No card has that code');
 
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
+  let marker = null;
   let kept;
   try {
+    marker = claim(project, card.id);
+    if (!marker) return no('That code has been used');
     const got = await earned({ project, question: card.question, label, client: api, now, left });
-    if (!got) return no('That card\'s answer can\'t be recorded now');
+    if (!got) {
+      // Nothing was recorded, so the card is let go and can be answered again.
+      fs.rmSync(marker, { force: true });
+      return no('That card\'s answer can\'t be recorded now');
+    }
     kept = keepEarned(project, got, { now, liftStop });
     const what = recordedAs(got.made, card.question);
     const sent = await sendKept(api, left, kept);
     return { made: true, says: sent ? `Recorded: ${what}` : `Recorded: ${what} (kept until the helper takes it)` };
   } catch {
-    return kept ? { made: true, says: 'Recorded, and kept until the helper takes it' } : no('That card\'s answer can\'t be recorded now');
+    if (kept) return { made: true, says: 'Recorded, and kept until the helper takes it' };
+    if (marker) fs.rmSync(marker, { force: true });
+    return no('That card\'s answer can\'t be recorded now');
   }
 }

@@ -40,11 +40,18 @@ export function runbookLine(step, sha) {
   return sha === undefined || sha === null ? base : `${base}, to commit ${sha12(sha)}`;
 }
 
-// A reply code: four characters of CODE_ALPHABET from the first bytes of the SHA-256 of a set
-// line, so one line always has one code. A card shows it as replyCodeLine(code).
+// A reply code: four characters of CODE_ALPHABET, the first eight bytes of the SHA-256 of a set
+// line read as one number and written in base 30, so one line always has one code and the codes
+// come out evenly. A card shows it as replyCodeLine(code).
 export function replyCode(line) {
-  const bytes = crypto.createHash('sha256').update(String(line)).digest();
-  return [...bytes.subarray(0, 4)].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+  let n = crypto.createHash('sha256').update(String(line)).digest().readBigUInt64BE(0);
+  const base = BigInt(CODE_ALPHABET.length);
+  let code = '';
+  for (let i = 0; i < 4; i += 1) {
+    code += CODE_ALPHABET[Number(n % base)];
+    n /= base;
+  }
+  return code;
 }
 
 export const replyCodeLine = (code) => `Reply code: ${code}`;

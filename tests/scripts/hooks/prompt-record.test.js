@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { decide, sendPending } from '../../../scripts/hooks/prompt-record.js';
+import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine } from '../../../scripts/state/card-lines.js';
@@ -461,6 +461,15 @@ test('a card with a set line and its code becomes a signed shown record; one wit
     const other = fake();
     await decide(coded({ [good]: 'Not now' }), deps(other));
     assert.deepEqual(kinds(other), ['shown']);
+    // A held record for this question that is spent, or out of date, gives way to a new one.
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: NOW.toISOString(), question: good, options: ['Approve', 'Not now'], spent: true } }));
+    const spent = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(spent));
+    assert.deepEqual(kinds(spent), ['shown']);
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: '2026-10-01T00:00:00.000Z', question: good, options: ['Approve', 'Not now'], spent: false } }));
+    const old = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(old));
+    assert.deepEqual(kinds(old), ['shown']);
   });
 });
 
@@ -474,4 +483,11 @@ test('a shown record the helper cannot take is kept pending like every signed re
     const kept = fs.readdirSync(folder).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')));
     assert.deepEqual(kept.filter((k) => k.route === 'record').map((k) => k.body.event.kind), ['shown']);
   });
+});
+
+test('every label the prompt record can sign for is in SIGNED_LABELS', () => {
+  const source = fs.readFileSync(new URL('../../../scripts/hooks/prompt-record.js', import.meta.url), 'utf8');
+  const handled = [...source.matchAll(/label === '([^']+)'/g)].map((m) => m[1]);
+  assert.ok(handled.length >= 5);
+  assert.deepEqual([...new Set(handled)].sort(), [...SIGNED_LABELS].sort());
 });
