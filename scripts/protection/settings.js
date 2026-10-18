@@ -113,9 +113,19 @@ export function statusLineCommand({ node, pluginRoot }) {
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // Whether a status line is the one Wheelhouse sets: its command names scripts/statusline.js.
-function isOwnStatusLine(statusLine) {
+export function isOwnStatusLine(statusLine) {
   return isObject(statusLine) && typeof statusLine.command === 'string'
     && /scripts[\\/]statusline\.js/.test(statusLine.command);
+}
+
+// The existing local settings, ready to merge: Wheelhouse's own status line is taken out when
+// the director has one of their own (`director`, from directorStatusLine), since the local file
+// outranks the user and project files and would hide theirs. Ours is kept when they have none,
+// and a status line that is not ours is never touched. The input is not changed.
+export function withoutOwnStatusLine(existingLocal, { director = null } = {}) {
+  const copy = isObject(existingLocal) ? structuredClone(existingLocal) : {};
+  if (director && Object.hasOwn(copy, 'statusLine') && isOwnStatusLine(copy.statusLine)) delete copy.statusLine;
+  return copy;
 }
 
 // The status line in the director's own settings, or null: the user settings, the project's

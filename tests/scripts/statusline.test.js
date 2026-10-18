@@ -78,3 +78,12 @@ test('input that never ends still gets a line, and quickly', async () => {
   assert.equal(out.trim(), 'Wheelhouse');
   assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
 });
+
+test('a share outside 0 to 100 is dropped rather than recorded', () => withHome((home) => {
+  const result = runScript(JSON.stringify({ rate_limits: { five_hour: { used_percentage: 140, resets_at: 1738425600 }, seven_day: { used_percentage: -3, resets_at: 1738857600 } } }), home);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), 'Wheelhouse');
+  assert.equal(fs.existsSync(path.join(usageDir(), 'allowance.json')), false);
+  runScript(JSON.stringify({ rate_limits: { five_hour: { used_percentage: 0, resets_at: 1738425600 }, seven_day: { used_percentage: 100, resets_at: 1738857600 } } }), home);
+  assert.deepEqual(allowance().windows.map((w) => w.percentUsed), [0, 100]);
+}));

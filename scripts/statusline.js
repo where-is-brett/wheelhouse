@@ -35,7 +35,8 @@ export function windowsFrom(input) {
   const windows = [];
   for (const kind of WINDOWS) {
     const window = limits[kind];
-    if (!window || typeof window.used_percentage !== 'number' || !Number.isFinite(window.used_percentage)) continue;
+    if (!window || typeof window.used_percentage !== 'number' || !Number.isFinite(window.used_percentage)
+      || window.used_percentage < 0 || window.used_percentage > 100) continue;
     const entry = { kind, percentUsed: window.used_percentage };
     const resetsAt = isoFromEpoch(window.resets_at);
     if (resetsAt) entry.resetsAt = resetsAt;

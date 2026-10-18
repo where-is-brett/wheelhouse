@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { projectSettings, localSettings, directorStatusLine, mergeSettings, writeSettings, sandboxFlag } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
@@ -182,4 +182,31 @@ test('the director\'s own status line is found in their user, project or local s
   fs.rmSync(path.join(project, '.claude', 'settings.json'));
   put(path.join(claudeHome, 'settings.json'), { statusLine: { type: 'command', command: 'user.sh' } });
   assert.deepEqual(find(), { type: 'command', command: 'user.sh' });
+});
+
+test('Wheelhouse\'s status line is recognised as its own', () => {
+  assert.equal(isOwnStatusLine({ type: 'command', command: '"/n" "/p/scripts/statusline.js"' }), true);
+  assert.equal(isOwnStatusLine({ type: 'command', command: '"C:\\n.exe" "C:\\p\\scripts\\statusline.js"' }), true);
+  assert.equal(isOwnStatusLine({ type: 'command', command: 'theirs.sh' }), false);
+  assert.equal(isOwnStatusLine(null), false);
+  assert.equal(isOwnStatusLine('scripts/statusline.js'), false);
+});
+
+test('our status line is taken out of the local settings once the director has their own, and never theirs', () => {
+  const ours = { type: 'command', command: '"/n" "/p/scripts/statusline.js"' };
+  const theirs = { type: 'command', command: 'theirs.sh' };
+  const local = { sandbox: { network: { allowUnixSockets: ['/s'] } }, statusLine: ours };
+  const before = JSON.stringify(local);
+  // ours present, the director adds theirs: ours goes, the rest stays
+  assert.deepEqual(withoutOwnStatusLine(local, { director: theirs }), { sandbox: { network: { allowUnixSockets: ['/s'] } } });
+  assert.equal(JSON.stringify(local), before); // the input is not changed
+  // ours present, no line of theirs: ours stays
+  assert.deepEqual(withoutOwnStatusLine(local, { director: null }), local);
+  assert.deepEqual(withoutOwnStatusLine(local), local);
+  // theirs in the local file: never removed
+  const mine = { statusLine: theirs, model: 'x' };
+  assert.deepEqual(withoutOwnStatusLine(mine, { director: theirs }), mine);
+  assert.deepEqual(withoutOwnStatusLine(mine, { director: null }), mine);
+  // no existing file
+  assert.deepEqual(withoutOwnStatusLine(null, { director: theirs }), {});
 });
