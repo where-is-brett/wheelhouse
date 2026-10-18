@@ -2,7 +2,7 @@
 // The four files between the foreman and a feature session, in the git-ignored
 // folder `.wheelhouse/feature/` at the root of the session's worktree: the brief,
 // the status, the questions and the report (plus the rulings the session keeps,
-// its session id and its pull request's number).
+// its session id, the plan it recorded and its pull request's number).
 // Each reader is strict: a wrong shape reads as null, throws the one message
 // named here, or is skipped and counted. Nothing in this file runs git.
 import crypto from 'node:crypto';
@@ -31,6 +31,7 @@ export function featurePaths(worktree) {
     rulings: path.join(dir, 'rulings.jsonl'),
     session: path.join(dir, 'session.json'),
     pr: path.join(dir, 'pr.json'),
+    plan: path.join(dir, 'plan.json'),
   };
 }
 

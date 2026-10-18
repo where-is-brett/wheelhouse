@@ -1,6 +1,7 @@
 // scripts/feature/status.js
 // Builds a feature's status from files alone, so the session spends no turns
-// on it: the brief, the plan it names, the Superpowers ledger for that plan,
+// on it: the brief, the plan it names (or, when it names none, the one the
+// session recorded in plan.json), the Superpowers ledger for that plan,
 // the questions, the report, the kept pull request number, the project's views
 // and the .git files. Also keeps the ledger's rulings in rulings.jsonl, so they
 // outlive the ledger when Superpowers deletes its workspace. Nothing here runs
@@ -171,6 +172,29 @@ export function readBrief(worktree) {
 
 const planOf = (brief) => (typeof brief.plan === 'string' && brief.plan.trim() !== '' ? brief.plan.trim() : null);
 const slashes = (p) => p.replaceAll('\\', '/');
+
+// Whether `plan` is a relative path that stays inside the worktree.
+export function planInside(worktree, plan) {
+  if (typeof plan !== 'string' || plan.trim() === '' || /[\0\r\n]/.test(plan) || path.isAbsolute(plan) || path.win32.isAbsolute(plan)) return false;
+  const rel = path.relative(worktree, path.resolve(worktree, plan));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+// The plan the session recorded with `cli.js plan` in plan.json as `{ plan }`
+// (ruling R87), or null.
+export function recordedPlan(worktree) {
+  try {
+    const kept = JSON.parse(readCapped(featurePaths(worktree).plan, SMALL_BYTES) ?? 'null');
+    return isPlain(kept) && planInside(worktree, kept.plan) ? slashes(kept.plan.trim()) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The feature's plan: the one the brief names, or else the one the session recorded.
+export function planIn(worktree, brief) {
+  return planOf(brief) ?? recordedPlan(worktree);
+}
 const planName = (plan) => slashes(plan).replace(/^(\.\/)+/, '');
 
 // Whether a ledger's first line names `plan` exactly: the text after `plan:`
@@ -218,7 +242,7 @@ export function findLedger(worktree, plan) {
 // What both functions below read: the brief, its plan, and the ledger with its
 // text (null when there is none, or it is over its limit). Read once per run.
 export function loadFeature(worktree, { brief = readBrief(worktree), ledger } = {}) {
-  const plan = planOf(brief);
+  const plan = planIn(worktree, brief);
   const found = ledger === undefined ? (plan === null ? null : findLedger(worktree, plan)) : ledger;
   const text = found ? (found.text ?? readCapped(found.file, LEDGER_BYTES)) : null;
   return { brief, plan, ledger: found && text !== null ? { ...found, text } : null };
@@ -274,24 +298,33 @@ function readTasks(ledger) {
 
 // --- The other feature files ---
 
-// The pull request number open-pr kept in pr.json as `{ pr }`, or null.
-export function readPr(worktree) {
+// The pull request open-pr kept in pr.json (ruling R88): `{ pr, plan, merged }`,
+// where `plan` is the plan it was opened for (null in the older `{ pr }`) and
+// `merged` is true once the foreman's merge has gone through. Null when there
+// is none or it doesn't read.
+export function readPrRecord(worktree) {
   try {
     const kept = JSON.parse(readCapped(featurePaths(worktree).pr, SMALL_BYTES) ?? 'null');
-    return isPlain(kept) && Number.isSafeInteger(kept.pr) && kept.pr >= 1 ? kept.pr : null;
+    if (!isPlain(kept) || !Number.isSafeInteger(kept.pr) || kept.pr < 1) return null;
+    return { pr: kept.pr, plan: typeof kept.plan === 'string' && kept.plan !== '' ? kept.plan : null, merged: kept.merged === true };
   } catch {
     return null;
   }
 }
 
-function hasReport(worktree) {
+// The kept pull request's number, or null.
+export function readPr(worktree) {
+  return readPrRecord(worktree)?.pr ?? null;
+}
+
+// The report's status (done, blocked or partial), or null when there is no report that reads.
+function reportStatus(worktree) {
   const text = readCapped(featurePaths(worktree).report, REPORT_BYTES);
-  if (text === null) return false;
+  if (text === null) return null;
   try {
-    parseReport(text);
-    return true;
+    return parseReport(text).fields.status;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -359,14 +392,24 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
   const asked = readQuestions(p.questions).questions.filter((q) => q.kind === 'question');
   const done = asked.length > 0 ? answered(worktree) : new Set();
   const waiting = asked.some((q) => !done.has(q.id));
-  const pr = readPr(worktree);
+  const kept = readPrRecord(worktree);
+  const pr = kept?.pr ?? null;
+  const currentSlice = slice(worktree, brief.work);
 
+  // The phase, in this order (ruling R88): a pull request not yet merged is
+  // open; a report ends the feature when it isn't `done` (it ended without a
+  // pull request) or the last slice's pull request has merged; a plan that
+  // isn't the one already merged is being built, or is ready to build.
+  const report = reportStatus(worktree);
+  const slicesLeft = currentSlice !== null && currentSlice.n < currentSlice.m;
+  const mergedPlan = kept?.merged ? kept.plan : null;
+  const current = plan !== null && plan !== mergedPlan;
   let phase;
   if (waiting) phase = 'waiting';
-  else if (hasReport(worktree)) phase = 'done';
-  else if (pr !== null) phase = 'pr-open';
-  else if (building) phase = 'building';
-  else if (plan !== null) phase = 'ready-to-build';
+  else if (kept !== null && !kept.merged) phase = 'pr-open';
+  else if (report !== null && (report !== 'done' || (kept?.merged === true && !slicesLeft))) phase = 'done';
+  else if (building && current) phase = 'building';
+  else if (current) phase = 'ready-to-build';
   else phase = 'planning';
 
   return {
@@ -379,7 +422,7 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
     waitingOn: waiting ? 'question' : null,
     head: gitHead(worktree),
     pr,
-    slice: slice(worktree, brief.work),
+    slice: currentSlice,
     tokens,
     updatedAt: now().toISOString(),
   };

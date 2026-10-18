@@ -43,12 +43,15 @@ test('start starts the watcher once', () => withHome(async (home) => {
   await project();
   const { client } = fakeClient({ cfg: config() });
   const fake = fakeSpawn();
-  const first = await start([P], { client, spawn: fake.spawn, pluginRoot: ROOT });
+  const env = { PATH: '/bin', WHEELHOUSE_ROLE: 'foreman', Wheelhouse_Role: 'x', CLAUDECODE: '1' };
+  const first = await start([P], { client, spawn: fake.spawn, pluginRoot: ROOT, env });
   assert.equal(first.code, 0, first.err);
   assert.equal(fake.calls.length, 1);
   const [call] = fake.calls;
   assert.equal(call.file, process.execPath);
   assert.deepEqual(call.args, [path.join(ROOT, 'scripts', 'watcher', 'main.js'), P]);
+  // No role and no host session's variables: the watcher is no one's session.
+  assert.deepEqual(call.opts.env, { PATH: '/bin' });
   assert.equal(call.opts.detached, true);
   assert.equal(call.opts.windowsHide, true);
   assert.equal(call.opts.stdio, 'ignore');

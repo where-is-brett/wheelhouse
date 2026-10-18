@@ -15,10 +15,13 @@ import { stateDir } from '../../../scripts/lib/paths.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeWaker, sessionFile } from '../../../scripts/watcher/waker.js';
+import { run as runProgram } from '../../../scripts/lib/run.js';
+import { g } from '../../helpers/git-fixture.js';
 import { withHome } from '../../helpers/homes.js';
 import {
-  P, T0, HASH, config, emptyViews, fakeClient, featureView, project, reportText, workView, worktree,
+  P, T0, HASH, config, emptyViews, fakeClient, featureView, project, recordInState, reportText, workView, worktree,
 } from '../../helpers/foreman.js';
+import { amendBrief } from '../../../scripts/feature/brief.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const now = () => new Date(T0);
@@ -161,26 +164,59 @@ test('under Shape 2 start passes on the waker\'s START line', () => withHome(asy
   assert.match(r.out, new RegExp(`^START feature add-export ${wt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
 }));
 
-test('start reuses its worktree and branch when an earlier start stopped part-way', () => withHome(async () => {
+test('start makes its branch and worktree afresh, refusing ones no recorded feature made', () => withHome(async () => {
   const checkout = await project({ git: true });
-  const fake = fakeClient({ views: startViews() });
-  // The worktree and branch made, then a stop before anything was recorded.
-  const first = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run: undefined });
-  assert.equal(first.code, 0, first.err);
-  fake.views.features = {};
-  fake.writes.length = 0;
-  const again = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
-  assert.equal(again.code, 0, again.err);
-  assert.match(again.out, /^Using the worktree .* on feature\/add-export, made before\.$/m);
-  assert.equal(fake.writes.length, 1);
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  // Git runs in the main checkout with hooks, fsmonitor, and system and global config off.
+  const gitCalls = [];
+  const run = (file, args, opts) => { gitCalls.push({ file, args, opts }); return runProgram(file, args, opts); };
 
-  // A branch kept with no worktree is checked out again.
-  const { run } = await import('../../../scripts/lib/run.js');
-  await run('git', ['worktree', 'remove', '--force', path.join(checkout, '.claude', 'worktrees', 'add-export')], { cwd: checkout });
-  fake.views.features = {};
-  const third = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
-  assert.equal(third.code, 0, third.err);
-  assert.equal(branchOf(path.join(checkout, '.claude', 'worktrees', 'add-export')), 'feature/add-export');
+  // A branch an agent made in the shared repository is not taken over.
+  await g(checkout, 'branch', 'feature/add-export');
+  const fake = fakeClient({ views: startViews() });
+  const branchThere = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run });
+  refusedInOneLine(branchThere);
+  assert.match(branchThere.err, /The branch feature\/add-export is there already, but no recorded feature made it/);
+  await g(checkout, 'branch', '-D', 'feature/add-export');
+
+  // Nor is a folder in the worktree's place.
+  fs.mkdirSync(wt, { recursive: true });
+  const folderThere = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run });
+  refusedInOneLine(folderThere);
+  assert.match(folderThere.err, /is there already, but no recorded feature made it/);
+  fs.rmSync(wt, { recursive: true });
+  assert.equal(fake.writes.length, 0);
+
+  const made = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run });
+  assert.equal(made.code, 0, made.err);
+  assert.equal(branchOf(wt), 'feature/add-export');
+  assert.ok(gitCalls.length > 0);
+  for (const call of gitCalls) {
+    assert.equal(call.file, 'git');
+    assert.equal(call.opts.cwd, checkout);
+    assert.deepEqual(call.args.slice(0, 4), ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']);
+    assert.equal(call.opts.env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.equal(call.opts.env.GIT_CONFIG_GLOBAL, '/dev/null');
+  }
+}));
+
+test('start refuses a repository whose config sets a filter or an include, before git runs (R93)', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const config = path.join(checkout, '.git', 'config');
+  const plain = fs.readFileSync(config, 'utf8');
+  for (const section of ['[filter "lfs"]\n\tsmudge = sh -c evil\n', '[include]\n\tpath = ../x\n', '[includeIf "gitdir:/x/"]\n\tpath = y\n', '[Filter.lfs]\n\tclean = x\n']) {
+    fs.writeFileSync(config, `${plain}${section}`);
+    const gitCalls = [];
+    const fake = fakeClient({ views: startViews() });
+    const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run: (...a) => { gitCalls.push(a); return runProgram(...a); } });
+    refusedInOneLine(r);
+    assert.match(r.err, /\.git\/config sets/, section);
+    assert.equal(gitCalls.length, 0, 'git never ran');
+    assert.equal(fake.writes.length, 0);
+  }
+  fs.writeFileSync(config, plain);
+  const fake = fakeClient({ views: startViews() });
+  assert.equal((await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor })).code, 0);
 }));
 
 test('start refuses what it may not start, in one line, and writes nothing', () => withHome(async () => {
@@ -223,6 +259,12 @@ test('small work held for pace may open a session to plan (R60)', () => withHome
   const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /^It is held \(no building slot is free \(pace\)\), so its session plans and then waits\.$/m);
+
+  // Bug work has no plan, so starting it is building: held, it doesn't start (R89).
+  fake.views.work['a-bug'] = workView('a-bug', { lane: 'bug', approved: false });
+  const bug = await act(['start', 'a-bug', ...START.slice(2, -2)], { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(bug);
+  assert.match(bug.err, /a-bug can't start: no building slot is free \(pace\)/);
 }));
 
 // --- plan-ready, build, pause and resume ---
@@ -293,9 +335,12 @@ test('build and resume give the go-ahead once a wait clears; pause records the p
   assert.deepEqual(fake.writes.at(-1).data, { work: 'mine', step: 'building', worktree: wt, branch: 'feature/mine', plan: 'p.md', files: ['src/mine.js'] });
   assert.equal((await act(['build', 'mine'], { client: fake.client })).out, 'mine is building already.\n');
 
+  // The foreman's own pause is for the five-hour window.
   const paused = await act(['pause', 'mine'], { client: fake.client });
   assert.equal(paused.out, 'Paused mine.\n');
-  assert.deepEqual(fake.writes.at(-1).data, { work: 'mine', step: 'paused', worktree: wt, branch: 'feature/mine', plan: 'p.md', files: ['src/mine.js'] });
+  assert.deepEqual(fake.writes.at(-1).data, {
+    work: 'mine', step: 'paused', worktree: wt, branch: 'feature/mine', plan: 'p.md', files: ['src/mine.js'], pausedFor: 'five-hour',
+  });
   assert.equal((await act(['pause', 'mine'], { client: fake.client })).out, 'mine is paused already.\n');
 
   const resumed = await act(['resume', 'mine'], { client: fake.client });
@@ -313,30 +358,70 @@ test('build and resume give the go-ahead once a wait clears; pause records the p
   refusedInOneLine(await act(['pause', 'nobody'], { client: fake.client }));
 }));
 
+test('a director\'s pause is lifted only by their amendment: build and resume refuse it', () => withHome(async () => {
+  const { views, wt } = await planScene();
+  for (const pausedFor of ['director', undefined]) {
+    views.features.mine = featureView('mine', {
+      step: 'paused', worktree: wt, plan: 'p.md', files: ['src/mine.js'], ...(pausedFor ? { pausedFor } : {}),
+    });
+    const fake = fakeClient({ views: structuredClone(views) });
+    for (const command of ['build', 'resume']) {
+      const r = await act([command, 'mine'], { client: fake.client });
+      refusedInOneLine(r);
+      assert.match(r.err, /paused by the director: only their amendment beginning "Resume" lifts it/, `${command} ${pausedFor}`);
+    }
+    assert.equal(fake.writes.length, 0);
+  }
+  // The foreman's own pause for the five-hour window doesn't replace the director's, but the director's replaces it.
+  views.features.mine = featureView('mine', { step: 'paused', worktree: wt, plan: 'p.md', files: [], pausedFor: 'director' });
+  const fake = fakeClient({ views });
+  assert.equal((await act(['pause', 'mine'], { client: fake.client })).out, 'mine is paused already.\n');
+  assert.equal(fake.writes.length, 0);
+}));
+
 test('a paused feature keeps its pause when its plan arrives, and one paused before it planned goes back to planning on resume', () => withHome(async () => {
   const { views, wt } = await planScene();
-  views.features.mine = featureView('mine', { step: 'paused', worktree: wt, branch: 'feature/mine' });
+  views.features.mine = featureView('mine', { step: 'paused', worktree: wt, branch: 'feature/mine', pausedFor: 'five-hour' });
   const fake = fakeClient({ views });
   const resumed = await act(['resume', 'mine'], { client: fake.client });
   assert.equal(resumed.out, 'Resumed mine: it had no plan yet, so it goes back to planning.\n');
   assert.deepEqual(fake.writes.at(-1).data, { work: 'mine', step: 'started', worktree: wt, branch: 'feature/mine' });
 
-  fake.views.features.mine = featureView('mine', { step: 'paused', worktree: wt, branch: 'feature/mine' });
+  fake.views.features.mine = featureView('mine', { step: 'paused', worktree: wt, branch: 'feature/mine', pausedFor: 'director' });
   const r = await act(['plan-ready', 'mine'], { client: fake.client });
   assert.equal(r.out, 'Recorded the plan of mine: docs/plans/mine.md, 2 files.\nmine is paused: its plan waits until it is resumed.\n');
   assert.deepEqual(fake.writes.at(-1).data, {
-    work: 'mine', step: 'paused', worktree: wt, branch: 'feature/mine', plan: 'docs/plans/mine.md', files: ['src/mine.js', 'package.json'],
+    work: 'mine', step: 'paused', worktree: wt, branch: 'feature/mine', plan: 'docs/plans/mine.md', files: ['src/mine.js', 'package.json'], pausedFor: 'director',
   });
   assert.equal((await act(['plan-ready', 'mine'], { client: fake.client })).out, 'mine is paused: its plan waits until it is resumed.\n');
   assert.equal(fake.writes.length, 2);
+}));
 
-  // A slice number is checked against the feature's slices.
-  fake.views.features.mine = featureView('mine', { step: 'building', worktree: wt, slice: { n: 1, m: 3 }, plan: 'old.md', files: [] });
-  refusedInOneLine(await act(['plan-ready', 'mine', '--slice', '4'], { client: fake.client }));
-  const sliced = await act(['plan-ready', 'mine', '--slice', '2'], { client: fake.client });
-  assert.equal(sliced.code, 0, sliced.err);
-  assert.deepEqual(fake.writes.at(-2).data.slice, { n: 2, m: 3 });
+test('plan-ready moves a feature on to its next slice once the slice in hand has merged (R88)', () => withHome(async () => {
+  const { views, wt } = await planScene();
+  views.features.mine = featureView('mine', {
+    step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 1, m: 3 }, plan: 'docs/plans/slice-1.md', files: [],
+  });
+  const fake = fakeClient({ views });
+  // Slice 1's pull request is still open: the brief's plan reads as a plan of its own, but the slice stays.
+  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 5, plan: 'docs/plans/slice-1.md' }));
+  await act(['plan-ready', 'mine'], { client: fake.client });
+  assert.deepEqual(fake.writes.at(-1).data.slice, { n: 1, m: 3 });
+
+  // Merged, with the next slice's plan recorded: slice 2 of 3.
+  fake.views.features.mine = featureView('mine', {
+    step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 1, m: 3 }, plan: 'docs/plans/slice-1.md', files: [],
+  });
+  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 5, plan: 'docs/plans/slice-1.md', merged: true }));
+  const r = await act(['plan-ready', 'mine'], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(fake.writes.at(-2).data, {
+    work: 'mine', step: 'planned', worktree: wt, branch: 'feature/mine', slice: { n: 2, m: 3 }, plan: 'docs/plans/mine.md', files: ['src/mine.js', 'package.json'],
+  });
   assert.equal(fake.writes.at(-1).data.step, 'building');
+  // Again: it is building slice 2's plan; the slice doesn't move again.
+  assert.equal((await act(['plan-ready', 'mine'], { client: fake.client })).out, 'mine is building this plan already.\n');
+  refusedInOneLine(await act(['plan-ready', 'mine', '--slice', '2'], { client: fake.client }));
 }));
 
 // --- questions ---
@@ -449,7 +534,10 @@ test('amend records the amended brief\'s hash before it writes the brief, at the
   views.work.mine = workView('mine');
   const wt = worktree(checkout, 'mine');
   const before = fs.readFileSync(featurePaths(wt).brief, 'utf8');
-  views.features.mine = featureView('mine', { step: 'building', worktree: wt, branch: 'feature/mine', plan: 'p.md', files: ['a.js'], brief: briefHash(before) });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt, branch: 'feature/mine', plan: 'p.md', files: ['a.js'] });
+  // The brief the foreman recorded at start; the go-ahead after it carries none (R85).
+  recordInState('feature', { work: 'mine', step: 'started', worktree: wt, brief: briefHash(before) }, T0 - 120000);
+  recordInState('feature', { work: 'mine', step: 'building', worktree: wt }, T0 - 90000);
   recordAmend('mine', 'Make the export CSV, not Excel', 'b'.repeat(64), T0 - 60000);
   const fake = fakeClient({ views });
   const fileAtWrite = [];
@@ -474,6 +562,35 @@ test('amend records the amended brief\'s hash before it writes the brief, at the
   assert.equal(again.out, 'mine\'s brief has this amendment already.\n');
   assert.equal(fake.writes.length, 1);
   assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), after);
+
+  // Stopped after the hash was recorded and before the file was written: the repeat writes the file only.
+  fs.writeFileSync(featurePaths(wt).brief, before);
+  const midway = await act(['amend', 'mine'], { client: fake.client });
+  assert.equal(midway.code, 0, midway.err);
+  assert.equal(fake.writes.length, 1);
+  assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), after);
+}));
+
+test('amend refuses a brief the session changed, records nothing and leaves the file', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine');
+  const recorded = fs.readFileSync(featurePaths(wt).brief, 'utf8');
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  recordInState('feature', { work: 'mine', step: 'started', worktree: wt, brief: briefHash(recorded) }, T0 - 120000);
+  recordAmend('mine', 'Make the export CSV, not Excel', 'b'.repeat(64), T0 - 60000);
+  // The session rewrote its own brief, even putting the change in itself.
+  const changed = recorded.replace('The goal.', 'A goal of the session\'s own.');
+  for (const text of [changed, amendBrief(changed, { change: 'Make the export CSV, not Excel', now: new Date(T0 - 60000) })]) {
+    fs.writeFileSync(featurePaths(wt).brief, text);
+    const fake = fakeClient({ views: structuredClone(views) });
+    const r = await act(['amend', 'mine'], { client: fake.client });
+    refusedInOneLine(r);
+    assert.match(r.err, /mine's brief isn't the one recorded, so it was not amended: ask the director/);
+    assert.equal(fake.writes.length, 0);
+    assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), text);
+  }
 }));
 
 test('an amendment that says to pause pauses the feature, and one that says to resume resumes it; none refuses', () => withHome(async () => {
@@ -491,7 +608,9 @@ test('an amendment that says to pause pauses the feature, and one that says to r
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out, 'The amendment says to pause: paused mine.\n');
   assert.deepEqual(fake.writes.map((w) => w.data.step), ['paused']);
+  assert.equal(fake.writes[0].data.pausedFor, 'director');
   assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), brief, 'the brief is not changed');
+  refusedInOneLine(await act(['resume', 'mine'], { client: fake.client }));
 
   recordAmend('mine', 'Resume it', 'd'.repeat(64), T0 - 30000);
   const resumed = await act(['amend', 'mine'], { client: fake.client });
@@ -505,27 +624,36 @@ test('merge brings the pull request up to date, then merges it; a refusal is one
   const checkout = await project();
   const views = emptyViews();
   views.work.mine = workView('mine');
-  views.features.mine = featureView('mine', { step: 'building', worktree: worktree(checkout, 'mine', { pr: 12 }) });
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/a.md' } });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  const kept = () => JSON.parse(fs.readFileSync(featurePaths(wt).pr, 'utf8'));
 
   const refused = fakeClient({ views });
   const r = await act(['merge', 'mine'], { client: refused.client });
   refusedInOneLine(r);
   assert.match(r.err.trim(), /^Pull request #12 for mine couldn't be brought up to date: unknown request\. Ask the director; don't try again\.$/);
   assert.deepEqual(refused.calls.map(([name]) => name), ['prState', 'updateBranch']);
+  assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md' });
+
+  const gate = fakeClient({ views, answers: { updateBranch: { ok: true }, merge: { ok: false, refused: 'no signed CLEAN review on the head commit' } } });
+  const no = await act(['merge', 'mine'], { client: gate.client });
+  refusedInOneLine(no);
+  assert.match(no.err.trim(), /^Pull request #12 for mine was not merged: no signed CLEAN review on the head commit\. Ask the director; don't try again\.$/);
+  assert.equal(kept().merged, undefined);
 
   const ok = fakeClient({ views, answers: { updateBranch: { ok: true } } });
   const merged = await act(['merge', 'mine'], { client: ok.client });
   assert.equal(merged.code, 0, merged.err);
   assert.equal(merged.out, 'Merged pull request #12 for mine at cccccccccccc.\n');
   assert.deepEqual(ok.calls.map(([name, body]) => [name, body]), [['prState', { project: P, number: 12 }], ['updateBranch', { project: P, number: 12 }], ['merge', { project: P, number: 12 }]]);
+  // pr.json marks the merge, so the status moves on (R88).
+  assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md', merged: true });
 
-  const gate = fakeClient({ views, answers: { updateBranch: { ok: true }, merge: { ok: false, refused: 'no signed CLEAN review on the head commit' } } });
-  const no = await act(['merge', 'mine'], { client: gate.client });
-  refusedInOneLine(no);
-  assert.match(no.err.trim(), /^Pull request #12 for mine was not merged: no signed CLEAN review on the head commit\. Ask the director; don't try again\.$/);
-
+  // Merged already (a stop after the merge, before pr.json was marked): it is marked now.
+  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 12, plan: 'docs/plans/a.md' }));
   const done = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
   assert.equal((await act(['merge', 'mine'], { client: done.client })).out, 'Pull request #12 for mine is merged already.\n');
+  assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md', merged: true });
 
   views.features.nopr = featureView('nopr', { step: 'building', worktree: worktree(checkout, 'nopr') });
   refusedInOneLine(await act(['merge', 'nopr'], { client: ok.client }));
@@ -536,13 +664,15 @@ test('close records the report with every ruling, then closes the feature and fo
   const views = emptyViews();
   views.work.mine = workView('mine');
   const rulings = ['Ruling: dates show as day month year', 'Ruling: the export streams'];
-  const wt = worktree(checkout, 'mine', { pr: 12, rulings, report: reportText('mine', { pr: 12, rulings }) });
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, merged: true }, rulings, report: reportText('mine', { pr: 99, rulings }) });
   views.features.mine = featureView('mine', { step: 'building', worktree: wt, branch: 'feature/mine' });
   fs.mkdirSync(path.dirname(sessionFile(P, 'mine')), { recursive: true });
   fs.writeFileSync(sessionFile(P, 'mine'), '{}');
   const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
   const r = await act(['close', 'mine'], { client: fake.client });
   assert.equal(r.code, 0, r.err);
+  // The pull request is pr.json's, never the one the report names.
+  assert.deepEqual(fake.calls, [['prState', { project: P, number: 12 }]]);
   assert.deepEqual(fake.writes.map((w) => [w.kind, w.data]), [
     ['report', { work: 'mine', outcome: 'merged', summary: 'Shipped the export. Tests pass.', rulings, pr: 12 }],
     ['feature', { work: 'mine', step: 'closed', worktree: wt, branch: 'feature/mine' }],
@@ -576,6 +706,18 @@ test('close works out the outcome, and refuses a report that is missing or incom
   assert.equal(fake.writes.at(-2).data.outcome, 'closed');
   assert.equal((await act(['close', 'open'], { client: fake.client })).code, 0);
   assert.equal(fake.writes.at(-2).data.outcome, 'closed', 'an open pull request is not merged');
+
+  // `merged` needs both pr.json's mark and the host's word.
+  add('unmarked', { pr: 8, report: reportText('unmarked') });
+  add('marked', { pr: { pr: 9, merged: true }, report: reportText('marked') });
+  const hostSaysMerged = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
+  const unmarked = await act(['close', 'unmarked'], { client: hostSaysMerged.client });
+  refusedInOneLine(unmarked);
+  assert.match(unmarked.err, /merged, but not through act merge/);
+  const marked = await act(['close', 'marked'], { client: fake.client });
+  refusedInOneLine(marked);
+  assert.match(marked.err, /pr\.json says pull request #9 merged, but the host says it hasn't/);
+  assert.equal(hostSaysMerged.writes.length, 0);
 
   const n = fake.writes.length;
   const none = await act(['close', 'none'], { client: fake.client });

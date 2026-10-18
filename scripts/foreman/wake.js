@@ -28,6 +28,11 @@
 // from its worktree, through the safe readers of scripts/feature/status.js,
 // and only from a worktree inside the checkout's .claude/worktrees/.
 //
+// An answer to the foreman's own question (an id from FOREMAN_QUESTIONS up)
+// says so, with the question, for the foreman to act on; any other answer
+// wakes its feature's session and needs nothing from the foreman. A director's
+// pause is never offered back: only their amendment lifts it.
+//
 // Which work may build now (ruling R60). nextWork's order holds, but work
 // whose session cannot take a slot yet is left out of the count: small and
 // feature work that has not started, or has started and is still planning.
@@ -44,7 +49,7 @@ import { pathToFileURL } from 'node:url';
 import { clashCheck, fileMapOf, nextWork } from './queue.js';
 import { loadFeature, readCapped, readPlan, safeFeatureFolder } from '../feature/status.js';
 import { helperClient } from '../host/helper-client.js';
-import { PACE } from '../lib/build-loop.js';
+import { PACE, questionIdOf } from '../lib/build-loop.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { projectConfig } from '../watcher/main.js';
@@ -63,8 +68,14 @@ const MEASURES_BYTES = 64 * 1024 * 1024;
 const LINE_CHARS = 200;
 // The lanes that build as soon as they start: no plan.
 export const NO_PLAN = Object.freeze(['quick', 'bug']);
-// The lanes whose work, held for pace or a dependency, may still open a session to plan (ruling R60).
-export const PLANS_WHILE_HELD = Object.freeze(['small', 'feature', 'bug']);
+// The lanes whose work, held for pace or a dependency, may still open a session
+// to plan (rulings R60, R89). Bug work has no plan: starting it is building.
+export const PLANS_WHILE_HELD = Object.freeze(['small', 'feature']);
+
+// Why a paused feature waits: `five-hour` (the foreman's, lifted by `resume`)
+// or `director` (lifted only by their amendment). A pause that doesn't say is
+// taken as the director's, so the foreman never lifts it by mistake.
+export const pausedBy = (f) => (f?.pausedFor === 'five-hour' ? 'five-hour' : 'director');
 // The steps at which a feature's recorded files are being changed.
 const CHANGING = Object.freeze(['building', 'paused']);
 
@@ -253,7 +264,11 @@ function eventLine(e, ctx) {
     case 'amended': return said(`the director changed it (${short(d.hash)})`, `Next: act amend ${work}`);
     case 'question': return said(e.id, `Next: act question ${work} ${e.id}`);
     case 'extra-plan': return said(e.id, `Next: act extra-plan ${work} ${e.id}`);
-    case 'answer': return said(`${d.questionId} answered "${oneLine(d.label, 60)}"`, 'Nothing to do: the watcher wakes its session.');
+    case 'answer': {
+      if (questionIdOf(d.questionId)?.foreman !== true) return said(`${d.questionId} answered "${oneLine(d.label, 60)}"`, 'Nothing to do: the watcher wakes its session.');
+      const asked = ctx.views?.questions?.[d.questionId]?.question?.data?.what;
+      return said(`the director answered your question ${d.questionId}${typeof asked === 'string' ? ` ("${oneLine(asked, 100)}")` : ''}: "${oneLine(d.label, 60)}"`, 'Act on it.');
+    }
     case 'merge-ready': return said(`pull request #${e.pr} at ${short(d.head)}`, `Next: act merge ${work}`);
     case 'stuck': return said(`no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`, 'Ask the director: act ask');
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
@@ -268,6 +283,7 @@ function eventLine(e, ctx) {
 }
 
 function planReadyLine(head, work, ctx) {
+  if (ctx.views === null || ctx.config === null) return `${head}: its plan is ready; whether it may build is unknown until ${ctx.unknown}. Next: act plan-ready ${work}, once that is put right`;
   let found;
   try {
     found = planOf(worktreeOf(ctx.project, ctx.views, work));
@@ -317,6 +333,8 @@ function queueLines(ctx) {
   for (const [id, f] of Object.entries(views.features)) {
     const step = f?.data?.step;
     if (step !== 'planned' && step !== 'paused') continue;
+    // Only a pause for the five-hour window is the foreman's to lift, and only while the window isn't tight.
+    if (step === 'paused' && (pausedBy(f.data) === 'director' || FIVE_HOUR_TIGHT)) continue;
     const verb = step === 'paused' ? 'resume' : 'build';
     const clash = clashFor(views, config, id, Array.isArray(f.data.files) ? f.data.files : []);
     const slot = toBuild.start.includes(id) ? { ok: true } : { ok: false, why: held.get(id) ?? 'unknown' };
@@ -331,10 +349,11 @@ function queueLines(ctx) {
   const steps = Object.entries(views.features).filter(([, f]) => isPlain(f?.data));
   const planning = steps.filter(([id, f]) => f.data.step === 'started' && !NO_PLAN.includes(laneOf(views, id))).map(([id]) => id);
   const building = steps.filter(([id, f]) => f.data.step === 'building' || (f.data.step === 'started' && NO_PLAN.includes(laneOf(views, id)))).map(([id]) => id);
-  const paused = steps.filter(([, f]) => f.data.step === 'paused').map(([id]) => id);
+  const paused = (why) => steps.filter(([, f]) => f.data.step === 'paused' && pausedBy(f.data) === why).map(([id]) => id);
   if (planning.length > 0) lines.push(`Planning: ${planning.join(', ')}.`);
   lines.push(`Building (${building.length} of ${PACE.building}): ${building.length > 0 ? building.join(', ') : 'none'}.`);
-  if (paused.length > 0) lines.push(`Paused: ${paused.join(', ')}.`);
+  if (paused('five-hour').length > 0) lines.push(`Paused for the five-hour window: ${paused('five-hour').join(', ')}.`);
+  if (paused('director').length > 0) lines.push(`Paused by the director: ${paused('director').join(', ')}. Only their amendment beginning "Resume" lifts it.`);
   if (q.pause.length === 0) lines.push('Pause: none. The five-hour window is not known yet, so it is taken as not tight.');
   return lines;
 }
@@ -344,22 +363,40 @@ export async function readWakeLines({ file, project, client, now = () => new Dat
   const wake = readWake(file);
   if (wake === null) refuse(`This isn't a wake that can be read: ${oneLine(file, 120)}`);
   if (wake.to !== 'foreman') refuse("This wake is for a feature session, not the foreman");
-  const config = await loadConfig(project, client);
-  const read = await loadViews(project, client, { kept: true });
-  const ctx = { project, config, views: read.views, now };
+  // Without the configuration or the views, the events are still read; the queue and clash answers are unknown.
+  const missing = [];
+  let config = null;
+  try {
+    config = await loadConfig(project, client);
+  } catch (error) {
+    if (!(error instanceof ForemanError)) throw error;
+    missing.push(oneLine(error.message, 160));
+  }
+  let read = null;
+  try {
+    read = await loadViews(project, client, { kept: true });
+  } catch (error) {
+    if (!(error instanceof ForemanError)) throw error;
+    missing.push(oneLine(error.message, 160));
+  }
+  const unknown = missing.length > 0 ? missing.join('; ').replace(/^./, (c) => c.toLowerCase()) : null;
+  const ctx = {
+    project, config, views: read?.views ?? null, now, unknown,
+  };
   const events = Array.isArray(wake.events) ? wake.events.filter(isPlain) : [];
   const digest = Array.isArray(wake.digest) ? wake.digest : [];
   const dropped = Number.isInteger(wake.dropped) && wake.dropped > 0 ? wake.dropped : 0;
 
   const lines = [`Wake ${path.basename(file, '.json')}, made ${wake.at}: ${plural(events.length, 'event')}.`];
   if (typeof wake.note === 'string' && wake.note !== '') lines.push(oneLine(wake.note, 600));
-  if (!read.fresh) lines.push(`The helper gave no views (${oneLine(read.why, 120)}), so these are the last ones it wrote.`);
+  if (read !== null && !read.fresh) lines.push(`The helper gave no views (${oneLine(read.why, 120)}), so these are the last ones it wrote.`);
   lines.push('Events:');
   if (events.length === 0) lines.push('- none');
   for (const e of events) lines.push(eventLine(e, ctx));
   lines.push(digestLine(digest, dropped));
   lines.push('Queue:');
-  lines.push(...queueLines(ctx));
+  if (unknown !== null) lines.push(`- unknown: ${unknown}. Start and build nothing until it can be read.`);
+  else lines.push(...queueLines(ctx));
   return { lines };
 }
 
@@ -393,6 +430,7 @@ export function recordDone({ file, project, outcome, now = () => new Date() }) {
   if (!['acted', 'idle'].includes(outcome)) refuse('A wake is done --acted or --idle');
   const wake = readWake(file);
   if (wake === null) refuse(`This isn't a wake that can be read: ${oneLine(file, 120)}`);
+  if (wake.to !== 'foreman') refuse("This wake is for a feature session, not the foreman");
   const id = path.basename(file, '.json');
   if (measureLines(project).some((m) => m.wake === id)) return { recorded: false, wake: id };
   const all = [...(Array.isArray(wake.events) ? wake.events : []), ...(Array.isArray(wake.digest) ? wake.digest : [])];
@@ -423,12 +461,19 @@ export function recordDone({ file, project, outcome, now = () => new Date() }) {
 // Design section 15's measures: idle wakes over all wakes, and conflicts over
 // merges (each 0 when there is nothing to divide by).
 export function measures(project) {
-  const lines = measureLines(project);
+  const { idleShare, conflictsPerMerge } = countMeasures(measureLines(project));
+  return { idleShare, conflictsPerMerge };
+}
+
+// The measures of the lines read once, with the counts behind them.
+function countMeasures(lines) {
   const idle = lines.filter((m) => m.outcome === 'idle').length;
   const num = (x) => (Number.isFinite(x) && x >= 0 ? x : 0);
   const conflicts = lines.reduce((n, m) => n + num(m.conflicts), 0);
   const merges = lines.reduce((n, m) => n + num(m.merges), 0);
-  return { idleShare: lines.length === 0 ? 0 : idle / lines.length, conflictsPerMerge: merges === 0 ? 0 : conflicts / merges };
+  return {
+    idleShare: lines.length === 0 ? 0 : idle / lines.length, conflictsPerMerge: merges === 0 ? 0 : conflicts / merges, idle, wakes: lines.length,
+  };
 }
 
 // --- The command line ---
@@ -454,10 +499,8 @@ export async function main(argv, {
       out(recorded ? `Recorded wake ${wake} as ${outcome}.\n` : `Wake ${wake} was recorded already.\n`);
     } else if (command === 'measures') {
       if (rest.length !== 0) refuse('measures takes nothing more');
-      const m = measures(project);
-      const lines = measureLines(project);
-      const idle = lines.filter((x) => x.outcome === 'idle').length;
-      out(`Idle wakes: ${idle} of ${lines.length} (${Math.round(m.idleShare * 100)}%). Conflicts per merge: ${Math.round(m.conflictsPerMerge * 100) / 100}.\n`);
+      const m = countMeasures(measureLines(project));
+      out(`Idle wakes: ${m.idle} of ${m.wakes} (${Math.round(m.idleShare * 100)}%). Conflicts per merge: ${Math.round(m.conflictsPerMerge * 100) / 100}.\n`);
     } else {
       refuse(USAGE);
     }

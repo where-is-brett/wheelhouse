@@ -108,11 +108,14 @@ test('a plan waits for the foreman: the session ends its turn and builds when wo
     assert.ok(plan >= 0 && wait === plan + 1 && build === wait + 1, `${lane}: plan, then wait, then build`);
     assert.match(all[wait], /woken with `build`/, lane);
     assert.match(all[wait], /clashes, pace and dependencies/, lane);
+    // The plan is recorded before the turn ends (ruling R87).
+    assert.match(all[wait], /cli\.js" plan <the plan's path>`, then end your turn/, lane);
     assert.doesNotMatch(all[plan], /go on to building/, `${lane}: the plan step does not send it straight to building`);
     assert.doesNotMatch(afterOverride(render(lane)), /If you are told the foreman is checking/, lane);
   }
   // In the feature lane, each slice's plan waits the same way.
   assert.match(steps('feature').find((s) => /slice n\+1/.test(s)), /woken with `build`/);
+  assert.match(steps('feature').find((s) => /slice n\+1/.test(s)), /Once slice n's pull request is open, plan slice n\+1 and record its plan with `node ".*cli\.js" plan /);
   // The quick lane has no plan, and builds at once.
   assert.doesNotMatch(afterOverride(render('quick')), /`build`|end your turn without building/);
 });

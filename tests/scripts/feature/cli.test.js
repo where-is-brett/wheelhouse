@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ask, answer, report, openPr, main, CliError } from '../../../scripts/feature/cli.js';
+import { ask, answer, report, openPr, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -216,6 +216,44 @@ test('open-pr opens against the default branch and keeps the number', async () =
   // A second run finds the pull request open already and asks the host nothing.
   assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 'Again'] }), { number: 7, already: true });
   assert.equal(calls.length, 1);
+});
+
+test('plan records the plan just written, inside the worktree only (R87)', async () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  write(path.join(tree, 'docs', 'plans', 'slice-1.md'), '# Plan\n');
+  assert.deepEqual(recordPlan({ worktree: tree, argv: ['docs/plans/slice-1.md'] }), { plan: 'docs/plans/slice-1.md' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(p.plan, 'utf8')), { plan: 'docs/plans/slice-1.md' });
+  assert.deepEqual(recordPlan({ worktree: tree, argv: [path.join(tree, 'docs', 'plans', 'slice-1.md')] }), { plan: 'docs/plans/slice-1.md' });
+  for (const bad of [[], ['a', 'b'], ['../x.md'], ['/etc/hosts'], ['docs/plans/missing.md'], ['docs/plans']]) {
+    assert.throws(() => recordPlan({ worktree: tree, argv: bad }), CliError, bad.join(' '));
+  }
+  const said = { out: '', err: '' };
+  const code = await main(['plan', 'docs/plans/slice-1.md'], {
+    cwd: tree, find: () => ({ root: tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; },
+  });
+  assert.equal(code, 0, said.err);
+  assert.equal(said.out, 'Recorded the plan: docs/plans/slice-1.md\n');
+});
+
+test('open-pr keeps the plan with the number, and opens the next slice\'s once the kept one is merged (R88)', async () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  write(path.join(tree, 'docs', 'plans', 'slice-1.md'), '# Plan\n');
+  recordPlan({ worktree: tree, argv: ['docs/plans/slice-1.md'] });
+  write(p.report, `${fence(reportFields())}\nShipped.\n`);
+  let number = 7;
+  const client = { openPr: async () => ({ ok: true, result: { number } }) };
+  assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), { number: 7, already: false });
+  assert.deepEqual(JSON.parse(fs.readFileSync(p.pr, 'utf8')), { pr: 7, plan: 'docs/plans/slice-1.md' });
+  assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), { number: 7, already: true });
+  // The foreman merges it; the next slice's plan is recorded and its pull request opened.
+  write(p.pr, JSON.stringify({ pr: 7, plan: 'docs/plans/slice-1.md', merged: true }));
+  write(path.join(tree, 'docs', 'plans', 'slice-2.md'), '# Plan\n');
+  recordPlan({ worktree: tree, argv: ['docs/plans/slice-2.md'] });
+  number = 8;
+  assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), { number: 8, already: false });
+  assert.deepEqual(JSON.parse(fs.readFileSync(p.pr, 'utf8')), { pr: 8, plan: 'docs/plans/slice-2.md' });
 });
 
 test('open-pr is refused while the report is missing or incomplete, and the host is never asked', async () => {

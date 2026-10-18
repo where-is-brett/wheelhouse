@@ -120,6 +120,49 @@ test('wake read falls back to the views kept on disk when the helper gives none,
   assert.match(text, /^- start a \(small\)/m);
 }));
 
+test('wake read: an answer to the foreman\'s own question is the foreman\'s to act on; a director\'s pause is never offered back; held bug work waits', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  for (const w of ['b1', 'b2', 'b3']) {
+    views.work[w] = workView(w, { since: '2026-10-19T06:00:00.000Z' });
+    views.features[w] = featureView(w, { step: 'building', worktree: worktree(checkout, w), files: [] });
+  }
+  views.questions['q-b1-1000001'] = { question: { key: 'q-b1-1000001', data: { id: 'q-b1-1000001', work: 'b1', what: 'b1 is stuck: close it?' } }, answer: null };
+  views.work.hers = workView('hers');
+  views.features.hers = featureView('hers', { step: 'paused', pausedFor: 'director', worktree: worktree(checkout, 'hers'), files: [] });
+  views.work.old = workView('old');
+  views.features.old = featureView('old', { step: 'paused', worktree: worktree(checkout, 'old'), files: [] });
+  views.work.mine = workView('mine');
+  views.features.mine = featureView('mine', { step: 'paused', pausedFor: 'five-hour', worktree: worktree(checkout, 'mine'), files: [] });
+  views.work['a-bug'] = workView('a-bug', { lane: 'bug', approved: false });
+  const { client } = fakeClient({ views });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', {
+    events: [ev('answer', 'b1', 'a1', { questionId: 'q-b1-1000001', label: 'Close it', foreman: true }), ev('answer', 'b2', 'a2', { questionId: 'q-b2-3', label: 'Yes' })],
+  });
+  const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  assert.match(text, /^- answer b1: the director answered your question q-b1-1000001 \("b1 is stuck: close it\?"\): "Close it"\. Act on it\.$/m);
+  assert.match(text, /^- answer b2: q-b2-3 answered "Yes"\. Nothing to do: the watcher wakes its session\.$/m);
+  assert.match(text, /^- resume mine: waits: no building slot is free \(pace\)\.$/m);
+  assert.doesNotMatch(text, /^- resume (hers|old)/m);
+  assert.match(text, /^Paused for the five-hour window: mine\.$/m);
+  assert.match(text, /^Paused by the director: hers, old\. Only their amendment beginning "Resume" lifts it\.$/m);
+  assert.match(text, /^- hold a-bug \(bug\): no building slot is free \(pace\)\.$/m);
+}));
+
+test('wake read with no configuration still lists the events, and says the queue and clash answers are unknown', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.d = workView('d');
+  views.features.d = featureView('d', { step: 'started', worktree: worktree(checkout, 'd', { plan: { path: 'p.md', files: ['a.js'] } }) });
+  const { client } = fakeClient({ views, cfg: null });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('plan-ready', 'd', 'p1'), ev('question', 'd', 'q-d-1')] });
+  const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  assert.match(text, /^- question d: q-d-1\. Next: act question d q-d-1$/m);
+  assert.match(text, /^- plan-ready d: its plan is ready; whether it may build is unknown until the project's configuration can't be read from its default branch: the helper could not be reached\./m);
+  assert.match(text, /^- unknown: the project's configuration can't be read from its default branch: the helper could not be reached\. Start and build nothing until it can be read\.$/m);
+  assert.doesNotMatch(text, /^Building/m);
+}));
+
 test('wake done records acted or idle, and measures gives the idle share', () => withHome(async () => {
   const checkout = await project();
   const dir = path.join(checkout, '.wheelhouse', 'foreman', 'wakes');
@@ -134,6 +177,10 @@ test('wake done records acted or idle, and measures gives the idle share', () =>
   assert.deepEqual(recordDone({ file: two, project: P, outcome: 'idle', now: at(2000) }), { recorded: true, wake: 'two' });
   // A repeated done for the same wake adds nothing, whatever it says.
   assert.deepEqual(recordDone({ file: one, project: P, outcome: 'idle', now: at(3000) }), { recorded: false, wake: 'one' });
+  // A feature's wake is not the foreman's to record.
+  const theirs = path.join(dir, 'theirs.json');
+  fs.writeFileSync(theirs, JSON.stringify({ v: 1, to: 'feature', work: 'x', at: new Date(T0).toISOString(), events: [], digest: [], dropped: 0 }));
+  assert.throws(() => recordDone({ file: theirs, project: P, outcome: 'idle', now: at(3000) }), /for a feature session/);
 
   const lines = fs.readFileSync(measuresFile(P), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepEqual(lines, [

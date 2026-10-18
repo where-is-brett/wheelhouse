@@ -161,6 +161,15 @@ test('each kind of change goes to the foreman, the feature or the digest as sect
   assert.deepEqual(stray.map((e) => e.id).sort(), ['q-login-page-1', 'skipped-lines:login-page:3']);
 });
 
+test('an answer to the foreman\'s own question wakes the foreman, not the feature session', () => {
+  const prev = observation();
+  const own = answerEvent('ev-own', 'q-login-page-1000001');
+  const theirs = answerEvent('ev-theirs', 'q-login-page-999999');
+  const routed = route(diff(prev, observation({ at: iso(1000), awake: 1000, events: [own, theirs] })));
+  assert.deepEqual(routed.foreman.map((e) => [e.id, e.work, e.detail.foreman ?? false]), [['ev-own', 'login-page', true], ['ev-theirs', 'login-page', false]]);
+  assert.deepEqual(routed.features['login-page'].map((e) => e.id), ['ev-theirs']);
+});
+
 test('an event the foreman wrote while handling a wake does not wake it again', () => {
   const prev = observation();
   const quick = { id: 'ev-foreman-quick', kind: 'work', data: { id: 'fix-typo', title: 'Fix', lane: 'quick', visible: false, dependsOn: [] }, verified: false };

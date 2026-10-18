@@ -217,7 +217,8 @@ async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   try {
     if (watcherRunning(project) || typeof client.config !== 'function') return;
     const read = await projectConfig(project, client);
-    if (read.config?.watcherShape === 1) startWatcher(project, { spawn, pluginRoot });
+    // As the start script reads the shape: anything but 2 is Shape 1.
+    if (read.config !== null && read.config.watcherShape !== 2) startWatcher(project, { spawn, pluginRoot });
   } catch { /* the session carries on without it */ }
 }
 

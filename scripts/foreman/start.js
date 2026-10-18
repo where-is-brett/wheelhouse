@@ -79,13 +79,15 @@ export function watcherRunning(project, { alive = pidAlive, now = () => new Date
 
 // Starts the watcher, detached and hidden, in Wheelhouse's own folder, unless
 // it runs already: `{ started }`.
-export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_ROOT, alive, now } = {}) {
+// Its environment is this process's less the host session's variables and
+// WHEELHOUSE_ROLE, so a watcher started from a foreman or any session is no one's.
+export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_ROOT, alive, now, env = process.env } = {}) {
   stateDir(project); // a project name that is not a folder name throws here
   if (watcherRunning(project, { alive, now })) return { started: false };
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'watcher', 'main.js'), project], {
-    cwd: home, detached: true, windowsHide: true, stdio: 'ignore',
+    cwd: home, env: sessionEnv(env), detached: true, windowsHide: true, stdio: 'ignore',
   });
   child?.on?.('error', () => {});
   child?.unref?.();
@@ -148,7 +150,9 @@ export async function main(argv, {
       err(`${MONITOR_NOTE}\n`);
       return await launch(session.file, session.args, session.options);
     }
-    const { started } = startWatcher(project, { spawn, pluginRoot, alive, now });
+    const { started } = startWatcher(project, {
+      spawn, pluginRoot, alive, now, env,
+    });
     out(started ? `Started the watcher for ${project}.\n` : `The watcher for ${project} is running already.\n`);
     return 0;
   } catch (error) {

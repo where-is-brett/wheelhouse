@@ -37,6 +37,8 @@ import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
+import { canonicalJson } from '../lib/canonical.js';
+import { pendingDir } from '../hooks/pending.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -61,6 +63,23 @@ const BACKUP_REF = 'refs/wheelhouse/backup';
 const EVENT_FILE = /^events\/\d{4}\/\d{2}\/[A-Za-z0-9._-]+\.json$/;
 // A version 4 UUID as crypto.randomUUID writes it.
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+// The ids of the records the hooks kept in projects/<p>/pending/ to send later:
+// a signed record's own id, or a write's given id. A file that won't read is passed over.
+function pendingIds(project) {
+  const ids = new Set();
+  let names = [];
+  try {
+    names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json'));
+  } catch { /* none kept */ }
+  for (const name of names) {
+    try {
+      const { body } = JSON.parse(fs.readFileSync(path.join(pendingDir(project), name), 'utf8'));
+      for (const id of [body?.event?.id, body?.id]) if (typeof id === 'string') ids.add(id);
+    } catch { /* not a record */ }
+  }
+  return ids;
+}
 const MOST_OUTPUT = 2000;
 const MOST_KEPT = 64 * 1024;
 // Text from git, gh or glab that says the sign-in is missing or refused.
@@ -854,6 +873,8 @@ export async function startHelper({
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
     if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
+    // A signed click a hook kept to send later must never find its id taken.
+    if (id !== undefined && pendingIds(project).has(id)) refuse('a record waiting to be sent from this computer has that id');
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
@@ -867,7 +888,11 @@ export async function startHelper({
     if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
     if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
-    if (listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === event.id)) refuse('the state already holds an event with that id');
+    // The same record again has been taken (a hook sending its kept copy); another
+    // event under its id has not, and says so in words a hook does not count as taken.
+    const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.id === event.id);
+    if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
+    if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     return written({ event, result });
   }

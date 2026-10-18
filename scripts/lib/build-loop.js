@@ -23,3 +23,17 @@ export const REPORT_OUTCOMES = Object.freeze(['merged', 'closed', 'blocked']);
 export const SLUG = /^[a-z0-9-]{1,40}$/;
 // A hash a card can show as its first twelve characters: lower-case hex, 12 to 64 long.
 export const HASH = /^[0-9a-f]{12,64}$/;
+// The first number of the foreman's own question ids, `q-<work>-<n>`. A
+// feature's own count up from 1 and never reach it.
+export const FOREMAN_QUESTIONS = 1000000;
+// Why a feature is paused: the director's amendment, or the five-hour window.
+export const PAUSED_FOR = Object.freeze(['director', 'five-hour']);
+
+// A question id `q-<work>-<n>` as `{ work, n, foreman }`, where `foreman` says
+// it is one of the foreman's own; null when it is not one.
+export function questionIdOf(id) {
+  const m = typeof id === 'string' ? /^q-([a-z0-9-]+)-([0-9]+)$/.exec(id) : null;
+  if (m === null || !SLUG.test(m[1])) return null;
+  const n = Number(m[2]);
+  return { work: m[1], n, foreman: n >= FOREMAN_QUESTIONS };
+}

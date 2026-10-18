@@ -5,16 +5,25 @@
 //   start <work> --goal <text> --done <line>… --appetite-sessions <n>
 //         --appetite-tokens <n> [--ruling <id>…] [--plan <path>] [--slices <n>]
 //       Opens the work's session. In order: the worktree
-//       <checkout>/.claude/worktrees/<work> on a branch feature/<work> from the
-//       default branch, made with git in the main checkout; `.wheelhouse/` kept
+//       <checkout>/.claude/worktrees/<work> on a branch feature/<work> made
+//       now from the default branch, with git in the main checkout (a branch
+//       or folder there already is refused, and so is a repository config
+//       that sets a filter or an include, ruling R93); `.wheelhouse/` kept
 //       out of git through info/exclude; the brief written; a `feature` event
 //       `started` recorded with the brief's hash (a first brief is written
 //       before its hash is recorded, ruling R41); the session started through
 //       the waker (under Shape 2 the waker's START line is passed on).
-//   plan-ready <work> [--slice <n>]   records the plan the brief names and its
-//       files (`planned`), then the go-ahead (`building`) when it clears.
+//       `--plan` is only for a plan the foreman knows is in the repository
+//       already; a session records its own with `cli.js plan` (ruling R87).
+//   plan-ready <work>   records the feature's plan (the brief's, or the one
+//       the session recorded) and its files (`planned`), then the go-ahead
+//       (`building`) when it clears. When the slice in hand has merged and
+//       this is the next slice's plan, the slice moves on by one (R88).
 //   build <work>    the go-ahead for a recorded plan whose wait has cleared.
-//   pause <work>, resume <work>
+//   pause <work>    a pause for the five-hour window (`pausedFor: five-hour`).
+//   resume <work>   lifts such a pause. A pause the director's amendment made
+//       (`pausedFor: director`) is lifted only by their amendment beginning
+//       "Resume"; `build` and `resume` refuse it.
 //   question <work> <questionId>      the feature's question, into state.
 //   extra-plan <work> <questionId>    the extra plan, queued as work.
 //   ask <work> --what … --why … --option "<label>=<says>"… --recommend <label> --level <n>
@@ -40,9 +49,9 @@
 // Which work may build (ruling R60, as wake.js works it out): a plan builds
 // when it clashes with no running feature's recorded files or the hot files,
 // and nextWork, counting only work that can build now, gives it a slot.
-// Small, feature or bug work held for pace or a dependency may still start,
-// so its session plans while it waits. A bug has no plan: started while
-// held, it builds at once, beyond the pace.
+// Small or feature work held for pace or a dependency may still start, so its
+// session plans while it waits. Quick and bug work have no plan: they start
+// only when nextWork gives them a slot (ruling R89).
 //
 // Pausing and resuming (ruling R80). An amendment whose change begins with
 // the word "Pause" pauses the feature, and one that begins with "Resume"
@@ -66,35 +75,36 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_ROOT } from './tools.js';
 import {
-  ForemanError, NO_PLAN, PLANS_WHILE_HELD, checkoutOf, clashFor, featureOf, laneOf, loadConfig, loadViews, oneLine, planOf, projectHere,
+  ForemanError, NO_PLAN, PLANS_WHILE_HELD, checkoutOf, clashFor, featureOf, laneOf, loadConfig, loadViews, oneLine, pausedBy, planOf, projectHere,
   queueToStart, slotFor, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { report as reportCheck } from '../feature/cli.js';
-import { briefHash, ensureIgnored, featurePaths, parseReport, readQuestions } from '../feature/files.js';
-import { readCapped, readPr, safeFeatureFolder, writeWhole } from '../feature/status.js';
-import { branchOf } from '../hooks/session-start.js';
+import {
+  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, readQuestions,
+} from '../feature/files.js';
+import { readCapped, readPrRecord, safeFeatureFolder, writeWhole } from '../feature/status.js';
 import { helperClient } from '../host/helper-client.js';
-import { SLUG } from '../lib/build-loop.js';
+import { FOREMAN_QUESTIONS, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { stateDir } from '../lib/paths.js';
 import { run as runProgram, withoutGitVars } from '../lib/run.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
-import { inWorktreesFolder } from '../watcher/sources.js';
+import { recordedBriefs } from '../watcher/sources.js';
 import { makeWaker, sessionFile } from '../watcher/waker.js';
 
 // The first number of the foreman's own question ids.
-export const FOREMAN_QUESTIONS = 1000000;
+export { FOREMAN_QUESTIONS };
 
 const NULL_FILE = '/dev/null';
 const BRIEF_BYTES = 1024 * 1024;
 const REPORT_BYTES = 1024 * 1024;
 const GIT_MS = 2 * 60 * 1000;
+const CONFIG_BYTES = 1024 * 1024;
 // What each `feature` event carries forward from the one before.
 const CARRIED = Object.freeze(['worktree', 'branch', 'session', 'plan', 'files', 'slice']);
-const QUESTION_ID = /^q-([a-z0-9-]+)-([0-9]+)$/;
 const BASE_REF = /^refs\/remotes\/origin\/[A-Za-z0-9._/-]+$/;
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -245,30 +255,55 @@ function realFolders(root, parts) {
   return dir;
 }
 
-// The worktree on `branch`, made from the default branch in the main checkout,
-// or the one made before. Resolves true when it was made now.
+// The sections of the repository's own git configuration that could run a
+// program, or read more configuration, when git checks out the worktree
+// (ruling R93): a smudge filter an agent set would run in the foreman's git.
+const RISKY_SECTIONS = Object.freeze(['filter', 'include', 'includeif']);
+
+// Refuses when <checkout>/.git/config (or its config.worktree) holds a
+// filter.*, include.* or includeIf.* key, read with fs, never with git.
+function checkRepoConfig(checkout) {
+  for (const name of ['config', 'config.worktree']) {
+    const file = path.join(checkout, '.git', name);
+    const stat = lstatOf(file);
+    if (stat === null) continue;
+    const text = stat.isFile() ? readCapped(file, CONFIG_BYTES) : null;
+    if (text === null) refuse(`The repository's .git/${name} can't be read, so no worktree was made`);
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*\[\s*([A-Za-z0-9.-]+)/.exec(line);
+      const section = m?.[1].split('.')[0].toLowerCase();
+      if (section !== undefined && RISKY_SECTIONS.includes(section)) {
+        refuse(`The repository's .git/${name} sets ${m[1]}, which git would act on while making the worktree; no worktree was made: ask the director`);
+      }
+    }
+  }
+}
+
+// The worktree on a branch made now from the default branch, in the main
+// checkout. A feature/<work> branch or worktree folder that is there already
+// was not made by a recorded start (a recorded feature never reaches here), so
+// it is refused, never reused: an agent can make branches in the shared repository.
 async function makeWorktree(ctx, work, checkout, worktree, branch) {
   const git = (args) => ctx.run('git', ['-c', `core.hooksPath=${NULL_FILE}`, '-c', 'core.fsmonitor=false', ...args], {
-    cwd: checkout, baseEnv: withoutGitVars(process.env), env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: GIT_MS,
+    cwd: checkout,
+    baseEnv: withoutGitVars(process.env),
+    env: {
+      GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, GIT_NO_REPLACE_OBJECTS: '1',
+    },
+    timeoutMs: GIT_MS,
   });
   realFolders(checkout, ['.claude', 'worktrees']);
-  const there = lstatOf(worktree);
-  if (there !== null) {
-    if (there.isDirectory() && inWorktreesFolder(checkout, worktree) && branchOf(worktree) === branch) return false;
-    refuse(`${worktree} is there already and isn't ${work}'s worktree on ${branch}`);
-  }
+  if (lstatOf(worktree) !== null) refuse(`${worktree} is there already, but no recorded feature made it: ask the director`);
+  checkRepoConfig(checkout);
   const head = await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   const base = String(head.stdout ?? '').trim();
   if (head.code !== 0 || !BASE_REF.test(base) || base.includes('..')) {
     refuse("The main checkout doesn't name its default branch (refs/remotes/origin/HEAD), so no worktree was made");
   }
   const kept = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
-  const args = kept.code === 0
-    ? ['worktree', 'add', '--quiet', worktree, branch]
-    : ['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, base];
-  const made = await git(args);
+  if (kept.code === 0) refuse(`The branch ${branch} is there already, but no recorded feature made it: ask the director`);
+  const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, base]);
   if (made.code !== 0) refuse(`git couldn't make the worktree: ${oneLine(made.stderr || made.stdout || 'no reason given', 200)}`);
-  return true;
 }
 
 async function startSession(ctx, work, worktree, config) {
@@ -291,7 +326,7 @@ async function start(ctx, work, rest) {
   const existing = featureOf(views, work);
   if (existing !== null) {
     // Recorded, but stopped before its session began (STOP, say): start the session only.
-    if (existing.step === 'started' && config.watcherShape === 1 && lstatOf(sessionFile(ctx.project, work)) === null) {
+    if (existing.step === 'started' && config.watcherShape !== 2 && lstatOf(sessionFile(ctx.project, work)) === null) {
       const worktree = worktreeOf(ctx.project, views, work);
       ctx.say(`${work} was started already, but its session had not begun.`);
       await startSession(ctx, work, worktree, config);
@@ -340,8 +375,8 @@ async function start(ctx, work, rest) {
   const checkout = checkoutOf(ctx.project);
   const worktree = path.join(checkout, '.claude', 'worktrees', work);
   const branch = `feature/${work}`;
-  const made = await makeWorktree(ctx, work, checkout, worktree, branch);
-  ctx.say(made ? `Made the worktree ${worktree} on ${branch}.` : `Using the worktree ${worktree} on ${branch}, made before.`);
+  await makeWorktree(ctx, work, checkout, worktree, branch);
+  ctx.say(`Made the worktree ${worktree} on ${branch}.`);
   try {
     ensureIgnored(worktree, { mainCheckout: checkout });
   } catch (error) {
@@ -359,16 +394,20 @@ async function start(ctx, work, rest) {
 
 // --- plan-ready, build, pause, resume ---
 
-function sliceOf(found, f) {
-  const text = single(found, 'slice');
-  if (text === undefined) return undefined;
-  const m = f.slice?.m;
-  if (!/^[1-9][0-9]{0,3}$/.test(text) || !Number.isInteger(m) || Number(text) > m) refuse(`--slice is the slice's number, from 1 to the feature's ${Number.isInteger(m) ? m : 'unknown number of'} slices`);
-  return { n: Number(text), m };
+// The next slice, when the slice in hand has merged (pr.json marks the merge of
+// the plan the feature recorded) and this is another plan; otherwise undefined.
+function nextSlice(worktree, f, plan) {
+  const s = f.slice;
+  if (!isPlain(s) || !Number.isInteger(s.n) || !Number.isInteger(s.m) || s.n >= s.m) return undefined;
+  const kept = readPrRecord(worktree);
+  return kept?.merged === true && kept.plan !== null && kept.plan === f.plan && plan !== f.plan ? { n: s.n + 1, m: s.m } : undefined;
 }
 
+// What a paused event keeps from the pause before it: why it was paused.
+const pausedFields = (f) => (f.step === 'paused' ? { pausedFor: pausedBy(f) } : {});
+
 async function planReady(ctx, work, rest) {
-  const found = flagsOf(rest, ['slice'], 'plan-ready');
+  flagsOf(rest, [], 'plan-ready');
   const views = await ctx.views();
   const f = liveFeature(views, work);
   const lane = laneOf(views, work);
@@ -381,8 +420,8 @@ async function planReady(ctx, work, rest) {
     if (error instanceof ForemanError) refuse(`${work}'s plan can't be read: ${error.message}`);
     throw error;
   }
-  const slice = sliceOf(found, f);
-  const unchanged = f.plan === read.plan && same(f.files, read.files) && (slice === undefined || same(f.slice, slice));
+  const slice = nextSlice(worktree, f, read.plan);
+  const unchanged = f.plan === read.plan && same(f.files, read.files) && slice === undefined;
   if (f.step === 'building' && unchanged) {
     ctx.say(`${work} is building this plan already.`);
     return;
@@ -391,7 +430,7 @@ async function planReady(ctx, work, rest) {
   const recordedLine = `Recorded the plan of ${work}: ${oneLine(read.plan, 120)}, ${plural(read.files.length, 'file')}.`;
   if (f.step === 'paused') {
     if (!unchanged) {
-      await ctx.write('feature', { ...data, step: 'paused' });
+      await ctx.write('feature', { ...data, step: 'paused', ...pausedFields(f) });
       ctx.say(recordedLine);
     }
     ctx.say(`${work} is paused: its plan waits until it is resumed.`);
@@ -416,33 +455,48 @@ async function build(ctx, work, rest) {
   if (f.step === 'started') {
     refuse(NO_PLAN.includes(lane) ? `${work} is ${lane} work: it builds as soon as it starts` : `${work} has no plan recorded yet: act plan-ready ${work} records it`);
   }
+  refuseDirectorsPause(work, f);
   await resumeOrBuild(ctx, work, f, lane);
 }
 
+const refuseDirectorsPause = (work, f) => {
+  if (f.step === 'paused' && pausedBy(f) === 'director') refuse(`${work} was paused by the director: only their amendment beginning "Resume" lifts it`);
+};
+
 // A planned or paused feature: the go-ahead once its wait clears. A paused
 // feature with no plan recorded, in a lane that plans, goes back to planning.
-async function resumeOrBuild(ctx, work, f, lane, { lead = '' } = {}) {
+// With `lifted`, the director's pause is over even when the plan still waits:
+// it then waits as a planned feature, which the foreman's `build` may lift.
+async function resumeOrBuild(ctx, work, f, lane, { lead = '', lifted = false } = {}) {
   if (f.step === 'paused' && !NO_PLAN.includes(lane) && typeof f.plan !== 'string') {
     await ctx.write('feature', { ...carried(f), step: 'started' });
     ctx.say(`${lead}Resumed ${work}: it had no plan yet, so it goes back to planning.`);
     return;
   }
-  await goAhead(ctx, work, f, { lead });
+  const went = await goAhead(ctx, work, f, { lead });
+  if (!went && lifted && f.step === 'paused') {
+    await ctx.write('feature', { ...carried(f), step: 'planned' });
+    ctx.say(`${work} is no longer paused; its plan waits as planned work.`);
+  }
 }
 
-async function pause(ctx, work, rest, { lead = '' } = {}) {
+// `why` is `five-hour` for the foreman's own pause (R61) and `director` for an
+// amendment's (R80). A director's pause replaces a five-hour one, never the other way.
+async function pause(ctx, work, rest, { lead = '', why = 'five-hour' } = {}) {
   flagsOf(rest, [], 'pause');
   const views = await ctx.views();
   const f = liveFeature(views, work);
-  if (f.step === 'paused') {
+  if (f.step === 'paused' && (pausedBy(f) === 'director' || why === 'five-hour')) {
     ctx.say(`${lead}${work} is paused already.`);
     return;
   }
-  await ctx.write('feature', { ...carried(f), step: 'paused' });
+  await ctx.write('feature', { ...carried(f), step: 'paused', pausedFor: why });
   ctx.say(`${lead}${lead === '' ? 'Paused' : 'paused'} ${work}.`);
 }
 
-async function resume(ctx, work, rest, { lead = '' } = {}) {
+// `lifted` when the director's amendment says to resume; otherwise only a
+// five-hour pause is lifted.
+async function resume(ctx, work, rest, { lead = '', lifted = false } = {}) {
   flagsOf(rest, [], 'resume');
   const views = await ctx.views();
   const f = liveFeature(views, work);
@@ -450,8 +504,15 @@ async function resume(ctx, work, rest, { lead = '' } = {}) {
     ctx.say(`${lead}${work} is building already.`);
     return;
   }
-  if (f.step !== 'paused') refuse(`${work} isn't paused (it is at ${f.step})`);
-  await resumeOrBuild(ctx, work, f, laneOf(views, work), { lead });
+  if (f.step !== 'paused') {
+    if (lifted && f.step === 'planned') {
+      await goAhead(ctx, work, f, { lead });
+      return;
+    }
+    refuse(`${work} isn't paused (it is at ${f.step})`);
+  }
+  if (!lifted) refuseDirectorsPause(work, f);
+  await resumeOrBuild(ctx, work, f, laneOf(views, work), { lead, lifted });
 }
 
 // --- questions ---
@@ -460,8 +521,8 @@ async function resume(ctx, work, rest, { lead = '' } = {}) {
 function featureQuestion(ctx, views, work, rest) {
   const [id, ...more] = rest;
   if (typeof id !== 'string' || more.length > 0) refuse('Give the question id the wake names: <work> <questionId>');
-  const m = QUESTION_ID.exec(id);
-  if (m === null || m[1] !== work || Number(m[2]) >= FOREMAN_QUESTIONS) refuse(`${oneLine(id, 60)} isn't one of ${work}'s own question ids`);
+  const named = questionIdOf(id);
+  if (named === null || named.work !== work || named.foreman) refuse(`${oneLine(id, 60)} isn't one of ${work}'s own question ids`);
   liveFeature(views, work);
   const worktree = worktreeOf(ctx.project, views, work);
   const q = readQuestions(featurePaths(worktree).questions).questions.find((x) => x.id === id);
@@ -488,7 +549,7 @@ async function question(ctx, work, rest) {
 // with the work's part cut and six characters of the question id's hash put
 // in when that would pass 40 characters.
 export function extraPlanId(work, questionId) {
-  const n = QUESTION_ID.exec(questionId)?.[2] ?? '0';
+  const n = questionIdOf(questionId)?.n ?? 0;
   const suffix = `-x${n}`;
   if (work.length + suffix.length <= 40) return `${work}${suffix}`;
   const hash = crypto.createHash('sha256').update(questionId).digest('hex').slice(0, 6);
@@ -518,8 +579,8 @@ async function extraPlan(ctx, work, rest) {
 }
 
 const foremanNumber = (id, work) => {
-  const m = QUESTION_ID.exec(String(id));
-  return m !== null && m[1] === work && Number(m[2]) >= FOREMAN_QUESTIONS ? Number(m[2]) : null;
+  const named = questionIdOf(id);
+  return named !== null && named.work === work && named.foreman ? named.n : null;
 };
 
 async function ask(ctx, work, rest) {
@@ -551,11 +612,7 @@ async function ask(ctx, work, rest) {
 
 // The latest amendment of `work` the director approved with a signed click:
 // `{ change, at }`, or null. Read from the state clone, as the views read it.
-function latestAmendment(project, work) {
-  const events = listEvents(stateDir(project), { report: () => {} });
-  const counts = new Map();
-  for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
-  const unique = events.filter((e) => counts.get(e.id) === 1);
+function latestAmendment(unique, work) {
   const enrolled = readEnrolled();
   const changes = unique.filter((e) => e.kind === 'amendment' && e.data?.work === work && typeof e.data.change === 'string' && typeof e.data.hash === 'string');
   const clicks = unique.filter((e) => e.kind === 'action' && e.data?.action === 'amend' && e.data.work === work
@@ -563,6 +620,14 @@ function latestAmendment(project, work) {
   const click = clicks.at(-1);
   if (!click) return null;
   return { change: changes.filter((m) => m.data.hash === click.data.hash).at(-1).data.change, at: click.at };
+}
+
+// The state clone's events, leaving out every copy of an id carried twice, as the views do.
+function stateEvents(project) {
+  const events = listEvents(stateDir(project), { report: () => {} });
+  const counts = new Map();
+  for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
+  return events.filter((e) => counts.get(e.id) === 1);
 }
 
 // An entry of "What changed" without its version: the same change on the same day.
@@ -576,15 +641,16 @@ async function amend(ctx, work, rest) {
   flagsOf(rest, [], 'amend');
   const views = await ctx.views();
   const f = liveFeature(views, work);
-  const amendment = latestAmendment(ctx.project, work);
+  const events = stateEvents(ctx.project);
+  const amendment = latestAmendment(events, work);
   if (amendment === null) refuse(`There is no amendment of ${work} the director has approved`);
   const word = amendment.change.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
   if (word === 'pause') {
-    await pause(ctx, work, [], { lead: 'The amendment says to pause: ' });
+    await pause(ctx, work, [], { lead: 'The amendment says to pause: ', why: 'director' });
     return;
   }
   if (word === 'resume') {
-    await resume(ctx, work, [], { lead: 'The amendment says to resume: ' });
+    await resume(ctx, work, [], { lead: 'The amendment says to resume: ', lifted: true });
     return;
   }
 
@@ -592,23 +658,31 @@ async function amend(ctx, work, rest) {
   const file = featurePaths(worktree).brief;
   const text = readCapped(file, BRIEF_BYTES);
   if (text === null) refuse(`${work}'s brief can't be read`);
+  // The brief must be the one the foreman recorded (from state, as the watcher
+  // judges it): an amendment never takes in a change the session made. The
+  // file may also be the one recorded before, when this amendment's hash was
+  // recorded and the file not yet written.
+  const recorded = recordedBriefs(events).get(work) ?? { recorded: null, before: null };
+  const found = briefHash(text);
   let next;
   try {
     next = amendBrief(text, { change: amendment.change, now: new Date(amendment.at) });
   } catch (error) {
     refuse(`${work}'s brief can't be amended: ${oneLine(error.message, 200)}`);
   }
+  const hash = briefHash(next);
   const [entry] = changeEntries(next);
-  if (changeEntries(text).includes(entry)) {
+  if (found === recorded.recorded && changeEntries(text).includes(entry)) {
     ctx.say(`${work}'s brief has this amendment already.`);
     return;
   }
-  const hash = briefHash(next);
+  const midway = recorded.recorded === hash && found === recorded.before;
+  if (found !== recorded.recorded && !midway) refuse(`${work}'s brief isn't the one recorded, so it was not amended: ask the director`);
   // The hash first, then the file (R41): a repeat after a stop in between records nothing more.
-  if (f.brief !== hash) await ctx.write('feature', { ...carried(f), step: f.step, brief: hash });
+  if (recorded.recorded !== hash) await ctx.write('feature', { ...carried(f), step: f.step, ...pausedFields(f), brief: hash });
   if (!safeFeatureFolder(worktree)) refuse("The worktree's feature folder isn't a real folder inside it");
   writeWhole(file, next);
-  ctx.say(`Amended ${work}'s brief to version ${JSON.parse(/```json\n([\s\S]*?)\n```/.exec(next)[1]).version} (${short(hash)}); its session is woken with brief-changed.`);
+  ctx.say(`Amended ${work}'s brief to version ${parseBrief(next).fields.version} (${short(hash)}); its session is woken with brief-changed.`);
 }
 
 // --- merge and close ---
@@ -617,11 +691,19 @@ async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
   liveFeature(views, work);
-  const pr = readPr(worktreeOf(ctx.project, views, work));
-  if (pr === null) refuse(`${work} has no pull request kept in its pr.json`);
+  const worktree = worktreeOf(ctx.project, views, work);
+  const kept = readPrRecord(worktree);
+  if (kept === null) refuse(`${work} has no pull request kept in its pr.json`);
+  const pr = kept.pr;
+  // pr.json marks the merge (ruling R88), so the status moves on to the next slice or to done.
+  const markMerged = () => {
+    if (!safeFeatureFolder(worktree)) refuse("The worktree's feature folder isn't a real folder inside it");
+    writeWhole(featurePaths(worktree).pr, `${JSON.stringify({ pr, ...(kept.plan ? { plan: kept.plan } : {}), merged: true })}\n`);
+  };
   const number = { project: ctx.project, number: pr };
   const state = await ctx.client.prState(number);
   if (state?.ok === true && state.result?.state === 'merged') {
+    if (!kept.merged) markMerged();
     ctx.say(`Pull request #${pr} for ${work} is merged already.`);
     return;
   }
@@ -629,6 +711,7 @@ async function merge(ctx, work, rest) {
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
   const merged = await ctx.client.merge(number);
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
+  markMerged();
   ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}.`);
 }
 
@@ -653,14 +736,24 @@ async function close(ctx, work, rest) {
   const parsed = parseReport(readCapped(featurePaths(worktree).report, REPORT_BYTES));
   const summary = parsed.body.trim();
   if (summary === '') refuse(`${work}'s report has no text after its fields`);
-  const pr = parsed.fields.pr ?? readPr(worktree);
+  // The pull request is the one open-pr kept, never one the report names. It
+  // counts as merged only when the foreman's merge marked it in pr.json and the
+  // host says so too.
+  const kept = readPrRecord(worktree);
+  const pr = kept?.pr ?? null;
   let outcome = parsed.fields.status === 'blocked' ? 'blocked' : 'closed';
-  if (Number.isInteger(pr)) {
+  if (pr !== null) {
     const state = await ctx.client.prState({ project: ctx.project, number: pr });
     if (state?.ok !== true) refuse(`Whether pull request #${pr} merged can't be told: ${refusal(state)}`);
-    if (state.result?.state === 'merged') outcome = 'merged';
+    const merged = state.result?.state === 'merged';
+    if (merged !== kept.merged) {
+      refuse(merged
+        ? `Pull request #${pr} for ${work} merged, but not through act merge: ask the director`
+        : `${work}'s pr.json says pull request #${pr} merged, but the host says it hasn't: ask the director`);
+    }
+    if (merged) outcome = 'merged';
   }
-  const data = { work, outcome, summary, rulings: parsed.fields.rulings, ...(Number.isInteger(pr) ? { pr } : {}) };
+  const data = { work, outcome, summary, rulings: parsed.fields.rulings, ...(pr !== null ? { pr } : {}) };
   if (!same(views.reports[work]?.data, data)) await ctx.write('report', data);
   await ctx.write('feature', { ...carried(f), step: 'closed' });
   fs.rmSync(sessionFile(ctx.project, work), { force: true });

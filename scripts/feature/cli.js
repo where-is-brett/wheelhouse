@@ -2,8 +2,9 @@
 // The commands a feature session runs, as `node "<pluginRoot>/scripts/feature/cli.js" <command> …`:
 //   ask      writes a question for the director and prints its id
 //   answer   prints the director's answer to a question, once it is signed
+//   plan     records the plan just written, in plan.json, for the status and the foreman
 //   report   checks report.md and that it holds every ruling kept
-//   open-pr  opens the feature's pull request and keeps its number
+//   open-pr  opens the feature's pull request and keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
 // the worktree, so tests use a fake helper. Files are read and written only in the
 // feature folder, through the safe readers and writers of status.js; the head
@@ -12,7 +13,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions } from './files.js';
-import { readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES } from './status.js';
+import {
+  planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
+} from './status.js';
 import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
 import { projectOf } from '../hooks/kit.js';
@@ -206,16 +209,24 @@ export function report({ worktree }) {
   return { missing: inspect(worktree).missing };
 }
 
-// --- open-pr ---
+// --- plan ---
 
-function keptPr(file) {
-  try {
-    const kept = JSON.parse(readCapped(file, SMALL_BYTES) ?? 'null');
-    return kept !== null && typeof kept === 'object' && Number.isSafeInteger(kept.pr) && kept.pr >= 1 ? kept.pr : null;
-  } catch {
-    return null;
-  }
+// Records the plan just written (ruling R87): a path inside the worktree, to a
+// plan file that is there, kept in plan.json as `{ plan }` with forward
+// slashes. The status and the foreman read the plan from it when the brief
+// names none. Returns `{ plan }`.
+export function recordPlan({ worktree, argv }) {
+  if (argv.length !== 1 || typeof argv[0] !== 'string' || argv[0].trim() === '') throw new CliError("Give the plan's path: plan <path>");
+  const given = argv[0].trim();
+  const rel = path.relative(worktree, path.resolve(worktree, given)).replaceAll('\\', '/');
+  if (!planInside(worktree, rel)) throw new CliError('The plan must be a file inside this worktree');
+  if (readPlan(worktree, rel) === null) throw new CliError(`${rel} isn't a plan file that can be read`);
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  writeWhole(featurePaths(worktree).plan, `${JSON.stringify({ plan: rel })}\n`);
+  return { plan: rel };
 }
+
+// --- open-pr ---
 
 function keptSession(file) {
   try {
@@ -227,16 +238,17 @@ function keptSession(file) {
 }
 
 // Opens the pull request from the worktree's branch against the default branch (the helper
-// takes a missing base for it) and keeps its number in pr.json. A pull request kept already is
-// not opened again. The report becomes the pull request's body, so nothing is opened until the
-// report passes the `report` check.
+// takes a missing base for it) and keeps its number in pr.json, with the plan it was opened for
+// (ruling R88). A pull request kept already is not opened again until the foreman's merge marks
+// it merged: then the next slice's is opened. The report becomes the pull request's body, so
+// nothing is opened until the report passes the `report` check.
 export async function openPr({ client, project, worktree, argv }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const p = featurePaths(worktree);
-  const already = keptPr(p.pr);
-  if (already !== null) return { number: already, already: true };
+  const already = readPrRecord(worktree);
+  if (already !== null && !already.merged) return { number: already.pr, already: true };
   const head = branchOf(worktree);
   if (head === null) throw new CliError("This worktree isn't on a branch, so there is nothing to open a pull request from");
   const checked = inspect(worktree);
@@ -246,13 +258,17 @@ export async function openPr({ client, project, worktree, argv }) {
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
   if (!Number.isSafeInteger(number) || number < 1) throw new CliError('The host opened a pull request but gave no number for it');
-  writeWhole(p.pr, `${JSON.stringify({ pr: number })}\n`);
+  let plan = null;
+  try {
+    plan = planIn(worktree, readBrief(worktree));
+  } catch { /* the report check read the brief; a plan is only kept when there is one */ }
+  writeWhole(p.pr, `${JSON.stringify({ pr: number, ...(plan ? { plan } : {}) })}\n`);
   return { number, already: false };
 }
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'answer', 'report', 'open-pr'];
+const COMMANDS = ['ask', 'answer', 'plan', 'report', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -277,6 +293,8 @@ export async function main(argv, {
       if (rest.length !== 1) throw new CliError('Give the id of the question: answer <questionId>');
       const { answer: label } = await answer({ client: helper(), project: project(), questionId: rest[0] });
       out(label === null ? 'There is no answer yet.\n' : `${label}\n`);
+    } else if (command === 'plan') {
+      out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);
     } else if (command === 'report') {
       if (rest.length > 0) throw new CliError('report takes no arguments');
       const { missing } = report({ worktree });

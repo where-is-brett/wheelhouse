@@ -72,6 +72,7 @@ test('the feature folder and its four files are named once', () => {
     rulings: path.join('/w/tree', '.wheelhouse', 'feature', 'rulings.jsonl'),
     session: path.join('/w/tree', '.wheelhouse', 'feature', 'session.json'),
     pr: path.join('/w/tree', '.wheelhouse', 'feature', 'pr.json'),
+    plan: path.join('/w/tree', '.wheelhouse', 'feature', 'plan.json'),
   });
 });
 

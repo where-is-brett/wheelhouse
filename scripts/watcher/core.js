@@ -76,7 +76,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BUNDLE_MS, STUCK_MS } from '../lib/build-loop.js';
+import { BUNDLE_MS, STUCK_MS, questionIdOf } from '../lib/build-loop.js';
 import { stateDir } from '../lib/paths.js';
 
 // How many ids the cursor remembers.
@@ -219,7 +219,9 @@ const isOver = (f) => isPlain(f) && isPlain(f.status)
 // The lanes whose work starts with no approval when no one is shown it first.
 const STARTS_UNAPPROVED = Object.freeze(['quick', 'bug']);
 
-const workOfQuestion = (id) => (typeof id === 'string' ? /^q-([a-z0-9-]+)-[0-9]+$/.exec(id)?.[1] : undefined);
+const workOfQuestion = (id) => questionIdOf(id)?.work;
+// An answer to the foreman's own question (ruling R63) is the foreman's alone: the feature never asked it.
+const foremansOwn = (e) => e.type === 'answer' && e.detail?.foreman === true;
 
 // The events from state: every one in the observation is after the cursor; only signed clicks count as actions.
 function stateEvents(next, out) {
@@ -238,7 +240,10 @@ function stateEvents(next, out) {
       } else if (data.action === 'amend') {
         out.push({ type: 'amended', work: data.work, id, detail: { hash: data.hash } });
       } else if (data.action === 'answer') {
-        out.push({ type: 'answer', work: workOfQuestion(data.questionId), id, detail: { questionId: data.questionId, label: data.label } });
+        const foreman = questionIdOf(data.questionId)?.foreman === true;
+        out.push({
+          type: 'answer', work: workOfQuestion(data.questionId), id, detail: { questionId: data.questionId, label: data.label, ...(foreman ? { foreman } : {}) },
+        });
       }
     }
   }
@@ -373,7 +378,8 @@ export function diff(prev, next, { handled = new Set(), seen = new Set() } = {})
 }
 
 // Who hears each event. A handled event goes to the digest in place of the
-// foreman; an answer still reaches its feature.
+// foreman; an answer still reaches its feature, unless it answers the
+// foreman's own question.
 export function route(events) {
   const routed = { foreman: [], features: {}, digest: [] };
   const toFeature = (e) => {
@@ -381,7 +387,7 @@ export function route(events) {
     (routed.features[e.work] ??= []).push(e);
   };
   for (const e of list(events)) {
-    if (FEATURE_TYPES.includes(e.type)) toFeature(e);
+    if (FEATURE_TYPES.includes(e.type) && !foremansOwn(e)) toFeature(e);
     if (FOREMAN_TYPES.includes(e.type)) (e.handled ? routed.digest : routed.foreman).push(e);
     else if (!FEATURE_TYPES.includes(e.type)) routed.digest.push(e);
   }

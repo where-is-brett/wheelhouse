@@ -2,11 +2,14 @@
 // A project for the foreman's tests: its record, a main checkout (a real git
 // repository when asked), feature worktrees with their files, the views as
 // the helper gives them, and a stand-in helper that keeps what is written and
-// lays it over the views, as the real one would after its next rebuild.
+// lays it over the views, as the real one would after its next rebuild, and
+// puts it in the state clone.
 import fs from 'node:fs';
 import path from 'node:path';
 import { featurePaths } from '../../scripts/feature/files.js';
+import { stateDir } from '../../scripts/lib/paths.js';
 import { writeProject } from '../../scripts/lib/projects.js';
+import { eventPath, makeEvent } from '../../scripts/state/events.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
 import { tempFolder } from './homes.js';
 import { g } from './git-fixture.js';
@@ -66,7 +69,7 @@ export function worktree(checkout, work, { brief = {}, plan = null, questions = 
   }
   if (questions.length > 0) fs.writeFileSync(p.questions, questions.map((q) => `${JSON.stringify(q)}\n`).join(''));
   if (report !== null) fs.writeFileSync(p.report, report);
-  if (pr !== null) fs.writeFileSync(p.pr, `${JSON.stringify({ pr })}\n`);
+  if (pr !== null) fs.writeFileSync(p.pr, `${JSON.stringify(typeof pr === 'number' ? { pr } : pr)}\n`);
   if (rulings.length > 0) fs.writeFileSync(p.rulings, rulings.map((r) => `${JSON.stringify(r)}\n`).join(''));
   return dir;
 }
@@ -113,6 +116,7 @@ export function fakeClient({ views = emptyViews(), cfg = config(), answers = {} 
       write: async ({ project: p, kind, data, id }) => {
         writes.push({ project: p, kind, data, id, handledFirst: readHandled(P).has(id) });
         lay(kind, data, id);
+        putInState({ ...makeEvent({ kind, data, now: () => new Date(T0 + 1000 * tick) }), id });
         return { ok: true, id, pushed: true };
       },
     },
@@ -122,6 +126,17 @@ export function fakeClient({ views = emptyViews(), cfg = config(), answers = {} 
   };
   return { client, writes, calls, views };
 }
+
+// An event put straight into the project's state clone, as the helper's write leaves it.
+export function putInState(event) {
+  const file = path.join(stateDir(P), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(event));
+  return event;
+}
+
+// A plain event recorded in the state clone at `at` (milliseconds).
+export const recordInState = (kind, data, at) => putInState(makeEvent({ kind, data, now: () => new Date(at) }));
 
 // A wake record as the watcher writes it, at `file`.
 export function wakeFile(dir, name, { events = [], digest = [], dropped = 0, note = 'A wake may repeat.' } = {}) {

@@ -20,7 +20,9 @@ import { pathToFileURL } from 'node:url';
 import { runAndExit, worktreeRoot } from './kit.js';
 import { featureSlug } from './session-start.js';
 import { featurePaths, readStatus, writeStatus } from '../feature/files.js';
-import { buildStatus, captureRulings, findLedger, loadFeature, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES } from '../feature/status.js';
+import {
+  buildStatus, captureRulings, findLedger, loadFeature, planIn, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES,
+} from '../feature/status.js';
 
 export const THROTTLE_MS = 5000;
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -87,7 +89,7 @@ export async function decide(input, { now = () => new Date(), answered, slice } 
   const nowMs = now().getTime();
   const checked = readSmallJson(checkedFile(p));
   const before = checked !== null && typeof checked === 'object' && !Array.isArray(checked) ? checked : {};
-  const ledger = attempt(() => findLedger(root, brief.plan)) ?? null;
+  const ledger = attempt(() => findLedger(root, planIn(root, brief))) ?? null;
   const stamp = ledger ? { file: path.relative(root, ledger.file), size: ledger.size, mtimeMs: ledger.mtimeMs } : null;
   const moved = JSON.stringify(before.ledger ?? null) !== JSON.stringify(stamp);
   // Two runs at once may leave the stamp of a ledger whose rulings the other

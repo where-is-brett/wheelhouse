@@ -18,6 +18,7 @@ import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent } from '../../../scripts/state/events.js';
+import { keep, taken } from '../../../scripts/hooks/pending.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
@@ -220,6 +221,33 @@ test('/state/write takes a caller-made id, and refuses one the state already hol
       const files = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
       assert.equal(files.length, 2);
       assert.ok(files.some((f) => f.includes('_note_0f1e')), 'the note is filed under its caller-made id');
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('a caller-made id can\'t take a kept signed click\'s place: the write is refused, and a record under a taken id is never counted as sent', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      // A signed click a hook kept to send later.
+      const click = makeEvent({ kind: 'review', data: { pr: 9, commit: 'abc1234', verdict: 'CLEAN' }, now: at(700) });
+      keep(PROJECT, 'record', { project: PROJECT, event: click }, at(700));
+      const write = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'first in' }, id: click.id });
+      assert.equal(write.ok, false);
+      assert.match(write.refused, /waiting to be sent/);
+
+      // Were another event under its id anyway, the click is refused in words the hook does not take as sent.
+      const other = makeEvent({ kind: 'review', data: { pr: 10, commit: 'abc1234', verdict: 'CLEAN' }, now: at(800) });
+      assert.equal((await c.client.state.record({ project: PROJECT, event: other })).ok, true);
+      const clash = sign({ ...makeEvent({ kind: 'review', data: { pr: 11, commit: 'abc1234', verdict: 'CLEAN' }, now: at(900) }), id: other.id });
+      const refused = await c.client.state.record({ project: PROJECT, event: clash });
+      assert.equal(refused.ok, false);
+      assert.equal(taken(refused), false, refused.refused);
+      // The same record sent again is taken.
+      const again = await c.client.state.record({ project: PROJECT, event: other });
+      assert.equal(again.ok, false);
+      assert.equal(taken(again), true, again.refused);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });

@@ -108,8 +108,9 @@ function readEvents(project) {
 }
 
 // The latest two distinct brief hashes the foreman recorded for each work,
-// over all its `feature` events: `{ recorded, before }`.
-function recordedBriefs(events) {
+// over all its `feature` events: `{ recorded, before }`. The foreman's amend
+// checks the brief against the same record.
+export function recordedBriefs(events) {
   const hashes = new Map();
   for (const e of events) {
     if (e.kind !== 'feature' || !isPlain(e.data) || !isText(e.data.work) || !isText(e.data.brief)) continue;
