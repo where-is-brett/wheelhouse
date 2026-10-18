@@ -97,6 +97,30 @@ test('the quick brief carries the five lines byte for byte', () => {
   assert.throws(() => renderBrief({ fields: fields('quick'), pluginRoot, implementText: `${FIVE_LINES}\n\nPush it.` }), /\/implement/);
 });
 
+test("Matt's code-review runs with Wheelhouse's reviewer in the quick and bug lanes", () => {
+  for (const lane of ['quick', 'bug']) {
+    const rest = afterOverride(render(lane));
+    const sentence = rest.split('\n').join(' ').split(/(?<=\.) /).find((s) => /code-review runs as it is written/.test(s));
+    assert.ok(sentence, `${lane}: says how code-review's reviewers are dispatched`);
+    assert.match(sentence, /`wheelhouse:reviewer`/);
+    assert.match(sentence, /`reviewer` role/);
+    assert.match(sentence, /`reviewerCritical`/);
+    assert.match(sentence, /never as general-purpose subagents/);
+  }
+});
+
+test('the installed /implement copy, laid out as Matt\'s file is, is accepted', () => {
+  // The body after the front matter: a leading blank line, and a blank line between the five paragraphs.
+  const installed = `\n${FIVE_LINES}\n`;
+  for (const text of [installed, installed.replace(/\n/g, '\r\n')]) {
+    for (const lane of ['quick', 'bug']) {
+      assert.ok(renderBrief({ fields: fields(lane), pluginRoot, implementText: text }).includes(FIVE_LINES), lane);
+    }
+  }
+  // A lane that does not carry the lines never reads them.
+  assert.ok(renderBrief({ fields: fields('small'), pluginRoot, implementText: 'anything' }).includes('Let people sign in'));
+});
+
 test("the bug brief starts systematic-debugging and never Matt's diagnosing-bugs", () => {
   for (const lane of LANES) assert.doesNotMatch(render(lane), /diagnosing-bugs/, lane);
   const text = render('bug');
@@ -178,17 +202,24 @@ test('an amended brief says what changed and has a new hash', () => {
   const { fields: after, body } = parseBrief(amended);
   assert.equal(after.version, 2);
   assert.deepEqual({ ...after, version: 1 }, parseBrief(original).fields);
-  assert.match(body.trimStart(), /^# What changed\n\n- 19 October 2026 \(version 2\): The director wants sign in by email only\n/);
-  assert.ok(body.includes(overrideText()), 'the override is still whole');
-  assert.ok(body.indexOf('# What changed') < body.indexOf(overrideText()));
+  // The override stays first and whole; the section follows it, before the work and the goal.
+  assert.ok(body.trimStart().startsWith(overrideText()), 'the override still opens the text');
+  const afterTheOverride = body.trimStart().slice(overrideText().length);
+  assert.match(afterTheOverride, /^\n\n# What changed\n\n- 19 October 2026 \(version 2\): The director wants sign in by email only\n\n# The work\n/);
+  assert.ok(body.indexOf('# What changed') < body.indexOf('# The goal'));
+  assert.equal(body.match(/# What changed/g).length, 1);
   assert.notEqual(briefHash(amended), briefHash(original));
 
-  // A second amendment adds to the same section, newest first.
+  // A second amendment adds to the same section, newest first, still after the override.
   const again = amendBrief(amended, { change: 'Drop the second slice', now: '2026-10-20T00:00:00Z' });
   const second = parseBrief(again);
   assert.equal(second.fields.version, 3);
+  assert.ok(second.body.trimStart().startsWith(overrideText()));
   assert.equal(second.body.match(/# What changed/g).length, 1);
-  assert.match(second.body, /# What changed\n\n- 20 October 2026 \(version 3\): Drop the second slice\n- 19 October 2026 \(version 2\): The director wants sign in by email only\n/);
+  assert.ok(second.body.trimStart().slice(overrideText().length).startsWith('\n\n# What changed\n\n- 20 October 2026 (version 3): Drop the second slice\n- 19 October 2026 (version 2): The director wants sign in by email only\n\n# The work\n'));
+  assert.ok(second.body.indexOf('# What changed') < second.body.indexOf('# The goal'));
+  assert.ok(second.body.includes(overrideText()), 'the override is still whole');
+  assert.equal(second.body.slice(second.body.indexOf('# The work')), body.slice(body.indexOf('# The work')), 'the rest of the text is unchanged');
 
   assert.throws(() => amendBrief('not a brief', { change: 'x', now }), /can't be read/);
   assert.throws(() => amendBrief(original, { change: '', now }), /change/);

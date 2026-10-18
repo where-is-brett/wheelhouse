@@ -75,14 +75,17 @@ export function renderBrief({ fields, pluginRoot, implementText } = {}) {
   const block = `\`\`\`json\n${JSON.stringify(fields, null, 2)}\n\`\`\`\n`;
   const { fields: f } = parseBrief(block);
 
-  const lines = implementLines();
-  if (implementText !== undefined && evenLines(implementText) !== lines) {
+  // Only the lanes that carry the five lines read them, and check them against the installed copy.
+  const carries = f.lane === 'quick' || f.lane === 'bug';
+  const lines = carries ? implementLines() : null;
+  if (carries && implementText !== undefined && evenLines(implementText) !== lines) {
     throw new Error("The installed /implement text differs from the five lines the quick lane carries");
   }
 
   const cli = `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
-  const shared = { cli, featureDir: FEATURE_DIR, fixRounds: String(FIX_ROUNDS), reportWords: String(REPORT_WORDS), work: f.work, lane: f.lane, implementLines: lines };
-  const laneText = fill(template('lanes', `${f.lane}.md`).replace(IMPLEMENT_BLOCK, `${lines}\n`), shared).trim();
+  const shared = { cli, featureDir: FEATURE_DIR, fixRounds: String(FIX_ROUNDS), reportWords: String(REPORT_WORDS), work: f.work, lane: f.lane, ...(carries ? { implementLines: lines } : {}) };
+  const laneTemplate = template('lanes', `${f.lane}.md`);
+  const laneText = fill(carries ? laneTemplate.replace(IMPLEMENT_BLOCK, `${lines}\n`) : laneTemplate, shared).trim();
 
   const text = fill(template('brief.md'), {
     ...shared,
@@ -112,8 +115,10 @@ function dayMonthYear(now) {
   return `${when.getUTCDate()} ${MONTHS[when.getUTCMonth()]} ${when.getUTCFullYear()}`;
 }
 
-// The brief `text` with its version one higher and a "What changed" section at
-// the top of the text after the JSON block. A section from an earlier amendment
+const OVERRIDE_HEADING = '# The Wheelhouse override';
+
+// The brief `text` with its version one higher and a "What changed" section
+// straight after the override, which stays first. A section from an earlier amendment
 // is kept, with the latest line first. Returns text only; the caller writes it and
 // records its hash. Throws if `text` is not a brief.
 export function amendBrief(text, { change, now } = {}) {
@@ -123,7 +128,13 @@ export function amendBrief(text, { change, now } = {}) {
   const date = dayMonthYear(now);
   const version = fields.version + 1;
 
-  let rest = body.replace(/^\s+/, '');
+  // The override opens the text and ends at the next top-level heading.
+  const text0 = body.replace(/^\s+/, '');
+  if (!text0.startsWith(OVERRIDE_HEADING)) throw new Error('The brief has no override');
+  const end = text0.indexOf('\n# ', OVERRIDE_HEADING.length);
+  const override = end === -1 ? text0.trimEnd() : text0.slice(0, end).trimEnd();
+  let rest = end === -1 ? '' : text0.slice(end + 1);
+
   let earlier = '';
   const section = /^# What changed\r?\n([\s\S]*?)(?=\r?\n# |$)/.exec(rest);
   if (section) {
@@ -132,5 +143,5 @@ export function amendBrief(text, { change, now } = {}) {
   }
   const entries = [`- ${date} (version ${version}): ${said}`, ...(earlier === '' ? [] : [earlier])].join('\n');
   const block = `\`\`\`json\n${JSON.stringify({ ...fields, version }, null, 2)}\n\`\`\`\n`;
-  return `${block}\n# What changed\n\n${entries}\n${rest === '' ? '' : `\n${rest}`}`;
+  return `${block}\n${override}\n\n# What changed\n\n${entries}\n${rest === '' ? '' : `\n${rest}`}`;
 }
