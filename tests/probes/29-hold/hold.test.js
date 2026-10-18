@@ -52,7 +52,15 @@ test('without the marker the hook stays silent for every tool', () => {
   }
 });
 
-test('the marker is looked for in the session folder, not the hook folder', () => {
-  const result = runHook(folder(false), 'Bash', { command: 'echo x' });
+test('a marker beside the hook, with an unmarked session folder, stays silent', () => {
+  const beside = fs.mkdtempSync(path.join(os.tmpdir(), 'hold-copy-'));
+  const copy = path.join(beside, 'hold.js');
+  fs.copyFileSync(hook, copy);
+  fs.writeFileSync(path.join(beside, '.hold-probe'), '');
+  const result = spawnSync(process.execPath, [copy], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', cwd: folder(false), tool_name: 'Bash', tool_input: { command: 'echo x' } }),
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, '');
 });

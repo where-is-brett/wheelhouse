@@ -27,7 +27,7 @@ That a pre-tool hook can refuse edits and commands in a session whose fingerprin
 
 Both sessions passed in both runs (log kept outside the repository, at `~/.wheelhouse-probes/29-hold/run.jsonl`).
 
-- **Held:** "Read ran, Edit refused (probe: held), Write refused (probe: held), shell refused (probe: held)". The Read returned the file's contents. The three refusals came back as errors reading "PreToolUse:Edit hook error: probe: held" (and the same for Write and Bash), so the reason the hook gives is what the session sees. The folder held only `notes.txt` ("before") and the marker.
+- **Held:** "Read ran, Edit refused (probe: held), Write refused (probe: held), shell refused (probe: held)". The Read returned the file's contents. The three refusals came back as errors reading "PreToolUse:Edit hook error: probe: held" (and the same for Write and Bash), so the reason the hook gives is what the session sees. `notes.txt` still read "before", and there was no `new.txt` and no `bash-ran` folder.
 - **Free:** "Read ran, Edit ran, Write ran, shell ran". `notes.txt` read "after", `new.txt` existed, and the `bash-ran` folder existed. No result mentioned "probe: held".
 - **The hold beat permission settings.** In the held session the shell command had an allow rule and Edit and Write were being accepted automatically; the hook refused them all the same.
 - **The hook loaded from the throwaway project's settings alone** (`--setting-sources project,local`), in a headless session, with no prompt to trust the folder.
@@ -38,6 +38,7 @@ Both sessions passed in both runs (log kept outside the repository, at `~/.wheel
 - **A pre-tool hook is a hold that works as designed on the Mac:** it refuses by tool name, whatever the permission rules and mode say, and the session is told why. A session whose fingerprints did not match can be held by a hook that checks for a marker (or, in the real design, the fingerprints) and refuses all but the reading tools.
 - **Marker or fingerprints are read from the session's folder** (`cwd` in the hook's input). The real hold would read whatever the design decides records the mismatch; this check shows only that a hook can act on a file in the folder.
 - **Reading stays open.** Only `Read` was exercised among the three open tools; `Grep` and `Glob` are let through by the same list and were not asked for.
+- **The real hold must fail closed.** The repository's guards do (`scripts/hooks/kit.js` turns a throw into a deny); this probe's hook does not, so a crash was not shown, and the real hold (Task 26) has to refuse when it cannot decide.
 - **Not shown:** that a hook which crashes, or fails to start, still holds (the probe's hook only ran correctly); that a subagent's tool calls are held (the session used none); an interactive or Desktop session; or more than two runs of each session, so the model's behaviour is two samples.
 - **Windows:** the same probe is written to run there unchanged; the harness finds `claude` as `claude.exe` or as a `.cmd` shim run through `cmd.exe` with the prompt on stdin. The hook command is `node "<path>"` with forward slashes; whether Windows takes it is what the sitting shows.
 
