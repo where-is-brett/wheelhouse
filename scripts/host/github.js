@@ -50,6 +50,10 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       return { headSha: pr.headRefOid, ...(typeof pr.headRefName === 'string' ? { headRef: pr.headRefName } : {}), ...(typeof pr.baseRefName === 'string' ? { baseRef: pr.baseRefName } : {}), mergeable: MERGEABLE[pr.mergeable] ?? 'unknown', state: STATE[pr.state] ?? 'unknown' };
     },
 
+    async branchHead(branch) {
+      return (await ask(['api', `repos/${repo}/branches/${encodeURIComponent(branch)}`]))?.commit?.sha;
+    },
+
     async ciState(sha) {
       const answer = await ask(['api', 'graphql', '-f', `query=${CI_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `sha=${sha}`]);
       // A GraphQL answer can carry errors with a 200; that is not the absence of checks.

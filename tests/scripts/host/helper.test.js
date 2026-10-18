@@ -39,6 +39,7 @@ function fakeAdapter(overrides = {}) {
     defaultBranch: async () => 'main',
     prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }),
     ciState: async (sha) => ({ sha, state: 'success' }),
+    branchHead: async () => HEAD,
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async (args) => ({ number: 7, url: `https://example.invalid/pr/7?h=${args.head}` }),
     updatePr: async () => ({ number: 7 }),
@@ -1010,4 +1011,48 @@ test('a helper that finds another starting says so in its own words', { skip: un
       assert.equal(fs.existsSync(`${address}.start`), true, 'a lock that is not ours is left alone');
     });
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// --- host facts ---
+
+const ghFixture = (name) => fs.readFileSync(new URL(`../../fixtures/host/github/${name}`, import.meta.url), 'utf8');
+// A fake `gh` that answers the free-plan private repository, as the protection read asks.
+const freePlanRun = async (file, args) => {
+  const answers = { 'repos/o/p': ghFixture('repo-private-free.json'), user: ghFixture('user-free.json') };
+  return args[1] in answers ? { code: 0, stdout: answers[args[1]], stderr: '' } : { code: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' };
+};
+
+test('/host/facts says whether protection is on and whether the default branch has any CI', async () => {
+  const p = await project({ lock: false });
+  try {
+    await as(p.home, async () => {
+      const heads = [];
+      const none = fakeAdapter({ branchHead: async (branch) => { heads.push(branch); return HEAD; }, ciState: async (sha) => ({ sha, state: 'none' }) });
+      await withHelper(none, async (client) => {
+        assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'none', ci: 'none' });
+        assert.deepEqual(heads, ['main'], 'the head asked for is the default branch\'s');
+      }, { run: freePlanRun });
+      for (const state of ['success', 'pending', 'failure']) {
+        await withHelper(fakeAdapter({ ciState: async (sha) => ({ sha, state }) }), async (client) => {
+          assert.equal((await client.host.facts({ project: 'o__p' })).ci, 'present', state);
+        }, { run: freePlanRun });
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('/host/facts says unknown for what the host would not tell, and still answers the rest', async () => {
+  const p = await project({ lock: false });
+  try {
+    await as(p.home, async () => {
+      const broken = fakeAdapter({ branchHead: async () => { throw new Error('the host is down'); } });
+      await withHelper(broken, async (client) => {
+        assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'none', ci: 'unknown' });
+      }, { run: freePlanRun });
+      const refused = async () => ({ code: 1, stdout: '', stderr: 'gh: Bad credentials (HTTP 401)' });
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'unknown', ci: 'present' });
+      }, { run: refused });
+    });
+  } finally { p.cleanup(); }
 });

@@ -109,6 +109,10 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       return { headSha: mr.sha, ...(typeof mr.source_branch === 'string' ? { headRef: mr.source_branch } : {}), ...(typeof mr.target_branch === 'string' ? { baseRef: mr.target_branch } : {}), mergeable: mergeable(mr.detailed_merge_status), state: STATE[mr.state] ?? 'unknown' };
     },
 
+    async branchHead(branch) {
+      return (await ask(['api', `${project}/repository/branches/${encodeURIComponent(branch)}`]))?.commit?.id;
+    },
+
     async ciState(sha) {
       const pipelines = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`]);
       const newest = Array.isArray(pipelines) ? pipelines[0] : undefined;

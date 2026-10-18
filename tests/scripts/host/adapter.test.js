@@ -515,3 +515,22 @@ test('when the merged-results lookup throws, CI reads none and the gate refuses'
   assert.equal(decision.allow, false);
   assert.ok(decision.reasons.some((r) => /CI has not passed/.test(r)));
 });
+
+// --- the default branch's head, for the health read of CI ---
+
+test('branchHead reads the head commit of a branch on each host', async () => {
+  const github = adapter('github', { stdout: JSON.stringify({ name: 'main', commit: { sha: SHA } }) });
+  assert.equal(await github.a.branchHead('main'), SHA);
+  assert.deepEqual(github.calls[0].args, ['api', `repos/${REPO}/branches/main`]);
+  const gitlab = adapter('gitlab', { stdout: JSON.stringify({ name: 'feature/x', commit: { id: GL_SHA } }) });
+  assert.equal(await gitlab.a.branchHead('feature/x'), GL_SHA);
+  assert.deepEqual(gitlab.calls[0].args, ['api', 'projects/a-director%2Fproduct/repository/branches/feature%2Fx']);
+});
+
+test('branchHead refuses an answer that is not a commit, and a branch that is not text', async () => {
+  const odd = adapter('github', { stdout: JSON.stringify({ commit: { sha: 'abc' } }) });
+  await assert.rejects(odd.a.branchHead('main'), /commit/);
+  const none = adapter('github');
+  await assert.rejects(none.a.branchHead(''), /branch/);
+  assert.equal(none.calls.length, 0);
+});

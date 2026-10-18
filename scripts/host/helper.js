@@ -26,6 +26,7 @@ import { scrub } from './adapter.js';
 import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { childEnv } from './connection.js';
+import { protectionStatus } from './protection.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { cloneState } from '../state/clone.js';
@@ -1595,6 +1596,29 @@ export async function startHelper({
     if (stopped()) return STOP_REFUSAL;
     return { ok: true, result: await call(adapter, body) };
   };
+  // What the board's health lines need from the host: whether protection is on ('none' when the
+  // plan can't have it) and whether the default branch's head has any checks or pipeline. What the
+  // host would not say is 'unknown'.
+  async function hostFacts({ project }, ctx) {
+    const { host, repo, connection } = recordOf(project);
+    const protection = async () => {
+      try {
+        const token = ctx.env?.GITLAB_TOKEN;
+        const api = host === 'gitlab' ? gitlabApi({ baseUrl: connection.baseUrl ?? 'https://gitlab.com', token, fetch }) : undefined;
+        const status = await protectionStatus({ host, repo, run, api, env: ctx.env });
+        return status.on ? 'on' : (status.available ? 'unknown' : 'none');
+      } catch { return 'unknown'; }
+    };
+    const ci = async () => {
+      try {
+        const adapter = await ctx.adapter();
+        const head = await adapter.branchHead(await defaultBranchOf(project, adapter));
+        return (await adapter.ciState(head)).state === 'none' ? 'none' : 'present';
+      } catch { return 'unknown'; }
+    };
+    const [onOrNot, checks] = await Promise.all([protection(), ci()]);
+    return { ok: true, protection: onOrNot, ci: checks };
+  }
   const pass = (call) => async (body, ctx) => ({ ok: true, result: await call(await ctx.adapter(), body) });
   const routes = {
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
@@ -1652,6 +1676,7 @@ export async function startHelper({
     '/pr/update': writing((a, { number, title, body }) => a.updatePr({ number, title, body })),
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),
     '/ci': pass((a, { sha }) => a.ciState(sha)),
+    '/host/facts': hostFacts,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
