@@ -111,17 +111,17 @@ export function eventPath(event) {
 }
 
 // Pushes, pulling and retrying when the remote moved on. Never throws.
-async function pushWithRetry(dir, push, env) {
+async function pushWithRetry(dir, push, env, branch = STATE_BRANCH) {
   let result = { ok: false };
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      result = await push(dir, STATE_BRANCH);
+      result = await push(dir, branch);
     } catch {
       return { ok: false };
     }
     if (result.ok) return { ok: true };
     if (result.rejected !== 'non-fast-forward' || attempt === MAX_RETRIES) break;
-    const pulled = await git(dir, ['pull', '--rebase', 'origin', STATE_BRANCH], env);
+    const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
     if (pulled.code !== 0) {
       await git(dir, ['rebase', '--abort'], env);
       break;
@@ -149,12 +149,13 @@ function removeEmpty(folders) {
   }
 }
 
-export async function writeEvent({ project, event, push, env }) {
+// `dir` and `branch` name another clone of events, such as the profile's; by default
+// the project's state clone and its state branch.
+export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }
-  const dir = stateDir(project);
   const relative = eventPath(event);
   const file = path.join(dir, relative);
   const made = madeFolders(path.dirname(file));
@@ -187,20 +188,20 @@ export async function writeEvent({ project, event, push, env }) {
     removeEmpty(made);
     throw new Error(`The event file ${path.basename(file)} could not be committed`);
   }
-  const pushed = await pushWithRetry(dir, push, env);
+  const pushed = await pushWithRetry(dir, push, env, branch);
   return pushed.refused
     ? { path: file, pushed: false, refused: pushed.refused }
     : { path: file, pushed: pushed.ok };
 }
 
 // Pulls, then pushes anything not yet pushed. Resolves with whether the pull
-// went through and how many commits the remote still lacks.
-export async function syncState({ project, push, env }) {
-  const dir = stateDir(project);
-  const pulled = await git(dir, ['pull', '--rebase', 'origin', STATE_BRANCH], env);
+// went through and how many commits the remote still lacks. `dir` and `branch`
+// as for writeEvent.
+export async function syncState({ project, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
+  const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
   if (pulled.code !== 0) await git(dir, ['rebase', '--abort'], env);
-  await pushWithRetry(dir, push, env);
-  const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${STATE_BRANCH}..HEAD`], env);
+  await pushWithRetry(dir, push, env, branch);
+  const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], env);
   const count = Number.parseInt(ahead.stdout.trim(), 10);
   // A count that cannot be read is taken as "something is still unpushed".
   return { pulled: pulled.code === 0, unpushed: ahead.code === 0 && Number.isInteger(count) ? count : 1 };

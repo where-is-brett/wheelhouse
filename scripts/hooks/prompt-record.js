@@ -5,7 +5,8 @@
 // Only this hook signs. Each signed record is written to
 // projects/<project>/pending/ before it is sent and removed once the helper has
 // it, so a hook cut short by its time limit loses nothing; the next session
-// start sends what is left.
+// start sends what is left. A confirmation of a setting in the director's
+// profile goes to the profile; the answer itself still goes to the project.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,7 +14,7 @@ import { runAndExit, projectOf } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift } from '../lib/stop.js';
-import { stateDir } from '../lib/paths.js';
+import { profileDir, stateDir } from '../lib/paths.js';
 import { makeEvent, listEvents, confirmationFor, CONFIRMABLE_KINDS } from '../state/events.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine } from '../state/card-lines.js';
 
@@ -78,9 +79,14 @@ async function earned({ project, question, label, client, now, left }) {
     return null;
   }
   if (label === 'Confirm') {
-    const found = listEvents(stateDir(project), { report: () => {} })
+    // A line may name an event in the project's state or in the director's profile; one
+    // that names events in both, or several, records nothing.
+    const named = (dir) => listEvents(dir, { report: () => {} })
       .filter((e) => CONFIRMABLE_KINDS.includes(e.kind) && question.includes(confirmLine(e)));
-    return found.length === 1 ? { made: confirmationFor(found[0]) } : null;
+    const found = named(stateDir(project));
+    const inProfile = named(profileDir());
+    if (found.length + inProfile.length !== 1) return null;
+    return found.length === 1 ? { made: confirmationFor(found[0]) } : { made: confirmationFor(inProfile[0]), profile: true };
   }
   const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
   if (label === 'Lift STOP') {
@@ -144,17 +150,19 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     try {
       const got = await earned({ project, ...click, client: api, now, left });
       if (!got) continue;
-      const body = { project, event: makeEvent({ ...got.made, now }) };
-      file = keep(project, 'record', body, now);
+      const event = makeEvent({ ...got.made, now });
+      const route = got.profile ? 'profile-record' : 'record';
+      const body = got.profile ? { event } : { project, event };
+      file = keep(project, route, body, now);
       if (got.lift) liftStop();
-      queued.push({ file, body });
+      queued.push({ file, body, route });
     } catch {
       // One question failing does not stop the rest; a lift that did not happen leaves no record.
       if (file) fs.rmSync(file, { force: true });
     }
   }
-  for (const { file, body } of queued) {
-    const result = await left(api.state.record(body));
+  for (const { file, body, route } of queued) {
+    const result = await left(route === 'profile-record' ? api.profile.record(body) : api.state.record(body));
     if (taken(result)) fs.rmSync(file, { force: true });
   }
   // Then the plain answers. What cannot be sent in time is kept.

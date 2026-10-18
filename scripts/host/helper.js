@@ -37,7 +37,10 @@ import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
-import { checkSetting } from '../settings/catalogue.js';
+import { checkSetting, definitionOf } from '../settings/catalogue.js';
+import { eventHash } from '../state/events.js';
+import { writeBackup } from '../state/backup.js';
+import { PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -216,6 +219,7 @@ export const PUSH_REFUSALS = {
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
   notJson: 'a file in the state push is not JSON, so nothing is pushed',
   prBase: 'a pull request may only be opened against the default branch',
+  profile: 'a profile push may only add new event files under events/, and add or remove bundles under backups/',
 };
 
 // A plain branch name: [A-Za-z0-9._/-], not refs/..., not HEAD, and nothing git
@@ -240,6 +244,12 @@ const ALLOWED_CHANGE = {
     && file.startsWith('events/') && file.length > 'events/'.length,
   [LOCK_BRANCH]: (status, mode, file) => (status === 'A' || status === 'M') && mode === '100644' && file === 'lock.json',
 };
+
+// What a profile push may carry: new plain event files, and bundles added to or removed
+// from backups/<project>/. Nothing under keys/, nothing changed in place.
+const BACKUP_PATH = /^backups\/[A-Za-z0-9._-]+\/\d{4}-\d{2}-\d{2}\.bundle$/;
+const PROFILE_CHANGE = (status, mode, file) => (ALLOWED_CHANGE[STATE_BRANCH](status, mode, file))
+  || (BACKUP_PATH.test(file) && ((status === 'A' && mode === '100644') || (status === 'D' && mode === '000000')));
 
 // Checks every commit up to `sha` that the remote's copy of `branch` lacks.
 // The remote's copy is fetched first; with none, every commit is checked, the
@@ -270,7 +280,8 @@ async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = fa
       const [, newMode, , newId, status] = meta.replace(/^:/, '').split(' ');
       const file = parts[i + 1];
       if (typeof file !== 'string' || !allowed(status, newMode, file)) return { allowed: false, refused };
-      if (scan) {
+      // `scan` is true for every file, or picks the files to scan.
+      if (scan === true || (typeof scan === 'function' && scan(file))) {
         const found = await scanAdded(git, newId, file);
         if (found) return { allowed: false, refused: found };
       }
@@ -443,6 +454,9 @@ function placeFolder(cwd) {
 // director's approval of the restore pull request can still be read and kept.
 const FALL_BACK_ROUTES = ['/pr/state', '/state/record'];
 
+const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/state/backup'];
+const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
+
 function checkProject(project) {
   try {
     stateDir(project);
@@ -513,6 +527,8 @@ function readBody(req, res) {
 
 export async function startHelper({
   address = helperAddress(), adapterFor, envFor, now = () => new Date(), run = realRun, onArrive = () => {}, fetch = globalThis.fetch, startWaitMs = 30 * 1000,
+  // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
+  profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -860,6 +876,128 @@ export async function startHelper({
     if (listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === event.id)) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     return written({ event, result });
+  }
+
+  // --- the director's profile (design section 5.5) ---
+
+  // What git gets for the profile's own connection; the profile has no host requests.
+  async function profileContext() {
+    const { mode, env } = connectionOf(await profileEnvFor());
+    return {
+      mode,
+      env,
+      signedOut: false,
+      gitEnv: mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env },
+      secrets: secretsOf(env),
+      adapter: async () => refuse('the profile makes no requests of the host'),
+    };
+  }
+
+  // Pushes the profile branch straight from the helper's own clone, once every commit the
+  // remote lacks has passed the profile's push rules. Never a force-push.
+  async function pushProfile(ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const dir = profileDir();
+    const keyed = gitIn(ctx.gitEnv);
+    const inClone = (args) => keyed('git', args, { cwd: dir });
+    const shallow = await inClone(['rev-parse', '--is-shallow-repository']);
+    if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
+    if (shallow.stdout.trim() === 'true') return { ok: false, refused: PUSH_REFUSALS.shallow };
+    const resolved = await inClone(['rev-parse', '--verify', '-q', `refs/heads/${PROFILE_BRANCH}^{commit}`]);
+    const sha = resolved.stdout.trim();
+    if (resolved.code !== 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return { ok: false, refused: PUSH_REFUSALS.missing };
+    const checked = await checkCommits({
+      dir, branch: PROFILE_BRANCH, sha, run: keyed, allowed: PROFILE_CHANGE, refused: PUSH_REFUSALS.profile, scan: (file) => file.startsWith('events/'),
+    });
+    if (!checked.allowed) return { ok: false, refused: checked.refused };
+    if (stopped()) return STOP_REFUSAL;
+    const pushed = await inClone(['push', '--no-verify', '--porcelain', REMOTE, `${sha}:refs/heads/${PROFILE_BRANCH}`]);
+    if (pushed.code === 0) {
+      await unkeyed('git', ['update-ref', `refs/remotes/${REMOTE}/${PROFILE_BRANCH}`, sha], { cwd: dir });
+      return { ok: true };
+    }
+    if (pushed.timedOut) return { ok: false, refused: 'the host did not answer the push in time' };
+    const line = pushed.stdout.split('\n').find((l) => l.startsWith('!') && l.includes(`refs/heads/${PROFILE_BRANCH}`));
+    if (line && /\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(line)) return { ok: false, rejected: 'non-fast-forward' };
+    const detail = clean(pushed.stderr, ctx.secrets);
+    return { ok: false, refused: `git could not push the profile${detail ? `: ${detail}` : ''}` };
+  }
+  const profilePush = (ctx) => () => pushProfile(ctx);
+  const inProfile = () => ({ dir: profileDir(), branch: PROFILE_BRANCH });
+
+  // Commits the bundles added to or removed from backups/ since the last commit, so the
+  // folder is clean for a pull. A bundle changed in place, or any other file, is left alone.
+  async function commitBackups() {
+    const dir = profileDir();
+    const listed = await stateGit(dir, ['status', '--porcelain=v1', '-z', '-uall', '--', 'backups/']);
+    if (listed.code !== 0) refuse('the profile\'s backups could not be read');
+    const changed = listed.stdout.split('\0')
+      .filter((entry) => (entry.startsWith('?? ') || entry.startsWith(' D ')) && BACKUP_PATH.test(entry.slice(3)))
+      .map((entry) => entry.slice(3));
+    if (changed.length === 0) return;
+    const committed = (await stateGit(dir, ['add', '-A', '--', ...changed])).code === 0
+      && (await stateGit(dir, ['commit', '-q', '-m', 'Back up the state', '--', ...changed])).code === 0;
+    if (!committed) {
+      await stateGit(dir, ['reset', '-q', '--', ...changed]);
+      refuse('the profile\'s backups could not be committed');
+    }
+  }
+
+  // One at a time: the profile clone is shared by every profile route and the backup.
+  const profileRoute = (fn, { clone = true, write = false } = {}) => (body, ctx) => oneAtATime('profile', async () => {
+    if (write && stopped()) return STOP_REFUSAL;
+    if (clone) await ensureProfileClone({ remote: profileRemote(), env: ctx.gitEnv });
+    if (write && stopped()) return STOP_REFUSAL;
+    return fn(body, ctx);
+  });
+
+  async function doProfileWrite({ kind, data }, ctx) {
+    if (kind !== 'setting') refuse('only a setting is written to the profile');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
+    try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
+    if (definitionOf(data.key)?.home !== 'profile') refuse(`${data.key} is kept in each project, not in the profile`);
+    await commitBackups();
+    const event = makeEvent({ kind, data, now });
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    return written({ event, result });
+  }
+
+  async function doProfileRecord({ event }, ctx) {
+    if (!event || typeof event !== 'object' || Array.isArray(event)) refuse('the record must be an event');
+    if (event.kind !== 'confirmation') refuse('only a confirmation is recorded in the profile');
+    if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
+    if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
+    if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
+    const events = listEvents(profileDir(), { report: () => {} });
+    if (events.some((e) => e.id === event.id)) refuse('the profile already holds an event with that id');
+    const target = events.find((e) => e.id === event.data?.confirms);
+    if (target?.kind !== 'setting' || eventHash(target) !== event.data?.confirmsHash) {
+      refuse('the confirmation names something that is not a profile event');
+    }
+    await commitBackups();
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    return written({ event, result });
+  }
+
+  // The answer carries the last push's refusal, when the push rules refused it.
+  async function doProfileSync(_body, ctx) {
+    await commitBackups();
+    let refused;
+    const push = async () => {
+      const pushed = await pushProfile(ctx);
+      refused = pushed.refused;
+      return pushed;
+    };
+    const synced = await syncState({ push, env: ctx.gitEnv, ...inProfile() });
+    return refused === undefined ? { ok: true, ...synced } : { ok: false, ...synced, refused };
+  }
+
+  // This week's bundle of the project's state branch, into the profile's backups/.
+  async function doBackup({ project }) {
+    let before = [];
+    try { before = fs.readdirSync(path.join(profileDir(), 'backups', project)); } catch { /* none yet */ }
+    const file = await writeBackup({ project, now });
+    return { ok: true, file: path.relative(profileDir(), file).replaceAll('\\', '/'), made: !before.includes(path.basename(file)) };
   }
 
   // The changed files and the configuration, in the mirror. One at a time per
@@ -1394,6 +1532,14 @@ export async function startHelper({
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
     '/state/views': stateRoute(async ({ project }) => ({ ok: true, views: await writeViews(project, { now }) })),
+    '/state/backup': (body, ctx) => oneAtATime('profile', () => stateRoute(doBackup)(body, ctx)),
+    '/profile/clone': profileRoute(async (_body, ctx) => ({
+      ok: true, ...(await ensureProfileClone({ remote: profileRemote(), env: ctx.gitEnv })),
+    }), { clone: false }),
+    '/profile/write': profileRoute(doProfileWrite, { write: true }),
+    '/profile/record': profileRoute(doProfileRecord),
+    '/profile/sync': profileRoute(doProfileSync),
+    '/profile/views': profileRoute(async () => ({ ok: true, views: await writeProfileViews({ now }) })),
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),
@@ -1464,8 +1610,14 @@ export async function startHelper({
       // runbook.js runs inside the sandbox, which cannot read ~/.wheelhouse: it sends its folder,
       // and the project is placed here.
       if (runbookRoute && body.cwd !== undefined) body = { ...body, project: placeFolder(body.cwd) };
-      const project = checkProject(body.project);
-      ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+      // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
+      if (NEEDS_PROFILE.includes(url.pathname) && profileRemote() === null) return send(res, 200, PROFILE_NOT_SET_UP);
+      if (url.pathname.startsWith('/profile/')) {
+        ctx = await profileContext();
+      } else {
+        const project = checkProject(body.project);
+        ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+      }
       onArrive(url.pathname); // for tests: the request is about to enter its queue
       const answer = await route(body, ctx);
       return send(res, 200, cleanDeep(answer, ctx.secrets));

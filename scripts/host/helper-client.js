@@ -58,6 +58,15 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
       views: post('/state/views'), //   { project } -> { ok, views }
+      backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
+    },
+    // The director's profile. Each answers { ok: false, why } while the profile isn't set up.
+    profile: {
+      clone: post('/profile/clone'), //   {} -> { ok, made }
+      write: post('/profile/write'), //   { kind: 'setting', data }: a setting whose home is the profile
+      record: post('/profile/record'), // { event }: a signed confirmation of a profile event
+      sync: post('/profile/sync'), //     {} -> { ok, pulled, unpushed, refused? }: commits new bundles, pulls and pushes
+      views: post('/profile/views'), //   {} -> { ok, views }
     },
     lock: {
       take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }

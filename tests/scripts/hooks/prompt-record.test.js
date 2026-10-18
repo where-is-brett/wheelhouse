@@ -8,7 +8,7 @@ import { decide, sendPending } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES } from '../../../scripts/state/card-lines.js';
-import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -29,7 +29,7 @@ async function withHome(fn) {
 }
 
 function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, refuse = false } = {}) {
-  const calls = { write: [], record: [], prState: [] };
+  const calls = { write: [], record: [], profileRecord: [], prState: [] };
   const no = { ok: false, refused: 'no' };
   return {
     calls,
@@ -37,6 +37,9 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
     state: {
       write: async (b) => { calls.write.push(b); return refuse ? no : { ok: true }; },
       record: async (b) => { calls.record.push(b); return refuse ? no : { ok: true }; },
+    },
+    profile: {
+      record: async (b) => { calls.profileRecord.push(b); return refuse ? no : { ok: true }; },
     },
   };
 }
@@ -50,8 +53,8 @@ const input = (answers, { multi = false, response = true } = {}) => ({
 const deps = (client) => ({ client, now: () => NOW, projectOf: () => ({ project: P }) });
 const kinds = (c) => c.calls.record.map((r) => r.event.kind);
 
-function keepEvent(event) {
-  const file = path.join(stateDir(P), eventPath(event));
+function keepEvent(event, dir = stateDir(P)) {
+  const file = path.join(dir, eventPath(event));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(event));
 }
@@ -361,5 +364,55 @@ test('sendPending stops between records once its deadline has passed and keeps t
     assert.deepEqual(seen, [1]);
     assert.equal(result.sent, 1);
     assert.equal(fs.readdirSync(folder).length, 2);
+  });
+});
+
+test('a Confirm line naming a profile setting records the confirmation through the profile', async () => {
+  await withHome(async (home) => {
+    const setting = makeEvent({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep it short' }, now: () => NOW });
+    keepEvent(setting, profileDir());
+    const c = fake();
+    await decide(input({ [`${confirmLine(setting)}?`]: 'Confirm' }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 1);
+    const [rec] = c.calls.profileRecord;
+    assert.equal(rec.event.kind, 'confirmation');
+    assert.equal(rec.event.data.confirms, setting.id);
+    assert.ok(rec.event.sig);
+    assert.equal(c.calls.write.length, 1, 'the answer itself goes to the project\'s state');
+
+    // One the helper does not take is kept, and sent through the profile later.
+    const refusing = fake({ refuse: true });
+    await decide(input({ [confirmLine(setting)]: 'Confirm' }), deps(refusing));
+    const folder = path.join(home, 'projects', P, 'pending');
+    const kept = fs.readdirSync(folder).map((f) => JSON.parse(fs.readFileSync(path.join(folder, f), 'utf8')));
+    assert.deepEqual(kept.map((k) => k.route).sort(), ['profile-record', 'write']);
+    const later = fake();
+    await sendPending(P, later);
+    assert.equal(later.calls.profileRecord.length, 1);
+    assert.equal(later.calls.record.length, 0);
+    assert.deepEqual(fs.readdirSync(folder), []);
+  });
+});
+
+test('a Confirm line that matches events in both the state and the profile records nothing', async () => {
+  await withHome(async () => {
+    // The same event in both.
+    const setting = makeEvent({ kind: 'setting', data: { key: 'briefing', value: 'short' }, now: () => NOW });
+    keepEvent(setting);
+    keepEvent(setting, profileDir());
+    // A card naming a state ruling and a profile setting at once.
+    const ruling = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
+    keepEvent(ruling);
+    const other = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build' }, now: () => NOW });
+    keepEvent(other, profileDir());
+    const c = fake();
+    await decide(input({
+      [confirmLine(setting)]: 'Confirm',
+      [`${confirmLine(ruling)} and ${confirmLine(other)}`]: 'Confirm',
+    }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 2);
   });
 });
