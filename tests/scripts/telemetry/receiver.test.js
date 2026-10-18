@@ -40,6 +40,13 @@ test('only session, model, type, source, the value and the times are kept', () =
   }
 });
 
+test('a data point without a start time gets an empty start', () => {
+  const changed = structuredClone(fixture);
+  delete changed.resourceMetrics[1].scopeMetrics[0].metrics[0].sum.dataPoints[0].startTimeUnixNano;
+  const [first] = parseOtlpMetrics(changed).filter((point) => point.session === 'session-2');
+  assert.equal(first.start, '');
+});
+
 test('a query_source that is not one short word is dropped', () => {
   const sourceOf = (value) => {
     const changed = structuredClone(fixture);

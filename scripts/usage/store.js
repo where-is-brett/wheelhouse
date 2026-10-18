@@ -141,7 +141,8 @@ function usablePoint(point, nowIso) {
     model: typeof point.model === 'string' && MODEL.test(point.model) ? point.model : 'unknown',
     value: point.value,
     at,
-    start: isoOf(point.start) ?? at,
+    // A point with no start time belongs to one series with the empty start, never to a new one each export.
+    start: typeof point.start === 'string' ? isoOf(point.start) ?? '' : '',
     cumulative: point.cumulative === true,
   };
   if (point.metric === 'tokens' && typeof point.type === 'string' && KIND.test(point.type)) usable.type = point.type;
@@ -149,23 +150,42 @@ function usablePoint(point, nowIso) {
   return usable;
 }
 
+// How many of a delta series' recent export times are kept to recognise a repeated export.
+const RECENT_EXPORTS = 32;
+
 // Turns each series' points into increases and appends them to the day's records.
 // A cumulative series (key includes its start time) adds only its rise since the last value
 // seen; a new start time is a new series that counts from zero; a repeat, or a lower value
-// with the same start time (out of order), adds nothing. A delta series adds each point as it
-// is, except one repeated exactly (same time, same value) as the last.
+// with the same start time (out of order), adds nothing. A delta export is identified by its
+// time: points of one series sharing a time are summed (attributes that are not kept can split
+// one series into several points), and a time already counted for the series adds nothing,
+// whether it comes again straight away or after later exports.
 export function addPoints(points, { now } = {}) {
   const nowIso = instant(now);
   const file = usagePath('series.json');
   const kept = readJson(file);
   const series = kept && typeof kept === 'object' && !Array.isArray(kept) ? kept : {};
-  const byDate = new Map();
+  const items = [];
+  const deltas = new Map();
   for (const raw of points ?? []) {
     const point = usablePoint(raw, nowIso);
     if (!point) continue;
-    const key = JSON.stringify([
+    point.key = JSON.stringify([
       point.metric, point.session, point.model, point.type ?? null, point.source ?? null, point.cumulative ? point.start : null,
     ]);
+    if (!point.cumulative) {
+      const same = `${point.key}@${point.at}`;
+      if (deltas.has(same)) {
+        deltas.get(same).value += point.value;
+        continue;
+      }
+      deltas.set(same, point);
+    }
+    items.push(point);
+  }
+  const byDate = new Map();
+  for (const point of items) {
+    const { key } = point;
     const last = series[key];
     let increase;
     if (point.cumulative) {
@@ -173,10 +193,10 @@ export function addPoints(points, { now } = {}) {
       if (!last || point.value > last.value) series[key] = { value: point.value, start: point.start, seen: nowIso };
       else last.seen = nowIso;
     } else {
-      const repeated = last && last.at === point.at && last.value === point.value;
+      const ats = Array.isArray(last?.ats) ? last.ats : [];
+      const repeated = ats.includes(point.at);
       increase = repeated ? 0 : point.value;
-      if (repeated) last.seen = nowIso;
-      else series[key] = { value: point.value, at: point.at, seen: nowIso };
+      series[key] = { ats: repeated ? ats : [...ats, point.at].slice(-RECENT_EXPORTS), seen: nowIso };
     }
     increase = round(increase);
     if (!(increase > 0)) continue;

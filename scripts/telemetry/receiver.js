@@ -57,7 +57,7 @@ export function parseOtlpMetrics(body) {
           if (type) parsed.type = type;
           const source = textOf(point.attributes, 'query_source', SOURCE);
           if (source) parsed.source = source;
-          Object.assign(parsed, { value, at, start: isoOf(point.startTimeUnixNano) ?? at, cumulative });
+          Object.assign(parsed, { value, at, start: isoOf(point.startTimeUnixNano) ?? '', cumulative });
           points.push(parsed);
         }
       }

@@ -78,6 +78,39 @@ test('delta points are added as they are; one repeated exactly adds nothing', ()
   assert.equal(Object.keys(series).length, 1);
 }));
 
+test('a delta export is counted once: same-time points of a series are summed, and an export seen before adds nothing', () => withHome(() => {
+  const delta = (over) => point({ cumulative: false, ...over });
+  const t1 = '2026-10-18T09:00:00.000Z';
+  const t2 = '2026-10-18T09:01:00.000Z';
+  // two points of one series in one export (a dropped attribute split them)
+  const export1 = [delta({ value: 5, at: t1 }), delta({ value: 7, at: t1 })];
+  addPoints(export1, { now: NOW });
+  addPoints(export1, { now: NOW }); // sent again
+  assert.equal(total(records()), 12);
+  // equal values are both counted
+  addPoints([delta({ value: 3, at: t2 }), delta({ value: 3, at: t2 })], { now: NOW });
+  assert.equal(total(records()), 18);
+  // A, B, A: the first export comes again after a later one
+  addPoints([delta({ value: 5, at: t1 })], { now: NOW });
+  addPoints([delta({ value: 7, at: '2026-10-18T09:02:00.000Z' })], { now: NOW });
+  addPoints([delta({ value: 5, at: t1 })], { now: NOW });
+  assert.equal(total(records()), 25);
+  // another series at the same time is its own
+  addPoints([delta({ value: 2, at: t1, model: 'model-b' })], { now: NOW });
+  assert.equal(total(records()), 27);
+  // only the recent export times are kept
+  for (let i = 0; i < 40; i++) addPoints([delta({ value: 1, at: new Date(Date.UTC(2026, 9, 18, 10, i)).toISOString() })], { now: NOW });
+  const [entry] = Object.values(JSON.parse(fs.readFileSync(path.join(usageDir(), 'series.json'), 'utf8'))).filter((item) => item.ats);
+  assert.ok(entry.ats.length <= 32);
+}));
+
+test('a cumulative point with no start time is one series, not a new one each export', () => withHome(() => {
+  addPoints([point({ start: undefined, value: 10, at: '2026-10-18T09:00:00.000Z' })], { now: NOW });
+  addPoints([point({ start: undefined, value: 10, at: '2026-10-18T09:01:00.000Z' })], { now: NOW });
+  addPoints([point({ start: undefined, value: 16, at: '2026-10-18T09:02:00.000Z' })], { now: NOW });
+  assert.equal(total(records()), 16);
+}));
+
 test('the cost metric is kept in dollars beside the tokens', () => withHome(() => {
   addPoints([
     point({ metric: 'usd', type: undefined, value: 0.25, cumulative: false }),
