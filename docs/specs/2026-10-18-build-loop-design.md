@@ -122,7 +122,7 @@ Brainstorming sizes the work; the lane only goes up. These three lanes are Wheel
 | Several unrelated failures at once | Feature session | Superpowers `dispatching-parallel-agents` | Investigates them side by side |
 | Review | Feature session | Superpowers `requesting-code-review` and `receiving-code-review` | A fresh reviewer; each finding checked before acting |
 | Before saying anything is done | Feature session | Superpowers `verification-before-completion` | Runs the checks and reads the output |
-| Main has moved and the branch conflicts | Feature session | Matt `resolving-merge-conflicts` | Superpowers has no skill for this |
+| Main has moved and the branch conflicts | Feature session | No skill: the brief's conflict rule | Matt removed `resolving-merge-conflicts` in v1.3.0 and Superpowers has none; the session merges the default branch in, resolves each conflict so both sides' intent survives, then re-checks and has the result reviewed |
 | The work is finished | Feature session | Superpowers `finishing-a-development-branch`, as the override changes it | Opens the PR through the helper; never merges |
 | A quick change | Feature session | Matt `tdd`, then Matt `code-review` | The quick lane's loop (section 6) |
 
