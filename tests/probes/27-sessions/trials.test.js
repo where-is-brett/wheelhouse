@@ -7,7 +7,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import {
   parseOptions, makeEnv, strippedNames, waitForText, judgeFresh, transcriptUsage, subtractUsage, findTranscript, parseTranscript, MESSAGES,
-  once, runCleanups, installSignalCleanup, sessionName, isOurSession,
+  once, runCleanups, runRoute, Interrupted, installSignalCleanup, sessionName, isOurSession,
 } from '../../../probes/27-sessions/trials.js';
 
 test('the model must be named, by option or by variable, and looks like a name', () => {
@@ -160,4 +160,62 @@ test('the trials recognise their own background sessions by name and process', (
   assert.equal(isOurSession('probe27-two-43', 42), false);
   assert.equal(isOurSession('my-session-42', 42), false);
   assert.equal(isOurSession(undefined, 42), false);
+});
+
+// A route that never runs claude: node stands in for it, so the cleanup's calls to `claude` fail harmlessly.
+function fakeContext(extra = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trials-test-'));
+  return {
+    dir,
+    ctx: {
+      options: { model: 'm', settingSources: 'project,local', worktreesOf: '', pauseAtEnd: false },
+      resolved: { kind: 'direct', file: process.execPath },
+      env: { overrides: {}, full: {} },
+      version: 'test',
+      log: path.join(dir, 'log.jsonl'),
+      backgrounded: new Set(),
+      cleanups: new Set(),
+      interrupted: false,
+      ...extra,
+    },
+  };
+}
+
+test('no route starts after an interrupt', async () => {
+  const { dir, ctx } = fakeContext({ interrupted: true });
+  let starts = 0;
+  const route = { name: 'fake', start: async () => { starts += 1; }, settle: async () => ({}), finish: async () => {} };
+  await assert.rejects(runRoute(ctx, route), Interrupted);
+  assert.equal(starts, 0);
+  assert.equal(ctx.cleanups.size, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('an interrupt during a route stops it before the next step, and the route cleans up', async () => {
+  const { dir, ctx } = fakeContext();
+  const started = [];
+  const route = {
+    name: 'fake',
+    start: async (c, { dir: where }) => {
+      started.push(where);
+      fs.writeFileSync(path.join(where, 'pong.txt'), 'pong-1\n');
+      return { startedAt: Date.now(), gaveUp: () => false };
+    },
+    settle: async (c) => { c.interrupted = true; return { sessionId: 's1', usage: { input: 0, output: 0 }, msToExit: null }; },
+    finish: async () => {},
+  };
+  await assert.rejects(runRoute(ctx, route), Interrupted);
+  assert.equal(started.length, 1, 'the second session was not started');
+  assert.equal(ctx.cleanups.size, 0);
+  assert.equal(fs.existsSync(started[0]), false, 'the throwaway project is gone');
+  assert.equal(fs.existsSync(`${started[0]}-second`), false, 'and its worktree');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('runCleanups also runs a cleanup registered while another was running', async () => {
+  const order = [];
+  const ctx = { cleanups: new Set() };
+  ctx.cleanups.add(async () => { order.push('first'); ctx.cleanups.add(async () => { order.push('late'); }); });
+  await runCleanups(ctx);
+  assert.deepEqual(order, ['first', 'late']);
 });

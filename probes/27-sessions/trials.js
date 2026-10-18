@@ -382,6 +382,13 @@ async function waitForTurn(handle, count) {
 
 class NotTrusted extends Error {}
 
+// Thrown to end a run once the script has been interrupted.
+export class Interrupted extends Error {}
+
+export function checkInterrupt(ctx) {
+  if (ctx.interrupted) throw new Interrupted('interrupted');
+}
+
 // Every background session the trials start is named like this, so cleaning up can find
 // them again even when `claude --bg` did not print an id.
 export function sessionName(label, pid = process.pid) {
@@ -478,7 +485,8 @@ const bgRoute = {
 function askEnter(question) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.on('SIGINT', () => { rl.close(); process.emit('SIGINT', 'SIGINT'); resolve(); });
+    // Ctrl+C here hands over to the script's signal handler, which cleans up and leaves; the wait never ends.
+    rl.on('SIGINT', () => { rl.close(); process.emit('SIGINT', 'SIGINT'); });
     rl.question(question, () => { rl.close(); resolve(); });
   });
 }
@@ -523,6 +531,7 @@ function record(result) {
 }
 
 export async function runRoute(ctx, route) {
+  checkInterrupt(ctx);
   const results = [];
   const base = { route: route.name, platform: process.platform, claude: ctx.version };
   const note = async (trial, name, fields) => {
@@ -551,11 +560,13 @@ export async function runRoute(ctx, route) {
     await removeWorktree(project, worktree).catch(() => {});
     await project.cleanup();
   });
+  checkInterrupt(ctx);
   ctx.cleanups.add(cleanup);
   try {
     await makeWorktree(project);
 
     // 1. a fresh session in the scratch project
+    checkInterrupt(ctx);
     let first;
     try {
       first = await route.start(ctx, { dir: project.dir, prompt: MESSAGES.first, label: 'one' });
@@ -571,6 +582,7 @@ export async function runRoute(ctx, route) {
     await note(1, 'start a session', { pass: msToFile1 !== null, why: msToFile1 === null ? 'pong.txt never held pong-1' : 'pong.txt holds pong-1', msToFile: msToFile1, msToExit: settled1.msToExit, usage: settled1.usage, sessionId: settled1.sessionId, startCommandMs: first.startCommandMs, detail: settled1.note });
 
     // 2. a second session in a separate worktree
+    checkInterrupt(ctx);
     second = await route.start(ctx, { dir: worktree, prompt: MESSAGES.first, label: 'two' });
     handles.push(second);
     const file2 = path.join(worktree, 'pong.txt');
@@ -579,6 +591,7 @@ export async function runRoute(ctx, route) {
     await note(2, 'start a second in a worktree', { pass: msToFile2 !== null && worktree !== project.dir, why: msToFile2 === null ? 'the worktree\'s pong.txt never held pong-1' : 'the worktree\'s pong.txt holds pong-1', msToFile: msToFile2, msToExit: settled2.msToExit, usage: settled2.usage, sessionId: settled2.sessionId, startCommandMs: second.startCommandMs, detail: settled2.note });
 
     // 3. wake the second with a one-line message
+    checkInterrupt(ctx);
     const wake = await route.wake(ctx, second, { dir: worktree, message: MESSAGES.second });
     const msToFile3 = await waitForText(file2, 'pong-2', { startedAt: wake.startedAt, gaveUp: wake.gaveUp });
     const settled3 = await wake.settle();
@@ -596,6 +609,7 @@ export async function runRoute(ctx, route) {
 
     // 3b, bg only: the same wake without stopping the session first (once it is idle again)
     if (route.name === 'bg' && second.sessionId) {
+      checkInterrupt(ctx);
       await route.settle(ctx, second);
       const extra = await route.wake(ctx, second, { dir: worktree, message: MESSAGES.extra, stopFirst: false });
       const msToExtra = await waitForText(path.join(worktree, 'pong-2b.txt'), 'pong-2b', { startedAt: extra.startedAt, gaveUp: extra.gaveUp });
@@ -604,6 +618,7 @@ export async function runRoute(ctx, route) {
     }
 
     // 4. a fresh third session, checked from its transcript
+    checkInterrupt(ctx);
     const third = await route.start(ctx, { dir: project.dir, prompt: MESSAGES.third, label: 'three' });
     handles.push(third);
     const msToFile4 = await waitForText(path.join(project.dir, 'pong-3.txt'), 'pong-3', { startedAt: third.startedAt, gaveUp: third.gaveUp });
@@ -636,10 +651,15 @@ export function once(fn) {
   };
 }
 
-// Runs every cleanup that is still registered. Used when the script is interrupted.
+// Runs every cleanup that is still registered, including any registered while
+// earlier ones were running. Used when the script is interrupted.
 export async function runCleanups(ctx) {
-  for (const cleanup of [...ctx.cleanups]) {
-    try { await cleanup(); } catch { /* best effort */ }
+  const ran = new Set();
+  for (;;) {
+    const next = [...ctx.cleanups].find((cleanup) => !ran.has(cleanup));
+    if (!next) return;
+    ran.add(next);
+    try { await next(); } catch { /* best effort */ }
   }
 }
 
@@ -704,11 +724,17 @@ export async function main(argv = process.argv.slice(2)) {
   const all = [];
   const uninstall = installSignalCleanup(ctx);
   try {
-    for (const name of options.routes) all.push(...await runRoute(ctx, routes[name]));
+    for (const name of options.routes) {
+      if (ctx.interrupted) break;
+      all.push(...await runRoute(ctx, routes[name]));
+    }
+  } catch (error) {
+    if (!(error instanceof Interrupted)) throw error;
   } finally {
     await runCleanups(ctx);
     uninstall();
   }
+  if (ctx.interrupted) return 130;
   const failed = all.filter((entry) => !entry.pass);
   console.log(`Check 27 on ${process.platform}: ${failed.length ? 'FAIL' : 'PASS'} (${all.length - failed.length} of ${all.length} trials passed)`);
   console.log(`Log: ${log}`);
