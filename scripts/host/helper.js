@@ -39,6 +39,7 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
+import { SLUG } from '../lib/build-loop.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -242,7 +243,7 @@ const touchesCi = (paths, config) => paths.some((file) => ciPatterns(config).som
 // is `{ open: false }`. With any open, it is a fix when a verified `incident-fix` of any open
 // incident names this pull request (the fix the director clicked is the point); otherwise the id
 // is an open incident's, so the reason names one.
-function incidentFor(views, number) {
+export function incidentFor(views, number) {
   const open = views.incidents?.open;
   if (!Array.isArray(open)) return { open: true, isFix: false };
   if (open.length === 0) return { open: false };
@@ -250,8 +251,11 @@ function incidentFor(views, number) {
   return { open: true, id: (fixed ?? open[0]).id, isFix: fixed !== undefined };
 }
 
+const STATE_BEHIND = 'the state could not be brought up to date';
+const STATE_DAMAGED = 'the state has damaged events, so an open incident or a shown-first change can\'t be ruled out';
+
 // The work a pull request's head branch names: `feature/<work>` or `feature/<work>/<slice>`.
-const FEATURE_BRANCH = /^feature\/([a-z0-9-]{1,40})(?:\/[^/]+)?$/;
+const FEATURE_BRANCH = new RegExp(`^feature/(${SLUG.source.slice(1, -1)})(?:/[^/]+)?$`);
 
 // Whether the work's signed approval makes the director's approval of this pull request needed
 // because the work is shown first (design section 12). The approval is read from the views, which
@@ -259,7 +263,7 @@ const FEATURE_BRANCH = /^feature\/([a-z0-9-]{1,40})(?:\/[^/]+)?$/;
 // that names no work, or work with no approval, adds nothing. For feature work, only a pull request
 // that changes one of the project's flag files counts (the switch-on); with no flag files listed,
 // every pull request of the work does.
-function shownFirstNeeded({ views, headRef, paths, config }) {
+export function shownFirstNeeded({ views, headRef, paths, config }) {
   const work = FEATURE_BRANCH.exec(typeof headRef === 'string' ? headRef : '')?.[1];
   if (work === undefined || !Object.hasOwn(views.work ?? {}, work)) return false;
   const approval = views.work[work].approval;
@@ -1256,6 +1260,18 @@ export async function startHelper({
     }
   }
 
+  // Pulls the project's state clone, and pushes what it holds that the host lacks, as /state/sync
+  // does. Whether the pull went through.
+  async function stateFresh(project, ctx) {
+    try {
+      return await oneAtATime(`state:${project}`, async () => (
+        (await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })).pulled === true
+      ));
+    } catch {
+      return false;
+    }
+  }
+
   async function mergeAnswer(body, ctx) {
     const { project, number } = body;
     if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
@@ -1292,9 +1308,16 @@ export async function startHelper({
     const touchesGuardrails = (!restore && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const ci = await adapter.ciState(headSha);
+    // The state clone is brought up to date first, so an incident declared on another computer is
+    // seen (Ruling 115); when it can't be, the merge waits.
+    const stateReasons = [];
+    if (!(await stateFresh(project, ctx))) stateReasons.push(STATE_BEHIND);
     const skipped = [];
     const enrolled = readEnrolled();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
+    // A damaged event is dropped from the views, and a dropped incident or approval of work reads as
+    // nothing to do, so with any damage only a restore goes on (Ruling 114).
+    if (views.damaged.length > 0 && !restore) stateReasons.push(STATE_DAMAGED);
     // Work shown first needs the director's approval of the pull request. When the changed files
     // couldn't be read, the change already counts as touching the guardrails.
     const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
@@ -1321,9 +1344,9 @@ export async function startHelper({
       // Interim value until Task 27.
       provenance: { ok: true }, // Task 27 reads the PR's provenance block
     });
-    if (!decision.allow) {
+    if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
-      const reasons = [...said, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
+      const reasons = [...said, ...stateReasons, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
       return { ok: false, refused: reasons.join('; '), reasons, ...found };
     }
     if (stopped() && !restore) {

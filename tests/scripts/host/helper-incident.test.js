@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startHelper } from '../../../scripts/host/helper.js';
+import { startHelper, incidentFor, shownFirstNeeded } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -188,36 +188,120 @@ test('with several incidents open, a fix of any of them lets its PR through; any
   } finally { remote.cleanup(); }
 });
 
+// A restore pull request: the default branch moved on after `release`, and the pull request puts
+// the release's files back on top, with the director's step 3 click and approval on record.
+async function restorePr(remote, home) {
+  const work = tempFolder('wh-restore-');
+  await g(work, 'init', '-q', '-b', 'main');
+  await g(work, 'fetch', '-q', remote.url, 'refs/heads/main');
+  await g(work, 'reset', '-q', '--hard', 'FETCH_HEAD');
+  const release = await g(work, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(work, 'app.js'), 'bad\n');
+  await g(work, 'commit', '-q', '-a', '-m', 'The bad release');
+  await g(work, 'push', '-q', remote.url, 'HEAD:refs/heads/main');
+  await g(work, 'checkout', '-q', release, '--', '.');
+  await g(work, 'commit', '-q', '-m', 'Restore');
+  const headSha = await g(work, 'rev-parse', 'HEAD');
+  await g(work, 'push', '-q', remote.url, 'HEAD:refs/pull/7/head');
+  await as(home, () => {
+    click({ action: 'runbook', step: 3, sha: release.slice(0, 12), label: 'Restore' });
+    approved(7, headSha);
+  });
+  return { headSha, headRef: `wheelhouse-restore-${release.slice(0, 12)}` };
+}
+
 test('a restore waits behind an open incident unless it is named its fix', async () => {
   const remote = await hostWith({ 'app.js': 'release\n' });
   try {
-    // The default branch moves on after the release; the restore pull request puts the release's files back on top.
-    const work = tempFolder('wh-restore-');
-    await g(work, 'init', '-q', '-b', 'main');
-    await g(work, 'fetch', '-q', remote.url, 'refs/heads/main');
-    await g(work, 'reset', '-q', '--hard', 'FETCH_HEAD');
-    const release = await g(work, 'rev-parse', 'HEAD');
-    fs.writeFileSync(path.join(work, 'app.js'), 'bad\n');
-    await g(work, 'commit', '-q', '-a', '-m', 'The bad release');
-    await g(work, 'push', '-q', remote.url, 'HEAD:refs/heads/main');
-    await g(work, 'checkout', '-q', release, '--', '.');
-    await g(work, 'commit', '-q', '-m', 'Restore');
-    const headSha = await g(work, 'rev-parse', 'HEAD');
-    await g(work, 'push', '-q', remote.url, `HEAD:refs/pull/7/head`);
-
     const home = await project(remote);
-    const adapter = fakeAdapter({ 7: { headSha, headRef: `wheelhouse-restore-${release.slice(0, 12)}` } });
-    await as(home, () => {
-      click({ action: 'runbook', step: 3, sha: release.slice(0, 12), label: 'Restore' });
-      approved(7, headSha);
-      declare('bad-total');
-    });
+    const restore = await restorePr(remote, home);
+    const adapter = fakeAdapter({ 7: restore });
+    await as(home, () => declare('bad-total'));
     await withHelper(home, adapter, async (client) => {
       assert.deepEqual((await merge(client)).reasons, [frozen('bad-total')]);
       await as(home, () => fixFor('bad-total', 7));
-      assert.deepEqual(await merge(client), { ok: true, merged: true, sha: headSha, ...NONE_FOUND });
+      assert.deepEqual(await merge(client), { ok: true, merged: true, sha: restore.headSha, ...NONE_FOUND });
     }, { now: at(60 * 1000) });
   } finally { remote.cleanup(); }
+});
+
+const DAMAGED = 'the state has damaged events, so an open incident or a shown-first change can\'t be ruled out';
+
+test('a damaged event file refuses an ordinary merge; a restore is not refused for it', async () => {
+  const remote = await hostWith({ 'app.js': 'release\n' });
+  try {
+    const home = await project(remote);
+    const restore = await restorePr(remote, home);
+    const a = await readyPr(home, remote, 8, 'feature/totals', { 'a.txt': 'a\n' });
+    const adapter = fakeAdapter({ 7: restore, 8: a });
+    await as(home, () => {
+      const folder = path.join(stateDir('o__p'), 'events');
+      fs.mkdirSync(folder, { recursive: true });
+      // Whatever it held (an incident, a work event, an approval) is lost to the views.
+      fs.writeFileSync(path.join(folder, 'damaged.json'), '{ not json');
+    });
+    await withHelper(home, adapter, async (client) => {
+      const refused = await merge(client, 8);
+      assert.deepEqual([refused.ok, refused.reasons], [false, [DAMAGED]]);
+      assert.deepEqual(await merge(client, 7), { ok: true, merged: true, sha: restore.headSha, ...NONE_FOUND });
+      assert.deepEqual(adapter.merges, [{ number: 7, sha: restore.headSha }]);
+    }, { now: at(60 * 1000) });
+  } finally { remote.cleanup(); }
+});
+
+test('an incident declared on another computer freezes the merge before this clone has pulled it', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const adapter = fakeAdapter({ 7: a });
+    // Another computer's clone of the state branch declares the incident and pushes it.
+    const other = tempFolder('wh-other-');
+    await g(other, 'clone', '-q', '--branch', 'wheelhouse-state', remote.url, '.');
+    const event = makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: at(500) });
+    const file = path.join(other, eventPath(event));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+    await g(other, 'add', '-A');
+    await g(other, 'commit', '-q', '-m', 'An incident');
+    await g(other, 'push', '-q', 'origin', 'wheelhouse-state');
+    await as(home, () => assert.equal(fs.existsSync(path.join(stateDir('o__p'), eventPath(event))), false));
+    await withHelper(home, adapter, async (client) => {
+      assert.deepEqual((await merge(client)).reasons, [frozen('bad-total')]);
+      assert.deepEqual(adapter.merges, []);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a state that can\'t be brought up to date refuses the merge', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    await as(home, () => g(stateDir('o__p'), 'remote', 'set-url', 'origin', path.join(home, 'nowhere.git')));
+    await withHelper(home, fakeAdapter({ 7: a }), async (client) => {
+      const refused = await merge(client);
+      assert.equal(refused.ok, false);
+      assert.ok(refused.reasons.includes('the state could not be brought up to date'), JSON.stringify(refused.reasons));
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a view that is not readable counts as an incident that can\'t be ruled out', () => {
+  for (const views of [{}, { incidents: {} }, { incidents: { open: 'yes' } }, { incidents: null }]) {
+    assert.deepEqual(incidentFor(views, 7), { open: true, isFix: false });
+  }
+  assert.deepEqual(incidentFor({ incidents: { open: [] } }, 7), { open: false });
+  assert.deepEqual(incidentFor({ incidents: { open: [{ id: 'a' }] } }, 7), { open: true, id: 'a', isFix: false });
+});
+
+test('a crafted branch name never names another work', () => {
+  const views = { work: { 'export-csv': { approval: { hash: H1, shownFirst: true, lane: 'small' } }, x: { approval: { hash: H1, shownFirst: true, lane: 'small' } } } };
+  const needed = (headRef) => shownFirstNeeded({ views, headRef, paths: [], config: { flagFiles: [] } });
+  for (const headRef of ['feature/export-csv', 'feature/export-csv/slice-1', 'feature/x']) assert.equal(needed(headRef), true, headRef);
+  for (const headRef of ['feature/Export-CSV', 'feature/x/a/b', 'feature/../x', 'feature/', 'feature/export-csv/', 'feature/x\n', 'features/x', 'xfeature/x', `feature/${'x'.repeat(41)}`, 'feature/__proto__', 'feature/constructor', undefined, null]) {
+    assert.equal(needed(headRef), false, String(headRef));
+  }
 });
 
 test('a shown-first small change needs the director\'s approval', async () => {

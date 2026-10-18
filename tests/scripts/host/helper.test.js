@@ -483,7 +483,7 @@ test('the lock and the mirror reach a remote only through the connection\'s envi
 
       await withHelper(fakeAdapter({ prState: openAt(head) }), async (client) => {
         const refused = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(refused.reasons, [LOCK_REASON, BEHIND, UNREADABLE], 'without the environment neither the lock nor the mirror can be read');
+        assert.deepEqual(refused.reasons, ['the state could not be brought up to date', LOCK_REASON, BEHIND, UNREADABLE], 'without the environment neither the lock nor the mirror can be read');
       });
       const adapter = fakeAdapter({ prState: openAt(head) });
       await withHelper(adapter, async (client) => {
