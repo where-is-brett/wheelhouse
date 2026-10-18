@@ -290,16 +290,10 @@ function readingsBefore(date, wanted) {
   return found;
 }
 
-// Adds up a day's raw counts and writes days/<date>.json. A day whose raw files are gone
-// keeps the summary it has.
-export function summariseDay(date) {
-  checkDate(date);
+// Adds up a day's raw counts, without writing anything.
+function buildDay(date) {
   const rawFile = usagePath('records', `${date}.jsonl`);
   const modFile = usagePath('mod', `${date}.jsonl`);
-  if (!fs.existsSync(rawFile) && !fs.existsSync(modFile)) {
-    const kept = readDay(date);
-    if (kept) return kept;
-  }
   const sessions = new Map();
   const sessionOf = (id) => {
     if (!sessions.has(id)) sessions.set(id, { tokens: 0, usd: 0, byModel: new Map(), bySource: new Map(), modUsd: null });
@@ -343,6 +337,26 @@ export function summariseDay(date) {
       modUsd: entry.modUsd,
     }])),
   };
+  return summary;
+}
+
+const hasRaw = (date) => fs.existsSync(usagePath('records', `${date}.jsonl`)) || fs.existsSync(usagePath('mod', `${date}.jsonl`));
+
+// A day's summary worked out from its raw files and not written, or null when it has none.
+export function computeDay(date) {
+  checkDate(date);
+  return hasRaw(date) ? buildDay(date) : null;
+}
+
+// Adds up a day's raw counts and writes days/<date>.json. A day whose raw files are gone
+// keeps the summary it has.
+export function summariseDay(date) {
+  checkDate(date);
+  if (!hasRaw(date)) {
+    const kept = readDay(date);
+    if (kept) return kept;
+  }
+  const summary = buildDay(date);
   writeJson(usagePath('days', `${date}.json`), summary);
   return summary;
 }

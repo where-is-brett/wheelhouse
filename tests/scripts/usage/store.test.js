@@ -6,7 +6,7 @@ import path from 'node:path';
 import { withHome } from '../../helpers/homes.js';
 import { usageDir } from '../../../scripts/lib/paths.js';
 import {
-  addPoints, recordModReading, recordAllowance, recordSession, summariseDay, readDay, pruneUsage,
+  addPoints, recordModReading, recordAllowance, recordSession, summariseDay, computeDay, readDay, pruneUsage,
 } from '../../../scripts/usage/store.js';
 
 const NOW = '2026-10-18T10:00:00.000Z';
@@ -267,4 +267,14 @@ test('a time can be given as a function, a Date or text', () => withHome(() => {
   recordAllowance({ windows: [{ kind: 'weekly', percentUsed: 1 }], at: new Date('2026-10-18T09:00:00Z') });
   addPoints([point({ at: undefined })], { now: () => new Date(NOW) });
   assert.equal(records()[0].at, NOW);
+}));
+
+test('computeDay sums a day from its raw files and writes nothing', () => withHome(() => {
+  addPoints([point({ value: 12 })], { now: NOW });
+  const summary = computeDay('2026-10-18');
+  assert.equal(summary.sessions.s1.tokens, 12);
+  assert.equal(readDay('2026-10-18'), null);
+  assert.equal(fs.existsSync(path.join(usageDir(), 'days')), false);
+  assert.equal(computeDay('2026-10-17'), null); // no raw files for the day
+  assert.deepEqual(summariseDay('2026-10-18'), summary);
 }));
