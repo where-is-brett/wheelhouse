@@ -1184,6 +1184,9 @@ The added costs are:
 - a Lift STOP click or reply doing nothing while STOP is off (section 17.1). *Designer's call.*
 - the board's waiting list as the state's own waiting view; whether a card put off with **Not now** stays waiting being the front desk plan's (section 5.2). *Designer's call.*
 - host facts cached a day; the board waiting at most 2 seconds for the helper (1.5 seconds from the hook), then using the cache (section 5.2). *Designer's call.*
+- the Build tab's plain summary of each pull request, and the critical-area mistakes caught before users saw them, coming from the build loop's report events once that work merges; until then they aren't on the board (section 5.2). *Designer's call.*
+- a Lift STOP reply counting only for a card shown after the STOP it would lift began; a click counting whatever the card's age (section 17.1). *Designer's call.*
+- a board, settings or sources command leaving the briefing that was due for the next prompt (section 5.2). *Designer's call.*
 
 Cards A and B of the safety plan, and Cards 1 and 2 of the board-and-usage plan, answered by the director, are in section 22. The build loop's own designer's calls are in `docs/specs/2026-10-18-build-loop-design.md`, section 17.
 
