@@ -2,7 +2,7 @@
 
 # Check 25: the override wins
 
-**Answer:** Yes — in one throwaway-project session each way, with Superpowers 7.0.0 loaded by `--plugin-dir`, the brief that opens with the override made the session build the plan and finish without Superpowers' finishing menu or any question to the person, while the same brief without the override ended on that menu. One trial each way, with no host helper or signed reviewer present, so the rules that depend on them were read, not exercised.
+**Answer:** Yes, for Superpowers' hand-offs — in one throwaway-project session each way, with Superpowers 7.0.0 loaded by `--plugin-dir` and its session-start text in place, the brief that opens with the override made the session build the plan and finish without Superpowers' finishing menu or any question to the person, while the same brief without the override ended on that menu. That clash is the one a run exercised. Rules 6 (models) and 7 (reviewers) are left to scenarios 33 and 34, and writing-plans' own hand-off was not reached because the plan already existed. One trial each way, with no host helper or signed reviewer present.
 
 ## Question
 

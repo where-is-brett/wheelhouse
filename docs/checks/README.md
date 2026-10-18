@@ -31,7 +31,7 @@ The answers to the checks in section 20 of the design, one note per check.
 | 23 | GitLab's protection of `main` | Partly | [23-gitlab-protection.md](23-gitlab-protection.md) |
 | 24 | Pinning through Wheelhouse's marketplace | Partly | [24-pinning.md](24-pinning.md) |
 | 27 | Starting and waking sessions from a script | Deferred | [27-sessions.md](27-sessions.md) |
-| 25 | The override wins | Yes | [25-override.md](25-override.md) |
+| 25 | The override wins | Yes, for Superpowers' hand-offs | [25-override.md](25-override.md) |
 | 28 | Claude Code's update settings in Desktop | Deferred | [28-update-channel.md](28-update-channel.md) |
 | 29 | The hold | Partly | [29-hold.md](29-hold.md) |
 | 30 | The undo | Partly | [30-undo.md](30-undo.md) |
