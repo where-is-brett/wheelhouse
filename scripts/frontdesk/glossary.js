@@ -8,6 +8,10 @@ const STARTER = fileURLToPath(new URL('../../templates/glossary.json', import.me
 
 // Other ways the director's text may name a term.
 const ALIASES = { 'pull request': ['PR'] };
+// The verb forms that count for a term, beside its plurals.
+const FORMS = { merge: ['merged', 'merging'], review: ['reviewed', 'reviewing'], commit: ['committed', 'committing'] };
+// Names, not ordinary words: only the capitalised form counts ("stop" and "standard" in a sentence don't).
+export const NAMES = Object.freeze(['STOP', 'Standard', 'Locked']);
 
 const isEntry = (x) => x !== null && typeof x === 'object' && typeof x.plain === 'string' && x.plain !== '';
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -33,11 +37,13 @@ export function glossaryOf(view) {
 }
 
 // A pattern for one term in a text: the term or an alias, in any case, as whole words, with an
-// optional plural ("branches", "PRs"). Words are runs of letters and digits.
+// optional plural ("branches", "PRs") and the verb forms ("merged"). A name (STOP, Standard,
+// Locked) matches in its own capitals only. Words are runs of letters and digits.
 export function termPattern(term) {
-  const names = [term, ...(ALIASES[term.toLowerCase()] ?? [])];
-  const body = names.map((n) => n.trim().split(/\s+/).map(escape).join('\\s+')).join('|');
-  return new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?:e?s)?(?![\\p{L}\\p{N}_])`, 'giu');
+  const spaced = (n) => n.trim().split(/\s+/).map(escape).join('\\s+');
+  const names = [term, ...(ALIASES[term.toLowerCase()] ?? [])].map((n) => `${spaced(n)}(?:e?s)?`);
+  const body = [...names, ...(FORMS[term.toLowerCase()] ?? []).map(spaced)].join('|');
+  return new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?![\\p{L}\\p{N}_])`, NAMES.includes(term) ? 'gu' : 'giu');
 }
 
 // Where each term of the glossary is used in a text, left to right: { term, index, length }.

@@ -52,6 +52,20 @@ test('plurals, PR and PRs count, and parts of other words do not', () => {
   assert.deepEqual(termsIn('the helpers', g), ['the helper']);
 });
 
+test('the verbs count in their other forms', () => {
+  const g = glossaryOf({});
+  assert.deepEqual(termsIn('It was merged, reviewed and committed; merging and reviewing and committing go on', g), ['merge', 'review', 'commit']);
+});
+
+test('STOP, Standard and Locked count only in their own capitals', () => {
+  const g = glossaryOf({});
+  assert.deepEqual(termsIn('STOP is on; the Standard level, not Locked', g), ['STOP', 'Standard', 'Locked']);
+  assert.deepEqual(termsIn('We stop at the standard door, locked up', g), []);
+  assert.deepEqual(termsIn('Stop. Locked. Standard.', g), ['Locked', 'Standard']);
+  // Other terms stay case-insensitive.
+  assert.deepEqual(termsIn('ci and Merge', g), ['CI', 'merge']);
+});
+
 test('termMatches gives positions, and the longer term wins an overlap', () => {
   const g = { flag: { plain: 'a flag' }, 'feature flag': { plain: 'a switch' } };
   assert.deepEqual(termMatches('a feature flag', g), [{ term: 'feature flag', index: 2, length: 12 }]);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, DECIDING, HEADERS, PART_LABELS } from '../../../scripts/cards/compose.js';
+import { composeCard, DECIDING, HEADERS } from '../../../scripts/cards/compose.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -30,7 +30,7 @@ const OWN = [
 const common = {
   why: 'It changes what users see, which is yours to decide at level 3.',
   recommend: 'Approve',
-  because: 'the checks passed and the change is small',
+  because: 'the checks passed and the change is small.',
   meanwhile: 'Nothing is released and the agents carry on with other work.',
   level: 3,
 };
@@ -39,13 +39,13 @@ const INPUTS = {
   approval: { ...common, kind: 'approval', what: 'Pull request #7 changes the wording on the sign-in page.', options: [says('Approve')], target: { pr: 7, sha: FULL } },
   confirm: { ...common, recommend: 'Confirm', kind: 'confirm', what: 'A rule you gave: money is shown in dollars.', options: [says('Confirm')], target: { event: RULING } },
   'lift-stop': { ...common, recommend: 'Lift STOP', kind: 'lift-stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift STOP')], target: {} },
-  'ci-push': { ...common, recommend: 'Push it', kind: 'ci-push', what: 'A change to the automatic checks is ready to go out under your sign-in.', options: [says('Push it')], target: { branch: 'ci-fix', sha: FULL } },
-  runbook: { ...common, recommend: 'Do it', kind: 'runbook', what: 'The emergency steps say to put the product back to an earlier release.', options: [says('Do it')], target: { step: 3, sha: FULL } },
-  'approve-work': { ...common, kind: 'approve-work', what: 'The plan for exporting a report as a spreadsheet file.', options: [says('Approve')], target: { work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true } },
+  'ci-push': { ...common, recommend: 'Push it', kind: 'ci-push', what: 'A change to the automatic checks, on the ci-fix branch, is ready to go out under your sign-in.', options: [says('Push it')], target: { branch: 'ci-fix', sha: FULL } },
+  runbook: { ...common, recommend: 'Do it', kind: 'runbook', what: 'The emergency steps say: put the product back to an earlier release.', options: [says('Do it')], target: { step: 3, sha: FULL } },
+  'approve-work': { ...common, kind: 'approve-work', what: 'The plan for exporting a report as a spreadsheet file (export-csv).', options: [says('Approve')], target: { work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true } },
   answer: { ...common, recommend: 'Comma', kind: 'answer', what: 'The export needs to know which separator to use.', options: OWN, target: { questionId: 'q-export-csv-1' } },
-  amend: { ...common, recommend: 'Change it', kind: 'amend', what: 'A change to the plan you approved for the export.', options: [says('Change it')], target: { work: 'export-csv', hash: DOC } },
-  'lift-incident': { ...common, recommend: 'End it', kind: 'lift-incident', what: 'The wrong totals are fixed, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
-  'incident-fix': { ...common, recommend: 'Merge the fix', kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
+  amend: { ...common, recommend: 'Change it', kind: 'amend', what: 'A change to the plan you approved for export-csv.', options: [says('Change it')], target: { work: 'export-csv', hash: DOC } },
+  'lift-incident': { ...common, recommend: 'End it', kind: 'lift-incident', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
+  'incident-fix': { ...common, recommend: 'Merge the fix', kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
 };
 const LINES = {
@@ -74,12 +74,11 @@ test("each kind's card carries the five parts in order, its set line and its rep
     const { question, card } = composeCard(input(kind));
     const rows = lines(question.question);
     const labels = ['What this is:', "Why it's coming to you:", 'Options:', 'My recommendation:', 'While you decide:'];
-    assert.deepEqual(labels, PART_LABELS.slice(0, 5));
     labels.forEach((label, i) => assert.ok(rows[i].startsWith(`${label} `), `${kind}: ${rows[i]}`));
     assert.ok(rows[0].includes(INPUTS[kind].what), kind);
     assert.ok(rows[1].includes(INPUTS[kind].why), kind);
     assert.ok(rows[3].includes(INPUTS[kind].recommend), kind);
-    assert.ok(rows[3].includes(INPUTS[kind].because), kind);
+    assert.ok(rows[3].startsWith(`My recommendation: ${INPUTS[kind].recommend}, because the checks passed and the change is small.`), rows[3]);
     assert.ok(rows[4].includes(INPUTS[kind].meanwhile), kind);
     if (kind === 'question') {
       assert.equal(rows.length, 5, 'a product question has no set line and no reply code');
@@ -114,6 +113,33 @@ test('the set line and the first part name the same pull request and commit', ()
   refused({ what: 'Pull request #30 corrects the wrong totals.' }, /what/, 'incident-fix');
   // A word that only looks like a commit is not one.
   composeCard(input('approval', { what: 'Pull request #7 makes a decade-old defaced page readable.' }));
+});
+
+test('the first part names what the set line names, for every kind', () => {
+  const cases = [
+    ['approval', { what: 'A change to the sign-in page.' }, /what.*#7/],
+    ['incident-fix', { what: 'Pull request #31 corrects the wrong totals.' }, /what.*incident bad-total/],
+    ['incident-fix', { what: 'Incident bad-total: pull request #32 corrects the totals.' }, /what.*#31/],
+    ['incident-fix', { what: 'Pull request #31 corrects the totals in incident bad-total-2.' }, /what.*bad-total/],
+    ['approve-work', { what: 'The plan for exporting a report.' }, /what.*export-csv/],
+    ['approve-work', { what: 'The plan for export-csv-two.' }, /what.*export-csv/],
+    ['amend', { what: 'A change to the plan you approved.' }, /what.*export-csv/],
+    ['amend', { what: 'A change to the plan for other-work.' }, /what.*export-csv/],
+    ['lift-incident', { what: 'The wrong totals have been corrected.' }, /what.*bad-total/],
+    ['runbook', { what: 'The emergency steps are open.' }, /what.*Put the product back/],
+    ['runbook', { what: 'The emergency steps say to cut the access.' }, /what.*Put the product back/],
+    ['ci-push', { what: 'A change to the automatic checks is ready.' }, /what.*ci-fix/],
+    ['ci-push', { what: 'A change to the checks on the ci-fix-2 branch is ready.' }, /what.*ci-fix/],
+    ['confirm', { what: 'A rule you gave about money.' }, /what.*Money is shown in dollars/],
+  ];
+  for (const [kind, over, pattern] of cases) refused(over, pattern, kind);
+  // Each is accepted once it names the subject, in any case.
+  composeCard(input('runbook', { what: 'The emergency step to PUT THE PRODUCT BACK to an earlier release.' }));
+  composeCard(input('confirm', { what: 'You said:  "money is shown   in DOLLARS".' }));
+  composeCard(input('ci-push', { what: 'The checks on branch ci-fix, please.' }));
+  // Kinds with nothing more to name need nothing more.
+  composeCard(input('answer', { what: 'Which separator?' }));
+  composeCard(input('lift-stop', { what: 'Everything is paused.' }));
 });
 
 test('a level-4 card without what it does to the checks is refused', () => {
@@ -183,8 +209,14 @@ test('an answer card carries up to three of its own options and Explain more, or
 
 test("concepts default to the glossary terms in the card's text", () => {
   const { card } = composeCard(input('approval', { what: 'Pull request #7 changes the wording; the CI is green.', meanwhile: 'The branch waits.' }));
-  // The set line says "commit" too, so that term is counted as well.
-  assert.deepEqual(card.concepts, ['pull request', 'CI', 'branch', 'commit']);
+  assert.deepEqual(card.concepts, ['pull request', 'CI', 'branch']);
+  // Only what the director reads as explanation counts: the set line's "commit" and the code line do not.
+  const plain = composeCard(input('approval')).card;
+  assert.ok(plain.line.includes('commit'));
+  assert.deepEqual(plain.concepts, ['pull request']);
+  assert.deepEqual(composeCard(input('lift-stop')).card.concepts, ['STOP']);
+  // The checks line is explanation too, and names such as STOP count only in their capitals.
+  assert.deepEqual(composeCard(input('approval', { level: 4, checks: 'It lets a change merge while STOP is on; stop signs are unaffected.' })).card.concepts, ['pull request', 'merge', 'STOP']);
   assert.deepEqual(composeCard(input('approval', { concepts: ['merge'] })).card.concepts, ['merge']);
   assert.deepEqual(composeCard(input('approval', { concepts: [] })).card.concepts, []);
   const mine = composeCard(input('question', { what: 'Should the sprocket be blue?', glossary: { sprocket: { plain: 'a toothed wheel' } } }));
@@ -205,6 +237,8 @@ test('the header keeps to 12 characters and the text to the limit', () => {
     assert.ok(question.question.length <= CARD.chars);
   }
   assert.equal(HEADERS['lift-incident'], 'End incident');
+  assert.equal(HEADERS.runbook, 'Emergency');
+  assert.equal(HEADERS['ci-push'], 'Push checks');
   // The text is checked as a whole, set line included.
   composeCard(input('approval', { meanwhile: 'x'.repeat(CARD.chars - 600) }));
   refused({ meanwhile: 'x'.repeat(CARD.chars) }, /text|characters/);
@@ -250,8 +284,8 @@ test('a target that does not give the kind\'s set line is refused', () => {
   refused({ target: {} }, /target/, 'lift-incident');
   refused({ target: { incident: 'bad-total' } }, /target/, 'incident-fix');
   // Runbook steps other than 3 may leave the commit out, or give one.
-  assert.ok(composeCard(input('runbook', { target: { step: 1 } })).question.question.includes(runbookLine(1)));
-  assert.ok(composeCard(input('runbook', { target: { step: 4, sha: FULL } })).question.question.includes(runbookLine(4, FULL)));
+  assert.ok(composeCard(input('runbook', { what: 'The emergency steps start with: turn STOP on.', target: { step: 1 } })).question.question.includes(runbookLine(1)));
+  assert.ok(composeCard(input('runbook', { what: "The emergency steps say: put the project's records back from the backup.", target: { step: 4, sha: FULL } })).question.question.includes(runbookLine(4, FULL)));
   // Approve-work without shownFirst gives the plain line.
   assert.ok(composeCard(input('approve-work', { target: { work: 'export-csv', lane: 'small', hash: DOC } })).question.question.includes(approveWorkLine('export-csv', 'small', DOC)));
 });

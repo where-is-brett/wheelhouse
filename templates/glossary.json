@@ -20,19 +20,19 @@
     "example": "Like a numbered save point in a game: you can always go back to it."
   },
   "review": {
-    "plain": "a second agent reading a change closely to find mistakes before it goes in",
-    "example": "Like a proofreader going through an article before it is published."
+    "plain": "a second, independent agent reading a change closely and signing off that it is clean; no change joins the product without one",
+    "example": "Like a proofreader who must initial the page before it is printed."
   },
   "slice": {
-    "plain": "one small, finished piece of a bigger feature, built and checked on its own",
-    "example": "Like building a house room by room rather than all at once."
+    "plain": "one finished piece of a bigger feature, sent up as its own pull request and kept hidden behind a feature flag until you switch it on",
+    "example": "Like building a house room by room, with each room inspected before the next."
   },
   "lane": {
-    "plain": "how much care a piece of work gets: quick, small, feature or bug, each with its own amount of checking",
-    "example": "Like the express and the full-service checkouts at a shop."
+    "plain": "how much process a piece of work goes through (quick, small, feature or bug); the bigger the lane, the more planning and checking",
+    "example": "Like the express and full-service checkouts at a shop."
   },
   "feature flag": {
-    "plain": "a switch that keeps new work hidden from users until you turn it on",
+    "plain": "a switch that keeps finished work hidden from users until you decide to turn it on",
     "example": "Like a curtain over a new shop window until opening day."
   },
   "preview": {
@@ -44,35 +44,35 @@
     "example": "Like giving each builder their own workbench."
   },
   "STOP": {
-    "plain": "the big red button: every agent stops working until you lift it",
+    "plain": "the big red button: every agent stops until you lift it",
     "example": "Like pulling the emergency cord on a train."
   },
   "Standard": {
-    "plain": "the normal amount of checking and sign-off for your project's work",
-    "example": "Like the usual security at an office, short of what a bank vault needs."
+    "plain": "the normal protection level, and the default: it guards against agents' mistakes and against being misled by what they read, and asks nothing extra of you",
+    "example": "Like an ordinary door lock: it keeps out the wrong turn and the casual try, but not someone set on getting in."
   },
   "Locked": {
-    "plain": "the strictest setting: the change cannot go ahead without your own sign-off",
-    "example": "Like a safe that opens only with your own key."
+    "plain": "the optional stronger protection level, set up once with your computer's password: it stops an agent getting round the safety checks even if it tries, because the checks sit where only an administrator can change them",
+    "example": "Like adding a deadbolt and an alarm to that door. Who signs things off stays the same; what changes is how hard the checks are to get round."
   },
   "the helper": {
-    "plain": "the small program on your computer that holds your sign-in and does the things agents are not allowed to do themselves",
+    "plain": "a small program on your computer, outside the agents' sandbox, that alone holds the keys to your code host and the signing key; agents can only ask it to act, and its checks apply to every request",
     "example": "Like a bank teller who handles the money so the clerks never touch the vault."
   },
   "the foreman": {
-    "plain": "the agent that runs the building: it hands out pieces of work and keeps them moving",
+    "plain": "the agent that runs a project's building: it queues work, writes briefs, starts and closes the builder sessions, checks for clashes, passes questions to you and merges through the gate, but never builds",
     "example": "Like the site manager on a building job, who is not laying bricks but knows who is."
   },
   "the gate": {
-    "plain": "the final set of checks a change must pass before it can join the product",
+    "plain": "the last checks a change must pass at the moment it merges: tests green on exactly that version, a clean signed review, and still fitting with the latest product",
     "example": "Like passport control: nobody walks through without being checked."
   },
   "appetite": {
-    "plain": "how much time and effort you are willing to spend on something",
-    "example": "Like deciding a weekend job is worth a weekend, and no more."
+    "plain": "how much effort a piece of work is worth, set when you approve it; if the work runs past it, it pauses and comes back to you with what was learnt",
+    "example": "Like deciding a weekend job is worth a weekend, and stopping to ask if it is heading for a month."
   },
   "the done contract": {
-    "plain": "the list, agreed before building starts, of what must be true for the work to count as finished",
+    "plain": "the list, agreed before building starts, of what must be true for the work to count as finished; it is turned into tests before any code is written",
     "example": "Like the checklist a builder and owner sign before the handover walk-through."
   }
 }

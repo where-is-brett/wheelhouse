@@ -21,8 +21,8 @@ export const HEADERS = Object.freeze({
   approval: 'Approval',
   confirm: 'Confirm',
   'lift-stop': 'Lift STOP',
-  'ci-push': 'Checks push',
-  runbook: 'Runbook',
+  'ci-push': 'Push checks',
+  runbook: 'Emergency',
   'approve-work': 'Approve work',
   answer: 'Question',
   amend: 'Change work',
@@ -59,8 +59,9 @@ const SET_FRAGMENTS = SET_LINES.map((p) => new RegExp(p.source.replace(/^\^/, ''
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isCount = (x) => Number.isInteger(x) && x >= 1;
-const sentence = (text) => (/[.!?]$/.test(text) ? text : `${text}.`);
 const bare = (text) => text.replace(/[.!?]+$/, '');
+// A reason read as a clause after "because": no closing full stop, and its first word in lower case unless it is a name or acronym.
+const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
 
 function fail(kind, part, why) {
   throw new Error(`A ${kind} card ${why === undefined ? `needs its ${part}` : `${part} ${why}`}`);
@@ -125,15 +126,28 @@ function lineFor(kind, target) {
   return incidentFixLine(t.incident, t.pr);
 }
 
-// The first part must name what the set line names: the pull request, and any commit it quotes.
+// The first part must name what the set line names, for every kind that names something: the
+// pull request (and the incident), the work, the incident, the runbook step's title, the branch,
+// the ruling's words. It names no other pull request or commit than the set line's. An answer
+// card, a lift-STOP card and a product question name nothing more.
 function sameThing(kind, what, target) {
   if (kind === 'question' || !isPlain(target)) return;
+  const lower = what.replace(/\s+/g, ' ').toLowerCase();
+  const names = (text) => lower.includes(String(text).replace(/\s+/g, ' ').toLowerCase());
+  // An id or a branch is a whole word: "ci-fix" is not named by "ci-fix-2", but is by "ci-fix.".
+  const nameId = (id) => new RegExp(`(?<![A-Za-z0-9._/-])${String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_/-]|\\.[A-Za-z0-9])`, 'i').test(what);
+  const must = (ok, subject) => { if (!ok) fail(kind, 'what', `must name ${subject}, as its set line does`); };
   if (target.pr !== undefined) {
     const named = [...what.matchAll(/#(\d+)(?!\d)/g)].map((m) => Number(m[1]));
     if (!named.includes(target.pr) || named.some((n) => n !== target.pr)) {
       fail(kind, 'what', `must name pull request #${target.pr}, and no other, as its set line does`);
     }
   }
+  if (kind === 'incident-fix' || kind === 'lift-incident') must(nameId(target.incident), `incident ${target.incident}`);
+  if (kind === 'approve-work' || kind === 'amend') must(nameId(target.work), `the work ${target.work}`);
+  if (kind === 'runbook') must(names(RUNBOOK_TITLES[target.step]), `the step's title, "${RUNBOOK_TITLES[target.step]}"`);
+  if (kind === 'ci-push') must(nameId(target.branch), `the branch ${target.branch}`);
+  if (kind === 'confirm') must(names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`);
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return;
   for (const token of what.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
@@ -170,8 +184,10 @@ function offered(kind, given) {
 // Composes one card from its input. Returns { question, card }: `question` is one entry of
 // AskUserQuestion's questions, `card` is the event data the state keeps. Throws, naming the
 // part, when the input can't make a card the prompt record would read as the input says.
-// `glossary` (optional) is the glossary whose terms become the card's concepts when `concepts`
-// isn't given; it defaults to the starter's.
+// `because` is a clause after "because" ("the checks passed"); a trailing full stop is dropped.
+// `what` must name what the set line names (see sameThing). `glossary` (optional) is the glossary
+// whose terms found in the five parts and the checks line become the card's concepts when
+// `concepts` isn't given; it defaults to the starter's.
 export function composeCard(input) {
   const kind = input?.kind;
   if (!CARD_KINDS.includes(kind)) throw new Error('A card needs its kind to be one the front desk knows');
@@ -198,15 +214,16 @@ export function composeCard(input) {
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null ? null : replyCode(line);
-  const text = [
+  // What the director reads as explanation: the five parts and the checks line, not the set line or the code.
+  const explained = [
     `${PART_LABELS[0]} ${what}`,
     `${PART_LABELS[1]} ${why}`,
     `${PART_LABELS[2]} ${buttons.map((b) => `${b.label}: ${bare(b.says)}`).join('; ')}`,
-    `${PART_LABELS[3]} ${recommend}. ${sentence(because)}`,
+    `${PART_LABELS[3]} ${recommend}, because ${clause(because)}.`,
     `${PART_LABELS[4]} ${meanwhile}`,
     ...(checks === undefined ? [] : [`${PART_LABELS[5]} ${checks}`]),
-    ...(line === null ? [] : [line, replyCodeLine(code)]),
-  ].join('\n');
+  ];
+  const text = [...explained, ...(line === null ? [] : [line, replyCodeLine(code)])].join('\n');
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
 
@@ -226,7 +243,7 @@ export function composeCard(input) {
     code,
     ...(input.importance === undefined ? {} : { importance: input.importance }),
     ...(topic === undefined ? {} : { topic }),
-    concepts: [...(input.concepts ?? termsIn(text, input.glossary ?? glossaryOf({})))],
+    concepts: [...(input.concepts ?? termsIn(explained.join('\n'), input.glossary ?? glossaryOf({})))],
   };
   return { question, card };
 }
