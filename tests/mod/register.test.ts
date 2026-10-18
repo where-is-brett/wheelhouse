@@ -2,7 +2,7 @@
 // The mod's hooks, run by `claude plugin test .` (npm run mod-check), not by node --test.
 // Everything beneath the mod is answered here: the session's figures, the command and toast
 // calls, and `$.process.run`, which stands in for the bridge and never starts a process.
-import { test, expect } from 'claude-code/testing'
+import { test, expect, mock } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const ROOT = '/Users/someone/projects/shop'
@@ -17,6 +17,8 @@ type Answer = { exitCode?: number, stdout?: string } | 'no-start'
 // Registers the world beneath the mod and returns what it saw. `answer` says how the bridge
 // answers each request: a line it prints, a non-zero exit, or a failure to start.
 function world(on: any, answer: (request: any) => Answer = () => ({ stdout: '{"ok":true}\n' })) {
+  const clock = mock.clock(on)
+  const hold = { usage: false }
   const seen = { runs: [] as any[], toasts: [] as string[], prompts: [] as any[], commands: [] as any[], registered: [] as any[] }
   on('session.id', () => ({ value: SESSION }))
   on('session.root', () => ({ value: ROOT }))
@@ -28,9 +30,10 @@ function world(on: any, answer: (request: any) => Answer = () => ({ stdout: '{"o
   } }))
   on('command.register', ($: any, e: any) => { seen.registered.push(e); return { value: { command: e.name } } })
   on('ui.toast', ($: any, e: any) => { seen.toasts.push(e.text); return { value: undefined } })
-  on('process.run', ($: any, e: any) => {
+  on('process.run', async ($: any, e: any) => {
     const request = JSON.parse(e.init?.stdin ?? 'null')
     seen.runs.push({ argv: e.argv, timeoutMs: e.init?.timeoutMs, request })
+    if (hold.usage && request?.cmd === 'usage') await clock.sleep(60000)
     const got = answer(request)
     if (got === 'no-start') return { deny: '$.process.run(node) failed to start: ENOENT: Executable not found in $PATH: "node"' }
     return { value: { ...RUN_RESULT, exitCode: got.exitCode ?? 0, stdout: got.stdout ?? '' } }
@@ -40,13 +43,18 @@ function world(on: any, answer: (request: any) => Answer = () => ({ stdout: '{"o
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('session.measure', ($: any, e: any) => ({ changed: e.changed }))
   const clear = () => { for (const list of Object.values(seen)) list.length = 0 }
-  return { seen, clear }
+  // The session start sends its usage reading without waiting for it; `start` lets it finish.
+  const start = async ($: any, surface: string) => {
+    await $.session.start({ cwd: ROOT, surface, isInteractive: true })
+    await clock.settle()
+  }
+  return { seen, clear, start, hold, clock }
 }
 
 // Starts the session on the surface, then forgets what the start did.
-async function startOn($: any, surface: string, clear: () => void) {
-  await $.session.start({ cwd: ROOT, surface, isInteractive: true })
-  clear()
+async function startOn($: any, surface: string, w: { clear: () => void, start: ($: any, surface: string) => Promise<void> }) {
+  await w.start($, surface)
+  w.clear()
 }
 
 const submit = ($: any, text: string, kind: string, extra: object = {}) =>
@@ -61,9 +69,9 @@ const bridgeCall = (run: any) => {
 }
 
 test('a typed reply code is sent to the bridge with origin composer, and the message passes unchanged', async ($, on) => {
-  const { seen, clear } = world(on, () => ({ stdout: '{"ok":true,"says":"Recorded: Approve pull request #4"}\n' }))
+  const { seen, clear, start } = world(on, () => ({ stdout: '{"ok":true,"says":"Recorded: Approve pull request #4"}\n' }))
   for (const surface of SURFACES) {
-    await startOn($, surface, clear)
+    await startOn($, surface, { clear, start })
     const result = await submit($, 'K7QD Approve', 'composer')
     expect(seen.runs).toHaveLength(1)
     expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin: 'composer', text: 'K7QD Approve', cwd: ROOT })
@@ -79,18 +87,25 @@ test('a typed reply code is sent to the bridge with origin composer, and the mes
     expect(seen.prompts[0].text).toBe('k7qd  approve.')
 
     clear()
-    await submit($, 'Please approve the pull request', 'composer')
-    await submit($, 'K7QD', 'composer')
+    await submit($, 'k7qd do it.', 'composer')
+    expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin: 'composer', text: 'k7qd do it.', cwd: ROOT })
+    expect(seen.prompts[0].text).toBe('k7qd do it.')
+
+    // Ordinary messages, even ones that start with four letters of the code alphabet, and
+    // options no signed record answers, send nothing.
+    clear()
+    const ordinary = ['What do you think', 'Have a look', 'Then carry on', 'K7QD Maybe', 'K7QD', 'Please approve the pull request']
+    for (const text of ordinary) await submit($, text, 'composer')
     expect(seen.runs).toHaveLength(0)
     expect(seen.toasts).toHaveLength(0)
-    expect(seen.prompts).toHaveLength(2)
+    expect(seen.prompts.map((p: any) => p.text)).toEqual(ordinary)
   }
 })
 
 test('a phone message that is just stop sends stop; a typed one does not', async ($, on) => {
-  const { seen, clear } = world(on, () => ({ stdout: '{"ok":true,"says":"STOP is on."}\n' }))
+  const { seen, clear, start } = world(on, () => ({ stdout: '{"ok":true,"says":"STOP is on."}\n' }))
   for (const surface of SURFACES) {
-    await startOn($, surface, clear)
+    await startOn($, surface, { clear, start })
     for (const text of ['stop', 'STOP', ' Stop. ']) {
       clear()
       await submit($, text, 'bridge')
@@ -109,9 +124,9 @@ test('a phone message that is just stop sends stop; a typed one does not', async
 })
 
 test('a message from sdk, peer or task-notification sends nothing', async ($, on) => {
-  const { seen, clear } = world(on)
+  const { seen, clear, start } = world(on)
   for (const surface of SURFACES) {
-    await startOn($, surface, clear)
+    await startOn($, surface, { clear, start })
     for (const kind of ['sdk', 'peer', 'task-notification']) {
       await submit($, 'K7QD Approve', kind)
       await submit($, 'stop', kind)
@@ -127,12 +142,11 @@ test('a message from sdk, peer or task-notification sends nothing', async ($, on
 })
 
 test('/go answers with the bridge\'s words', async ($, on) => {
-  const { seen, clear } = world(on, (request) => request.cmd === 'go'
-    ? { stdout: '{"ok":true,"says":"STOP is off. No build work is in progress."}\n' }
-    : { stdout: '{"ok":true}\n' })
+  let goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
+  const { seen, clear, start } = world(on, (request) => request.cmd === 'go' ? { stdout: goLine } : { stdout: '{"ok":true}\n' })
   for (const surface of SURFACES) {
     clear()
-    await $.session.start({ cwd: ROOT, surface, isInteractive: true })
+    await start($, surface)
     expect(seen.registered).toEqual([{ name: 'go', description: 'Lift STOP' }])
 
     for (const kind of ['composer', 'bridge']) {
@@ -144,14 +158,31 @@ test('/go answers with the bridge\'s words', async ($, on) => {
       expect(seen.toasts).toHaveLength(0)
       expect(seen.commands).toHaveLength(0)
     }
+
+    // A refusal is the bridge's own words, shown as the answer and nothing else.
+    goLine = '{"ok":false,"says":"Only the director can lift STOP"}\n'
+    clear()
+    const refused = await $.command.run({ command: 'go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    expect(refused).toMatchObject({ text: 'Only the director can lift STOP' })
+    expect(seen.toasts).toHaveLength(0)
+    goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
   }
 })
 
 test('a measure with rateLimits sends the windows; one with only context sends nothing', async ($, on) => {
-  const { seen, clear } = world(on)
+  const { seen, clear, start, hold, clock } = world(on)
   for (const surface of SURFACES) {
+    // The session starts while the bridge is still taking its usage reading.
     clear()
+    hold.usage = true
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
+    await clock.settle()
+    expect(seen.runs).toHaveLength(1)
+    await clock.advance(60000)
+    hold.usage = false
+
+    clear()
+    await start($, surface)
     const started = seen.runs.map(bridgeCall)
     expect(started).toEqual([{
       cmd: 'usage', session: SESSION, cwd: ROOT, usd: 1.25,
@@ -189,11 +220,11 @@ test('a measure with rateLimits sends the windows; one with only context sends n
 
 test('a bridge failure toasts and never blocks the prompt', async ($, on) => {
   let answer: Answer = 'no-start'
-  const { seen, clear } = world(on, () => answer)
+  const { seen, clear, start } = world(on, () => answer)
   for (const surface of SURFACES) {
     for (const failure of ['no-start', { exitCode: 1, stdout: '' }, { stdout: 'not json\n' }, { stdout: '{"says":"no ok"}\n' }] as Answer[]) {
       answer = failure
-      await startOn($, surface, clear)
+      await startOn($, surface, { clear, start })
 
       const reply = await submit($, 'K7QD Approve', 'composer')
       expect(seen.toasts).toEqual([FAILED])
@@ -208,6 +239,7 @@ test('a bridge failure toasts and never blocks the prompt', async ($, on) => {
       clear()
       const go = await $.command.run({ command: 'go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
       expect(go).toMatchObject({ text: FAILED })
+      expect(seen.toasts).toEqual([FAILED])
 
       // A usage reading that can't be kept says nothing: it is tried again at the next measure.
       clear()

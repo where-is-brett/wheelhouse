@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkMod, membersIn, HOOKS, CALLS } from '../../../scripts/mod/validate.js';
+import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const FOUR = 'session.start, session.measure, prompt.submit, command.run{command=go}';
@@ -75,6 +76,13 @@ test('the mod in hooks/register.ts calls only what the brief names', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'register.ts'), 'utf8');
   const allowed = new Set([...CALLS, '$.plugin.root']);
   for (const member of membersIn(source)) assert.ok(allowed.has(member), member);
+});
+
+test('the options the mod sends as a reply are the signed labels', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'hooks', 'register.ts'), 'utf8');
+  const list = /^const LABELS = (\[[^\]]*\])$/m.exec(source);
+  assert.ok(list, 'hooks/register.ts names its LABELS on one line');
+  assert.deepEqual(JSON.parse(list[1].replaceAll("'", '"')), SIGNED_LABELS);
 });
 
 test('hooks.json names the mod beside the command hooks', () => {
