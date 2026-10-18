@@ -189,7 +189,24 @@ test('text from events becomes one capped line, with links and headings taken ou
     assert.equal(oneLine(text), 'Heading', text);
   }
   // HTML tags are taken out; an autolink keeps its address as text.
-  assert.equal(oneLine('<b>bold</b> <img src=x onerror=y> <https://e.test> 1 < 2'), 'bold https://e.test 1 < 2');
+  assert.equal(oneLine('<b>bold</b> <img src=x onerror=y> <https://e.test> 1 < 2'), 'bold https://e.test 1 2');
+  // A tag taken out can't leave another behind, and no < or > is left at all.
+  assert.equal(oneLine('<img<b> src=x onerror=alert(1)>'), '');
+  assert.equal(oneLine('<a<b> href="https://evil.test">click</a>'), 'click');
+  assert.equal(oneLine('<<script>script>alert(1)<</script>/script>'), 'script alert(1) /script');
+  assert.equal(oneLine('write to <mailto:a@b.test> or <a@b.test>'), 'write to mailto:a@b.test or a@b.test');
+  // Deep nesting is cut before it is read, so it stays quick.
+  const started = Date.now();
+  const deep = oneLine(`${'[<'.repeat(50000)}x${'>](y)'.repeat(50000)}`);
+  assert.ok(deep.length <= LINE_CHARS && !/[<>[\]]/.test(deep));
+  assert.ok(Date.now() - started < 2000);
+  // Read twice, a line reads the same.
+  const adversarial = [
+    '[[x](y)](https://evil.test)', '- # Heading', '> - # H', '    # Heading', '- ~~~ code', '[~~~ x](y)', '[# x](y) [- z](w)',
+    '<img<b> src=x onerror=alert(1)>', '<a<b> href="https://evil.test">click</a>', '<<script>script>alert(1)<</script>/script>',
+    '1 < 2 > 0', '```js\n# a\n```', `${'x '.repeat(150)}[y](z)`, '[a](b(c))', '- [ ] task', '> > ## [deep](u) <b>x</b>',
+  ];
+  for (const text of adversarial) assert.equal(oneLine(oneLine(text)), oneLine(text), text);
   assert.equal(oneLine(undefined), '');
   assert.equal(oneLine(42), '42');
   const long = oneLine('word '.repeat(100));
@@ -292,15 +309,24 @@ test('event times reach the model only as strict UTC times', () => {
   assert.deepEqual(m.director.waiting, [{ n: 1, what: 'T', since: null }]);
   assert.deepEqual(m.director.changed, []);
   assert.equal(m.director.budget.week.from, null);
+
+  // A date that rolls over is no time; one without milliseconds, or with fewer, is.
+  const times = emptyViews();
+  times.decisions = ['2026-02-30T00:00:00Z', '2026-10-18T24:00:00Z', '2026-10-18T00:00:60Z', '2026-10-18T00:00:00Z', '2026-10-18T00:00:00.5Z']
+    .map((when, i) => ({ id: `t${i}`, at: when, data: { what: `t${i}`, level: 2 } }));
+  const read = Object.fromEntries(model({ views: times }).director.rulings.map((r) => [r.what, r.at]));
+  assert.deepEqual(read, { t0: null, t1: null, t2: null, t3: '2026-10-18T00:00:00Z', t4: '2026-10-18T00:00:00.5Z' });
 });
 
 test('a clock that can\'t be read is named, not replaced by this computer\'s', () => {
-  for (const now of [() => new Date('nonsense'), 'nonsense', undefined, () => { throw new Error('no clock'); }]) {
+  for (const now of [() => new Date('nonsense'), 'nonsense', undefined, null, true, () => null, 'Oct 18 2026', NaN, Infinity, 1e20,
+    () => { throw new Error('no clock'); }]) {
     const m = model({ now });
     assert.equal(m.builtAt, null);
     assert.ok(m.missing.includes('The board\'s clock couldn\'t be read'));
   }
   assert.ok(!model().missing.includes('The board\'s clock couldn\'t be read'));
+  for (const now of [NOW, NOW.getTime(), () => NOW.getTime()]) assert.equal(model({ now }).builtAt, NOW.toISOString());
 });
 
 test('a review of an older commit doesn\'t speak for the pull request\'s head', () => {

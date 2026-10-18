@@ -20,11 +20,21 @@ const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
 const NO_CLOCK = 'The board\'s clock couldn\'t be read';
 // A time as the state and usage scripts write it, in UTC. Any other text is no time.
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+// The most of a text oneLine reads.
+const INPUT_CHARS = 20 * LINE_CHARS;
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const values = (view) => (isRecord(view) ? Object.values(view).filter(isRecord) : []);
 const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
-const timeOf = (value) => (typeof value === 'string' && ISO_UTC.test(value) && !Number.isNaN(Date.parse(value)) ? value : null);
+// The time if it is one, else null. The time it reads back as must be the one written, so a
+// date that rolls over (30 February, hour 24) is no time.
+function timeOf(value) {
+  const parts = typeof value === 'string' ? ISO_UTC.exec(value) : null;
+  const ms = parts ? Date.parse(value) : NaN;
+  if (Number.isNaN(ms)) return null;
+  const fraction = (parts[1] ?? '.').slice(1).padEnd(3, '0');
+  return new Date(ms).toISOString() === `${value.slice(0, 19)}.${fraction}Z` ? value : null;
+}
 const numberOrNull = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 // Oldest first by strict time; a time that can't be read counts as the oldest.
 const oldestFirst = (a, b) => (timeOf(a?.at) ?? '').localeCompare(timeOf(b?.at) ?? '');
@@ -44,17 +54,21 @@ function cap(text) {
 export function oneLine(text) {
   if (typeof text === 'number' && Number.isFinite(text)) return String(text);
   if (typeof text !== 'string') return '';
+  // Cut first, so deeply nested marks can't make the passes below slow.
+  if (text.length > INPUT_CHARS) text = text.slice(0, INPUT_CHARS).replace(/[\uD800-\uDBFF]$/, '');
   const lines = text.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029]/g, ' ').split(/\r?\n|\r/)
-    .filter((line) => !/^\s*(`{3,}|~{3,})/.test(line))
     .map(withoutLeadingMarks);
-  const words = untilStable(lines.join(' '), (s) => s
+  const linked = untilStable(lines.join(' '), (s) => s
     .replace(/!\[([^\][]*)\]\([^()]*\)/g, '$1')
     .replace(/\[([^\][]*)\]\([^()]*\)/g, '$1')
     .replace(/\[([^\][]*)\]\[[^\][]*\]/g, '$1'))
     .replaceAll('](', ' (')
     .replace(/[[\]]/g, '')
-    .replace(/<(https?:\/\/[^<>\s]*)>/g, '$1')
-    .replace(/<\/?[A-Za-z!?][^<>]*>/g, ' ')
+    .replace(/<((?:https?:\/\/|mailto:)[^<>\s]*|[^<>\s@]+@[^<>\s@]+)>/g, ' $1 ');
+  // Tags come out until none is left, since taking one out can join the text around it into
+  // another; then any < or > left over goes too. The board's lines need neither.
+  const words = untilStable(linked, (s) => s.replace(/<\/?[A-Za-z!?][^<>]*>/g, ' '))
+    .replace(/[<>]/g, ' ')
     .replace(/`+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -72,9 +86,11 @@ function untilStable(text, step) {
   return after;
 }
 
-// Takes quote, heading and list marks off the start of a line, however they are nested or indented.
+// Takes quote, heading, list and code-fence marks off the start of a line, however they are
+// nested or indented. A fence's language word goes with it.
 function withoutLeadingMarks(line) {
   return untilStable(line, (s) => s
+    .replace(/^\s*(`{3,}|~{3,})\S*/, '')
     .replace(/^\s*>+/, '')
     .replace(/^\s*#+(\s+|$)/, '')
     .replace(/^\s*([-*+]|\d{1,9}[.)])(\s+|$)/, ''));
@@ -201,12 +217,15 @@ function part(missing, name, build, fallback) {
 export function boardModel({ project, views, events, usage, health, settings, sources, now } = {}) {
   const missing = [];
   // A clock that can't be read is named, never replaced by this computer's.
+  // Only a Date, a finite number, or a function giving one of those, is a clock.
+  const reading = (value) => (value instanceof Date ? value.getTime() : typeof value === 'number' && Number.isFinite(value) ? value : NaN);
   let nowMs = NaN;
   try {
-    nowMs = new Date(typeof now === 'function' ? now() : now).getTime();
+    nowMs = reading(typeof now === 'function' ? now() : now);
   } catch {
     // stays unread
   }
+  if (!Number.isFinite(nowMs) || Number.isNaN(new Date(nowMs).getTime())) nowMs = NaN;
   const builtAt = Number.isNaN(nowMs) ? null : new Date(nowMs).toISOString();
   if (builtAt === null) missing.push(NO_CLOCK);
   const state = isRecord(views) ? views : null;
