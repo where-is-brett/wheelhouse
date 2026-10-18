@@ -24,3 +24,5 @@ export const REPLY_CODE_DAYS = 7;
 export const HOST_FACTS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // The longest a line from an event may be on the board, the briefing or the front desk's context.
 export const LINE_CHARS = 200;
+// The longest the board, the briefing and the glance wait on any helper call.
+export const HELPER_WAIT_MS = 2000;

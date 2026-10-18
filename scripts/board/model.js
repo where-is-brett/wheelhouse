@@ -1,9 +1,9 @@
 // scripts/board/model.js
-// The board's two tabs, Director and Build, as plain data: built from the state views, the
-// raw events, the usage figures, the health lines, the settings in force and the sources
-// report. Nothing here reads a file or the host, and nothing throws: a missing or damaged
-// input becomes a line in `missing`. Every text an agent wrote reaches the board through
-// oneLine, as one capped line with no Markdown of its own.
+// The board's two tabs, Director and Build, as plain data: built from the state views (and the
+// profile views' unconfirmed settings), the raw events, the usage figures, the health lines, the
+// settings in force and the sources report. Nothing here reads a file or the host, and nothing
+// throws: a missing or damaged input becomes a line in `missing`. Every text an agent wrote
+// reaches the board through oneLine, as one capped line with no Markdown of its own.
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
 
@@ -122,12 +122,16 @@ export const dollarWords = (value) => `$${value < 1 ? value.toFixed(2) : Math.ro
 
 // Section 9: what was written for the director to confirm and isn't confirmed yet. The views keep
 // these without effect, so nothing has been applied without confirmation; they are listed instead.
-function firstLines(views) {
+// `profile` is the profile views' unconfirmed list: a setting there is the director's own, for
+// every project.
+function firstLines(views, profile) {
   const kinds = { ruling: 'A ruling', level: 'A level', setting: 'A setting' };
-  return list(views?.unconfirmed).filter((u) => Object.hasOwn(kinds, u.kind)).sort(oldestFirst).map((u) => {
+  const project = list(views?.unconfirmed).filter((u) => Object.hasOwn(kinds, u.kind)).map((u) => ({ u, label: kinds[u.kind] }));
+  const own = list(profile).filter((u) => u.kind === 'setting').map((u) => ({ u, label: 'Your setting' }));
+  return [...project, ...own].sort((a, b) => oldestFirst(a.u, b.u)).map(({ u, label }) => {
     const data = isRecord(u.data) ? u.data : {};
     const what = u.kind === 'ruling' ? oneLine(data.words) : `${oneLine(u.key ?? data.key)} ${valueWords(data.value)}`.trim();
-    return cap(`${kinds[u.kind]}: ${what || 'with no words'}, not yet confirmed by you`);
+    return cap(`${label}: ${what || 'with no words'}, not yet confirmed by you`);
   });
 }
 
@@ -219,7 +223,7 @@ function part(missing, name, build, fallback) {
   }
 }
 
-export function boardModel({ project, views, events, usage, health, settings, sources, now } = {}) {
+export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, now } = {}) {
   const missing = [];
   // A clock that can't be read is named, never replaced by this computer's.
   // Only a Date, a finite number, or a function giving one of those, is a clock.
@@ -298,7 +302,7 @@ export function boardModel({ project, views, events, usage, health, settings, so
   const [weekFrom, weekTo] = Number.isNaN(fromMs) || Number.isNaN(toMs) ? [nowMs - WEEK_MS, nowMs] : [fromMs, toMs];
 
   const director = {
-    first: part(missing, 'unconfirmed changes', () => firstLines(state), []),
+    first: part(missing, 'unconfirmed changes', () => firstLines(state, profileUnconfirmed), []),
     waiting: part(missing, 'waiting list', () => waitingList(state, all, questions), []),
     launch,
     inProgress,

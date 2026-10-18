@@ -6,7 +6,8 @@ import net from 'node:net';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadBoardInputs, HELPER_WAIT_MS } from '../../../scripts/board/inputs.js';
+import { loadBoardInputs } from '../../../scripts/board/inputs.js';
+import { HELPER_WAIT_MS } from '../../../scripts/lib/core-numbers.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -95,6 +96,19 @@ test('the inputs gather the views, events, settings, usage, sources and health f
     if (process.platform === 'darwin') assert.ok(lines.includes('This project has real users: Locked would protect it more'));
     assert.deepEqual(client.calls.sort(), ['health', 'lock']);
     assert.deepEqual(found.model.missing.filter((line) => /state|settings|sources|How the project stands/.test(line)), []);
+  });
+});
+
+test('a profile setting written but not confirmed is on the board, as the director\'s own', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    keepEverything();
+    put(path.join(profileViewsDir(), 'unconfirmed.json'), [
+      { kind: 'setting', id: 'p1', at: '2026-10-18T08:00:00.000Z', key: 'briefing', data: { key: 'briefing', value: 'short' } },
+    ]);
+    const found = await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW });
+    assert.deepEqual(found.model.director.first, ['Your setting: briefing short, not yet confirmed by you']);
   });
 });
 

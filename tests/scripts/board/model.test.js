@@ -63,6 +63,22 @@ test('unconfirmed rulings, levels and settings come first', () => {
   assert.deepEqual(model().director.first, []);
 });
 
+test('a profile setting not yet confirmed is listed among them, as the director\'s own', () => {
+  const views = emptyViews();
+  views.unconfirmed = [{ kind: 'setting', id: 's1', at: at(12), key: 'pace', data: { key: 'pace', value: 2 } }];
+  const profileUnconfirmed = [
+    { kind: 'setting', id: 'p1', at: at(11), key: 'briefing', data: { key: 'briefing', value: 'short', words: '# Keep it short' } },
+    { kind: 'ruling', id: 'p2', at: at(13), data: { words: 'not a profile kind' } },
+  ];
+  assert.deepEqual(model({ views, profileUnconfirmed }).director.first, [
+    'Your setting: briefing short, not yet confirmed by you',
+    'A setting: pace 2, not yet confirmed by you',
+  ]);
+  // Without the project's views the profile's still show.
+  assert.deepEqual(model({ views: null, profileUnconfirmed }).director.first, ['Your setting: briefing short, not yet confirmed by you']);
+  assert.deepEqual(model({ profileUnconfirmed: 'damaged' }).director.first, []);
+});
+
 test('waiting lists cards and unasked build-loop questions once each, numbered', () => {
   const askedCard = ev('card', at(12), { title: 'Pick a colour', question: 'Answer question q-login-1 about the colour' });
   const other = ev('card', at(11), { title: 'Name the app', question: 'Name the app?' });

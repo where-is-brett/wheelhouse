@@ -157,13 +157,17 @@ test('with no changed source the sources command says so', async () => {
   });
 });
 
-test('a command after a long gap adds only its own text, and records the prompt', async () => {
+test('a command after a long gap adds only its own text, and leaves the due briefing for the next prompt', async () => {
   await withProject(async ({ repo }) => {
     markSeen(P, { promptAt: new Date('2026-10-18T12:00:00.000Z'), briefedAt: new Date('2026-10-18T12:00:00.000Z') });
-    const text = contextOf(await run(repo, '/wheelhouse:settings', NOW));
-    assert.ok(text.startsWith(HEADINGS.settings));
-    assert.doesNotMatch(text, /Waiting on you/);
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: '2026-10-18T12:00:00.000Z' });
+    for (const command of ['/wheelhouse:settings', '/wheelhouse:board', '/wheelhouse:sources']) {
+      const text = contextOf(await run(repo, command, NOW));
+      assert.doesNotMatch(text, /Waiting on you:/, command);
+      assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' }, command);
+    }
+    const later = '2026-10-19T12:05:00.000Z';
+    assert.ok(contextOf(await run(repo, 'Morning', later)).startsWith(HEADINGS.briefing));
+    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: later });
   });
 });
 

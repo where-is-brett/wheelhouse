@@ -10,7 +10,7 @@
 // Nothing here throws.
 import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { sayTime } from '../settings/effective.js';
-import { NO_STATE, oneLine } from './model.js';
+import { NO_STATE, dollarWords, oneLine, tokenWords } from './model.js';
 import { STOP_LINE } from './health.js';
 
 const GLANCE_CHARS = 80;
@@ -36,13 +36,6 @@ function dayOf(value) {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 const onDay = (value) => (dayOf(value) ? ` (${dayOf(value)})` : '');
-
-function tokenWords(value) {
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M tokens`;
-  if (value >= 1e3) return `${Math.round(value / 1e3)}K tokens`;
-  return `${Math.round(value)} tokens`;
-}
-const dollarWords = (value) => `$${value < 1 ? value.toFixed(2) : Math.round(value)}`;
 
 // "1.2M tokens, about $84", leaving out what isn't known; '' when neither is.
 function spend(tokens, usd) {

@@ -29,8 +29,8 @@ import { stopState } from '../lib/stop.js';
 import { sourcesDir, stateDir } from '../lib/paths.js';
 import { renewalDue } from '../host/connection.js';
 import { helperClient } from '../host/helper-client.js';
+import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 
-export const HELPER_WAIT_MS = 2000;
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
 // the helper as tried, before the reading as a whole stops waiting.
@@ -148,6 +148,6 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     realUsers: settings?.phase?.value === 'launched',
   }));
 
-  const model = boardModel({ project, views, events, usage, health, settings, sources, now: clock });
+  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, now: clock });
   return { project, model, usage, sources, settings };
 }
