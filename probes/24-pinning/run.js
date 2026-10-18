@@ -68,7 +68,7 @@ const USER_FILES = [
   // Claude Code's own state file: beside the config folder, or inside it when one is set.
   process.env.CLAUDE_CONFIG_DIR ? path.join(configDir, '.claude.json') : path.join(home, '.claude.json'),
 ];
-const [KNOWN_FILE, INSTALLED_FILE, USER_SETTINGS_FILE] = USER_FILES;
+const [KNOWN_FILE, INSTALLED_FILE, USER_SETTINGS_FILE, CLAUDE_STATE_FILE] = USER_FILES;
 const SCRATCH_CACHE = path.join(pluginsDir, 'cache', MARKETPLACE_NAME);
 const PLUGIN_IDS = [SUPERPOWERS, MATT].map((plugin) => `${plugin.name}@${MARKETPLACE_NAME}`);
 
@@ -86,24 +86,38 @@ async function check(what, ok, detail) {
   await note(`check: ${what}`, { ok, detail });
 }
 
-// Runs a command and never throws: failures are results to record.
-async function run(file, args, options = {}) {
+// Set when a stop signal arrives. Once set, no new command starts except the undo's.
+let stopping = false;
+let undoing = false;
+const inflight = new Set();
+
+// Runs a command and never throws: failures are results to record. The child
+// is tracked so a stop signal can wait for it to finish.
+function run(file, args, options = {}) {
   const started = Date.now();
-  try {
-    const { stdout, stderr } = await execFileAsync(file, args, {
-      timeout: 300_000,
-      maxBuffer: 20 * 1024 * 1024,
-      ...options,
+  return new Promise((resolve) => {
+    const child = execFile(file, args, { timeout: 300_000, maxBuffer: 20 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
+      inflight.delete(child);
+      if (!error) {
+        resolve({ code: 0, stdout, stderr, ms: Date.now() - started, child });
+        return;
+      }
+      resolve({
+        code: typeof error.code === 'number' ? error.code : -1,
+        stdout: stdout ?? '',
+        stderr: stderr || String(error.message),
+        ms: Date.now() - started,
+        child,
+      });
     });
-    return { code: 0, stdout, stderr, ms: Date.now() - started };
-  } catch (error) {
-    return {
-      code: typeof error.code === 'number' ? error.code : -1,
-      stdout: error.stdout ?? '',
-      stderr: error.stderr ?? String(error.message),
-      ms: Date.now() - started,
-    };
-  }
+    if (!undoing) inflight.add(child);
+    child.finished = new Promise((done) => child.once('close', done));
+  });
+}
+
+// The main flow calls this between steps: once a stop signal has arrived, it stops.
+function keepGoing() {
+  if (stopping && !undoing) throw new Error('stopped by a signal');
 }
 
 function parseJson(text) {
@@ -121,6 +135,7 @@ function readJson(file) {
 }
 
 async function claude(step, args, cwd) {
+  keepGoing();
   const result = await run('claude', args, { cwd });
   await note(step, {
     command: `claude ${args.join(' ')}`,
@@ -176,9 +191,9 @@ for (const file of USER_FILES) {
   }
 }
 
-// The commands that put the three or four files back as they were.
-function copyBackCommands() {
-  return USER_FILES.map((file) => (backed[file] ? `cp "${backed[file]}" "${file}"` : `rm -f "${file}"`));
+// The command that puts one file back as it was.
+function copyBackCommand(file) {
+  return backed[file] ? `cp "${backed[file]}" "${file}"` : `rm -f "${file}"`;
 }
 
 console.log(`Copies of your plugin files are in: ${backupDir}`);
@@ -205,6 +220,7 @@ async function attempt(what, work) {
 // The undo: runs once, from the end of the run or from Ctrl-C / a termination signal.
 function undo() {
   undoPromise ??= (async () => {
+    undoing = true;
     if (ownsMarketplace && project) {
       for (const id of PLUGIN_IDS) {
         await claude(`uninstall ${id}`, ['plugin', 'uninstall', id, '--scope', 'project'], project.dir);
@@ -226,20 +242,25 @@ function undo() {
     if (project) await attempt('clean up the scratch project', () => project.cleanup());
 
     // Compare the user's files with the copies.
-    const differences = [];
-    for (const file of USER_FILES) {
-      const copy = backed[file];
-      const now = fs.existsSync(file) ? fs.readFileSync(file) : null;
-      const was = copy ? fs.readFileSync(copy) : null;
-      const same = (now === null && was === null) || (now !== null && was !== null && now.equals(was));
-      if (!same) differences.push(file);
-      await note(`file compared: ${file}`, { same });
-    }
-    await check('your plugin files are as before', differences.length === 0, differences);
-    if (differences.length) {
-      console.error(`These differ from the copies in ${backupDir}. To put them back:`);
-      for (const command of copyBackCommands()) console.error(`  ${command}`);
-    }
+    await attempt('compare your files with the copies', async () => {
+      const differences = [];
+      for (const file of USER_FILES) {
+        const copy = backed[file];
+        const now = fs.existsSync(file) ? fs.readFileSync(file) : null;
+        const was = copy ? fs.readFileSync(copy) : null;
+        const same = (now === null && was === null) || (now !== null && was !== null && now.equals(was));
+        if (!same) differences.push(file);
+        await note(`file compared: ${file}`, { same });
+      }
+      await check('your plugin files are as before', differences.length === 0, differences);
+      if (differences.length) {
+        console.error(`These differ from the copies in ${backupDir}. Only the ones that differ are listed; nothing is copied back for you:`);
+        for (const file of differences) {
+          const own = file === CLAUDE_STATE_FILE ? "  # Claude Code's own state: copy back only if you know the probe changed it" : '';
+          console.error(`  ${copyBackCommand(file)}${own}`);
+        }
+      }
+    });
     if (problems.length) console.error(`Problems while undoing:\n  ${problems.join('\n  ')}`);
     const failed = results.filter((one) => !one.ok);
     console.log(`\n${results.length - failed.length} of ${results.length} checks passed. Log: ${logFile}`);
@@ -253,9 +274,20 @@ function undo() {
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, async () => {
-    console.error(`\n${signal}: undoing what this run added, then stopping.`);
-    await undo();
-    process.exit(130);
+    console.error(`\n${signal}: stopping, then undoing what this run added.`);
+    stopping = true;
+    // Wait for the command in flight (the terminal's Ctrl-C has usually
+    // reached it already); ask it to stop if not. The undo's own commands
+    // start after this and are not in the list.
+    const pending = [...inflight];
+    for (const child of pending) child.kill('SIGTERM');
+    await Promise.all(pending.map((child) => child.finished ?? Promise.resolve()));
+    try {
+      await undo();
+    } catch (error) {
+      console.error(`The undo failed: ${error.message}`);
+    }
+    process.exit(signal === 'SIGTERM' ? 143 : 130);
   });
 }
 
@@ -279,20 +311,21 @@ try {
   marketplace = await makeScratchMarketplace({ name: MARKETPLACE_KEY, plugins: [SUPERPOWERS, MATT] });
   await note('scratch', { project: project.dir, marketplace: marketplace.dir, marketplaceUrl: marketplace.url });
 
-  console.log('\nAbout to change this computer\'s plugin list. If this run is stopped and the undo does not finish, run:');
+  keepGoing();
+  console.log('\nAbout to change this computer\'s plugin list. If this run is stopped and the undo does not finish, run these (your own files are copied in the backup folder above; the run lists what, if anything, differs at the end):');
   for (const id of PLUGIN_IDS) console.log(`  (cd "${project.dir}" && claude plugin uninstall ${id} --scope project)`);
   console.log(`  (cd "${project.dir}" && claude plugin marketplace remove ${MARKETPLACE_NAME})`);
   console.log(`  rm -rf "${SCRATCH_CACHE}"`);
-  console.log('and, to put your own files back exactly:');
-  for (const command of copyBackCommands()) console.log(`  ${command}`);
   console.log('');
 
   // 2. Add the marketplace at project scope (a folder path: Claude Code's
   // documented "directory" source).
+  // From here a signal or a half-done add must still be undone: the checks at
+  // the start proved the name was not there before.
+  ownsMarketplace = true;
   const added = await claude('marketplace add', ['plugin', 'marketplace', 'add', marketplace.dir, '--scope', 'project', '--json'], project.dir);
   await check('marketplace added at project scope', added.code === 0, added.stderr.slice(0, 300));
-  if (added.code === 0) ownsMarketplace = true;
-  else throw new Error('the marketplace could not be added: stopping');
+  if (added.code !== 0) throw new Error('the marketplace could not be added: stopping');
   await note('project settings after add', readJson(settingsPath(project.dir)) ?? 'no project settings file');
   await note('known_marketplaces entry', (readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME] ?? 'no entry');
 
@@ -315,6 +348,7 @@ try {
   const recorded = (readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME];
   const declared = readJson(settingsPath(project.dir))?.extraKnownMarketplaces?.[MARKETPLACE_NAME];
   await note('auto-update as recorded', { knownMarketplacesAutoUpdate: recorded?.autoUpdate ?? '(not set)', projectSettingsAutoUpdate: declared?.autoUpdate ?? '(not set)' });
+  keepGoing();
   const settings = readJson(settingsPath(project.dir)) ?? {};
   settings.extraKnownMarketplaces = settings.extraKnownMarketplaces ?? {};
   settings.extraKnownMarketplaces[MARKETPLACE_NAME] = { ...(settings.extraKnownMarketplaces[MARKETPLACE_NAME] ?? {}), autoUpdate: false };
@@ -328,6 +362,7 @@ try {
   const synced = [...new Set(allIds)].filter((id) => /@synced$/.test(id) && /^(superpowers|mattpocock-skills)@/.test(id));
   await note('synced copies found', synced);
   const off = { [ANTHROPIC_SUPERPOWERS]: false, ...Object.fromEntries(synced.map((id) => [id, false])) };
+  keepGoing();
   const withOff = readJson(settingsPath(project.dir)) ?? {};
   withOff.enabledPlugins = { ...(withOff.enabledPlugins ?? {}), ...off };
   fs.writeFileSync(settingsPath(project.dir), JSON.stringify(withOff, null, 2) + '\n', 'utf8');
@@ -336,6 +371,7 @@ try {
   await claude('list in the project, copies off (text)', ['plugin', 'list'], project.dir);
 
   // 6. Move the refs on, keep the sha, update, and see if anything moved.
+  keepGoing();
   const file = path.join(marketplace.dir, '.claude-plugin', 'marketplace.json');
   const manifest = readJson(file);
   for (const entry of manifest.plugins) entry.source.ref = MOVED[entry.name];
