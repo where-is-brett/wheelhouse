@@ -4,7 +4,7 @@
 // Also finds the waiting card that already carries a set line, and the card the board numbers n.
 import { CARD } from '../lib/front-desk.js';
 import { numberedWaiting } from '../board/model.js';
-import { ID, QUESTION_ID } from '../state/card-lines.js';
+import { QUESTION_ID } from '../state/card-lines.js';
 
 // How important a card is, as a number: the higher, the sooner the director sees it. The one
 // place the order lives. "Above level 3" is a rank over LEVEL_3: STOP or an incident, level 4,
@@ -12,29 +12,16 @@ import { ID, QUESTION_ID } from '../state/card-lines.js';
 export const IMPORTANCE = Object.freeze({ STOP_OR_INCIDENT: 4, LEVEL_4: 3, HOLDS_UP_ALL: 2, LEVEL_3: 1, REST: 0 });
 
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const INCIDENT_KINDS = ['lift-stop', 'lift-incident', 'incident-fix'];
-// The kinds that decide one piece of work, and the set line's words that name it.
-const WORK_LINES = [
-  ['approve-work', new RegExp(`^Approve (${ID}) \\(`)],
-  ['amend', new RegExp(`^Change the approved (${ID}) to this`)],
-];
+// The kinds that are STOP or an incident, or the emergency steps the director runs for one.
+const EMERGENCY_KINDS = ['lift-stop', 'lift-incident', 'incident-fix', 'runbook'];
 
-// Whether a card's words name an incident that is open: a whole word, not part of a longer id.
-function namesOpenIncident(card, views) {
-  const open = Array.isArray(views?.incidents?.open) ? views.incidents.open : [];
-  const text = String(card.data?.question ?? '');
-  return open.some((i) => typeof i?.id === 'string' && new RegExp(`(?<![A-Za-z0-9-])${i.id.replace(/[^a-z0-9-]/g, '')}(?![A-Za-z0-9-])`).test(text));
-}
-
-// The work a card decides, from its kind and set line, or null.
-function workOf(card, views) {
-  const line = typeof card.data?.line === 'string' ? card.data.line : '';
-  if (card.data?.kind === 'answer') {
-    const id = new RegExp(`^Answer question (${QUESTION_ID})$`).exec(line)?.[1];
-    return id === undefined ? null : views.questions?.[id]?.question?.data?.work ?? null;
-  }
-  const found = WORK_LINES.find(([kind]) => kind === card.data?.kind);
-  return found ? found[1].exec(line)?.[1] ?? null : null;
+// The open question an answer card asks, from its set line and the build loop's questions view,
+// or null when the card isn't an answer card or its question is answered or unknown.
+function openQuestionOf(card, views) {
+  if (card?.data?.kind !== 'answer' || !isRecord(views?.questions)) return null;
+  const id = new RegExp(`^Answer question (${QUESTION_ID})$`).exec(String(card.data.line ?? ''))?.[1];
+  const entry = id === undefined ? undefined : views.questions[id];
+  return isRecord(entry) && !entry.answer ? entry.question?.data ?? null : null;
 }
 
 // Whether all other work that isn't finished waits, directly or through other work, on this
@@ -52,14 +39,16 @@ function holdsUpAll(id, views) {
   return Object.keys(work).filter((w) => w !== id && open(w)).every((w) => waitsOn(w));
 }
 
-// The card's rank, one of IMPORTANCE's values; higher is more important. `views` are the state
-// views, for the build loop's work, reports and open incidents.
+// The card's rank, one of IMPORTANCE's values; higher is more important. It is read from the
+// card's kind and level and the build loop's views, never from the card's words. Only an
+// answer card to a question still open can hold up all work: the question's work is unfinished
+// and every other unfinished work depends on it.
 export function importanceOf(card, views) {
   const data = card?.data;
-  if (INCIDENT_KINDS.includes(data?.kind) || namesOpenIncident(card, views)) return IMPORTANCE.STOP_OR_INCIDENT;
+  if (EMERGENCY_KINDS.includes(data?.kind)) return IMPORTANCE.STOP_OR_INCIDENT;
   if (data?.level === 4) return IMPORTANCE.LEVEL_4;
-  const work = workOf(card, views);
-  if (work !== null && holdsUpAll(work, views)) return IMPORTANCE.HOLDS_UP_ALL;
+  const work = openQuestionOf(card, views)?.work;
+  if (typeof work === 'string' && holdsUpAll(work, views)) return IMPORTANCE.HOLDS_UP_ALL;
   return data?.level === 3 ? IMPORTANCE.LEVEL_3 : IMPORTANCE.REST;
 }
 
@@ -77,13 +66,18 @@ function asQuestion(card) {
 
 const waitingOf = (views) => (Array.isArray(views?.waiting) ? views.waiting.filter(isRecord) : []);
 
-// The next visit's cards: those never asked (`asked` null), most important first and the oldest
-// first among equals, at most CARD.questions. `left` counts the ones not taken. A card put off
-// stays on the board, so the director can still ask for it. The order doesn't depend on the clock.
+// The composer's own importance for a card, to order cards of one rank; none counts as 0.
+const ownImportance = (card) => (Number.isFinite(card.data?.importance) ? card.data.importance : 0);
+
+// The next visit's cards: those never asked (`asked` null), most important first. Within one
+// rank the composer's own importance decides (higher first), then the oldest, then the id.
+// At most CARD.questions; `left` counts the ones not taken. A card put off stays on the board,
+// so the director can still ask for it. The order doesn't depend on the clock.
 export function cardsForVisit(views, _visit = {}) {
   const ranked = waitingOf(views).filter((c) => c.asked === null || c.asked === undefined)
     .map((card) => ({ card, rank: importanceOf(card, views) }))
-    .sort((a, b) => b.rank - a.rank || (a.card.at < b.card.at ? -1 : a.card.at > b.card.at ? 1 : 0) || (a.card.id < b.card.id ? -1 : 1))
+    .sort((a, b) => b.rank - a.rank || ownImportance(b.card) - ownImportance(a.card)
+      || (a.card.at < b.card.at ? -1 : a.card.at > b.card.at ? 1 : 0) || (a.card.id < b.card.id ? -1 : 1))
     .map(({ card }) => card);
   const chosen = ranked.slice(0, CARD.questions);
   return { questions: chosen.map(asQuestion), ids: chosen.map((c) => c.id), left: ranked.length - chosen.length };

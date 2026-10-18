@@ -43,7 +43,7 @@ function loop({ works = [], reports = [], questions = [], incidents = [] } = {})
     work: Object.fromEntries(works.map(([id, entry]) => [id, { work: entry, approved: true }])),
     features: {},
     reports: Object.fromEntries(reports.map(([id, outcome]) => mark(id, `r-${id}`, 2, { work: id, outcome, summary: 's', rulings: [] }))),
-    questions: Object.fromEntries(questions.map((q) => [q.data.id, { question: q, answer: null }])),
+    questions: Object.fromEntries(questions.map(({ answer = null, ...q }) => [q.data.id, { question: q, answer }])),
     incidents: { open: incidents },
   };
 }
@@ -134,22 +134,63 @@ test('a question holds up all work when every other unfinished work depends on i
   assert.equal(rank({ works: [work('export-csv', ['login']), work('login', ['export-csv'])] }), IMPORTANCE.HOLDS_UP_ALL);
   assert.equal(rank({ works: chain, reports: [['export-csv', 'merged']] }), IMPORTANCE.REST);
   assert.equal(rank({ works: [work('login')] }), IMPORTANCE.REST);
-  // A plan to approve or change names its work on its set line.
-  const plan = waitingCard('p', 1, 'answer', {
-    kind: 'approve-work', what: 'The plan for exporting (export-csv).', recommend: 'Approve', options: [says('Approve')],
-    target: { work: 'export-csv', lane: 'feature', hash: 'f'.repeat(64) },
+  // A question already answered holds nothing up; one the build doesn't know holds nothing up either.
+  const answered = loop({ works: chain, questions: [{ ...q, answer: { label: 'Comma', at: T(5) } }] });
+  assert.equal(importanceOf(answer, views([answer], { ...answered })), IMPORTANCE.REST);
+  assert.equal(importanceOf(answer, views([answer], loop({ works: chain }))), IMPORTANCE.REST);
+  // Only an answer card holds up all work: a plan to approve or change ranks by its level.
+  const plan = (kind, over) => waitingCard('p', 1, 'answer', {
+    kind, what: 'The plan for exporting (export-csv).', recommend: kind === 'amend' ? 'Change it' : 'Approve',
+    options: [says(kind === 'amend' ? 'Change it' : 'Approve')], target: { work: 'export-csv', lane: 'feature', hash: 'f'.repeat(64) }, ...over,
   });
-  assert.equal(importanceOf(plan, views([plan], loop({ works: chain }))), IMPORTANCE.HOLDS_UP_ALL);
-  assert.equal(importanceOf(plan, views([plan], loop({ works: [...chain, work('help-page')] }))), IMPORTANCE.REST);
+  for (const kind of ['approve-work', 'amend']) {
+    assert.equal(importanceOf(plan(kind, { level: 3 }), views([], loop({ works: chain }))), IMPORTANCE.LEVEL_3, kind);
+    assert.equal(importanceOf(plan(kind, { level: 2 }), views([], loop({ works: chain }))), IMPORTANCE.REST, kind);
+  }
 });
 
-test('an open incident named on a card puts it with STOP and incidents', () => {
-  const named = waitingCard('n', 1, 'approval', { what: 'Pull request #7 changes the totals after incident bad-total.' });
-  const plain = waitingCard('p', 1, 'approval');
+test('a card ranks from its kind, never from its words: an open incident named in the text changes nothing', () => {
   const open = loop({ incidents: [{ id: 'bad-total', what: 'Wrong totals', at: T(1), fixes: [] }] });
-  assert.equal(importanceOf(named, views([named], open)), IMPORTANCE.STOP_OR_INCIDENT);
-  assert.equal(importanceOf(plain, views([plain], open)), IMPORTANCE.LEVEL_3);
-  assert.equal(importanceOf(named, views([named])), IMPORTANCE.LEVEL_3);
+  const named = waitingCard('n', 1, 'approval', { what: 'Pull request #7 changes the totals after bad-total, the incident.' });
+  assert.ok(named.data.question.includes('bad-total'));
+  assert.equal(importanceOf(named, views([named], open)), IMPORTANCE.LEVEL_3);
+  // The emergency kinds rank with STOP, the runbook's steps among them.
+  const runbook = waitingCard('r', 1, 'approval', {
+    kind: 'runbook', what: 'The emergency steps say: put the product back to an earlier release.', recommend: 'Do it',
+    options: [says('Do it')], target: { step: 3, sha: FULL },
+  });
+  assert.equal(importanceOf(runbook, views([runbook])), IMPORTANCE.STOP_OR_INCIDENT);
+  const fix = waitingCard('f', 1, 'approval', {
+    kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', recommend: 'Merge the fix',
+    options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 },
+  });
+  assert.equal(importanceOf(fix, views([fix])), IMPORTANCE.STOP_OR_INCIDENT);
+});
+
+test('within a rank the composer\'s importance decides first, then age, then the id', () => {
+  const v = views([
+    waitingCard('old', 1, 'approval', { importance: 1 }),
+    waitingCard('urgent', 9, 'approval', { importance: 8, target: { pr: 8, sha: FULL }, what: 'Pull request #8 changes the footer.' }),
+    waitingCard('none-b', 3, 'approval', { target: { pr: 9, sha: FULL }, what: 'Pull request #9 changes the footer.' }),
+    waitingCard('none-a', 3, 'approval', { target: { pr: 10, sha: FULL }, what: 'Pull request #10 changes the footer.' }),
+    waitingCard('level4-low', 5, 'approval', { level: 4, importance: 0.5, target: { pr: 11, sha: FULL }, what: 'Pull request #11 changes the footer.' }),
+  ]);
+  // A rank always beats the composer's importance; the card with none counts as 0.
+  const visit = cardsForVisit(v);
+  assert.deepEqual(visit.ids, ['level4-low', 'urgent', 'old', 'none-a']);
+  assert.equal(visit.left, 1, 'none-b: same rank, importance and time as none-a, so its id puts it last');
+});
+
+test('importanceOf reads a card or views that are missing as the lowest rank, without throwing', () => {
+  const card = waitingCard('c', 1, 'question');
+  for (const [c, v] of [[null, null], [undefined, undefined], [{}, {}], [card, null], [card, {}], [card, { questions: 'x', work: [], reports: 3 }]]) {
+    assert.equal(importanceOf(c, v), IMPORTANCE.REST);
+  }
+  const answer = waitingCard('a', 1, 'answer');
+  assert.equal(importanceOf(answer, null), IMPORTANCE.REST);
+  assert.equal(importanceOf(answer, { questions: { 'q-export-csv-1': null }, work: { 'export-csv': null } }), IMPORTANCE.REST);
+  assert.equal(importanceOf(waitingCard('l3', 1, 'approval'), null), IMPORTANCE.LEVEL_3);
+  assert.deepEqual(cardsForVisit(null), { questions: [], ids: [], left: 0 });
 });
 
 test('a card answered Not now is not asked on the next visit, and stays on the board', () => {
