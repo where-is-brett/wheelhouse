@@ -137,12 +137,13 @@ test('each kind of change goes to the foreman, the feature or the digest as sect
   assert.equal(byType['extra-plan'], 'q-login-page-2');
   assert.equal(byType.amended, 'ev-amend');
   assert.equal(byType.incident, 'ev-incident');
-  assert.equal(byType.stop, `stop:${iso(0)}`);
-  assert.equal(byType.clash, `clash:login-page+search-box:${iso(0)}`);
+  assert.equal(byType.stop, 'stop:0');
+  assert.equal(byType.clash, 'clash:login-page+search-box:0');
+  assert.equal(byType['brief-changed'], 'brief-changed:search-box:b2:0');
   assert.equal(byType['task-done'], 'task-done:login-page:1');
 
   // Nothing changed is nothing to say, and unverified clicks count for nothing.
-  assert.deepEqual(diff(next, next, { handled: new Set() }), []);
+  assert.deepEqual(diff(next, { ...next, events: [] }, { handled: new Set() }), []);
   const forged = observation({
     events: [
       action('ev-f1', { action: 'approve-work', work: 'new-footer', lane: 'small', hash: 'abcdefabcdef', shownFirst: false }, false),
@@ -153,8 +154,11 @@ test('each kind of change goes to the foreman, the feature or the digest as sect
   });
   assert.deepEqual(diff(observation(), forged, { handled: new Set() }), []);
 
-  // The first observation is the starting point: it wakes no one.
-  assert.deepEqual(diff(null, next, { handled: new Set() }), []);
+  // A question id naming another work is not this feature's: skipped and counted.
+  const stray = diff(observation(), observation({
+    features: { 'login-page': feature({ questions: ['q-login-page-1', 'q-search-box-9'], extraPlans: ['q-cart-2'], skipped: 1 }) },
+  }), { handled: new Set() });
+  assert.deepEqual(stray.map((e) => e.id).sort(), ['q-login-page-1', 'skipped-lines:login-page:3']);
 });
 
 test('an event the foreman wrote while handling a wake does not wake it again', () => {
@@ -197,11 +201,14 @@ test('events within a minute arrive as one bundle; the digest rides with the nex
   t += 1000;
   assert.equal(BUNDLE_MS, 60 * 1000);
   const out = bundler.due();
-  assert.deepEqual(out.map((b) => b.to).sort(), ['foreman', 'login-page']);
+  assert.deepEqual(out.map((b) => `${b.to} ${b.work ?? ''}`).sort(), ['feature login-page', 'foreman ']);
   const foreman = out.find((b) => b.to === 'foreman');
   assert.deepEqual(foreman.events.map((e) => e.id), ['f1', 'f2']);
   assert.deepEqual(foreman.digest.map((e) => e.id), ['d1', 'd2']);
-  const feat = out.find((b) => b.to === 'login-page');
+  assert.equal(foreman.dropped, 0);
+  assert.equal(foreman.work, undefined);
+  const feat = out.find((b) => b.to === 'feature');
+  assert.equal(feat.work, 'login-page');
   assert.deepEqual(feat.events.map((e) => e.id), ['c1']);
   assert.deepEqual(feat.digest, []);
   assert.deepEqual(bundler.due(), [], 'each bundle goes out once');
@@ -221,6 +228,27 @@ test('events within a minute arrive as one bundle; the digest rides with the nex
   u = 10;
   const [one] = quick.due();
   assert.equal(one.events.length, 1);
+
+  // A work called foreman is still a feature.
+  quick.add({ foreman: [], features: { foreman: [ev('ci-red', 'x', 'foreman')] }, digest: [] });
+  u = 20;
+  assert.deepEqual(quick.due().map((b) => [b.to, b.work]), [['feature', 'foreman']]);
+
+  // The digest keeps its newest 200 events and counts the rest, across a restart.
+  let v = 0;
+  const big = makeBundler({ now: () => v });
+  big.add({ foreman: [], features: {}, digest: Array.from({ length: 250 }, (_, i) => ev('progress', `p${i}`, 'login-page')) });
+  const again = makeBundler({ now: () => v, held: big.held() });
+  again.add({ foreman: [ev('stop', 's')], features: {}, digest: [ev('pushed', 'p250', 'login-page')] });
+  v = BUNDLE_MS;
+  const [full] = again.due();
+  assert.equal(full.digest.length, 200);
+  assert.equal(full.digest[0].id, 'p51');
+  assert.equal(full.digest.at(-1).id, 'p250');
+  assert.equal(full.dropped, 51);
+  again.add({ foreman: [ev('stop', 's2')], features: {}, digest: [] });
+  v += BUNDLE_MS;
+  assert.equal(again.due()[0].dropped, 0);
 });
 
 test('stuck counts awake time only, and never while waiting', () => {
@@ -259,9 +287,26 @@ test('stuck counts awake time only, and never while waiting', () => {
   const open = feature({ status: status({ phase: 'pr-open', pr: 7, updatedAt: iso(3) }) });
   const pending = { 7: prState({ ci: 'pending' }) };
   for (let i = 0; i < 3; i += 1) assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': open }, prs: pending })), []);
+  // PRs are polled less often than features: an observation without the PR
+  // keeps its last known state, so red CI every other observation still counts.
   const red = { 7: prState({ ci: 'failure' }) };
   assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': open }, prs: red })), []);
-  assert.equal(run(idle(10 * MIN, { features: { 'login-page': open }, prs: red })).length, 1);
+  assert.equal(run(idle(10 * MIN, { features: { 'login-page': open }, prs: {} })).length, 1);
+  assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': open }, prs: red })), []);
+  assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': open }, prs: {} })), []);
+
+  // Three feature observations to each PR poll: a PR waiting on CI stays waiting in between.
+  cursor = { seen: [], prev: observation() };
+  assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': open }, prs: pending })), []);
+  for (let i = 0; i < 3; i += 1) assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': open }, prs: {} })), []);
+  assert.equal(cursor.prev.features['login-page'].still, 0);
+
+  // A PR the watcher has never seen is unknown, not waiting.
+  cursor = { seen: [], prev: observation() };
+  const unseen = feature({ status: status({ phase: 'pr-open', pr: 99, updatedAt: iso(5) }) });
+  assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': unseen } })), []);
+  assert.deepEqual(run(idle(10 * MIN, { features: { 'login-page': unseen } })), []);
+  assert.equal(run(idle(10 * MIN, { features: { 'login-page': unseen } })).length, 1);
 
   // A finished feature is never stuck.
   const done = feature({ status: status({ phase: 'done', updatedAt: iso(4) }), report: true });
@@ -280,7 +325,7 @@ test('after a restart from the cursor, nothing is lost and nothing wakes twice',
     observation({ at: iso(2 * MIN), awake: MIN, features: asked }),
     observation({ at: iso(3 * MIN), awake: MIN, features: asked, prs: red }),
     observation({ at: iso(4 * MIN), awake: MIN, events: [answerEvent()], features: asked, prs: red }),
-    observation({ at: iso(30 * MIN), awake: 26 * MIN, events: [answerEvent()], features: asked, prs: red }),
+    observation({ at: iso(30 * MIN), awake: 26 * MIN, features: asked, prs: red }),
   ];
   const start = { seen: [], prev: observation(), held: null };
 
@@ -293,12 +338,13 @@ test('after a restart from the cursor, nothing is lost and nothing wakes twice',
     const delivered = [];
     const deliver = () => {
       for (const b of bundler.due()) {
-        delivered.push(...b.events.map((e) => `${b.to} ${e.id}`), ...b.digest.map((e) => `digest ${e.id}`));
+        delivered.push(...b.events.map((e) => `${b.work ?? b.to} ${e.id}`), ...b.digest.map((e) => `digest ${e.id}`));
       }
     };
     observations.forEach((obs, i) => {
       clock = Date.parse(obs.at);
       const r = step(cursor, obs, { handled: new Set() });
+      assert.equal('held' in r.cursor, false, 'the caller sets held from its bundler');
       bundler.add(route(r.events));
       deliver();
       cursor = { ...r.cursor, held: bundler.held() };
@@ -375,7 +421,7 @@ test('a brief changed by anyone but the foreman is tampered, not amended', () =>
   // The session rewrites its own brief.
   const edited = run(feature(), feature({ briefHash: 'mine' }));
   assert.deepEqual(types(edited.foreman), ['brief-tampered']);
-  assert.equal(edited.foreman[0].id, 'brief-tampered:login-page:mine');
+  assert.equal(edited.foreman[0].id, 'brief-tampered:login-page:mine:0');
   assert.equal(edited.features['login-page'], undefined, 'the session is not told its own edit is a change');
   assert.ok(![...edited.foreman, ...edited.digest].some((e) => e.type === 'amended'));
 
@@ -391,7 +437,7 @@ test('a brief changed by anyone but the foreman is tampered, not amended', () =>
   const written = run(recorded, feature({ briefHash: 'b2', recordedBrief: 'b2', recordedBefore: 'b1' }));
   assert.deepEqual(written.foreman, []);
   assert.deepEqual(types(written.features['login-page']), ['brief-changed']);
-  assert.equal(written.features['login-page'][0].id, 'brief-changed:login-page:b2');
+  assert.equal(written.features['login-page'][0].id, 'brief-changed:login-page:b2:0');
 
   // Two versions back is not the one before: tampered.
   const old = run(
@@ -400,13 +446,92 @@ test('a brief changed by anyone but the foreman is tampered, not amended', () =>
   );
   assert.deepEqual(types(old.foreman), ['brief-tampered']);
 
-  // A brief with no recorded hash at all is not the foreman's.
-  const unrecorded = run(feature({ recordedBrief: null }), feature({ briefHash: 'b9', recordedBrief: null }));
-  assert.deepEqual(types(unrecorded.foreman), ['brief-tampered']);
+  // A deleted brief is tampered too, unless the whole worktree is gone.
+  assert.deepEqual(types(run(feature(), feature({ briefHash: null })).foreman), ['brief-tampered']);
+  assert.equal(run(feature(), feature({ briefHash: null })).foreman[0].id, 'brief-tampered:login-page:none:0');
+  assert.deepEqual(run(feature(), feature({ briefHash: null, gone: true, status: null })).foreman, []);
 
   // Tampered once is one wake, however long it stays so.
   const still = run(feature({ briefHash: 'mine' }), feature({ briefHash: 'mine' }));
   assert.deepEqual(still.foreman, []);
+});
+
+test('a brief is judged over time: every tampering wakes, and the hash before counts only until the file catches up', () => {
+  let cursor = { seen: [], prev: observation() };
+  let n = 0;
+  const run = (f) => {
+    n += 1;
+    const r = step(cursor, observation({ at: iso(n * 1000), awake: 1000, features: { 'login-page': f } }), { handled: new Set() });
+    cursor = r.cursor;
+    const routed = route(r.events);
+    return [...routed.foreman, ...Object.values(routed.features).flat()].filter((e) => e.type.startsWith('brief')).map((e) => e.type);
+  };
+
+  // Tamper, restore, the same tamper again: two wakes.
+  assert.deepEqual(run(feature({ briefHash: 'mine' })), ['brief-tampered']);
+  assert.deepEqual(run(feature({ briefHash: 'mine' })), []);
+  assert.deepEqual(run(feature()), ['brief-changed']);
+  assert.deepEqual(run(feature({ briefHash: 'mine' })), ['brief-tampered']);
+  assert.deepEqual(run(feature()), ['brief-changed']);
+
+  // An amendment: recorded first, then written. Going back to the earlier
+  // hash once the file has caught up undoes the amendment, so it is tampering.
+  const amended = { recordedBrief: 'b2', recordedBefore: 'b1' };
+  assert.deepEqual(run(feature({ ...amended, briefHash: 'b1' })), []);
+  assert.deepEqual(run(feature({ ...amended, briefHash: 'b1' })), []);
+  assert.deepEqual(run(feature({ ...amended, briefHash: 'b2' })), ['brief-changed']);
+  assert.deepEqual(run(feature({ ...amended, briefHash: 'b1' })), ['brief-tampered']);
+  assert.deepEqual(run(feature({ ...amended, briefHash: 'b2' })), ['brief-changed']);
+
+  // The foreman amends back to the earlier text: the session hears of it again.
+  const back = { recordedBrief: 'b1', recordedBefore: 'b2' };
+  assert.deepEqual(run(feature({ ...back, briefHash: 'b2' })), []);
+  assert.deepEqual(run(feature({ ...back, briefHash: 'b1' })), ['brief-changed']);
+
+  // With nothing recorded, nothing can be tampered, even on a feature's first appearance.
+  cursor = { seen: [], prev: observation({ features: {} }) };
+  assert.deepEqual(run(feature({ briefHash: 'b9', recordedBrief: null })), []);
+  assert.deepEqual(run(feature({ briefHash: 'b8', recordedBrief: null })), []);
+  assert.deepEqual(run(feature({ briefHash: null, recordedBrief: null })), []);
+});
+
+test('observations that leave out PRs and test merges are judged from their last known state', () => {
+  let cursor = { seen: [], prev: observation() };
+  const run = (over) => {
+    const r = step(cursor, observation({ awake: 1000, ...over }), { handled: new Set() });
+    cursor = r.cursor;
+    return r.events.map((e) => e.id);
+  };
+  const clash = [{ a: 'search-box', b: 'login-page', clean: false }];
+  const red = { 7: prState({ ci: 'failure' }) };
+
+  assert.deepEqual(run({ testMerges: clash, prs: red }), ['ci-red:login-page:aaa111', 'clash:login-page+search-box:0']);
+  assert.deepEqual(run({ testMerges: [], prs: {} }), []);
+  assert.deepEqual(cursor.prev.prs, red, 'a PR left out keeps its last known state');
+  assert.deepEqual(cursor.prev.testMerges, clash);
+  assert.deepEqual(run({ testMerges: clash, prs: red }), [], 'the same clash and the same red CI wake once');
+
+  // A clean run in between makes the next clash new.
+  assert.deepEqual(run({ testMerges: [{ a: 'login-page', b: 'search-box', clean: true }] }), []);
+  assert.deepEqual(run({ testMerges: clash }), ['clash:login-page+search-box:4']);
+
+  // A PR named null is closed and forgotten.
+  run({ prs: { 7: null } });
+  assert.deepEqual(cursor.prev.prs, {});
+  // The cursor keeps no events.
+  assert.equal(cursor.prev.events, undefined);
+});
+
+test('with no cursor, the first observation is judged against an empty one', () => {
+  const next = observation({
+    features: { 'login-page': feature({ questions: ['q-login-page-1'] }) },
+    prs: { 7: prState({ ci: 'failure' }) },
+  });
+  const { events } = step({ seen: [], prev: null }, next, { handled: new Set() });
+  const routed = route(events);
+  assert.deepEqual(types(routed.foreman), ['question']);
+  assert.deepEqual(types(routed.features['login-page']), ['ci-red']);
+  assert.deepEqual(diff(null, next, { handled: new Set() }).map((e) => e.id), events.map((e) => e.id));
 });
 
 test('a status with no tokens never counts as over appetite', () => {

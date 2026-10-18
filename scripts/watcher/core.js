@@ -5,31 +5,47 @@
 //     at: string,             when it was made, UTC ISO 8601
 //     awake: number,          milliseconds the watcher ran since its last observation,
 //                             so time the computer slept never counts
-//     events: Array<{ id, kind, data, verified }>,   state events; `verified` for a signed action
+//     events: Array<{ id, kind, data, verified }>,   the state events after the cursor;
+//                             `verified` for a signed action
 //     features: Record<work, {
 //       status: Status | null,
 //       questions: string[],          ids of `question` lines in the questions file
 //       extraPlans: string[],         ids of `extra-plan` lines
 //       skipped: number,              malformed question lines skipped
-//       briefHash: string | null,     the brief file's hash as it is now
+//       briefHash: string | null,     the brief file's hash as it is now (null: no file)
 //       recordedBrief: string | null, the hash the foreman last recorded in state
 //       recordedBefore: string | null, the hash it recorded before that one
 //       appetite: number | null,      the brief's token appetite
 //       report: boolean,
-//       still?: number,               set by settle: awake ms the status has stood unchanged
+//       gone: boolean,                the feature's worktree is missing
 //     }>,
-//     prs: Record<pr, { work, head, ci, mergeable, review }>,
+//     prs: Record<pr, { work, head, ci, mergeable, review } | null>,   null: closed, forget it
 //     testMerges: Array<{ a, b, clean }>,
 //     stop: boolean,
 //   }
 //
+// Task 12 derives `recordedBrief` and `recordedBefore` as the latest two
+// distinct `brief` hashes over all `feature` events for the work, and reads
+// state no older than the brief file, so a brief the foreman has just recorded
+// and written is never judged against an older record.
+//
+// PRs and test merges are polled less often than the feature files, so an
+// observation may leave some or all of them out: `settle` keeps the last known
+// state of each, and `diff` judges what an observation names against it.
+//
 //   WatchEvent = { type, work?, pr?, id, detail, handled? }
 //
 // `diff` and `route` are pure, and the bundler takes its clock from the caller.
-// Every event's id is made from its inputs alone (a state event's own id, a
-// question's id, `<type>:<work>:<head>` and so on), so a watcher restarted from
+// Every event's id is made from its inputs alone, so a watcher restarted from
 // its cursor makes the same ids again and the cursor's `seen` list stops any of
-// them waking twice. Only the cursor's reader and writer touch the disk.
+// them waking twice:
+//   - a state event's own id (work-ready, amended, answer, incident);
+//   - a question's own id (question, extra-plan);
+//   - `<type>:<work>:<head>` for a PR's events;
+//   - a change of state with no id of its own (stop, clash, the brief's events,
+//     stuck with no status) carries the count of the observation before it,
+//     which only ever rises, so a clock set back can never repeat one.
+// Only the cursor's reader and writer touch the disk.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +54,8 @@ import { stateDir } from '../lib/paths.js';
 
 // How many ids the cursor remembers.
 export const SEEN_CAP = 5000;
+// How many digest events wait for the foreman; older ones are counted, not kept.
+export const DIGEST_CAP = 200;
 
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
@@ -49,6 +67,10 @@ export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-run
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const entries = (x) => (isPlain(x) ? Object.entries(x) : []);
 const list = (x) => (Array.isArray(x) ? x : []);
+const text = (x) => (typeof x === 'string' ? x : null);
+
+// What diff compares a first observation against when there is no cursor.
+const EMPTY = Object.freeze({ seq: 0, features: {}, prs: {}, testMerges: [], stop: false });
 
 // A status's content, leaving out the time it was written: two statuses with
 // the same content are no change, however often the hook rewrote the file.
@@ -58,9 +80,29 @@ function statusKey(status) {
   return JSON.stringify(Object.keys(rest).sort().map((k) => [k, rest[k]]));
 }
 
+// The PRs as last known: the earlier ones, with what this observation names laid over them.
+function knownPrs(prev, next) {
+  const prs = { ...(isPlain(prev?.prs) ? prev.prs : {}) };
+  for (const [key, p] of entries(next?.prs)) {
+    if (isPlain(p)) prs[key] = p;
+    else delete prs[key];
+  }
+  return prs;
+}
+
+const pairOf = (m) => [String(m.a), String(m.b)].sort().join('+');
+
+// The test merges as last known, one per pair, in the same way.
+function knownMerges(prev, next) {
+  const merges = new Map(list(prev?.testMerges).filter(isPlain).map((m) => [pairOf(m), m]));
+  for (const m of list(next?.testMerges)) if (isPlain(m)) merges.set(pairOf(m), m);
+  return [...merges.values()];
+}
+
 // Whether the feature is waiting on someone else, so its stillness is no sign of being stuck:
 // it waits on something by its own word, it is done, or its pull request waits on CI,
-// a review or a merge (red CI, findings or a conflict are the session's to fix).
+// a review or a merge (red CI, findings or a conflict are the session's to fix). A PR
+// the watcher has never seen is unknown, and unknown is not waiting.
 function isWaiting(f, prs) {
   const s = f.status;
   if (f.report === true) return true;
@@ -68,46 +110,88 @@ function isWaiting(f, prs) {
   if (s.waitingOn !== null && s.waitingOn !== undefined) return true;
   if (s.phase === 'done') return true;
   if (s.phase === 'pr-open') {
-    const pr = isPlain(prs) ? prs[s.pr] : undefined;
-    if (!isPlain(pr)) return true;
+    const pr = prs[s.pr];
+    if (!isPlain(pr)) return false;
     return !(pr.ci === 'failure' || pr.review === 'findings' || pr.mergeable === 'no');
   }
   return false;
 }
 
-const awakeOf = (obs) => (typeof obs?.awake === 'number' && Number.isFinite(obs.awake) && obs.awake > 0 ? obs.awake : 0);
+// The question and extra-plan ids that are this feature's (`q-<work>-<n>`), and how many are not.
+function ownIds(work, ids) {
+  const own = [];
+  let stray = 0;
+  for (const id of list(ids)) {
+    const rest = typeof id === 'string' && id.startsWith(`q-${work}-`) ? id.slice(work.length + 3) : null;
+    if (rest !== null && /^[0-9]+$/.test(rest)) own.push(id);
+    else stray += 1;
+  }
+  return { own, stray };
+}
 
-// `next` as the watcher keeps it for its next diff: each feature gains `still`,
-// the awake time its status has stood unchanged while not waiting, and the
-// state events are kept by id only, which is all a later diff reads of them.
+// The brief as judged against the foreman's record. `pf` is the feature as
+// last settled, or null. The hash recorded before counts only until the file
+// first matches the latest record: after that, going back to it undoes the
+// amendment, which is tampering. With nothing recorded, nothing is tampered.
+function judgeBrief(pf, f) {
+  const recorded = text(f.recordedBrief);
+  const hash = text(f.briefHash);
+  const sameRecord = pf !== null && text(pf.recordedBrief) === recorded;
+  const caughtUp = sameRecord && (pf.briefCaughtUp ?? text(pf.briefHash) === recorded) === true;
+  const matched = recorded !== null && (hash === recorded || caughtUp);
+  let tampered = false;
+  if (f.gone !== true && recorded !== null && hash !== recorded) {
+    const before = text(f.recordedBefore);
+    tampered = !(hash !== null && hash === before && !caughtUp);
+  }
+  return { matched, tampered };
+}
+
+// Whether the last settled feature counted as tampered (an unsettled one is judged on its own).
+const wasTampered = (pf) => pf !== null && (pf.briefTampered ?? judgeBrief(null, pf).tampered) === true;
+
+const awakeOf = (obs) => (typeof obs?.awake === 'number' && Number.isFinite(obs.awake) && obs.awake > 0 ? obs.awake : 0);
+const seqOf = (obs) => (Number.isInteger(obs?.seq) && obs.seq >= 0 ? obs.seq : 0);
+
+// `next` as the watcher keeps it for its next diff, holding only what diff reads:
+//   - its count, one more than the observation before;
+//   - each feature with `still`, the awake time its status has stood unchanged
+//     while not waiting, and how its brief stands against the foreman's record;
+//   - the PRs and test merges as last known;
+//   - no events, since the next observation holds only those after the cursor.
 export function settle(prev, next) {
+  const before = isPlain(prev) ? prev : EMPTY;
   const awake = awakeOf(next);
+  const prs = knownPrs(before, next);
   const features = {};
   for (const [work, f] of entries(next?.features)) {
-    const before = isPlain(prev?.features) ? prev.features[work] : undefined;
-    const same = isPlain(before) && statusKey(before.status) === statusKey(f.status);
-    const prior = same && typeof before.still === 'number' && Number.isFinite(before.still) ? before.still : 0;
-    features[work] = { ...f, still: same && !isWaiting(f, next.prs) ? prior + awake : 0 };
+    if (!isPlain(f)) continue;
+    const p = isPlain(before.features) ? before.features[work] : undefined;
+    const pf = isPlain(p) ? p : null;
+    const same = pf !== null && statusKey(pf.status) === statusKey(f.status);
+    const prior = same && typeof pf.still === 'number' && Number.isFinite(pf.still) ? pf.still : 0;
+    const brief = judgeBrief(pf, f);
+    features[work] = {
+      ...f,
+      still: same && !isWaiting(f, prs) ? prior + awake : 0,
+      briefCaughtUp: brief.matched,
+      briefTampered: brief.tampered,
+    };
   }
-  return { ...next, events: list(next?.events).map((e) => ({ id: e.id })), features };
+  const { events, ...rest } = isPlain(next) ? next : {}; // eslint-disable-line no-unused-vars
+  return { ...rest, seq: seqOf(before) + 1, features, prs, testMerges: knownMerges(before, next) };
 }
 
 const isOver = (f) => isPlain(f) && isPlain(f.status)
   && typeof f.status.tokens === 'number' && typeof f.appetite === 'number'
   && f.status.tokens > f.appetite;
 
-// Whether the brief file is anything but the foreman's: neither the hash it last
-// recorded nor, while it rewrites the file after recording, the hash before.
-const isTampered = (f) => isPlain(f) && typeof f.briefHash === 'string'
-  && f.briefHash !== f.recordedBrief && f.briefHash !== f.recordedBefore;
-
 const workOfQuestion = (id) => (typeof id === 'string' ? /^q-([a-z0-9-]+)-[0-9]+$/.exec(id)?.[1] : undefined);
 
-// The events from state: new since the last observation, and only signed clicks for actions.
-function stateEvents(prev, next, out) {
-  const before = new Set(list(prev.events).map((e) => e?.id));
+// The events from state: every one in the observation is after the cursor; only signed clicks count as actions.
+function stateEvents(next, out) {
   for (const e of list(next.events)) {
-    if (!isPlain(e) || typeof e.id !== 'string' || before.has(e.id) || !isPlain(e.data)) continue;
+    if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
     const { id, kind, data } = e;
     if (kind === 'work') {
       if (data.lane === 'quick' && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: 'quick' } });
@@ -125,51 +209,59 @@ function stateEvents(prev, next, out) {
   }
 }
 
-function featureEvents(prev, next, out) {
-  const settled = settle(prev, next).features;
+function featureEvents(prev, next, settled, out) {
+  const anchor = seqOf(prev);
   for (const [work, f] of entries(next.features)) {
     if (!isPlain(f)) continue;
     const p = isPlain(prev.features) ? prev.features[work] : undefined;
     const pf = isPlain(p) ? p : null;
 
+    const questions = ownIds(work, f.questions);
+    const extraPlans = ownIds(work, f.extraPlans);
     const asked = new Set(list(pf?.questions));
-    for (const q of list(f.questions)) if (!asked.has(q)) out.push({ type: 'question', work, id: q, detail: {} });
+    for (const q of questions.own) if (!asked.has(q)) out.push({ type: 'question', work, id: q, detail: {} });
     const split = new Set(list(pf?.extraPlans));
-    for (const q of list(f.extraPlans)) if (!split.has(q)) out.push({ type: 'extra-plan', work, id: q, detail: {} });
+    for (const q of extraPlans.own) if (!split.has(q)) out.push({ type: 'extra-plan', work, id: q, detail: {} });
 
-    const skipped = Number.isInteger(f.skipped) ? f.skipped : 0;
-    if (skipped > 0 && skipped !== (pf?.skipped ?? 0)) {
+    const skippedOf = (x, ownQ, ownP) => (Number.isInteger(x?.skipped) ? x.skipped : 0) + ownQ.stray + ownP.stray;
+    const skipped = skippedOf(f, questions, extraPlans);
+    const before = pf === null ? 0 : skippedOf(pf, ownIds(work, pf.questions), ownIds(work, pf.extraPlans));
+    if (skipped > 0 && skipped !== before) {
       out.push({ type: 'skipped-lines', work, id: `skipped-lines:${work}:${skipped}`, detail: { skipped } });
     }
 
     // The brief: tampered goes to the foreman; the file catching up with the
     // foreman's record goes to the session. Nothing here is ever an amendment.
-    if (isTampered(f) && !(isTampered(pf) && pf.briefHash === f.briefHash)) {
-      out.push({ type: 'brief-tampered', work, id: `brief-tampered:${work}:${f.briefHash}`, detail: { found: f.briefHash, recorded: f.recordedBrief ?? null } });
-    } else if (pf && typeof f.briefHash === 'string' && f.briefHash === f.recordedBrief && pf.briefHash !== f.briefHash) {
-      out.push({ type: 'brief-changed', work, id: `brief-changed:${work}:${f.briefHash}`, detail: { hash: f.briefHash } });
+    const hash = text(f.briefHash);
+    const s = settled.features[work];
+    if (s.briefTampered && !(wasTampered(pf) && text(pf.briefHash) === hash)) {
+      out.push({
+        type: 'brief-tampered', work, id: `brief-tampered:${work}:${hash ?? 'none'}:${anchor}`, detail: { found: hash, recorded: text(f.recordedBrief) },
+      });
+    } else if (pf !== null && f.gone !== true && hash !== null && hash === text(f.recordedBrief) && text(pf.briefHash) !== hash) {
+      out.push({ type: 'brief-changed', work, id: `brief-changed:${work}:${hash}:${anchor}`, detail: { hash } });
     }
 
-    const s = isPlain(f.status) ? f.status : null;
+    const status = isPlain(f.status) ? f.status : null;
     const ps = isPlain(pf?.status) ? pf.status : null;
-    if (s && pf && statusKey(s) !== statusKey(ps)) {
-      const n = s.task?.n ?? 0;
-      if (n >= 1 && n > (ps?.task?.n ?? 0)) out.push({ type: 'task-done', work, id: `task-done:${work}:${n}`, detail: { task: s.task } });
+    if (status && pf && statusKey(status) !== statusKey(ps)) {
+      const n = status.task?.n ?? 0;
+      if (n >= 1 && n > (ps?.task?.n ?? 0)) out.push({ type: 'task-done', work, id: `task-done:${work}:${n}`, detail: { task: status.task } });
       out.push({
         type: 'progress',
         work,
-        id: `progress:${work}:${s.updatedAt}`,
-        detail: { phase: s.phase, task: s.task, fixRound: s.fixRound, waitingOn: s.waitingOn, tokens: s.tokens },
+        id: `progress:${work}:${status.updatedAt}`,
+        detail: { phase: status.phase, task: status.task, fixRound: status.fixRound, waitingOn: status.waitingOn, tokens: status.tokens },
       });
     }
 
-    const still = settled[work].still;
-    if (still >= STUCK_MS && !((pf?.still ?? 0) >= STUCK_MS)) {
-      out.push({ type: 'stuck', work, id: `stuck:${work}:${s?.updatedAt ?? 'none'}`, detail: { still, phase: s?.phase ?? null } });
+    if (s.still >= STUCK_MS && !((pf?.still ?? 0) >= STUCK_MS)) {
+      const id = status ? `stuck:${work}:${status.updatedAt}` : `stuck:${work}:none:${anchor}`;
+      out.push({ type: 'stuck', work, id, detail: { still: s.still, phase: status?.phase ?? null } });
     }
 
     if (isOver(f) && !(isOver(pf) && pf.appetite === f.appetite)) {
-      out.push({ type: 'over-appetite', work, id: `over-appetite:${work}:${f.appetite}`, detail: { tokens: s.tokens, appetite: f.appetite } });
+      out.push({ type: 'over-appetite', work, id: `over-appetite:${work}:${f.appetite}`, detail: { tokens: status.tokens, appetite: f.appetite } });
     }
   }
 }
@@ -184,6 +276,7 @@ const PR_CONDITIONS = [
   ['ci-running', (p) => p.ci === 'pending'],
 ];
 
+// The PRs this observation names, each against its last known state.
 function prEvents(prev, next, out) {
   for (const [key, p] of entries(next.prs)) {
     if (!isPlain(p)) continue;
@@ -201,32 +294,32 @@ function prEvents(prev, next, out) {
   }
 }
 
-// A change of state between two observations, anchored on the earlier one's
-// time: the same change seen again from the same cursor has the same id.
+// STOP set, and a pair of features newly not clean against its last known test merge.
 function edgeEvents(prev, next, out) {
-  const anchor = typeof prev.at === 'string' ? prev.at : 'start';
+  const anchor = seqOf(prev);
   if (next.stop === true && prev.stop !== true) out.push({ type: 'stop', id: `stop:${anchor}`, detail: {} });
-  const pair = (m) => [String(m.a), String(m.b)].sort().join('+');
-  const clean = new Map(list(prev.testMerges).filter(isPlain).map((m) => [pair(m), m.clean === true]));
+  const known = new Map(list(prev.testMerges).filter(isPlain).map((m) => [pairOf(m), m.clean]));
   for (const m of list(next.testMerges)) {
     if (!isPlain(m) || m.clean !== false) continue;
-    const key = pair(m);
-    if (clean.get(key) === false) continue;
+    const key = pairOf(m);
+    if (known.get(key) === false) continue;
     out.push({ type: 'clash', id: `clash:${key}:${anchor}`, detail: { a: m.a, b: m.b } });
   }
 }
 
-// The events between two observations. The first observation (no `prev`) is
-// the starting point and makes none: the foreman reads where things stand when
-// it starts. An id in `seen` was sent before and is dropped; an id in `handled`
+// The events between two observations. With no `prev` (no cursor), `next` is
+// judged against an empty observation, so what is already waiting wakes on the
+// first run. An id in `seen` was sent before and is dropped; an id in `handled`
 // (the foreman wrote it while handling a wake) is marked so it goes to the digest.
 export function diff(prev, next, { handled = new Set(), seen = new Set() } = {}) {
-  if (!isPlain(prev) || !isPlain(next)) return [];
+  if (!isPlain(next)) return [];
+  const before = isPlain(prev) ? prev : EMPTY;
+  const settled = settle(before, next);
   const out = [];
-  stateEvents(prev, next, out);
-  featureEvents(prev, next, out);
-  prEvents(prev, next, out);
-  edgeEvents(prev, next, out);
+  stateEvents(next, out);
+  featureEvents(before, next, settled, out);
+  prEvents(before, next, out);
+  edgeEvents(before, next, out);
   const kept = new Set();
   const events = [];
   for (const e of out) {
@@ -255,18 +348,23 @@ export function route(events) {
 
 const timeOf = (t) => (t instanceof Date ? t.getTime() : Number(t));
 
-// Gathers routed events into wakes. Each recipient's events go out together
-// once `windowMs` has passed since the first of them; the digest waits for the
-// next foreman bundle. `held` is what `held()` gave before a restart.
+// Gathers routed events into wakes: `{ to: 'foreman', events, digest, dropped }`
+// or `{ to: 'feature', work, events, digest: [], dropped: 0 }`. Each recipient's
+// events go out together once `windowMs` has passed since the first of them.
+// The digest waits for the next foreman bundle, keeping its newest DIGEST_CAP
+// events and counting the rest in `dropped`. `held` is what `held()` gave
+// before a restart.
 export function makeBundler({ windowMs = BUNDLE_MS, now = () => new Date(), held = null } = {}) {
   let foreman = null;
   const features = new Map();
   let digest = [];
+  let dropped = 0;
   if (isPlain(held)) {
     const group = (g) => (isPlain(g) && typeof g.first === 'number' && Array.isArray(g.events) ? { first: g.first, events: [...g.events] } : null);
     foreman = group(held.foreman);
     for (const [work, g] of entries(held.features)) if (group(g)) features.set(work, group(g));
-    digest = list(held.digest).filter(isPlain);
+    digest = list(held.digest).filter(isPlain).slice(-DIGEST_CAP);
+    dropped = Number.isInteger(held.dropped) && held.dropped > 0 ? held.dropped : 0;
   }
 
   const put = (group, events, t) => {
@@ -286,18 +384,23 @@ export function makeBundler({ windowMs = BUNDLE_MS, now = () => new Date(), held
       }
       const ids = new Set(digest.map((e) => e.id));
       for (const e of list(routed?.digest)) if (!ids.has(e.id)) { ids.add(e.id); digest.push(e); }
+      if (digest.length > DIGEST_CAP) {
+        dropped += digest.length - DIGEST_CAP;
+        digest = digest.slice(-DIGEST_CAP);
+      }
     },
     due() {
       const t = timeOf(now());
       const out = [];
       if (foreman && t - foreman.first >= windowMs) {
-        out.push({ to: 'foreman', events: foreman.events, digest });
+        out.push({ to: 'foreman', events: foreman.events, digest, dropped });
         foreman = null;
         digest = [];
+        dropped = 0;
       }
       for (const [work, g] of features) {
         if (t - g.first >= windowMs) {
-          out.push({ to: work, events: g.events, digest: [] });
+          out.push({ to: 'feature', work, events: g.events, digest: [], dropped: 0 });
           features.delete(work);
         }
       }
@@ -305,19 +408,21 @@ export function makeBundler({ windowMs = BUNDLE_MS, now = () => new Date(), held
     },
     // What is waiting, for the cursor: a restarted bundler picks up from here.
     held() {
-      return structuredClone({ foreman, features: Object.fromEntries(features), digest });
+      return structuredClone({ foreman, features: Object.fromEntries(features), digest, dropped });
     },
   };
 }
 
 // One watch: the events since the cursor's observation, and the cursor to keep
 // after them (the ids now seen, and the observation settled for the next diff).
+// The returned cursor has no `held`: the caller sets it from its bundler's
+// `held()` before writing, so a restart never brings back an old bundle.
 export function step(cursor, next, { handled = new Set() } = {}) {
   const prev = isPlain(cursor?.prev) ? cursor.prev : null;
   const before = list(cursor?.seen);
   const events = diff(prev, next, { handled, seen: new Set(before) });
   const seen = [...before, ...events.map((e) => e.id)].slice(-SEEN_CAP);
-  return { events, cursor: { ...cursor, seen, prev: settle(prev, next) } };
+  return { events, cursor: { seen, prev: settle(prev, next) } };
 }
 
 // --- The cursor, at projects/<p>/watcher/cursor.json ---
