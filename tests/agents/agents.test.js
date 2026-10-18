@@ -49,8 +49,10 @@ test('the tester has the tools to read, fetch and run Playwright, and writes onl
   const { front, body } = load('tester');
   assert.deepEqual(front.tools.split(',').map((t) => t.trim()).sort(), ['Bash', 'Glob', 'Grep', 'Read', 'WebFetch']);
   assert.match(body, /\.wheelhouse\/feature\/screens\//);
-  const builder = load('builder').front.tools;
-  assert.equal(builder, undefined, 'the builder inherits the session\'s tools');
+});
+
+test('the builder names no tools, so it inherits the session\'s', () => {
+  assert.equal(load('builder').front.tools, undefined);
 });
 
 test('each agent file has a name, a description and the path comment straight after the front matter', () => {

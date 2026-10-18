@@ -149,6 +149,15 @@ test('no brief tells the session to use AskUserQuestion, merge, or wait for a me
   }
 });
 
+test('every brief tells the session how to dispatch a reviewer: the diff file, the commit and the pull request', () => {
+  for (const lane of LANES) {
+    const text = afterOverride(render(lane));
+    assert.match(text, /before each `wheelhouse:reviewer` dispatch, write the diff under review to `\.wheelhouse\/feature\/review\/<n>\.diff`/i, lane);
+    assert.match(text, /full commit hash of the head it reviews/, lane);
+    assert.match(text, /pull request number once the feature's pull request is open \(`pr: none` before then\)/, lane);
+  }
+});
+
 test('the commands carry the real plugin root', () => {
   const text = render('small');
   assert.ok(text.includes(`node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}" ask`));
