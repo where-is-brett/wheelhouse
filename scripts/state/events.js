@@ -10,11 +10,12 @@ import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET } from './card-lines.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
+import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
-  'work', 'feature', 'question', 'report', 'incident', 'amendment',
+  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -99,6 +100,9 @@ const PLAIN_SHAPES = {
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['line', 'code', 'importance', 'topic', 'concepts'] },
+  // The director undid something decided at level 2.
+  reversal: { must: ['topic', 'what'], may: ['of'] },
 };
 
 function checkPlain(kind, data) {
@@ -156,6 +160,23 @@ function checkPlain(kind, data) {
     slug('work');
     text('change');
     if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the changed document');
+  } else if (kind === 'card') {
+    // The question and its header as AskUserQuestion takes them; composing keeps them within CARD's limits.
+    text('question');
+    text('header');
+    if (!CARD_KINDS.includes(data.kind)) bad('needs its kind to be one the front desk knows');
+    if (!Array.isArray(data.options) || data.options.length < 2 || data.options.length > CARD.options || !data.options.every(isText)) {
+      bad(`needs two to ${CARD.options} options, each text`);
+    }
+    if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
+    for (const k of ['line', 'code']) if (data[k] !== undefined && data[k] !== null && !isText(data[k])) bad(`has a ${k} that is neither text nor null`);
+    if (data.importance !== undefined && !Number.isFinite(data.importance)) bad('has an importance that is not a number');
+    optionalText('topic');
+    if (data.concepts !== undefined && !(Array.isArray(data.concepts) && data.concepts.every(isText))) bad('has concepts that are not a list of text');
+  } else if (kind === 'reversal') {
+    text('topic');
+    text('what');
+    optionalText('of');
   }
 }
 

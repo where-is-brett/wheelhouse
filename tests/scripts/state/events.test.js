@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
-import { makeEvent, eventPath, writeEvent, syncState, listEvents } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
@@ -461,5 +461,66 @@ test('each new action needs its own fields and refuses others', async () => {
       { ...a.answer, questionId: 'nope' }, { ...a.answer, questionHash: 'zz' }, { ...a.answer, label: 'Explain more' }, { ...a.answer, label: 'Not now' },
       { ...a.amend, hash: H.slice(0, 11) }, { ...a['lift-incident'], incident: '' }, { ...a['incident-fix'], pr: 0 }, { ...a['incident-fix'], pr: '3' },
     ]) assert.throws(() => makeEvent({ kind: 'action', data: bad }), /action event/, JSON.stringify(bad));
+  });
+});
+
+// --- cards and reversals ---
+
+const CARD_DATA = {
+  question: 'What this is: a pull request.', header: 'Approve', options: ['Approve', 'Not now', 'Explain more', 'Show me'],
+  kind: 'approval', line: 'Approve pull request #7 at commit abcdef123456', code: 'K7M2', level: 3, importance: 5,
+};
+
+test('a card event needs its kind, options and level', async () => {
+  await withHome(() => {
+    const make = (data) => makeEvent({ kind: 'card', data, now: at(1) });
+    assert.equal(make(CARD_DATA).kind, 'card');
+    // A card with no line or code (a product question), and the optional topic and concepts.
+    make({ ...CARD_DATA, kind: 'question', line: null, code: null, topic: 'colours', concepts: ['pull request'] });
+    for (const kind of ['approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'question']) {
+      make({ ...CARD_DATA, kind });
+    }
+    for (const k of ['question', 'header', 'options', 'kind', 'level']) {
+      const { [k]: _gone, ...without } = CARD_DATA;
+      assert.throws(() => make(without), /card event.*needs/, `without ${k}`);
+    }
+    const bad = (data) => assert.throws(() => make({ ...CARD_DATA, ...data }), /card event/, JSON.stringify(data));
+    bad({ kind: 'bogus' });
+    bad({ options: [] });
+    bad({ options: ['Only'] });
+    bad({ options: ['a', 'b', 'c', 'd', 'e'] });
+    bad({ options: ['a', 3] });
+    bad({ options: 'Approve' });
+    bad({ level: 0 });
+    bad({ level: 5 });
+    bad({ level: '3' });
+    bad({ question: '' });
+    bad({ header: 7 });
+    bad({ line: 7 });
+    bad({ code: 7 });
+    bad({ importance: 'high' });
+    bad({ topic: '' });
+    bad({ concepts: 'pull request' });
+    bad({ concepts: [3] });
+    bad({ title: 'extra' });
+    assert.throws(() => make(undefined), /card event/);
+    assert.throws(() => make([]), /card event/);
+  });
+});
+
+test('a reversal is accepted as a plain kind', async () => {
+  await withHome(() => {
+    assert.ok(PLAIN_KINDS.includes('reversal'));
+    const made = makeEvent({ kind: 'reversal', data: { topic: 'colours', what: 'The director undid the colour change' }, now: at(1) });
+    assert.equal(made.sig, undefined);
+    makeEvent({ kind: 'reversal', data: { topic: 'colours', what: 'Undid it', of: 'r001' }, now: at(1) });
+    const bad = (data) => assert.throws(() => makeEvent({ kind: 'reversal', data }), /reversal event/, JSON.stringify(data));
+    bad(undefined);
+    bad({ what: 'x' });
+    bad({ topic: 'x' });
+    bad({ topic: '', what: 'x' });
+    bad({ topic: 'x', what: 'x', of: '' });
+    bad({ topic: 'x', what: 'x', of: 3 });
+    bad({ topic: 'x', what: 'x', extra: 1 });
   });
 });

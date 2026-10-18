@@ -5,6 +5,7 @@ import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
+import { PUT_OFF } from '../lib/front-desk.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
@@ -136,6 +137,11 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const byId = new Map(sorted.map((e) => [e.id, e]));
   const confirmed = new Set();
   const confirmations = [];
+  // The kind and id a confirm line in `text` names, or null; and whether a confirmation of exactly
+  // that event came after `record`. A waiting card and a shown card are spent by the same rule.
+  const confirmNamed = (text) => /Confirm ([a-z-]+) (\S+): "/.exec(text);
+  const confirmedAfter = (record, named) => named !== null && confirmations.some((c) => byOrder(record, c.event) < 0
+    && c.target.id === named[2] && c.target.kind === named[1]);
   for (const e of sorted) {
     if (e.kind !== 'confirmation' || typeof e.data?.confirms !== 'string' || typeof e.data?.confirmsHash !== 'string') continue;
     const target = byId.get(e.data.confirms);
@@ -203,15 +209,31 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
 
   // An answer names its card by id (data.card) or, as the prompt record writes it, quotes the
   // question shown (data.question): that matches a card's question, or its title when it has none.
-  // Two cards asking the same question both close on one answer.
+  // Two cards asking the same question both close on one answer. A card closes on an answer whose
+  // label is one of its options other than Not now, Explain more and Show me, or on a verified
+  // signed record after it that carries its question or confirms the event its confirm line names.
+  // Any other answer leaves it waiting, and the latest of them is what `asked` marks. A card
+  // written before cards carried options has none to check, so any label but those three decides it.
   const answers = sorted.filter((e) => e.kind === 'card-answer');
-  const answeredIds = new Set(answers.map((e) => e.data?.card).filter((c) => typeof c === 'string'));
-  const answeredQuestions = new Set(answers.filter((e) => e.data?.card === undefined || e.data?.card === null)
-    .map((e) => e.data?.question).filter((q) => typeof q === 'string'));
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
-  const answered = (card) => answeredIds.has(card.id) || answeredQuestions.has(questionOf(card));
-  const waiting = sorted.filter((e) => e.kind === 'card' && !answered(e))
-    .map((e) => ({ id: e.id, at: e.at, data: e.data }));
+  const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string' ? a.data.card === card.id
+    : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
+  const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
+  // The verified approvals and actions that carry the question they were clicked on.
+  const answeredBy = sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
+  const closedBySigned = (card) => {
+    const question = questionOf(card);
+    if (answeredBy.some((e) => byOrder(card, e) < 0 && e.data.question === question)) return true;
+    const named = confirmNamed(typeof card.data?.line === 'string' ? card.data.line : question);
+    return confirmedAfter(card, named);
+  };
+  const waiting = [];
+  for (const card of sorted.filter((e) => e.kind === 'card')) {
+    const mine = answersTo(card);
+    if (mine.some((a) => decides(card, a.data?.label)) || closedBySigned(card)) continue;
+    const last = mine.at(-1);
+    waiting.push({ id: card.id, at: card.at, data: card.data, asked: last ? { at: last.at, label: last.data?.label ?? null } : null });
+  }
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
@@ -227,12 +249,9 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // carries its question or confirms the one event its confirm line names.
   const shownRecords = sorted.filter((e) => e.kind === 'shown' && verify(e, enrolled)
     && typeof e.data?.code === 'string' && typeof e.data?.question === 'string' && Array.isArray(e.data?.options));
-  const answeredBy = sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
   const spentBy = (shownEvent) => {
     if (answeredBy.some((e) => byOrder(shownEvent, e) < 0 && e.data.question === shownEvent.data.question)) return true;
-    const named = /Confirm ([a-z-]+) (\S+): "/.exec(shownEvent.data.question);
-    return named !== null && confirmations.some((c) => byOrder(shownEvent, c.event) < 0
-      && c.target.id === named[2] && c.target.kind === named[1]);
+    return confirmedAfter(shownEvent, confirmNamed(shownEvent.data.question));
   };
   // Only live records take part: not spent, and younger than REPLY_CODE_DAYS. The latest live
   // record holds its code, and two live records with different questions clash. A code with no

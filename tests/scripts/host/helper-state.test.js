@@ -365,7 +365,7 @@ test('each /state/write and /state/record it takes rewrites the project\'s views
   try {
     await c.as(async () => {
       const viewsOf = (name) => JSON.parse(fs.readFileSync(path.join(stateDir(PROJECT), '..', 'views', `${name}.json`), 'utf8'));
-      const card = await c.client.state.write({ project: PROJECT, kind: 'card', data: { title: 'Pick a colour' } });
+      const card = await c.client.state.write({ project: PROJECT, kind: 'card', data: { question: 'Pick a colour?', header: 'Colour', options: ['Blue', 'Green'], kind: 'question', level: 3 } });
       assert.equal(card.ok, true);
       assert.deepEqual(viewsOf('waiting').map((w) => w.id), [card.id]);
       const review = makeEvent({ kind: 'review', data: { pr: 7, commit: 'abc1234', verdict: 'CLEAN' }, now: at(5000) });

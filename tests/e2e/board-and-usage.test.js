@@ -185,6 +185,8 @@ async function write(c, kind, data) {
   assert.equal(written.ok, true, JSON.stringify(written));
   return written;
 }
+// A card event asking `question`, as the front desk writes one.
+const cardOf = (question) => ({ question, header: 'Question', options: ['Yes', 'No'], kind: 'question', line: null, code: null, level: 3, importance: 1 });
 const eventsOf = (kind, dir = stateDir(PROJECT)) => listEvents(dir, { report: () => {} }).filter((e) => e.kind === kind);
 
 function freePort() {
@@ -395,7 +397,7 @@ test('a profile setting confirmed by a click changes the briefing\'s length; a p
     // A second apart, so they are oldest first as asked.
     for (const [i, title] of titles.entries()) {
       c.time(MINUTE + i * 1000);
-      await write(c, 'card', { title });
+      await write(c, 'card', cardOf(title));
     }
     c.time(HOUR);
 
@@ -519,7 +521,7 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     const titles = Array.from({ length: 14 }, (_, i) => `Pick the wording for message ${i + 1} on the sign-in page`);
     for (const [i, title] of titles.entries()) {
       c.time(90 * MINUTE + (i + 1) * 1000);
-      await write(c, 'card', { title });
+      await write(c, 'card', cardOf(title));
     }
     await write(c, 'merge', { pr: 5, forUsers: 'Sign-in now remembers you for thirty days' });
     await c.act(() => {
