@@ -14,13 +14,16 @@
   "merge": {
     "plain": "to join a checked change into the real product",
     "past": "added to the product",
+    "pastBefore": "combined",
     "ing": "adding to the product",
+    "ingBefore": "combining",
     "example": "Like adding the edited page into the finished book."
   },
   "branch": {
     "plain": "a separate copy of the work where a change is made without touching the real product",
     "phrase": "separate copy of the work",
     "plural": "separate copies of the work",
+    "takesName": true,
     "example": "Like photocopying a recipe so you can try a new spice without spoiling the original."
   },
   "commit": {
@@ -29,6 +32,7 @@
     "plural": "saved steps",
     "past": "saved",
     "ing": "saving",
+    "takesName": true,
     "example": "Like a numbered save point in a game: you can always go back to it."
   },
   "review": {
@@ -41,8 +45,8 @@
   },
   "slice": {
     "plain": "one finished piece of a bigger feature, sent up as its own pull request and kept hidden behind a feature flag until you switch it on",
-    "phrase": "part",
-    "plural": "parts",
+    "phrase": "piece",
+    "plural": "pieces",
     "example": "Like building a house room by room, with each room inspected before the next."
   },
   "lane": {
@@ -55,6 +59,7 @@
     "plain": "a switch that keeps finished work hidden from users until you decide to turn it on",
     "phrase": "hidden-until-ready switch",
     "plural": "hidden-until-ready switches",
+    "takesName": true,
     "example": "Like a curtain over a new shop window until opening day."
   },
   "preview": {
@@ -67,6 +72,7 @@
     "plain": "a separate working folder where one agent builds one piece of work without getting in the way of the others",
     "phrase": "separate working folder",
     "plural": "separate working folders",
+    "takesName": true,
     "example": "Like giving each builder their own workbench."
   },
   "STOP": {

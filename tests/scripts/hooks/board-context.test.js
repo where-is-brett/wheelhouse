@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { decide, HEADINGS, WAIT_MS } from '../../../scripts/hooks/board-context.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { readSeen, markSeen } from '../../../scripts/briefing/seen.js';
@@ -227,19 +228,36 @@ test('the board and the briefing come through the glossary', async () => {
     waitingOn(LABELS);
     const briefing = contextOf(await run(repo, 'Hello', NOW));
     assert.ok(briefing.startsWith(`${HEADINGS.briefing}\n\n`), briefing);
-    assert.match(briefing, /The proposed change's automatic check run is red on part 2/);
+    assert.match(briefing, /The proposed change's automatic check run is red on piece 2/);
     assert.doesNotMatch(briefing, /PR's CI/);
 
     const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.ok(board.startsWith(`${HEADINGS.board}\n\n`), board);
-    assert.match(board, /proposed change's automatic check run is red on part 2/);
+    assert.match(board, /proposed change's automatic check run is red on piece 2/);
 
     // The settings and the changed sources are texts it adds too.
     waitingOn('Nothing');
-    put(path.join(sourcesDir(), 'diff', 'models.txt'), '+ The PR was merged on a new branch');
+    put(path.join(sourcesDir(), 'diff', 'models.txt'), '+ The PR was merged into main');
     const sources = contextOf(await run(repo, '/wheelhouse:sources', NOW));
-    assert.match(sources, /The proposed change was added to the product on a new separate copy of the work/);
-    assert.match(contextOf(await run(repo, '/wheelhouse:settings', NOW)), /Independent check round cap/);
+    assert.match(sources, /The proposed change was combined into main/);
+    // A setting's name is how the director finds it, so it is kept.
+    assert.match(contextOf(await run(repo, '/wheelhouse:settings', NOW)), /\nReview round cap: 3 \(the default\)\n/);
+  });
+});
+
+test('a work title is kept as written, and the words around it go through', async () => {
+  await withProject(async ({ repo }) => {
+    const load = async (options) => {
+      const inputs = await loadBoardInputs(options);
+      inputs.model.build.features = [{ work: 'w1', title: 'Fix CI on slice 2', lane: 'feature', step: 'building', slice: { n: 1, m: 3 }, pr: 12 }];
+      inputs.model.build.pullRequests = [{ pr: 12, work: 'Review the PR page', review: 'clean', findings: null }];
+      return inputs;
+    };
+    const board = contextOf(await run(repo, '/wheelhouse:board build', NOW, { load }));
+    assert.match(board, /\n- Fix CI on slice 2 \(feature process level\): building, slice 1 of 3, proposed change #12\n/);
+    // The term's first mention was replaced above, so this one stays and the end gives its meaning.
+    assert.match(board, /\n- Pull request #12 for Review the PR page: its independent check found nothing to fix\n/);
+    assert.match(board, /\n\nTerms: [^]*pull request means a proposed change[^]*\.$/);
   });
 });
 
@@ -253,7 +271,7 @@ test('some-terms keeps the terms with their meanings, and a known term is left a
     assert.doesNotMatch(text, /CI means/);
 
     setProfile({ explanations: 'plain', 'known:pull-request': true });
-    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The PR's automatic check run is red on part 2/);
+    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The PR's automatic check run is red on piece 2/);
   });
 });
 
@@ -262,7 +280,7 @@ test('the project\'s glossary is used, and the Terms line survives a long board'
     const views = path.join(wheelhouseHome(), 'projects', P, 'views');
     put(path.join(views, 'glossary.json'), { ci: { key: 'ci', id: 'g1', at: '2026-10-01T00:00:00.000Z', data: { term: 'CI', plain: 'our robot inspector', phrase: 'robot inspector' } } });
     waitingOn(LABELS);
-    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The proposed change's robot inspector is red on part 2/);
+    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The proposed change's robot inspector is red on piece 2/);
 
     put(path.join(views, 'waiting.json'), Array.from({ length: 200 }, (_, i) => ({ id: `c${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Question ${i}: ${LABELS}` } })));
     setProfile({ explanations: 'some-terms' });

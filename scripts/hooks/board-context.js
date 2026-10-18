@@ -24,6 +24,7 @@ import { briefingParts } from '../briefing/text.js';
 import { readSeen, markSeen } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
+import { KNOWN, SETTINGS } from '../settings/catalogue.js';
 import { sourcesText } from '../sources/check.js';
 import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
 import { readProfileViews } from '../profile/store.js';
@@ -103,11 +104,28 @@ function fitLines(text, limit) {
   return { text: text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, ''), cut: true };
 }
 
+const LABELS = [...Object.values(SETTINGS), KNOWN].map((setting) => setting.label);
+
+// The titles the director finds work by (a feature's or a pull request's), which stay as written.
+function titlesOf(model) {
+  const out = new Set();
+  const records = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
+  for (const item of [
+    ...records(model?.build?.features), ...records(model?.build?.pullRequests),
+    ...Object.values(isRecord(model?.director?.inProgress) ? model.director.inProgress : {}).flatMap(records),
+  ]) {
+    for (const title of [item.title, item.work]) if (typeof title === 'string' && title !== '') out.add(title);
+  }
+  return [...out];
+}
+
 // The words every text it adds goes through: the starter glossary with the project's over it, the
-// explanations setting, and the concepts the director knows. What can't be read gives the defaults.
-function wordsOf(project, settings) {
+// explanations setting, the concepts the director knows, and what stays as written: the settings'
+// names and the titles of the work. What can't be read gives the defaults.
+function wordsOf(project, settings, model) {
   const view = attempt(() => localViews(project, ['glossary'])?.glossary);
   return {
+    protect: [...LABELS, ...attempt(() => titlesOf(model), [])],
     glossary: attempt(() => glossaryOf(isRecord(view) ? view : {}), attempt(() => glossaryOf({}), {})),
     explanations: settings?.explanations?.value,
     known: attempt(() => knownConcepts(settings), []),
@@ -166,7 +184,7 @@ async function build(want, { project, cwd, at, client, load, command, since, bri
     body = parts.text.split('\n').map(unlinked).join('\n');
     raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, parts.shownWatch) : [];
   }
-  const fitted = inPlainWords(make ?? (() => body), room, wordsOf(project, settings));
+  const fitted = inPlainWords(make ?? (() => body), room, wordsOf(project, settings, model));
   // A briefing cut for length here may have lost what it raised, so none of it counts as told.
   return { text: `${HEADINGS[want]}\n\n${fitted.text}`, raise: fitted.cut ? [] : raise };
 }

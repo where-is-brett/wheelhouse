@@ -78,21 +78,26 @@ const SOME = { explanations: 'some-terms', known: [] };
 test('"The PR\'s CI is red on slice 2" reads in plain words', () => {
   const g = glossaryOf({});
   const out = plainWords("The PR's CI is red on slice 2", g, PLAIN);
-  assert.equal(out.text, "The proposed change's automatic check run is red on part 2");
+  assert.equal(out.text, "The proposed change's automatic check run is red on piece 2");
   assert.deepEqual(out.terms, ['pull request', 'CI', 'slice']);
 });
 
 test('only the first mention is replaced; later ones keep the term, and a sentence start keeps its capital', () => {
   const g = glossaryOf({});
-  assert.equal(plainWords('Slice 1 is done. Slice 2 is not; slices 3 and 4 wait.', g, PLAIN).text, 'Part 1 is done. Slice 2 is not; slices 3 and 4 wait.');
-  assert.equal(plainWords('- the helper is up\n- the helper is slow', g, PLAIN).text, '- the key-holding program on your computer is up\n- the helper is slow');
-  assert.equal(plainWords('Two PRs and a PR', g, PLAIN).text, 'Two proposed changes and a PR');
+  const later = plainWords('Slice 1 is done. Slice 2 is not; slices 3 and 4 wait.', g, PLAIN);
+  // A term mentioned again after its replacement is given its meaning at the end.
+  assert.equal(later.text, `Piece 1 is done. Slice 2 is not; slices 3 and 4 wait.\n\nTerms: slice means ${g.slice.plain}.`);
+  assert.equal(
+    plainWords('- the helper is up\n- the helper is slow', g, PLAIN).text,
+    `- the key-holding program on your computer is up\n- the helper is slow\n\nTerms: the helper means ${g['the helper'].plain}.`,
+  );
+  assert.equal(plainWords('Two PRs and a PR', g, PLAIN).text, `Two proposed changes and a PR\n\nTerms: pull request means ${g['pull request'].plain}.`);
 });
 
 test('a known term is kept as it is, named by its term or its concept', () => {
   const g = glossaryOf({});
   const text = "The PR's CI is red on slice 2";
-  assert.equal(plainWords(text, g, { explanations: 'plain', known: ['pull-request'] }).text, "The PR's automatic check run is red on part 2");
+  assert.equal(plainWords(text, g, { explanations: 'plain', known: ['pull-request'] }).text, "The PR's automatic check run is red on piece 2");
   assert.equal(plainWords(text, g, { explanations: 'plain', known: new Set(['pull request', 'CI', 'slice']) }).text, text);
   const some = plainWords(text, g, { explanations: 'some-terms', known: ['ci', 'slice'] });
   assert.match(some.text, /^The PR's CI is red on slice 2\n\nTerms: pull request means a proposed change/);
@@ -112,9 +117,9 @@ test('with some technical terms, terms are kept with their meanings at the end',
 
 test('without a setting, explanations are plain', () => {
   const g = glossaryOf({});
-  assert.equal(plainWords('A PR', g).text, 'A proposed change');
-  assert.equal(plainWords('A PR', g, {}).text, 'A proposed change');
-  assert.equal(plainWords('A PR', g, { explanations: 'nonsense' }).text, 'A proposed change');
+  assert.equal(plainWords('My PR', g).text, 'My proposed change');
+  assert.equal(plainWords('My PR', g, {}).text, 'My proposed change');
+  assert.equal(plainWords('My PR', g, { explanations: 'nonsense' }).text, 'My proposed change');
 });
 
 test('text with no term comes back as it was', () => {
@@ -128,7 +133,7 @@ test('the project\'s glossary wins over the starter', () => {
     ci: { data: { term: 'CI', plain: 'our robot inspector', phrase: 'robot inspector', plural: 'robot inspectors' } },
     sprocket: { data: { term: 'sprocket', plain: 'a toothed wheel' } },
   });
-  assert.equal(plainWords('Two CIs and a CI', g, PLAIN).text, 'Two robot inspectors and a CI');
+  assert.equal(plainWords('Two CIs and a CI', g, PLAIN).text, 'Two robot inspectors and a CI\n\nTerms: CI means our robot inspector.');
   // A project term with no phrase can't be put into a sentence, so it is kept with its meaning.
   assert.equal(plainWords('A sprocket and a PR', g, PLAIN).text, 'A sprocket and a proposed change\n\nTerms: sprocket means a toothed wheel.');
 });
@@ -140,7 +145,8 @@ test('verbs: a past or -ing form is replaced where there are words for it; the b
   const to = plainWords('Ready to merge', g, PLAIN);
   assert.equal(to.text, `Ready to merge\n\nTerms: merge means ${g.merge.plain}.`);
   const verb = plainWords('We will commit it, then the commit is checked', g, PLAIN);
-  assert.equal(verb.text, 'We will commit it, then the saved step is checked');
+  // The bare verb stays, so the term is listed.
+  assert.equal(verb.text, `We will commit it, then the saved step is checked\n\nTerms: commit means ${g.commit.plain}.`);
 });
 
 test('STOP, Standard and Locked keep their names, with their meaning, and only in their capitals', () => {
@@ -169,7 +175,7 @@ test('every starter term has words that fit a sentence', () => {
   const g = glossaryOf({});
   for (const [term, entry] of Object.entries(g)) {
     assert.ok(entry.phrase || entry.past || entry.ing, term);
-    for (const field of ['phrase', 'plural', 'past', 'ing']) {
+    for (const field of ['phrase', 'plural', 'past', 'ing', 'pastBefore', 'ingBefore']) {
       if (entry[field] !== undefined) assert.deepEqual(termsIn(entry[field], g).filter((t) => t !== term), [], `${term}.${field}`);
     }
   }
@@ -187,4 +193,64 @@ test('knownConcepts reads the known:* settings that are true; conceptOf names a 
   };
   assert.deepEqual(knownConcepts(settings), ['ci', 'the-helper']);
   assert.deepEqual(knownConcepts(undefined), []);
+});
+
+test('commands, addresses, branch and file names, quotations and setting names are kept as written', () => {
+  const g = glossaryOf({});
+  for (const text of [
+    'Run `/wheelhouse:review` now',
+    'Type /wheelhouse:review to start',
+    'See https://example.com/pull/ci-checks?merge=1 for more',
+    'It is on feat/branch-picker today',
+    'The file .github/workflows/ci.yml changed',
+    'Mail review@example.com about pr-12',
+    'Knows "slice": yes',
+    'Setting known:ci is on',
+    'Pull request "Fix CI on slice 2" is waiting',
+    'He called it \u201Cthe PR merge\u201D',
+    "It is called 'review' by us",
+  ]) {
+    const out = plainWords(text, g, PLAIN);
+    for (const part of text.match(/`[^`]*`|"[^"]*"|\u201C[^\u201D]*\u201D|'review'|\S*[/@:.-]\S*/g)) assert.ok(out.text.includes(part), `${text} -> ${out.text}`);
+  }
+  // The words around a protected span still go through.
+  assert.equal(plainWords('The PR "Fix CI" has a CI failure', g, PLAIN).text.split('\n\n')[0], 'The proposed change "Fix CI" has an automatic check run failure');
+  // A protected mention isn't a term the text used.
+  assert.deepEqual(plainWords('Run `/wheelhouse:review` on pr-12', g, PLAIN), { text: 'Run `/wheelhouse:review` on pr-12', terms: [] });
+  // An apostrophe in "PR's" opens no quotation.
+  assert.equal(plainWords("The PR's CI isn't green; it's the PR's fault", g, PLAIN).text.startsWith("The proposed change's automatic check run isn't"), true);
+});
+
+test('text the caller names is kept as written', () => {
+  const g = glossaryOf({});
+  const out = plainWords('Review round cap: 3. The review ran.', g, { ...PLAIN, protect: ['Review round cap'] });
+  assert.equal(out.text, 'Review round cap: 3. The independent check ran.');
+  assert.deepEqual(out.terms, ['review']);
+});
+
+test('replaced sentences read as English', () => {
+  const g = glossaryOf({});
+  const plain = (text) => plainWords(text, g, PLAIN).text.split('\n\n')[0];
+  assert.equal(plain('We need a review'), 'We need an independent check');
+  assert.equal(plain('A review is due'), 'An independent check is due');
+  assert.equal(plain('a CI run failed'), 'an automatic check run failed');
+  assert.equal(plain('The CI runs failed'), 'The automatic check runs failed');
+  assert.equal(plain('a PR'), 'a proposed change');
+  assert.equal(plain('merged into main'), 'combined into main');
+  assert.equal(plain('merged with main'), 'combined with main');
+  assert.equal(plain('The PR was merged'), 'The proposed change was added to the product');
+  assert.equal(plain('Merging into main'), 'Combining into main');
+  assert.equal(plain('Merged.'), 'Added to the product.');
+});
+
+test('a term followed by a name, or by another term, is kept and listed', () => {
+  const g = glossaryOf({});
+  const branch = plainWords('Branch main is protected', g, PLAIN);
+  assert.equal(branch.text, `Branch main is protected\n\nTerms: branch means ${g.branch.plain}.`);
+  assert.equal(plainWords('The branch is protected', g, PLAIN).text, 'The separate copy of the work is protected');
+  assert.equal(plainWords('On branch feat-x', g, PLAIN).text.split('\n\n')[0], 'On branch feat-x');
+  // A verb form after a term is no compound.
+  assert.equal(plainWords('1 pull request merged', g, PLAIN).text, '1 proposed change added to the product');
+  const compound = plainWords('The PR review is clean', g, PLAIN);
+  assert.equal(compound.text, `The PR review is clean\n\nTerms: pull request means ${g['pull request'].plain}; review means ${g.review.plain}.`);
 });
