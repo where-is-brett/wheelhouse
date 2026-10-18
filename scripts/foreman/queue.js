@@ -9,6 +9,26 @@ const FILES_LINE = /^\s*[-*]\s+(?:Create|Modify|Test):(.*)$/;
 // A trailing `:10-20` or `:3,40-50` after a path.
 const LINE_SUFFIX = /:\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$/;
 
+// The backticked spans on a line that are not inside a parenthetical note, which may name
+// identifiers rather than files. Parentheses inside backticks belong to the path.
+function pathsOnLine(text) {
+  const spans = [];
+  let depth = 0;
+  let open = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (open >= 0) {
+      if (ch === '`') {
+        if (depth === 0 && i > open + 1) spans.push(text.slice(open + 1, i));
+        open = -1;
+      }
+    } else if (ch === '`') open = i;
+    else if (ch === '(') depth += 1;
+    else if (ch === ')' && depth > 0) depth -= 1;
+  }
+  return spans;
+}
+
 // Every backticked path on a Create, Modify or Test line under a task's `**Files:**`, without line
 // suffixes, each once, in the order the plan gives them.
 export function fileMapOf(planText) {
@@ -25,7 +45,7 @@ export function fileMapOf(planText) {
       inFiles = false;
       continue;
     }
-    for (const [, text] of match[1].matchAll(/`([^`]+)`/g)) {
+    for (const text of pathsOnLine(match[1])) {
       const file = text.trim().replace(LINE_SUFFIX, '').replace(/^\.\//, '');
       if (file !== '' && !out.includes(file)) out.push(file);
     }
@@ -51,6 +71,8 @@ export function clashCheck({ files, running, hotFiles }) {
 }
 
 const FEATURE_LANE = 'feature';
+// A report with one of these outcomes ends the work; a blocked one leaves it in the queue.
+const ENDED = ['merged', 'closed'];
 
 // Which work may take a building slot now. `work`, `features` and `reports` are the state views.
 // A slot is held by a feature that is building, or by quick work that has started (it has no plan,
@@ -67,7 +89,8 @@ export function nextWork({ work, features, reports, now, fiveHourTight }) {
 
   const candidates = Object.values(work ?? {})
     .map((w) => w.work)
-    .filter((w) => !holdsSlot(w.key) && stepOf(w.key) !== 'closed')
+    .filter((w) => !holdsSlot(w.key) && stepOf(w.key) !== 'closed' && !ENDED.includes(reports?.[w.key]?.data?.outcome))
+    .map((w) => ({ ...w, since: work[w.key].since ?? w.at }))
     .sort((a, b) => {
       const pa = a.data.place;
       const pb = b.data.place;
@@ -75,7 +98,7 @@ export function nextWork({ work, features, reports, now, fiveHourTight }) {
       const hasB = Number.isFinite(pb);
       if (hasA !== hasB) return hasA ? -1 : 1;
       if (hasA && pa !== pb) return pa - pb;
-      return a.at < b.at ? -1 : a.at > b.at ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+      return a.since < b.since ? -1 : a.since > b.since ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
     });
 
   const start = [];

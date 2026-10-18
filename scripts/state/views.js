@@ -82,7 +82,9 @@ function buildLoopViews(sorted, enrolled) {
       const direct = ofWork.filter((a) => a.data.hash === current).at(-1);
       approval = direct ? detail(direct, current) : carried;
     }
-    work[id] = { work: { key: id, ...mark(w) }, approved: approval !== null, ...(approval ? { approval } : {}) };
+    // `since` is when the work was first recorded: re-recording it (a changed document) keeps its place in the queue.
+    const since = sorted.find((e) => e.kind === 'work' && e.data?.id === id).at;
+    work[id] = { work: { key: id, ...mark(w) }, since, approved: approval !== null, ...(approval ? { approval } : {}) };
   }
 
   const features = latestPerKey(sorted.filter((e) => e.kind === 'feature'), (e) => e.data?.work);

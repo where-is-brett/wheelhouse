@@ -578,3 +578,12 @@ test('a work event naming the document an approved change already moved to leave
     assert.equal(build([...base1, workEv(5)]).work['export-csv'].approval.hash, H1);
   });
 });
+
+test('work remembers when it was first recorded', async () => {
+  await withHome(() => {
+    const v = build([workEv(5, { title: 'Export again' }), workEv(2), ev('work', 3, { id: 'login', title: 'Login', lane: 'small', visible: false, dependsOn: [] })]);
+    assert.equal(v.work['export-csv'].since, T(2));
+    assert.equal(v.work['export-csv'].work.at, T(5), 'the latest event is still the work');
+    assert.equal(v.work.login.since, T(3));
+  });
+});

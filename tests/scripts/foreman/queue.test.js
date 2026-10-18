@@ -162,3 +162,33 @@ test('under five-hour pressure the newest work pauses first', () => {
   // Without the pressure nothing pauses.
   assert.deepEqual(next({ work, features, fiveHourTight: false }).pause, []);
 });
+
+test('fileMapOf leaves out identifiers in a parenthetical note', () => {
+  const plan = [
+    '**Files:**',
+    '- Create: `scripts/foreman/queue.js`',
+    '- Modify: `scripts/gate/guardrails.js` (`hotFiles` and `flagFiles` in `Config`)',
+    '- Modify: `src/(admin)/page.js:4-9`, `LICENSE` (see `mergeAnswer`)',
+    '- Test: `tests/scripts/foreman/queue.test.js`',
+  ].join('\n');
+  assert.deepEqual(fileMapOf(plan), ['scripts/foreman/queue.js', 'scripts/gate/guardrails.js', 'src/(admin)/page.js', 'LICENSE', 'tests/scripts/foreman/queue.test.js']);
+  const other = ['**Files:**', '- Modify: `scripts/state/views.js` (`Config` too)'].join('\n');
+  assert.equal(clashCheck({ files: fileMapOf(plan), running: [{ work: 'b', files: fileMapOf(other) }], hotFiles: HOT }).ok, true, 'the same identifier in two notes is no clash');
+});
+
+test('work whose report says merged or closed is not queued again; a blocked one is', () => {
+  const report = (id, outcome) => ({ [id]: { key: id, id: `r-${id}`, at: T(1), data: { work: id, outcome, summary: 's', rulings: [] } } });
+  const work = worksOf(mkWork('a', 'small', 1), mkWork('b', 'small', 2), mkWork('c', 'small', 3), mkWork('d', 'small', 4));
+  const reports = { ...report('a', 'merged'), ...report('b', 'closed'), ...report('c', 'blocked') };
+  const found = next({ work, reports });
+  assert.deepEqual(found.start, ['c', 'd']);
+  assert.deepEqual(found.hold, []);
+});
+
+test('work is ordered by when it was first recorded, not by its latest event', () => {
+  const rerecorded = { ...mkWork('a', 'small', 9), since: T(1) };
+  const work = worksOf(rerecorded, mkWork('b', 'small', 5), mkWork('c', 'small', 6), mkWork('d', 'small', 7));
+  const found = next({ work });
+  assert.deepEqual(found.start, ['a', 'b', 'c']);
+  assert.deepEqual(found.hold, [{ work: 'd', why: 'pace' }]);
+});
