@@ -22,9 +22,10 @@ export function withoutGitVars(env = process.env) {
 // carries `timedOut: true`; on Windows it is ended with `taskkill /pid <pid> /T /F`, which
 // takes its children too (`platform` and `killer` are for tests). A variable in `env`
 // whose value is undefined or null is removed from the environment. With `limit` (bytes), only about the newest `limit`
-// bytes of each stream are kept while it runs. Resolves with the exit code and the collected
+// bytes of each stream are kept while it runs. With `windowsVerbatimArguments` (Windows only), the
+// arguments are passed to the program as they are, without Node's quoting, for `cmd.exe /c`. Resolves with the exit code and the collected
 // output; rejects only if the program cannot be started.
-export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill } = {}) {
+export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false } = {}) {
   return new Promise((resolve, reject) => {
     const merged = { ...baseEnv, ...env };
     for (const name of Object.keys(merged)) if (merged[name] === undefined || merged[name] === null) delete merged[name];
@@ -33,6 +34,7 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
       env: merged,
       shell: false,
       windowsHide: true,
+      windowsVerbatimArguments,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const out = [];

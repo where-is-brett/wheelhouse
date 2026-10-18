@@ -12,6 +12,10 @@ import {
   subagents,
   modelsUsed,
   usageOf,
+  totalUsageOf,
+  resolveClaude,
+  quoteForCmd,
+  invocation,
   missingFlags,
   runSession,
   locateSuperpowers,
@@ -77,6 +81,14 @@ test('usageOf counts everything the main session read as input, and what it wrot
   assert.deepEqual(usageOf([]), { input: 0, output: 0 });
 });
 
+test('totalUsageOf sums every model that worked, subagents included', () => {
+  assert.deepEqual(totalUsageOf(events), { input: (6 + 33359 + 123600) + (2 + 0 + 40159), output: 237 + 4 });
+  // with no per-model figures it falls back to the main session's usage
+  const bare = [{ type: 'result', usage: { input_tokens: 1, cache_read_input_tokens: 2, output_tokens: 3 } }];
+  assert.deepEqual(totalUsageOf(bare), { input: 3, output: 3 });
+  assert.deepEqual(totalUsageOf([]), { input: 0, output: 0 });
+});
+
 test('missingFlags names the flags the help text does not mention', () => {
   const help = '  --output-format <format>  x\n  --verbose  y\n  -p, --print  z\n';
   assert.deepEqual(missingFlags(help, ['--output-format', '--verbose', '--print']), []);
@@ -134,6 +146,7 @@ test('runSession runs claude -p in the folder with the flags asked for, and pars
   assert.equal(result.exitCode, 0);
   assert.equal(finalText(result.events), 'finished');
   assert.deepEqual(result.usage, { input: 6 + 33359 + 123600, output: 237 });
+  assert.deepEqual(result.totalUsage, totalUsageOf(events));
 });
 
 test('runSession leaves out --model when none is given, and reports a non-zero exit', async () => {
@@ -184,8 +197,65 @@ test('locateSuperpowers reads the installed folder from installed_plugins.json u
       'superpowers@claude-plugins-official': [{ scope: 'user', installPath: installed, version: '7.0.0' }],
     },
   }));
-  assert.equal(locateSuperpowers({ home }), installed);
-  assert.throws(() => locateSuperpowers({ home: tempFolder('harness-empty-') }), /installed_plugins\.json/);
+  assert.equal(locateSuperpowers({ home, env: {} }), installed);
+  assert.throws(() => locateSuperpowers({ home: tempFolder('harness-empty-'), env: {} }), /installed_plugins\.json/);
+});
+
+test('locateSuperpowers honours CLAUDE_CONFIG_DIR', () => {
+  const home = tempFolder('harness-home-');
+  const configDir = tempFolder('harness-config-');
+  const installed = path.join(configDir, 'cache', '7.0.0');
+  fs.mkdirSync(installed, { recursive: true });
+  fs.mkdirSync(path.join(configDir, 'plugins'), { recursive: true });
+  fs.writeFileSync(path.join(configDir, 'plugins', 'installed_plugins.json'), JSON.stringify({
+    plugins: { 'superpowers@elsewhere': [{ scope: 'user', installPath: installed, version: '7.0.0' }] },
+  }));
+  assert.equal(locateSuperpowers({ home, env: { CLAUDE_CONFIG_DIR: configDir } }), installed);
+  assert.throws(() => locateSuperpowers({ home, env: {} }), /installed_plugins\.json/);
+});
+
+test('resolveClaude needs no search away from Windows', () => {
+  assert.deepEqual(resolveClaude({ platform: 'darwin', env: {}, exists: () => false }), { kind: 'direct', file: 'claude' });
+});
+
+test('on Windows, resolveClaude prefers claude.exe on the PATH, then claude.cmd, and finds the PATH however it is spelt', () => {
+  const present = new Set();
+  const exists = (file) => present.has(file);
+  const env = { Path: 'C:\\Windows;"C:\\Users\\x\\AppData\\Roaming\\npm";D:\\tools' };
+  present.add('C:\\Users\\x\\AppData\\Roaming\\npm\\claude.cmd');
+  assert.deepEqual(resolveClaude({ platform: 'win32', env, exists }), { kind: 'cmd', file: 'C:\\Users\\x\\AppData\\Roaming\\npm\\claude.cmd' });
+  present.add('D:\\tools\\claude.exe');
+  assert.deepEqual(resolveClaude({ platform: 'win32', env, exists }), { kind: 'direct', file: 'D:\\tools\\claude.exe' });
+});
+
+test('on Windows, resolveClaude says plainly when neither claude.exe nor claude.cmd is on the PATH', () => {
+  assert.throws(() => resolveClaude({ platform: 'win32', env: { PATH: 'C:\\Windows' }, exists: () => false }), /claude\.exe or claude\.cmd/);
+  assert.throws(() => resolveClaude({ platform: 'win32', env: {}, exists: () => false }), /claude\.exe or claude\.cmd/);
+});
+
+test('quoteForCmd leaves plain arguments alone, quotes ones with spaces or shell characters, and refuses ones it cannot quote', () => {
+  assert.equal(quoteForCmd('--output-format'), '--output-format');
+  assert.equal(quoteForCmd('C:\\Users\\x\\npm\\claude.cmd'), 'C:\\Users\\x\\npm\\claude.cmd');
+  assert.equal(quoteForCmd('C:\\My Files\\a&b'), '"C:\\My Files\\a&b"');
+  assert.throws(() => quoteForCmd('say "hi"'), /safely/);
+  assert.throws(() => quoteForCmd('100%'), /safely/);
+  assert.throws(() => quoteForCmd('a\nb'), /safely/);
+});
+
+test('invocation starts claude directly with the prompt as an argument', () => {
+  assert.deepEqual(
+    invocation({ kind: 'direct', file: 'claude' }, ['lead'], ['--verbose'], 'say "hi" & 100%'),
+    { file: 'claude', args: ['lead', '-p', 'say "hi" & 100%', '--verbose'], input: '', verbatim: false },
+  );
+});
+
+test('invocation runs a .cmd shim through cmd.exe, with the prompt on stdin, never on the command line', () => {
+  const call = invocation({ kind: 'cmd', file: 'C:\\Program Files\\npm\\claude.cmd' }, [], ['--verbose', '--plugin-dir', 'C:\\a b'], 'say "hi" & 100%');
+  assert.equal(call.file, 'cmd.exe');
+  assert.deepEqual(call.args, ['/d', '/s', '/c', '""C:\\Program Files\\npm\\claude.cmd" -p --verbose --plugin-dir "C:\\a b""']);
+  assert.equal(call.input, 'say "hi" & 100%');
+  assert.equal(call.verbatim, true);
+  assert.ok(!call.args.join(' ').includes('hi'));
 });
 
 test('resultFile puts a run under the evaluations folder in the home folder, by date, id, variant and trial', () => {
@@ -248,13 +318,15 @@ test('runScenario sets the project up, runs the session, judges it and writes th
   assert.equal(sessionSaw.maxTurns, 5);
   assert.equal(sessionSaw.permissionMode, 'acceptEdits');
   assert.equal(outcome.pass, true);
-  assert.equal(outcome.line, '99 without: pass (variant without) 163 in / 237 out'.replace('163', String(6 + 33359 + 123600)));
+  const total = totalUsageOf(events);
+  assert.equal(outcome.line, `99 without: pass (variant without) ${total.input} in / ${total.output} out`);
   const written = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', '2026-10-18', '99-without-1.json'), 'utf8'));
   assert.equal(written.id, 99);
   assert.equal(written.variant, 'without');
   assert.equal(written.pass, true);
   assert.equal(written.events.length, events.length);
-  assert.deepEqual(written.usage, usageOf(events));
+  assert.deepEqual(written.usage, total);
+  assert.deepEqual(written.mainSessionUsage, usageOf(events));
   assert.ok(!fs.existsSync(setupSaw.dir), 'the scratch project is removed afterwards');
 });
 
@@ -278,4 +350,27 @@ test('runScenario records a failing judgement and a session that did not exit cl
   });
   assert.equal(outcome.pass, false);
   assert.match(outcome.line, /^98 with: fail \(it asked; claude exited 2\)/);
+});
+
+test('runScenario never passes a session whose result event is an error', async () => {
+  const home = tempFolder('harness-home-');
+  const scenario = {
+    id: 97,
+    title: 'a stand-in',
+    setup: async () => {},
+    prompt: 'x',
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+    pass: () => ({ pass: true, why: 'looked fine' }),
+  };
+  const errored = [{ type: 'result', subtype: 'error_max_turns', is_error: true, usage: {} }];
+  const outcome = await runScenario({
+    scenario,
+    variant: 'with',
+    trial: 1,
+    home,
+    date: '2026-10-18',
+    runner: async () => ({ events: errored, exitCode: 1, usage: { input: 0, output: 0 } }),
+  });
+  assert.equal(outcome.pass, false);
+  assert.match(outcome.line, /result event is an error/);
 });
