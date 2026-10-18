@@ -14,6 +14,7 @@ import { weeklyDue as backgroundWeeklyDue } from '../../../scripts/lib/backgroun
 
 const NOW = '2026-10-19T09:00:00.000Z';
 const at = (offsetMs) => new Date(Date.parse(NOW) + offsetMs).toISOString();
+const HOUR = 60 * 60 * 1000;
 const recordFile = () => path.join(jobsDir(), 'weekly.json');
 const readRecord = () => JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
 const writeRecord = (body) => {
@@ -146,6 +147,26 @@ test('a refused profile sync is a failure with the reason in plain words', () =>
     client: fakeClient({ sync: () => { throw new Error('boom'); } }),
   });
   assert.deepEqual(down.profile, { ok: false, why: 'boom' });
+}));
+
+test('when the helper can\'t be reached for any backup or the sync, the run isn\'t recorded as done', () => withHome(async () => {
+  addProject('owner__one');
+  addProject('owner__two');
+  const away = { ok: false, refused: 'the host helper could not be reached: is it running?' };
+  const late = { ok: false, refused: 'the host helper did not answer in time' };
+  const client = fakeClient({ backup: (project) => (project === 'owner__one' ? away : late), sync: () => away });
+  const out = await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot() });
+  assert.equal(out.profile.ok, false);
+  const kept = readRecord();
+  assert.equal(kept.lastRun, undefined, 'no last run while the helper was down');
+  assert.deepEqual(kept.result.profile, out.profile);
+  assert.equal(weeklyDue(at(HOUR)), true, 'the next session start tries again');
+
+  // A run some of whose calls reach the helper is done for the week.
+  const reached = await runWeekly({ now: at(HOUR), fetch: pageFetch(), root: bareRoot(), client: fakeClient({ sync: () => away }) });
+  assert.equal(reached.backups.every((b) => b.ok), true);
+  assert.equal(readRecord().lastRun, at(HOUR));
+  assert.equal(weeklyDue(at(2 * HOUR)), false);
 }));
 
 test('the record keeps counts and whys, written only after all three have been tried', () => withHome(async () => {

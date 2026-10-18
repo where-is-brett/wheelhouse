@@ -14,7 +14,8 @@
 //     added as it is, and a cumulative one by its increase since the last point of its series.
 //
 // Layout:
-//   series.json            the last value seen for each series, so a repeat adds nothing
+//   series.json            for a cumulative series its last value, and for a delta one its
+//                          recent export times, so a repeat adds nothing
 //   records/<date>.jsonl   increases: { at, session, model, type?, source?, tokens? | usd? }
 //   mod/<date>.jsonl       the mod's readings of a session's running cost: { at, session, usd }
 //   allowance.json         the latest rate-limit windows: { at, windows }
@@ -234,29 +235,31 @@ function timeOf(at) {
   return iso;
 }
 
-// The latest windows win; a reading older than the one kept changes nothing.
-function writeAllowance(windows, at) {
+// The latest windows win; a reading older than the one kept changes nothing, unless the kept
+// one is stamped ahead of now (the clock was put back), when it would block every later reading.
+function writeAllowance(windows, at, now = new Date()) {
   const kept = windowsOf(windows);
   if (kept.length === 0) return;
   const file = usagePath('allowance.json');
   const current = readJson(file);
-  if (current && typeof current.at === 'string' && Date.parse(current.at) > Date.parse(at)) return;
+  const keptAt = current && typeof current.at === 'string' ? Date.parse(current.at) : NaN;
+  if (keptAt > Date.parse(at) && !(keptAt > new Date(now).getTime())) return;
   writeJson(file, { at, windows: kept });
 }
 
 // The mod's reading of a session's running cost (`usd`), and of the allowance (`windows`).
-export function recordModReading({ session, usd, windows, at }) {
+export function recordModReading({ session, usd, windows, at, now }) {
   checkSession(session);
   const time = timeOf(at);
   if (typeof usd === 'number' && Number.isFinite(usd) && usd >= 0) {
     appendLines('mod', new Map([[dateOf(time), [{ at: time, session, usd }]]]));
   }
-  writeAllowance(windows, time);
+  writeAllowance(windows, time, now);
 }
 
 // The allowance as the terminal's status line reports it: the same file.
-export function recordAllowance({ windows, at }) {
-  writeAllowance(windows, timeOf(at));
+export function recordAllowance({ windows, at, now }) {
+  writeAllowance(windows, timeOf(at), now);
 }
 
 // What a session is for, written once; a second call changes nothing. The mod's bridge can't

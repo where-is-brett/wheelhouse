@@ -192,11 +192,21 @@ test('the allowance file holds the latest windows and their reset times', () => 
   recordAllowance({ windows: [{ kind: 'five_hour', percentUsed: 55, resetsAt: '2026-10-18T13:00:00.000Z' }], at: '2026-10-18T11:00:00.000Z' });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).windows[0].percentUsed, 55);
   // an older reading does not replace a newer one, and an empty list changes nothing
-  recordAllowance({ windows: [{ kind: 'five_hour', percentUsed: 3 }], at: '2026-10-18T09:30:00.000Z' });
+  recordAllowance({ windows: [{ kind: 'five_hour', percentUsed: 3 }], at: '2026-10-18T09:30:00.000Z', now: new Date('2026-10-18T12:00:00.000Z') });
   recordAllowance({ windows: [], at: '2026-10-18T12:00:00.000Z' });
   const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(kept.windows[0].percentUsed, 55);
   assert.equal(kept.at, '2026-10-18T11:00:00.000Z');
+}));
+
+test('a kept allowance stamped ahead of now (the clock moved back) gives way to the next reading', () => withHome(() => {
+  const file = path.join(usageDir(), 'allowance.json');
+  recordAllowance({ windows: [{ kind: 'weekly', percentUsed: 40 }], at: '2026-10-25T09:00:00.000Z', now: new Date('2026-10-25T09:00:00.000Z') });
+  // The clock is put back a week: the kept reading is in the future, so it no longer blocks.
+  recordAllowance({ windows: [{ kind: 'weekly', percentUsed: 12 }], at: '2026-10-18T09:00:00.000Z', now: new Date('2026-10-18T09:00:00.000Z') });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { at: '2026-10-18T09:00:00.000Z', windows: [{ kind: 'weekly', percentUsed: 12 }] });
+  recordModReading({ session: 's1', windows: [{ kind: 'weekly', percentUsed: 13 }], at: '2026-10-18T10:00:00.000Z', now: new Date('2026-10-18T10:00:00.000Z') });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).windows[0].percentUsed, 13);
 }));
 
 test('a session is recorded once', () => withHome(() => {

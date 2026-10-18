@@ -6,6 +6,7 @@
 // Under jobsDir():
 //   weekly.json   { lastRun, result }  written once all three have been tried. `result` keeps
 //                 counts and reasons only; the whole sources report is in sources/report.json.
+//                 When the helper couldn't be reached for any of its calls there is no lastRun.
 //   weekly.lock   held while the jobs run, so two sessions starting together run them once
 //
 // Git and the host are reached only through the helper (`client`).
@@ -19,6 +20,7 @@ import { DEFAULT_SOURCES } from '../sources/list.js';
 import { runSourcesCheck } from '../sources/check.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { readProfileViews } from '../profile/store.js';
+import { readSmallText } from '../hooks/kit.js';
 
 // Longer than the jobs take; a lock older than this belongs to a run that died.
 const LOCK_STALE_MS = 30 * 60 * 1000;
@@ -126,15 +128,15 @@ const CONFIG_MAX_BYTES = 256 * 1024;
 
 // The project's configuration, read only when it is a regular file (not a link, not a pipe)
 // of reasonable size, inside a `.claude` that is a real folder: the project's folder is one an
-// agent controls, and opening a pipe there would wait forever.
+// agent controls. readSmallText opens without waiting and reads only a regular file within the
+// limit, so a pipe put there between the check and the read is never waited on.
 function readConfig(folder) {
   try {
     const dir = path.join(folder, '.claude');
     const file = path.join(dir, 'wheelhouse.json');
-    if (!fs.lstatSync(dir).isDirectory()) return undefined;
-    const info = fs.lstatSync(file);
-    if (!info.isFile() || info.size > CONFIG_MAX_BYTES) return undefined;
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!fs.lstatSync(dir).isDirectory() || fs.lstatSync(file).isSymbolicLink()) return undefined;
+    const text = readSmallText(file, CONFIG_MAX_BYTES);
+    return text === null ? undefined : JSON.parse(text);
   } catch {
     return undefined;
   }
@@ -155,6 +157,10 @@ const whyOf = (error) => (error instanceof Error ? error.message : String(error)
 
 // The reason in an answer that was not ok, in the helper's own words.
 const reasonOf = (answer) => answer?.why ?? answer?.refused ?? 'The host helper gave no reason';
+// Whether an answer is the helper client's own for a helper that gave none, or a call that threw.
+const NO_ANSWER = /^the host helper (?:could not be reached|did not answer in time)/;
+const THREW = Symbol('threw');
+const notReached = (answer) => answer === THREW || (answer?.ok !== true && NO_ANSWER.test(answer?.refused ?? ''));
 
 function sourcesCounts(report) {
   const list = Array.isArray(report?.sources) ? report.sources : [];
@@ -171,26 +177,32 @@ function sourcesCounts(report) {
   };
 }
 
-async function backUp(client, projects) {
+// `answers` collects each raw answer (THREW for a call that threw), so the run can tell a
+// helper that was down from one that answered.
+async function backUp(client, projects, answers) {
   const backups = [];
   for (const { project } of projects) {
     try {
       const answer = await client.state.backup({ project });
+      answers.push(answer);
       if (answer?.ok === true) backups.push({ project, ok: true, ...(typeof answer.why === 'string' ? { why: answer.why } : {}) });
       else backups.push({ project, ok: false, why: reasonOf(answer) });
     } catch (error) {
+      answers.push(THREW);
       backups.push({ project, ok: false, why: whyOf(error) });
     }
   }
   return backups;
 }
 
-async function syncProfile(client) {
+async function syncProfile(client, answers) {
   try {
     const answer = await client.profile.sync({});
+    answers.push(answer);
     if (answer?.ok === true) return { ok: true, ...(Number.isInteger(answer.unpushed) ? { unpushed: answer.unpushed } : {}) };
     return { ok: false, why: reasonOf(answer) };
   } catch (error) {
+    answers.push(THREW);
     return { ok: false, why: whyOf(error) };
   }
 }
@@ -223,10 +235,14 @@ export async function runWeekly({ now, fetch = globalThis.fetch, client, root, s
     } catch (error) {
       sourcesResult = { ok: false, why: whyOf(error) };
     }
-    const backups = await backUp(client, projects);
-    const profile = await syncProfile(client);
+    const answers = [];
+    const backups = await backUp(client, projects, answers);
+    const profile = await syncProfile(client, answers);
 
-    writeWhole(recordFile(), `${JSON.stringify({ lastRun: at, result: { sources: sourcesResult, backups, profile } }, null, 2)}\n`);
+    // With the helper down for every call, the run is kept without a last run, so the next
+    // session start tries again.
+    const lastRun = answers.every(notReached) ? undefined : at;
+    writeWhole(recordFile(), `${JSON.stringify({ lastRun, result: { sources: sourcesResult, backups, profile } }, null, 2)}\n`);
     return { sources, backups, profile };
   } finally {
     release();
