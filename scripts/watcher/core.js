@@ -51,17 +51,38 @@
 // Every event's id is made from its inputs alone, so a watcher restarted from
 // its cursor makes the same ids again and the cursor's `seen` list stops any of
 // them waking twice:
-//   - a state event's own id (work-ready, amended, answer, incident);
+//   - a state event's own id (work-ready, amended, answer, incident,
+//     lift-incident, incident-fix, build);
 //   - a question's own id (question, extra-plan);
 //   - `<type>:<work>:<head>` for a PR's events;
 //   - a change of state with no id of its own (stop, clash, the brief's events,
-//     stuck with no status) carries the count of the observation before it,
-//     which only ever rises, so a clock set back can never repeat one.
+//     plan-ready, report, stuck with no status) carries the count of the observation
+//     before it, which only ever rises, so a clock set back can never repeat one.
+//
+// The two wakes around a plan (ruling R76). A feature's status phase arriving
+// at `ready-to-build` (from any other phase, from no status, or first seen
+// there) is `plan-ready` for the foreman, which checks the plan for clashes,
+// pace and dependencies. A status read as null between two reads at
+// `ready-to-build` raises it again: wakes are at least once (ruling R27). The
+// foreman then records a `feature` event at step `building` carrying no
+// `brief`, which is `build` for that feature's session: only then does it
+// build. Each slice's plan in the feature lane goes the same way. An event
+// carrying `brief` records an amendment's hash at the feature's current step
+// (ruling R85) and is never `build`.
+//
+// A feature's end (ruling R94). Its status phase arriving at `done` (merged
+// with no slices left, or a report that ends it blocked or closed) is `report`
+// for the foreman, which records the report and closes the feature. It is
+// raised as plan-ready is, once per arrival.
+//
+// Work that starts with no approval (rulings R60 and R78): quick and bug work
+// that no one is shown first. Its plain `work` event is `work-ready`; any other
+// work is ready only with the director's signed `approve-work`.
 // Only the cursor's reader and writer touch the disk.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BUNDLE_MS, STUCK_MS } from '../lib/build-loop.js';
+import { BUNDLE_MS, STUCK_MS, questionIdOf } from '../lib/build-loop.js';
 import { stateDir } from '../lib/paths.js';
 
 // How many ids the cursor remembers.
@@ -71,9 +92,9 @@ export const DIGEST_CAP = 200;
 
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
-  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered',
+  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
 ]);
-export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'brief-changed', 'answer']);
+export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'brief-changed', 'answer', 'build']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -117,10 +138,11 @@ function knownMerges(prev, next) {
 // Whether the feature is waiting on someone else, so its stillness is no sign of being stuck:
 // it waits on something by its own word, it is done, or its pull request waits on CI,
 // a review or a merge (red CI, findings or a conflict are the session's to fix). A PR
-// the watcher has never seen is unknown, and unknown is not waiting.
+// the watcher has never seen is unknown, and unknown is not waiting. The report is
+// written from the first open-pr on (ruling R72), so only the phase `done` says the
+// feature has ended: a report alone is no sign of waiting.
 function isWaiting(f, prs) {
   const s = f.status;
-  if (f.report === true) return true;
   if (!isPlain(s)) return false;
   if (s.waitingOn !== null && s.waitingOn !== undefined) return true;
   if (s.phase === 'done') return true;
@@ -201,7 +223,12 @@ const isOver = (f) => isPlain(f) && isPlain(f.status)
   && typeof f.status.tokens === 'number' && typeof f.appetite === 'number'
   && f.status.tokens > f.appetite;
 
-const workOfQuestion = (id) => (typeof id === 'string' ? /^q-([a-z0-9-]+)-[0-9]+$/.exec(id)?.[1] : undefined);
+// The lanes whose work starts with no approval when no one is shown it first.
+const STARTS_UNAPPROVED = Object.freeze(['quick', 'bug']);
+
+const workOfQuestion = (id) => questionIdOf(id)?.work;
+// An answer to the foreman's own question (ruling R63) is the foreman's alone: the feature never asked it.
+const foremansOwn = (e) => e.type === 'answer' && e.detail?.foreman === true;
 
 // The events from state: every one in the observation is after the cursor; only signed clicks count as actions.
 function stateEvents(next, out) {
@@ -209,7 +236,9 @@ function stateEvents(next, out) {
     if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
     const { id, kind, data } = e;
     if (kind === 'work') {
-      if (data.lane === 'quick' && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: 'quick' } });
+      if (STARTS_UNAPPROVED.includes(data.lane) && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: data.lane } });
+    } else if (kind === 'feature') {
+      if (data.step === 'building' && data.brief === undefined && typeof data.work === 'string') out.push({ type: 'build', work: data.work, id, detail: { slice: data.slice ?? null } });
     } else if (kind === 'incident') {
       out.push({ type: 'incident', id, detail: { incident: data.id, what: data.what } });
     } else if (kind === 'action' && e.verified === true) {
@@ -218,7 +247,16 @@ function stateEvents(next, out) {
       } else if (data.action === 'amend') {
         out.push({ type: 'amended', work: data.work, id, detail: { hash: data.hash } });
       } else if (data.action === 'answer') {
-        out.push({ type: 'answer', work: workOfQuestion(data.questionId), id, detail: { questionId: data.questionId, label: data.label } });
+        const foreman = questionIdOf(data.questionId)?.foreman === true;
+        out.push({
+          type: 'answer', work: workOfQuestion(data.questionId), id, detail: { questionId: data.questionId, label: data.label, ...(foreman ? { foreman } : {}) },
+        });
+      } else if (data.action === 'lift-incident') {
+        // A merge held while the incident was open is raised once per head, so
+        // the foreman hears the lift and reads the ready pull requests again.
+        out.push({ type: 'lift-incident', id, detail: { incident: data.incident } });
+      } else if (data.action === 'incident-fix') {
+        out.push({ type: 'incident-fix', pr: data.pr, id, detail: { incident: data.incident, pr: data.pr } });
       }
     }
   }
@@ -268,6 +306,19 @@ function featureEvents(prev, next, settled, out) {
         id: `progress:${work}:${status.updatedAt}`,
         detail: { phase: status.phase, task: status.task, fixRound: status.fixRound, waitingOn: status.waitingOn, tokens: status.tokens },
       });
+    }
+
+    // A plan arriving: the phase is ready-to-build now and was not when last seen.
+    if (status?.phase === 'ready-to-build' && ps?.phase !== 'ready-to-build') {
+      out.push({
+        type: 'plan-ready', work, id: `plan-ready:${work}:${anchor}`, detail: { phase: status.phase, task: status.task, slice: status.slice },
+      });
+    }
+
+    // A feature's end, merged, blocked or closed with its report (ruling R94):
+    // the phase is done now and was not when last seen. The foreman closes it.
+    if (status?.phase === 'done' && ps?.phase !== 'done') {
+      out.push({ type: 'report', work, id: `report:${work}:${anchor}`, detail: { phase: status.phase } });
     }
 
     if (s.still >= STUCK_MS && !((pf?.still ?? 0) >= STUCK_MS)) {
@@ -346,7 +397,8 @@ export function diff(prev, next, { handled = new Set(), seen = new Set() } = {})
 }
 
 // Who hears each event. A handled event goes to the digest in place of the
-// foreman; an answer still reaches its feature.
+// foreman; an answer still reaches its feature, unless it answers the
+// foreman's own question.
 export function route(events) {
   const routed = { foreman: [], features: {}, digest: [] };
   const toFeature = (e) => {
@@ -354,7 +406,7 @@ export function route(events) {
     (routed.features[e.work] ??= []).push(e);
   };
   for (const e of list(events)) {
-    if (FEATURE_TYPES.includes(e.type)) toFeature(e);
+    if (FEATURE_TYPES.includes(e.type) && !foremansOwn(e)) toFeature(e);
     if (FOREMAN_TYPES.includes(e.type)) (e.handled ? routed.digest : routed.foreman).push(e);
     else if (!FEATURE_TYPES.includes(e.type)) routed.digest.push(e);
   }

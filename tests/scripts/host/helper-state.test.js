@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
@@ -17,6 +18,7 @@ import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent } from '../../../scripts/state/events.js';
+import { keep, taken } from '../../../scripts/hooks/pending.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
@@ -193,22 +195,111 @@ test('the helper refuses a setting event the catalogue refuses', async () => {
   } finally { await c.close(); await repo.cleanup(); }
 });
 
-test('/state/write makes the event itself: its id and time are the helper\'s', async () => {
+test('/state/write makes the event itself: its time and computer are the helper\'s, and an id not shaped as a random UUID is refused', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);
   try {
     await c.as(async () => {
+      for (const id of ['forged-id', '', 7, 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE', '0f1e2d3c-4b5a-1978-8796-a5b4c3d2e1f0', '0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 ']) {
+        const refused = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'hello' }, id });
+        assert.equal(refused.ok, false, String(id));
+        assert.match(refused.refused, /id/, String(id));
+      }
+      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), []);
       const answer = await c.client.state.write({
-        project: PROJECT, kind: 'note', data: { words: 'hello' }, id: 'forged-id', at: '1999-01-01T00:00:00.000Z', computer: 'deadbeef',
+        project: PROJECT, kind: 'note', data: { words: 'hello' }, at: '1999-01-01T00:00:00.000Z', computer: 'deadbeef',
       });
       assert.equal(answer.ok, true);
-      assert.notEqual(answer.id, 'forged-id');
+      assert.match(answer.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
       const files = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
       assert.equal(files.length, 1);
       assert.match(files[0], /^events\/2026\/10\/2026-10-18T01-00-01\.000Z_/);
       assert.ok(files[0].includes(`_${computerId()}_note_`));
     });
   } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('/state/write takes a caller-made id, and refuses one the state already holds', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const id = '0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0';
+      const first = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'first' }, id });
+      assert.deepEqual(first, { ok: true, id, pushed: true });
+      const views = await c.client.state.views({ project: PROJECT });
+      assert.equal(views.ok, true);
+      // The same id again, for the same record or another, is refused and writes nothing.
+      for (const data of [{ words: 'first' }, { words: 'second' }]) {
+        const again = await c.client.state.write({ project: PROJECT, kind: 'note', data, id });
+        assert.equal(again.ok, false);
+        assert.match(again.refused, /already holds an event with that id/);
+      }
+      // An id held by a signed record is refused too.
+      const review = makeEvent({ kind: 'review', data: { pr: 7, commit: 'abc1234', verdict: 'CLEAN' }, now: at(500) });
+      assert.equal((await c.client.state.record({ project: PROJECT, event: review })).ok, true);
+      const taken = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'third' }, id: review.id });
+      assert.equal(taken.ok, false);
+      assert.match(taken.refused, /already holds/);
+      const files = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
+      assert.equal(files.length, 2);
+      assert.ok(files.some((f) => f.includes('_note_0f1e')), 'the note is filed under its caller-made id');
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('a caller-made id can\'t take a kept signed click\'s place: the write is refused, and a record under a taken id is never counted as sent', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      // A signed click a hook kept to send later.
+      const click = makeEvent({ kind: 'review', data: { pr: 9, commit: 'abc1234', verdict: 'CLEAN' }, now: at(700) });
+      keep(PROJECT, 'record', { project: PROJECT, event: click }, at(700));
+      const write = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'first in' }, id: click.id });
+      assert.equal(write.ok, false);
+      assert.match(write.refused, /waiting to be sent/);
+      // Only so much of a kept file is read: an oversized one is passed over, not read whole.
+      const bigId = '1f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0';
+      keep(PROJECT, 'record', { project: PROJECT, event: { id: bigId }, pad: 'x'.repeat(300 * 1024) }, at(750));
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'big' }, id: bigId })).ok, true);
+
+      // Were another event under its id anyway, the click is refused in words the hook does not take as sent.
+      const other = makeEvent({ kind: 'review', data: { pr: 10, commit: 'abc1234', verdict: 'CLEAN' }, now: at(800) });
+      assert.equal((await c.client.state.record({ project: PROJECT, event: other })).ok, true);
+      const clash = sign({ ...makeEvent({ kind: 'review', data: { pr: 11, commit: 'abc1234', verdict: 'CLEAN' }, now: at(900) }), id: other.id });
+      const refused = await c.client.state.record({ project: PROJECT, event: clash });
+      assert.equal(refused.ok, false);
+      assert.equal(taken(refused), false, refused.refused);
+      // The same record sent again is taken.
+      const again = await c.client.state.record({ project: PROJECT, event: other });
+      assert.equal(again.ok, false);
+      assert.equal(taken(again), true, again.refused);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('the helper client passes a write\'s id to the helper', async () => {
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (d) => chunks.push(d));
+    req.on('end', () => {
+      calls.push({ path: req.url, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) });
+      res.end(JSON.stringify({ ok: true, id: 'x' }));
+    });
+  });
+  const home = shortHome();
+  const address = testAddress(home);
+  await new Promise((resolve) => server.listen(address, resolve));
+  try {
+    const id = '0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0';
+    const answer = await helperClient({ address }).state.write({ project: PROJECT, kind: 'feature', data: { work: 'w', step: 'building' }, id });
+    assert.equal(answer.ok, true);
+    assert.deepEqual(calls, [{ path: '/state/write', body: { project: PROJECT, kind: 'feature', data: { work: 'w', step: 'building' }, id } }]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('/state/record accepts a record signed by this computer, and refuses one unsigned, altered, or signed by another computer', async () => {

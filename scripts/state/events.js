@@ -9,7 +9,7 @@ import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET } from './card-lines.js';
-import { LANES, FEATURE_STEPS, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
+import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
@@ -94,7 +94,7 @@ function questionIdOf(id) {
 // records mean is read from them by the views and by the foreman.
 const PLAIN_SHAPES = {
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent'] },
-  feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice'] },
+  feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: [] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
@@ -127,6 +127,7 @@ function checkPlain(kind, data) {
     if (!FEATURE_STEPS.includes(data.step)) bad('needs its step to be one the build loop knows');
     for (const k of ['worktree', 'branch', 'session', 'plan', 'brief']) optionalText(k);
     if (data.files !== undefined && !(Array.isArray(data.files) && data.files.every(isText))) bad('has files that are not a list of paths');
+    if (data.pausedFor !== undefined && !(data.step === 'paused' && PAUSED_FOR.includes(data.pausedFor))) bad('has a pausedFor that is not why a paused feature waits');
     if (data.slice !== undefined) {
       const s = data.slice;
       if (!(isPlain(s) && Object.keys(s).length === 2 && Number.isInteger(s.n) && Number.isInteger(s.m) && s.n >= 1 && s.n <= s.m)) bad('has a slice that is not n of m');

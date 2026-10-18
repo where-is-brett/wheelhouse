@@ -588,6 +588,36 @@ A managed hook's refusal holds: a project's own hook answering allow didn't over
 - **Why the sandbox and not deny rules alone:** a Bash deny rule doesn't match the same program called by its full path or inside `sh -c` (M1). The sandbox limits what any program can do, however it is called.
 - **On Windows** there is no sandbox (check 10). Agents there are held by the deny rules, the gate and the helper's checks only, with the tool guard holding the PowerShell tool as it holds Bash (PowerShell gets no deny rules of its own, because a scoped PowerShell rule would keep the tool on where a Bash rule turns it off, so the tool guard alone holds it), and the board says plainly that Windows has no sandbox (the director's decision, section 22).
 
+#### Build commands on Windows
+
+*The director's decision of 19 October 2026 (section 22). Research: `docs/research/windows-build-commands-2026-10.md`.*
+
+A feature session nobody watches needs the build's usual commands to run without a prompt (`docs/specs/2026-10-18-build-loop-design.md`, section 11). On Windows these **build commands** are the configuration's `buildCommands` (`npm test`, `npm run` and `node` by default) and local git (`status`, `diff`, `log`, `show`, `add`, `commit`, `restore`, `rm` and `mv`), which the Mac's sandbox lets through unasked. On the Mac the sandbox makes that safe enough. On Windows nothing holds such a command, and the agent writes the code it runs (the tests, the package's scripts), so letting `npm test` run is letting the agent do anything the director's account can: read the helper's keys file and sign records (section 11), read the director's sign-ins, change Wheelhouse's own hooks, or send files anywhere. A person asked "may it run `npm test`?" can't see that code either, so asking slows an agent down far more than it protects.
+
+So each project has a setting, **Build commands on Windows** (section 14.1), with three levels:
+
+- **Ask** (the default). A feature session that needs a build command asks with a card (`ask --kind build-command`), naming the command and, in plain words, what it runs (for `npm test` or `npm run x`, the package's own script line). It asks for every command it will need at once, not one at a time. Options:
+  - **Allow this time:** for the session's next run only.
+  - **Allow for this feature:** until the feature ends. The card says that this is the dangerous level below, for one feature.
+  - **Not now:** the feature waits, and the foreman raises it with the next briefing.
+
+  The recommendation is **Allow this time**. The click is signed. The watcher passes the matching allow rule to that one session, for that run or the feature's life, on the computer where the click was made. Asking costs speed: while the director is away, a feature stops at its first build command.
+- **Guarded** (the recommendation, on a computer where its self-test passes). Build commands run through Wheelhouse's own runner at **low integrity**, a Windows protection every edition has: a program started from a file labelled low runs at low, and so does everything it starts, and Windows stops a low process changing anything at the normal level, which is nearly everything in the director's account (research, sections 3.1 and 8.1). It needs no administrator and nothing installed: setup copies Node.js into Wheelhouse's folder and labels the copy low with Windows' own `icacls`. *Designer's call.*
+  - **What it holds:** changes outside the feature's worktree, so a build can't touch Wheelhouse's own files and hooks, `~/.claude`, the startup folders or the director's other projects. The worktree is labelled low for the build, except `.git/hooks`, `.git/config`, `.claude/` and `.mcp.json`, which stay at the normal level so a build can't plant a hook. Where Windows lets Wheelhouse set a "no read up" label without an administrator, the helper's keys folder and the credential folders of section 12.2 are made unreadable to it too (check 52).
+  - **What it doesn't hold:** the network, and reading files Wheelhouse doesn't label. So a command that fetches and runs new code (`npm install`, `npm ci`, `npx` of a package not yet installed, and the same in other package managers) is refused by the runner and still asks, or runs at Unattended.
+  - **Offered only where it works.** A self-test, run when the director picks it and again at each session start, starts the runner and tries to write outside the worktree and to read the keys folder. Guarded is offered only where the write is refused, and its card says plainly whether the read was. The runner also checks, before each command, that it really runs at low, and refuses to run at all otherwise. A computer whose policy refuses a copied Node.js (AppLocker or App Control) doesn't get Guarded.
+  - **Set by the director's click** on its card, like any move away from Ask. The board shows it at the ok level: "Build commands run at low integrity on this Windows computer: they can't change files outside the project, but can still use the network."
+  - **Not a sandbox.** It is the most a standard user can do with what Windows ships: nothing on stock Windows limits the network without an administrator (research, section 3). Where IT can help, Microsoft Execution Containers or WSL2 give the full boundary (research, section 8.3); Wheelhouse doesn't set those up. Microsoft lists Claude Code among the tools adding support for its Execution Containers. When Claude Code runs its own sandbox on Windows, the weekly official-sources check (section 9.1) says so, and the design is revisited: build commands then run as on the Mac.
+- **Unattended (dangerous).** Build commands run with no prompt and no sandbox. The rest still holds: the deny rules for Claude's own tools, the tool guard, the helper's checks, reviews, the merge gate and STOP.
+  - **Set only by the director's click on its own card,** never by saying it, never by an agent, and never in a Locked project. The card says, in plain words: "Builders on this computer will run their tests and build steps without asking you, and with nothing to hold them. A builder writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, change Wheelhouse's own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and STOP still hold." Its options are **Keep asking**, **Turn on (dangerous)**, and, where Guarded is offered on this computer, **Use Guarded**, which is then the recommendation; otherwise **Keep asking** is.
+  - **Shown while it is on.** The board's health line says, at the watch level: "Build commands run unattended on this Windows computer, with no sandbox." The session start's Windows line says the same, and the briefing repeats it once a week.
+  - **One computer and one project.** It holds only on the computer where the director clicked, because the setting's event records that computer (section 9). A second Windows computer asks again.
+  - **Turning it off** needs no card: saying so, or the settings pane, puts it back to Ask at once.
+
+Changing to any level other than Ask goes by a card click, so a builder that can run commands can't move the setting by writing a message. On Windows, though, a builder running an allowed command could forge any signed record, the setting's included (section 11). The **Allow** options and **Unattended** therefore each say that for as long as they last the builder can do whatever the director's account can.
+
+Interactive sessions, where someone is in the chat, aren't changed: Claude Code asks there as usual, at every level.
+
 ### 12.3 Enforcement: hooks and the host
 
 | Hook | What it does |
@@ -768,6 +798,7 @@ The catalogue holds a setting before everything that obeys it is built: `pace`, 
 | **Notifications** | Channels, and quiet hours | Section 13 |
 | **Product phase** | **Before launch** · Launched | The front desk's priorities (section 5.1) |
 | **Protection** | **Standard** · Locked | Section 12.1. Moving either way runs the guided step, with the password |
+| **Build commands on Windows** | **Ask** · Guarded · Unattended (dangerous) | Whether a feature session on Windows asks before running the build's usual commands (section 12.2). Guarded runs them at low integrity, so they can't change files outside the project; it is offered only on a computer where its self-test passes, and is then the recommendation. Unattended is set only by a click on its own card, never in a Locked project, and shows on the board while it is on. It holds on the computer where it was clicked |
 
 ### 14.2 Advanced settings
 
@@ -794,12 +825,14 @@ There are two kinds, kept apart:
   - **In the project:** the others.
   - **Conflicts:** where a project sets something the profile also sets, the project wins (section 5.5).
 - **Protection** is set by its guided step (section 12.1), because Locked lives in the computer-wide file.
+- **Build commands on Windows** is a project setting on the state branch, but holds only on the computer whose event set it (section 12.2).
 
 ### 14.4 How settings change
 
 - **By saying it.** "I'm away till 6" or "be more careful this week". The front desk reads the change back in one line, and it takes effect on the director's confirmation (section 9). A temporary change carries its end time and reverts on its own.
 - **In the mod's settings pane** (section 17.1), with no Claude turn.
 - **Only the director changes them.** Agents are denied writes to the settings files, and every change is logged with its date.
+- **Build commands on Windows** moves away from Ask only by the director's click on its card, never by saying it; back to Ask, by either (section 12.2).
 
 ### 14.5 What no setting can move
 
@@ -1099,6 +1132,11 @@ The added costs are:
 32. **The mod's commands and the sandbox:** whether a command a mod runs with `$.process.run`, and a file it writes with `$.fs.write`, are held by the session's sandbox; whether the plugin can carry its mod beside its command hooks; and whether a UserPromptSubmit hook can answer a plugin command with context. **Answer:** Yes. The mod's commands and files run outside the sandbox, while an agent's run of the same file is refused; one `hooks/hooks.json` holds both; the hook sees `/wheelhouse:board` as typed and its context reaches the turn. `node` is found only where it is on the session's PATH, which setup checks. `docs/checks/32-mod-sandbox.md`
 33. **The mod's first piece in Desktop:** that the weekly figure and each session's cost reach the usage files; that `/go`, typed and sent from the phone, lifts STOP with a signed record; that "stop" from the phone sets it; and that a reply code, typed and sent from the phone, records what a click would, on the Mac and on Windows. **Answer:** Still to come: one Mac sitting of about 5 minutes of the director's time, then Windows when the director is next at that computer. If the mod sees the weekly figure but not phone messages on one system, reply codes there wait for the rest of the mod, and the board's health line says so.
 
+**Added for build commands on Windows** (the director's decision of 19 October 2026, section 22). Both run as a standard user, on a personal Windows computer and, where one is available, a managed work computer:
+
+52. **The low-integrity runner:** whether a copy of Node.js labelled low with `icacls` starts at low and its children too, or is refused by AppLocker or App Control; whether `npm test`, a `node` script and `git commit` work in a worktree labelled low with `.git/hooks`, `.git/config` and `.claude/` left at the normal level, and how much slower; whether the low process is refused writes to `~/.claude`, the plugin's folder, the Startup folder, `HKCU`'s Run key, `.git/hooks` and a second drive; what it can read of `~/.ssh`, `~/.wheelhouse`, a browser profile and git's stored credentials; whether a "no read up" label can be set on a folder with stock tools (`icacls`, PowerShell in the language mode the computer allows, or Node's built-in `node:ffi`) and then holds; and whether the low process can start a normal-level one. The answers set what Guarded's card says it holds (section 12.2). The steps are the research's section 8.4, items 1 to 7.
+53. **Granting build commands to a feature session on Windows:** whether a `claude -p` feature session started through `claude.cmd` refuses an unallowed `npm test` at once rather than waiting, and runs it when `--allowedTools` names it, and runs the Guarded runner's rule; whether Claude Desktop on Windows applies any sandbox of its own (the research found conflicting reports, section 2.1); and, only if check 27 gives Shape 2, whether a running Desktop session picks up an allow rule written into its worktree's `.claude/settings.local.json`.
+
 ## 21. The designer's calls (the director may override)
 
 - critical areas, named per project (section 3);
@@ -1149,6 +1187,7 @@ The added costs are:
 - 30 days for transcripts and 90 for telemetry summaries (section 12.8);
 - needs-you items never relying on the phone alone (section 13);
 - the settings, their levels and defaults (section 14);
+- for build commands on Windows: asking for every command a session needs at once, the **Allow this time** and **Allow for this feature** options with **Allow this time** recommended, the setting holding on one computer and one project, the dangerous level refused in Locked projects, turning it off without a card, and the weekly reminder in the briefing; Guarded as a low-integrity runner rather than a route needing IT, its self-test and per-command check, the folders it leaves at the normal level, and its refusing commands that fetch new code (sections 12.2 and 14.1);
 - guardrail settings on `main` and everyday settings on the state branch (section 14.3);
 - practice copies made per provider, test data otherwise (section 15);
 - keyless signing of releases, and a seven-day acknowledgement in the security policy (section 16);
@@ -1206,6 +1245,7 @@ Answered on 17 October 2026:
 | Protection | Two levels, chosen at setup: Standard by default, with no admin step; Locked, optional, offered to projects with real users, where the director only types their computer password at the system's own prompt (section 12.1) |
 | Secrets | A general Wheelhouse rule: agents never hold production credentials; `.env` reads are denied and the sandbox enforces it; setup asks about live data and keeps agents on a practice copy by default; file permissions don't protect against agents (section 12.6) |
 | The sandbox on Windows (check 10) | Accept it, and show it: builders run on Windows too, with the deny rules, the gate and the helper, and the board says plainly that Windows has no sandbox. To be revisited when Claude Code adds a Windows sandbox |
+| Build commands on Windows (ruling R49 of the build loop) | Decided 19 October 2026: "Build commands on Windows by default, but maybe give an option to dangerously allow unattended? Again, this should also appeal to those who want automation. Otherwise, we could look into how to improve this." Windows sessions ask before build commands by default; a setting named plainly as dangerous runs them unattended after the director's click on its card, shown on the board while it is on; and a safer route, where it works, is the recommended way to run them unattended. Added the same day: "bear in mind some corporate users may not have access to WSL2, nor can they install apps easily without IT approval. So try to keep it stock Windows." So the recommended route, Guarded, uses only what ships with Windows and Node.js (sections 12.2 and 14.1; `docs/research/windows-build-commands-2026-10.md`) |
 | Locked on Windows (check 12) | Offered on macOS only until the computer-wide file has been tried on a Windows computer with admin rights. Windows projects use Standard meanwhile (section 12.1) |
 | The designer's calls from the checks | Kept: approvals by card click until the mod's first piece; lifting STOP by card click; nothing urgent relying on the phone alone; setup asking to allow Claude's notifications on the phone |
 | How Wheelhouse connects to GitHub and GitLab | Decided 18 October 2026, after research: two ways, chosen at setup. Quick uses the director's existing sign-in, with its risks shown plainly; narrow uses a Wheelhouse GitHub App, or a GitLab project key or token (section 11). "Offer a tier of using existing sign in … easy to set up, likely fine for most personal hobby vibe coders. But do warn implications" |

@@ -42,6 +42,8 @@ import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { eventHash } from '../state/events.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
 import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
+import { canonicalJson } from '../lib/canonical.js';
+import { pendingDir } from '../hooks/pending.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -64,6 +66,32 @@ const NO_HARM = 'This project has defined no live harm to contain';
 const BACKUP_FILE = /^\d{4}-\d{2}-\d{2}\.bundle$/;
 const BACKUP_REF = 'refs/wheelhouse/backup';
 const EVENT_FILE = /^events\/\d{4}\/\d{2}\/[A-Za-z0-9._-]+\.json$/;
+// A version 4 UUID as crypto.randomUUID writes it.
+const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+// The most of one kept record that is read: a signed click is a few kilobytes.
+const PENDING_BYTES = 256 * 1024;
+
+// The ids of the records the hooks kept in projects/<p>/pending/ to send later:
+// a signed record's own id, or a write's given id. Only regular files of at
+// most PENDING_BYTES are read; anything else, or a file that won't read, is passed over.
+function pendingIds(project) {
+  const ids = new Set();
+  let names = [];
+  try {
+    names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json'));
+  } catch { /* none kept */ }
+  for (const name of names) {
+    try {
+      const file = path.join(pendingDir(project), name);
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.size > PENDING_BYTES) continue;
+      const { body } = JSON.parse(fs.readFileSync(file, 'utf8'));
+      for (const id of [body?.event?.id, body?.id]) if (typeof id === 'string') ids.add(id);
+    } catch { /* not a record */ }
+  }
+  return ids;
+}
 const MOST_OUTPUT = 2000;
 const MOST_KEPT = 64 * 1024;
 // Text from git, gh or glab that says the sign-in is missing or refused.
@@ -867,14 +895,23 @@ export async function startHelper({
     try { await write(); } catch { /* the views stay as they were */ }
   }
 
-  async function doWrite({ project, kind, data }, ctx) {
+  // A plain event, made here: its time and computer are the helper's. Its id is
+  // made here too, unless the caller made it (the foreman's act command does,
+  // to record the id as handled before the event exists, ruling R86): then it
+  // must be shaped as a random UUID and not one the state holds already.
+  async function doWrite({ project, kind, data, id }, ctx) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
+    if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
+    if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
+    // A signed click a hook kept to send later must never find its id taken.
+    if (id !== undefined && pendingIds(project).has(id)) refuse('a record waiting to be sent from this computer has that id');
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
     }
-    const event = makeEvent({ kind, data, now });
+    const made = makeEvent({ kind, data, now });
+    const event = id === undefined ? made : { ...made, id };
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
@@ -887,7 +924,11 @@ export async function startHelper({
     if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
     if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
-    if (listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === event.id)) refuse('the state already holds an event with that id');
+    // The same record again has been taken (a hook sending its kept copy); another
+    // event under its id has not, and says so in words a hook does not count as taken.
+    const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.id === event.id);
+    if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
+    if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
@@ -1731,6 +1772,13 @@ export async function startHelper({
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
     '/state/views': stateRoute(async ({ project }) => ({ ok: true, views: await writeViews(project, { now }) })),
+    // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
+    '/state/answer': stateRoute(async ({ project, questionId }) => {
+      if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
+      const { questions } = await writeViews(project, { now });
+      const label = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.label : undefined;
+      return { ok: true, answer: typeof label === 'string' ? label : null };
+    }),
     '/state/backup': (body, ctx) => oneAtATime('profile', () => stateRoute(doBackup)(body, ctx)),
     '/profile/clone': profileRoute(async (_body, ctx) => ({
       ok: true, ...(await ensureProfileClone({ remote: profileRemote(), env: ctx.gitEnv })),
@@ -1756,12 +1804,14 @@ export async function startHelper({
       if (stopped()) return STOP_REFUSAL;
       const adapter = await ctx.adapter();
       const defaultBranch = await defaultBranchOf(body.project, adapter);
-      if (body.base !== defaultBranch) return { ok: false, refused: PUSH_REFUSALS.prBase };
+      // A request that names no base means the default branch, which only the helper reads.
+      const base = body.base === undefined ? defaultBranch : body.base;
+      if (base !== defaultBranch) return { ok: false, refused: PUSH_REFUSALS.prBase };
       const spelled = checkRefspec(body.head, defaultBranch);
       if (!spelled.allowed) return { ok: false, refused: spelled.refused };
       if (spelled.branch === STATE_BRANCH || spelled.branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
       if (stopped()) return STOP_REFUSAL;
-      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base: body.base, title: body.title, body: body.body }) };
+      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: body.body }) };
     },
     '/pr/update': writing((a, { number, title, body }) => a.updatePr({ number, title, body })),
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),

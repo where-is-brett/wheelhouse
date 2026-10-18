@@ -105,6 +105,87 @@ test('under STOP, the runbook command is let through and the same words with ano
   });
 });
 
+test('under STOP, a feature session may read an answer and check its report, and may not ask or open a pull request', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const cli = `${PLUGIN}/scripts/feature/cli.js`;
+      for (const ok of [
+        `node ${cli} answer q-login-page-1`,
+        `node "${cli}" answer q-login-page-12`,
+        `node '${cli}' answer "q-login-page-1"`,
+        `node ${cli} report`,
+        `node "${cli}" report`,
+      ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
+      for (const bad of [
+        `node ${cli} ask --what x --why y --option a=b --option c=d --recommend a --level 2`,
+        `node ${cli} open-pr --title x`,
+        `node ${cli}`,
+        `node ${cli} answer`,
+        `node ${cli} answer q-login-page-1 extra`,
+        `node ${cli} answer ../x`,
+        `node ${cli} answer --help`,
+        `node ${cli} report extra`,
+        `node ${cli} report --out x`,
+        `node ${cli} report; rm -rf x`,
+        `node ${cli} report && ls`,
+        `node ${cli} report | cat`,
+        `node ${cli} report > out`,
+        `node ${cli} answer $(id)`,
+        `node ${cli} answer q-login-page-1\nls`,
+        `node ${cli} answer q-login-page-1 &`,
+        `node /elsewhere/scripts/feature/cli.js report`,
+        `node ${PLUGIN}-x/scripts/feature/cli.js report`,
+        `bash ${cli} report`,
+        `node /other/x.js ${cli} report`,
+        `node ${PLUGIN}/scripts/feature/files.js report`,
+      ]) assert.ok(denied(await guard(bash(main, bad), deps(base))), bad);
+      // The same words are no runbook command, and the runbook's are no feature command.
+      assert.ok(denied(await guard(bash(main, `node ${PLUGIN}/scripts/runbook/runbook.js`), deps(base))));
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('under STOP, the foreman may read a wake and record it done, and nothing more of its commands', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const wake = `${PLUGIN}/scripts/foreman/wake.js`;
+      const act = `${PLUGIN}/scripts/foreman/act.js`;
+      const file = `${main}/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json`;
+      for (const ok of [
+        `node '${wake}' read ${file}`,
+        `node '${wake}' read '${file}'`,
+        `node "${wake}" read .wheelhouse/foreman/wakes/one.json`,
+        `node '${wake}' done ${file} --acted`,
+        `node '${wake}' done ${file} --idle`,
+      ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
+      for (const bad of [
+        `node '${wake}' measures`,
+        `node '${wake}' read`,
+        `node '${wake}' read ${file} ${file}`,
+        `node '${wake}' read --help`,
+        `node '${wake}' read ${main}/notes.txt`,
+        `node '${wake}' done ${file}`,
+        `node '${wake}' done ${file} --busy`,
+        `node '${wake}' done ${file} --acted --idle`,
+        `node '${wake}' read ${file}; rm -rf x`,
+        `node '${wake}' read ${file} && node '${act}' merge x`,
+        `node '${wake}' read $(id).json`,
+        `node '${act}' merge x`,
+        `node '${act}' close x`,
+        `node /elsewhere/scripts/foreman/wake.js read ${file}`,
+      ]) assert.ok(denied(await guard(bash(main, bad), deps(base))), bad);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('under STOP, a worktree whose .git file was rewritten is still held by its main folder', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();

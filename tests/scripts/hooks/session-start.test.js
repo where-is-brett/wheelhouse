@@ -419,3 +419,62 @@ test('a usage receiver that could not start is named in the reload, once', async
     assert.doesNotMatch(text(hung), /Usage counts/);
   });
 });
+
+// The project's configuration as the helper reads it from the default branch.
+const shapeConfig = (watcherShape) => ({ ok: true, config: { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], watcherShape } });
+const watcherStarts = (f) => f.calls.spawn.filter((c) => c.args[0] === path.join(PLUGIN_ROOT, 'scripts', 'watcher', 'main.js'));
+
+test('in a Shape 1 project the session start starts the watcher when it isn\'t running, detached and hidden', async () => {
+  await withHome(async (home) => {
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.config = async () => shapeConfig(1);
+    // The started watcher takes its lock, as the real one does.
+    const spawn = f.spawn;
+    f.spawn = (file, args, opts) => {
+      const child = spawn(file, args, opts);
+      fs.mkdirSync(path.join(home, 'projects', P, 'watcher'), { recursive: true });
+      fs.writeFileSync(path.join(home, 'projects', P, 'watcher', 'watcher.lock'), `${process.pid}\n`);
+      return child;
+    };
+    await run(f);
+    const started = watcherStarts(f);
+    assert.equal(started.length, 1);
+    assert.equal(started[0].file, process.execPath);
+    assert.deepEqual(started[0].args, [path.join(PLUGIN_ROOT, 'scripts', 'watcher', 'main.js'), P]);
+    assert.equal(started[0].opts.detached, true);
+    assert.equal(started[0].opts.windowsHide, true);
+    assert.equal(started[0].opts.stdio, 'ignore');
+    // A second session finds it running and starts nothing; it doesn't ask for the configuration either.
+    let asked = 0;
+    f.client.config = async () => { asked += 1; return shapeConfig(1); };
+    await run(f);
+    assert.equal(watcherStarts(f).length, 1);
+    assert.equal(asked, 0);
+  });
+});
+
+test('the session start leaves the watcher alone in Shape 2, and fails open when the configuration can\'t be had', async () => {
+  await withHome(async () => {
+    const answers = [
+      async () => shapeConfig(2),
+      async () => ({ ok: false, refused: 'the helper could not be reached' }),
+      async () => { throw new Error('boom'); },
+      () => new Promise(() => {}),
+    ];
+    for (const answer of answers) {
+      const f = fake();
+      f.client.health = async () => ({ ok: true });
+      f.client.config = answer;
+      const began = Date.now();
+      await assert.doesNotReject(run(f, { totalMs: 400 }));
+      assert.ok(Date.now() - began < 3000);
+      assert.equal(watcherStarts(f).length, 0);
+    }
+    // A helper that isn't running gives no configuration: nothing is started but the helper.
+    const f = fake({ startsUp: false });
+    f.client.config = async () => shapeConfig(1);
+    await run(f);
+    assert.equal(watcherStarts(f).length, 0);
+  });
+});

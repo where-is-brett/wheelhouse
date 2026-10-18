@@ -7,7 +7,9 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { featurePaths, readQuestions, readStatus } from '../../../scripts/feature/files.js';
-import { buildStatus, captureRulings, gitHead, readCapped } from '../../../scripts/feature/status.js';
+import {
+  buildStatus, captureRulings, gitHead, loadFeature, readCapped, recordedPlan,
+} from '../../../scripts/feature/status.js';
 import { decide, THROTTLE_MS } from '../../../scripts/hooks/feature-status.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -164,6 +166,30 @@ test('task n of m comes from the plan and the ledger', () => {
   assert.equal(s.task, null);
 });
 
+test('a plan the session recorded in plan.json counts when the brief names none (R87)', () => {
+  const tree = feature({ plan: null });
+  const p = featurePaths(tree);
+  assert.equal(status(tree).phase, 'planning');
+  write(path.join(tree, 'docs', 'plans', 'mine.md'), planText(3));
+  write(p.plan, JSON.stringify({ plan: 'docs/plans/mine.md' }));
+  assert.equal(recordedPlan(tree), 'docs/plans/mine.md');
+  assert.equal(loadFeature(tree).plan, 'docs/plans/mine.md');
+  assert.equal(status(tree).phase, 'ready-to-build');
+  ledger(tree, 'mine', ['Task 1: complete'], { plan: 'docs/plans/mine.md' });
+  const s = status(tree);
+  assert.equal(s.phase, 'building');
+  assert.deepEqual(s.task, { n: 1, m: 3 });
+  // A plan outside the worktree, or not a path, is not taken.
+  for (const bad of ['../elsewhere.md', '/etc/plan.md', 'C:\\plan.md', '', 7, 'a\nb']) {
+    write(p.plan, JSON.stringify({ plan: bad }));
+    assert.equal(recordedPlan(tree), null, String(bad));
+  }
+  // The brief's own plan comes first.
+  const named = feature();
+  write(featurePaths(named).plan, JSON.stringify({ plan: 'docs/plans/other.md' }));
+  assert.equal(loadFeature(named).plan, PLAN);
+});
+
 test('only the plan\'s own headings count, not those in a code block', () => {
   const tree = feature();
   write(path.join(tree, ...PLAN.split('/')), [
@@ -258,7 +284,7 @@ test('the slice comes from the feature event in the features view', async () => 
   });
 });
 
-test('a kept pull request number means a PR is open, and a report means done', () => {
+test('a kept pull request not yet merged is open, even with a report; merged, with a report and no slices left, is done', () => {
   const tree = feature();
   ledger(tree, 'this', ['Task 1: complete']);
   const p = featurePaths(tree);
@@ -273,13 +299,19 @@ test('a kept pull request number means a PR is open, and a report means done', (
   assert.equal(s.pr, 42);
   assert.equal(s.phase, 'pr-open');
 
-  // A report that cannot be read is not the end.
+  // A report that cannot be read is not the end, and nor is one while the pull request is open.
   write(p.report, 'Shipped, more or less.\n');
   assert.equal(status(tree).phase, 'pr-open');
   write(p.report, reportText());
+  assert.equal(status(tree).phase, 'pr-open');
+  // The foreman's merge marks it merged (ruling R88): then the report ends it.
+  write(p.pr, JSON.stringify({ pr: 42, plan: PLAN, merged: true }));
   s = status(tree);
   assert.equal(s.phase, 'done');
   assert.equal(s.pr, 42);
+  // With slices left, a merged slice is not the end: its plan is merged, so the next is planned.
+  assert.equal(buildStatus({ worktree: tree, now: () => NOW, answered: none, slice: () => ({ n: 1, m: 3 }) }).phase, 'planning');
+  assert.equal(buildStatus({ worktree: tree, now: () => NOW, answered: none, slice: () => ({ n: 3, m: 3 }) }).phase, 'done');
 
   // An unanswered question comes before everything else.
   write(p.questions, `${JSON.stringify(question(1))}\n`);

@@ -161,6 +161,15 @@ test('each kind of change goes to the foreman, the feature or the digest as sect
   assert.deepEqual(stray.map((e) => e.id).sort(), ['q-login-page-1', 'skipped-lines:login-page:3']);
 });
 
+test('an answer to the foreman\'s own question wakes the foreman, not the feature session', () => {
+  const prev = observation();
+  const own = answerEvent('ev-own', 'q-login-page-1000001');
+  const theirs = answerEvent('ev-theirs', 'q-login-page-999999');
+  const routed = route(diff(prev, observation({ at: iso(1000), awake: 1000, events: [own, theirs] })));
+  assert.deepEqual(routed.foreman.map((e) => [e.id, e.work, e.detail.foreman ?? false]), [['ev-own', 'login-page', true], ['ev-theirs', 'login-page', false]]);
+  assert.deepEqual(routed.features['login-page'].map((e) => e.id), ['ev-theirs']);
+});
+
 test('an event the foreman wrote while handling a wake does not wake it again', () => {
   const prev = observation();
   const quick = { id: 'ev-foreman-quick', kind: 'work', data: { id: 'fix-typo', title: 'Fix', lane: 'quick', visible: false, dependsOn: [] }, verified: false };
@@ -314,6 +323,26 @@ test('stuck counts awake time only, and never while waiting', () => {
 
   // An awake figure that is not a number counts as nothing.
   assert.equal(settle(observation(), idle(Number.NaN)).features['login-page'].still, 0);
+});
+
+test('a report written before the feature is done does not hide it going still (R72)', () => {
+  // The report is there from the first open-pr on, so only the phase says the feature has ended.
+  let cursor = { seen: [], prev: observation() };
+  const run = (obs) => {
+    const r = step(cursor, obs, { handled: new Set() });
+    cursor = r.cursor;
+    return r.events.filter((e) => e.type === 'stuck');
+  };
+  const building = feature({ status: status({ phase: 'building', task: { n: 3, m: 4 }, updatedAt: iso(6) }), report: true });
+  assert.deepEqual(run(observation({ awake: 10 * MIN, features: { 'login-page': building } })), []);
+  assert.deepEqual(run(observation({ awake: 10 * MIN, features: { 'login-page': building } })), []);
+  assert.equal(run(observation({ awake: 10 * MIN, features: { 'login-page': building } })).length, 1);
+  // A red pull request with the report written is the session's to fix: it is not waiting either.
+  cursor = { seen: [], prev: observation() };
+  const red = feature({ status: status({ phase: 'pr-open', pr: 7, updatedAt: iso(7) }), report: true });
+  const prs = { 7: prState({ ci: 'failure' }) };
+  for (let i = 0; i < 2; i += 1) assert.deepEqual(run(observation({ awake: 10 * MIN, features: { 'login-page': red }, prs })), []);
+  assert.equal(run(observation({ awake: 10 * MIN, features: { 'login-page': red }, prs })).length, 1);
 });
 
 test('after a restart from the cursor, nothing is lost and nothing wakes twice', () => withHome(() => {
@@ -578,4 +607,146 @@ test('a status with no tokens never counts as over appetite', () => {
   assert.equal(route(found).foreman.length, 1);
   assert.deepEqual(over(withTokens(400001), withTokens(500000)), [], 'over once per appetite');
   assert.equal(over(withTokens(500000), withTokens(900001, 800000)).length, 1, 'a raised appetite can be passed again');
+});
+
+test('a plan that is ready wakes the foreman once per arrival, not at every observation', () => {
+  const at = (phase, over = {}) => feature({ status: status({ phase, ...over }) });
+  let cursor = { seen: [], prev: observation({ features: { 'login-page': at('planning') } }) };
+  const run = (f, ms) => {
+    const r = step(cursor, observation({ at: iso(ms), awake: 1000, features: { 'login-page': f } }), { handled: new Set() });
+    cursor = r.cursor;
+    return r.events.filter((e) => e.type === 'plan-ready');
+  };
+
+  const ready = run(at('ready-to-build', { task: { n: 0, m: 5 }, updatedAt: iso(1000) }), 1000);
+  assert.equal(ready.length, 1);
+  assert.equal(ready[0].work, 'login-page');
+  assert.equal(ready[0].id, 'plan-ready:login-page:0', 'the count of the observation before it');
+  assert.deepEqual(ready[0].detail, { phase: 'ready-to-build', task: { n: 0, m: 5 }, slice: null });
+  assert.deepEqual(route(ready).foreman.map((e) => e.id), ['plan-ready:login-page:0']);
+  assert.deepEqual(route(ready).features, {});
+
+  // Still ready, however often the status is rewritten: no second wake.
+  assert.deepEqual(run(at('ready-to-build', { task: { n: 0, m: 5 }, updatedAt: iso(2000) }), 2000), []);
+  assert.deepEqual(run(at('ready-to-build', { task: { n: 0, m: 5 }, updatedAt: iso(3000) }), 3000), []);
+
+  // A phase that leaves and comes back (the next slice's plan) wakes again, with an id of its own.
+  assert.deepEqual(run(at('building', { updatedAt: iso(4000) }), 4000), []);
+  const slice2 = run(at('ready-to-build', { slice: { n: 2, m: 3 }, updatedAt: iso(5000) }), 5000);
+  assert.equal(slice2.length, 1);
+  assert.equal(slice2[0].id, 'plan-ready:login-page:4');
+  assert.deepEqual(slice2[0].detail.slice, { n: 2, m: 3 });
+
+  // A feature first seen with its plan ready wakes too; one first seen planning does not.
+  const first = diff(observation({ features: {} }), observation({
+    features: { 'login-page': at('ready-to-build'), 'search-box': feature({ status: status({ work: 'search-box', phase: 'planning' }) }) },
+  }), { handled: new Set() });
+  assert.deepEqual(first.filter((e) => e.type === 'plan-ready').map((e) => e.work), ['login-page']);
+  // A status that can't be read is no plan.
+  assert.deepEqual(diff(observation(), observation({ features: { 'login-page': feature({ status: null }) } })).filter((e) => e.type === 'plan-ready'), []);
+});
+
+test('a verified incident lift or incident fix wakes the foreman, with the click\'s own id; an unverified one does not', () => {
+  const events = [
+    action('ev-lift', { action: 'lift-incident', incident: 'bad-deploy' }),
+    action('ev-fix', { action: 'incident-fix', incident: 'bad-deploy', pr: 9 }),
+    action('ev-lift-forged', { action: 'lift-incident', incident: 'bad-deploy' }, false),
+    action('ev-fix-forged', { action: 'incident-fix', incident: 'bad-deploy', pr: 9 }, false),
+  ];
+  const routed = route(diff(observation(), observation({ events }), { handled: new Set() }));
+  assert.deepEqual(routed.foreman.map((e) => [e.type, e.id]), [['lift-incident', 'ev-lift'], ['incident-fix', 'ev-fix']]);
+  assert.deepEqual(routed.foreman[0].detail, { incident: 'bad-deploy' });
+  assert.equal(routed.foreman[1].pr, 9);
+  assert.deepEqual(routed.foreman[1].detail, { incident: 'bad-deploy', pr: 9 });
+  assert.deepEqual(routed.features, {});
+  assert.deepEqual(routed.digest, []);
+});
+
+test('a feature whose phase arrives at done wakes the foreman once with report, to close it (R94)', () => {
+  const at = (phase, over = {}) => feature({ status: status({ phase, ...over }) });
+  let cursor = { seen: [], prev: observation({ features: { 'login-page': at('pr-open') } }) };
+  const run = (f, ms) => {
+    const r = step(cursor, observation({ at: iso(ms), awake: 1000, features: { 'login-page': f } }), { handled: new Set() });
+    cursor = r.cursor;
+    return r.events.filter((e) => e.type === 'report');
+  };
+  const done = run(at('done', { updatedAt: iso(1000) }), 1000);
+  assert.deepEqual(done.map((e) => [e.work, e.id, e.detail.phase]), [['login-page', 'report:login-page:0', 'done']]);
+  assert.deepEqual(route(done).foreman.map((e) => e.id), ['report:login-page:0']);
+  assert.deepEqual(route(done).features, {});
+  // Still done: no second wake.
+  assert.deepEqual(run(at('done', { updatedAt: iso(2000) }), 2000), []);
+  // A feature first seen done wakes too (a blocked one ends there with no pull request); one planning does not.
+  const first = diff(observation({ features: {} }), observation({
+    features: { 'login-page': at('done'), 'search-box': feature({ status: status({ work: 'search-box', phase: 'planning' }) }) },
+  }), { handled: new Set() });
+  assert.deepEqual(first.filter((e) => e.type === 'report').map((e) => e.work), ['login-page']);
+});
+
+test('plan-ready is not repeated after a restart from the cursor, and a handled one goes to the digest', () => withHome(() => {
+  const at = (phase, ms) => observation({ at: iso(ms), awake: 1000, features: { 'login-page': feature({ status: status({ phase, updatedAt: iso(ms) }) }) } });
+  const start = { seen: [], prev: settle(null, at('planning', 0)), held: null };
+
+  const one = step(start, at('ready-to-build', 1000), { handled: new Set() });
+  assert.deepEqual(one.events.filter((e) => e.type === 'plan-ready').map((e) => e.id), ['plan-ready:login-page:1']);
+  writeCursor('acme__shop', { ...one.cursor, held: null });
+
+  // Restarted from the cursor: still ready is no news.
+  const again = step(readCursor('acme__shop'), at('ready-to-build', 2000), { handled: new Set() });
+  assert.deepEqual(again.events.filter((e) => e.type === 'plan-ready'), []);
+
+  // Stopped before the cursor was written: the same arrival comes again with the same id.
+  const lost = step(start, at('ready-to-build', 1500), { handled: new Set() });
+  assert.deepEqual(lost.events.filter((e) => e.type === 'plan-ready').map((e) => e.id), ['plan-ready:login-page:1']);
+  // And once seen, never again, even judged against an older observation.
+  assert.deepEqual(diff(start.prev, at('ready-to-build', 3000), { seen: new Set(one.cursor.seen) }).filter((e) => e.type === 'plan-ready'), []);
+
+  // A plan-ready the foreman has handled goes to the digest, not to a wake.
+  const handled = route(diff(start.prev, at('ready-to-build', 1000), { handled: new Set(['plan-ready:login-page:1']) }));
+  assert.deepEqual(handled.foreman, []);
+  assert.deepEqual(handled.digest.filter((e) => e.type === 'plan-ready').map((e) => e.id), ['plan-ready:login-page:1']);
+}));
+
+test('the foreman recording a feature as building wakes that session to build', () => {
+  const featureEvent = (id, data) => ({ id, kind: 'feature', data: { work: 'login-page', ...data }, verified: false });
+  const next = observation({
+    at: iso(1000),
+    awake: 1000,
+    events: [
+      featureEvent('ev-started', { step: 'started', brief: 'b1' }),
+      featureEvent('ev-planned', { step: 'planned' }),
+      featureEvent('ev-build', { step: 'building', slice: { n: 1, m: 2 } }),
+      featureEvent('ev-paused', { step: 'paused' }),
+      // An amendment's hash, recorded at the feature's current step (ruling R85), is not a go-ahead.
+      featureEvent('ev-amended-hash', { step: 'building', brief: 'h' }),
+    ],
+  });
+  const events = diff(observation(), next, { handled: new Set() });
+  const builds = events.filter((e) => e.type === 'build');
+  assert.deepEqual(builds.map((e) => [e.work, e.id]), [['login-page', 'ev-build']], 'only building with no brief, with the state event\'s own id');
+  assert.deepEqual(diff(observation(), observation({ events: [featureEvent('ev-h', { step: 'building', brief: 'h' })] })).filter((e) => e.type === 'build'), []);
+  assert.deepEqual(builds[0].detail, { slice: { n: 1, m: 2 } });
+
+  const routed = route(builds);
+  assert.deepEqual(routed.features['login-page'].map((e) => e.id), ['ev-build']);
+  assert.deepEqual(routed.foreman, []);
+  assert.deepEqual(routed.digest, []);
+
+  // The foreman wrote it, so it is among the handled ids: it still reaches the session, and never the foreman.
+  const handled = route(diff(observation(), next, { handled: new Set(['ev-started', 'ev-planned', 'ev-build', 'ev-paused', 'ev-amended-hash']) }));
+  assert.deepEqual(handled.features['login-page'].map((e) => e.id), ['ev-build']);
+  assert.deepEqual(handled.foreman, []);
+  assert.deepEqual(handled.digest.filter((e) => e.type === 'build'), []);
+
+  // A feature event with no work to wake is nothing.
+  assert.deepEqual(diff(observation(), observation({ events: [{ id: 'ev-x', kind: 'feature', data: { step: 'building' } }] })).filter((e) => e.type === 'build'), []);
+});
+
+test('a bug no one is shown first starts as quick work does; a visible one waits for its approval', () => {
+  const work = (id, over) => ({ id: `ev-${id}`, kind: 'work', data: { id, title: id, lane: 'bug', visible: false, dependsOn: [], ...over }, verified: false });
+  const events = diff(observation(), observation({ events: [work('quiet-bug', {}), work('shown-bug', { visible: true })] }), { handled: new Set() });
+  assert.deepEqual(events.map((e) => [e.type, e.work, e.id, e.detail]), [['work-ready', 'quiet-bug', 'ev-quiet-bug', { lane: 'bug' }]]);
+  assert.deepEqual(route(events).foreman.map((e) => e.work), ['quiet-bug']);
+  // Small and feature work still needs its signed approval.
+  assert.deepEqual(diff(observation(), observation({ events: [work('a-small', { lane: 'small' }), work('a-feature', { lane: 'feature' })] })), []);
 });

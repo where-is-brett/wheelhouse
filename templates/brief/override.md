@@ -13,7 +13,7 @@ These rules win over any skill's, whatever order the skills load in. Where a ski
 **3. Level 3 and 4 matters are questions, not rulings.** Anything at decision level 3 or 4 (what users see, settings, the guardrails) is a question for the director, and you pause on it. Reversible matters below level 3 are still ruled and recorded in the ledger.
 > Overrides `subagent-driven-development` and `executing-plans`, each: "**Rulings, not stalls.**"
 
-**4. Nothing waits for a person in chat.** Nobody is reading this session's chat. Do not ask for a plan review, an execution method or a finishing choice; go straight from the plan to building. To finish, open the pull request through the host helper, then own it until it merges.
+**4. Nothing waits for a person in chat.** Nobody is reading this session's chat. Do not ask for a plan review, an execution method or a finishing choice; go straight from the plan to building. To finish, write the report and run `report`, open the pull request through the host helper (`open-pr`), have Wheelhouse's reviewer review its head, then own it until it merges.
 > Overrides `writing-plans`: "link it for your human partner"
 > Overrides `finishing-a-development-branch`: "1. Merge back to <base-branch> locally"
 

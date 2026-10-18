@@ -8,7 +8,8 @@
 //              ciFiles: [glob], mcpServers: [string], webDomains: [string],
 //              runbook?: { contain?: { describe: string, command: [string] } },
 //              routing?: { foreman, builder, reviewer, reviewerCritical, tester, mechanical },
-//              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2 }
+//              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
+//              hotFiles?: [glob], flagFiles?: [glob] }
 // Other keys are kept and ignored.
 //
 // The build loop's keys (build-loop design, section 11; main design, section 8),
@@ -23,6 +24,11 @@
 //     each made into a `Bash(<command>:*)` rule; default `npm test`, `npm run`
 //     and `node`. Words of letters, digits and `._/@=-`, one space apart.
 //   - watcherShape: how the watcher wakes sessions (check 27), default 1.
+//   - hotFiles: globs for the files nearly every feature touches (dependency lists, migrations and
+//     the project's route files, which the project lists itself). Two plans that each touch a file
+//     matching one of them clash, even if they name different files. Default: package.json,
+//     package-lock.json, pnpm-lock.yaml, yarn.lock and `**/migrations/**`.
+//   - flagFiles: globs for the files where a feature switch is declared, default none.
 import { matchGlob } from './glob.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
@@ -43,6 +49,7 @@ export const SESSION_MODES = Object.freeze(['acceptEdits', 'auto', 'default', 'd
 export const DEFAULT_SESSION_MODE = 'acceptEdits';
 export const DEFAULT_BUILD_COMMANDS = Object.freeze(['npm test', 'npm run', 'node']);
 export const WATCHER_SHAPES = Object.freeze([1, 2]);
+export const DEFAULT_HOT_FILES = Object.freeze(['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '**/migrations/**']);
 
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]-]{0,127}$/;
 // Its first word starts with a letter or digit, so it never reads as a flag.
@@ -66,6 +73,8 @@ function withDefaults(c) {
     sessionMode: c.sessionMode ?? DEFAULT_SESSION_MODE,
     buildCommands: c.buildCommands ?? [...DEFAULT_BUILD_COMMANDS],
     watcherShape: c.watcherShape ?? 1,
+    hotFiles: c.hotFiles ?? [...DEFAULT_HOT_FILES],
+    flagFiles: c.flagFiles ?? [],
   };
 }
 
@@ -74,6 +83,8 @@ function buildLoopOk(c) {
   if (c.sessionMode !== undefined && !SESSION_MODES.includes(c.sessionMode)) return false;
   if (c.buildCommands !== undefined && !(Array.isArray(c.buildCommands) && c.buildCommands.every(isBuildCommand))) return false;
   if (c.watcherShape !== undefined && !WATCHER_SHAPES.includes(c.watcherShape)) return false;
+  if (c.hotFiles !== undefined && !globs(c.hotFiles)) return false;
+  if (c.flagFiles !== undefined && !globs(c.flagFiles)) return false;
   return true;
 }
 

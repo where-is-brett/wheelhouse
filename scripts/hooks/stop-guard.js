@@ -1,6 +1,7 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
-// only reading, reporting and the runbook through. On SessionEnd it clears the
+// only reading, reporting, the runbook, and the foreman's reading and closing
+// of a wake through. On SessionEnd it clears the
 // session's bypass marker and says nothing.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -8,6 +9,7 @@ import { Readable } from 'node:stream';
 import fs from 'node:fs';
 import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir } from './kit.js';
 import { words } from './shell-words.js';
+import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 
@@ -26,16 +28,43 @@ const CONTROL = /[;&|`<>\n\r]|\$\(/;
 // Whitespace other than a space or tab (no-break space, U+2028, U+3000 and the like).
 const ODD_SPACE = /[^\S \t]/u;
 
-function isRunbook(command, pluginRoots, platform) {
-  if (typeof command !== 'string' || CONTROL.test(command) || ODD_SPACE.test(command)) return false;
+// The words after the script when `command` is `node <pluginRoot>/<script> …` with no shell
+// syntax at all and the script in a real plugin root; null for anything else.
+function scriptArguments(command, pluginRoots, platform, script) {
+  if (typeof command !== 'string' || CONTROL.test(command) || ODD_SPACE.test(command)) return null;
   const windows = platform === 'win32';
   const parts = words(command, windows);
-  if (!parts || parts.length < 3 || parts[0] !== 'node') return false;
+  if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
   const fold = (p) => {
     const slashed = windows ? p.replaceAll('\\', '/') : p;
     return windows || platform === 'darwin' ? slashed.toLowerCase() : slashed;
   };
-  return pluginRoots.some((root) => fold(parts[1]) === fold(`${root}/scripts/runbook/runbook.js`));
+  return pluginRoots.some((root) => fold(parts[1]) === fold(`${root}/${script}`)) ? parts.slice(2) : null;
+}
+
+function isRunbook(command, pluginRoots, platform) {
+  const args = scriptArguments(command, pluginRoots, platform, 'scripts/runbook/runbook.js');
+  return args !== null && args.length > 0;
+}
+
+// A feature session's two commands that only read and report: `answer <questionId>` and
+// `report`. `ask` and `open-pr` write, so they stay refused.
+function isFeatureRead(command, pluginRoots, platform) {
+  const args = scriptArguments(command, pluginRoots, platform, 'scripts/feature/cli.js');
+  if (args === null) return false;
+  return (args.length === 1 && args[0] === 'report') || (args.length === 2 && args[0] === 'answer' && QUESTION_ID.test(args[1]));
+}
+
+// A wake file as the foreman is told it: one word naming a .json file, never a flag.
+const WAKE_FILE = /^[^-].*\.json$/;
+
+// The foreman's two commands that read a wake and record it done: `read <file>`
+// and `done <file> --acted|--idle`, so a wake under way when STOP lands can
+// still be read and closed. `measures` and every `act.js` command stay refused.
+function isWakeRead(command, pluginRoots, platform) {
+  const args = scriptArguments(command, pluginRoots, platform, 'scripts/foreman/wake.js');
+  if (args === null || !WAKE_FILE.test(args[1] ?? '')) return false;
+  return (args.length === 2 && args[0] === 'read') || (args.length === 3 && args[0] === 'done' && ['--acted', '--idle'].includes(args[2]));
 }
 
 // sandbox.enabled as the worktree's settings leave it: the local file wins when it
@@ -88,7 +117,11 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   // A folder that cannot be placed is held, not waved through.
   if (!inProject && byPath !== null) return undefined;
   if (READ_TOOLS.includes(input.tool_name) || HALT_TOOLS.includes(input.tool_name)) return undefined;
-  if (input.tool_name === 'Bash' && isRunbook(input.tool_input?.command, runbookRoots(dir, self, pluginRoot), platform)) return undefined;
+  if (input.tool_name === 'Bash') {
+    const roots = runbookRoots(dir, self, pluginRoot);
+    const command = input.tool_input?.command;
+    if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform) || isWakeRead(command, roots, platform)) return undefined;
+  }
   return answer.deny(DENIED);
 }
 
