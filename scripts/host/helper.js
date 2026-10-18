@@ -238,6 +238,36 @@ const WHEELHOUSE_AUTHOR = {
 const ciPatterns = (config) => [...CI_FILES, ...config.ciFiles];
 const touchesCi = (paths, config) => paths.some((file) => ciPatterns(config).some((p) => matchGlob(p, file, { ignoreCase: true })));
 
+// The incident the gate weighs for a pull request, from the views (design section 12): none open
+// is `{ open: false }`. With any open, it is a fix when a verified `incident-fix` of any open
+// incident names this pull request (the fix the director clicked is the point); otherwise the id
+// is an open incident's, so the reason names one.
+function incidentFor(views, number) {
+  const open = views.incidents?.open;
+  if (!Array.isArray(open)) return { open: true, isFix: false };
+  if (open.length === 0) return { open: false };
+  const fixed = open.find((i) => Array.isArray(i.fixes) && i.fixes.includes(number));
+  return { open: true, id: (fixed ?? open[0]).id, isFix: fixed !== undefined };
+}
+
+// The work a pull request's head branch names: `feature/<work>` or `feature/<work>/<slice>`.
+const FEATURE_BRANCH = /^feature\/([a-z0-9-]{1,40})(?:\/[^/]+)?$/;
+
+// Whether the work's signed approval makes the director's approval of this pull request needed
+// because the work is shown first (design section 12). The approval is read from the views, which
+// take it from the verified `approve-work` alone, never from the work event or the caller. A branch
+// that names no work, or work with no approval, adds nothing. For feature work, only a pull request
+// that changes one of the project's flag files counts (the switch-on); with no flag files listed,
+// every pull request of the work does.
+function shownFirstNeeded({ views, headRef, paths, config }) {
+  const work = FEATURE_BRANCH.exec(typeof headRef === 'string' ? headRef : '')?.[1];
+  if (work === undefined || !Object.hasOwn(views.work ?? {}, work)) return false;
+  const approval = views.work[work].approval;
+  if (approval?.shownFirst !== true) return false;
+  if (approval.lane !== 'feature' || config.flagFiles.length === 0) return true;
+  return paths.some((file) => config.flagFiles.some((p) => matchGlob(p, file, { ignoreCase: true })));
+}
+
 // The git configuration files of a folder, read with fs only: running git
 // there could run what the folder's configuration names. Null when the folder
 // has no repository; throws when one cannot be read.
@@ -1250,21 +1280,25 @@ export async function startHelper({
     // read, the change counts as touching the guardrails.
     let classified = { touchesGuardrails: true, guardrailPaths: [], criticalAreas: [] };
     let readable = true;
+    let changes = null;
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
-      const { paths, config } = await readChanges({ project, number, headSha, defaultBranch }, ctx);
-      classified = classifyChange({ paths, config });
+      changes = await readChanges({ project, number, headSha, defaultBranch }, ctx);
+      classified = classifyChange({ paths: changes.paths, config: changes.config });
     } catch {
       readable = false;
     }
     // A restore is a release that passed review before; the director's approval stands in for it.
     const touchesGuardrails = (!restore && classified.touchesGuardrails) || body.touchesGuardrails === true;
-    const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const ci = await adapter.ciState(headSha);
     const skipped = [];
     const enrolled = readEnrolled();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
+    // Work shown first needs the director's approval of the pull request. When the changed files
+    // couldn't be read, the change already counts as touching the guardrails.
+    const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
+    const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore || shownFirst;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter }, ctx);
     // STOP and bypass are read last, just before the decision, so one set during the
@@ -1283,8 +1317,8 @@ export async function startHelper({
       approval,
       enrolled,
       upToDate,
-      // Interim values until Tasks 22 and 27.
-      incident: { open: false }, // Task 22 reads the open incident
+      incident: incidentFor(views, number),
+      // Interim value until Task 27.
       provenance: { ok: true }, // Task 27 reads the PR's provenance block
     });
     if (!decision.allow) {
