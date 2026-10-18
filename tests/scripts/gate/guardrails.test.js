@@ -40,13 +40,17 @@ test('a critical area\'s check file is a guardrail; a file in the area only name
   assert.deepEqual(both.criticalAreas, ['money', 'login']);
 });
 
+// What readConfig fills in for each build-loop key a configuration leaves out.
+const ROUTING_NONE = { foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null };
+const DEFAULTS = { routing: ROUTING_NONE, sessionMode: 'acceptEdits', buildCommands: ['npm test', 'npm run', 'node'], watcherShape: 1 };
+
 test('readConfig: no file is the empty config; a malformed one throws', () => {
-  assert.deepEqual(empty, { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] });
-  const good = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], routing: { a: 1 }, runbook: { contain: { describe: 'Stop it', command: ['node', 'x.js'] } } };
-  assert.deepEqual(readConfig(JSON.stringify(good)), good, 'unknown keys are kept');
+  assert.deepEqual(empty, { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], ...DEFAULTS });
+  const good = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], other: { a: 1 }, runbook: { contain: { describe: 'Stop it', command: ['node', 'x.js'] } } };
+  assert.deepEqual(readConfig(JSON.stringify(good)), { ...good, ...DEFAULTS }, 'unknown keys are kept');
   const older = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
-  assert.deepEqual(readConfig(JSON.stringify(older)), older, 'a configuration with no runbook is still valid');
-  assert.deepEqual(readConfig(JSON.stringify({ ...older, runbook: {} })), { ...older, runbook: {} });
+  assert.deepEqual(readConfig(JSON.stringify(older)), { ...older, ...DEFAULTS }, 'a configuration with no runbook is still valid');
+  assert.deepEqual(readConfig(JSON.stringify({ ...older, runbook: {} })), { ...older, runbook: {}, ...DEFAULTS });
   const message = "The project's Wheelhouse configuration can't be read";
   const bad = [
     '', 'not json', 'null', '[]', '{}', '{"v":2,"criticalAreas":[],"ciFiles":[],"mcpServers":[],"webDomains":[]}',
@@ -63,6 +67,42 @@ test('readConfig: no file is the empty config; a malformed one throws', () => {
     JSON.stringify({ ...good, runbook: { contain: { describe: '', command: ['node'] } } }),
   ];
   for (const text of bad) assert.throws(() => readConfig(text), { message }, text);
+});
+
+test('readConfig: the build loop\'s keys are kept as given, and the missing ones filled in', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  const given = {
+    ...base,
+    routing: { foreman: 'model-a', reviewer: 'model-b', reviewerCritical: null, custom: 'model-c' },
+    sessionMode: 'plan',
+    buildCommands: ['npm test', 'make check'],
+    watcherShape: 2,
+  };
+  assert.deepEqual(readConfig(JSON.stringify(given)), {
+    ...given,
+    routing: { ...ROUTING_NONE, foreman: 'model-a', reviewer: 'model-b', custom: 'model-c' },
+  });
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, routing: {} })).routing, ROUTING_NONE, 'no model named: the command line\'s own default');
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, buildCommands: [] })).buildCommands, [], 'an empty list allows no commands');
+  for (const mode of ['acceptEdits', 'auto', 'default', 'dontAsk', 'plan']) {
+    assert.equal(readConfig(JSON.stringify({ ...base, sessionMode: mode })).sessionMode, mode);
+  }
+});
+
+test('readConfig: bypass mode, a model that reads as a flag, and a command a rule cannot hold are refused', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  const message = "The project's Wheelhouse configuration can't be read";
+  const bad = [
+    { sessionMode: 'bypassPermissions' }, { sessionMode: 'ACCEPTEDITS' }, { sessionMode: '' }, { sessionMode: null },
+    { routing: [] }, { routing: 'model-a' }, { routing: null },
+    { routing: { foreman: '--dangerously-skip-permissions' } }, { routing: { builder: '' } }, { routing: { tester: 1 } },
+    { routing: { reviewer: 'model a' } }, { routing: { mechanical: 'model-a\n' } }, { routing: { foreman: 'x'.repeat(129) } },
+    { buildCommands: 'npm test' }, { buildCommands: [''] }, { buildCommands: [' npm test'] }, { buildCommands: ['npm  test'] },
+    { buildCommands: ['npm test:*'] }, { buildCommands: ['npm test)'] }, { buildCommands: ['rm -rf *'] }, { buildCommands: ['-x'] },
+    { buildCommands: ['npm\ntest'] }, { buildCommands: [1] },
+    { watcherShape: 0 }, { watcherShape: 3 }, { watcherShape: '1' }, { watcherShape: 1.5 }, { watcherShape: null },
+  ];
+  for (const extra of bad) assert.throws(() => readConfig(JSON.stringify({ ...base, ...extra })), { message }, JSON.stringify(extra));
 });
 
 test('classification ignores case, for every kind of pattern', () => {

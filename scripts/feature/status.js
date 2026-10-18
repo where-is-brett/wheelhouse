@@ -8,7 +8,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { featurePaths, parseBrief, parseReport, readQuestions } from './files.js';
+import { featurePaths, openRegular, parseBrief, parseReport, readQuestions } from './files.js';
 import { findRepoRoot } from '../hooks/kit.js';
 import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -41,20 +41,15 @@ function lstatOf(file) {
 }
 
 // The text of a regular file, or null when it is missing, not a regular file
-// (a symlink, a folder or a FIFO is refused before it is opened, so it can't
+// (a symlink, a folder or a FIFO is refused, even one swapped in after the check, so it can't
 // block), or over `max` bytes. With `head`, only the first `max` bytes are read
 // and a longer file is not refused.
 export function readCapped(file, max, { head = false } = {}) {
-  if (!lstatOf(file)?.isFile()) return null;
-  let fd;
-  try {
-    fd = fs.openSync(file, 'r');
-  } catch {
-    return null;
-  }
+  const fd = openRegular(file);
+  if (fd === null) return null;
   try {
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || (!head && stat.size > max)) return null;
+    if (!head && stat.size > max) return null;
     const size = Math.min(stat.size, max);
     const buffer = Buffer.alloc(size);
     return buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, size, 0));

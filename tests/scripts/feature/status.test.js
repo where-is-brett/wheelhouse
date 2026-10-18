@@ -6,8 +6,8 @@ import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { featurePaths, readStatus } from '../../../scripts/feature/files.js';
-import { buildStatus, captureRulings, gitHead } from '../../../scripts/feature/status.js';
+import { featurePaths, readQuestions, readStatus } from '../../../scripts/feature/files.js';
+import { buildStatus, captureRulings, gitHead, readCapped } from '../../../scripts/feature/status.js';
 import { decide, THROTTLE_MS } from '../../../scripts/hooks/feature-status.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -295,6 +295,35 @@ test('a FIFO in place of a feature file is refused, not waited on', { skip: !uni
   assert.equal(s.phase, 'building');
   assert.equal(s.pr, null);
   assert.equal(readStatus(p.status), null);
+});
+
+test('a feature file swapped for a FIFO or a link after its check is refused, not waited on', { skip: !unix }, (t) => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  const target = path.join(tempFolder('wh-target-'), 'status.json');
+  fs.writeFileSync(target, '{}');
+  const swapped = new Set();
+  for (const file of [p.status, p.questions, p.brief, p.report]) {
+    fs.rmSync(file, { force: true });
+    execFileSync('mkfifo', [file]);
+    swapped.add(file);
+  }
+  const link = path.join(p.dir, 'link.json');
+  fs.symlinkSync(target, link);
+  swapped.add(link);
+  // Every check says "a regular file", as it would have just before the swap.
+  const lstat = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (file, ...rest) => {
+    const real = lstat(file, ...rest);
+    if (!swapped.has(file)) return real;
+    return Object.assign(Object.create(Object.getPrototypeOf(real)), real, { isFile: () => true, isFIFO: () => false, isSymbolicLink: () => false });
+  });
+  assert.equal(readStatus(p.status), null);
+  assert.deepEqual(readQuestions(p.questions), { questions: [], skipped: 0, truncated: false });
+  assert.equal(readCapped(p.brief, 1024), null);
+  assert.equal(readCapped(p.report, 1024, { head: true }), null);
+  assert.equal(readCapped(link, 1024), null);
+  assert.equal(readStatus(link), null);
 });
 
 test('the head commit is read from the .git files, loose or packed, from a worktree', () => {

@@ -713,6 +713,11 @@ export async function startHelper({
       // ref (for example one that would make the mirror shallow) yet exits 0.
       // git-upload-pack runs in the folder: GIT_NO_LAZY_FETCH stops a partial
       // clone there from fetching missing objects through its own remote.
+      // core.hooksPath set to the null file stops the hooks folder; a hook
+      // named in the mirror's configuration (hook.<name>.command) would not
+      // be stopped by it, so a mirror whose configuration sets one is refused.
+      const hooked = await configSets(unkeyed, mirror, '^hook\\.');
+      if (hooked !== 'none') return { ok: false, refused: 'the mirror\'s git configuration names a hook, or could not be read, so nothing is copied into it' };
       await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
       const fetched = await gitIn({ ...ISOLATED, GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS)('git', [
         '-c', `core.hooksPath=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
@@ -867,6 +872,78 @@ export async function startHelper({
         mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: gitIn(ctx.gitEnv),
       });
     });
+  }
+
+  // Whether the configuration git reads when `runner` runs in `mirror` sets any
+  // key matching `pattern`: 'none', 'some', or 'unreadable'.
+  async function configSets(runner, mirror, pattern) {
+    const listed = await runner('git', ['config', '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
+    if (listed.code === 1) return 'none';
+    if (listed.code !== 0) return 'unreadable';
+    return listed.stdout.trim() === '' ? 'none' : 'some';
+  }
+
+  // Two branches merged in the mirror, to see whether they clash in text
+  // (design section 12). Read-only toward the host, so STOP lets it through.
+  // Both branches are fetched with the connection's key into fixed working
+  // refs; `git merge-tree` then merges them with no checkout and no index.
+  // Nothing from either branch can run:
+  //   - git reads hooks from two places. Every call here sets core.hooksPath
+  //     to the null file, which stops the hooks folder. A hook named in the
+  //     configuration (hook.<name>.command) is not stopped by that, so the
+  //     request is refused, before any ref is touched, when the configuration
+  //     the fetch reads (the connection's) or the mirror's own sets any
+  //     hook.* key.
+  //   - The merge runs with no system or user configuration and no attributes
+  //     from outside the mirror, and the request is refused when the mirror's
+  //     own configuration sets any filter.* or merge.* key, so an attribute in
+  //     a branch that names a filter or a merge driver finds nothing to run.
+  // The working refs are dropped afterwards, whatever happened.
+  const TEST_MERGE_REFS = ['refs/wheelhouse/tm/a', 'refs/wheelhouse/tm/b'];
+  const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
+  const MERGE_ONLY = [
+    ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
+  ];
+  const CONFIG_REFUSED = {
+    some: 'the git configuration names a hook, filter or merge driver, so nothing is merged',
+    unreadable: 'the git configuration could not be read, so nothing is merged',
+  };
+  function doTestMerge({ project, a, b }, ctx) {
+    if (!plainBranch(a) || !plainBranch(b)) refuse('the branch name is not valid');
+    return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
+      const local = (args) => plain('git', args, { cwd: mirror, input: '' });
+      for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook)\\.')]) {
+        if (said !== 'none') return { ok: false, refused: CONFIG_REFUSED[said] };
+      }
+      try {
+        for (const ref of TEST_MERGE_REFS) await local([...NO_HOOKS, 'update-ref', '-d', ref]);
+        const fetched = await keyed('git', [
+          ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE,
+          `+refs/heads/${a}:${TEST_MERGE_REFS[0]}`, `+refs/heads/${b}:${TEST_MERGE_REFS[1]}`,
+        ], { cwd: mirror, input: '' });
+        if (fetched.code !== 0) return { ok: false, refused: 'fetching the branches failed' };
+        const merged = await local([
+          ...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', TEST_MERGE_REFS[0], TEST_MERGE_REFS[1],
+        ]);
+        if (merged.code !== 0 && merged.code !== 1) return { ok: false, refused: 'git could not merge the two branches' };
+        const conflicts = merged.code === 0 ? [] : merged.stdout.split('\0').slice(1).filter((name) => name !== '');
+        return { ok: true, clean: merged.code === 0, conflicts };
+      } finally {
+        for (const ref of TEST_MERGE_REFS) await local([...NO_HOOKS, 'update-ref', '-d', ref]);
+      }
+    }));
+  }
+
+  // The project's configuration as the default branch has it, from the mirror: never a
+  // working copy an agent can edit. For the watcher, which holds no keys.
+  async function doConfig({ project }, ctx) {
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+      await defaultHistory(must, defaultBranch);
+      return { ok: true, config: await baseConfig(must) };
+    }));
   }
 
   async function doMerge(body, ctx) {
@@ -1417,6 +1494,22 @@ export async function startHelper({
     '/pr/update': writing((a, { number, title, body }) => a.updatePr({ number, title, body })),
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),
     '/ci': pass((a, { sha }) => a.ciState(sha)),
+    // Read-only, so STOP lets it through.
+    '/test-merge': async (body, ctx) => {
+      try {
+        return await doTestMerge(body, ctx);
+      } finally {
+        tidyAfterAnswer(body.project);
+      }
+    },
+    // Read-only, so STOP lets it through.
+    '/config': async (body, ctx) => {
+      try {
+        return await doConfig(body, ctx);
+      } finally {
+        tidyAfterAnswer(body.project);
+      }
+    },
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
