@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
-import { listEvents, eventHash, CONFIRMABLE_KINDS } from './events.js';
+import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
 import { verify, readEnrolled } from './signing.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -55,44 +55,50 @@ function buildLoopViews(sorted, enrolled) {
   const amends = actions('amend').filter((a) => amendments.some((m) => m.data?.work === a.data?.work && m.data?.hash === a.data?.hash));
   const work = {};
   for (const [id, w] of Object.entries(latestWork)) {
-    const doc = w.data.doc?.hash;
-    // A change approved before the work was last written is read as part of that writing.
-    const mine = amends.filter((a) => a.data.work === id && byOrder(w, a) < 0);
-    const required = mine.length > 0 ? mine.at(-1).data.hash : doc;
-    const ofWork = approvals.filter((a) => a.data.work === id);
+    // Only an approval for the work's current lane counts: a work event that moves the work to another lane asks again.
+    const ofWork = approvals.filter((a) => a.data.work === id && a.data.lane === w.data.lane);
     const detail = (a, hash) => ({ hash, shownFirst: a.data.shownFirst, lane: a.data.lane });
-    let approval = null;
-    if (typeof required === 'string' && required !== '') {
-      const direct = ofWork.filter((a) => a.data.hash === required).at(-1);
-      if (direct) {
-        approval = detail(direct, required);
-      } else if (mine.length > 0) {
-        // The director's click on a change approves the changed work as it approved the work before it.
-        let current = doc;
-        let carried = null;
-        for (const e of [...ofWork, ...mine].sort(byOrder)) {
-          if (e.data.action === 'amend') {
-            current = e.data.hash;
-            if (carried) carried = { ...carried, hash: current };
-          } else if (e.data.hash === current) {
-            carried = detail(e, current);
-          }
-        }
-        if (carried && carried.hash === required) approval = carried;
+    // In time order the document the work names (each work event, each approved change) is the one an
+    // approval must name. The director's click on a change approves the changed work as it approved
+    // the work before it; a work event that names another document starts again, and one that names
+    // the document an approved change already moved to leaves the approval standing.
+    let current = null;
+    let carried = null;
+    const timeline = [...sorted.filter((e) => e.kind === 'work' && e.data?.id === id), ...ofWork, ...amends.filter((a) => a.data.work === id)].sort(byOrder);
+    for (const e of timeline) {
+      if (e.kind === 'work') {
+        current = e.data.doc?.hash ?? null;
+        if (carried && carried.hash !== current) carried = null;
+      } else if (e.data.action === 'amend') {
+        current = e.data.hash;
+        if (carried) carried = { ...carried, hash: current };
+      } else if (current !== null && e.data.hash === current) {
+        carried = detail(e, current);
       }
+    }
+    let approval = null;
+    if (typeof current === 'string' && current !== '') {
+      // An approval of the document the work now names counts wherever it falls in time.
+      const direct = ofWork.filter((a) => a.data.hash === current).at(-1);
+      approval = direct ? detail(direct, current) : carried;
     }
     work[id] = { work: { key: id, ...mark(w) }, approved: approval !== null, ...(approval ? { approval } : {}) };
   }
 
   const features = latestPerKey(sorted.filter((e) => e.kind === 'feature'), (e) => e.data?.work);
 
+  // An answer counts for the question as it was shown: it names the hash of the question's data, and
+  // one question recorded again with other words or options needs a fresh answer.
   const questions = {};
   for (const e of sorted) {
     if (e.kind === 'question' && isPlainKey(e.data?.id)) questions[e.data.id] = { question: { key: e.data.id, ...mark(e) }, answer: null };
   }
   for (const a of actions('answer')) {
     const q = questions[a.data.questionId];
-    if (q && typeof a.data.label === 'string') q.answer = { label: a.data.label, at: a.at };
+    if (!q || typeof a.data.label !== 'string' || a.data.questionHash !== dataHash(q.question.data)) continue;
+    if (Array.isArray(q.question.data.options) && q.question.data.options.some((o) => o?.label === a.data.label)) {
+      q.answer = { label: a.data.label, at: a.at };
+    }
   }
 
   // An incident is open from its declaration until a verified lift after it.

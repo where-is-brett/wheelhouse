@@ -369,7 +369,7 @@ test('a work id that is not a short slug is refused', async () => {
 const CLICK = { question: 'the card as shown', label: 'Approve' };
 const ACTION_SHAPES = {
   'approve-work': { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: H, shownFirst: true, ...CLICK },
-  answer: { action: 'answer', questionId: 'q-export-csv-1', question: 'the card as shown', label: 'Comma' },
+  answer: { action: 'answer', questionId: 'q-export-csv-1', questionHash: H, question: 'the card as shown', label: 'Comma' },
   amend: { action: 'amend', work: 'export-csv', hash: H, question: 'the card as shown', label: 'Change it' },
   'lift-incident': { action: 'lift-incident', incident: 'bad-total', question: 'the card as shown', label: 'End it' },
   'incident-fix': { action: 'incident-fix', incident: 'bad-total', pr: 31, question: 'the card as shown', label: 'Merge the fix' },
@@ -380,7 +380,7 @@ test('each new action needs its own fields and refuses others', async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
     const own = {
-      'approve-work': ['work', 'lane', 'hash', 'shownFirst'], answer: ['questionId'], amend: ['work', 'hash'],
+      'approve-work': ['work', 'lane', 'hash', 'shownFirst'], answer: ['questionId', 'questionHash'], amend: ['work', 'hash'],
       'lift-incident': ['incident'], 'incident-fix': ['incident', 'pr'],
     };
     for (const [name, data] of Object.entries(ACTION_SHAPES)) {
@@ -409,7 +409,7 @@ test('each new action needs its own fields and refuses others', async () => {
     const a = ACTION_SHAPES;
     for (const bad of [
       { ...a['approve-work'], lane: 'huge' }, { ...a['approve-work'], shownFirst: 'yes' }, { ...a['approve-work'], hash: 'zz' }, { ...a['approve-work'], work: 'Bad Id' },
-      { ...a.answer, questionId: 'nope' }, { ...a.answer, label: 'Explain more' }, { ...a.answer, label: 'Not now' },
+      { ...a.answer, questionId: 'nope' }, { ...a.answer, questionHash: 'zz' }, { ...a.answer, label: 'Explain more' }, { ...a.answer, label: 'Not now' },
       { ...a.amend, hash: H.slice(0, 11) }, { ...a['lift-incident'], incident: '' }, { ...a['incident-fix'], pr: 0 }, { ...a['incident-fix'], pr: '3' },
     ]) assert.throws(() => makeEvent({ kind: 'action', data: bad }), /action event/, JSON.stringify(bad));
   });

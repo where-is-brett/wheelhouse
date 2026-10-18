@@ -26,7 +26,7 @@ const ACTION_OWN = {
   runbook: ['step', 'sha'],
   'ci-push': ['branch', 'sha'],
   'approve-work': ['work', 'lane', 'hash', 'shownFirst'],
-  answer: ['questionId'],
+  answer: ['questionId', 'questionHash'],
   amend: ['work', 'hash'],
   'lift-incident': ['incident'],
   'incident-fix': ['incident', 'pr'],
@@ -68,6 +68,7 @@ function checkAction(data) {
     if (typeof data.shownFirst !== 'boolean') bad('needs to say whether the director is to see it before it merges');
   } else if (data.action === 'answer') {
     if (typeof data.questionId !== 'string' || !questionIdOf(data.questionId)) bad('needs the question it answers');
+    if (typeof data.questionHash !== 'string' || !HASH.test(data.questionHash)) bad('needs the hash of the question it answers');
     if (NOT_AN_ANSWER.includes(data.label)) bad('has a label that is not an answer');
   } else if (data.action === 'amend') {
     if (!isSlug(data.work)) bad('needs the work, named by a short slug');
@@ -195,6 +196,11 @@ export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting'];
 export function eventHash(event) {
   const { sig, ...unsigned } = event ?? {};
   return crypto.createHash('sha256').update(canonicalJson(unsigned)).digest('hex');
+}
+
+// The sha256 of a record's data in canonical JSON: what an answer names, so it answers the question as shown.
+export function dataHash(data) {
+  return crypto.createHash('sha256').update(canonicalJson(data)).digest('hex');
 }
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.

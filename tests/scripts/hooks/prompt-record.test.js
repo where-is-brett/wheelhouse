@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending } from '../../../scripts/hooks/prompt-record.js';
-import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
@@ -431,7 +431,7 @@ test('a click on an answer card records the label; Explain more and Not now reco
     const c = fake();
     const q = `Which separator should the export use? ${answerLine('q-export-csv-1')}`;
     await decide(input({ [q]: 'Tab' }, { options: OPTIONS }), deps(c));
-    assert.deepEqual(recorded(c), [{ action: 'answer', questionId: 'q-export-csv-1', question: q, label: 'Tab' }]);
+    assert.deepEqual(recorded(c), [{ action: 'answer', questionId: 'q-export-csv-1', questionHash: dataHash(QUESTION), question: q, label: 'Tab' }]);
     assert.equal(c.calls.record[0].event.kind, 'action');
     assert.ok(c.calls.record[0].event.sig);
     assert.deepEqual(c.calls.write.map((w) => w.data.label), ['Tab']);
@@ -525,5 +525,19 @@ test('the new clicks are signed only on a card whose button the card offered', a
     await decide(input({ [approveWorkLine('export-csv', 'feature', DOC)]: ['Approve'] }), deps(c));
     await decide(input({ [approveWorkLine('export-csv', 'feature', DOC)]: 'Approve' }, { multi: true }), deps(c));
     assert.equal(c.calls.record.length, 0);
+  });
+});
+
+test('an answer names the question as it stands now, when the question was recorded twice', async () => {
+  await withHome(async () => {
+    keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+    const rewritten = { ...QUESTION, options: [{ label: 'Tab', says: 'Tabs, always' }, { label: 'Semicolon', says: 'Semicolons' }] };
+    keepEvent(makeEvent({ kind: 'question', data: rewritten, now: () => new Date(NOW.getTime() + 1000) }));
+    const c = fake();
+    await decide(input({ [answerLine('q-export-csv-1')]: 'Tab' }, { options: OPTIONS }), deps(c));
+    assert.deepEqual(recorded(c).map((d) => d.questionHash), [dataHash(rewritten)]);
+    // Comma is no longer an option of the question as it stands.
+    await decide(input({ [answerLine('q-export-csv-1')]: 'Comma' }, { options: OPTIONS }), deps(c));
+    assert.equal(c.calls.record.length, 1);
   });
 });

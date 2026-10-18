@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.js';
-import { listEvents, makeEvent, confirmationFor, eventHash } from '../../../scripts/state/events.js';
+import { listEvents, makeEvent, confirmationFor, eventHash, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -457,7 +457,7 @@ const question = (n, data = {}) => ev('question', n, {
   id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file',
   options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2, ...data,
 });
-const answer = (n, label, extra = {}) => click(n, { action: 'answer', questionId: 'q-export-csv-1', label, ...extra });
+const answer = (n, label, extra = {}) => click(n, { action: 'answer', questionId: 'q-export-csv-1', questionHash: dataHash(question(1).data), label, ...extra });
 
 test('a question is answered only by a verified answer action', async () => {
   await withHome(() => {
@@ -474,8 +474,29 @@ test('a question is answered only by a verified answer action', async () => {
     assert.deepEqual(done.answer, { label: 'Tab', at: T(6) });
     // An answer to a question nobody asked is not a question.
     assert.deepEqual(Object.keys(build([answer(6, 'Tab')]).questions), []);
-    // A question the foreman records again is still one question.
-    assert.deepEqual(Object.keys(build([q, question(2)]).questions), ['q-export-csv-1']);
+    // A question the foreman records again, word for word, is still one question and keeps its answer.
+    assert.deepEqual(Object.keys(build([q, answer(6, 'Tab'), question(7)]).questions), ['q-export-csv-1']);
+    assert.deepEqual(build([q, answer(6, 'Tab'), question(7)]).questions['q-export-csv-1'].answer, { label: 'Tab', at: T(6) });
+    // A label the question does not offer, or an answer naming another question hash, answers nothing.
+    assert.equal(build([q, answer(6, 'Semicolon')]).questions['q-export-csv-1'].answer, null);
+    assert.equal(build([q, answer(6, 'Tab', { questionHash: 'e'.repeat(64) })]).questions['q-export-csv-1'].answer, null);
+  });
+});
+
+test('a question rewritten after it was answered needs a fresh answer', async () => {
+  await withHome(() => {
+    const q = question(1);
+    const rewritten = question(7, { options: [{ label: 'Semicolon', says: 'Semicolons' }, { label: 'Tab', says: 'Different tabs' }] });
+    const early = answer(6, 'Tab');
+    const v = build([q, early, rewritten]).questions['q-export-csv-1'];
+    assert.equal(v.question.id, rewritten.id);
+    assert.equal(v.answer, null, 'the earlier answer was for the question as it was');
+    // An answer that names the new content counts; the old one still does not replace it.
+    const fresh = answer(8, 'Semicolon', { questionHash: dataHash(rewritten.data) });
+    assert.deepEqual(build([q, early, rewritten, fresh]).questions['q-export-csv-1'].answer, { label: 'Semicolon', at: T(8) });
+    // A rewritten question that kept the label but changed the words still asks again.
+    const reworded = question(7, { what: 'Which delimiter?' });
+    assert.equal(build([q, early, reworded]).questions['q-export-csv-1'].answer, null);
   });
 });
 
@@ -504,5 +525,41 @@ test('an incident stays open until a verified lift names it; an unsigned lift ch
     // A lift before the incident was declared does not end it; a second declaration of an open incident is one incident.
     assert.deepEqual(build([lift(0, 'bad-total'), inc]).incidents.open.map((i) => i.id), ['bad-total']);
     assert.equal(build([inc, ev('incident', 2, { id: 'bad-total', what: 'again' })]).incidents.open.length, 1);
+  });
+});
+
+test('an approval counts only for the lane the work is in now', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    const moved = workEv(3, { lane: 'quick' });
+    assert.equal(build([w, approve(2, H1)]).work['export-csv'].approved, true);
+    const v = build([w, approve(2, H1), moved]).work['export-csv'];
+    assert.equal(v.approved, false);
+    assert.equal(v.approval, undefined);
+    // A fresh approval for the new lane counts; one for the old lane still does not.
+    assert.equal(build([w, approve(2, H1), moved, approve(4, H1, { lane: 'feature' })]).work['export-csv'].approved, false);
+    const again = build([w, approve(2, H1), moved, approve(4, H1, { lane: 'quick' })]).work['export-csv'];
+    assert.deepEqual([again.approved, again.approval.lane], [true, 'quick']);
+    // The lane check holds for an approval carried over a change as well.
+    const amendment = ev('amendment', 5, { work: 'export-csv', change: 'x', hash: H2 });
+    const amend = click(6, { action: 'amend', work: 'export-csv', hash: H2, label: 'Change it' });
+    assert.equal(build([w, approve(2, H1), moved, amendment, amend]).work['export-csv'].approved, false);
+  });
+});
+
+test('a work event naming the document an approved change already moved to leaves the work approved', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    const amendment = ev('amendment', 3, { work: 'export-csv', change: 'CSV, not Excel', hash: H2 });
+    const amend = click(4, { action: 'amend', work: 'export-csv', hash: H2, label: 'Change it' });
+    const base1 = [w, approve(2, H1, { shownFirst: true }), amendment, amend];
+    const recorded = workEv(5, { doc: { path: 'd.md', hash: H2 } });
+    const v = build([...base1, recorded]).work['export-csv'];
+    assert.equal(v.approved, true);
+    assert.deepEqual(v.approval, { hash: H2, shownFirst: true, lane: 'feature' });
+    // A work event naming some other document starts again.
+    assert.equal(build([...base1, workEv(5, { doc: { path: 'd.md', hash: H3 } })]).work['export-csv'].approved, false);
+    // One naming the original document is approved only because the director approved that document itself.
+    assert.equal(build([...base1, workEv(5)]).work['export-csv'].approval.hash, H1);
   });
 });

@@ -14,7 +14,7 @@ import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js'
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift } from '../lib/stop.js';
 import { stateDir } from '../lib/paths.js';
-import { makeEvent, listEvents, confirmationFor, CONFIRMABLE_KINDS } from '../state/events.js';
+import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine,
@@ -87,7 +87,7 @@ function answerOf(project, question, label) {
   if (!m || !question.includes(answerLine(m[1]))) return null;
   const asked = held(project, 'question').filter((e) => e.data?.id === m[1]).at(-1);
   const options = Array.isArray(asked?.data?.options) ? asked.data.options : [];
-  return options.some((o) => o?.label === label) ? { action: 'answer', questionId: m[1] } : null;
+  return options.some((o) => o?.label === label) ? { action: 'answer', questionId: m[1], questionHash: dataHash(asked.data) } : null;
 }
 
 // The record a click on a work card earns: the card's lane and hash must be the latest work event's.
