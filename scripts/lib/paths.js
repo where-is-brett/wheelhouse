@@ -69,6 +69,26 @@ export function profileDir() {
   return path.join(wheelhouseHome(), 'profile');
 }
 
+// Counts of use: sessions, models, kinds and times, never content.
+export function usageDir() {
+  return path.join(wheelhouseHome(), 'usage');
+}
+
+// The copies of the sources Wheelhouse watches.
+export function sourcesDir() {
+  return path.join(wheelhouseHome(), 'sources');
+}
+
+// Records of the background jobs.
+export function jobsDir() {
+  return path.join(wheelhouseHome(), 'jobs');
+}
+
+// The views built from the profile's events, beside the profile.
+export function profileViewsDir() {
+  return path.join(wheelhouseHome(), 'profile-views');
+}
+
 // While this file exists, STOP is on.
 export function stopFile() {
   return path.join(wheelhouseHome(), 'STOP');

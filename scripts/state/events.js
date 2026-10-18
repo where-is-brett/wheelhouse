@@ -8,12 +8,13 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
+import { CODE_ALPHABET } from './card-lines.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
-  'setting', 'dispatch', 'merge', 'note',
+  'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
 ];
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action'];
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
@@ -56,10 +57,24 @@ function checkReview(data) {
   for (const k of ['check', 'claudeCode', 'model']) if (data[k] !== undefined && typeof data[k] !== 'string') bad(`has a ${k} that is not text`);
 }
 
+// What a shown record must carry: the reply code, the question put to the director
+// and the labels of the options offered (two to six).
+function checkShown(data) {
+  const bad = (why) => { throw new Error(`A shown event ${why}`); };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) bad('needs data');
+  if (typeof data.code !== 'string' || data.code.length !== 4 || [...data.code].some((c) => !CODE_ALPHABET.includes(c))) {
+    bad('needs a code of four letters or digits from the code alphabet');
+  }
+  if (typeof data.question !== 'string' || data.question === '') bad('needs the question');
+  if (!Array.isArray(data.options) || data.options.length < 2 || data.options.length > 6) bad('needs two to six options');
+  if (data.options.some((o) => typeof o !== 'string' || o === '')) bad('has an option that is not text');
+}
+
 export function makeEvent({ kind, data, now = () => new Date() }) {
   if (!KINDS.has(kind)) throw new Error('Unknown event kind');
   if (kind === 'action') checkAction(data);
   if (kind === 'review') checkReview(data);
+  if (kind === 'shown') checkShown(data);
   const event = {
     v: 1,
     id: crypto.randomUUID(),

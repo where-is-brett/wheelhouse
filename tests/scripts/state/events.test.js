@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
 import { makeEvent, eventPath, writeEvent, syncState, listEvents } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -294,4 +295,47 @@ test('a failed commit leaves no empty month folder', async () => {
       assert.deepEqual(fs.readdirSync(path.join(dir, 'events', '2031')), ['02']);
     });
   } finally { remote.cleanup(); }
+});
+
+test('blocker, risk and decision events are accepted as plain kinds', async () => {
+  await withHome(() => {
+    const kinds = [
+      ['blocker', { key: 'login', what: 'Sign-in is not built', resolved: false }],
+      ['risk', { key: 'hard-coded-rates', what: 'Rates are typed in', costLater: 'A day to move them out' }],
+      ['decision', { what: 'Use the existing form', why: 'It is already tested', level: 1 }],
+    ];
+    for (const [kind, data] of kinds) {
+      const e = makeEvent({ kind, data, now: at(1) });
+      assert.equal(e.kind, kind);
+      assert.equal(e.sig, undefined);
+    }
+  });
+});
+
+test('a shown event must be signed, with a code, a question and two to six options', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    assert.equal(CODE_ALPHABET, 'ABCDEFGHJKMNPQRSTVWXYZ23456789');
+    const good = { code: 'K7M2', question: 'Ship it?', options: ['Yes', 'No'] };
+    const e = makeEvent({ kind: 'shown', data: good, now: at(1) });
+    assert.ok(e.sig);
+    assert.equal(verify(e, readEnrolled()), true);
+    const bad = (data) => assert.throws(() => makeEvent({ kind: 'shown', data, now: at(1) }), /shown/i);
+    bad(undefined);
+    bad({ ...good, code: 'K7M' });
+    bad({ ...good, code: 'K7M22' });
+    bad({ ...good, code: 'k7m2' });
+    bad({ ...good, code: 'K7M0' });
+    bad({ ...good, code: 'K7MI' });
+    bad({ ...good, code: 'K7MO' });
+    bad({ ...good, code: 'K7M1' });
+    bad({ ...good, question: '' });
+    bad({ ...good, question: 7 });
+    bad({ ...good, options: ['Only'] });
+    bad({ ...good, options: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] });
+    bad({ ...good, options: ['a', 3] });
+    bad({ ...good, options: 'Yes' });
+    makeEvent({ kind: 'shown', data: { ...good, options: ['a', 'b', 'c', 'd', 'e', 'f'] }, now: at(1) });
+  });
 });

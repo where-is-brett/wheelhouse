@@ -20,6 +20,9 @@ export function confirmLine(event) {
   return `Confirm ${event?.kind} ${event?.id}: "${words}"`;
 }
 
+// The letters and digits a reply code is made from: none that are easy to mistake for another.
+export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+
 export const LIFT_STOP = 'Lift STOP and let the agents carry on';
 
 export const RUNBOOK_TITLES = {
