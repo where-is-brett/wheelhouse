@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTINGS, checkSetting } from '../../../scripts/settings/catalogue.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
+import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
 
 test('every setting in design section 14 is in the catalogue, with its default', () => {
   const expected = {
@@ -24,7 +25,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     compactPrepare: ['project', 200000],
     delegationReviewDays: ['project', 14],
     unusualFactor: ['project', UNUSUAL.factor],
-    sources: ['project', []],
+    sources: ['project', DEFAULT_SOURCES.map((source) => source.url)],
   };
   assert.deepEqual(Object.keys(SETTINGS).sort(), Object.keys(expected).sort());
   for (const [key, [home, def]] of Object.entries(expected)) {

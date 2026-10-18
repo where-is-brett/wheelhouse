@@ -3,6 +3,7 @@
 // whether it can end on its own. Design section 14. The state branch holds the changes
 // as `setting` events; this file says which of them are allowed.
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../lib/core-numbers.js';
+import { DEFAULT_SOURCES } from '../sources/list.js';
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -52,8 +53,8 @@ export const SETTINGS = {
   compactPrepare: { label: 'Prepare for compaction at (context size)', group: 'advanced', check: wholeBetween(100000, 290000), default: 200000, home: 'project' },
   delegationReviewDays: { label: 'Days between delegation reviews', group: 'advanced', check: wholeBetween(7, 60), default: 14, home: 'project' },
   unusualFactor: { label: 'Unusual-use factor', group: 'advanced', check: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 2 && v <= 10, default: UNUSUAL.factor, home: 'project' },
-  // Task 9 fills in the default list of official sources.
-  sources: { label: 'Sources checked weekly', group: 'advanced', check: checkSources, default: [], home: 'project' },
+  // The addresses of the official pages, checked weekly beside the upstream repositories.
+  sources: { label: 'Sources checked weekly', group: 'advanced', check: checkSources, default: DEFAULT_SOURCES.map((source) => source.url), home: 'project' },
 };
 
 // One per concept the director already knows (a plain-words glossary switch).
