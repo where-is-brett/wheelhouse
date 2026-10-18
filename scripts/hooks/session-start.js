@@ -19,6 +19,7 @@ import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { startBackground } from '../lib/background.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -31,6 +32,7 @@ const LINE_CHARS = 200;
 
 export const NO_HELPER = 'The host helper isn\'t running, so nothing can be pushed or merged';
 export const NOT_SYNCED = 'State was not synced with the host this time';
+export const NO_USAGE = 'Usage counts couldn\'t start this time';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call. Claude Code reads that field from 2.1.295; an older one lets the call through.
@@ -236,6 +238,7 @@ export async function decide(input, deps = {}) {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS, totalMs = TOTAL_MS, pause = sleep,
+    background = startBackground,
   } = deps;
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
@@ -250,6 +253,8 @@ export async function decide(input, deps = {}) {
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
+  // Records what this session is for and starts the usage receiver, alongside the sync below.
+  const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;
   if (!up) notes.push(NO_HELPER);
   else {
@@ -264,6 +269,7 @@ export async function decide(input, deps = {}) {
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
   }
   views ??= localViews(project);
+  if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   const stateRoot = stateDir(project);
   const text = reload({

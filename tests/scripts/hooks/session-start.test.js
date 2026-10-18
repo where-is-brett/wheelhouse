@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { decide, NO_HELPER, NOT_SYNCED } from '../../../scripts/hooks/session-start.js';
+import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE } from '../../../scripts/hooks/session-start.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
 
@@ -46,7 +46,7 @@ function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync =
 const PLUGIN_ROOT = '/plugin/root';
 const run = (f, extra = {}, input = {}) => decide(
   { cwd: '/x', session_id: 's1', ...input },
-  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, ...extra },
+  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), ...extra },
 );
 const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
 
@@ -282,6 +282,13 @@ test('session-start exits in time with its context when the helper never answers
   // The script asks the usual address: a socket in the home folder, or on Windows the user's pipe.
   const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
   await new Promise((resolve) => server.listen(address, resolve));
+  // The receiver the session starts goes to a port of its own, and is stopped afterwards.
+  const receiverPort = await new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
+  });
+  fs.mkdirSync(path.join(home, 'usage'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'usage', 'receiver.json'), JSON.stringify({ port: receiverPort }));
   try {
     const began = Date.now();
     const child = spawnChild(process.execPath, [SCRIPT], { env: { ...process.env, WHEELHOUSE_HOME: home }, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -292,7 +299,15 @@ test('session-start exits in time with its context when the helper never answers
     assert.equal(code, 0);
     assert.ok(Date.now() - began < 10000, `took ${Date.now() - began} ms`);
     assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, new RegExp(NOT_SYNCED));
+    assert.ok(fs.existsSync(path.join(home, 'usage', 'sessions', 's1.json')), 'the session\'s part is recorded');
   } finally {
+    for (let tries = 0; tries < 40; tries += 1) {
+      try {
+        process.kill(Number.parseInt(fs.readFileSync(path.join(home, 'usage', 'receiver.pid'), 'utf8'), 10));
+        break;
+      } catch { /* not written yet, or not running */ }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     server.close();
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -372,5 +387,35 @@ test('a helper of another version than this copy is named in the reload', async 
     assert.doesNotMatch(text(await run(f, { pluginRoot: root })), /The helper running is version/);
     f.client.health = async () => ({ ok: true });
     assert.doesNotMatch(text(await run(f, { pluginRoot: root })), /The helper running is version/, 'a helper that names no version is not compared');
+  });
+});
+
+test('the session\'s part and the usage receiver are handed this session\'s details, and the reload says nothing when they start', async () => {
+  await withHome(async () => {
+    const f = fake();
+    const seen = [];
+    const out = await run(f, { background: async (args) => { seen.push(args); return { receiver: 'started', weekly: 'not-due' }; } }, { cwd: '/some/cwd', session_id: 's-9' });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].session, 's-9');
+    assert.equal(seen[0].cwd, '/some/cwd');
+    assert.equal(seen[0].project, P);
+    assert.equal(seen[0].pluginRoot, PLUGIN_ROOT);
+    assert.doesNotMatch(text(out), /Usage counts/);
+  });
+});
+
+test('a usage receiver that could not start is named in the reload, once', async () => {
+  await withHome(async () => {
+    const f = fake();
+    const out = await run(f, { background: async () => ({ receiver: 'failed', weekly: 'not-due' }) });
+    assert.equal(text(out).split(NO_USAGE).length - 1, 1);
+    assert.equal(NO_USAGE, 'Usage counts couldn\'t start this time');
+    // A background step that throws or never answers does not stop the session or add the line.
+    const thrown = await run(fake(), { background: async () => { throw new Error('x'); } });
+    assert.doesNotMatch(text(thrown), /Usage counts/);
+    const began = Date.now();
+    const hung = await run(fake(), { totalMs: 400, background: () => new Promise(() => {}) });
+    assert.ok(Date.now() - began < 1500);
+    assert.doesNotMatch(text(hung), /Usage counts/);
   });
 });
