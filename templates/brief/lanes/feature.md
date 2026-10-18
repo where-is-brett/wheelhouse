@@ -1,0 +1,12 @@
+<!-- templates/brief/lanes/feature.md -->
+
+This is the feature lane: an approved design, built as slices. One plan per slice, one pull request per slice. This one session carries the slices in turn.
+
+1. Start `superpowers:using-git-worktrees` and confirm you are in your own worktree, on your own branch, never the default branch.
+2. For the slice in hand, start `superpowers:writing-plans` and write its plan. Do not ask for a plan review; go on to building. If the plan's scope check suggests parts that are separate work and not slices of this feature, write each one's plan file and hand it back with `ask --kind extra-plan --plan <path>`, as "How to ask the director" shows.
+3. If you are told the foreman is checking your plan for clashes before you build, stop and end your turn. You are woken when it clears.
+4. Build the slice with `superpowers:subagent-driven-development`. Each task has a fresh builder (`wheelhouse:builder`) and a review by `wheelhouse:reviewer`; each task starts with its failing test, as `superpowers:test-driven-development` says. Then comes the whole-branch review by `wheelhouse:reviewer`. For several unrelated failures at once, start `superpowers:dispatching-parallel-agents`; for any bug or unexpected failure, start `superpowers:systematic-debugging` before you fix it.
+5. After the whole-branch review, run the tester (`wheelhouse:tester`) against the done contract. It tries the product as a user would and reports findings as a reviewer does. Handle its findings as you handle a reviewer's, and have every fix reviewed again. Check each finding before you act on it, as `superpowers:receiving-code-review` says.
+6. Each slice goes up behind its own feature flag, as its own pull request, under about 600 lines. Do not switch a flag on for users: that is a question at decision level 3. A flag that is no longer needed is removed in a later slice.
+7. While slice n's pull request waits, you may plan slice n+1. Build it once slice n has merged. Between wakes you cost nothing: when you are waiting, stop and end your turn.
+8. Check each slice as "Rules in every lane" says, then open its pull request.
