@@ -34,6 +34,13 @@
 // state no older than the brief file, so a brief the foreman has just recorded
 // and written is never judged against an older record.
 //
+// The foreman's order of writing, which the brief's judging relies on: a
+// feature's first brief is written to its file before its hash is recorded
+// in state (until then nothing is recorded, so nothing can be tampered); an
+// amendment's new hash is recorded before the file is rewritten (until then
+// the file still holds the hash recorded before, which counts until the file
+// first catches up).
+//
 // PRs and test merges are polled less often than the feature files, so an
 // observation may leave some or all of them out: `settle` keeps the last known
 // state of each, and `diff` judges what an observation names against it.

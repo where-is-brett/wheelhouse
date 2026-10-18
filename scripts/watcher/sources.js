@@ -16,12 +16,17 @@
 //      computer, so state read after the brief file is never older than it.
 //   5. Pull requests, and test merges between building features' branches,
 //      when their intervals have passed.
+// While git is part-way through changing the clone (a rebase, or a held
+// index lock, seen before or after a read), the clone is not read: the last
+// read this process made stands in for it.
 //
 // Between observe and the cursor. observe takes `prev`, the observation as
 // core's `settle` left it in the cursor, and adds two things to the one it
 // makes, which `settle` keeps for the next:
 //   - `polled`: when state, the pull requests and the test merges were last
-//     asked for, so each waits for its own interval, across restarts too;
+//     asked for, so each waits for its own interval, across restarts too; and
+//     in `polled.prAsked`, when each pull request number not known to be open
+//     (closed, not answered, or not the claiming feature's) was last asked;
 //   - `stateIds`: the ids of the state events in the clone written within
 //     LOOKBACK_MS of the observation. An event is sent once: when it is in the
 //     clone, within the look-back and not among the last observation's ids. A
@@ -37,6 +42,7 @@ import { featurePaths, briefHash, parseBrief, parseReport, readQuestions, readSt
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { stateDir } from '../lib/paths.js';
+import { isInsideFolder, readProject } from '../lib/projects.js';
 import { stopState } from '../lib/stop.js';
 import { listEvents, PROTECTED_KINDS } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
@@ -49,6 +55,9 @@ export const INTERVALS = Object.freeze({ state: 30000, features: 15000, prs: 600
 // How far back a state event pushed late is still sent.
 export const LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
+// The most pull request numbers whose last asking is kept; the oldest go first.
+export const PR_ASKED_CAP = 200;
+
 // The most of a brief, or of a report, that is read; a longer one reads as missing.
 const BRIEF_BYTES = 1024 * 1024;
 const REPORT_BYTES = 1024 * 1024;
@@ -58,14 +67,44 @@ const MERGEABLE = ['yes', 'no', 'unknown'];
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x !== '';
+const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
+
+function lstatOf(p) {
+  try {
+    return fs.lstatSync(p);
+  } catch (error) {
+    return error;
+  }
+}
+
+// --- State, from the clone ---
+
+// What git leaves in the clone while it is part-way through changing it.
+const BUSY = ['rebase-merge', 'rebase-apply', 'index.lock'];
+const cloneBusy = (project) => BUSY.some((name) => !(lstatOf(path.join(stateDir(project), '.git', name)) instanceof Error));
+
+// The last state each project's clone gave this process, by the clone's folder.
+const lastRead = new Map();
 
 // The state events in the clone, in order, leaving out every copy of an id
-// carried by more than one event, as the views do.
+// carried by more than one event, as the views do. While git is changing the
+// clone, the last read stands in; with none yet, the clone is read as it is.
 function readEvents(project) {
-  const events = listEvents(stateDir(project), { report: () => {} });
-  const counts = new Map();
-  for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
-  return events.filter((e) => counts.get(e.id) === 1);
+  const dir = stateDir(project);
+  const unique = () => {
+    const events = listEvents(dir, { report: () => {} });
+    const counts = new Map();
+    for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
+    return events.filter((e) => counts.get(e.id) === 1);
+  };
+  if (!cloneBusy(project)) {
+    const events = unique();
+    if (!cloneBusy(project)) {
+      lastRead.set(dir, events);
+      return events;
+    }
+  }
+  return lastRead.get(dir) ?? unique();
 }
 
 // The latest two distinct brief hashes the foreman recorded for each work,
@@ -87,21 +126,44 @@ function recordedBriefs(events) {
   return out;
 }
 
+// --- The feature files ---
+
+// Whether `p` is a path the watcher may follow on `platform`: a full path,
+// never a network or device path (starting `\\` or `//`) on any system, and
+// on Windows one that starts with a drive letter.
+export function plainWorktreePath(p, platform = process.platform) {
+  if (!isText(p) || p.includes('\0')) return false;
+  if (p.startsWith('\\\\') || p.startsWith('//')) return false;
+  if (platform === 'win32') return /^[A-Za-z]:[\\/]/.test(p);
+  return path.posix.isAbsolute(p);
+}
+
+// Whether `p`, spelt as it is, lies in `folder` (for a worktree that is not
+// there, so has no real path).
+function speltInside(folder, p) {
+  const key = (x) => (caseBlind ? x.toLowerCase() : x);
+  const base = key(path.resolve(folder));
+  const target = key(path.resolve(p));
+  return target === base || target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+}
+
 // A feature's files, read only from `<worktree>/.wheelhouse/feature/`. The
-// worktree must be a full path to a real folder (a link is not followed), and
-// the feature folder must be a real folder under it; otherwise nothing is
-// read. Only a worktree that is plainly not there is `gone`. Each file is
-// read with a cap and refused when it is not a regular file.
-function readFeature(work, worktree) {
+// worktree must pass plainWorktreePath, be a real folder (a link is not
+// followed), and lie, by its real path, in the project's main checkout,
+// which holds `.claude/worktrees/` where feature worktrees are made; the
+// feature folder must be a real folder under it. Otherwise nothing is read.
+// Only a worktree in the project's folder that is plainly not there is
+// `gone`. Each file is read with a cap, and refused when it is not a regular
+// file, without waiting on it.
+function readFeature(work, worktree, checkout) {
   const nothing = { status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null, appetite: null, report: false, gone: false };
-  if (!isText(worktree) || !path.isAbsolute(worktree)) return nothing;
-  let stat;
-  try {
-    stat = fs.lstatSync(worktree);
-  } catch (error) {
-    return error?.code === 'ENOENT' || error?.code === 'ENOTDIR' ? { ...nothing, gone: true } : nothing;
+  if (!plainWorktreePath(worktree) || !isText(checkout)) return nothing;
+  const stat = lstatOf(worktree);
+  if (stat instanceof Error) {
+    const missing = stat.code === 'ENOENT' || stat.code === 'ENOTDIR';
+    return missing && spelt(checkout, worktree) ? { ...nothing, gone: true } : nothing;
   }
-  if (!stat.isDirectory() || !safeFeatureFolder(worktree)) return nothing;
+  if (!stat.isDirectory() || !isInsideFolder(checkout, worktree) || !safeFeatureFolder(worktree)) return nothing;
 
   const p = featurePaths(worktree);
   const status = readStatus(p.status);
@@ -132,6 +194,19 @@ function readFeature(work, worktree) {
   };
 }
 
+// The main checkout's folder as recorded, and as its real path, either of
+// which a missing worktree may be spelt under.
+function spelt(checkout, worktree) {
+  if (speltInside(checkout, worktree)) return true;
+  try {
+    return speltInside(fs.realpathSync.native(checkout), worktree);
+  } catch {
+    return false;
+  }
+}
+
+// --- The pull requests ---
+
 // The review of the pull request's head, from the signed review records.
 function reviewOf(views, pr, head) {
   const verdict = views.reviews?.[String(pr)]?.[head]?.data?.verdict;
@@ -140,9 +215,11 @@ function reviewOf(views, pr, head) {
   return 'none';
 }
 
-// One pull request as the host has it: its state, null once it has closed or
-// merged, or undefined when the helper could not say.
-async function readPr({ project, client, number, work, views }) {
+// One pull request as the host has it, for the first of `works` whose branch
+// is the pull request's head branch: its state, or null once it has closed or
+// merged. Undefined when the helper could not say, or no claimant's branch
+// is its head branch.
+async function readPr({ project, client, number, works, branchOf, views }) {
   let answer;
   try {
     answer = await client.prState({ project, number });
@@ -150,7 +227,9 @@ async function readPr({ project, client, number, work, views }) {
     return undefined;
   }
   const pr = answer?.ok === true && isPlain(answer.result) ? answer.result : null;
-  if (pr === null) return undefined;
+  if (pr === null || !isText(pr.headRef)) return undefined;
+  const work = works.find((w) => branchOf(w) === pr.headRef);
+  if (work === undefined) return undefined;
   if (pr.state === 'merged' || pr.state === 'closed') return null;
   if (pr.state !== 'open' || !isText(pr.headSha)) return undefined;
   let ci;
@@ -170,35 +249,41 @@ async function readPr({ project, client, number, work, views }) {
 }
 
 // The observation core's `diff` takes. `prev` is the cursor's settled
-// observation, or null; `awake` the milliseconds the watcher ran since it.
-// Never throws for a missing or unreadable feature: it is reported.
-export async function observe({ project, client, now = () => new Date(), intervals = INTERVALS, prev = null, awake = 0 }) {
+// observation, or null; `awake` the milliseconds the watcher ran since it;
+// `intervals` overrides some or all of INTERVALS. Never throws for a missing
+// or unreadable feature: it is reported.
+export async function observe({ project, client, now = () => new Date(), intervals = {}, prev = null, awake = 0 }) {
+  const every = { ...INTERVALS, ...(isPlain(intervals) ? intervals : {}) };
   const t = now();
   const ms = t.getTime();
+  const iso = t.toISOString();
   const before = isPlain(prev) && isPlain(prev.polled) ? prev.polled : {};
   const polled = { ...before };
-  const due = (kind) => {
-    const last = Date.parse(before[kind] ?? '');
-    // Never asked, or a clock set back: due now.
-    return Number.isNaN(last) || ms < last || ms - last >= intervals[kind];
+  // Never asked, or a clock set back: due now.
+  const dueSince = (when, interval) => {
+    const last = Date.parse(when ?? '');
+    return Number.isNaN(last) || ms < last || ms - last >= interval;
   };
+  const due = (kind) => dueSince(before[kind], every[kind]);
 
   // 1. State from the host.
   if (due('state')) {
     try {
       await client.state.sync({ project });
     } catch { /* the clone is read as it is */ }
-    polled.state = t.toISOString();
+    polled.state = iso;
   }
 
   // 2. The running features and their worktrees.
   const enrolled = readEnrolled();
   const views = buildViews(readEvents(project), enrolled, { now });
-  const running = Object.entries(isPlain(views.features) ? views.features : {})
-    .filter(([work, f]) => SLUG.test(work) && isPlain(f?.data) && f.data.step !== 'closed');
+  const viewed = isPlain(views.features) ? views.features : {};
+  const running = Object.entries(viewed).filter(([work, f]) => SLUG.test(work) && isPlain(f?.data) && f.data.step !== 'closed');
+  const branchOf = (work) => (isText(viewed[work]?.data?.branch) ? viewed[work].data.branch : null);
 
   // 3. Their files.
-  const read = new Map(running.map(([work, f]) => [work, readFeature(work, f.data.worktree)]));
+  const checkout = readProject(project)?.folder ?? null;
+  const read = new Map(running.map(([work, f]) => [work, readFeature(work, f.data.worktree, checkout)]));
 
   // 4. State again, no older than the files.
   const events = readEvents(project);
@@ -224,26 +309,38 @@ export async function observe({ project, client, now = () => new Date(), interva
     verified: PROTECTED_KINDS.includes(e.kind) && verify(e, enrolled),
   }));
 
-  // 5. The pull requests: those a running feature's status names, and those
-  // known before until they close. All of them when their interval has passed;
-  // otherwise only those not known yet.
+  // 5. The pull requests: those known before, until they close, then those a
+  // running feature's status names. Each number's claimants are in that
+  // order, and the first whose branch is the pull request's head branch has
+  // it, so a later claim never takes a binding from an earlier one. A known
+  // pull request is asked again when its interval has passed; any other
+  // number, when that much time has passed since it was last asked.
   const prevPrs = isPlain(prev) && isPlain(prev.prs) ? prev.prs : {};
-  const candidates = new Map();
-  for (const [key, p] of Object.entries(prevPrs)) {
-    const n = Number(key);
-    if (Number.isSafeInteger(n) && n >= 1 && isPlain(p)) candidates.set(n, p.work);
-  }
-  for (const [work, f] of Object.entries(features)) {
-    if (Number.isSafeInteger(f.status?.pr) && f.status.pr >= 1) candidates.set(f.status.pr, work);
-  }
+  const claims = new Map();
+  const claim = (n, work) => {
+    if (!Number.isSafeInteger(n) || n < 1 || !isText(work)) return;
+    const works = claims.get(n) ?? [];
+    if (!works.includes(work)) works.push(work);
+    claims.set(n, works);
+  };
+  for (const [key, p] of Object.entries(prevPrs)) if (isPlain(p)) claim(Number(key), p.work);
+  for (const [work, f] of Object.entries(features)) claim(f.status?.pr, work);
+
   const prsDue = due('prs');
+  const prAsked = isPlain(before.prAsked) ? { ...before.prAsked } : {};
   const prs = {};
-  for (const [number, work] of candidates) {
-    if (!prsDue && Object.hasOwn(prevPrs, String(number))) continue;
-    const pr = await readPr({ project, client, number, work, views });
-    if (pr !== undefined) prs[number] = pr;
+  for (const [number, works] of claims) {
+    const key = String(number);
+    if (Object.hasOwn(prevPrs, key) ? !prsDue : !dueSince(prAsked[key], every.prs)) continue;
+    const pr = await readPr({ project, client, number, works, branchOf, views });
+    if (pr !== undefined) prs[key] = pr;
+    if (isPlain(pr)) delete prAsked[key];
+    else prAsked[key] = iso;
   }
-  if (prsDue) polled.prs = t.toISOString();
+  if (prsDue) polled.prs = iso;
+  const asked = Object.entries(prAsked).filter(([, when]) => typeof when === 'string')
+    .sort(([, x], [, y]) => (x < y ? -1 : x > y ? 1 : 0)).slice(-PR_ASKED_CAP);
+  polled.prAsked = Object.fromEntries(asked);
 
   // Test merges between every pair of building features' branches.
   const testMerges = [];
@@ -265,11 +362,11 @@ export async function observe({ project, client, now = () => new Date(), interva
         testMerges.push({ a, b, clean: answer.clean, conflicts: Array.isArray(answer.conflicts) ? answer.conflicts : [] });
       }
     }
-    polled.testMerge = t.toISOString();
+    polled.testMerge = iso;
   }
 
   return {
-    at: t.toISOString(),
+    at: iso,
     awake: typeof awake === 'number' && Number.isFinite(awake) && awake > 0 ? awake : 0,
     events: sent,
     features,

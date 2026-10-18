@@ -52,6 +52,30 @@ function isRegular(file) {
     return false;
   }
 }
+// Opens `file` for reading only when it is a regular file, and never waits:
+// the path is checked with lstat first, then opened without following a link
+// and without blocking (where the system has those flags; Windows has
+// neither, and a FIFO can't be made there), and the open descriptor itself
+// must be a regular file. So a file swapped for a FIFO or a link between the
+// check and the open is refused, not waited on. Resolves with the descriptor,
+// which the caller closes, or null, with nothing left open.
+const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
+export function openRegular(file) {
+  if (!isRegular(file)) return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, OPEN_FLAGS);
+  } catch {
+    return null;
+  }
+  let regular = false;
+  try {
+    regular = fs.fstatSync(fd).isFile();
+  } catch { /* not readable as a file */ }
+  if (regular) return fd;
+  fs.closeSync(fd);
+  return null;
+}
 const isTime = (x) => typeof x === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(x) && !Number.isNaN(Date.parse(x));
 
 // A document whose first block is a fenced json block: its parsed fields and the text after it.
@@ -128,9 +152,9 @@ function validStatus(s) {
 // The status in `file`, or null when it is missing, not a regular file, over
 // 64 KB, not JSON or not the right shape.
 export function readStatus(file) {
-  if (!isRegular(file)) return null;
+  const fd = openRegular(file);
+  if (fd === null) return null;
   try {
-    const fd = fs.openSync(file, 'r');
     let text;
     try {
       const size = fs.fstatSync(fd).size;
@@ -194,9 +218,9 @@ function validQuestion(q) {
 export function readQuestions(file, { maxBytes = READ_BYTES } = {}) {
   let text;
   let cut = false;
-  if (!isRegular(file)) return { questions: [], skipped: 0, truncated: false };
+  const fd = openRegular(file);
+  if (fd === null) return { questions: [], skipped: 0, truncated: false };
   try {
-    const fd = fs.openSync(file, 'r');
     try {
       const size = fs.fstatSync(fd).size;
       const buffer = Buffer.alloc(Math.min(size, maxBytes));

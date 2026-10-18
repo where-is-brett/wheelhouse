@@ -5,13 +5,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { observe, INTERVALS, LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
+import { execFileSync } from 'node:child_process';
+import { observe, plainWorktreePath, INTERVALS, LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
 import { step, diff } from '../../../scripts/watcher/core.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
+import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const unix = process.platform !== 'win32';
@@ -54,8 +56,21 @@ function record(kind, data, ms) {
 }
 
 // A worktree with the feature folder and the given files in it.
+// The project's main checkout, recorded for the home in use; feature worktrees are made in its .claude/worktrees/.
+function checkout() {
+  const found = readProject(P);
+  if (found) return found.folder;
+  const main = tempFolder('wh-main-');
+  writeProject(P, {
+    folder: main, remoteUrl: 'https://github.com/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+  });
+  return main;
+}
+
 function worktree(files) {
-  const dir = tempFolder('wh-wt-');
+  const parent = path.join(checkout(), '.claude', 'worktrees');
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(parent, 'wt-'));
   const p = featurePaths(dir);
   fs.mkdirSync(p.dir, { recursive: true });
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(p[name], text);
@@ -165,7 +180,7 @@ test('observe reads state, feature files and PRs into one observation', () => wi
 
   // A minute on: state and PRs are due, and pull request 7 has merged, so it is sent as null.
   client.calls.length = 0;
-  const merged = fakeClient({ prs: { 7: { headSha: HEAD, mergeable: 'unknown', state: 'merged' } } });
+  const merged = fakeClient({ prs: { 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'unknown', state: 'merged' } } });
   setStop({ by: 'prompt', now: at(60 * SEC) });
   const third = await observe({ project: P, client: merged, now: at(61 * SEC), prev: cursor.prev });
   assert.deepEqual(names(merged.calls), ['sync', 'prState']);
@@ -193,7 +208,7 @@ test('the intervals are the plan\'s, and a test merge waits for its own', () => 
 }));
 
 test('a feature whose worktree is gone is reported, not thrown', () => withHome(async () => {
-  const gone = path.join(tempFolder('wh-gone-'), 'removed');
+  const gone = path.join(checkout(), '.claude', 'worktrees', 'removed');
   record('feature', { work: 'gone-one', step: 'building', worktree: gone, branch: 'gone-one', brief: 'b'.repeat(64) }, 0);
   record('feature', { work: 'relative', step: 'building', worktree: 'some/where', branch: 'relative', brief: 'c'.repeat(64) }, 0);
   const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
@@ -238,11 +253,11 @@ test('feature files are read only from the feature folder, capped and never thro
   const big = worktree({ brief: 'x'.repeat(1024 * 1024 + 1), status: JSON.stringify(status('big')) });
   // A feature folder that is a link to another folder is not read.
   const elsewhere = worktree({ brief: briefText('linked'), status: JSON.stringify(status('linked')) });
-  const linked = tempFolder('wh-wt-');
-  fs.mkdirSync(path.join(linked, '.wheelhouse'));
+  const linked = worktree({});
+  fs.rmSync(featurePaths(linked).dir, { recursive: true });
   fs.symlinkSync(featurePaths(elsewhere).dir, featurePaths(linked).dir);
   // A worktree that is itself a link is not followed.
-  const linkTree = path.join(tempFolder('wh-wt-'), 'link');
+  const linkTree = path.join(checkout(), '.claude', 'worktrees', 'link');
   fs.symlinkSync(elsewhere, linkTree);
   // A status file that is a link is not read; one naming another work is not this feature's.
   const statusLink = worktree({ brief: briefText('status-link') });
@@ -274,4 +289,158 @@ test('state events older than the look-back are taken as seen, and a late one in
   record('incident', { id: 'ancient', what: 'x' }, -LOOKBACK_MS - SEC);
   const next = await observe({ project: P, client: fakeClient(), now: at(20 * SEC), prev });
   assert.deepEqual(next.events.map((e) => e.id), [late.id]);
+}));
+
+test('a FIFO at any feature path is refused, not waited on', { skip: !unix }, () => withHome(async () => {
+  const wt = worktree({});
+  for (const name of ['brief', 'status', 'questions', 'report']) execFileSync('mkfifo', [featurePaths(wt)[name]]);
+  record('feature', { work: 'fifo', step: 'building', worktree: wt, branch: 'fifo' }, 0);
+  const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
+  assert.deepEqual(obs.features.fifo, {
+    status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null,
+    recordedBrief: null, recordedBefore: null, appetite: null, report: false, gone: false,
+  });
+}));
+
+test('a feature\'s status never takes another feature\'s pull request', () => withHome(async () => {
+  // bbb is recorded first and names aaa's pull request; the host says its head branch is aaa's.
+  const bbb = worktree({ status: JSON.stringify(status('bbb', { pr: 7 })) });
+  const aaa = worktree({ status: JSON.stringify(status('aaa', { pr: 7 })) });
+  record('feature', { work: 'bbb', step: 'building', worktree: bbb, branch: 'bbb' }, 0);
+  record('feature', { work: 'aaa', step: 'building', worktree: aaa, branch: 'aaa' }, SEC);
+  const open = { 7: { headSha: HEAD, headRef: 'aaa', mergeable: 'yes', state: 'open' } };
+  let obs = await observe({ project: P, client: fakeClient({ prs: open }), now: at(2 * SEC) });
+  assert.equal(obs.prs[7].work, 'aaa');
+  const prev = step({ seen: [], prev: null }, obs).cursor.prev;
+
+  // With aaa's binding known, bbb's claim still does not move it, nor does aaa dropping it from its status.
+  fs.writeFileSync(featurePaths(aaa).status, JSON.stringify(status('aaa', { pr: null })));
+  obs = await observe({ project: P, client: fakeClient({ prs: open }), now: at(70 * SEC), prev });
+  assert.equal(obs.prs[7].work, 'aaa');
+
+  // Claimed by bbb alone, a pull request whose head branch is not bbb's is left out, not taken, and not closed.
+  fs.writeFileSync(featurePaths(aaa).status, JSON.stringify(status('aaa', { pr: null })));
+  obs = await observe({ project: P, client: fakeClient({ prs: open }), now: at(2 * SEC) });
+  assert.deepEqual(obs.prs, {});
+  const merged = { 7: { headSha: HEAD, headRef: 'aaa', mergeable: 'unknown', state: 'merged' } };
+  obs = await observe({ project: P, client: fakeClient({ prs: merged }), now: at(2 * SEC) });
+  assert.deepEqual(obs.prs, {});
+}));
+
+test('worktree paths from state are followed only inside the project\'s checkout', () => withHome(async () => {
+  // Network and device paths are refused on every system; Windows needs a drive letter.
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    assert.equal(plainWorktreePath('\\\\server\\share\\wt', platform), false, platform);
+    assert.equal(plainWorktreePath('//server/share/wt', platform), false, platform);
+    assert.equal(plainWorktreePath('\\\\?\\C:\\wt', platform), false, platform);
+    assert.equal(plainWorktreePath('relative/wt', platform), false, platform);
+  }
+  assert.equal(plainWorktreePath('C:\\work\\wt', 'win32'), true);
+  assert.equal(plainWorktreePath('C:/work/wt', 'win32'), true);
+  assert.equal(plainWorktreePath('C:wt', 'win32'), false);
+  assert.equal(plainWorktreePath('/work/wt', 'win32'), false);
+  assert.equal(plainWorktreePath('/work/wt', 'linux'), true);
+
+  // A worktree with a sound feature folder, but outside the project's checkout.
+  const outside = tempFolder('wh-outside-');
+  fs.mkdirSync(featurePaths(outside).dir, { recursive: true });
+  fs.writeFileSync(featurePaths(outside).status, JSON.stringify(status('outside')));
+  fs.writeFileSync(featurePaths(outside).brief, briefText('outside'));
+  // A worktree path that is a regular file.
+  const file = path.join(checkout(), '.claude', 'worktrees', 'a-file');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, 'x');
+  // A missing worktree outside the checkout is not gone: it is not one of the project's.
+  const missing = path.join(tempFolder('wh-outside-'), 'removed');
+  // Inside by its spelling, outside by its real path.
+  const escape = path.join(checkout(), '.claude', 'worktrees', 'escape');
+  if (unix) fs.symlinkSync(outside, path.join(checkout(), '.claude', 'worktrees', 'up'));
+  for (const [work, wt] of [['outside', outside], ['a-file', file], ['missing', missing], ['escape', unix ? path.join(checkout(), '.claude', 'worktrees', 'up', '.') : escape]]) {
+    record('feature', { work, step: 'building', worktree: wt, branch: work }, 0);
+  }
+  const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
+  for (const work of ['outside', 'a-file', 'missing', 'escape']) {
+    assert.equal(obs.features[work].status, null, work);
+    assert.equal(obs.features[work].briefHash, null, work);
+    assert.equal(obs.features[work].gone, false, work);
+  }
+}));
+
+test('a pull request that is closed or not answered is asked again only after its interval', () => withHome(async () => {
+  const wt = worktree({ status: JSON.stringify(status('login-page', { pr: 7 })) });
+  record('feature', { work: 'login-page', step: 'building', worktree: wt, branch: 'login-page' }, 0);
+  for (const [answer, sent] of [
+    [{ 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'unknown', state: 'merged' } }, { 7: null }],
+    [{}, {}],
+  ]) {
+    const client = fakeClient({ prs: answer });
+    let prev = null;
+    const asked = [];
+    for (const s of [0, 15, 30, 45, 60, 75, 90, 105, 120]) {
+      client.calls.length = 0;
+      const obs = await observe({ project: P, client, now: at(s * SEC), prev });
+      if (names(client.calls).includes('prState')) {
+        asked.push(s);
+        assert.deepEqual(obs.prs, sent, 'a refused /pr/state leaves the pull request out, never null');
+      } else {
+        assert.deepEqual(obs.prs, {});
+      }
+      prev = step({ seen: [], prev }, obs).cursor.prev;
+    }
+    assert.deepEqual(asked, [0, 60, 120]);
+  }
+}));
+
+test('a pull request the helper can\'t answer for keeps its last known state', () => withHome(async () => {
+  const wt = worktree({ status: JSON.stringify(status('login-page', { pr: 7 })) });
+  record('feature', { work: 'login-page', step: 'building', worktree: wt, branch: 'login-page' }, 0);
+  const open = { 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'yes', state: 'open' } };
+  const first = await observe({ project: P, client: fakeClient({ prs: open }), now: at(0) });
+  let prev = step({ seen: [], prev: null }, first).cursor.prev;
+  const refused = await observe({ project: P, client: fakeClient(), now: at(60 * SEC), prev });
+  assert.deepEqual(refused.prs, {});
+  prev = step({ seen: [], prev }, refused).cursor.prev;
+  assert.deepEqual(prev.prs, first.prs);
+}));
+
+test('while git is changing the clone, the last read of it stands', () => withHome(async () => {
+  const wt = worktree({});
+  record('feature', { work: 'w', step: 'building', worktree: wt, branch: 'w' }, 0);
+  const first = await observe({ project: P, client: fakeClient(), now: at(SEC) });
+  let prev = step({ seen: [], prev: null }, first).cursor.prev;
+  const git = path.join(stateDir(P), '.git');
+  fs.mkdirSync(git, { recursive: true });
+  for (const busy of ['index.lock', 'rebase-merge', 'rebase-apply']) {
+    const marker = path.join(git, busy);
+    if (busy === 'index.lock') fs.writeFileSync(marker, ''); else fs.mkdirSync(marker);
+    const late = record('incident', { id: `during-${busy.replace('.', '-')}`, what: 'x' }, 2 * SEC);
+    const other = `other-${busy.replace('.', '-')}`;
+    record('feature', { work: other, step: 'building', worktree: wt, branch: other }, 2 * SEC);
+    const during = await observe({ project: P, client: fakeClient(), now: at(20 * SEC), prev });
+    assert.deepEqual(during.events, [], busy);
+    assert.equal(Object.hasOwn(during.features, other), false, busy);
+    fs.rmSync(marker, { recursive: true });
+    const after = await observe({ project: P, client: fakeClient(), now: at(40 * SEC), prev });
+    assert.ok(after.events.some((e) => e.id === late.id), busy);
+    assert.equal(Object.hasOwn(after.features, other), true, busy);
+    prev = step({ seen: [], prev }, after).cursor.prev;
+    fs.rmSync(path.join(stateDir(P), eventPath(late)));
+  }
+}));
+
+test('intervals given are laid over the plan\'s', () => withHome(async () => {
+  const a = worktree({});
+  const b = worktree({});
+  record('feature', { work: 'a', step: 'building', worktree: a, branch: 'a' }, 0);
+  record('feature', { work: 'b', step: 'building', worktree: b, branch: 'b' }, 0);
+  const client = fakeClient({ merges: { 'a+b': { ok: true, clean: true, conflicts: [] } } });
+  let prev = null;
+  const calls = [];
+  for (const s of [0, 20, 40]) {
+    client.calls.length = 0;
+    const obs = await observe({ project: P, client, now: at(s * SEC), prev, intervals: { testMerge: 20 * SEC } });
+    calls.push(names(client.calls).join(','));
+    prev = step({ seen: [], prev }, obs).cursor.prev;
+  }
+  assert.deepEqual(calls, ['sync,testMerge', 'testMerge', 'sync,testMerge']);
 }));

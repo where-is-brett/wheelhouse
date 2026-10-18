@@ -713,6 +713,11 @@ export async function startHelper({
       // ref (for example one that would make the mirror shallow) yet exits 0.
       // git-upload-pack runs in the folder: GIT_NO_LAZY_FETCH stops a partial
       // clone there from fetching missing objects through its own remote.
+      // core.hooksPath set to the null file stops the hooks folder; a hook
+      // named in the mirror's configuration (hook.<name>.command) would not
+      // be stopped by it, so a mirror whose configuration sets one is refused.
+      const hooked = await configSets(unkeyed, mirror, '^hook\\.');
+      if (hooked !== 'none') return { ok: false, refused: 'the mirror\'s git configuration names a hook, or could not be read, so nothing is copied into it' };
       await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
       const fetched = await gitIn({ ...ISOLATED, GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS)('git', [
         '-c', `core.hooksPath=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
@@ -869,39 +874,55 @@ export async function startHelper({
     });
   }
 
+  // Whether the configuration git reads when `runner` runs in `mirror` sets any
+  // key matching `pattern`: 'none', 'some', or 'unreadable'.
+  async function configSets(runner, mirror, pattern) {
+    const listed = await runner('git', ['config', '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
+    if (listed.code === 1) return 'none';
+    if (listed.code !== 0) return 'unreadable';
+    return listed.stdout.trim() === '' ? 'none' : 'some';
+  }
+
   // Two branches merged in the mirror, to see whether they clash in text
   // (design section 12). Read-only toward the host, so STOP lets it through.
   // Both branches are fetched with the connection's key into fixed working
   // refs; `git merge-tree` then merges them with no checkout and no index.
-  // Nothing from either branch can run: no hooks, every git call has
-  // core.hooksPath set to the null file; the merge itself runs with no system
-  // or user configuration and no attributes from outside the mirror, and is
-  // refused if the mirror's own configuration names any filter or merge
-  // driver, so an attribute in a branch that names one finds nothing to run.
+  // Nothing from either branch can run:
+  //   - git reads hooks from two places. Every call here sets core.hooksPath
+  //     to the null file, which stops the hooks folder. A hook named in the
+  //     configuration (hook.<name>.command) is not stopped by that, so the
+  //     request is refused, before any ref is touched, when the configuration
+  //     the fetch reads (the connection's) or the mirror's own sets any
+  //     hook.* key.
+  //   - The merge runs with no system or user configuration and no attributes
+  //     from outside the mirror, and the request is refused when the mirror's
+  //     own configuration sets any filter.* or merge.* key, so an attribute in
+  //     a branch that names a filter or a merge driver finds nothing to run.
   // The working refs are dropped afterwards, whatever happened.
   const TEST_MERGE_REFS = ['refs/wheelhouse/tm/a', 'refs/wheelhouse/tm/b'];
   const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
   const MERGE_ONLY = [
     ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
   ];
+  const CONFIG_REFUSED = {
+    some: 'the git configuration names a hook, filter or merge driver, so nothing is merged',
+    unreadable: 'the git configuration could not be read, so nothing is merged',
+  };
   function doTestMerge({ project, a, b }, ctx) {
     if (!plainBranch(a) || !plainBranch(b)) refuse('the branch name is not valid');
     return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
-      const local = (args) => unkeyed('git', args, { cwd: mirror, input: '', env: { GIT_ATTR_NOSYSTEM: '1' } });
+      const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
+      const local = (args) => plain('git', args, { cwd: mirror, input: '' });
+      for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook)\\.')]) {
+        if (said !== 'none') return { ok: false, refused: CONFIG_REFUSED[said] };
+      }
       try {
         for (const ref of TEST_MERGE_REFS) await local([...NO_HOOKS, 'update-ref', '-d', ref]);
         const fetched = await keyed('git', [
           ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE,
           `+refs/heads/${a}:${TEST_MERGE_REFS[0]}`, `+refs/heads/${b}:${TEST_MERGE_REFS[1]}`,
         ], { cwd: mirror, input: '' });
-        if (fetched.code !== 0) {
-          return { ok: false, refused: ctx.signedOut && AUTH_FAILURE.test(fetched.stderr) ? PUSH_REFUSALS.ciSignIn : 'fetching the branches failed' };
-        }
-        const drivers = await local(['config', '--name-only', '--get-regexp', '^(filter|merge)\\.']);
-        if (drivers.code === 0 && drivers.stdout.trim() !== '') {
-          return { ok: false, refused: 'the mirror\'s configuration names a filter or merge driver, so nothing is merged' };
-        }
-        if (drivers.code !== 1 && drivers.code !== 0) return { ok: false, refused: 'the mirror\'s configuration could not be read' };
+        if (fetched.code !== 0) return { ok: false, refused: 'fetching the branches failed' };
         const merged = await local([
           ...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', TEST_MERGE_REFS[0], TEST_MERGE_REFS[1],
         ]);

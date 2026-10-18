@@ -199,3 +199,45 @@ test('under STOP, /test-merge still answers', async () => {
     });
   } finally { remote.cleanup(); }
 });
+
+test('a hook named in git\'s configuration is refused, not run, by /test-merge and by the copy into the mirror', async () => {
+  const outside = tempFolder('wh-evil-');
+  const marks = path.join(outside, 'marks');
+  const slash = (p) => p.split(path.sep).join('/');
+  const script = path.join(outside, 'mark.sh');
+  fs.writeFileSync(script, `#!/bin/sh\necho "config hook $*" >> "${slash(marks)}"\n`, { mode: 0o755 });
+  const hookLines = ['[hook "reference-transaction"]', `\tcommand = ${slash(script)}`, '\tevent = reference-transaction', ''];
+  const config = path.join(outside, 'gitconfig');
+  fs.writeFileSync(config, hookLines.join('\n'));
+  const remote = await remoteWith({ base: { 'app.js': 'base\n' }, branches: { a: { 'app.js': 'a\n' }, b: { 'b.js': 'b\n' } } });
+  try {
+    // The control: a fetch with that configuration runs the hook, whatever core.hooksPath says.
+    const control = path.join(outside, 'control.git');
+    await run('git', ['init', '-q', '--bare', control]);
+    await run('git', ['-c', 'core.hooksPath=/dev/null', 'fetch', '-q', remote.url, '+refs/heads/a:refs/x/a'], { cwd: control, env: { GIT_CONFIG_GLOBAL: config } });
+    assert.match(fs.readFileSync(marks, 'utf8'), /config hook/, 'the control should run the configured hook');
+    fs.rmSync(marks);
+
+    const home = await project(remote);
+    // In the connection's configuration (the quick connection's carries the director's own).
+    await withHelper(home, async (client) => {
+      const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
+      assert.deepEqual(answer, { ok: false, refused: 'the git configuration names a hook, filter or merge driver, so nothing is merged' });
+      assert.equal(fs.existsSync(marks), false);
+    }, { env: { GIT_CONFIG_GLOBAL: config } });
+
+    // In the mirror's own configuration: refused by /test-merge, and by a push's copy into the mirror.
+    await withHelper(home, async (client) => {
+      assert.equal((await client.testMerge({ project: 'o__p', a: 'a', b: 'b' })).ok, true);
+      for (const line of [['hook.reference-transaction.command', slash(script)], ['hook.reference-transaction.event', 'reference-transaction']]) {
+        await run('git', ['config', ...line], { cwd: mirrorOf() });
+      }
+      const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
+      assert.equal(answer.ok, false);
+      assert.match(answer.refused, /names a hook/);
+      const written = await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
+      assert.equal(written.pushed, false, JSON.stringify(written));
+      assert.equal(fs.existsSync(marks), false, fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8') : '');
+    });
+  } finally { remote.cleanup(); }
+});
