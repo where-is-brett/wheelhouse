@@ -1,0 +1,198 @@
+{
+  "v": 1,
+  "version": "0.0.0",
+  "overrides": [
+    {
+      "id": "fix-rounds",
+      "upstream": "superpowers",
+      "skill": "subagent-driven-development",
+      "anchors": [
+        {
+          "file": "skills/subagent-driven-development/SKILL.md",
+          "text": "Five rounds maximum per task:"
+        }
+      ],
+      "rule": "A task gets three rounds of fix and re-review, not five.",
+      "why": "The loop stops early and asks the director, instead of grinding through five rounds.",
+      "scenario": 20
+    },
+    {
+      "id": "re-review",
+      "upstream": "superpowers",
+      "skill": "executing-plans",
+      "anchors": [
+        {
+          "file": "skills/executing-plans/SKILL.md",
+          "text": "Critical/Important → ONE fix pass"
+        }
+      ],
+      "rule": "A fix made after the final review is reviewed again, never taken on trust.",
+      "why": "A single fix pass with no second look lets a bad fix reach the merge.",
+      "scenario": 21
+    },
+    {
+      "id": "no-rulings-at-3-4",
+      "upstream": "superpowers",
+      "skill": "subagent-driven-development, executing-plans",
+      "anchors": [
+        {
+          "file": "skills/subagent-driven-development/SKILL.md",
+          "text": "**Rulings, not stalls.**"
+        },
+        {
+          "file": "skills/executing-plans/SKILL.md",
+          "text": "**Rulings, not stalls.**"
+        }
+      ],
+      "rule": "Anything at decision level 3 or 4 (what users see, settings, the guardrails) is a question for the director, and you pause on it.",
+      "why": "The skills tell an agent to rule on every conflict itself; matters the director owns must reach them.",
+      "scenario": 22
+    },
+    {
+      "id": "nothing-waits",
+      "upstream": "superpowers",
+      "skill": "writing-plans, finishing-a-development-branch",
+      "anchors": [
+        {
+          "file": "skills/writing-plans/SKILL.md",
+          "text": "link it for your human partner"
+        },
+        {
+          "file": "skills/finishing-a-development-branch/SKILL.md",
+          "text": "1. Merge back to <base-branch> locally"
+        }
+      ],
+      "rule": "Do not ask for a plan review, an execution method or a finishing choice; go straight from the plan to building.",
+      "why": "Nobody reads the session chat, so a question asked there waits for ever.",
+      "scenario": 23
+    },
+    {
+      "id": "front-desk",
+      "upstream": "superpowers",
+      "skill": "brainstorming",
+      "anchors": [
+        {
+          "file": "skills/brainstorming/SKILL.md",
+          "text": "| A quick, clear task | the request itself | do it |"
+        },
+        {
+          "file": "skills/brainstorming/SKILL.md",
+          "text": "invoke superpowers:writing-plans and no other skill"
+        }
+      ],
+      "rule": "A quick change goes to the quick lane, and an approved design or brief goes to the foreman's queue.",
+      "why": "The front desk talks to the director; building and planning belong to the lanes and the foreman.",
+      "scenario": 35
+    },
+    {
+      "id": "models",
+      "upstream": "superpowers",
+      "skill": "subagent-driven-development",
+      "anchors": [
+        {
+          "file": "skills/subagent-driven-development/SKILL.md",
+          "text": "Use the least powerful model that can handle each role to conserve cost and increase speed."
+        }
+      ],
+      "rule": "Every subagent's model is the one the project's routing table names for its role.",
+      "why": "Models are chosen once, in the routing table, by role; an agent picking its own breaks that.",
+      "scenario": 33
+    },
+    {
+      "id": "reviewers",
+      "upstream": "superpowers",
+      "skill": "subagent-driven-development, requesting-code-review",
+      "anchors": [
+        {
+          "file": "skills/subagent-driven-development/task-reviewer-prompt.md",
+          "text": "Subagent (general-purpose):"
+        },
+        {
+          "file": "skills/subagent-driven-development/re-review-prompt.md",
+          "text": "Subagent (general-purpose):"
+        },
+        {
+          "file": "skills/requesting-code-review/SKILL.md",
+          "text": "Dispatch a `general-purpose` subagent"
+        }
+      ],
+      "rule": "A per-task or whole-branch review uses Wheelhouse's reviewer agent, which can read but cannot write.",
+      "why": "A reviewer that cannot write cannot quietly change the work it is judging.",
+      "scenario": 34
+    }
+  ],
+  "carried": [
+    {
+      "id": "implement",
+      "upstream": "mattpocock-skills",
+      "file": "skills/engineering/implement/SKILL.md",
+      "hash": "8aa412ff29385a4593b3f821e1dc5def63f0fc48fbcac294f1378ba84a3cfa85",
+      "text": "Implement the work described by the user in the spec or tickets.\n\nUse /tdd where possible, at pre-agreed seams.\n\nRun typechecking regularly, single test files regularly, and the full test suite once at the end.\n\nOnce done, use /code-review to review the work.\n\nCommit your work to the current branch."
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "no-model-start",
+      "says": "Claude cannot start a skill marked disable-model-invocation.",
+      "check": 6,
+      "retest": "script",
+      "feature": "disable-model-invocation"
+    },
+    {
+      "id": "monitor-30-minutes",
+      "says": "A Monitor-tool watch ends after 30 minutes.",
+      "check": 26,
+      "retest": "person",
+      "feature": "Monitor"
+    },
+    {
+      "id": "override-wins",
+      "says": "Superpowers follows the brief's rules over its own, including the text its session-start hook adds.",
+      "check": 25,
+      "retest": "script",
+      "feature": "SessionStart"
+    },
+    {
+      "id": "pins-hold",
+      "says": "A marketplace entry's sha installs that exact commit, the project's settings switch off the other copies, and auto-update stays off.",
+      "check": 24,
+      "retest": "person",
+      "feature": "marketplace"
+    },
+    {
+      "id": "hold-refuses",
+      "says": "A pre-tool hook refuses edits and commands in a session whose fingerprints did not match, on macOS and Windows.",
+      "check": 29,
+      "retest": "person",
+      "feature": "PreToolUse"
+    },
+    {
+      "id": "undo-after-cleanup",
+      "says": "The undo reinstalls a previous commit from Wheelhouse's marketplace, including after Claude Code's clean-up of old plugin versions.",
+      "check": 30,
+      "retest": "script",
+      "feature": "plugin cache"
+    },
+    {
+      "id": "start-and-wake",
+      "says": "A background process can start a fresh session and wake a running one, by the route check 27 found.",
+      "check": 27,
+      "retest": "person",
+      "feature": "background session"
+    },
+    {
+      "id": "update-channel",
+      "says": "The Claude Code inside Desktop follows the stable channel and minimum version in the user's settings.",
+      "check": 28,
+      "retest": "person",
+      "feature": "autoUpdatesChannel"
+    },
+    {
+      "id": "installed-list-shape",
+      "says": "Claude Code's list of installed plugins keeps the shape locateInstalled reads.",
+      "check": 24,
+      "retest": "script",
+      "feature": "installed_plugins"
+    }
+  ]
+}
