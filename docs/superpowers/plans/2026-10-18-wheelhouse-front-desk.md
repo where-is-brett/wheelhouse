@@ -30,7 +30,7 @@ It does not build the intake (the build-loop plan's Task 18, which this playbook
 
 Asked once, on a card, with the plan:
 
-- **Card 1, comparing screenshots to save a second approval.** When a branch is brought up to date after the director approved it, the gate asks again unless every page looks exactly the same. To check, the helper opens the change's preview in a hidden browser on this computer and photographs each page. The preview runs the agents' new code, inside the browser's own protections, with a fresh empty profile. **Compare them** (recommended): fewer repeat approvals. **Always ask me again**: no browser is opened; every update after an approval comes back as a card.
+- **Card 1, comparing screenshots to save a second approval.** When a branch is brought up to date after the director approved it, the gate asks again unless every page looks exactly the same. To check, the helper opens the change's preview in a hidden browser on this computer and photographs each page. The preview runs the agents' new code, inside the browser's own protections, with a fresh empty profile. Answered by the director on 18 October 2026: **Compare them**, for fewer repeat approvals; any doubt still asks again.
 
 ## Global Constraints
 
@@ -552,7 +552,7 @@ Settled here without the director, each listed for the design in Task 14:
 7. **Learning thresholds:** a concept is known after three cards on different days without "Explain more"; a learnt setting after three visits running; a turned-down proposal waits 30 days.
 8. **A longer explanation needs no confirmation,** since it fails safe.
 9. **The delegation review** counts a level-3 topic approved unchanged five times since the last review, and moves a reversed topic up a level.
-10. **Screenshots** (if the director agrees, Card 1) come only from the host's preview deployment, photographed by the helper in a fresh headless Chrome or Edge, compared by their pixels; the project lists its pages in `.claude/wheelhouse.json`, a guardrail; anything in doubt asks again.
+10. **Screenshots** (the director agreed, Card 1) come only from the host's preview deployment, photographed by the helper in a fresh headless Chrome or Edge, compared by their pixels; the project lists its pages in `.claude/wheelhouse.json`, a guardrail; anything in doubt asks again.
 11. **The front desk's command** is allowed in the local settings by its full path, and its reading forms run under STOP.
 
 ## Order
