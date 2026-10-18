@@ -2,7 +2,7 @@
 
 # Check 30: the undo
 
-**Answer:** Yes — against a scratch marketplace and plugin on macOS, moving the marketplace entry back to the previous release's `ref` and `sha`, then `claude plugin marketplace update` and `claude plugin update <plugin>@<marketplace> --scope project`, reinstalled the previous commit every time, including when that release's cached folder had been deleted first; the 14-day clean-up itself was stood in for by that deletion, not waited for, and a `github` source was not tried.
+**Answer:** Partly — against a scratch marketplace and plugin on macOS, the undo worked by `claude plugin update` for a `url` source pinned by `sha`: moving the entry back to the previous release's `ref` and `sha`, then `claude plugin marketplace update` and `claude plugin update <plugin>@<marketplace> --scope project`, reinstalled the previous commit every time, including when that release's cached folder had been deleted first. The 14-day clean-up itself was stood in for by that deletion, not waited for; `github` sources and Windows were not tried.
 
 ## Question
 
@@ -10,7 +10,7 @@ That the undo script reinstalls a previous commit from Wheelhouse's marketplace,
 
 ## Tested on
 
-18 October 2026, on macOS with Claude Code 2.1.302, with no network. Documentation read the same day: https://code.claude.com/docs/en/plugins/loading (clean-up of previous versions, versions and updates, where plugins live on disk) and https://code.claude.com/docs/en/plugins/marketplace-reference (the `url` plugin source accepts a `file://` address; when `ref` and `sha` are both set, `sha` is checked out). Windows was not tried.
+18 October 2026, on macOS with Claude Code 2.1.302; the probe needed no network. Documentation read the same day: https://code.claude.com/docs/en/plugins/loading (clean-up of previous versions, versions and updates, where plugins live on disk) and https://code.claude.com/docs/en/plugins/marketplace-reference (the `url` plugin source accepts a `file://` address; when `ref` and `sha` are both set, `sha` is checked out). Windows was not tried.
 
 ## Method
 
@@ -36,10 +36,10 @@ That the undo script reinstalls a previous commit from Wheelhouse's marketplace,
 
 ## What it means for the design
 
-- **The undo's route (for the undo script):** in Wheelhouse's marketplace, set the plugin entry's `ref` and `sha` back to the previous release's; run `claude plugin marketplace update <marketplace>`; then `claude plugin update <plugin>@<marketplace> --scope project`, once for Superpowers and once for Matt's skills. Afterwards read `gitCommitSha` in `installed_plugins.json` for the project (not the folder name) to confirm each is back at the previous release's commit.
+- **The route that was proven (for a `url` source pinned by `sha`):** in the marketplace, set the plugin entry's `ref` and `sha` back to the previous release's; run `claude plugin marketplace update <marketplace>`; then `claude plugin update <plugin>@<marketplace> --scope project`. Afterwards read `gitCommitSha` in `installed_plugins.json` for the project (not the folder name) to confirm the plugin is back at the previous release's commit.
 - **It works after the 14-day clean-up,** because the entry is fetched again at its `sha` into a new folder; nothing depends on the old folder still being in the cache. What was tried is a deleted folder, not a swept one after 14 days, and the same sweep skips when no install is recorded (documentation), which does not arise while the project's plugins stay installed.
-- **Releases must differ in `plugin.json` `version`,** or `update` is a no-op ("already at the latest version") and the undo would leave the later commit in place. Wheelhouse's pins of other people's plugins carry their own versions; where two pinned commits share a version string, the undo cannot use `update` and has to uninstall and install (the probe's fallback route, which was not exercised).
-- **A `github` source is not covered.** Check 24 found `plugin update` on a `github` source cloned over SSH and failed on a Mac with no GitHub SSH key, while the install had used HTTPS. This check used a local `file://` address, so it does not show that `update` works for a `github` entry. Task 29's undo must not assume it: the undo needs a route that works without SSH (for example uninstall then install, which check 24 saw use HTTPS), and that route was not tried here for a `github` source.
+- **Releases must differ in `plugin.json` `version`,** or `update` is a no-op ("already at the latest version") and the undo would leave the later commit in place. Pinned releases of other people's plugins are expected to carry their own versions (not checked); where two pinned commits share a version string, the undo cannot use `update` and has to uninstall and install (the probe's fallback route, which was not exercised).
+- **Wheelhouse's marketplace should list Superpowers and Matt's skills as `url` sources, not `github` sources.** Check 24 saw `plugin update` on a `github` source try SSH and fail on a Mac with no GitHub SSH key, while the install used HTTPS. A `url` source takes a full git address, so the entries give each plugin's `https://` git address with `ref` and `sha`; that is also the form Anthropic's own marketplace uses for these two plugins (check 24). This check used a local `file://` address, so it does not show that `update` works over `https`. Task 29's real trial (its Step 3) is where the update route is confirmed on such an `https` `url` entry, with uninstall then install as the fallback if it is not.
 
 ## Needs the director
 
