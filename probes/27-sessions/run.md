@@ -12,6 +12,8 @@ You need: the Wheelhouse checkout, Node.js 22 or newer, and `claude` working in 
 
 ## Sitting 1: the Mac, with Desktop open (about 5 minutes)
 
+Done: the agent ran this on the director's click (see the note), with `--worktrees-of .` and no one watching Desktop during the run. What is left from it is to watch Desktop while a route runs, which needs `--pause-at-end` in a real terminal (the script says so on one line and carries on without the pause if standard input is not a terminal).
+
 1. Open Claude Desktop on the Code tab. Leave its session list visible on the left.
 2. In a terminal, in the Wheelhouse checkout, run:
 

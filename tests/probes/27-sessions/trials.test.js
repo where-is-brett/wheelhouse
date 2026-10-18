@@ -7,7 +7,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import {
   parseOptions, makeEnv, strippedNames, waitForText, judgeFresh, transcriptUsage, subtractUsage, findTranscript, parseTranscript, MESSAGES,
-  once, runCleanups, runRoute, Interrupted, installSignalCleanup, sessionName, isOurSession,
+  once, settlePause, runCleanups, runRoute, Interrupted, installSignalCleanup, sessionName, isOurSession,
 } from '../../../probes/27-sessions/trials.js';
 
 test('the model must be named, by option or by variable, and looks like a name', () => {
@@ -218,4 +218,14 @@ test('runCleanups also runs a cleanup registered while another was running', asy
   ctx.cleanups.add(async () => { order.push('first'); ctx.cleanups.add(async () => { order.push('late'); }); });
   await runCleanups(ctx);
   assert.deepEqual(order, ['first', 'late']);
+});
+
+test('--pause-at-end is switched off, with one line saying so, when there is no terminal', () => {
+  const options = { pauseAtEnd: true };
+  assert.match(settlePause(options, false), /not a terminal/);
+  assert.equal(options.pauseAtEnd, false);
+  const kept = { pauseAtEnd: true };
+  assert.equal(settlePause(kept, true), null);
+  assert.equal(kept.pauseAtEnd, true);
+  assert.equal(settlePause({ pauseAtEnd: false }, false), null);
 });
