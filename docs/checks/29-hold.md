@@ -39,7 +39,7 @@ Both sessions passed in both runs (log kept outside the repository, at `~/.wheel
 - **Marker or fingerprints are read from the session's folder** (`cwd` in the hook's input). The real hold would read whatever the design decides records the mismatch; this check shows only that a hook can act on a file in the folder.
 - **Reading stays open.** Only `Read` was exercised among the three open tools; `Grep` and `Glob` are let through by the same list and were not asked for.
 - **Not shown:** that a hook which crashes, or fails to start, still holds (the probe's hook only ran correctly); that a subagent's tool calls are held (the session used none); an interactive or Desktop session; or more than two runs of each session, so the model's behaviour is two samples.
-- **Windows:** the same probe is written to run there unchanged, finding `claude` as `claude.exe` or run through `cmd.exe` as a `.cmd` shim. The hook command is `node "<path>"` with forward slashes; whether Windows takes it is what the sitting shows.
+- **Windows:** the same probe is written to run there unchanged; the harness finds `claude` as `claude.exe` or as a `.cmd` shim run through `cmd.exe` with the prompt on stdin. The hook command is `node "<path>"` with forward slashes; whether Windows takes it is what the sitting shows.
 
 ## Needs the director
 

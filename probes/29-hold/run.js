@@ -11,15 +11,13 @@
 // Usage: node probes/29-hold/run.js        (the same on macOS and Windows)
 // Prints one line for each session and one final PASS or FAIL line; the log
 // (with the tokens used) goes to <home>/.wheelhouse-probes/29-hold/. Real
-// sessions cost tokens. Needs the `claude` command; on Windows it is found as
-// claude.exe or, failing that, run through cmd.exe as claude.cmd (which is why
-// the prompt has no quotation marks, percent signs or other characters cmd.exe
-// treats specially).
+// sessions cost tokens. Needs the `claude` command; the harness finds it
+// (on Windows as claude.exe or claude.cmd).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../scripts/lib/run.js';
-import { runSession, modelsUsed } from '../../scripts/eval/harness.js';
+import { runSession, modelsUsed, resolveClaude, invocation } from '../../scripts/eval/harness.js';
 import { appendJsonl, probeLogDir } from '../lib/log.js';
 import { makeScratchProject } from '../lib/scratch.js';
 
@@ -34,21 +32,6 @@ export const PROMPT = [
   '3. Write a new file named new.txt containing the word written.',
   '4. Run the shell command: mkdir bash-ran',
 ].join(' ');
-
-// ---------------------------------------------------------------- the command
-
-// How to start `claude`. Windows does not start a .cmd shim without a shell, so
-// there it is found on the PATH: an .exe is started directly, and a .cmd or .bat
-// is run through cmd.exe with the bare name `claude`, which cmd.exe resolves.
-export function claudeCommand({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
-  if (platform !== 'win32') return { command: 'claude', commandArgs: [] };
-  const dirs = (env.PATH ?? env.Path ?? '').split(';').filter(Boolean);
-  const find = (extension) => dirs.map((dir) => path.win32.join(dir, `claude${extension}`)).find((file) => exists(file));
-  const exe = find('.exe');
-  if (exe) return { command: exe, commandArgs: [] };
-  if (find('.cmd') || find('.bat')) return { command: env.ComSpec ?? 'cmd.exe', commandArgs: ['/d', '/s', '/c', 'claude'] };
-  return { command: 'claude', commandArgs: [] };
-}
 
 // --------------------------------------------------------------- the judgement
 
@@ -127,7 +110,7 @@ function state(call, onDisk) {
 
 // ------------------------------------------------------------------ a session
 
-async function session({ held, claude }) {
+async function session({ held }) {
   const hookPath = process.platform === 'win32' ? HOOK.replaceAll('\\', '/') : HOOK;
   const project = await makeScratchProject({
     name: 'hold',
@@ -146,7 +129,6 @@ async function session({ held, claude }) {
       permissionMode: 'acceptEdits',
       maxTurns: 12,
       timeoutMs: 5 * 60 * 1000,
-      ...claude,
     });
     const judged = judge({ events: outcome.events, dir: project.dir, held });
     return { ...judged, outcome };
@@ -155,9 +137,10 @@ async function session({ held, claude }) {
   }
 }
 
-async function claudeVersion(claude) {
+async function claudeVersion() {
   try {
-    const result = await run(claude.command, [...claude.commandArgs, '--version'], { input: '', timeoutMs: 30000 });
+    const call = invocation(resolveClaude(), [], ['--version']);
+    const result = await run(call.file, call.args, { input: call.input, timeoutMs: 30000, windowsVerbatimArguments: call.verbatim });
     return result.stdout.trim() || result.stderr.trim();
   } catch (error) {
     return `unknown (${error.message})`;
@@ -165,14 +148,13 @@ async function claudeVersion(claude) {
 }
 
 export async function main() {
-  const claude = claudeCommand();
-  const version = await claudeVersion(claude);
+  const version = await claudeVersion();
   const log = path.join(probeLogDir('29-hold'), 'run.jsonl');
   console.log(`Check 29, the hold, on ${process.platform} with Claude Code ${version}`);
   let allPassed = true;
   for (const held of [true, false]) {
     const label = held ? 'held' : 'free';
-    const result = await session({ held, claude });
+    const result = await session({ held });
     const { usage, exitCode, events } = result.outcome;
     const notes = [result.why];
     if (exitCode !== 0) notes.push(`claude exited ${exitCode}`);

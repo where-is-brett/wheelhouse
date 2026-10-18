@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { claudeCommand, judge } from '../../../probes/29-hold/run.js';
+import { judge } from '../../../probes/29-hold/run.js';
 
 function events(calls) {
   return [
@@ -63,23 +63,4 @@ test('free fails when the hook refused a call', () => {
 
 test('free fails when a call reported done but left nothing on disk', () => {
   assert.equal(judge({ events: events(free), dir: project({ edited: true, written: true }), held: false }).pass, false);
-});
-
-test('claude is started by name off Windows', () => {
-  assert.deepEqual(claudeCommand({ platform: 'darwin' }), { command: 'claude', commandArgs: [] });
-});
-
-test('on Windows an .exe is started directly', () => {
-  const env = { PATH: 'C:\\a;C:\\b' };
-  const exists = (file) => file === 'C:\\b\\claude.exe';
-  assert.deepEqual(claudeCommand({ platform: 'win32', env, exists }), { command: 'C:\\b\\claude.exe', commandArgs: [] });
-});
-
-test('on Windows a .cmd shim is run through cmd.exe', () => {
-  const env = { PATH: 'C:\\a;C:\\b', ComSpec: 'C:\\Windows\\system32\\cmd.exe' };
-  const exists = (file) => file === 'C:\\a\\claude.cmd';
-  assert.deepEqual(claudeCommand({ platform: 'win32', env, exists }), {
-    command: 'C:\\Windows\\system32\\cmd.exe',
-    commandArgs: ['/d', '/s', '/c', 'claude'],
-  });
 });
