@@ -107,6 +107,12 @@ test('an unusual item is in one briefing and not the next', () => withHome(() =>
   assert.deepEqual(after.watch, []);
   assert.deepEqual(after.raise, []);
 
+  // Unusual use is news, so it opens `watch`, before the health lines that stand each time.
+  const health = board({ health: [{ level: 'watch', text: 'The weekly allowance is 90% used' }] });
+  const both = briefingModel({ model: health, usage, sources: null, since: null, now: NOW, wasRaised: never });
+  assert.deepEqual(both.watch, [...lines, 'The weekly allowance is 90% used']);
+  assert.deepEqual(both.raise, ['session:abc', 'day:2026-10-18']);
+
   // A check that throws leaves the item in: telling twice is better than not telling.
   const throws = briefingModel({ model: board(), usage, now: NOW, wasRaised: () => { throw new Error('no'); } });
   assert.deepEqual(throws.watch, lines);
@@ -176,7 +182,8 @@ test('unconfirmed changes and what waits come straight from the board model', ()
     waiting: [{ n: 1, what: 'Choose the sign-up colour', since: at(10) }, { n: 2, what: 'Approve the plan', since: null }],
   });
   const b = briefingModel({ model, usage: null, sources: null, since: at(15), now: NOW, wasRaised: never });
-  assert.deepEqual(b.first, ['A ruling: Never email on Sundays, not yet confirmed by you']);
+  // The briefing's heading says they aren't confirmed, so the lines don't say it again.
+  assert.deepEqual(b.first, ['A ruling: Never email on Sundays']);
   assert.deepEqual(b.waiting, ['Choose the sign-up colour', 'Approve the plan']);
   // Nothing in it throws, whatever it is given.
   for (const odd of [undefined, null, {}, { model: 'x' }, { model: { director: 7, build: [], missing: 'x' }, usage: 3, sources: [] }]) {

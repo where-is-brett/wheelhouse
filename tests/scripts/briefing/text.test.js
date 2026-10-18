@@ -1,7 +1,7 @@
 // tests/scripts/briefing/text.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { briefingText } from '../../../scripts/briefing/text.js';
+import { briefingText, briefingParts } from '../../../scripts/briefing/text.js';
 import { briefingModel } from '../../../scripts/briefing/model.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { BRIEFING_WORDS } from '../../../scripts/lib/core-numbers.js';
@@ -12,7 +12,7 @@ const empty = { first: [], waiting: [], changed: [], progress: [], watch: [], us
 
 test('the parts come in the design\'s order, with unconfirmed changes first', () => {
   const text = briefingText({
-    first: ['A ruling: Never email on Sundays, not yet confirmed by you'],
+    first: ['A ruling: Never email on Sundays'],
     waiting: ['Choose the sign-up colour', 'Approve the plan'],
     changed: ['Sign-up works on phones'],
     progress: ['1 pull request merged'],
@@ -22,7 +22,7 @@ test('the parts come in the design\'s order, with unconfirmed changes first', ()
   }, { words: BRIEFING_WORDS.standard });
   assert.equal(text, [
     'Not in effect until you confirm:',
-    '- A ruling: Never email on Sundays, not yet confirmed by you',
+    '- A ruling: Never email on Sundays',
     '',
     'Waiting on you:',
     '1. Choose the sign-up colour',
@@ -49,8 +49,8 @@ test('nothing waiting says so in one line', () => {
   const text = briefingText({ ...empty, progress: ['Building Search'], usage: 'Usage this week: 34% of your weekly allowance.' });
   assert.equal(text, 'Nothing needs you.\n\nProgress:\n- Building Search\n\nUsage this week: 34% of your weekly allowance.');
   // With changes to confirm, they need the director, so the line says nothing else does.
-  assert.equal(briefingText({ ...empty, first: ['A level: copy 2, not yet confirmed by you'] }),
-    'Not in effect until you confirm:\n- A level: copy 2, not yet confirmed by you\n\nNothing else needs you.');
+  assert.equal(briefingText({ ...empty, first: ['A level: copy 2'] }),
+    'Not in effect until you confirm:\n- A level: copy 2\n\nNothing else needs you.');
 });
 
 test('each length keeps within its words, cutting from the end of each part with and N more', () => {
@@ -91,6 +91,50 @@ test('each length keeps within its words, cutting from the end of each part with
   // A length that can't be read is the standard one.
   assert.equal(briefingText(briefing, { words: 'long' }), briefingText(briefing, { words: BRIEFING_WORDS.standard }));
   assert.equal(briefingText(briefing), briefingText(briefing, { words: BRIEFING_WORDS.standard }));
+});
+
+test('it says how many things to watch it showed, so only unusual use really shown is marked raised', () => {
+  const briefing = {
+    ...empty,
+    waiting: Array.from({ length: 6 }, (_, i) => `Question number ${i + 1} with a few more words in it`),
+    watch: ['Unusual one used 1.2M tokens, against a usual 300K', 'Unusual two used $42, against a usual $10', 'Standing health line about the allowance'],
+    raise: ['session:a', 'day:b'],
+  };
+  const whole = briefingParts(briefing, { words: BRIEFING_WORDS.detailed });
+  assert.equal(whole.shownWatch, 3);
+  assert.equal(whole.text, briefingText(briefing, { words: BRIEFING_WORDS.detailed }));
+  for (const words of [20, 30, 40, 50, 60]) {
+    const { text, shownWatch } = briefingParts(briefing, { words });
+    const shown = briefing.watch.filter((line) => text.includes(`- ${line}`)).length;
+    assert.equal(shownWatch, shown, `${words} words`);
+    // The unusual items open `watch`, so the ones shown are always the first of `raise`.
+    assert.ok(briefing.watch.slice(0, shownWatch).every((line) => text.includes(line)));
+    assert.ok(briefing.raise.slice(0, shownWatch).length <= 2);
+  }
+  assert.equal(briefingParts(briefing, { words: 20 }).shownWatch < 2, true);
+  assert.deepEqual(briefingParts('x'), { text: 'Nothing needs you.', shownWatch: 0 });
+  assert.equal(briefingText(briefing, null), briefingText(briefing));
+});
+
+test('no input passes the word limit, however long its usage line or one entry', () => {
+  // Entries and usage are one line each, so at most LINE_CHARS: single letters give the most words.
+  const huge = 'a '.repeat(5000);
+  const briefing = { ...empty, waiting: [huge], watch: [huge], usage: `Usage this week: ${huge}` };
+  for (const words of [...Object.values(BRIEFING_WORDS), 1, 2, 5, 10]) {
+    const { text } = briefingParts(briefing, { words });
+    assert.ok(wordCount(text) <= words, `${words}: ${wordCount(text)} words`);
+    assert.ok(text.length > 0);
+    // Something waits, so the text never says nothing does.
+    assert.equal(/Nothing/.test(text), false, `${words}: ${text}`);
+  }
+  // The usage line alone too long is left out; the cut parts still show.
+  assert.equal(briefingText(briefing, { words: BRIEFING_WORDS.short }), 'Waiting on you:\nand 1 more\n\nTo watch:\nand 1 more');
+  // A usage line that fits stays, with the parts cut to make room for it.
+  const standard = briefingParts(briefing, { words: BRIEFING_WORDS.standard });
+  assert.match(standard.text, /^Waiting on you:\nand 1 more\n\nTo watch:\nand 1 more\n\nUsage this week: (a )+a?…$/);
+  assert.equal(standard.shownWatch, 0);
+  // A limit too small for even the headings sends the director to the board.
+  assert.equal(briefingText(briefing, { words: 5 }), 'Ask for the board.');
 });
 
 test('with no state, usage or sources it still says nothing needs you', () => {

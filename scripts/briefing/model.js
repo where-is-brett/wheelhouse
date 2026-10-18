@@ -6,8 +6,9 @@
 // What changed for users and the merges in progress count only when they are after `since`, the
 // last briefing (no since: all of them). What waits, what is building and the open pull requests
 // are shown whenever they stand. Unusual use is raised once: items already raised are left out,
-// and `raise` lists the ids this briefing includes, for the caller to mark as raised
-// (markRaised) once the briefing has really been given.
+// and `raise` lists the ids this briefing includes, in the order they open `watch`. The caller
+// marks as raised (markRaised) only those its text showed, `raise.slice(0, shownWatch)` from
+// briefingParts, once the briefing has really been given.
 import { oneLine, unusualLine, tokenWords, dollarWords } from '../board/model.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
 
@@ -17,6 +18,8 @@ const EMPTY = () => ({ first: [], waiting: [], changed: [], progress: [], watch:
 // What the board model says when a merge carried no words for users. It belongs to progress, not
 // to what changed for users.
 const BARE_MERGE = /^(Pull request #\d+|A pull request) merged$/;
+// The end of the board model's line for a change not yet confirmed.
+const UNCONFIRMED = /, not yet confirmed by you$/;
 // The board model's line for event records it couldn't read.
 const DAMAGED = /^\d+ records? couldn't be read$/;
 // Anthropic's pages the sources check reads (sources/list.js), by id, as the director knows them.
@@ -146,7 +149,8 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised })
   if (Number.isFinite(nowMs) && sinceMs > nowMs) sinceMs = NaN;
   const isNew = (at) => Number.isNaN(sinceMs) || msOf(at) > sinceMs;
 
-  briefing.first = part(() => lines(list(director.first)), []);
+  // The heading says these aren't confirmed, so each line's own saying of it goes.
+  briefing.first = part(() => lines(list(director.first)).map((line) => line.replace(UNCONFIRMED, '')), []);
   briefing.waiting = part(() => records(director.waiting).map((w) => oneLine(w.what) || 'A question'), []);
   briefing.changed = part(() => lines(records(director.changed).filter((c) => isNew(c.at)).map((c) => c.what))
     .filter((what) => !BARE_MERGE.test(what)), []);
@@ -157,7 +161,9 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised })
   const report = isRecord(sources) && (Number.isNaN(sinceMs) || msOf(sources.at) > sinceMs) ? sources : null;
   const fromSources = report ? part(() => sourceLines(report), []) : [];
   const damaged = part(() => list(board.missing).filter((line) => typeof line === 'string' && DAMAGED.test(line)), []);
-  briefing.watch = [...health, ...unusual.map((u) => u.line), ...fromSources, ...damaged];
+  // Unusual use is news and the health lines stand from one briefing to the next, so unusual use
+  // comes first and is the last of `watch` to be cut for length.
+  briefing.watch = [...unusual.map((u) => u.line), ...health, ...fromSources, ...damaged];
   briefing.raise = unusual.map((u) => u.id);
   briefing.usage = part(() => usageLine(usage), null);
   return briefing;
