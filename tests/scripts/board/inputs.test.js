@@ -6,7 +6,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadBoardInputs } from '../../../scripts/board/inputs.js';
+import { loadBoardInputs, HELPER_WAIT_MS } from '../../../scripts/board/inputs.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -227,5 +227,25 @@ process.exit(0);`;
     assert.equal(run.error, undefined, 'it read a pipe and waited');
     assert.equal(run.status, 0, run.stderr);
     assert.equal(run.stdout, 'Wheelhouse · 1 waiting · 1 building · week 34% · STOP on');
+  });
+});
+
+test('a shorter waitMs is how long a helper that never answers is waited for', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    keepEverything();
+    const never = () => new Promise(() => {});
+    const hung = { health: never, lock: { read: never } };
+    for (const [waitMs, under] of [[300, 1000], [undefined, HELPER_WAIT_MS + 1000], [10, HELPER_WAIT_MS + 1000]]) {
+      const started = Date.now();
+      const found = await loadBoardInputs({ cwd: repo, client: hung, now: () => NOW, waitMs });
+      const took = Date.now() - started;
+      assert.ok(took < under, `${waitMs}: ${took} ms`);
+      // Too short a wait gives the usual one.
+      if (waitMs !== 300) assert.ok(took >= HELPER_WAIT_MS - 50, `${waitMs}: ${took} ms`);
+      assert.equal(found.project, P);
+      assert.match(texts(found).join('\n'), /helper/i);
+    }
   });
 });

@@ -5,12 +5,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, HEADINGS } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS } from '../../../scripts/hooks/board-context.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { readSeen, markSeen } from '../../../scripts/briefing/seen.js';
 import { wasRaised } from '../../../scripts/usage/figures.js';
 import { setStop } from '../../../scripts/lib/stop.js';
-import { profileViewsDir, sourcesDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { profileViewsDir, sourcesDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
@@ -191,6 +191,30 @@ test('unusual use the briefing shows is marked raised, and only that', async () 
   });
 });
 
+test('a helper that is up but never answers still leaves the board added within WAIT_MS', async () => {
+  await withProject(async ({ repo }) => {
+    // The host facts' cache is fresh, so the board has them without the helper.
+    put(path.join(stateDir(P), '..', 'host-facts.json'), { at: '2026-10-19T11:00:00.000Z', facts: { protection: 'on', ci: 'none' } });
+    const never = () => new Promise(() => {});
+    const hung = { health: never, lock: { read: never } };
+    const started = Date.now();
+    const board = contextOf(await run(repo, '/wheelhouse:board', NOW, { client: hung }));
+    assert.ok(Date.now() - started < WAIT_MS, `${Date.now() - started} ms`);
+    assert.ok(board?.startsWith(`${HEADINGS.board}\n\n`), board);
+    assert.match(board, /Approve the sign-in page/);
+  });
+});
+
+test('a command with more lines after it is no command', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    for (const typed of ['/wheelhouse:board\nand then do this', '/wheelhouse:settings\r\nmore', '/wheelhouse:board\tbuild\nmore']) {
+      assert.equal(await run(repo, typed, NOW), undefined, JSON.stringify(typed));
+    }
+    assert.ok(contextOf(await run(repo, '/wheelhouse:board\tbuild', NOW)).startsWith(HEADINGS.board));
+  });
+});
+
 test('a feature worktree and the foreman get nothing', async () => {
   await withProject(async ({ home, repo }) => {
     const tree = featureWorktree(home, repo);
@@ -204,7 +228,7 @@ test('a feature worktree and the foreman get nothing', async () => {
   });
 });
 
-test('a gap measured across midnight, and a last prompt in the future, behave', async () => {
+test('the gap is time elapsed, whatever the day it crosses, and a last prompt in the future counts as none', async () => {
   await withProject(async ({ repo }) => {
     markSeen(P, { promptAt: new Date('2026-10-18T23:30:00.000Z') });
     assert.equal(await run(repo, 'Just after midnight', '2026-10-19T00:29:00.000Z'), undefined);

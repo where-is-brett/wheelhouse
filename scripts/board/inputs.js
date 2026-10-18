@@ -4,7 +4,8 @@
 // raw events in the state clone, the settings views, the usage store, the sources report, STOP,
 // the project's record and the host facts' cache. The helper is asked only for whether it is
 // up, who holds the project's lock and, once a day, the host facts, each within HELPER_WAIT_MS
-// and all of them together within it too.
+// (or the shorter `waitMs` a caller with a limit of its own asks for) and all of them together
+// within it too.
 //
 // With `offline` (the status line, which has half a second and whose reads can't be interrupted)
 // only what the glance needs is read, each a file of known size or a view by name: the waiting,
@@ -79,17 +80,17 @@ function glanceUsage(clock, clockRead) {
 
 // What the helper knows: whether it is up and who holds the lock (undefined when unknown, so
 // healthLines leaves their lines out), and the host facts, from their cache when it is fresh.
-async function helperFacts(project, { client, address, now, offline, clockRead }) {
+async function helperFacts(project, { client, address, now, offline, clockRead, waitMs }) {
   if (offline) {
     return { helperUp: undefined, lock: undefined, facts: await readHostFacts(project, { now, ask: false }).catch(() => null) };
   }
-  const asker = attempt(() => client ?? helperClient({ address, timeout: HELPER_WAIT_MS }));
+  const asker = attempt(() => client ?? helperClient({ address, timeout: waitMs }));
   const [health, lock, asked] = await Promise.all([
-    asker ? within(() => asker.health(), HELPER_WAIT_MS) : null,
-    asker ? within(() => asker.lock.read({ project }), HELPER_WAIT_MS) : null,
+    asker ? within(() => asker.health(), waitMs) : null,
+    asker ? within(() => asker.lock.read({ project }), waitMs) : null,
     // It builds its own client with its own, shorter limit, so a request not answered is closed
     // and the helper marked as tried before this stops waiting. The race is a second guard.
-    within(() => readHostFacts(project, { now, address, waitMs: HELPER_WAIT_MS - FACTS_MARGIN_MS, ask: clockRead }), HELPER_WAIT_MS),
+    within(() => readHostFacts(project, { now, address, waitMs: waitMs - FACTS_MARGIN_MS, ask: clockRead }), waitMs),
   ]);
   const facts = asked === LATE ? await readHostFacts(project, { now, ask: false }).catch(() => null) : asked;
   return {
@@ -99,10 +100,11 @@ async function helperFacts(project, { client, address, now, offline, clockRead }
   };
 }
 
-// loadBoardInputs({ cwd, client, address, now, offline }) ->
+// loadBoardInputs({ cwd, client, address, now, offline, waitMs }) ->
 //   { project, model, usage, sources, settings } inside a Wheelhouse project, else { none }.
 // `settings` are the settings in force (effectiveSettings), `usage` the week's figures and
-// `sources` the weekly report, for the briefing and the settings text.
+// `sources` the weekly report, for the briefing and the settings text. `waitMs` (at most
+// HELPER_WAIT_MS, the default) is how long the helper is waited for.
 export async function loadBoardInputs(options = {}) {
   try {
     return await gather(isRecord(options) ? options : {});
@@ -111,7 +113,9 @@ export async function loadBoardInputs(options = {}) {
   }
 }
 
-async function gather({ cwd, client, address, now = () => new Date(), offline = false }) {
+async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked }) {
+  // A wait too short to leave readHostFacts its margin is no wait at all, so it gives the usual one.
+  const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= HELPER_WAIT_MS ? asked : HELPER_WAIT_MS;
   const found = attempt(() => (typeof cwd === 'string' && path.isAbsolute(cwd) ? projectOf(cwd) : null));
   if (!found) return { none: NOT_A_PROJECT };
   const { project, record, locked } = found;
@@ -129,7 +133,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const usage = offline ? glanceUsage(clock, clockRead) : attempt(() => usageFigures({ project, now: clock, factor }));
   const sources = offline ? null : readSources();
 
-  const known = await helperFacts(project, { client, address, now: clock, offline, clockRead }).catch(() => ({}));
+  const known = await helperFacts(project, { client, address, now: clock, offline, clockRead, waitMs }).catch(() => ({}));
   const health = attempt(() => healthLines({
     record,
     locked,
