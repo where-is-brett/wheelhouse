@@ -130,30 +130,42 @@ function lineFor(kind, target) {
 // pull request (and the incident), the work, the incident, the runbook step's title, the branch,
 // the ruling's words. It names no other pull request or commit than the set line's. An answer
 // card, a lift-STOP card and a product question name nothing more.
-function sameThing(kind, what, target) {
-  if (kind === 'question' || !isPlain(target)) return;
+// Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
+// right. The card check judges a card by this too, from the set line alone: with `abbreviated`,
+// the target's commit is the twelve characters the set line holds, so a longer name for the same
+// commit still counts as it.
+export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
+  if (kind === 'question' || !isPlain(target)) return null;
   const lower = what.replace(/\s+/g, ' ').toLowerCase();
   const names = (text) => lower.includes(String(text).replace(/\s+/g, ' ').toLowerCase());
   // An id or a branch is a whole word: "ci-fix" is not named by "ci-fix-2", but is by "ci-fix.".
   const nameId = (id) => new RegExp(`(?<![A-Za-z0-9._/-])${String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_/-]|\\.[A-Za-z0-9])`, 'i').test(what);
-  const must = (ok, subject) => { if (!ok) fail(kind, 'what', `must name ${subject}, as its set line does`); };
   if (target.pr !== undefined) {
     const named = [...what.matchAll(/#(\d+)(?!\d)/g)].map((m) => Number(m[1]));
     if (!named.includes(target.pr) || named.some((n) => n !== target.pr)) {
-      fail(kind, 'what', `must name pull request #${target.pr}, and no other, as its set line does`);
+      return `must name pull request #${target.pr}, and no other, as its set line does`;
     }
   }
-  if (kind === 'incident-fix' || kind === 'lift-incident') must(nameId(target.incident), `incident ${target.incident}`);
-  if (kind === 'approve-work' || kind === 'amend') must(nameId(target.work), `the work ${target.work}`);
-  if (kind === 'runbook') must(names(RUNBOOK_TITLES[target.step]), `the step's title, "${RUNBOOK_TITLES[target.step]}"`);
-  if (kind === 'ci-push') must(nameId(target.branch), `the branch ${target.branch}`);
-  if (kind === 'confirm') must(names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`);
+  let need = null; // [whether the first part names it, what it is]
+  if (kind === 'incident-fix' || kind === 'lift-incident') need = [nameId(target.incident), `incident ${target.incident}`];
+  if (kind === 'approve-work' || kind === 'amend') need = [nameId(target.work), `the work ${target.work}`];
+  if (kind === 'runbook') need = [names(RUNBOOK_TITLES[target.step]), `the step's title, "${RUNBOOK_TITLES[target.step]}"`];
+  if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
+  if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];
+  if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
-  if (typeof commit !== 'string') return;
+  if (typeof commit !== 'string') return null;
   for (const token of what.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
     const looksLikeOne = /[0-9]/.test(token) && (/[a-f]/.test(token) || token.length >= 12);
-    if (looksLikeOne && !commit.startsWith(token)) fail(kind, 'what', `names commit ${token}, not the commit its set line names`);
+    const same = commit.startsWith(token) || (abbreviated && token.startsWith(commit));
+    if (looksLikeOne && !same) return `names commit ${token}, not the commit its set line names`;
   }
+  return null;
+}
+
+function sameThing(kind, what, target) {
+  const why = whatProblem(kind, what, target);
+  if (why !== null) fail(kind, 'what', why);
 }
 
 // The buttons a card offers, each { label, says }, in the order they are shown.

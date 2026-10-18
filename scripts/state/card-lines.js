@@ -106,12 +106,17 @@ export const SET_LINES = [
   new RegExp(`^Merge pull request #[1-9][0-9]* as the fix for incident ${ID}$`, 'm'),
 ];
 
-// The one set line a question carries, or null when it carries none, or two or more.
-export function setLineOf(question) {
-  if (typeof question !== 'string') return null;
-  const found = SET_LINES.flatMap((pattern) => {
+// Every set line a question carries, in the order the patterns are listed.
+export function setLinesOf(question) {
+  if (typeof question !== 'string') return [];
+  return SET_LINES.flatMap((pattern) => {
     const every = new RegExp(pattern.source, [...new Set(`${pattern.flags}gm`)].join(''));
     return [...question.matchAll(every)].map((m) => m[0]);
   });
+}
+
+// The one set line a question carries, or null when it carries none, or two or more.
+export function setLineOf(question) {
+  const found = setLinesOf(question);
   return found.length === 1 ? found[0] : null;
 }
