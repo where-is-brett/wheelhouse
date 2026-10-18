@@ -172,6 +172,29 @@ test('/state/write refuses a protected kind, an unknown kind and a missing kind'
   } finally { await c.close(); await repo.cleanup(); }
 });
 
+test('the helper refuses a setting event the catalogue refuses', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      for (const [data, pattern] of [
+        [{ key: 'nonsense', value: 1 }, /no setting called nonsense/],
+        [{ key: 'autonomy', value: 'reckless' }, /autonomy can't be reckless/],
+        [{ key: 'budget', value: 'weekly-share' }, /budget can't be weekly-share/],
+        [{ key: 'autonomy', value: 'cautious', until: '2026-10-18T18:00:00.000Z' }, /end time/],
+        [undefined, /object|setting/],
+      ]) {
+        const answer = await c.client.state.write({ project: PROJECT, kind: 'setting', data });
+        assert.equal(answer.ok, false, JSON.stringify(data));
+        assert.match(answer.refused, pattern);
+      }
+      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), [], 'nothing reached the host');
+      const ok = await c.client.state.write({ project: PROJECT, kind: 'setting', data: { key: 'presence', value: 'away', until: '2026-10-18T18:00:00.000Z' } });
+      assert.equal(ok.ok, true);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
 test('/state/write makes the event itself: its time and computer are the helper\'s, and an id not shaped as a random UUID is refused', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);
@@ -332,6 +355,23 @@ test('/state/record refuses an id the state already holds', async () => {
       assert.equal(again.ok, false);
       assert.match(again.refused, /id/);
       assert.equal((await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).length, 2);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('each /state/write and /state/record it takes rewrites the project\'s views', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const viewsOf = (name) => JSON.parse(fs.readFileSync(path.join(stateDir(PROJECT), '..', 'views', `${name}.json`), 'utf8'));
+      const card = await c.client.state.write({ project: PROJECT, kind: 'card', data: { title: 'Pick a colour' } });
+      assert.equal(card.ok, true);
+      assert.deepEqual(viewsOf('waiting').map((w) => w.id), [card.id]);
+      const review = makeEvent({ kind: 'review', data: { pr: 7, commit: 'abc1234', verdict: 'CLEAN' }, now: at(5000) });
+      assert.equal((await c.client.state.record({ project: PROJECT, event: review })).ok, true);
+      assert.equal(viewsOf('reviews')['7'].abc1234.id, review.id);
+      assert.equal(viewsOf('status').lastEventAt, review.at);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });

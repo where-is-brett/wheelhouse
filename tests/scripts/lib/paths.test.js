@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   wheelhouseHome, computerId, stateDir, keysDir, profileDir, helperAddress, projectSlug,
+  usageDir, sourcesDir, jobsDir, profileViewsDir,
 } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -87,5 +88,16 @@ test('projectSlug joins owner and name, and refuses a name with a slash or ..', 
 test('stateDir refuses a project that is not a safe slug', () => {
   withHome('home', () => {
     assert.throws(() => stateDir('../x'));
+  });
+});
+
+test('the new folders sit under WHEELHOUSE_HOME', () => {
+  withHome('home', (home) => {
+    const folders = [usageDir(), sourcesDir(), jobsDir(), profileViewsDir()];
+    for (const folder of folders) {
+      assert.equal(path.dirname(folder), home);
+    }
+    assert.equal(new Set(folders).size, 4);
+    assert.ok(!folders.includes(profileDir()));
   });
 });

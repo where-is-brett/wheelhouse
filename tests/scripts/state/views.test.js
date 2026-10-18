@@ -8,13 +8,14 @@ import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'work', 'features', 'reports', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -201,7 +202,7 @@ test('writeViews writes outside the clone, one file per view, and reports damage
     fs.writeFileSync(path.join(folder, 'broken-unique-name.json'), '{ nope');
     const v = await writeViews('o__p', { now });
     const out = path.join(home, 'projects', 'o__p', 'views');
-    for (const name of ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status']) {
+    for (const name of ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'blockers', 'risks', 'decisions', 'shown']) {
       assert.ok(fs.existsSync(path.join(out, `${name}.json`)), name);
     }
     assert.equal(path.relative(dir, out).startsWith('..'), true);
@@ -361,6 +362,128 @@ test('a card-answer with no card id closes the card whose question it quotes', a
     const v = build([...base(), asked, titled, other, ...answers]);
     assert.deepEqual(v.waiting.map((c) => c.id), [other.id]);
     assert.equal(v.status.waitingCount, 1);
+  });
+});
+
+const shownData = (code, question, options = ['Yes', 'No']) => ({ code, question, options });
+
+test('blockers and risks hold the latest per key; decisions list newest first, at most 50', async () => {
+  await withHome(() => {
+    const events = [
+      ev('blocker', 1, { key: 'login', what: 'No sign-in' }),
+      ev('blocker', 2, { key: 'login', what: 'No sign-in', resolved: true }),
+      ev('risk', 3, { key: 'rates', what: 'Typed in', costLater: 'A day' }),
+    ];
+    for (let i = 0; i < 55; i++) events.push(makeEvent({ kind: 'decision', now: () => new Date(Date.UTC(2026, 9, 18, 3, 0, i)),
+      data: { what: `d${i}`, why: 'w', level: 1 } }));
+    const v = build(events);
+    assert.equal(v.blockers.login.data.resolved, true);
+    assert.equal(v.risks.rates.data.costLater, 'A day');
+    assert.equal(v.decisions.length, 50);
+    assert.equal(v.decisions[0].data.what, 'd54');
+    assert.equal(v.decisions[49].data.what, 'd5');
+  });
+});
+
+test('an unsigned or wrongly signed shown record is left out of the shown view', async () => {
+  await withHome(() => {
+    const signed = ev('shown', 1, shownData('K7M2', 'Ship it?'));
+    const unsigned = { ...ev('shown', 2, shownData('P3Q4', 'Other?')) };
+    delete unsigned.sig;
+    const forged = ev('shown', 3, shownData('R5S6', 'Third?'));
+    forged.data = { ...forged.data, question: 'Altered?' };
+    const v = build([signed, unsigned, forged]);
+    assert.deepEqual(Object.keys(v.shown), ['K7M2']);
+    assert.deepEqual(v.shown.K7M2, { id: signed.id, at: signed.at, question: 'Ship it?', options: ['Yes', 'No'], spent: false });
+    assert.deepEqual(v.damaged, []);
+  });
+});
+
+test('a shown record is spent once a signed record carries its question', async () => {
+  await withHome(() => {
+    // By an approval or action carrying the same question.
+    const s1 = ev('shown', 5, shownData('K7M2', 'Approve pull request #4 at commit abc?'));
+    const early = ev('approval', 2, { pr: 4, commit: 'abc', question: s1.data.question });
+    assert.equal(build([early, s1]).shown.K7M2.spent, false);
+    const approval = ev('approval', 6, { pr: 4, commit: 'abc', question: s1.data.question });
+    assert.equal(build([s1, approval]).shown.K7M2.spent, true);
+    const other = ev('approval', 6, { pr: 4, commit: 'abc', question: 'Something else' });
+    assert.equal(build([s1, other]).shown.K7M2.spent, false);
+    const action = ev('action', 7, { action: 'lift-stop', question: s1.data.question, label: 'Lift' });
+    assert.equal(build([s1, action]).shown.K7M2.spent, true);
+    const unsigned = { ...approval };
+    delete unsigned.sig;
+    assert.equal(build([s1, unsigned]).shown.K7M2.spent, false);
+
+    // By a confirmation of the one event the question's confirm line names.
+    const setting = ev('setting', 1, { key: 'quiet', value: true, words: 'Be quiet' });
+    const other2 = ev('setting', 1, { key: 'loud', value: true, words: 'Be loud' });
+    const s2 = ev('shown', 8, shownData('T8V9', `Please read this.\n${confirmLine(setting)}\nThank you.`));
+    assert.equal(build([setting, s2]).shown.T8V9.spent, false);
+    assert.equal(build([setting, s2, conf(9, setting)]).shown.T8V9.spent, true);
+    assert.equal(build([setting, other2, s2, conf(9, other2)]).shown.T8V9.spent, false);
+    assert.equal(build([setting, conf(7, setting), s2]).shown.T8V9.spent, false);
+    const bad = conf(9, setting);
+    bad.data = { ...bad.data, confirmsHash: 'f'.repeat(64) };
+    assert.equal(build([setting, s2, bad]).shown.T8V9.spent, false);
+  });
+});
+
+test('two shown records with one code and different questions are both left out and listed as damaged', async () => {
+  await withHome(() => {
+    const a = ev('shown', 1, shownData('K7M2', 'First?'));
+    const b = ev('shown', 2, shownData('K7M2', 'Second?'));
+    const fine = ev('shown', 3, shownData('P3Q4', 'Fine?'));
+    const v = build([a, b, fine]);
+    assert.deepEqual(Object.keys(v.shown), ['P3Q4']);
+    assert.equal(v.damaged.filter((d) => d.includes('K7M2')).length, 1);
+    // The same question shown again under its code is not damage.
+    const again = ev('shown', 4, shownData('P3Q4', 'Fine?'));
+    const w = build([fine, again]);
+    assert.equal(w.shown.P3Q4.id, again.id);
+    assert.deepEqual(w.damaged, []);
+  });
+});
+
+test('only live shown records hold a code or clash: a spent or expired one gives way to a later card', async () => {
+  await withHome(() => {
+    // Spent, then a later card with the same code and other words: no clash, the later card holds it.
+    const used = ev('shown', 1, shownData('K7M2', 'STOP went on at noon.'));
+    const lift = ev('action', 2, { action: 'lift-stop', question: used.data.question, label: 'Lift STOP' });
+    const later = ev('shown', 3, shownData('K7M2', 'STOP went on again.'));
+    const v = build([used, lift, later]);
+    assert.equal(v.shown.K7M2.id, later.id);
+    assert.equal(v.shown.K7M2.spent, false);
+    assert.deepEqual(v.damaged, []);
+    // Expired, then a later card: the later card holds it.
+    const old = makeEvent({ kind: 'shown', data: shownData('P3Q4', 'Old card?'), now: () => new Date('2026-10-01T00:00:00.000Z') });
+    const fresh = ev('shown', 4, shownData('P3Q4', 'New card?'));
+    const w = build([old, fresh]);
+    assert.equal(w.shown.P3Q4.id, fresh.id);
+    assert.deepEqual(w.damaged, []);
+    // With no live record, the latest one is shown, as used.
+    assert.equal(build([used, lift]).shown.K7M2.spent, true);
+  });
+});
+
+test('an accepted setting keeps its until and the accepted value it replaced', async () => {
+  await withHome(() => {
+    const s1 = ev('setting', 1, { key: 'quiet', value: true, until: '2026-11-01T00:00:00.000Z' });
+    const s2 = ev('setting', 3, { key: 'quiet', value: false });
+    const s3 = ev('setting', 5, { key: 'quiet', value: true, until: '2026-12-01T00:00:00.000Z' });
+    const s4 = ev('setting', 7, { key: 'quiet', value: 'never confirmed' });
+    const v1 = build([s1, conf(2, s1)]);
+    assert.deepEqual(v1.settings.quiet, {
+      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null,
+    });
+    const v2 = build([s1, conf(2, s1), s2, conf(4, s2)]);
+    assert.deepEqual(v2.settings.quiet, {
+      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' },
+    });
+    const v3 = build([s1, conf(2, s1), s2, conf(4, s2), s3, conf(6, s3), s4]);
+    assert.deepEqual(v3.settings.quiet.before, { value: false });
+    assert.equal(v3.settings.quiet.until, '2026-12-01T00:00:00.000Z');
+    assert.equal(v3.settings.quiet.id, s3.id);
   });
 });
 

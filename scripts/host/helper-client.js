@@ -54,6 +54,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project } -> { ok, config }: the default branch's, read-only, answered under STOP
+    host: {
+      facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown' }
+    },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? }
     state: {
       clone: post('/state/clone'), //   { project }
@@ -61,7 +64,16 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
       views: post('/state/views'), //   { project } -> { ok, views }
+      backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
+    },
+    // The director's profile. Each answers { ok: false, why } while the profile isn't set up.
+    profile: {
+      clone: post('/profile/clone'), //   {} -> { ok, made }
+      write: post('/profile/write'), //   { kind: 'setting', data }: a setting whose home is the profile
+      record: post('/profile/record'), // { event }: a signed confirmation of a profile event
+      sync: post('/profile/sync'), //     {} -> { ok, pulled, unpushed, refused? }: commits new bundles, pulls and pushes
+      views: post('/profile/views'), //   {} -> { ok, views }
     },
     lock: {
       take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }

@@ -1,0 +1,1 @@
+{ "name": "wheelhouse-probe-32", "version": "0.1.0", "description": "Throwaway probe for Wheelhouse check 32: whether a mod's commands and writes are held by the session's sandbox." }

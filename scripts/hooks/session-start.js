@@ -14,13 +14,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries } from './kit.js';
+import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText } from './kit.js';
 import { sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { startBackground } from '../lib/background.js';
 import { projectConfig } from '../watcher/main.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -34,6 +35,7 @@ const LINE_CHARS = 200;
 
 export const NO_HELPER = 'The host helper isn\'t running, so nothing can be pushed or merged';
 export const NOT_SYNCED = 'State was not synced with the host this time';
+export const NO_USAGE = 'Usage counts couldn\'t start this time';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call. Claude Code reads that field from 2.1.295; an older one lets the call through.
@@ -88,13 +90,8 @@ const show = (value) => (typeof value === 'string' ? value : (JSON.stringify(val
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function readText(file) {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
-}
+// Small regular files only, opened without waiting: a FIFO HEAD can't hang the hook.
+const readText = (file) => readSmallText(file);
 
 // The branch a folder is on, read from the HEAD file with fs only (never git).
 export function branchOf(cwd) {
@@ -130,12 +127,19 @@ export function featureSlug(cwd) {
 
 // The views as the last sync left them on disk, when the helper cannot give them.
 // While views are being replaced the old ones sit in `views.old` for a moment (or for good
-// after a crash), so that folder is read when `views` is not there.
-function localViews(project) {
+// after a crash), so that folder is read when `views` is not there. `names` null reads
+// every view there (the board's inputs).
+export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'unconfirmed', 'damaged']) {
   const base = path.join(wheelhouseHome(), 'projects', project, 'views');
   const dir = fs.existsSync(base) ? base : `${base}.old`;
   const out = {};
-  for (const name of ['rulebook', 'levels', 'waiting', 'unconfirmed', 'damaged']) {
+  let wanted = names;
+  try {
+    wanted ??= fs.readdirSync(dir).filter((n) => /^[A-Za-z][A-Za-z0-9-]*\.json$/.test(n)).map((n) => n.slice(0, -'.json'.length));
+  } catch {
+    return null;
+  }
+  for (const name of wanted) {
     try {
       out[name] = JSON.parse(fs.readFileSync(path.join(dir, `${name}.json`), 'utf8'));
     } catch { /* missing */ }
@@ -251,6 +255,7 @@ export async function decide(input, deps = {}) {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS, totalMs = TOTAL_MS, pause = sleep,
+    background = startBackground,
   } = deps;
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
@@ -265,6 +270,8 @@ export async function decide(input, deps = {}) {
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
+  // Records what this session is for and starts the usage receiver, alongside the sync below.
+  const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;
   if (!up) notes.push(NO_HELPER);
   else {
@@ -280,6 +287,7 @@ export async function decide(input, deps = {}) {
     await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= localViews(project);
+  if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   const stateRoot = stateDir(project);
   const text = reload({

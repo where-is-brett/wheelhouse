@@ -26,6 +26,7 @@ import { scrub } from './adapter.js';
 import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { childEnv } from './connection.js';
+import { protectionStatus } from './protection.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { cloneState } from '../state/clone.js';
@@ -37,6 +38,10 @@ import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
+import { checkSetting, definitionOf } from '../settings/catalogue.js';
+import { eventHash } from '../state/events.js';
+import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
+import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 
@@ -243,6 +248,8 @@ export const PUSH_REFUSALS = {
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
   notJson: 'a file in the state push is not JSON, so nothing is pushed',
   prBase: 'a pull request may only be opened against the default branch',
+  profile: 'a profile push may only add new event files under events/, and add or remove bundles under backups/',
+  profileNotJson: 'a file in the profile push is not JSON, so nothing is pushed',
 };
 
 // A plain branch name: [A-Za-z0-9._/-], not refs/..., not HEAD, and nothing git
@@ -268,10 +275,15 @@ const ALLOWED_CHANGE = {
   [LOCK_BRANCH]: (status, mode, file) => (status === 'A' || status === 'M') && mode === '100644' && file === 'lock.json',
 };
 
+// What a profile push may carry: new plain event files, and bundles added to or removed
+// from backups/<project>/. Nothing under keys/, nothing changed in place.
+const PROFILE_CHANGE = (status, mode, file) => (ALLOWED_CHANGE[STATE_BRANCH](status, mode, file))
+  || (BUNDLE_PATH.test(file) && ((status === 'A' && mode === '100644') || (status === 'D' && mode === '000000')));
+
 // Checks every commit up to `sha` that the remote's copy of `branch` lacks.
 // The remote's copy is fetched first; with none, every commit is checked, the
 // root commit included.
-async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = false }) {
+async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = false, push = 'state' }) {
   const git = (args) => run('git', args, { cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1' } });
   const tracking = `refs/remotes/${REMOTE}/${branch}`;
   let range = [sha];
@@ -297,8 +309,9 @@ async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = fa
       const [, newMode, , newId, status] = meta.replace(/^:/, '').split(' ');
       const file = parts[i + 1];
       if (typeof file !== 'string' || !allowed(status, newMode, file)) return { allowed: false, refused };
-      if (scan) {
-        const found = await scanAdded(git, newId, file);
+      // `scan` is true for every file, or picks the files to scan.
+      if (scan === true || (typeof scan === 'function' && scan(file))) {
+        const found = await scanAdded(git, newId, file, push);
         if (found) return { allowed: false, refused: found };
       }
     }
@@ -306,16 +319,16 @@ async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = fa
   return { allowed: true };
 }
 
-// The secret scan on one file a state push adds (design section 9): its text
+// The secret scan on one file a state or profile push adds (design section 9): its text
 // and every decoded string in it. A refusal names the patterns and the file,
 // never the value; a file name that itself matches is not repeated.
-async function scanAdded(git, blob, file) {
-  if (scanText(file).length > 0) return 'a file in the state push has a name that looks like a secret, so nothing is pushed';
+async function scanAdded(git, blob, file, push = 'state') {
+  if (scanText(file).length > 0) return `a file in the ${push} push has a name that looks like a secret, so nothing is pushed`;
   const read = await git(['cat-file', 'blob', blob]);
   if (read.code !== 0) return PUSH_REFUSALS.unchecked;
   const found = scanContent(read.stdout);
-  if (found.length > 0) return `the state push was refused because ${file} matched: ${found.join(', ')}`;
-  try { JSON.parse(read.stdout); } catch { return PUSH_REFUSALS.notJson; }
+  if (found.length > 0) return `the ${push} push was refused because ${file} matched: ${found.join(', ')}`;
+  try { JSON.parse(read.stdout); } catch { return push === 'profile' ? PUSH_REFUSALS.profileNotJson : PUSH_REFUSALS.notJson; }
   return null;
 }
 
@@ -470,6 +483,9 @@ function placeFolder(cwd) {
 // director's approval of the restore pull request can still be read and kept.
 const FALL_BACK_ROUTES = ['/pr/state', '/state/record'];
 
+const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/state/backup'];
+const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
+
 function checkProject(project) {
   try {
     stateDir(project);
@@ -540,6 +556,8 @@ function readBody(req, res) {
 
 export async function startHelper({
   address = helperAddress(), adapterFor, envFor, now = () => new Date(), run = realRun, onArrive = () => {}, fetch = globalThis.fetch, startWaitMs = 30 * 1000,
+  // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
+  profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -870,6 +888,13 @@ export async function startHelper({
     ok: true, id: made.event.id, pushed: made.result.pushed, ...(made.result.refused ? { refused: made.result.refused } : {}),
   });
 
+  // After each event taken the views are written again, so the board and the briefing never
+  // read views older than the last write. A failure here leaves the write as it was; the
+  // next write, or /state/views, writes them.
+  async function freshViews(write) {
+    try { await write(); } catch { /* the views stay as they were */ }
+  }
+
   // A plain event, made here: its time and computer are the helper's. Its id is
   // made here too, unless the caller made it (the foreman's act command does,
   // to record the id as handled before the event exists, ruling R86): then it
@@ -882,9 +907,13 @@ export async function startHelper({
     if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
     // A signed click a hook kept to send later must never find its id taken.
     if (id !== undefined && pendingIds(project).has(id)) refuse('a record waiting to be sent from this computer has that id');
+    if (kind === 'setting') {
+      try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
+    }
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
 
@@ -901,7 +930,219 @@ export async function startHelper({
     if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
     if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
+  }
+
+  // --- the director's profile (design section 5.5) ---
+
+  // What git gets for the profile's own connection; the profile has no host requests.
+  async function profileContext() {
+    const { mode, env } = connectionOf(await profileEnvFor());
+    return {
+      mode,
+      env,
+      signedOut: false,
+      gitEnv: mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env },
+      secrets: secretsOf(env),
+      adapter: async () => refuse('the profile makes no requests of the host'),
+    };
+  }
+
+  const PROFILE_TRACKING = `refs/remotes/${REMOTE}/${PROFILE_BRANCH}`;
+  const inRebase = (dir) => ['rebase-merge', 'rebase-apply'].some((d) => fs.existsSync(path.join(dir, '.git', d)));
+
+  // Brings the profile clone up to date with a rebase. Two computers that back up the same
+  // project on the same day each add backups/<project>/<date>.bundle: the same state, so
+  // where the rebase stops only on bundles, the remote's copy is taken and this computer's
+  // commit of it is dropped. A stop on anything else is abandoned and said.
+  async function pullProfile(ctx) {
+    const dir = profileDir();
+    const env = ctx.gitEnv;
+    const pulled = await stateGit(dir, ['pull', '--rebase', REMOTE, PROFILE_BRANCH], env);
+    if (pulled.code === 0) return { ok: true };
+    if (!inRebase(dir)) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
+    for (let round = 0; round < 100 && inRebase(dir); round++) {
+      const listed = await stateGit(dir, ['diff', '--name-only', '--diff-filter=U', '-z']);
+      const paths = listed.stdout.split('\0').filter(Boolean);
+      if (listed.code !== 0 || paths.length === 0 || !paths.every((p) => BUNDLE_PATH.test(p))) break;
+      // During a rebase "ours" is the remote's side.
+      for (const p of paths) {
+        const taken = await stateGit(dir, ['checkout', '--ours', '--', p]);
+        await stateGit(dir, taken.code === 0 ? ['add', '--', p] : ['rm', '-q', '--', p]);
+      }
+      const nothingLeft = (await stateGit(dir, ['diff', '--cached', '--quiet'])).code === 0;
+      await stateGit(dir, nothingLeft ? ['rebase', '--skip'] : ['-c', 'core.editor=true', 'rebase', '--continue'], env);
+    }
+    if (!inRebase(dir)) return { ok: true };
+    await stateGit(dir, ['rebase', '--abort'], env);
+    return { ok: false, why: 'the profile here and in its repository differ in a way that needs looking at, so nothing more was pushed' };
+  }
+
+  // Pushes the profile, bringing the clone up to date and trying again when the remote
+  // has moved on. Never answers that the push was declined without saying why.
+  async function pushProfile(ctx) {
+    for (let attempt = 0; ; attempt++) {
+      const answer = await pushProfileOnce(ctx);
+      if (answer.rejected !== 'non-fast-forward') return answer;
+      if (attempt === 3) return { ok: false, refused: 'the profile\'s repository kept moving on, so the push did not go through; the next sync tries again' };
+      const pulled = await pullProfile(ctx);
+      if (!pulled.ok) return { ok: false, refused: pulled.why };
+    }
+  }
+
+  // Pushes the profile branch straight from the helper's own clone, once every commit the
+  // remote lacks has passed the profile's push rules. Never a force-push.
+  async function pushProfileOnce(ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    const dir = profileDir();
+    const keyed = gitIn(ctx.gitEnv);
+    const inClone = (args) => keyed('git', args, { cwd: dir });
+    const shallow = await inClone(['rev-parse', '--is-shallow-repository']);
+    if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
+    if (shallow.stdout.trim() === 'true') return { ok: false, refused: PUSH_REFUSALS.shallow };
+    const resolved = await inClone(['rev-parse', '--verify', '-q', `refs/heads/${PROFILE_BRANCH}^{commit}`]);
+    const sha = resolved.stdout.trim();
+    if (resolved.code !== 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return { ok: false, refused: PUSH_REFUSALS.missing };
+    const checked = await checkCommits({
+      dir, branch: PROFILE_BRANCH, sha, run: keyed, allowed: PROFILE_CHANGE, refused: PUSH_REFUSALS.profile, scan: (file) => file.startsWith('events/'), push: 'profile',
+    });
+    if (!checked.allowed) return { ok: false, refused: checked.refused };
+    if (stopped()) return STOP_REFUSAL;
+    const pushed = await inClone(['push', '--no-verify', '--porcelain', REMOTE, `${sha}:refs/heads/${PROFILE_BRANCH}`]);
+    if (pushed.code === 0) {
+      await unkeyed('git', ['update-ref', PROFILE_TRACKING, sha], { cwd: dir });
+      return { ok: true };
+    }
+    if (pushed.timedOut) return { ok: false, refused: 'the host did not answer the push in time' };
+    const line = pushed.stdout.split('\n').find((l) => l.startsWith('!') && l.includes(`refs/heads/${PROFILE_BRANCH}`));
+    if (line && /\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(line)) return { ok: false, rejected: 'non-fast-forward' };
+    const detail = clean(pushed.stderr, ctx.secrets);
+    return { ok: false, refused: `git could not push the profile${detail ? `: ${detail}` : ''}` };
+  }
+  const profilePush = (ctx) => () => pushProfile(ctx);
+  const inProfile = () => ({ dir: profileDir(), branch: PROFILE_BRANCH });
+
+  // Whether the keep rule removed this bundle: the backup keeps the newest BUNDLES_KEPT of
+  // a project, so a bundle with that many newer ones beside it is one it pruned.
+  function prunedByKeepRule(file) {
+    const name = file.split('/').at(-1);
+    let names = [];
+    try { names = fs.readdirSync(path.join(profileDir(), ...file.split('/').slice(0, -1))); } catch { /* none */ }
+    return names.filter((n) => BACKUP_FILE.test(n) && n > name).length >= BUNDLES_KEPT;
+  }
+
+  // Commits the new bundles under backups/, and the removal of those the keep rule pruned,
+  // so the folder is clean for a pull. A bundle missing for any other reason (a start cut
+  // short, a slip) or changed in place is put back from the branch; any other file is left alone.
+  async function commitBackups() {
+    const dir = profileDir();
+    const listed = await stateGit(dir, ['status', '--porcelain=v1', '-z', '-uall', '--', 'backups/']);
+    if (listed.code !== 0) refuse('the profile\'s backups could not be read');
+    const entries = listed.stdout.split('\0').filter((entry) => BUNDLE_PATH.test(entry.slice(3)));
+    const having = (code) => entries.filter((entry) => entry.startsWith(code)).map((entry) => entry.slice(3));
+    const deleted = having(' D ');
+    const pruned = deleted.filter(prunedByKeepRule);
+    const putBack = [...having(' M '), ...deleted.filter((f) => !pruned.includes(f))];
+    if (putBack.length > 0 && (await stateGit(dir, ['checkout', '-q', '--', ...putBack])).code !== 0) {
+      refuse('the profile\'s backups could not be put back');
+    }
+    const changed = [...having('?? '), ...pruned];
+    if (changed.length === 0) return;
+    const committed = (await stateGit(dir, ['add', '-A', '--', ...changed])).code === 0
+      && (await stateGit(dir, ['commit', '-q', '-m', 'Back up the state', '--', ...changed])).code === 0;
+    if (!committed) {
+      await stateGit(dir, ['reset', '-q', '--', ...changed]);
+      refuse('the profile\'s backups could not be committed');
+    }
+  }
+
+  // One at a time: the profile clone is shared by every profile route and the backup.
+  const profileRoute = (fn, { clone = true, write = false } = {}) => (body, ctx) => oneAtATime('profile', async () => {
+    if (write && stopped()) return STOP_REFUSAL;
+    if (clone) await ensureProfileClone({ remote: profileRemote(), env: ctx.gitEnv });
+    if (write && stopped()) return STOP_REFUSAL;
+    return fn(body, ctx);
+  });
+
+  async function doProfileWrite({ kind, data }, ctx) {
+    if (kind !== 'setting') refuse('only a setting is written to the profile');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
+    try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
+    if (definitionOf(data.key)?.home !== 'profile') refuse(`${data.key} is kept in each project, not in the profile`);
+    await commitBackups();
+    const event = makeEvent({ kind, data, now });
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    await freshViews(() => writeProfileViews({ now }));
+    return profileWritten({ event, result });
+  }
+
+  // As `written`, and when the event did not reach the profile's repository, how many
+  // commits there still lack, so work that is stuck is said plainly.
+  async function profileWritten(made) {
+    const answer = written(made);
+    if (answer.pushed) return answer;
+    const ahead = await stateGit(profileDir(), ['rev-list', '--count', `${PROFILE_TRACKING}..HEAD`]);
+    const count = Number.parseInt(ahead.stdout.trim(), 10);
+    return { ...answer, unpushed: ahead.code === 0 && Number.isInteger(count) ? count : 1 };
+  }
+
+  async function doProfileRecord({ event }, ctx) {
+    if (!event || typeof event !== 'object' || Array.isArray(event)) refuse('the record must be an event');
+    if (event.kind !== 'confirmation') refuse('only a confirmation is recorded in the profile');
+    if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
+    if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
+    if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
+    const events = listEvents(profileDir(), { report: () => {} });
+    if (events.some((e) => e.id === event.id)) refuse('the profile already holds an event with that id');
+    const target = events.find((e) => e.id === event.data?.confirms);
+    if (target?.kind !== 'setting' || eventHash(target) !== event.data?.confirmsHash) {
+      refuse('the confirmation names something that is not a profile event');
+    }
+    await commitBackups();
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    await freshViews(() => writeProfileViews({ now }));
+    return profileWritten({ event, result });
+  }
+
+  // The answer carries the last push's refusal, when the push rules refused it.
+  async function doProfileSync(_body, ctx) {
+    await commitBackups();
+    await pullProfile(ctx); // what it can't settle, the push below says
+    let refused;
+    const push = async () => {
+      const pushed = await pushProfile(ctx);
+      refused = pushed.refused;
+      return pushed;
+    };
+    const synced = await syncState({ push, env: ctx.gitEnv, ...inProfile() });
+    await freshViews(() => writeProfileViews({ now }));
+    return refused === undefined ? { ok: true, ...synced } : { ok: false, ...synced, refused };
+  }
+
+  // This week's bundle of the project's state branch, into the profile's backups/. The
+  // profile is brought up to date first, so a bundle another computer made today is found
+  // and not made again. When the profile's repository can't be reached the bundle is still
+  // made here.
+  async function doBackup({ project }) {
+    const profileCtx = await profileContext();
+    await ensureProfileClone({ remote: profileRemote(), env: profileCtx.gitEnv });
+    await commitBackups();
+    await pullProfile(profileCtx);
+    const today = `backups/${project}/${now().toISOString().slice(0, 10)}.bundle`;
+    if ((await stateGit(profileDir(), ['cat-file', '-e', `HEAD:${today}`])).code === 0) {
+      return { ok: true, file: today, made: false, why: 'The profile already holds today\'s backup of this project' };
+    }
+    let before = [];
+    try { before = fs.readdirSync(path.join(profileDir(), 'backups', project)); } catch { /* none yet */ }
+    const file = await writeBackup({ project, now });
+    const made = !before.includes(path.basename(file));
+    return {
+      ok: true,
+      file: path.relative(profileDir(), file).replaceAll('\\', '/'),
+      made,
+      ...(made ? {} : { why: 'A backup of this project from the last seven days is already kept' }),
+    };
   }
 
   // The changed files and the configuration, in the mirror. One at a time per
@@ -1486,6 +1727,29 @@ export async function startHelper({
     if (stopped()) return STOP_REFUSAL;
     return { ok: true, result: await call(adapter, body) };
   };
+  // What the board's health lines need from the host: whether protection is on ('none' when the
+  // plan can't have it) and whether the default branch's head has any checks or pipeline. What the
+  // host would not say is 'unknown'.
+  async function hostFacts({ project }, ctx) {
+    const { host, repo, connection } = recordOf(project);
+    const protection = async () => {
+      try {
+        const token = ctx.env?.GITLAB_TOKEN;
+        const api = host === 'gitlab' ? gitlabApi({ baseUrl: checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com'), token, fetch }) : undefined;
+        const status = await protectionStatus({ host, repo, run, api, env: ctx.env });
+        return status.on ? 'on' : (status.available ? 'unknown' : 'none');
+      } catch { return 'unknown'; }
+    };
+    const ci = async () => {
+      try {
+        const adapter = await ctx.adapter();
+        const branch = await defaultBranchOf(project, adapter);
+        return await adapter.hasCi(await adapter.branchHead(branch), branch) ? 'present' : 'none';
+      } catch { return 'unknown'; }
+    };
+    const [onOrNot, checks] = await Promise.all([protection(), ci()]);
+    return { ok: true, protection: onOrNot, ci: checks };
+  }
   const pass = (call) => async (body, ctx) => ({ ok: true, result: await call(await ctx.adapter(), body) });
   const routes = {
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
@@ -1515,6 +1779,14 @@ export async function startHelper({
       const label = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.label : undefined;
       return { ok: true, answer: typeof label === 'string' ? label : null };
     }),
+    '/state/backup': (body, ctx) => oneAtATime('profile', () => stateRoute(doBackup)(body, ctx)),
+    '/profile/clone': profileRoute(async (_body, ctx) => ({
+      ok: true, ...(await ensureProfileClone({ remote: profileRemote(), env: ctx.gitEnv })),
+    }), { clone: false }),
+    '/profile/write': profileRoute(doProfileWrite, { write: true }),
+    '/profile/record': profileRoute(doProfileRecord),
+    '/profile/sync': profileRoute(doProfileSync),
+    '/profile/views': profileRoute(async () => ({ ok: true, views: await writeProfileViews({ now }) })),
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),
@@ -1560,6 +1832,7 @@ export async function startHelper({
         tidyAfterAnswer(body.project);
       }
     },
+    '/host/facts': hostFacts,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
@@ -1603,8 +1876,14 @@ export async function startHelper({
       // runbook.js runs inside the sandbox, which cannot read ~/.wheelhouse: it sends its folder,
       // and the project is placed here.
       if (runbookRoute && body.cwd !== undefined) body = { ...body, project: placeFolder(body.cwd) };
-      const project = checkProject(body.project);
-      ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+      // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
+      if (NEEDS_PROFILE.includes(url.pathname) && profileRemote() === null) return send(res, 200, PROFILE_NOT_SET_UP);
+      if (url.pathname.startsWith('/profile/')) {
+        ctx = await profileContext();
+      } else {
+        const project = checkProject(body.project);
+        ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+      }
       onArrive(url.pathname); // for tests: the request is about to enter its queue
       const answer = await route(body, ctx);
       return send(res, 200, cleanDeep(answer, ctx.secrets));
