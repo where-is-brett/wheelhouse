@@ -5,9 +5,11 @@
 //
 // THIS CHANGES THIS COMPUTER'S PLUGIN LIST while it runs (it adds a scratch
 // marketplace and installs two plugins at project scope), then puts it back.
-// Run it only once the director has said yes. It first copies the three user
-// files it could touch to a folder under the temporary folder, and at the end
-// compares them with the copies.
+// Run it only once the director has said yes. It first copies the four user
+// files it could touch (known_marketplaces.json, installed_plugins.json,
+// settings.json and .claude.json) to a folder under the temporary folder, and
+// at the end compares them with the copies. It undoes only what this run
+// added, also on Ctrl-C or a termination signal.
 //
 // Needs the network (the two plugins are fetched from GitHub) and the `claude`
 // command. Flags used were read from `claude plugin <command> --help` on
@@ -56,12 +58,19 @@ const MARKETPLACE_NAME = `wheelhouse-probe-${MARKETPLACE_KEY}`;
 const ANTHROPIC_SUPERPOWERS = 'superpowers@claude-plugins-official';
 
 const home = os.homedir();
-const pluginsDir = path.join(home, '.claude', 'plugins');
+// Claude Code keeps its folder at ~/.claude unless CLAUDE_CONFIG_DIR says otherwise.
+const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
+const pluginsDir = path.join(configDir, 'plugins');
 const USER_FILES = [
   path.join(pluginsDir, 'known_marketplaces.json'),
   path.join(pluginsDir, 'installed_plugins.json'),
-  path.join(home, '.claude', 'settings.json'),
+  path.join(configDir, 'settings.json'),
+  // Claude Code's own state file: beside the config folder, or inside it when one is set.
+  process.env.CLAUDE_CONFIG_DIR ? path.join(configDir, '.claude.json') : path.join(home, '.claude.json'),
 ];
+const [KNOWN_FILE, INSTALLED_FILE, USER_SETTINGS_FILE] = USER_FILES;
+const SCRATCH_CACHE = path.join(pluginsDir, 'cache', MARKETPLACE_NAME);
+const PLUGIN_IDS = [SUPERPOWERS, MATT].map((plugin) => `${plugin.name}@${MARKETPLACE_NAME}`);
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const logFile = path.join(probeLogDir('24-pinning'), `run-${stamp}.jsonl`);
@@ -124,7 +133,7 @@ async function claude(step, args, cwd) {
 }
 
 function installedEntries(id) {
-  return readJson(path.join(pluginsDir, 'installed_plugins.json'))?.plugins?.[id] ?? [];
+  return readJson(INSTALLED_FILE)?.plugins?.[id] ?? [];
 }
 
 function describeInstall(id, projectDir) {
@@ -166,33 +175,126 @@ for (const file of USER_FILES) {
     backed[file] = null;
   }
 }
+
+// The commands that put the three or four files back as they were.
+function copyBackCommands() {
+  return USER_FILES.map((file) => (backed[file] ? `cp "${backed[file]}" "${file}"` : `rm -f "${file}"`));
+}
+
 console.log(`Copies of your plugin files are in: ${backupDir}`);
 console.log(`The log is: ${logFile}`);
 await note('backup', { backupDir, files: backed });
 
+// State this run created. The undo touches only what is marked here.
 let project;
 let marketplace;
-let projectDir;
+let ownsMarketplace = false;
+let undoPromise = null;
+const problems = [];
+
+async function attempt(what, work) {
+  try {
+    await work();
+  } catch (error) {
+    problems.push(`${what}: ${error.message}`);
+    results.push({ what: `${what} (undo)`, ok: false });
+    await note(`error: ${what}`, { message: String(error.stack ?? error) });
+  }
+}
+
+// The undo: runs once, from the end of the run or from Ctrl-C / a termination signal.
+function undo() {
+  undoPromise ??= (async () => {
+    if (ownsMarketplace && project) {
+      for (const id of PLUGIN_IDS) {
+        await claude(`uninstall ${id}`, ['plugin', 'uninstall', id, '--scope', 'project'], project.dir);
+      }
+      await claude('remove marketplace (project scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME, '--scope', 'project'], project.dir);
+      if ((readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME]) {
+        await claude('remove marketplace (every scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME], project.dir);
+      }
+    }
+    // Uninstall leaves the old version folders to age out; take away only the
+    // folder named for the scratch marketplace, and only if this run added it.
+    if (ownsMarketplace && path.basename(SCRATCH_CACHE) === MARKETPLACE_NAME && fs.existsSync(SCRATCH_CACHE)) {
+      await attempt('remove the scratch cache folder', async () => {
+        await fs.promises.rm(SCRATCH_CACHE, { recursive: true, force: true });
+        await note('removed scratch cache folder', SCRATCH_CACHE);
+      });
+    }
+    if (marketplace) await attempt('clean up the scratch marketplace', () => marketplace.cleanup());
+    if (project) await attempt('clean up the scratch project', () => project.cleanup());
+
+    // Compare the user's files with the copies.
+    const differences = [];
+    for (const file of USER_FILES) {
+      const copy = backed[file];
+      const now = fs.existsSync(file) ? fs.readFileSync(file) : null;
+      const was = copy ? fs.readFileSync(copy) : null;
+      const same = (now === null && was === null) || (now !== null && was !== null && now.equals(was));
+      if (!same) differences.push(file);
+      await note(`file compared: ${file}`, { same });
+    }
+    await check('your plugin files are as before', differences.length === 0, differences);
+    if (differences.length) {
+      console.error(`These differ from the copies in ${backupDir}. To put them back:`);
+      for (const command of copyBackCommands()) console.error(`  ${command}`);
+    }
+    if (problems.length) console.error(`Problems while undoing:\n  ${problems.join('\n  ')}`);
+    const failed = results.filter((one) => !one.ok);
+    console.log(`\n${results.length - failed.length} of ${results.length} checks passed. Log: ${logFile}`);
+    if (failed.length) {
+      console.log(`Not passed: ${failed.map((one) => one.what).join('; ')}`);
+      process.exitCode = 1;
+    }
+  })();
+  return undoPromise;
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, async () => {
+    console.error(`\n${signal}: undoing what this run added, then stopping.`);
+    await undo();
+    process.exit(130);
+  });
+}
+
 try {
+  // Refuse to start if anything of ours could already be there: then the undo
+  // could remove something this run did not make.
+  for (const file of [KNOWN_FILE, USER_SETTINGS_FILE]) {
+    if (fs.existsSync(file) && readJson(file) === null) throw new Error(`${file} exists but does not parse as JSON: stopping so nothing is overwritten`);
+  }
+  if ((readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME]) throw new Error(`${MARKETPLACE_NAME} is already registered: stopping so nothing is overwritten`);
+  if (readJson(USER_SETTINGS_FILE)?.extraKnownMarketplaces?.[MARKETPLACE_NAME]) throw new Error(`${MARKETPLACE_NAME} is already in your user settings: stopping so nothing is overwritten`);
+  if (fs.existsSync(SCRATCH_CACHE)) throw new Error(`${SCRATCH_CACHE} already exists: stopping so nothing is overwritten`);
+
   const version = await claude('version', ['--version'], process.cwd());
   await note('claude version', version.stdout.trim());
-  const known = readJson(USER_FILES[0]) ?? {};
-  if (known[MARKETPLACE_NAME]) throw new Error(`${MARKETPLACE_NAME} is already registered: stopping so nothing is overwritten`);
   const before = await claude('list before', ['plugin', 'list', '--json'], process.cwd());
   await note('baseline ids', { ids: JSON.stringify(parseJson(before.stdout))?.match(/"[^"]+@[^"]+"/g) ?? [] });
 
   // 1. The scratch project and marketplace.
   project = await makeScratchProject({ name: 'pinning-project' });
-  projectDir = project.dir;
   marketplace = await makeScratchMarketplace({ name: MARKETPLACE_KEY, plugins: [SUPERPOWERS, MATT] });
   await note('scratch', { project: project.dir, marketplace: marketplace.dir, marketplaceUrl: marketplace.url });
+
+  console.log('\nAbout to change this computer\'s plugin list. If this run is stopped and the undo does not finish, run:');
+  for (const id of PLUGIN_IDS) console.log(`  (cd "${project.dir}" && claude plugin uninstall ${id} --scope project)`);
+  console.log(`  (cd "${project.dir}" && claude plugin marketplace remove ${MARKETPLACE_NAME})`);
+  console.log(`  rm -rf "${SCRATCH_CACHE}"`);
+  console.log('and, to put your own files back exactly:');
+  for (const command of copyBackCommands()) console.log(`  ${command}`);
+  console.log('');
 
   // 2. Add the marketplace at project scope (a folder path: Claude Code's
   // documented "directory" source).
   const added = await claude('marketplace add', ['plugin', 'marketplace', 'add', marketplace.dir, '--scope', 'project', '--json'], project.dir);
   await check('marketplace added at project scope', added.code === 0, added.stderr.slice(0, 300));
+  if (added.code === 0) ownsMarketplace = true;
+  else throw new Error('the marketplace could not be added: stopping');
   await note('project settings after add', readJson(settingsPath(project.dir)) ?? 'no project settings file');
-  await note('known_marketplaces entry', (readJson(USER_FILES[0]) ?? {})[MARKETPLACE_NAME] ?? 'no entry');
+  await note('known_marketplaces entry', (readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME] ?? 'no entry');
 
   // 3. Install both at project scope; read what was installed.
   const ids = [SUPERPOWERS, MATT].map((plugin) => ({ plugin, id: `${plugin.name}@${MARKETPLACE_NAME}` }));
@@ -210,7 +312,7 @@ try {
   await note('project settings after install', readJson(settingsPath(project.dir)) ?? 'no project settings file');
 
   // 4. The marketplace's auto-update setting: as recorded, then set off by name.
-  const recorded = (readJson(USER_FILES[0]) ?? {})[MARKETPLACE_NAME];
+  const recorded = (readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME];
   const declared = readJson(settingsPath(project.dir))?.extraKnownMarketplaces?.[MARKETPLACE_NAME];
   await note('auto-update as recorded', { knownMarketplacesAutoUpdate: recorded?.autoUpdate ?? '(not set)', projectSettingsAutoUpdate: declared?.autoUpdate ?? '(not set)' });
   const settings = readJson(settingsPath(project.dir)) ?? {};
@@ -255,45 +357,7 @@ try {
 } catch (error) {
   results.push({ what: 'the probe ran to the end', ok: false });
   await note('error', { message: String(error.stack ?? error) });
+  console.error(`Stopped: ${error.message}`);
 } finally {
-  // 7. Undo.
-  if (projectDir) {
-    for (const id of [SUPERPOWERS, MATT].map((plugin) => `${plugin.name}@${MARKETPLACE_NAME}`)) {
-      await claude(`uninstall ${id}`, ['plugin', 'uninstall', id, '--scope', 'project'], projectDir);
-    }
-    await claude('remove marketplace (project scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME, '--scope', 'project'], projectDir);
-    if ((readJson(USER_FILES[0]) ?? {})[MARKETPLACE_NAME]) {
-      await claude('remove marketplace (every scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME], projectDir);
-    }
-  }
-  // Uninstall leaves the old version folders to age out; take away only the
-  // folder that is named for the scratch marketplace.
-  const leftover = path.join(pluginsDir, 'cache', MARKETPLACE_NAME);
-  if (path.basename(leftover) === MARKETPLACE_NAME && fs.existsSync(leftover)) {
-    await fs.promises.rm(leftover, { recursive: true, force: true });
-    await note('removed scratch cache folder', leftover);
-  }
-  if (marketplace) await marketplace.cleanup();
-  if (project) await project.cleanup();
-
-  // Compare the user's files with the copies.
-  const differences = [];
-  for (const file of USER_FILES) {
-    const copy = backed[file];
-    const now = fs.existsSync(file) ? fs.readFileSync(file) : null;
-    const was = copy ? fs.readFileSync(copy) : null;
-    const same = (now === null && was === null) || (now !== null && was !== null && now.equals(was));
-    if (!same) differences.push(file);
-    await note(`file compared: ${file}`, { same });
-  }
-  await check('your plugin files are as before', differences.length === 0, differences);
-  if (differences.length) {
-    console.error(`These differ from the copies in ${backupDir}:\n  ${differences.join('\n  ')}`);
-  }
-  const failed = results.filter((one) => !one.ok);
-  console.log(`\n${results.length - failed.length} of ${results.length} checks passed. Log: ${logFile}`);
-  if (failed.length) {
-    console.log(`Not passed: ${failed.map((one) => one.what).join('; ')}`);
-    process.exitCode = 1;
-  }
+  await undo();
 }
