@@ -106,7 +106,7 @@ test('a phone message that is just stop sends stop; a typed one does not', async
   const { seen, clear, start } = world(on, () => ({ stdout: '{"ok":true,"says":"STOP is on."}\n' }))
   for (const surface of SURFACES) {
     await startOn($, surface, { clear, start })
-    for (const text of ['stop', 'STOP', ' Stop. ']) {
+    for (const text of ['stop', 'STOP', ' Stop. ', 'stop!!']) {
       clear()
       await submit($, text, 'bridge')
       expect(seen.runs).toHaveLength(1)

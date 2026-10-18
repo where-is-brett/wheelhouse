@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkMod, membersIn, HOOKS, CALLS } from '../../../scripts/mod/validate.js';
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
+import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const FOUR = 'session.start, session.measure, prompt.submit, command.run{command=go}';
@@ -83,6 +84,28 @@ test('the options the mod sends as a reply are the signed labels', () => {
   const list = /^const LABELS = (\[[^\]]*\])$/m.exec(source);
   assert.ok(list, 'hooks/register.ts names its LABELS on one line');
   assert.deepEqual(JSON.parse(list[1].replaceAll("'", '"')), SIGNED_LABELS);
+});
+
+test('the mod reads a reply code from the code alphabet', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'hooks', 'register.ts'), 'utf8');
+  const alphabet = /^const CODE_ALPHABET = '([^']*)'$/m.exec(source);
+  assert.ok(alphabet, 'hooks/register.ts names its CODE_ALPHABET on one line');
+  assert.equal(alphabet[1], CODE_ALPHABET);
+  assert.match(source, /^const REPLY = new RegExp\(`\^\[\$\{CODE_ALPHABET\}\]\{4\}/m, 'REPLY is built from CODE_ALPHABET');
+});
+
+test('the mod\'s phoned "stop" is the stop-word hook\'s plain word', () => {
+  const read = (file, name) => {
+    const found = new RegExp(`^const ${name} = /(.*)/([a-z]*);?$`, 'm').exec(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+    assert.ok(found, `${file} names ${name} on one line`);
+    return new RegExp(found[1], found[2]);
+  };
+  const mod = read('hooks/register.ts', 'STOP');
+  const word = read('scripts/hooks/stop-word.js', 'STOP_WORD');
+  for (const text of ['stop', 'STOP', 'Stop.', 'stop!', 'stop!!', 'Stop.!', 'stop...', 'stop it', 'stopp', 'a stop', 'stop?']) {
+    assert.equal(mod.test(text), word.test(text), text);
+  }
+  assert.equal(mod.test('/stop'), false, 'a command is the stop-word hook\'s alone');
 });
 
 test('hooks.json names the mod beside the command hooks', () => {

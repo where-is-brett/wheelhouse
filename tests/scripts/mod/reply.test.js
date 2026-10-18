@@ -77,6 +77,9 @@ async function show(question, { answer = 'Not now', options = OPTIONS } = {}) {
   return c;
 }
 
+// STOP on since an hour before NOW, so the cards shown at NOW were shown after it.
+const stopOn = (at = new Date(NOW.getTime() - 60 * 60 * 1000)) => fs.writeFileSync(stopFile(), JSON.stringify({ by: 'prompt', at: at.toISOString() }));
+
 const cardOf = (line, before = 'What this is.') => `${before}\n${line}\n${replyCodeLine(replyCode(line))}`;
 const signed = (c) => c.calls.record.filter((r) => r.event.kind !== 'shown').map((r) => ({ kind: r.event.kind, data: r.event.data }));
 
@@ -154,7 +157,7 @@ test('an option the card did not offer records nothing', async () => {
 
 test('a reply earns exactly the record the click would have', async () => {
   await withHome(async () => {
-    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
+    stopOn(); // a Lift STOP earns its record only while STOP is on
     const ruling = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
     keepEvent(ruling);
     const cases = [
@@ -226,7 +229,7 @@ test('a Lift STOP reply while STOP is off records nothing and leaves its code to
     assert.equal(off.calls.record.length + off.calls.write.length, 0);
     assert.equal(lifted, 0);
     // The card was let go, so once STOP is on its code works.
-    fs.writeFileSync(stopFile(), '{}');
+    stopOn();
     const on = fake();
     assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client: on, now: () => LATER, liftStop: () => { lifted += 1; } }), { made: true, says: 'Recorded: Lift STOP' });
     assert.equal(on.calls.record.length, 1);
@@ -283,9 +286,43 @@ test('two replies in a row, or a click then a reply, record once while the views
   });
 });
 
+test('a Lift STOP card shown before this STOP began can\'t lift it by reply; a click on it still can', async () => {
+  await withHome(async () => {
+    await show(cardOf(LIFT_STOP, 'STOP went on at four.'));
+    // STOP went off and on again half an hour after the card was shown.
+    stopOn(new Date(NOW.getTime() + 30 * 60 * 1000));
+    let lifted = 0;
+    const old = fake();
+    const reply = (client, now = LATER) => replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client, now: () => now, liftStop: () => { lifted += 1; } });
+    assert.deepEqual(await reply(old), { made: false, says: 'That card\'s answer can\'t be recorded now' });
+    assert.equal(old.calls.record.length + old.calls.write.length, 0);
+    assert.equal(lifted, 0);
+    // With STOP's time unreadable, a reply can't show its card is the newer, so nothing either.
+    fs.writeFileSync(stopFile(), '{}');
+    assert.equal((await reply(fake())).made, false);
+
+    // The same card shown again after STOP began gets a new shown record, and lifts it by reply.
+    stopOn(new Date(NOW.getTime() + 30 * 60 * 1000));
+    const newer = fake();
+    await decide(card(cardOf(LIFT_STOP, 'STOP went on at four.'), 'Not now'), deps(newer, LATER));
+    assert.equal(newer.calls.record.filter((r) => r.event.kind === 'shown').length, 1);
+    for (const r of newer.calls.record) keepEvent(r.event);
+    await writeViews(P, { now: () => LATER });
+    assert.deepEqual(await reply(fake(), new Date(LATER.getTime() + 1000)), { made: true, says: 'Recorded: Lift STOP' });
+    assert.equal(lifted, 1);
+
+    // A click is the director at the card now, so it lifts whatever the card's age.
+    stopOn(new Date(LATER.getTime() + 60 * 1000));
+    const click = fake();
+    let clicked = 0;
+    await decide(card(cardOf(LIFT_STOP, 'STOP went on at four.'), 'Lift STOP'), { ...deps(click, new Date(LATER.getTime() + 120 * 1000)), liftStop: () => { clicked += 1; } });
+    assert.equal(clicked, 1);
+  });
+});
+
 test('a line that repeats gets a working code on each new card, and two waiting cards sharing it are refused', async () => {
   await withHome(async () => {
-    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
+    stopOn(); // a Lift STOP earns its record only while STOP is on
     const reply = (client, now = LATER) => replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client, now: () => now, liftStop: () => {} });
     // The first lift-STOP card is used.
     await show(cardOf(LIFT_STOP, 'STOP went on at noon.'));

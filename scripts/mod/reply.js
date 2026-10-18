@@ -153,7 +153,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   try {
     marker = claim(project, card.id);
     if (!marker) return no('That code has been used');
-    const got = await earned({ project, question: card.question, label, client: api, now, left, stopState });
+    const got = await earned({ project, question: card.question, label, client: api, now, left, stopState, shownAt: card.at });
     if (!got) {
       // Nothing was recorded, so the card is let go and can be answered again.
       fs.rmSync(marker, { force: true });

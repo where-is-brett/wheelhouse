@@ -19,11 +19,15 @@ const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
 // kept in step by tests/scripts/mod/validate.test.js. The bridge refuses every other option.
 const LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it']
-// A reply is four characters from the code alphabet (scripts/state/card-lines.js) and one of
-// those labels, in any case, with any spacing and one closing full stop; the bridge does the
-// real parse. So an ordinary message that starts with a four-letter word sends nothing.
-const REPLY = new RegExp(`^[A-HJKMNP-TV-Z2-9]{4}\\s+(?:${LABELS.map((l) => l.split(' ').join('\\s+')).join('|')})\\s*\\.?$`, 'i')
-const STOP = /^stop\.?$/i
+// The code alphabet of scripts/state/card-lines.js, kept in step by the same test.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789'
+// A reply is four characters from the code alphabet and one of those labels, in any case, with
+// any spacing and one closing full stop; the bridge does the real parse. So an ordinary message
+// that starts with a four-letter word sends nothing.
+const REPLY = new RegExp(`^[${CODE_ALPHABET}]{4}\\s+(?:${LABELS.map((l) => l.split(' ').join('\\s+')).join('|')})\\s*\\.?$`, 'i')
+// "stop" as the stop-word hook (scripts/hooks/stop-word.js) reads it: the word, in any case,
+// with any closing full stops or exclamation marks.
+const STOP = /^stop[.!]*$/i
 
 type Answer = { ok: boolean, says?: string }
 

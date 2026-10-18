@@ -74,8 +74,10 @@ export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push 
 
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
-// while STOP is off, so an old card's click or reply code can't stand for a later STOP.
-export async function earned({ project, question, label, client, now, left, stopState = defaultStopState }) {
+// while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
+// passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
+// shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one.
+export async function earned({ project, question, label, client, now, left, stopState = defaultStopState, shownAt }) {
   if (label === 'Approve') {
     const m = only(APPROVE, question);
     if (!m || !question.includes(approvalLine(m[1], m[2]))) return null;
@@ -99,7 +101,10 @@ export async function earned({ project, question, label, client, now, left, stop
   }
   const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
   if (label === 'Lift STOP') {
-    return question.includes(LIFT_STOP) && stopState().on ? { ...action({ action: 'lift-stop' }), lift: true } : null;
+    const stop = stopState();
+    if (!question.includes(LIFT_STOP) || !stop.on) return null;
+    if (shownAt !== undefined && !(Date.parse(shownAt) > Date.parse(stop.at))) return null;
+    return { ...action({ action: 'lift-stop' }), lift: true };
   }
   if (label === 'Do it') {
     const found = runbookOf(question);
@@ -168,8 +173,9 @@ export async function sendKept(api, left, { file, body, route }) {
 // The shown records a card asks for: one for each single-choice question that carries exactly
 // one set line and the line with that line's reply code, whatever was clicked, unless the shown
 // view already holds the code, live (unspent and in date at `at`), for this question. The
-// options are the card's own labels.
-function shownFor(project, input, at) {
+// options are the card's own labels. A Lift STOP card shown again under a STOP that began after
+// its held record gets a new one, since a reply lifts STOP only by a card shown after it began.
+function shownFor(project, input, at, stopState = defaultStopState) {
   const questions = input.tool_input?.questions;
   if (!Array.isArray(questions)) return [];
   const held = localViews(project, ['shown'])?.shown;
@@ -182,7 +188,9 @@ function shownFor(project, input, at) {
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
     const was = held && Object.hasOwn(held, code) ? held[code] : null;
-    if (was?.question === q.question && was.spent === false && at.getTime() - Date.parse(was.at) < REPLY_CODE_DAYS * DAY) continue;
+    const stop = line === LIFT_STOP ? stopState() : null;
+    const beforeStop = stop?.on === true && !(Date.parse(was?.at) > Date.parse(stop.at));
+    if (was?.question === q.question && was.spent === false && at.getTime() - Date.parse(was.at) < REPLY_CODE_DAYS * DAY && !beforeStop) continue;
     out.push({ kind: 'shown', data: { code, question: q.question, options: q.options.map((o) => o?.label) } });
   }
   return out;
@@ -207,7 +215,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const shownAt = new Date(at.getTime() - 1);
   let cards = [];
   try {
-    cards = shownFor(project, input, at);
+    cards = shownFor(project, input, at, stopState);
   } catch {
     // No reply codes this time; the clicks are still recorded.
   }
