@@ -32,9 +32,10 @@ async function scene() {
   views.work.g = workView('g', { since: '2026-10-19T07:30:00.000Z' });
   views.features.g = featureView('g', { step: 'started', worktree: worktree(checkout, 'g'), branch: 'feature/g' });
   // Work not started: one approved, one not, one waiting on another.
-  views.work['queued-a'] = workView('queued-a', { since: '2026-10-19T08:00:00.000Z' });
+  const doc = (id) => ({ path: `docs/specs/${id}.md`, hash: 'a'.repeat(64) });
+  views.work['queued-a'] = workView('queued-a', { since: '2026-10-19T08:00:00.000Z', doc: doc('queued-a') });
   views.work['queued-b'] = workView('queued-b', { approved: false, since: '2026-10-19T08:10:00.000Z' });
-  views.work['queued-c'] = workView('queued-c', { dependsOn: ['e'], since: '2026-10-19T08:20:00.000Z' });
+  views.work['queued-c'] = workView('queued-c', { dependsOn: ['e'], since: '2026-10-19T08:20:00.000Z', doc: doc('queued-c') });
   return { checkout, views };
 }
 
@@ -118,6 +119,35 @@ test('wake read: a next plan waits while the feature\'s own pull request is open
   const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
   assert.match(text, /^- plan-ready s: plan plans\/s2\.md, 1 file\. It waits: its pull request #5 is still open; the next plan is checked once it merges\. Next: act plan-ready s$/m);
   assert.match(text, /^- build t: waits: its pull request #9 is still open; the next plan is checked once it merges\.$/m);
+}));
+
+test('wake read names the approved document each start reads from, and lists the rulings in force by id (R84)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.a = workView('a', { doc: { path: 'docs/specs/a.md', hash: 'a'.repeat(64) }, since: '2026-10-19T07:00:00.000Z' });
+  views.work.b = workView('b', { doc: { path: '/elsewhere/b.md', hash: 'b'.repeat(64) }, since: '2026-10-19T07:10:00.000Z' });
+  views.work.c = workView('c', { since: '2026-10-19T07:20:00.000Z' });
+  views.rulebook = [
+    { id: 'r-one', words: 'Dates read\nday month year.', status: 'accepted' },
+    { id: 'r-two', words: 'Not yet confirmed.', status: 'proposed' },
+    { id: 'r-three', words: 'Gone.', status: 'superseded' },
+  ];
+  const { client } = fakeClient({ views });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
+  const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  const a = path.join(checkout, 'docs', 'specs', 'a.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(text, new RegExp(`^- start a \\(small\\): approved\\. Next: act start a --goal … --done … --appetite-sessions … --appetite-tokens … \\(from its approved document, ${a}\\)$`, 'm'));
+  assert.match(text, /^- start b \(small\): approved\. Next: act start b .*\(from its approved document, \/elsewhere\/b\.md\)$/m);
+  assert.match(text, /^- start c \(small\): approved\. It names no document to read its goal from\. Ask the director: act ask$/m);
+  assert.match(text, /^Rulings in force: 1; give each that applies with --ruling <id>\.$/m);
+  assert.match(text, /^- ruling r-one: Dates read day month year\.$/m);
+  assert.doesNotMatch(text, /r-two|r-three/);
+
+  // With nothing to start, no rulings are listed.
+  const quiet = emptyViews();
+  quiet.rulebook = views.rulebook;
+  const none = (await readWakeLines({ file, project: P, client: fakeClient({ views: quiet }).client, now })).lines.join('\n');
+  assert.doesNotMatch(none, /Rulings in force/);
 }));
 
 test('wake read falls back to the views kept on disk when the helper gives none, and says so', () => withHome(async (home) => {

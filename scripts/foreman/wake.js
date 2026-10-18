@@ -7,7 +7,10 @@
 //     and, where the next step is certain, `Next: act …`), the digest counted
 //     by type and never listed, then the queue's answer: what may start, which
 //     recorded plans may build or must wait and why, what is planning and
-//     what is building. For each `plan-ready` the plan's files are read and
+//     what is building. Each start names the work's approved document, to
+//     read the brief's goal, done lines and appetite from (ruling R84), and
+//     the rulings in force are listed by id under the starts, for `--ruling`.
+//     For each `plan-ready` the plan's files are read and
 //     checked for clashes against the running features' recorded files and
 //     the configuration's hot files.
 //   node wake.js done <file> --acted | --idle
@@ -157,6 +160,23 @@ export async function loadConfig(project, client) {
 
 export const laneOf = (views, work) => views.work?.[work]?.work?.data?.lane ?? null;
 export const featureOf = (views, work) => (isPlain(views.features?.[work]?.data) ? views.features[work].data : null);
+
+// The document the work names (its brief, design or report), as a full path
+// for the foreman to read its goal, done lines and appetite from (ruling R84):
+// a path in the record is taken from the project's main checkout. Null when it
+// names none.
+export function documentOf(project, views, work) {
+  const doc = views.work?.[work]?.work?.data?.doc;
+  if (!isPlain(doc) || typeof doc.path !== 'string' || doc.path.trim() === '') return null;
+  if (path.isAbsolute(doc.path)) return oneLine(doc.path, 300);
+  let checkout = null;
+  try {
+    checkout = checkoutOf(project);
+  } catch (error) {
+    if (!(error instanceof ForemanError)) throw error;
+  }
+  return oneLine(checkout === null ? doc.path : path.join(checkout, doc.path), 300);
+}
 
 // The feature's worktree from its record, when it is a feature worktree of the
 // project: inside the checkout's .claude/worktrees/, with a real feature folder.
@@ -323,7 +343,14 @@ function queueLines(ctx) {
   const { views, config, now } = ctx;
   const lines = [];
   const recorded = (id) => featureOf(views, id) !== null;
-  const startLine = (id) => `Next: act start ${id} --goal … --done … --appetite-sessions … --appetite-tokens … (from its approved document)`;
+  let offered = false;
+  const startLine = (id) => {
+    offered = true;
+    const doc = documentOf(ctx.project, views, id);
+    return doc === null
+      ? 'It names no document to read its goal from. Ask the director: act ask'
+      : `Next: act start ${id} --goal … --done … --appetite-sessions … --appetite-tokens … (from its approved document, ${doc})`;
+  };
 
   // Work not started: what may open a session now.
   const toStart = queueToStart(views, { now });
@@ -335,6 +362,12 @@ function queueLines(ctx) {
     const lane = laneOf(views, id);
     const opens = ['pace', 'dependency'].includes(why) && PLANS_WHILE_HELD.includes(lane);
     lines.push(`- hold ${id} (${lane}): ${whyText(why)}${opens ? `; it may open a session to plan. ${startLine(id)}` : '.'}`);
+  }
+  // The rulings a brief may carry, by id, when there is work to start.
+  if (offered) {
+    const accepted = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => isPlain(r) && r.status === 'accepted' && typeof r.id === 'string');
+    lines.push(`Rulings in force: ${accepted.length > 0 ? `${accepted.length}; give each that applies with --ruling <id>.` : 'none.'}`);
+    for (const r of accepted) lines.push(`- ruling ${oneLine(r.id, 80)}: ${oneLine(r.words, 160)}`);
   }
 
   // Recorded plans: which may build now, and why the rest wait.
