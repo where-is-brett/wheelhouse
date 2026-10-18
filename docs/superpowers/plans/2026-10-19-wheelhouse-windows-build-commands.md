@@ -10,7 +10,7 @@
 
 **Tech Stack:** Node.js 22 or later, ESM, `node:test`, no npm dependencies. Windows' own `icacls` and `whoami`. Nothing installed and no administrator.
 
-**Spec:** `docs/specs/2026-10-17-wheelhouse-design.md`: section 12.2 ("Build commands on Windows"), sections 14.1, 14.3 and 14.4, checks 40 and 41 in section 20, and the director's decision of 19 October 2026 in section 22. Read with `docs/specs/2026-10-18-build-loop-design.md`, section 11 ("On Windows"), and the research, `docs/research/windows-build-commands-2026-10.md` (sections 3.1, 8.1 and 8.4).
+**Spec:** `docs/specs/2026-10-17-wheelhouse-design.md`: section 12.2 ("Build commands on Windows"), sections 14.1, 14.3 and 14.4, checks 52 and 53 in section 20, and the director's decision of 19 October 2026 in section 22. Read with `docs/specs/2026-10-18-build-loop-design.md`, section 11 ("On Windows"), and the research, `docs/research/windows-build-commands-2026-10.md` (sections 3.1, 8.1 and 8.4).
 
 ## Scope
 
@@ -117,7 +117,7 @@ git add scripts/feature scripts/protection scripts/watcher tests
 git commit -m "Let the director's click on a build-command card grant a Windows session its commands"
 ```
 
-**If check 27's Windows half gives Shape 2,** a Desktop feature session can't be given rules on its command line: the watcher writes the rules into the worktree's `.claude/settings.local.json` and takes them out when the grant ends, if check 41 finds a running session picks the change up. If it doesn't, the card for a Shape 2 feature says to open that session and click Allow there.
+**If check 27's Windows half gives Shape 2,** a Desktop feature session can't be given rules on its command line: the watcher writes the rules into the worktree's `.claude/settings.local.json` and takes them out when the grant ends, if check 53 finds a running session picks the change up. If it doesn't, the card for a Shape 2 feature says to open that session and click Allow there.
 
 ### Task 3: The brief and the foreman
 
@@ -173,25 +173,25 @@ git commit -m "Show the Windows build-commands level on the board, at session st
 
 ## Part 2: Guarded
 
-### Task 5: Checks 40 and 41
+### Task 5: Checks 52 and 53
 
 **Files:**
-- Create: `probes/40-low-integrity/run.js`, `probes/41-windows-grants/run.js`, `docs/checks/40-low-integrity.md`, `docs/checks/41-windows-grants.md`
+- Create: `probes/52-low-integrity/run.js`, `probes/53-windows-grants/run.js`, `docs/checks/52-low-integrity.md`, `docs/checks/53-windows-grants.md`
 - Modify: `docs/checks/README.md`
 
 **Interfaces:**
 - Produces, in each note's "What it means for the design", for Tasks 2 and 6: whether a copied, low-labelled `node.exe` starts at low and is allowed by the computer's policy; which writes are refused; which reads succeed; which of `icacls`, PowerShell (by its language mode) and `node:ffi` can set a "no read up" label that holds, with the exact call (`LOCK_READS_ROUTE`); whether `git commit` works with the folders Task 6 labels; the time a Guarded `npm test` takes against a normal one; whether a low process can start a normal-level one; whether Desktop applies a sandbox; whether `-p` refuses an unallowed command at once and runs one named by `--allowedTools`.
 
-The questions are the design's checks 40 and 41 (section 20); the notes follow the findings note format (`tests/docs/checks-format.test.js`).
+The questions are the design's checks 52 and 53 (section 20); the notes follow the findings note format (`tests/docs/checks-format.test.js`).
 
-- [ ] **Step 1: Write the probes** on the Mac. Each runs on Windows only, as a standard user, with `node probes/<n>/run.js`, prints one line per trial (`PASS`, `FAIL` or `SEEN <what>`) and cleans up what it made. `40` follows the research's section 8.4, items 1 to 7, against a scratch repository with a linked worktree in the system's temporary folder. `41` runs `claude -p` through `claude.cmd` in a scratch project, as check 27's probe does, with a made-up prompt that runs `npm test`, first with no allow rule and then with `--allowedTools "Bash(npm test:*)"`, and with the runner's rule from Task 6's form.
-- [ ] **Step 2: Director (Windows, about 20 minutes, in the next Windows sitting).** Run both probes; check 41's Desktop step is the research's section 8.4, item 9. On a managed work computer as well if one is to hand.
+- [ ] **Step 1: Write the probes** on the Mac. Each runs on Windows only, as a standard user, with `node probes/<n>/run.js`, prints one line per trial (`PASS`, `FAIL` or `SEEN <what>`) and cleans up what it made. `52` follows the research's section 8.4, items 1 to 7, against a scratch repository with a linked worktree in the system's temporary folder. `53` runs `claude -p` through `claude.cmd` in a scratch project, as check 27's probe does, with a made-up prompt that runs `npm test`, first with no allow rule and then with `--allowedTools "Bash(npm test:*)"`, and with the runner's rule from Task 6's form.
+- [ ] **Step 2: Director (Windows, about 20 minutes, in the next Windows sitting).** Run both probes; check 53's Desktop step is the research's section 8.4, item 9. On a managed work computer as well if one is to hand.
 - [ ] **Step 3: Write both notes** and their rows in `docs/checks/README.md`; run `npm test`, expect PASS.
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add probes/40-low-integrity probes/41-windows-grants docs/checks
-git commit -m "Record checks 40 and 41: the low-integrity runner and granting build commands on Windows"
+git add probes/52-low-integrity probes/53-windows-grants docs/checks
+git commit -m "Record checks 52 and 53: the low-integrity runner and granting build commands on Windows"
 ```
 
 ### Task 6: The low-integrity runner and its self-test
@@ -202,17 +202,17 @@ git commit -m "Record checks 40 and 41: the low-integrity runner and granting bu
 - Test: `tests/scripts/windows/guarded.test.js`, `tests/scripts/windows/low.test.js`, `tests/scripts/lib/command-path.test.js`
 
 **Interfaces:**
-- Consumes: Check 40's note (`LOCK_READS_ROUTE`, the folders git needs); `run`; `wheelhouseHome()`.
+- Consumes: Check 52's note (`LOCK_READS_ROUTE`, the folders git needs); `run`; `wheelhouseHome()`.
 - Produces:
   - `commandPath(path, { platform }) -> string`, in `scripts/lib/command-path.js`: the checked, quoted form `scripts/foreman/tools.js` makes today (forward slashes, a drive letter, single quotes), so a path can sit in an allow rule. `tools.js` calls it.
   - `lowNode({ run, home }) -> Promise<string>`, in `low.js`: copies `process.execPath` to `<home>/windows/low-node/node.exe` when missing or a different size, runs `icacls <copy> /setintegritylevel L`, and returns the copy's path.
-  - `labelWorktree(worktree, { run, commonDir }) -> Promise<void>`: `icacls <worktree> /setintegritylevel (OI)(CI)L`; then back to `M` on the worktree's `.git` file, `.claude`, `.mcp.json` and `.vscode` where they exist; and, so local git works, `L` on the worktree's own admin folder under `<commonDir>/worktrees/`, `<commonDir>/objects`, and the feature's folders under `<commonDir>/refs/heads/feature/` and `<commonDir>/logs/refs/heads/feature/` (adjusted to check 40's answer). `<commonDir>/hooks` and `<commonDir>/config` are never labelled.
+  - `labelWorktree(worktree, { run, commonDir }) -> Promise<void>`: `icacls <worktree> /setintegritylevel (OI)(CI)L`; then back to `M` on the worktree's `.git` file, `.claude`, `.mcp.json` and `.vscode` where they exist; and, so local git works, `L` on the worktree's own admin folder under `<commonDir>/worktrees/`, `<commonDir>/objects`, and the feature's folders under `<commonDir>/refs/heads/feature/` and `<commonDir>/logs/refs/heads/feature/` (adjusted to check 52's answer). `<commonDir>/hooks` and `<commonDir>/config` are never labelled.
   - `lockReads(paths, { run }) -> Promise<{ held: boolean }>`: sets a "no read up" label on each by `LOCK_READS_ROUTE`; `{ held: false }` where the computer has no route.
   - `guardedCommand({ home, pluginRoot }) -> string`: `<commandPath(lowNode)> <commandPath(pluginRoot/scripts/windows/guarded.js)>`, the prefix the brief gives and the one allow rule.
   - `guarded.js <command words…>`, run by the low copy in the worktree: before anything, checks its own token is low (`whoami /groups` lists `S-1-16-4096`) and exits 3 with "This runner isn't at low integrity, so it won't run anything." otherwise; refuses, exit 4, the fetching forms (`npm install`, `npm i`, `npm ci`, `npm add`, `npm update`, `npm exec`, `npx`, `pnpm add`, `pnpm install`, `pnpm dlx`, `yarn add`, `yarn install`, `yarn dlx`), each refusal saying "Ask for this with ask --kind build-command."; sets `npm_config_cache`, `TEMP` and `TMP` to `<worktree>/.wheelhouse/tmp/`; runs the command, kills its whole tree (`taskkill /T /F`) after `GUARDED_TIMEOUT_MS = 30 * 60 * 1000`, and exits with its code.
   - `selfTest({ run, home, worktree }) -> Promise<{ at, lowStarts, writeHeld, keysReadHeld }>`, run by the session start on Windows when the level is `guarded` or the Guarded card is about to be shown, within 3 seconds or counted as not ready, after `lowNode` and `lockReads` on the helper's keys folder and the credential folders of design section 12.2: the runner tries to write a marker in `<home>` and to read a marker it placed beside the helper's keys file; results go to `<home>/windows/guarded-selftest.json`. `guardedReady` (Task 1) is `lowStarts && writeHeld` from a self-test under a day old.
 
-- [ ] **Step 1: Write the failing tests,** with a fake `run` that records `icacls`, `whoami` and `taskkill` calls and answers as Windows would; the real calls run only in check 40's probe.
+- [ ] **Step 1: Write the failing tests,** with a fake `run` that records `icacls`, `whoami` and `taskkill` calls and answers as Windows would; the real calls run only in check 52's probe.
 
 ```js
 test('the low copy is made once and labelled low', ...)
@@ -251,9 +251,9 @@ Settled here without the director:
 
 ## Order
 
-Tasks 1 to 4 need nothing from a Windows computer and run first, once build-loop Part 4 and board-and-usage Part 5 have merged; Task 1 comes before Tasks 2 to 4. Task 5's probes are written at the same time, and its sitting is the next Windows one. Task 6 waits for check 40.
+Tasks 1 to 4 need nothing from a Windows computer and run first, once build-loop Part 4 and board-and-usage Part 5 have merged; Task 1 comes before Tasks 2 to 4. Task 5's probes are written at the same time, and its sitting is the next Windows one. Task 6 waits for check 52.
 
-**If check 40 answers differently from what the design expects:**
+**If check 52 answers differently from what the design expects:**
 
 - **A copied `node.exe` is refused by the computer's policy, or doesn't start at low:** Guarded isn't offered on such computers; Tasks 1 to 4 stand as they are, and Task 6 is built for the computers where it works.
 - **Git can't commit from low without labelling more of the common folder:** local git stays out of the runner and keeps asking (or runs at Unattended), and Task 6 labels only the worktree.
@@ -263,6 +263,6 @@ Tasks 1 to 4 need nothing from a Windows computer and run first, once build-loop
 
 | Sitting | Computer | Task | About |
 |---|---|---|---|
-| The next Windows sitting | Windows, as a standard user | 5 (checks 40 and 41) | 20 min |
+| The next Windows sitting | Windows, as a standard user | 5 (checks 52 and 53) | 20 min |
 
-If the prepared Windows run for checks 27 to 29 hasn't happened yet, checks 40 and 41 join it, sent the same way as that run's brief.
+If the prepared Windows run for checks 27 to 29 hasn't happened yet, checks 52 and 53 join it, sent the same way as that run's brief.
