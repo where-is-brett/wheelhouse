@@ -237,12 +237,15 @@ function reviewOf(views, pr, head) {
 
 // A head with no signed review of its own counts as reviewed when the helper, by the gate's
 // own carry-over rule (/pr/carried), says an earlier commit's CLEAN review still holds for it:
-// so a branch the gate brought up to date raises merge-ready again once CI is green. Any
-// other answer, or none, leaves it unreviewed.
+// so a branch the gate brought up to date raises merge-ready again once CI is green. When none
+// carries but an earlier CLEAN review is on record, the head needs a review of its own
+// ('needed', ruling R119), which wakes its session. Any other answer, or none, leaves it unreviewed.
 async function carriedReview({ project, client, number }) {
   try {
     const answer = await client.carried({ project, number });
-    return answer?.ok === true && answer.review === 'clean' ? 'clean' : 'none';
+    if (answer?.ok !== true) return 'none';
+    if (answer.review === 'clean') return 'clean';
+    return answer.review === 'none' && answer.earlier === true ? 'needed' : 'none';
   } catch {
     return 'none';
   }
@@ -273,12 +276,17 @@ async function readPr({ project, client, number, works, branchOf, views }) {
   }
   if (ci?.ok !== true || !CI.includes(ci.result?.state)) return undefined;
   const own = reviewOf(views, number, pr.headSha);
+  // What carries over changes what is raised only once CI has passed on the head, so the helper,
+  // whose answer can cost a fetch, is asked only then.
+  const asked = own === 'none' && ci.result.state === 'success';
   return {
     work,
     head: pr.headSha,
+    // The head branch, so the director's CI push for it can be matched to this pull request.
+    branch: pr.headRef,
     ci: ci.result.state,
     mergeable: MERGEABLE.includes(pr.mergeable) ? pr.mergeable : 'unknown',
-    review: own === 'none' ? await carriedReview({ project, client, number }) : own,
+    review: asked ? await carriedReview({ project, client, number }) : own,
   };
 }
 

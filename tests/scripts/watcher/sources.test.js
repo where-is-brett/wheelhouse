@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { observe, plainWorktreePath, INTERVALS, LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
-import { step, diff } from '../../../scripts/watcher/core.js';
+import { step, diff, route } from '../../../scripts/watcher/core.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { setStop } from '../../../scripts/lib/stop.js';
@@ -158,7 +158,7 @@ test('observe reads state, feature files and PRs into one observation', () => wi
     status: null, questions: [], extraPlans: [], skipped: 0, briefHash: briefHash(briefText('search-box')),
     recordedBrief: null, recordedBefore: null, appetite: 400000, report: false, gone: false,
   });
-  assert.deepEqual(first.prs, { 7: { work: 'login-page', head: HEAD, ci: 'failure', mergeable: 'yes', review: 'clean' } });
+  assert.deepEqual(first.prs, { 7: { work: 'login-page', head: HEAD, branch: 'login-page', ci: 'failure', mergeable: 'yes', review: 'clean' } });
   assert.deepEqual(first.testMerges, [{ a: 'login-page', b: 'search-box', clean: false, conflicts: ['app.js'] }]);
   assert.deepEqual(names(client.calls), ['sync', 'prState', 'ci', 'testMerge']);
   assert.deepEqual(client.calls[0][1], { project: P });
@@ -338,28 +338,52 @@ test('a head with no signed review of its own counts as reviewed when the helper
   // The signed review names an earlier commit: the gate brought the branch up to date since.
   record('review', { pr: 7, commit: 'e'.repeat(40), verdict: 'CLEAN' }, SEC);
   const open = { 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'yes', state: 'open' } };
-  const review = async (carried) => {
-    const client = fakeClient({ prs: open, carried });
+  const ciIs = (client, state) => { client.ci = async (args) => ({ ok: true, result: { sha: args.sha, state } }); return client; };
+  const review = async (carried, ci = 'success') => {
+    const client = ciIs(fakeClient({ prs: open, carried }), ci);
     const obs = await observe({ project: P, client, now: at(2 * SEC) });
     return { review: obs.prs[7].review, calls: client.calls.filter(([n]) => n === 'carried').map(([, a]) => a) };
   };
 
-  assert.deepEqual(await review({ ok: true, review: 'clean', upToDate: true }), { review: 'clean', calls: [{ project: P, number: 7 }] });
+  assert.deepEqual(await review({ ok: true, review: 'clean', upToDate: true, earlier: true }), { review: 'clean', calls: [{ project: P, number: 7 }] });
   // Any other answer, a refusal or a throw leaves it unreviewed.
-  for (const answer of [{ ok: true, review: 'none', upToDate: true }, { ok: false, refused: 'no' }, { ok: true }, null, () => { throw new Error('down'); }]) {
+  for (const answer of [{ ok: true, review: 'none', upToDate: true }, { ok: true, review: 'none', upToDate: true, earlier: false }, { ok: true, review: 'none', earlier: 'yes' },
+    { ok: false, refused: 'no' }, { ok: true }, null, () => { throw new Error('down'); }]) {
     assert.equal((await review(answer)).review, 'none', JSON.stringify(answer));
   }
+  // M4: /pr/carried changes what is raised only once CI has passed, so it is asked only then.
+  for (const ci of ['pending', 'failure', 'none']) {
+    assert.deepEqual(await review({ ok: true, review: 'clean', upToDate: true, earlier: true }, ci), { review: 'none', calls: [] }, ci);
+  }
   // A green CI on the brought-up-to-date head, with the carried review, raises merge-ready.
-  const green = fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } });
-  green.ci = async (args) => ({ ok: true, result: { sha: args.sha, state: 'success' } });
+  const green = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true, earlier: true } }), 'success');
   const obs = await observe({ project: P, client: green, now: at(2 * SEC) });
   assert.ok(diff(null, obs, { seen: new Set() }).some((e) => e.type === 'merge-ready' && e.work === 'login-page'));
 
   // A head with its own signed review needs no asking.
   record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 2 * SEC);
-  const own = fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } });
+  const own = ciIs(fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } }), 'success');
   assert.equal((await observe({ project: P, client: own, now: at(3 * SEC) })).prs[7].review, 'findings');
   assert.deepEqual(names(own.calls).filter((n) => n === 'carried'), []);
+}));
+
+test('a green head whose earlier CLEAN review did not carry over wakes its session to review it (R119)', () => withHome(async () => {
+  enrolHere();
+  const wt = worktree({ status: JSON.stringify(status('login-page')) });
+  record('feature', { work: 'login-page', step: 'building', worktree: wt, branch: 'login-page' }, 0);
+  record('review', { pr: 7, commit: 'e'.repeat(40), verdict: 'CLEAN' }, SEC);
+  const open = { 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'yes', state: 'open' } };
+  const client = fakeClient({ prs: open, carried: { ok: true, review: 'none', upToDate: true, earlier: true } });
+  client.ci = async (args) => ({ ok: true, result: { sha: args.sha, state: 'success' } });
+  const obs = await observe({ project: P, client, now: at(2 * SEC) });
+  assert.equal(obs.prs[7].review, 'needed');
+  const events = diff(null, obs, { seen: new Set() });
+  const raised = events.filter((e) => e.type === 'review-needed');
+  assert.deepEqual(raised.map((e) => [e.work, e.pr, e.id]), [['login-page', 7, `review-needed:login-page:${HEAD}`]]);
+  assert.equal(events.some((e) => e.type === 'merge-ready'), false);
+  // Routed to the session, which pulls and dispatches the reviewer on the head.
+  assert.deepEqual(route(raised).features['login-page'].map((e) => e.type), ['review-needed']);
+  assert.match(raised[0].detail.next, new RegExp(`wheelhouse:reviewer with pr: 7 on ${HEAD}`));
 }));
 
 test('worktree paths from state are followed only inside the project\'s checkout', () => withHome(async () => {
