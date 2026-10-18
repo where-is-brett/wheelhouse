@@ -408,7 +408,7 @@ The question: *Whether the helper can photograph a web page with an installed Ch
 
 - [ ] **Step 1: Read** Chrome's headless documentation (`--headless`, `--screenshot`, `--window-size`, `--user-data-dir`, `--hide-scrollbars`) and record the date and links.
 - [ ] **Step 2: Run `probes/34-screens/run.js`** on the Mac: it finds the browser (`findBrowser`, Task 11), serves three local test pages (still, with a clock, with a CSS animation), photographs each twice at both sizes in a fresh profile, and records the time and whether the pixel hashes matched.
-- [ ] **Step 3: Windows,** in the board-and-usage plan's Windows sitting (its Task 19), 5 minutes more: the same run with Edge.
+- [ ] **Step 3: Windows,** in the board-and-usage plan's Windows sitting (its Task 19): the agent runs the same probe with Edge. The director's only part is being at that computer; the sitting's opening card names this run too.
 - [ ] **Step 4: Write the note,** add its row, run `npm test`, commit.
 
 ```bash
@@ -563,9 +563,9 @@ Tasks 1 to 4 in order, then 5 and 6, then 7 (which needs 5 and 6), then 8 and 9.
 
 | Sitting | Computer | Tasks | About |
 |---|---|---|---|
-| Windows, with the board-and-usage plan's sitting | Windows | 10 (check 34) | 5 min more |
+| Windows, with the board-and-usage plan's sitting | Windows | 10 (check 34) | no extra time: the agent runs it |
 
-Check 34 on the Mac needs nobody.
+Agents run every step they can (the director's standing rule for Wheelhouse, 18 October 2026); the sitting's opening card, which the director approves by clicking, names this run. Check 34 on the Mac needs nobody.
 
 ## After this plan
 

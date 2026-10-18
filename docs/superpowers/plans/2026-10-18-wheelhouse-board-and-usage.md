@@ -836,9 +836,11 @@ git commit -m "Add the mod's first piece: the usage figure, /go, stop from the p
 
 The question: *That the mod's first piece works in Claude Desktop on the Mac and on Windows: the weekly figure and each session's cost reach the usage files; `/go` typed and sent from the phone lifts STOP with a signed record; "stop" from the phone sets it; and a reply code typed and sent from the phone records what a click would.*
 
-- [ ] **Step 1: Prepare** a scratch Wheelhouse project with a stand-in host (as the safety sitting did), and one card for the director listing what the sitting changes on the computer (the plugin loaded from this worktree for that session only, by hot reloading, as in check 9) and how it is undone.
-- [ ] **Step 2: Director (Mac, 10 min).** In a Desktop session on the scratch project: one message, then the session shows `usage/allowance.json` and the session's cost line. `/stop`, then `/go` typed: STOP lifts and a signed `lift-stop` record exists. From the phone, "stop", then "/go". A test card carrying a confirmation line and its reply code: answer **Not now**, then type the code and **Confirm**; then a second card answered from the phone the same way. Pass: each record is signed and verified, and nothing is recorded for a code typed by the agent itself into its own reply.
-- [ ] **Step 3: Director (Windows, 10 min), when next at that computer.** The same steps.
+Agents do every step they can (the director's standing rule for Wheelhouse, 18 October 2026). The director is brought only what needs them: one card to approve the sitting, the hot-reloading question (which only the person at the computer can answer), and the few messages that must be typed by them or sent from their phone, since telling those apart from an agent's is what this check tests.
+
+- [ ] **Step 1: Prepare.** The agent makes a scratch Wheelhouse project with a stand-in host (as the safety sitting did), and shows the director one card listing what the sitting changes on the computer (the plugin loaded from this worktree for one session only, by hot reloading, as in check 9) and how it is undone. The director approves it by clicking.
+- [ ] **Step 2: Mac (about 5 minutes of the director's time).** The agent opens a Desktop session on the scratch project with `start_session`. The director clicks **Enable for this session** when hot reloading is offered. The agent checks `usage/allowance.json` and the session's cost line, turns STOP on, and asks a test card carrying a confirmation line and its reply code, which the director answers **Not now**. The director then types, in that session, `/go` and the card's code with **Confirm**, and sends from the phone "stop", then "/go", then a second card's code with **Confirm**, each line given to them on a card. The agent also types the same code into its own reply and runs the bridge itself. It reads the records and undoes everything. Pass: each of the director's lines makes a signed, verified record; nothing is recorded for the agent's own.
+- [ ] **Step 3: Windows, when the director is next at that computer.** The same steps; the director's part is being there, the approval click, the hot-reloading click and the same few lines.
 - [ ] **Step 4: Undo,** write the note with what each step showed, add its row, run `npm test`, commit.
 
 ```bash
@@ -908,10 +910,10 @@ Task 1 first: Tasks 15, 17 and 18 build to its answer. Then Tasks 2 to 4, 5 to 8
 
 | Sitting | Computer | Tasks | About |
 |---|---|---|---|
-| 1 | Mac | 19 (check 33) | 10 min |
-| 2 | Windows, when next at it | 19 (check 33) | 10 min |
+| 1 | Mac | 19 (check 33) | about 5 min of the director's time |
+| 2 | Windows, when next at it | 19 (check 33) | about 5 min, and being at that computer |
 
-Before each sitting, one card lists every change it makes (the plugin loaded for one session by hot reloading, a scratch project) and how each is undone. Check 32 needs nobody.
+Agents run every step they can (the director's standing rule for Wheelhouse, 18 October 2026). Each sitting starts with one card listing every change it makes (the plugin loaded for one session by hot reloading, a scratch project) and how each is undone, which the director approves by clicking. The director is then asked only for the hot-reloading click and the lines that must come from their own typing or phone. Check 32 needs nobody.
 
 ## After this plan
 
