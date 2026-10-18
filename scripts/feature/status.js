@@ -1,9 +1,11 @@
 // scripts/feature/status.js
 // Builds a feature's status from files alone, so the session spends no turns
 // on it: the brief, the plan it names, the Superpowers ledger for that plan,
-// the questions, the report, the kept pull request number and the .git files.
-// Also keeps the ledger's rulings in rulings.jsonl, so they outlive the ledger
-// when Superpowers deletes its workspace. Nothing here runs git or any command.
+// the questions, the report, the kept pull request number, the project's views
+// and the .git files. Also keeps the ledger's rulings in rulings.jsonl, so they
+// outlive the ledger when Superpowers deletes its workspace. Nothing here runs
+// git or any other command.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { featurePaths, parseBrief, parseReport, readQuestions } from './files.js';
@@ -12,11 +14,11 @@ import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
 
 // The most of each file that is read. A file over its limit reads as missing.
-const SMALL_BYTES = 4096; // HEAD, a loose ref, a .git file, commondir, pr.json
+export const SMALL_BYTES = 4096; // HEAD, a loose ref, a .git file, commondir, pr.json, a ledger's first line
 const BRIEF_BYTES = 1024 * 1024;
 const REPORT_BYTES = 1024 * 1024;
 const PLAN_BYTES = 4 * 1024 * 1024;
-const LEDGER_BYTES = 8 * 1024 * 1024;
+export const LEDGER_BYTES = 8 * 1024 * 1024;
 const RULINGS_BYTES = 8 * 1024 * 1024;
 const VIEW_BYTES = 8 * 1024 * 1024;
 const PACKED_REFS_BYTES = 32 * 1024 * 1024;
@@ -27,8 +29,23 @@ const MAX_LINKS = 5;
 const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const RULING = 'Ruling:';
 
-// The text of a regular file, or null when it is missing, not a file, or over `max` bytes.
-function readCapped(file, max) {
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const lines = (text) => text.split(/\r?\n/);
+
+function lstatOf(file) {
+  try {
+    return fs.lstatSync(file);
+  } catch {
+    return null;
+  }
+}
+
+// The text of a regular file, or null when it is missing, not a regular file
+// (a symlink, a folder or a FIFO is refused before it is opened, so it can't
+// block), or over `max` bytes. With `head`, only the first `max` bytes are read
+// and a longer file is not refused.
+export function readCapped(file, max, { head = false } = {}) {
+  if (!lstatOf(file)?.isFile()) return null;
   let fd;
   try {
     fd = fs.openSync(file, 'r');
@@ -37,9 +54,10 @@ function readCapped(file, max) {
   }
   try {
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > max) return null;
-    const buffer = Buffer.alloc(stat.size);
-    return buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, stat.size, 0));
+    if (!stat.isFile() || (!head && stat.size > max)) return null;
+    const size = Math.min(stat.size, max);
+    const buffer = Buffer.alloc(size);
+    return buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, size, 0));
   } catch {
     return null;
   } finally {
@@ -47,9 +65,42 @@ function readCapped(file, max) {
   }
 }
 
-const lines = (text) => text.split(/\r?\n/);
+// Writes `text` whole to a temporary file opened with `wx` beside `file`, then
+// renames it over `file`, so a reader sees the old text or the new and never
+// half of either. Refuses a `file` that is there but is not a regular file (a
+// symlink above all) and a folder that is not a real folder.
+export function writeWhole(file, text) {
+  const dir = path.dirname(file);
+  if (!lstatOf(dir)?.isDirectory()) throw new Error("The feature's folder isn't a real folder");
+  const stat = lstatOf(file);
+  if (stat !== null && !stat.isFile()) throw new Error(`${path.basename(file)} isn't a regular file`);
+  const temp = `${file}.${crypto.randomUUID().slice(0, 12)}.tmp`;
+  try {
+    fs.writeFileSync(temp, text, { flag: 'wx' });
+    fs.renameSync(temp, file);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+}
+
+// Whether the worktree's `.wheelhouse` and `.wheelhouse/feature` are real
+// folders (not symlinks) and the feature folder's real path is the one under
+// the worktree's own, so nothing written there can land anywhere else.
+export function safeFeatureFolder(worktree) {
+  const dot = path.join(worktree, '.wheelhouse');
+  const dir = featurePaths(worktree).dir;
+  if (!lstatOf(dot)?.isDirectory() || !lstatOf(dir)?.isDirectory()) return false;
+  try {
+    return fs.realpathSync.native(dir) === path.join(fs.realpathSync.native(worktree), '.wheelhouse', 'feature');
+  } catch {
+    return false;
+  }
+}
 
 // --- The head commit, from the .git files ---
+//
+// A repository that keeps its refs in reftable, or a branch whose name has
+// characters outside [A-Za-z0-9._/-], reads as head null.
 
 // The worktree's own git folder and the repository's common one. A `.git`
 // folder is both; a `.git` file names the worktree's folder, whose `commondir`
@@ -114,34 +165,40 @@ export function gitHead(worktree) {
   return ref ? resolveRef(folders, ref[1], 0) : null;
 }
 
-// --- The plan and its ledger ---
+// --- The brief, the plan and its ledger ---
 
-// A plan path as a ledger's first line would name it: forward slashes, no leading `./`.
-const planName = (plan) => plan.replaceAll('\\', '/').replace(/^(\.\/)+/, '');
-
-// The plan's text, from a path inside the worktree only.
-function readPlan(worktree, plan) {
-  const file = path.resolve(worktree, plan);
-  const rel = path.relative(worktree, file);
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
-  return readCapped(file, PLAN_BYTES);
+// The brief's fields. Throws when it can't be read.
+export function readBrief(worktree) {
+  const text = readCapped(featurePaths(worktree).brief, BRIEF_BYTES);
+  if (text === null) throw new Error("The brief can't be read");
+  return parseBrief(text).fields;
 }
 
-// The number of distinct `### Task N` headings in the plan.
-function countTasks(text) {
-  const seen = new Set();
-  for (const line of lines(text ?? '')) {
-    const m = /^###\s+Task\s+(\d+)\b/.exec(line);
-    if (m) seen.add(Number(m[1]));
-  }
-  return seen.size;
+const planOf = (brief) => (typeof brief.plan === 'string' && brief.plan.trim() !== '' ? brief.plan.trim() : null);
+const slashes = (p) => p.replaceAll('\\', '/');
+const planName = (plan) => slashes(plan).replace(/^(\.\/)+/, '');
+
+// Whether a ledger's first line names `plan` exactly: the text after `plan:`
+// (backticks aside) is the plan's path as the brief gives it, or that path in
+// full under the worktree. `other/plans/a.md` and `plans/a.md.bak` are not `plans/a.md`.
+function namesPlan(firstLine, worktree, plan) {
+  const m = /plan:\s*`?(.+?)`?\s*$/.exec(firstLine);
+  if (!m) return false;
+  const named = planName(m[1]);
+  const wanted = planName(plan);
+  if (named === wanted) return true;
+  const roots = new Set([worktree]);
+  try {
+    roots.add(fs.realpathSync.native(worktree));
+  } catch { /* the path as given */ }
+  return [...roots].some((root) => named === slashes(path.join(root, wanted)));
 }
 
-// The text of the newest `.superpowers/sdd/*/progress.md` (by modification
-// time) whose first line names `plan`; null when none does.
-function readLedger(worktree, plan) {
+// The newest `.superpowers/sdd/*/progress.md` (by modification time) whose
+// first line names `plan`, as `{ file, size, mtimeMs }`; null when none does.
+// Only each candidate's first 4 KB is read.
+export function findLedger(worktree, plan) {
   if (typeof plan !== 'string' || plan.trim() === '') return null;
-  const wanted = planName(plan.trim());
   const sdd = path.join(worktree, '.superpowers', 'sdd');
   let entries;
   try {
@@ -152,17 +209,51 @@ function readLedger(worktree, plan) {
   const found = [];
   for (const entry of entries) {
     const file = path.join(sdd, entry.name, 'progress.md');
-    try {
-      const stat = fs.lstatSync(file);
-      if (stat.isFile()) found.push({ file, mtime: stat.mtimeMs });
-    } catch { /* no ledger in this workspace */ }
+    const stat = lstatOf(file);
+    if (stat?.isFile()) found.push({ file, size: stat.size, mtimeMs: stat.mtimeMs });
   }
-  found.sort((a, b) => b.mtime - a.mtime);
-  for (const { file } of found) {
-    const text = readCapped(file, LEDGER_BYTES);
-    if (text !== null && lines(text)[0].includes(wanted)) return text;
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const candidate of found) {
+    const start = readCapped(candidate.file, SMALL_BYTES, { head: true });
+    if (start !== null && namesPlan(lines(start)[0], worktree, plan.trim())) return candidate;
   }
   return null;
+}
+
+// What both functions below read: the brief, its plan, and the ledger with its
+// text (null when there is none, or it is over its limit). Read once per run.
+export function loadFeature(worktree, { brief = readBrief(worktree), ledger } = {}) {
+  const plan = planOf(brief);
+  const found = ledger === undefined ? (plan === null ? null : findLedger(worktree, plan)) : ledger;
+  const text = found ? (found.text ?? readCapped(found.file, LEDGER_BYTES)) : null;
+  return { brief, plan, ledger: found && text !== null ? { ...found, text } : null };
+}
+
+// The plan's text, from a path inside the worktree only.
+function readPlan(worktree, plan) {
+  const file = path.resolve(worktree, plan);
+  const rel = path.relative(worktree, file);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return readCapped(file, PLAN_BYTES);
+}
+
+// The task numbers of the plan's `### Task N` headings, leaving out any inside
+// a fenced code block.
+function planTasks(text) {
+  const seen = new Set();
+  let fence = null;
+  for (const line of lines(text ?? '')) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (f) {
+      if (fence === null) fence = f[1];
+      else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const m = /^###\s+Task\s+(\d+)\b/.exec(line);
+    if (m) seen.add(Number(m[1]));
+  }
+  return seen;
 }
 
 const TASK_LINE = /^\s*(?:[-*]\s+)?Task (\d+): (.*)$/;
@@ -188,17 +279,11 @@ function readTasks(ledger) {
 
 // --- The other feature files ---
 
-function readBrief(worktree) {
-  const text = readCapped(featurePaths(worktree).brief, BRIEF_BYTES);
-  if (text === null) throw new Error("The brief can't be read");
-  return parseBrief(text).fields;
-}
-
 // The pull request number open-pr kept in pr.json as `{ pr }`, or null.
 function readPr(worktree) {
   try {
     const kept = JSON.parse(readCapped(featurePaths(worktree).pr, SMALL_BYTES) ?? 'null');
-    return kept !== null && typeof kept === 'object' && !Array.isArray(kept) && Number.isSafeInteger(kept.pr) && kept.pr >= 1 ? kept.pr : null;
+    return isPlain(kept) && Number.isSafeInteger(kept.pr) && kept.pr >= 1 ? kept.pr : null;
   } catch {
     return null;
   }
@@ -215,46 +300,63 @@ function hasReport(worktree) {
   }
 }
 
-// The ids of the questions the director has answered, from the project's
-// questions view on disk (`views/questions.json`, or `views.old` while the
-// views are being replaced). None when the project or the view can't be found.
-export function answeredInViews(worktree) {
-  const answered = new Set();
+// --- The project's views ---
+
+// One of the project's views as the helper last wrote it (`views/<name>.json`,
+// or `views.old` while the views are being replaced); null when the project or
+// the view can't be found, or the view is not an object.
+function readView(worktree, name) {
   try {
     const root = findRepoRoot(worktree);
     const found = root === null ? null : projectForFolder(fs.realpathSync.native(root));
-    if (!found) return answered;
+    if (!found) return null;
     const base = path.join(wheelhouseHome(), 'projects', found.project, 'views');
-    const text = readCapped(path.join(base, 'questions.json'), VIEW_BYTES) ?? readCapped(path.join(`${base}.old`, 'questions.json'), VIEW_BYTES);
+    const text = readCapped(path.join(base, `${name}.json`), VIEW_BYTES) ?? readCapped(path.join(`${base}.old`, `${name}.json`), VIEW_BYTES);
     const view = JSON.parse(text ?? 'null');
-    if (view === null || typeof view !== 'object' || Array.isArray(view)) return answered;
-    for (const [id, entry] of Object.entries(view)) {
-      if (entry?.answer !== null && typeof entry?.answer === 'object') answered.add(id);
-    }
-  } catch { /* none known */ }
+    return isPlain(view) ? view : null;
+  } catch {
+    return null;
+  }
+}
+
+// The ids of the questions the director has answered, from the questions view:
+// those whose `answer` is not null.
+export function answeredInViews(worktree) {
+  const answered = new Set();
+  for (const [id, entry] of Object.entries(readView(worktree, 'questions') ?? {})) {
+    if (isPlain(entry?.answer)) answered.add(id);
+  }
   return answered;
+}
+
+// The slice the latest `feature` event for `work` names, from the features
+// view; null when it is absent or not n of m.
+export function sliceInViews(worktree, work) {
+  const slice = readView(worktree, 'features')?.[work]?.data?.slice;
+  const ok = isPlain(slice) && Object.keys(slice).length === 2
+    && Number.isInteger(slice.n) && Number.isInteger(slice.m) && slice.n >= 1 && slice.n <= slice.m;
+  return ok ? { n: slice.n, m: slice.m } : null;
 }
 
 // --- The status ---
 
 // The feature's Status, from files alone. `answered(worktree)` gives the ids of
-// answered questions; it reads the questions view unless a caller passes its own.
-// Throws when the brief can't be read, since the status names its work and lane.
-export function buildStatus({ worktree, now = () => new Date(), tokens = null, answered = answeredInViews }) {
-  const brief = readBrief(worktree);
+// answered questions and `slice(worktree, work)` the current slice; both read
+// the project's views unless a caller passes its own. `feature` is what
+// loadFeature read, when the caller has it already. Throws when the brief
+// can't be read, since the status names its work and lane.
+export function buildStatus({ worktree, now = () => new Date(), tokens = null, answered = answeredInViews, slice = sliceInViews, feature }) {
+  const { brief, plan, ledger } = feature ?? loadFeature(worktree);
   const p = featurePaths(worktree);
-  const plan = typeof brief.plan === 'string' && brief.plan.trim() !== '' ? brief.plan : null;
-  const ledger = plan === null ? null : readLedger(worktree, plan);
 
   let task = null;
   let fixRound = null;
   let building = false;
   if (ledger !== null) {
-    const m = countTasks(readPlan(worktree, plan));
-    const read = readTasks(ledger);
-    const n = [...read.complete].filter((k) => k >= 1 && k <= m).length;
-    // Status's n of m starts at 1: before any task is complete there is none to give.
-    task = m > 0 && n > 0 ? { n, m } : null;
+    const headings = planTasks(readPlan(worktree, plan));
+    const read = readTasks(ledger.text);
+    const n = [...read.complete].filter((k) => headings.has(k)).length;
+    task = headings.size > 0 ? { n, m: headings.size } : null;
     fixRound = read.fixRound;
     building = read.any;
   }
@@ -282,7 +384,7 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
     waitingOn: waiting ? 'question' : null,
     head: gitHead(worktree),
     pr,
-    slice: null,
+    slice: slice(worktree, brief.work),
     tokens,
     updatedAt: now().toISOString(),
   };
@@ -290,17 +392,14 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
 
 // --- The rulings ---
 
-// The rulings kept so far, one JSON string per line; null when the file is too
-// big to read whole, so nothing is appended that might already be there.
+// The rulings kept so far, one JSON string per line, and the file's text. Null
+// when the file is there but is not a regular file, or is too big to read
+// whole, so nothing is written that might clobber or repeat what is there.
 function keptRulings(file) {
-  let text;
-  try {
-    const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size > RULINGS_BYTES) return null;
-    text = fs.readFileSync(file, 'utf8');
-  } catch (error) {
-    return error?.code === 'ENOENT' ? { list: [], text: '' } : null;
-  }
+  const stat = lstatOf(file);
+  if (stat === null) return { list: [], text: '' };
+  const text = readCapped(file, RULINGS_BYTES);
+  if (text === null) return null;
   const list = [];
   for (const line of lines(text)) {
     try {
@@ -311,27 +410,27 @@ function keptRulings(file) {
   return { list, text };
 }
 
-// Appends to rulings.jsonl, as one JSON string per line and in ledger order,
-// each ledger line holding `Ruling:` (trimmed) that is not kept already.
-// Returns the lines it appended. Nothing is written without a ledger.
-export function captureRulings({ worktree }) {
-  const brief = readBrief(worktree);
-  const ledger = typeof brief.plan === 'string' ? readLedger(worktree, brief.plan) : null;
-  if (ledger === null) return [];
+// Keeps in rulings.jsonl, one JSON string per line and in ledger order, each
+// ledger line holding `Ruling:` (trimmed) that is not kept already. The file is
+// rewritten whole (what was kept, then what is added) and renamed into place,
+// never appended to, so runs at the same moment can't repeat a line.
+// Returns the lines it added. Nothing is written without a ledger.
+export function captureRulings({ worktree, feature }) {
+  const { ledger } = feature ?? loadFeature(worktree);
+  if (ledger === null || !safeFeatureFolder(worktree)) return [];
   const file = featurePaths(worktree).rulings;
   const kept = keptRulings(file);
   if (kept === null) return [];
   const seen = new Set(kept.list);
   const added = [];
-  for (const line of lines(ledger)) {
+  for (const line of lines(ledger.text)) {
     const text = line.trim();
     if (!text.includes(RULING) || seen.has(text)) continue;
     seen.add(text);
     added.push(text);
   }
   if (added.length === 0) return [];
-  fs.mkdirSync(path.dirname(file), { recursive: true });
   const lead = kept.text === '' || kept.text.endsWith('\n') ? '' : '\n';
-  fs.appendFileSync(file, `${lead}${added.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  writeWhole(file, `${kept.text}${lead}${added.map((r) => JSON.stringify(r)).join('\n')}\n`);
   return added;
 }

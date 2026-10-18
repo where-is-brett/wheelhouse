@@ -174,6 +174,15 @@ test('a malformed status reads as null', () => {
   delete missing.pr;
   put(missing);
   assert.equal(readStatus(file), null);
+  for (const change of [{ task: { n: -1, m: 3 } }, { task: { n: 0, m: 0 } }, { slice: { n: 0, m: 2 } }]) {
+    put({ ...status(), ...change });
+    assert.equal(readStatus(file), null, JSON.stringify(change));
+  }
+  // No task complete yet is 0 of m.
+  put({ ...status(), task: { n: 0, m: 4 } });
+  assert.deepEqual(readStatus(file).task, { n: 0, m: 4 });
+  put({ ...status(), task: { n: 4, m: 4 } });
+  assert.deepEqual(readStatus(file).task, { n: 4, m: 4 });
   put({ ...status(), task: null, slice: null, head: null, tokens: null, fixRound: 2, waitingOn: 'ci', pr: 9, phase: 'waiting' });
   assert.equal(readStatus(file).waitingOn, 'ci');
 });

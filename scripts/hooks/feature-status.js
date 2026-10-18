@@ -1,43 +1,52 @@
 // scripts/hooks/feature-status.js
 // Keeps a feature session's status.json current, on PostToolUse (any tool),
-// SubagentStop and Stop. In a feature worktree only (one whose root holds
-// .wheelhouse/feature/brief.md), it keeps the session id for open-pr, keeps the
-// ledger's rulings, then builds the status and writes it when it changed. On
-// PostToolUse it does that at most once every five seconds; the last time is
-// kept in .wheelhouse/feature/checked.json, since status.json is rewritten only
-// on a change and so its own time can't say when the hook last looked.
-// It informs: it prints nothing, and a failure anywhere is passed over.
-// It never runs git; the root is found from the .git entry with fs.
-import crypto from 'node:crypto';
-import fs from 'node:fs';
+// SubagentStop and Stop. It acts in a feature worktree only: one whose
+// `.wheelhouse` and `.wheelhouse/feature` are real folders inside it, whose
+// brief can be read, and whose branch is `feature/<the brief's work>`.
+// Anywhere else it does nothing and writes nothing.
+//
+// In a feature worktree it keeps the session id for open-pr; keeps the
+// ledger's rulings whenever the ledger's size or time has moved; and builds the
+// status, writing it when it changed. On PostToolUse the status is built at
+// most once every five seconds. The time of the last build and the ledger's
+// stamp are kept in .wheelhouse/feature/checked.json: status.json is rewritten
+// only on a change, so its own time can't say when the hook last looked.
+//
+// It informs: it prints nothing, and a failure anywhere is passed over. Every
+// write refuses a symlink. It never runs git; the root is found with fs.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runAndExit, worktreeRoot } from './kit.js';
+import { featureSlug } from './session-start.js';
 import { featurePaths, readStatus, writeStatus } from '../feature/files.js';
-import { buildStatus, captureRulings } from '../feature/status.js';
+import { buildStatus, captureRulings, findLedger, loadFeature, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES } from '../feature/status.js';
 
 export const THROTTLE_MS = 5000;
-const SMALL_BYTES = 4096;
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+const checkedFile = (p) => path.join(p.dir, 'checked.json');
 
 function readSmallJson(file) {
   try {
-    if (fs.statSync(file).size > SMALL_BYTES) return null;
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    return JSON.parse(readCapped(file, SMALL_BYTES) ?? 'null');
   } catch {
     return null;
   }
 }
 
-// Written whole to a temporary name, then renamed over the real one.
-function writeJson(file, value) {
-  const temp = `${file}.${crypto.randomUUID().slice(0, 12)}.tmp`;
+const writeJson = (file, value) => writeWhole(file, `${JSON.stringify(value)}\n`);
+
+// The worktree's root and brief when `cwd` is in a feature worktree; null otherwise.
+export function featureWorktree(cwd) {
+  const root = worktreeRoot(cwd);
+  if (root === null || !safeFeatureFolder(root)) return null;
+  let brief;
   try {
-    fs.writeFileSync(temp, `${JSON.stringify(value)}\n`, { flag: 'wx' });
-    fs.renameSync(temp, file);
-  } finally {
-    fs.rmSync(temp, { force: true });
+    brief = readBrief(root);
+  } catch {
+    return null;
   }
+  return featureSlug(root) === brief.work ? { root, brief } : null;
 }
 
 // session.json holds `{ sessionId }`, rewritten only when the session changes.
@@ -47,23 +56,8 @@ function keepSession(file, sessionId) {
   writeJson(file, { sessionId });
 }
 
-// Whether five seconds have passed since the hook last looked, and if so,
-// marks now as the last look. A last look in the future (the clock went back)
-// counts as long ago.
-function due(file, nowMs) {
-  const last = readSmallJson(file)?.at;
-  if (Number.isFinite(last) && nowMs >= last && nowMs - last < THROTTLE_MS) return false;
-  writeJson(file, { at: nowMs });
-  return true;
-}
-
-// Every field but updatedAt.
-function sameStatus(a, b) {
-  if (a === null || b === null) return false;
-  const { updatedAt: _a, ...restA } = a;
-  const { updatedAt: _b, ...restB } = b;
-  return JSON.stringify(restA) === JSON.stringify(restB);
-}
+// A last build in the future (the clock went back) counts as long ago.
+const recent = (last, nowMs) => Number.isFinite(last) && nowMs >= last && nowMs - last < THROTTLE_MS;
 
 // Each step stands alone: one that fails leaves the others to run.
 function attempt(step) {
@@ -74,22 +68,43 @@ function attempt(step) {
   }
 }
 
-export async function decide(input, { now = () => new Date(), answered } = {}) {
-  const root = worktreeRoot(input.cwd);
-  if (root === null) return undefined;
+// Every field but updatedAt.
+function sameStatus(a, b) {
+  if (a === null || b === null) return false;
+  const { updatedAt: _a, ...restA } = a;
+  const { updatedAt: _b, ...restB } = b;
+  return JSON.stringify(restA) === JSON.stringify(restB);
+}
+
+export async function decide(input, { now = () => new Date(), answered, slice } = {}) {
+  const found = featureWorktree(input.cwd);
+  if (found === null) return undefined;
+  const { root, brief } = found;
   const p = featurePaths(root);
-  try {
-    if (!fs.statSync(p.brief).isFile()) return undefined;
-  } catch {
-    return undefined;
-  }
   attempt(() => keepSession(p.session, input.session_id));
-  if (input.hook_event_name === 'PostToolUse' && attempt(() => due(path.join(p.dir, 'checked.json'), now().getTime())) === false) return undefined;
-  attempt(() => captureRulings({ worktree: root }));
-  attempt(() => {
-    const next = buildStatus({ worktree: root, now, ...(answered ? { answered } : {}) });
-    if (!sameStatus(readStatus(p.status), next)) writeStatus(p.status, next);
-  });
+
+  const nowMs = now().getTime();
+  const checked = readSmallJson(checkedFile(p));
+  const before = checked !== null && typeof checked === 'object' && !Array.isArray(checked) ? checked : {};
+  const ledger = attempt(() => findLedger(root, brief.plan)) ?? null;
+  const stamp = ledger ? { file: path.relative(root, ledger.file), size: ledger.size, mtimeMs: ledger.mtimeMs } : null;
+  const moved = JSON.stringify(before.ledger ?? null) !== JSON.stringify(stamp);
+  const due = input.hook_event_name !== 'PostToolUse' || !recent(before.at, nowMs);
+  if (!moved && !due) return undefined;
+
+  // The brief and the ledger, read once for both steps.
+  const feature = attempt(() => loadFeature(root, { brief, ledger }));
+  if (!feature) return undefined;
+  const after = { ...before };
+  if (moved && attempt(() => (captureRulings({ worktree: root, feature }), true))) after.ledger = stamp;
+  if (due) {
+    attempt(() => {
+      const next = buildStatus({ worktree: root, now, feature, ...(answered ? { answered } : {}), ...(slice ? { slice } : {}) });
+      if (!sameStatus(readStatus(p.status), next)) writeStatus(p.status, next);
+    });
+    after.at = nowMs;
+  }
+  attempt(() => writeJson(checkedFile(p), after));
   return undefined;
 }
 

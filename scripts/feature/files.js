@@ -41,6 +41,17 @@ const isNumber = (x) => typeof x === 'number' && Number.isFinite(x) && x >= 0;
 const isTexts = (x) => Array.isArray(x) && x.every((y) => typeof y === 'string');
 const hasOnly = (o, keys) => Object.keys(o).every((k) => keys.includes(k));
 const isNofM = (x) => isPlain(x) && hasOnly(x, ['n', 'm']) && Number.isInteger(x.n) && Number.isInteger(x.m) && x.n >= 1 && x.n <= x.m;
+// A task count: n of the plan's m tasks complete, where none complete yet is 0.
+const isTaskCount = (x) => isPlain(x) && hasOnly(x, ['n', 'm']) && Number.isInteger(x.n) && Number.isInteger(x.m) && x.m >= 1 && x.n >= 0 && x.n <= x.m;
+// Whether `file` is a regular file, checked without following a symlink or
+// opening it, so a symlink, a folder or a FIFO is refused before it can block.
+function isRegular(file) {
+  try {
+    return fs.lstatSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
 const isTime = (x) => typeof x === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(x) && !Number.isNaN(Date.parse(x));
 
 // A document whose first block is a fenced json block: its parsed fields and the text after it.
@@ -104,7 +115,7 @@ function validStatus(s) {
     && typeof s.work === 'string' && SLUG.test(s.work)
     && LANES.includes(s.lane)
     && PHASES.includes(s.phase)
-    && (s.task === null || isNofM(s.task))
+    && (s.task === null || isTaskCount(s.task))
     && (s.fixRound === null || isCount(s.fixRound))
     && (s.waitingOn === null || WAITING_ON.includes(s.waitingOn))
     && (s.head === null || isText(s.head))
@@ -114,8 +125,10 @@ function validStatus(s) {
     && isTime(s.updatedAt);
 }
 
-// The status in `file`, or null when it is missing, over 64 KB, not JSON or not the right shape.
+// The status in `file`, or null when it is missing, not a regular file, over
+// 64 KB, not JSON or not the right shape.
 export function readStatus(file) {
+  if (!isRegular(file)) return null;
   try {
     const fd = fs.openSync(file, 'r');
     let text;
@@ -135,9 +148,11 @@ export function readStatus(file) {
 }
 
 // Writes the status whole to a temporary name and renames it over `file`, so a
-// reader sees the old status or the new one and never half of either.
+// reader sees the old status or the new one and never half of either. A `file`
+// that is there but is not a regular file (a symlink, say) is refused.
 export function writeStatus(file, status) {
   if (!validStatus(status)) throw new Error("The status can't be written");
+  if (lstatOf(file) !== null && !isRegular(file)) throw new Error("The status can't be written");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${crypto.randomUUID().slice(0, 12)}.tmp`;
   try {
@@ -179,6 +194,7 @@ function validQuestion(q) {
 export function readQuestions(file, { maxBytes = READ_BYTES } = {}) {
   let text;
   let cut = false;
+  if (!isRegular(file)) return { questions: [], skipped: 0, truncated: false };
   try {
     const fd = fs.openSync(file, 'r');
     try {
