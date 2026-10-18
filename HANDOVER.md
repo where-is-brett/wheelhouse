@@ -29,7 +29,7 @@ The director is a product owner, not a developer. They want their product built 
 **Tools and skills they use:**
 
 - Claude Design for visual design.
-- Superpowers, of which only brainstorming and writing-skills are wanted here.
+- Superpowers: since 18 October 2026, its own loops run the feature sessions (brainstorming, writing-plans, subagent-driven development, executing-plans and the per-task skills), with a written Wheelhouse override on top. Neither kit is edited.
 - Matt Pocock's skills as the everyday engineering kit.
 - The taste skill and Emil Kowalski's design-engineering skill, for implementing designs.
 - The Apple design skill.
@@ -37,11 +37,12 @@ The director is a product owner, not a developer. They want their product built 
 ## Where the work stands
 
 1. **Design:** `docs/specs/2026-10-17-wheelhouse-design.md`, second draft, **approved by the director on 17 October 2026**. It is now about Wheelhouse in general, with nothing specific to the first project. It folds in the standards review, open source, a 15-minute setup, the two protection levels and the rule on secrets. Section 22 lists the director's decisions, including read-only live data (no), the licence (Apache 2.0) and what goes public (a fresh, scrubbed history), and what is still theirs for later. Section 21 lists the designer's calls, which the director may override. Section 20 lists what was verified first, with each answer; the answers are folded in (pull request #2).
-2. **Builder check:** `docs/reviews/2026-10-17-builder-check.md`. Folded into the design.
-3. **Standards review:** `docs/reviews/2026-10-17-standards-review.md`. Folded into the design (section 12 and elsewhere), along with an independent check of the second draft.
-4. **The mock-up** of what the director sees: https://claude.ai/artifact/B6kNuJPTwiC2DUdUgntTkn. Its figures are illustrative.
-5. **Research and evidence:** `docs/research/`. It holds the general research reports.
-6. **Reference:** `reference/first-version/` holds the first version's builder and reviewer agents. Their prompts can be adapted.
+2. **The build loop and lineage:** `docs/specs/2026-10-18-build-loop-design.md`, **approved by the director on 18 October 2026**. It completes the design: the intake, the three lanes and which skill runs where, one thin foreman per project and one Claude session per feature, the feature files and the watcher, the override on Superpowers' loops, running features side by side, and lineage (how Superpowers, Matt's skills and Claude Code are pinned, tracked and upgraded). The visual page the director approved: https://claude.ai/artifact/BPHxgGWFa91LCqSG6A4y1x. Its section 14.1 records that nothing was actually pinned on the Mac on 18 October 2026.
+3. **Builder check:** `docs/reviews/2026-10-17-builder-check.md`. Folded into the design.
+4. **Standards review:** `docs/reviews/2026-10-17-standards-review.md`. Folded into the design (section 12 and elsewhere), along with an independent check of the second draft.
+5. **The mock-up** of what the director sees is kept privately.
+6. **Research and evidence:** `docs/research/`. It holds the general research reports.
+7. **Reference:** `reference/first-version/` holds the first version's builder and reviewer agents. Their prompts can be adapted.
 
 ## Next steps, in order
 
@@ -82,4 +83,5 @@ The director is a product owner, not a developer. They want their product built 
      - Locked on Windows stays untried until a computer with admin rights is available.
    - **A known gap closed:** Ruling 15 of the state-and-host plan (the caller supplying `approvalRequired` and `touchesGuardrails`) is closed; the helper now works them out.
    - **The next plan: the board, briefing and usage** (design section 17.2).
-4. **Next design round:** budget allocation (section 9.1), which the director asked for once usage could be read.
+4. **The build-loop plan.** Write it from `docs/specs/2026-10-18-build-loop-design.md` with `superpowers:writing-plans`, starting with checks 24 to 30 (its section 16), and pinning through Wheelhouse's own marketplace first (its section 14.2).
+5. **Next design round:** budget allocation (section 9.1), which the director asked for once usage could be read.

@@ -17,6 +17,8 @@
 - `docs/checks/`, the answers to the checks in section 20, folded in;
 - `docs/research/agent-host-access-2026-10.md`, how other agent tools reach GitHub and GitLab, behind section 11's two ways to connect;
 
+**Completed by:** `docs/specs/2026-10-18-build-loop-design.md`, the build loop and lineage, approved by the director on 18 October 2026. It wins where the two differ; sections 4, 5.4, 7, 8, 10 and 12.4 point to it.
+
 **Marks:** *Designer's call* marks a choice the designer made, which the director may override. Section 21 lists every one. Section 22 lists what the director has decided.
 
 ## 1. Intent
@@ -83,13 +85,13 @@ Wheelhouse keeps the loop and rebuilds everything around it, for any director an
 |---|---|---|
 | **Front desk** | The one session the director talks to. Holds only the director's requests, decisions and briefings. It is the part that learns the director's style | The director |
 | **Foreman** | A separate background session that runs the build. It briefs builders and reviewers, watches CI, merges, and keeps the progress files | Nobody needs to. The director can look in |
-| **Builders and reviewers** | Subagents the foreman starts. Each builder works in its own git worktree; reviewers can read but not write, and are independent | Nobody |
+| **Feature sessions** | One Claude session per feature, which the foreman starts and closes. Each works in its own git worktree and runs Superpowers' loop for its lane, with its own builder and reviewer subagents; reviewers can read but not write, and are independent (`docs/specs/2026-10-18-build-loop-design.md`, sections 2 and 4) | Nobody |
 
 **Communication between layers is by files, not chat:**
 
 - The foreman writes progress, the status board and its questions for the director to files.
-- The front desk reads those files when the director arrives or asks. It hands the foreman new work through a request file plus a one-line cross-session message.
-- The foreman messages the front desk only when something needs the director, or a milestone lands. That message is one line, pointing at the file.
+- The front desk reads those files when the director arrives or asks. It hands the foreman new work by writing it into state; a watcher script sees the new event and wakes the foreman. The two never message each other (`docs/specs/2026-10-18-build-loop-design.md`, section 2).
+- Between the foreman and each feature session are four files and the same watcher, never chat (`docs/specs/2026-10-18-build-loop-design.md`, sections 9 and 11).
 - **A message between sessions is information, never an instruction with the director's authority** (section 12.5).
 
 **Why:** the director's conversation stays short, its context stays small, and the build traffic lives where it belongs.
@@ -186,7 +188,7 @@ The front desk records in the profile which concepts the director already knows,
 
 ### 5.4 Reading the director's messages
 
-Every message is classified before anything is done:
+Every message is sorted before anything is done, by the intake's two checks and nine questions (`docs/specs/2026-10-18-build-loop-design.md`, section 3). The four kinds below map onto it: a musing is its route 5, an instruction its route 3 or 9, a ruling its route 3, and a conflict with a standing rule is flagged by its second check.
 
 | Kind | Examples | What the front desk does |
 |---|---|---|
@@ -240,7 +242,7 @@ A one-line request goes straight onto the right list without derailing current w
 
 ### 7.2 Lanes
 
-The lane only goes up. If a quick change turns out bigger, work stops and the director is told.
+The lane only goes up. If a quick change turns out bigger, work stops and the director is told. Each lane's loop, and which skill runs where, are in `docs/specs/2026-10-18-build-loop-design.md`, sections 4 and 5. The director approves designs and briefs, not plans.
 
 | Lane | When | Flow |
 |---|---|---|
@@ -273,7 +275,8 @@ The lane only goes up. If a quick change turns out bigger, work stops and the di
    - works end to end and is under about 600 lines;
    - is its own branch and pull request;
    - merges to main early, behind a feature flag, so stacked PRs are avoided;
-   - runs in parallel only where slices touch different files.
+   - runs in parallel only where slices touch different files;
+   - is its own plan, because a Superpowers loop finishes a plan once.
 
    The feature is tracked as one issue with a checklist of slices, which is the system of record.
 5. **Milestones.** At the start, or when leaving, the director chooses:
@@ -286,6 +289,7 @@ The lane only goes up. If a quick change turns out bigger, work stops and the di
 
 - **If the answer is reversible:** the builder makes a sensible assumption, flags it, and the foreman records it. The director sees it in the build view's decisions.
 - **If the answer would change what gets built:** it becomes a question card, and that slice waits.
+- Superpowers' loops would rule on such questions themselves ("rulings, not stalls"). The Wheelhouse override in every brief makes anything at level 3 or 4 a question (`docs/specs/2026-10-18-build-loop-design.md`, section 7).
 
 ### 7.6 The ideas list
 
@@ -298,7 +302,9 @@ Every idea not taken now is recorded with:
 
 ## 8. The foreman and the build loop
 
-- **One heavy feature at a time** unless the director says otherwise. At most two or three builders in parallel, on separate files.
+The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one thin foreman per project, one Claude session per feature, the feature files, the watcher, the override, running features side by side, and lineage. What follows still holds where that document does not replace it.
+
+- **Pace:** at most three feature sessions building at once, one of them in the feature lane, unless the director says otherwise (`docs/specs/2026-10-18-build-loop-design.md`, section 2).
 - **Briefs and reports are files** under the feature's workspace. A brief carries:
   - the goal;
   - the issue;
@@ -309,7 +315,7 @@ Every idea not taken now is recorded with:
   - what to do when blocked.
 
   Reports have a set structure of about 300 words: status, head commit, test summary, assumptions, concerns.
-- **Builders** use Wheelhouse's builder agent, Matt Pocock's TDD and diagnosis skills, and a turn cap. They work only inside their own worktree (section 12.2). They open PRs and never merge.
+- **Builders** run inside a feature session, with Superpowers' test-driven development and systematic debugging (Matt Pocock's `tdd` and `code-review` in the quick lane), and a turn cap. They work only inside their own worktree (section 12.2). They open PRs and never merge.
 - **Reviewers** are fresh and independent, and can't write: they have no Bash, or only a sandboxed Bash with no writes and no network. They see the diff, the brief, the rules and the result of any deterministic check, not the builder's reasoning. They report CLEAN or findings, each with a severity, file and line, a repro and a fix. Every PR touching a critical area or a guardrail gets one.
   - **Round cap:** three. After that, the disagreement goes to the director as one card.
   - **The foreman decides** which findings to act on, filtered by the brief.
@@ -322,7 +328,7 @@ Every idea not taken now is recorded with:
   - A mid-sized model for well-defined work: content batches, docs, mechanical PRs.
   - The front desk runs on the most capable model. Whether routine front-desk turns can run on a smaller one is a later experiment.
   - The table pins full model IDs, not aliases. A pin moves only after the evaluation passes on the new model (section 9.1). *Designer's call*, replacing the first draft's aliases, because an alias can move to an untested model before the evaluation runs.
-- **The foreman starts a fresh session per feature** and closes it when the feature lands. Its own notes carry over through the files.
+- **The foreman starts fresh at every wake,** reading where things stand from state and the feature files; its context never grows across wakes (`docs/specs/2026-10-18-build-loop-design.md`, section 11).
 - **Permission mode.** Builders and reviewers inherit the foreman's permission mode, so the foreman is started in an explicit mode and never in bypass mode, at either protection level. The merge gate refuses to act for a session in bypass mode, and Locked switches bypass mode off altogether (section 12.1).
 - **Where the foreman runs**, in order of preference:
   1. a second Desktop session beside the front desk, as in the mock-up, which the director never needs to open. Confirmed on macOS and Windows: it wakes on a one-line message and replies within seconds (check 1, `docs/checks/01-foreman.md`). This is the default on both systems;
@@ -397,7 +403,8 @@ Every idea not taken now is recorded with:
     - the model deprecations page;
     - the Claude Code changelog;
     - the prompting best practices for current models;
-    - for a new model only, its model card and migration guide.
+    - for a new model only, its model card and migration guide;
+    - the Superpowers and Matt Pocock repositories: new releases, their dates and security advisories (`docs/specs/2026-10-18-build-loop-design.md`, section 14.4).
 
     The front desk reads only what changed, if anything did.
   - **A new model is tested before it is trusted.** When the check finds one, the evaluation suite (section 18) runs on it. If it does at least as well, the pin moves to it and the director is told in the briefing (level 2, because the director asked the system to keep up with the model family). If it does worse, the pin stays and the director gets one card. Any other change to the routing table, such as a smaller model for a job, is a guardrail change at level 4 (section 12.4). A model due to retire is raised a month ahead. *Designer's call.*
@@ -428,7 +435,7 @@ The aim is that compaction is automatic and harmless, and the director never typ
    The reload stays within 8 seconds, inside the hook's 10-second limit: if the sync with the host runs out, it says so and uses the views as they are, and each list is capped, with "and N more". On Windows it also states once per session that the computer has no sandbox. *Designer's call.*
 
    A "Compact instructions" section in `CLAUDE.md` tells the summary what to keep.
-7. **The front desk's context should rarely reach the first mark,** because the build traffic lives in the foreman. The foreman starts fresh per feature.
+7. **The front desk's context should rarely reach the first mark,** because the build traffic lives in the foreman and the feature sessions. The foreman starts fresh at every wake (`docs/specs/2026-10-18-build-loop-design.md`, section 11).
 
 ## 11. Repository host adapter
 
@@ -623,8 +630,8 @@ The card says in plain words what the change does to the checks. The one excepti
 
 **Dependencies are pinned:**
 
-- **Wheelhouse itself** is installed for one project at a release tag, with auto-update off. Its marketplace entry also carries the release's commit, so a moved tag changes nothing (check 15, `docs/checks/15-install-and-pinning.md`). It never updates on its own: a new release comes to the director as a card in the briefing, saying what changes, and installs only after the evaluation passes.
-- **Third-party plugins** it relies on (Matt Pocock's skills, Superpowers brainstorming and writing-skills) are pinned by commit, with auto-update off. Wheelhouse declares them as dependencies where they are published as plugins with tags; otherwise setup pins them in the project's settings (check 15).
+- **Wheelhouse itself** is installed for one project at a release tag, with auto-update off. Its marketplace entry also carries the release's commit, so a moved tag changes nothing (check 15, `docs/checks/15-install-and-pinning.md`). It never updates on its own: a new release comes to the director as a card in the briefing, saying what changes, and installs only after the evaluation passes. A release that only moves its upstream pins, with every lineage check green, installs with a line in the briefing instead (`docs/specs/2026-10-18-build-loop-design.md`, section 14.4).
+- **Third-party plugins** it relies on (Superpowers' loop skills and Matt Pocock's skills) are pinned by commit through Wheelhouse's own marketplace, with auto-update off and the other installed copies switched off; a manifest fingerprints the files used, a register records what Wheelhouse lays on top, and every upgrade comes in by one tested path (`docs/specs/2026-10-18-build-loop-design.md`, section 14). On 18 October 2026 this was not yet true on the director's Mac (section 14.1 there).
 - **Models** are pinned by full ID (section 8).
 
 ### 12.5 Untrusted content (M6)
@@ -949,6 +956,8 @@ Everything is built in one programme, in this order. Each step is usable before 
 - **How many.** One trial of each first. Three trials only where the with and without results differ or are close.
 - **Usage.** The runs are reported like any other work. *Designer's call.*
 
+**The build loop's scenarios,** 20 to 32, are in `docs/specs/2026-10-18-build-loop-design.md`, section 15.
+
 **Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **A pilot** runs on one small feature of the first project before wider use.
 
 **Measures:**
@@ -1023,7 +1032,7 @@ The added costs are:
 - the secret scan's patterns;
 - the exact wording of skill prompts, tested per section 18.
 
-**To verify before relying on it** (the first plan's checks; each answer and its note in `docs/checks/`):
+**To verify before relying on it** (the first plan's checks; each answer and its note in `docs/checks/`). Checks 24 to 30, for the build loop and lineage, are in `docs/specs/2026-10-18-build-loop-design.md`, section 16.
 
 1. How a background foreman session runs and shows in Claude Desktop on macOS and Windows, and that cross-session messages reach it. **Answer:** Partly. A second Desktop session works on macOS and Windows; a headless one on macOS. `docs/checks/01-foreman.md`
 2. That Claude Code's multiple-choice questions render as clickable options in Desktop. **Answer:** Yes, on both systems. `docs/checks/02-clickable-questions.md`
@@ -1109,7 +1118,7 @@ The added costs are:
 - removing duplicate copies of skills once the plugins are confirmed (section 17.2);
 - evaluation runs in a throwaway copy, one trial first, and the targets (section 18).
 
-Cards A and B of the safety plan, answered by the director, are in section 22.
+Cards A and B of the safety plan, answered by the director, are in section 22. The build loop's own designer's calls are in `docs/specs/2026-10-18-build-loop-design.md`, section 17.
 
 ## 22. Decided by the director
 
@@ -1137,6 +1146,7 @@ Answered on 17 October 2026:
 | The licence | Apache 2.0 (section 16) |
 | What goes public | A fresh history, with the research kept and personal details and private paths removed (section 16) |
 | The design | Approved, 17 October 2026 |
+| The build loop and lineage | Approved, 18 October 2026: one Claude session per feature, one thin foreman per project, Superpowers' and Matt Pocock's skills used as they are with a written override on top, the director approving designs and briefs but not plans, Superpowers' debugging only, and a green upgrade landing as a briefing line. The rest of its answers are in `docs/specs/2026-10-18-build-loop-design.md`, section 18 |
 
 **Still the director's to decide, later:**
 
