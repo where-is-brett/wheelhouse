@@ -9,12 +9,14 @@ import { jobsDir, sourcesDir, wheelhouseHome } from '../../../scripts/lib/paths.
 import { WEEK_MS } from '../../../scripts/lib/core-numbers.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
+import { runSourcesCheck } from '../../../scripts/sources/check.js';
 import { weeklyDue, runWeekly } from '../../../scripts/jobs/weekly.js';
 import { weeklyDue as backgroundWeeklyDue } from '../../../scripts/lib/background.js';
 
 const NOW = '2026-10-19T09:00:00.000Z';
 const at = (offsetMs) => new Date(Date.parse(NOW) + offsetMs).toISOString();
 const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 const recordFile = () => path.join(jobsDir(), 'weekly.json');
 const readRecord = () => JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
 const writeRecord = (body) => {
@@ -160,13 +162,104 @@ test('when the helper can\'t be reached for any backup or the sync, the run isn\
   const kept = readRecord();
   assert.equal(kept.lastRun, undefined, 'no last run while the helper was down');
   assert.deepEqual(kept.result.profile, out.profile);
-  assert.equal(weeklyDue(at(HOUR)), true, 'the next session start tries again');
+  assert.equal(weeklyDue(at(HOUR)), false, 'not again the same day');
+  assert.equal(weeklyDue(at(DAY)), true, 'a session start a day later tries again');
 
   // A run some of whose calls reach the helper is done for the week.
-  const reached = await runWeekly({ now: at(HOUR), fetch: pageFetch(), root: bareRoot(), client: fakeClient({ sync: () => away }) });
+  const reached = await runWeekly({ now: at(DAY), fetch: pageFetch(), root: bareRoot(), client: fakeClient({ sync: () => away }) });
   assert.equal(reached.backups.every((b) => b.ok), true);
-  assert.equal(readRecord().lastRun, at(HOUR));
-  assert.equal(weeklyDue(at(2 * HOUR)), false);
+  assert.equal(readRecord().lastRun, at(DAY));
+  assert.equal(weeklyDue(at(DAY + HOUR)), false);
+}));
+
+const AWAY = { ok: false, refused: 'the host helper could not be reached: is it running?' };
+const downClient = () => fakeClient({ backup: () => AWAY, sync: () => AWAY });
+// A sources check that counts its runs and hands on to the real one.
+function countedCheck() {
+  const check = async (args) => { check.runs += 1; return runSourcesCheck(args); };
+  check.runs = 0;
+  return check;
+}
+
+test('with the helper down, the sources check runs once and only the backups and the sync are tried again, once a day', () => withHome(async () => {
+  addProject('owner__one');
+  const check = countedCheck();
+  const first = downClient();
+  await runWeekly({ now: NOW, fetch: pageFetch(), client: first, root: bareRoot(), sourcesCheck: check });
+  assert.equal(check.runs, 1);
+  assert.deepEqual(first.calls, [['backup', 'owner__one'], ['sync']]);
+  assert.equal(readRecord().sourcesRun, NOW);
+  assert.equal(readRecord().lastRun, undefined);
+
+  // The same day: nothing is due, and a run that starts anyway does nothing.
+  assert.equal(weeklyDue(at(3 * HOUR)), false);
+  const again = downClient();
+  const sameDay = await runWeekly({ now: at(3 * HOUR), fetch: pageFetch(), client: again, root: bareRoot(), sourcesCheck: check });
+  assert.equal(sameDay.skipped, true);
+  assert.deepEqual(again.calls, []);
+  assert.equal(check.runs, 1);
+
+  // The next day: the backups and the sync are tried again, the sources check is not.
+  assert.equal(weeklyDue(at(DAY)), true);
+  const second = downClient();
+  const retried = await runWeekly({ now: at(DAY), fetch: pageFetch(), client: second, root: bareRoot(), sourcesCheck: check });
+  assert.equal(check.runs, 1, 'the sources check is not run again');
+  assert.deepEqual(second.calls, [['backup', 'owner__one'], ['sync']]);
+  assert.equal(retried.sources, null);
+  const kept = readRecord();
+  assert.equal(kept.sourcesRun, NOW, 'the week still counts from the first try');
+  assert.equal(kept.lastRun, undefined);
+  assert.equal(kept.result.sources.ok, true, 'the sources result from the first try is kept');
+  assert.equal(weeklyDue(at(DAY + HOUR)), false);
+  assert.equal(weeklyDue(at(2 * DAY)), true);
+}));
+
+test('a sources change found while the helper is down is still there after the next day\'s retry', () => withHome(async () => {
+  addProject('owner__one');
+  const changelog = DEFAULT_SOURCES.find((s) => s.id === 'changelog');
+  let text = '<p>Version 1 notes</p>';
+  const fetch = async (url) => new Response(String(url) === changelog.url ? text : '<p>a page</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+  // Last week's run, with the helper up, keeps the first copy.
+  await runWeekly({ now: at(-WEEK_MS), fetch, client: fakeClient(), root: bareRoot() });
+  text = '<p>Version 1 notes</p><p>Version 2 notes</p>';
+  await runWeekly({ now: NOW, fetch, client: downClient(), root: bareRoot() });
+  const reportFile = path.join(sourcesDir(), 'report.json');
+  const diffFile = path.join(sourcesDir(), 'diff', 'changelog.txt');
+  const report = fs.readFileSync(reportFile, 'utf8');
+  assert.equal(JSON.parse(report).sources.find((s) => s.id === 'changelog').changed, true);
+  const diff = fs.readFileSync(diffFile, 'utf8');
+  assert.match(diff, /Version 2/);
+
+  await runWeekly({ now: at(DAY), fetch, client: downClient(), root: bareRoot() });
+  assert.equal(fs.readFileSync(reportFile, 'utf8'), report, 'the report is as the first try left it');
+  assert.equal(fs.readFileSync(diffFile, 'utf8'), diff, 'the diff is still there');
+  await runWeekly({ now: at(2 * DAY), fetch, client: fakeClient(), root: bareRoot() });
+  assert.equal(fs.readFileSync(reportFile, 'utf8'), report);
+  assert.equal(fs.readFileSync(diffFile, 'utf8'), diff);
+}));
+
+test('with the helper back the next day, the week is done; the next week counts from the first try', () => withHome(async () => {
+  addProject('owner__one');
+  const check = countedCheck();
+  await runWeekly({ now: NOW, fetch: pageFetch(), client: downClient(), root: bareRoot(), sourcesCheck: check });
+  const back = fakeClient();
+  const out = await runWeekly({ now: at(DAY), fetch: pageFetch(), client: back, root: bareRoot(), sourcesCheck: check });
+  assert.deepEqual(back.calls, [['backup', 'owner__one'], ['sync']]);
+  assert.deepEqual(out.backups, [{ project: 'owner__one', ok: true }]);
+  assert.equal(out.profile.ok, true);
+  const kept = readRecord();
+  assert.equal(kept.lastRun, at(DAY));
+  assert.equal(kept.sourcesRun, NOW);
+  assert.equal(check.runs, 1);
+  assert.equal(weeklyDue(at(2 * DAY)), false, 'no retry once the week is done');
+  assert.equal(weeklyDue(at(WEEK_MS - 1)), false);
+  assert.equal(weeklyDue(at(WEEK_MS)), true, 'a week after the first try, not after the last');
+
+  const next = fakeClient();
+  await runWeekly({ now: at(WEEK_MS), fetch: pageFetch(), client: next, root: bareRoot(), sourcesCheck: check });
+  assert.equal(check.runs, 2, 'the next week checks the sources again');
+  assert.equal(readRecord().sourcesRun, at(WEEK_MS));
+  assert.equal(readRecord().lastRun, at(WEEK_MS));
 }));
 
 test('the record keeps counts and whys, written only after all three have been tried', () => withHome(async () => {

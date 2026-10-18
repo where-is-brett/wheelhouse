@@ -1,12 +1,21 @@
 // scripts/jobs/weekly.js
 // The weekly jobs: the check of the official sources, a backup of every registered project's
 // state, and a sync of the director's profile. A session start runs `weekly-main.js`, detached,
-// when `weeklyDue` says a week has passed; the process calls `runWeekly`.
+// when `weeklyDue` says a week has passed or a retry is due; the process calls `runWeekly`.
 //
 // Under jobsDir():
-//   weekly.json   { lastRun, result }  written once all three have been tried. `result` keeps
-//                 counts and reasons only; the whole sources report is in sources/report.json.
-//                 When the helper couldn't be reached for any of its calls there is no lastRun.
+//   weekly.json   { sourcesRun, lastRun, retryAt, result }  written once the run's jobs have been tried.
+//                 sourcesRun  when this week's sources check ran: the first try of the week, which
+//                             the week counts from
+//                 lastRun     when the backups and the sync were tried with the helper reachable:
+//                             the week is done. Absent while the helper couldn't be reached for any
+//                             of its calls; then
+//                 retryAt     when the backups and the sync are tried again (a day after the last
+//                             try). The sources check is not run again until the next week, so a
+//                             change it found stays in sources/ for the director to see.
+//                 `result` keeps counts and reasons only; the whole sources report is in
+//                 sources/report.json. A retry keeps the sources result of the week's first try.
+//                 A record from before sourcesRun was kept counts its week from lastRun.
 //   weekly.lock   held while the jobs run, so two sessions starting together run them once
 //
 // Git and the host are reached only through the helper (`client`).
@@ -24,6 +33,8 @@ import { readSmallText } from '../hooks/kit.js';
 
 // Longer than the jobs take; a lock older than this belongs to a run that died.
 const LOCK_STALE_MS = 30 * 60 * 1000;
+// While the helper can't be reached, the backups and the sync are tried again at most this often.
+const RETRY_MS = 24 * 60 * 60 * 1000;
 const MAX_NESTING = 3;
 
 const recordFile = () => path.join(jobsDir(), 'weekly.json');
@@ -35,18 +46,28 @@ function isoOf(value) {
   return new Date(time).toISOString();
 }
 
-// Whether the jobs are due: no record, a damaged one, a last run a week old or more, or a last
-// run in the future (a clock that was wrong).
+const readRecord = () => {
+  try { return JSON.parse(fs.readFileSync(recordFile(), 'utf8')); } catch { return undefined; }
+};
+
+// What is due for a record at `nowMs`: 'week' (all three jobs), 'retry' (the backups and the
+// sync only) or null. The whole week is due with no record, a damaged one, a week start a week
+// old or more, or one in the future (a clock that was wrong). Within the week, a retry is due
+// while the week isn't done and its retry time has come (or is more than a day off: a clock
+// that was wrong).
+function dueFor(record, nowMs) {
+  const lastRun = Date.parse(record?.lastRun);
+  const weekFrom = Date.parse(record?.sourcesRun ?? record?.lastRun);
+  if (Number.isNaN(weekFrom) || weekFrom > nowMs || nowMs - weekFrom >= WEEK_MS) return 'week';
+  if (!Number.isNaN(lastRun) && lastRun >= weekFrom) return null;
+  const retryAt = Date.parse(record?.retryAt);
+  if (Number.isNaN(retryAt) || nowMs >= retryAt || retryAt - nowMs > RETRY_MS) return 'retry';
+  return null;
+}
+
+// Whether the jobs are due: a new week, or a retry of the backups and the sync.
 export function weeklyDue(now) {
-  let lastRun;
-  try {
-    lastRun = Date.parse(JSON.parse(fs.readFileSync(recordFile(), 'utf8'))?.lastRun);
-  } catch {
-    return true;
-  }
-  if (Number.isNaN(lastRun)) return true;
-  const nowMs = Date.parse(isoOf(now));
-  return lastRun > nowMs || nowMs - lastRun >= WEEK_MS;
+  return dueFor(readRecord(), Date.parse(isoOf(now))) !== null;
 }
 
 function writeWhole(file, body) {
@@ -207,10 +228,12 @@ async function syncProfile(client, answers) {
   }
 }
 
-// Runs the three jobs once a week. One failure never stops the rest. Resolves with
-// `{ sources: SourcesReport | null, backups: [{ project, ok, why? }], profile: { ok, why? } }`,
-// or, when another run holds the lock or has already done this week's jobs,
-// `{ skipped: true, why }` and nothing runs. `root` and `sourcesCheck` are for tests.
+// Runs the three jobs once a week, and the backups and the sync again a day later while the
+// helper couldn't be reached. One failure never stops the rest. Resolves with
+// `{ sources: SourcesReport | null, backups: [{ project, ok, why? }], profile: { ok, why? } }`
+// (`sources` is null for a retry, and for a check that threw), or, when another run holds the
+// lock or nothing is due, `{ skipped: true, why }` and nothing runs. `root` and `sourcesCheck`
+// are for tests.
 export async function runWeekly({ now, fetch = globalThis.fetch, client, root, sourcesCheck = runSourcesCheck } = {}) {
   const at = isoOf(now);
   let release;
@@ -222,27 +245,39 @@ export async function runWeekly({ now, fetch = globalThis.fetch, client, root, s
     return { skipped: true, why: whyOf(error) };
   }
   try {
-    if (!weeklyDue(at)) return { skipped: true, why: 'The weekly jobs have already run this week' };
+    const record = readRecord();
+    const due = dueFor(record, Date.parse(at));
+    if (due === null) return { skipped: true, why: 'The weekly jobs have already run this week' };
     const projects = registeredProjects();
 
     let sources = null;
-    let sourcesResult;
-    try {
-      sources = await sourcesCheck({
-        fetch, now: at, sources: sourcesToCheck(projects, at), routedModels: routedModels(projects), ...(root === undefined ? {} : { root }),
-      });
-      sourcesResult = sourcesCounts(sources);
-    } catch (error) {
-      sourcesResult = { ok: false, why: whyOf(error) };
+    let sourcesRun = record?.sourcesRun ?? record?.lastRun;
+    let sourcesResult = record?.result?.sources;
+    if (due === 'week') {
+      sourcesRun = at;
+      try {
+        sources = await sourcesCheck({
+          fetch, now: at, sources: sourcesToCheck(projects, at), routedModels: routedModels(projects), ...(root === undefined ? {} : { root }),
+        });
+        sourcesResult = sourcesCounts(sources);
+      } catch (error) {
+        sourcesResult = { ok: false, why: whyOf(error) };
+      }
     }
     const answers = [];
     const backups = await backUp(client, projects, answers);
     const profile = await syncProfile(client, answers);
 
-    // With the helper down for every call, the run is kept without a last run, so the next
-    // session start tries again.
-    const lastRun = answers.every(notReached) ? undefined : at;
-    writeWhole(recordFile(), `${JSON.stringify({ lastRun, result: { sources: sourcesResult, backups, profile } }, null, 2)}\n`);
+    // With the helper down for every call, the week isn't done: the record has no last run and
+    // says when the backups and the sync are tried again. A helper that answered, even with a
+    // refusal, counts as tried.
+    const reached = !answers.every(notReached);
+    const kept = {
+      sourcesRun,
+      ...(reached ? { lastRun: at } : { retryAt: new Date(Date.parse(at) + RETRY_MS).toISOString() }),
+      result: { sources: sourcesResult, backups, profile },
+    };
+    writeWhole(recordFile(), `${JSON.stringify(kept, null, 2)}\n`);
     return { sources, backups, profile };
   } finally {
     release();
