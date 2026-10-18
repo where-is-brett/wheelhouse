@@ -287,7 +287,7 @@ test('hooks.json names a script that exists for every hook', () => {
   assert.deepEqual(file, {
     hooks: {
       SessionStart: [{ matcher: 'startup|resume|compact|clear|fork', hooks: [cmd('session-start')] }],
-      UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge')] }],
+      UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge'), cmd('board-context')] }],
       PreToolUse: [
         { matcher: '*', hooks: [{ ...cmd('stop-guard'), onFailure: 'block' }] },
         { matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Bash|PowerShell|Monitor|WebFetch|ListMcpResourcesTool|ReadMcpResourceTool|mcp__.*', hooks: [{ ...cmd('tool-guard'), onFailure: 'block' }] },

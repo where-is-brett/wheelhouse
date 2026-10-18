@@ -51,7 +51,7 @@ function spend(tokens, usd) {
 
 // Puts each word a viewer would link in backticks, with any closing punctuation left outside.
 // oneLine leaves no backtick in a text, so the code span can't be closed early.
-const unlinked = (line) => line.split(' ').map((word) => {
+export const unlinked = (line) => line.split(' ').map((word) => {
   if (!ADDRESS.test(word)) return word;
   const [, core, tail] = /^(.*?)([.,;:!?]*)$/.exec(word);
   return ADDRESS.test(core) ? `\`${core}\`${tail}` : `\`${word}\``;
