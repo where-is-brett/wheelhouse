@@ -65,19 +65,19 @@ test('unconfirmed rulings, levels and settings come first', () => {
 
 test('waiting lists cards and unasked build-loop questions once each, numbered', () => {
   const askedCard = ev('card', at(12), { title: 'Pick a colour', question: 'Answer question q-login-1 about the colour' });
-  const deferred = ev('card', at(11), { title: 'Name the app', question: 'Name the app?' });
-  const done = ev('card', at(10), { title: 'Ship it?', question: 'Ship it?' });
-  const events = [
-    askedCard, deferred, done,
-    ev('card-answer', at(13), { question: 'Name the app?', label: 'Not now' }),
-    ev('card-answer', at(13), { question: 'Ship it?', label: 'Approve' }),
-  ];
+  const other = ev('card', at(11), { title: 'Name the app', question: 'Name the app?' });
+  // Answered, so not in the waiting view, but it still names its question.
+  const done = ev('card', at(10), { title: 'Ship it?', question: 'Answer question q-login-4' });
+  const events = [askedCard, other, done, ev('card-answer', at(13), { question: 'Answer question q-login-4', label: 'Not now' })];
   const questions = [
     { ...ev('question', at(9), { id: 'q-login-1', work: 'login', what: 'Which colour?', why: '', options: [], recommendation: '', level: 3 }) },
     { ...ev('question', at(8), { id: 'q-login-2', work: 'login', what: 'Email or phone sign-in?', why: '', options: [], recommendation: '', level: 3 }) },
     { ...ev('question', at(7), { id: 'q-login-3', work: 'login', what: 'Answered already', why: '', options: [], recommendation: '', level: 3 }), answer: { label: 'Yes', at: at(8) } },
+    { ...ev('question', at(6), { id: 'q-login-4', work: 'login', what: 'Asked on a card already', why: '', options: [], recommendation: '', level: 3 }) },
   ];
   const views = { ...emptyViews(), ...buildLoop({ questions }) };
+  // The cards waiting are the waiting view's, whatever the events say.
+  views.waiting = [askedCard, other].map((e) => ({ id: e.id, at: e.at, data: e.data }));
   const m = model({ views, events });
   assert.deepEqual(m.director.waiting, [
     { n: 1, what: 'Email or phone sign-in?', since: at(8) },
@@ -180,6 +180,16 @@ test('text from events becomes one capped line, with links and headings taken ou
   assert.equal(oneLine('# Title\n\n- see [the docs](https://x.test) and ![a chart](https://x.test/c.png)'), 'Title see the docs and a chart');
   assert.equal(oneLine('> quoted\n1. first\n* second\n```js\nrun `code`\n```'), 'quoted first second run code');
   assert.equal(oneLine('  lots \t of\r\n space  '), 'lots of space');
+  // Links inside links, and leftover brackets, never make a link.
+  assert.equal(oneLine('[[x](y)](https://evil.test)'), 'x');
+  assert.equal(oneLine('[![a](b)](https://evil.test) and [c][d]'), 'a and c');
+  assert.equal(oneLine('[x] (https://e.test) [y](https://e.test/(z))'), 'x (https://e.test) y (https://e.test/(z))');
+  // Heading, list and quote marks however they are nested or indented.
+  for (const text of ['- # Heading', '1. ## Heading', '> - # Heading', '## ## Heading', '    # Heading', '####### Heading', '[# Heading](https://e.test)']) {
+    assert.equal(oneLine(text), 'Heading', text);
+  }
+  // HTML tags are taken out; an autolink keeps its address as text.
+  assert.equal(oneLine('<b>bold</b> <img src=x onerror=y> <https://e.test> 1 < 2'), 'bold https://e.test 1 < 2');
   assert.equal(oneLine(undefined), '');
   assert.equal(oneLine(42), '42');
   const long = oneLine('word '.repeat(100));
@@ -225,7 +235,7 @@ test('with no build-loop views, no state and no usage, the model is built and na
   assert.ok(noTokens.missing.includes('Token counts start once setup switches on usage counting on this computer'));
 });
 
-test('a damaged event is counted in health, not thrown', () => {
+test('damaged records are counted in missing, and damaged inputs never throw', () => {
   const views = emptyViews();
   views.damaged = ['events/2026/10/x.json: not JSON', 'an event with a repeated id: e9 (idea, 2026-10-18T00:00:00.000Z)'];
   views.risks = { odd: { key: 'odd', id: 'x', at: at(1), data: null } };
@@ -264,9 +274,56 @@ test('budget shows the week and unusual use in its own unit; open incidents and 
   const texts = m.director.health.map((l) => l.text);
   assert.equal(texts[0], 'Protection: Standard');
   assert.ok(texts.includes('Incident leak is open, so nothing merges: Emails sent twice'));
-  assert.ok(texts.includes('m-old, which this project uses, retires on 1 November 2026'));
+  assert.ok(texts.includes('m-old, a model your projects use, retires on 1 November 2026'));
   assert.ok(texts.includes('A security advisory for owner/repo: Bad thing'));
   assert.ok(!texts.some((t) => t.includes('m-other')));
+});
+
+test('event times reach the model only as strict UTC times', () => {
+  const views = emptyViews();
+  const loose = 'Oct 18 2026 (## H\n[x](https://e.test))';
+  views.decisions = [{ id: 'd1', at: loose, data: { what: 'A', level: 2 } }, { id: 'd2', at: at(5), data: { what: 'B', level: 2 } }];
+  views.waiting = [{ id: 'c1', at: '2026-10-18', data: { title: 'T' } }];
+  const events = [ev('merge', loose, { pr: 3 }), ev('report', '2026-10-18T00:00:00+01:00', { work: 'w', outcome: 'merged', summary: '', rulings: ['R'] })];
+  const m = model({ views, events, usage: usageWith({ week: { from: loose, to: at(20), tokens: 1, usd: 1, share: null } }) });
+  assert.deepEqual(m.director.rulings, [{ what: 'B', at: at(5) }, { what: 'A', at: null }]);
+  assert.ok(m.build.decisions.every((d) => d.at === null || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(d.at)));
+  assert.equal(m.build.decisions.find((d) => d.what === 'R').at, null);
+  assert.deepEqual(m.director.waiting, [{ n: 1, what: 'T', since: null }]);
+  assert.deepEqual(m.director.changed, []);
+  assert.equal(m.director.budget.week.from, null);
+});
+
+test('a clock that can\'t be read is named, not replaced by this computer\'s', () => {
+  for (const now of [() => new Date('nonsense'), 'nonsense', undefined, () => { throw new Error('no clock'); }]) {
+    const m = model({ now });
+    assert.equal(m.builtAt, null);
+    assert.ok(m.missing.includes('The board\'s clock couldn\'t be read'));
+  }
+  assert.ok(!model().missing.includes('The board\'s clock couldn\'t be read'));
+});
+
+test('a review of an older commit doesn\'t speak for the pull request\'s head', () => {
+  const views = emptyViews();
+  views.reviews = {
+    3: { aaa: ev('review', at(10), { pr: 3, commit: 'aaa', verdict: 'CLEAN', findings: 0 }) },
+    4: { ccc: ev('review', at(10), { pr: 4, commit: 'ccc', verdict: 'CLEAN', findings: 0 }) },
+  };
+  views.approvals = {
+    3: { bbb: ev('approval', at(11), { pr: 3, commit: 'bbb' }) },
+    4: { ccc: ev('approval', at(11), { pr: 4, commit: 'ccc' }) },
+  };
+  assert.deepEqual(model({ views }).build.pullRequests, [
+    { pr: 3, work: null, review: 'none', findings: null },
+    { pr: 4, work: null, review: 'clean', findings: 0 },
+  ]);
+});
+
+test('usage figures that aren\'t numbers read as unknown', () => {
+  const m = model({ usage: usageWith({ byPart: { 'front-desk': { tokens: '12', usd: NaN }, foreman: null }, bySubagents: { tokens: '5' } }) });
+  assert.deepEqual(m.build.usage, {
+    'front-desk': { tokens: null, usd: null }, foreman: { tokens: null, usd: null }, feature: { tokens: null, usd: null }, subagents: null,
+  });
 });
 
 test('build decisions join the decisions and the rulings from build-loop reports, newest first, at most 20', () => {

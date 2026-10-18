@@ -5,11 +5,10 @@
 // input becomes a line in `missing`. Every text an agent wrote reaches the board through
 // oneLine, as one capped line with no Markdown of its own.
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
+import { latestFor } from '../state/views.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];
-// Answers that leave a card waiting: the director put it off, or asked to hear more.
-const NOT_ANSWERS = ['Not now', 'Explain more'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const NO_STATE = 'There is no state for this project on this computer yet';
@@ -18,12 +17,17 @@ const NO_USAGE = 'Usage counts aren\'t on yet';
 const NO_HEALTH = 'How the project stands couldn\'t be read';
 const NO_SETTINGS = 'The settings couldn\'t be read';
 const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
+const NO_CLOCK = 'The board\'s clock couldn\'t be read';
+// A time as the state and usage scripts write it, in UTC. Any other text is no time.
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const values = (view) => (isRecord(view) ? Object.values(view).filter(isRecord) : []);
 const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
-const timeOf = (value) => (typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null);
-const oldestFirst = (a, b) => String(a.at ?? '').localeCompare(String(b.at ?? ''));
+const timeOf = (value) => (typeof value === 'string' && ISO_UTC.test(value) && !Number.isNaN(Date.parse(value)) ? value : null);
+const numberOrNull = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+// Oldest first by strict time; a time that can't be read counts as the oldest.
+const oldestFirst = (a, b) => (timeOf(a?.at) ?? '').localeCompare(timeOf(b?.at) ?? '');
 const newestFirst = (a, b) => oldestFirst(b, a);
 const isPr = (value) => Number.isInteger(value) && value > 0;
 
@@ -42,19 +46,38 @@ export function oneLine(text) {
   if (typeof text !== 'string') return '';
   const lines = text.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029]/g, ' ').split(/\r?\n|\r/)
     .filter((line) => !/^\s*(`{3,}|~{3,})/.test(line))
-    .map((line) => line
-      .replace(/^\s*(>\s*)+/, '')
-      .replace(/^\s{0,3}#{1,6}(\s+|$)/, '')
-      .replace(/^\s*([-*+]|\d{1,9}[.)])\s+/, ''));
-  const flat = lines.join(' ')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]*)\]\[[^\]]*\]/g, '$1')
-    .replace(/<(https?:\/\/[^>\s]*)>/g, '$1')
+    .map(withoutLeadingMarks);
+  const words = untilStable(lines.join(' '), (s) => s
+    .replace(/!\[([^\][]*)\]\([^()]*\)/g, '$1')
+    .replace(/\[([^\][]*)\]\([^()]*\)/g, '$1')
+    .replace(/\[([^\][]*)\]\[[^\][]*\]/g, '$1'))
+    .replaceAll('](', ' (')
+    .replace(/[[\]]/g, '')
+    .replace(/<(https?:\/\/[^<>\s]*)>/g, '$1')
+    .replace(/<\/?[A-Za-z!?][^<>]*>/g, ' ')
     .replace(/`+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return cap(flat);
+  return cap(withoutLeadingMarks(words).trim());
+}
+
+// Applies `step` until the text stops changing.
+function untilStable(text, step) {
+  let before;
+  let after = text;
+  do {
+    before = after;
+    after = step(before);
+  } while (after !== before);
+  return after;
+}
+
+// Takes quote, heading and list marks off the start of a line, however they are nested or indented.
+function withoutLeadingMarks(line) {
+  return untilStable(line, (s) => s
+    .replace(/^\s*>+/, '')
+    .replace(/^\s*#+(\s+|$)/, '')
+    .replace(/^\s*([-*+]|\d{1,9}[.)])(\s+|$)/, ''));
 }
 
 // A value as words: text and numbers as they are, anything else as JSON.
@@ -98,32 +121,19 @@ function namesQuestion(card, id) {
   return [card.data?.question, card.data?.title].some((text) => typeof text === 'string' && pattern.test(text));
 }
 
-// The cards still waiting, and every card asked (which may name a question). From the events when
-// there are any, since the waiting view closes a card on any answer, a put-off one included.
-function cardsOf(views, events) {
-  if (events.length === 0 && Array.isArray(views?.waiting)) {
-    const waiting = list(views.waiting);
-    return { waiting, asked: waiting };
-  }
-  const asked = events.filter((e) => e.kind === 'card' && typeof e.id === 'string');
-  const answers = events.filter((e) => e.kind === 'card-answer' && isRecord(e.data) && !NOT_ANSWERS.includes(e.data.label));
-  const ids = new Set(answers.map((e) => e.data.card).filter((c) => typeof c === 'string'));
-  const quoted = new Set(answers.filter((e) => e.data.card === undefined || e.data.card === null)
-    .map((e) => e.data.question).filter((q) => typeof q === 'string'));
-  const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
-  return { waiting: asked.filter((card) => !ids.has(card.id) && !quoted.has(questionOf(card))), asked };
-}
-
-// Cards asked and not yet answered, other than put off; then questions from the build loop that
-// no card names yet and nobody has answered. Oldest first, numbered from 1.
+// The cards waiting are the waiting view's, so one rule, in views.js, says what waits. (Whether a
+// card put off with Not now stays waiting is the front desk plan's change to that rule.) Then the
+// build loop's questions that nobody has answered and no card asked, waiting or not, names.
+// Oldest first, numbered from 1.
 function waitingList(views, events, questions) {
-  const { waiting: cards, asked: named } = cardsOf(views, events);
+  const cards = list(views?.waiting);
+  const named = [...cards, ...events.filter((e) => e.kind === 'card')];
   const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at) }));
   for (const [id, entry] of Object.entries(questions)) {
     if (!isRecord(entry) || entry.answer || named.some((card) => namesQuestion(card, id))) continue;
     items.push({ what: oneLine(entry.question?.data?.what) || 'A question from the build', since: timeOf(entry.question?.at) });
   }
-  return items.sort((a, b) => String(a.since ?? '').localeCompare(String(b.since ?? ''))).map((item, i) => ({ n: i + 1, ...item }));
+  return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));
 }
 
 function workInfo(work, id) {
@@ -131,9 +141,23 @@ function workInfo(work, id) {
   return { title: oneLine(data.title) || oneLine(id), lane: LANES.includes(data.lane) ? data.lane : null };
 }
 
-// The latest review across a pull request's commits, or null.
-function latestReview(commits) {
-  return values(commits).filter((r) => isRecord(r.data)).sort(oldestFirst).at(-1) ?? null;
+// pull request -> commit -> record, keeping only records with data and a time.
+function readable(view) {
+  const out = {};
+  for (const [pr, commits] of Object.entries(isRecord(view) ? view : {})) {
+    out[pr] = Object.fromEntries(Object.entries(isRecord(commits) ? commits : {})
+      .filter(([, r]) => isRecord(r) && isRecord(r.data) && typeof r.at === 'string' && typeof r.id === 'string'));
+  }
+  return out;
+}
+
+// The review of a pull request's head: the newest commit the reviews or approvals name for it.
+// A review of an older commit says nothing about the head, so a head with none reads as none.
+function headReview(reviews, approvals, pr) {
+  const review = latestFor(reviews, pr);
+  const approval = latestFor(approvals, pr);
+  if (!approval || (review && oldestFirst(approval, review) <= 0)) return review;
+  return reviews[String(pr)]?.[String(approval.data.commit)] ?? null;
 }
 function reviewState(record) {
   const verdict = typeof record?.data?.verdict === 'string' ? record.data.verdict.toUpperCase() : null;
@@ -152,13 +176,13 @@ function unusualLines(unusual) {
   });
 }
 
-// What the build loop and the sources add to health: open incidents, a model this project uses
-// retiring soon, and security advisories for the repositories it builds on.
+// What the build loop and the sources add to health: open incidents, a model the director's
+// projects use retiring soon, and security advisories for the repositories it builds on.
 function extraHealth(incidents, sources) {
   const lines = [];
   for (const i of list(incidents?.open)) lines.push({ level: 'stop', text: cap(`Incident ${oneLine(i.id)} is open, so nothing merges: ${oneLine(i.what)}`) });
   for (const r of list(sources?.retiring)) {
-    if (r.routed === true && r.soon === true) lines.push({ level: 'watch', text: cap(`${oneLine(r.model)}, which this project uses, retires on ${dayMonthYear(r.date) ?? oneLine(r.date)}`) });
+    if (r.routed === true && r.soon === true) lines.push({ level: 'watch', text: cap(`${oneLine(r.model)}, a model your projects use, retires on ${dayMonthYear(r.date) ?? oneLine(r.date)}`) });
   }
   for (const a of list(sources?.advisories)) lines.push({ level: 'watch', text: cap(`A security advisory for ${oneLine(a.repo)}: ${oneLine(a.summary)}`) });
   return lines;
@@ -175,9 +199,16 @@ function part(missing, name, build, fallback) {
 }
 
 export function boardModel({ project, views, events, usage, health, settings, sources, now } = {}) {
-  const nowMs = new Date(typeof now === 'function' ? now() : now ?? Date.now()).getTime();
-  const builtAt = new Date(Number.isNaN(nowMs) ? Date.now() : nowMs).toISOString();
   const missing = [];
+  // A clock that can't be read is named, never replaced by this computer's.
+  let nowMs = NaN;
+  try {
+    nowMs = new Date(typeof now === 'function' ? now() : now).getTime();
+  } catch {
+    // stays unread
+  }
+  const builtAt = Number.isNaN(nowMs) ? null : new Date(nowMs).toISOString();
+  if (builtAt === null) missing.push(NO_CLOCK);
   const state = isRecord(views) ? views : null;
   if (!state) missing.push(NO_STATE);
   const loop = state && isRecord(state.work) && isRecord(state.features) ? state : null;
@@ -238,8 +269,8 @@ export function boardModel({ project, views, events, usage, health, settings, so
 
   const decisions = list(state?.decisions).filter((d) => isRecord(d.data));
   const week = isRecord(figures?.week) ? figures.week : null;
-  const fromMs = Date.parse(week?.from);
-  const toMs = Date.parse(week?.to);
+  const fromMs = Date.parse(timeOf(week?.from));
+  const toMs = Date.parse(timeOf(week?.to));
   const [weekFrom, weekTo] = Number.isNaN(fromMs) || Number.isNaN(toMs) ? [nowMs - WEEK_MS, nowMs] : [fromMs, toMs];
 
   const director = {
@@ -248,18 +279,18 @@ export function boardModel({ project, views, events, usage, health, settings, so
     launch,
     inProgress,
     changed: part(missing, 'changes for users', () => merges.filter((m) => timeOf(m.at)).sort(newestFirst).slice(0, 20).map((m) => ({
-      what: oneLine(m.data.forUsers) || (isPr(m.data.pr) ? `Pull request #${m.data.pr} merged` : 'A pull request merged'), at: m.at,
+      what: oneLine(m.data.forUsers) || (isPr(m.data.pr) ? `Pull request #${m.data.pr} merged` : 'A pull request merged'), at: timeOf(m.at),
     })), []),
     ideas,
     health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'health', () => extraHealth(loop?.incidents, report), [])],
     budget: {
-      week: week ? { from: week.from ?? null, to: week.to ?? null, tokens: week.tokens ?? null, usd: week.usd ?? null } : null,
-      share: typeof week?.share === 'number' ? week.share : null,
+      week: week ? { from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd) } : null,
+      share: numberOrNull(week?.share),
       setting: 'report',
       unusual: part(missing, 'unusual use', () => unusualLines(figures?.unusual), []),
     },
     rulings: part(missing, 'rulings', () => decisions.filter((d) => d.data.level === 2).sort(newestFirst).slice(0, 10)
-      .map((d) => ({ what: oneLine(d.data.what), at: d.at })), []),
+      .map((d) => ({ what: oneLine(d.data.what), at: timeOf(d.at) })), []),
   };
 
   const build = {
@@ -285,16 +316,18 @@ export function boardModel({ project, views, events, usage, health, settings, so
         ...Object.keys(isRecord(state?.approvals) ? state.approvals : {}),
         ...reports.map((r) => String(r.data.pr)),
       ].map(Number).filter((pr) => isPr(pr) && !done.has(pr)));
+      const reviews = readable(state?.reviews);
+      const approvals = readable(state?.approvals);
       return [...prs].sort((a, b) => a - b).map((pr) => {
-        const review = latestReview(state?.reviews?.[String(pr)]);
+        const review = headReview(reviews, approvals, pr);
         const named = reports.filter((r) => r.data.pr === pr && typeof r.data.work === 'string').sort(oldestFirst).at(-1);
         return { pr, work: named ? oneLine(named.data.work) : null, review: reviewState(review), findings: review ? findingsOf(review) : null };
       });
     }, []),
     quality: part(missing, 'quality this week', () => {
-      const reviews = values(state?.reviews).flatMap(values).filter((r) => {
-        const time = Date.parse(r.at);
-        return isRecord(r.data) && time >= weekFrom && time <= weekTo;
+      const reviews = values(readable(state?.reviews)).flatMap(values).filter((r) => {
+        const time = Date.parse(timeOf(r.at));
+        return time >= weekFrom && time <= weekTo;
       });
       const counts = reviews.map((r) => findingsOf(r) ?? 0);
       return {
@@ -304,17 +337,17 @@ export function boardModel({ project, views, events, usage, health, settings, so
       };
     }, { reviews: 0, withFindings: 0, findings: 0 }),
     decisions: part(missing, 'decisions', () => [
-      ...decisions.map((d) => ({ what: oneLine(d.data.what), why: oneLine(d.data.why), at: d.at })),
-      ...reports.flatMap((r) => (Array.isArray(r.data.rulings) ? r.data.rulings : []).map((what) => ({ what: oneLine(what), why: '', at: r.at }))),
+      ...decisions.map((d) => ({ what: oneLine(d.data.what), why: oneLine(d.data.why), at: timeOf(d.at) })),
+      ...reports.flatMap((r) => (Array.isArray(r.data.rulings) ? r.data.rulings : []).map((what) => ({ what: oneLine(what), why: '', at: timeOf(r.at) }))),
     ].filter((d) => d.what).sort(newestFirst).slice(0, 20), []),
     risks: part(missing, 'risks', () => values(state?.risks).filter((r) => isRecord(r.data)).sort(newestFirst)
       .map((r) => ({ what: oneLine(r.data.what), costLater: oneLine(r.data.costLater) })), []),
     usage: {
       ...Object.fromEntries(['front-desk', 'foreman', 'feature'].map((role) => {
         const figure = figures?.byPart?.[role];
-        return [role, { tokens: figure?.tokens ?? null, usd: figure?.usd ?? null }];
+        return [role, { tokens: numberOrNull(figure?.tokens), usd: numberOrNull(figure?.usd) }];
       })),
-      subagents: typeof figures?.bySubagents?.tokens === 'number' ? figures.bySubagents.tokens : null,
+      subagents: numberOrNull(figures?.bySubagents?.tokens),
     },
   };
 
