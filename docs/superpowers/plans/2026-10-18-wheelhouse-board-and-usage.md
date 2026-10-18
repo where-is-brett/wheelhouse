@@ -34,7 +34,7 @@ It does not build the front desk's playbook (how it proposes rulings, learnt pro
 Asked once, on cards, with the plan (see the session's summary). Until answered, the recommendation stands for planning, and nothing is built.
 
 - **Card 1, when to build it:** answered by the director on 18 October 2026: **Start now**, alongside the build loop. Running both at once draws on the weekly allowance faster; the two touch a few of the same files (`scripts/state/events.js`, `views.js`, `card-lines.js`, `prompt-record.js`, `session-start.js`, `hooks/hooks.json`, `helper.js`), each change here a small addition, and whichever merges second takes the other's in.
-- **Card 2, answering a card by typing or from the phone:** **Reply codes** (recommended): each card that decides something carries a four-letter code, and a message typed or sent from the phone that is just the code and an option ("K7QD Approve") counts as the click. Or **Buttons only**, until the rest of the mod draws card buttons. A plain typed "yes" never counts, either way.
+- **Card 2, answering a card by typing or from the phone:** answered by the director on 18 October 2026: **both**. Reply codes now: each card that decides something carries a four-letter code, and a message typed or sent from the phone that is just the code and an option ("K7QD Approve") counts as the click. When the rest of the mod draws card buttons, the codes stay, as the way to answer from the phone and a backup to the buttons. A plain typed "yes" never counts.
 
 ## Global Constraints
 
@@ -894,7 +894,7 @@ Settled here without the director, each listed for the design in Task 20:
 12. **The board and briefing are Markdown added by a hook,** since no agent can read `~/.wheelhouse/`; the commands only ask for them, and they answer under STOP too.
 13. **The briefing** comes from the same hook, measured from the director's last prompt, never in a feature session or the foreman; "detailed" is 300 words.
 14. **The status line** is written into a project's local settings only when the director has none of their own.
-15. **Reply codes** (if the director agrees, Card 2): four characters from the card's set line, valid for seven days, used once; a message counts only as the whole code and an option.
+15. **Reply codes** (the director chose them, with buttons to come, Card 2): four characters from the card's set line, valid for seven days, used once; a message counts only as the whole code and an option.
 16. **`/go`** is a mod command, so its origin is read from the command's run; "stop" from the phone is set by the mod as well as the hook.
 17. **Typed messages aren't stored.** The mod records only what a reply code, `/go` or "stop" earns, so the director's words never reach the state branch.
 
@@ -915,4 +915,4 @@ Before each sitting, one card lists every change it makes (the plugin loaded for
 
 ## After this plan
 
-The next step in the design's build order (section 17.2) is the agents and skills: the front desk's playbook, which asks its cards with this plan's reply codes, reads the briefing and the board, proposes rulings, settings and learnt profile changes for the director to confirm, and runs the delegation review. Then setup and uninstall (switching on telemetry with this plan's port, writing `profile.json`, and enrolling a second computer's key into the profile), the evaluation as a whole, the pilot on the first project, the rest of the mod (which calls this plan's scripts), and the first public release.
+The next step in the design's build order (section 17.2) is the agents and skills: the front desk's playbook, which asks its cards with this plan's reply codes, reads the briefing and the board, proposes rulings, settings and learnt profile changes for the director to confirm, and runs the delegation review. Then setup and uninstall (switching on telemetry with this plan's port, writing `profile.json`, and enrolling a second computer's key into the profile), the evaluation as a whole, the pilot on the first project, the rest of the mod (which calls this plan's scripts, and keeps reply codes beside its card buttons, as the director decided), and the first public release.
