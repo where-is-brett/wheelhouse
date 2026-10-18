@@ -38,13 +38,14 @@ Each function this plan calls, and the task that makes it. "Built" means the tas
 |---|---|---|
 | The bridge (`handle`, `runBridge`, `SAYS`, `BRIDGE_MS`, `HELPER_MS`), the mod's four hooks, `scripts/mod/validate.js` (`checkMod`, `membersIn`, `HOOKS`, `CALLS`), `npm run mod-check` | board-and-usage, Tasks 17 and 18 | built, `claude/focused-pasteur-70cf64` |
 | `earned`, `keepEarned`, `sendKept`, `SIGNED_LABELS` (`scripts/hooks/prompt-record.js`); `replyRecord`, `parseReply` and the reply's private `claim`, `answeredInPending`, `recordedAs` (`scripts/mod/reply.js`); `setLineOf`, `replyCode`, `replyCodeLine` | board-and-usage, Task 16 | built, same branch |
-| `loadBoardInputs({ cwd, now, offline })`, `boardModel`, `glanceLine`, `renderBoard`, `oneLine`, `NOT_A_PROJECT` | board-and-usage, Tasks 12 and 13 | built, same branch |
+| `loadBoardInputs({ cwd, now, offline })`, `boardModel` (its waiting list, which this plan's Task 3 gives ids), `glanceLine`, `renderBoard`, `oneLine`, `NOT_A_PROJECT` | board-and-usage, Tasks 12 and 13 | built, same branch |
+| `earned` signing the build loop's clicks too (`approve-work`, `answer`, `amend`, `lift-incident`, `incident-fix`) | board-and-usage Task 16 and build loop Task 8, joined when the second of the two merges (board-and-usage, Card 1) | the board-and-usage branch's `earned` signs the five first-piece labels only |
 | `briefingModel`, `briefingText`, `readSeen`, `markSeen` | board-and-usage, Task 14 | built, same branch |
 | `SETTINGS`, `checkSetting`, `definitionOf`, `say`, `effectiveSettings`, `sayTime`; the helper's `/state/write`, `/profile/write`, `/state/record`, `/profile/record` | board-and-usage, Tasks 3 and 4 | built, same branch |
 | The board-context hook (`commandOf`, `decide`) | board-and-usage, Task 15 | built, same branch |
 | Check 33, the first piece in Desktop | board-and-usage, Task 19 | waits for the director's sitting |
 | `card` data (`kind`, `options`, `line`, `code`, `level`, `importance`), the `waiting` view with `asked` | front desk, Task 1 | not started (`claude/front-desk-build-92aa7a`) |
-| The importance order (`cardsForVisit`), `askAgain` | front desk, Task 3 | not started |
+| The importance order (`cardsForVisit`, and `importanceOf`, which this plan's Task 8 asks it to export), `askAgain` | front desk, Task 3 | not started |
 | The card check's tests of a card's form (`scripts/hooks/card-check.js`) | front desk, Task 4 | not started |
 | `plainWords`, `glossaryOf` | front desk, Task 5 | not started |
 | `cli.js preview`, `/pr/preview` (for **Show me**) | front desk, Tasks 6 and 12 | not started |
@@ -66,12 +67,12 @@ Everything in the earlier plans' Global Constraints holds: Node.js 22 or later, 
 
 - **The design's numbers are constants, named once,** in `scripts/lib/mod-numbers.js`: `PANE_ID = 'wheelhouse'`, `TICK_MS = 15000` (the front desk's pane and courier), `FOREMAN_TICK_MS = 30000` (a Shape 2 foreman's watcher loop, as the watcher's own state interval), `WATCH_EVERY_MS = 60000` (a Shape 1 check that the watcher runs), `WATCH_BRIDGE_MS = 45000` (the limit on a Shape 2 loop), `COURIER_GAP_MS = 10 * 60 * 1000`, `CARD_HASH_CHARS = 12`, `PANE_LINES = 5`, `STALE_TICKS = 3`, `LEADS = { pane: 'Wheelhouse pane:', courier: 'Wheelhouse courier:' }`, `MESSAGE_LEAD = /^Wheelhouse(?: [a-z]+)?:/`, `AWAY = { hours: 2, evening: '18:00', morning: '09:00' }`. The foreman's lead stays `FOREMAN_PROMPT_LEAD` in `scripts/foreman/start.js`; it is imported, never written again.
 - **The mod decides nothing.** Every rule (which buttons a card gets, what a press records, which setting a choice sets, when the courier wakes) is in a script tested by `npm test`. The mod's own tests check only that it draws what the bridge answered, sends what was pressed, and passes every message on.
-- **The mod never approves a permission prompt.** It hooks no `tool.check`, `tool.call`, `tool.describe`, `config.set`, `agent.offer`, `plugin.register` or `classic.*` event, and calls nothing on `$.tool`, `$.agent`, `$.fs`, `$.settings`, `$.http`, `$.model`, `$.command.run`, `$.prompt.fill`, `$.session.append`, `$.process.spawn` or `$.env.set`. Its one `$.process.run` runs the bridge and nothing else, and the bridge's own imports never reach the code that writes Claude Code's settings. This is proved by `scripts/mod/validate.js` from `claude plugin validate`'s report and the module's source (Task 2), in `npm run mod-check`, which every mod task runs before it commits and CI's `validate` job runs on every pull request.
+- **The mod never approves a permission prompt.** It hooks no `tool.check`, `tool.call`, `tool.describe`, `config.set`, `agent.offer`, `plugin.register` or `classic.*` event, and calls nothing on `$.tool`, `$.agent`, `$.fs`, `$.settings`, `$.http`, `$.model`, `$.command.run`, `$.prompt.fill`, `$.session.append`, `$.process.spawn` or `$.env.set`. Its one `$.process.run` runs the bridge and nothing else, and the bridge's own imports never reach the code that writes Claude Code's settings. Under Shape 2 the bridge runs the watcher's loop (Task 7), which starts sessions with the build loop's own modes and allow rules, exactly as the background watcher does under Shape 1; the mod adds none. This is proved by `scripts/mod/validate.js` from `claude plugin validate`'s report and the module's source (Task 2), in `npm run mod-check`, which every mod task runs before it commits and CI's `validate` job runs on every pull request.
 - **Whose press counts.** A message counts as the director's only from `composer` (typed) or `bridge` (phoned), as the first piece set. A press counts as the director's under the origin `pane`, which the mod sets only inside a button's press handler; agents have no way to press a mod's button. The bridge signs for `pane` only what a card click on that same card would earn, so an agent's own run of the bridge with `origin: 'pane'` gets nothing it couldn't get by forging a click: on the Mac it can't read the signing key (check 32), and on Windows the known gap of design section 11 applies, as it does to reply codes.
 - **Text from events is data.** A card's text is drawn whole, as plain `Text`, never as `Markdown`, so nothing in it can be a link or a heading. Every other line from an event goes through `oneLine` and the glossary's `plainWords`. A prompt the mod submits (the courier's wake, a pane press's) carries counts, card numbers and the card's own option labels, never an event's other text.
-- **The mod never holds up the director.** Every hook passes the message on with `next(e)`, except the courier's one rule for Wheelhouse traffic from other sessions (Task 11). Every bridge failure is a toast or a line in the pane, never a refused prompt. Every hook carries `.catch(($, e, next) => next(e))`.
+- **The mod never holds up the director.** Every hook passes the message on with `next(e)`, except the courier's one rule for Wheelhouse traffic from other sessions (Task 11). Every bridge failure is a toast or a line in the pane, never a refused prompt. Every hook that passes a message on carries `.catch(($, e, next) => next(e))`; a command's own hook answers a failure with its own words and a toast, as `/go` does.
 - **One tick at a time.** A session's mod never starts a tick while its last one is running, so a slow bridge can't pile up processes.
-- **Checks continue the numbering:** the evaluation plan's is 39; this plan's are 40 and 41. Evaluation scenarios go on from the evaluation plan's numbering: this plan's are 36 and 37 (Task 12).
+- **Checks continue the numbering:** the evaluation plan's is 39; 40 to 49 are this plan's (as the install plan counts them), and it uses 40 and 41. Scenarios from 36 on are the problems real use turns up (the evaluation and install plans), so this plan's two scenarios take the next two free numbers when Task 12 writes them, read from `tests/eval/` then; the task calls them the pane scenario and the courier scenario.
 
 ## Review Focus
 
@@ -89,6 +90,7 @@ scripts/mod/validate.js           (changed) the allowed and forbidden lists, eve
 scripts/mod/bridge.js             (changed) tick, press, settings, setting, digest; the pane origin
 scripts/mod/reply.js              (changed) claim, answeredInPending and recordedAs exported
 scripts/mod/status.js             the pane's model, and projects/<p>/status.json
+scripts/board/model.js            (changed) each waiting item carries its id
 scripts/mod/buttons.js            which buttons each card gets
 scripts/mod/press.js              what a press on a card records
 scripts/mod/settings-pane.js      the settings pane's rows, and what a choice sets
@@ -111,7 +113,7 @@ tests/mod/pane.test.ts, cards.test.ts, settings.test.ts, messages.test.ts, regis
 tests/fixtures/mod/               recorded `claude plugin validate --json` reports
 probes/40-mod-headless/…          check 40
 docs/checks/40-mod-headless.md, docs/checks/41-mod-desktop.md
-tests/eval/mod/36-pane-explain.js, 37-courier-wake.js
+tests/eval/mod/<n>-pane-explain.js, <n+1>-courier-wake.js
 tests/e2e/mod.test.js
 .github/workflows/ci.yml          (changed) the validate job runs npm run mod-check
 ```
@@ -132,13 +134,13 @@ As the checks plan set it (`docs/superpowers/plans/2026-10-17-wheelhouse-foundat
 
 **Interfaces:**
 - Consumes: `makeScratchProject`, `probeLogDir`, `appendJsonl` (`probes/lib/`); the session route check 27 found.
-- Produces, in the note under "What it means for the design", for Tasks 2, 6, 9 and 11: how `claude plugin validate --json` lists the hooks and calls of a file the module imports, and how it spells a `ui.render` matcher and a `command.run` matcher; whether `claude plugin test` runs with no Claude sign-in (as in CI); whether a classic UserPromptSubmit hook receives a mod command's typed line (`/digest`), and whether the command's `{ text }` answer is kept with no model turn; whether `$.clock.every` keeps firing between turns in a long-lived session, and whether `$.prompt.submit` from it starts a turn when idle and waits behind a running one; whether a prompt sent into a `stream-json` session arrives with origin `sdk`, and whether a `prompt.submit` hook's `{ drop }` keeps it from the model and the transcript; and, where check 27's route can send one, whether `session.receive` sees a message from another session and `{ consumed }` keeps it out.
+- Produces, in the note under "What it means for the design", for Tasks 2, 6, 9 and 11: how `claude plugin validate --json` lists the hooks and calls of a file the module imports, and how it spells a `ui.render` matcher and a `command.run` matcher; whether `claude plugin test` runs with no Claude sign-in (as in CI); whether a classic UserPromptSubmit hook receives a mod command's typed line (`/digest`), and whether the command's `{ text }` answer is kept with no model turn; whether `$.clock.every` keeps firing between turns in a long-lived session, and whether `$.prompt.submit` from it starts a turn when idle and waits behind a running one; whether a prompt sent into a `stream-json` session arrives with origin `sdk`, and whether a `prompt.submit` hook's `{ drop }` keeps it from the model and the transcript. Whether `session.receive` sees a message from another session can't be asked here: check 27 found no route by which a script sends a message into a running session, so check 41 asks it in Desktop.
 
 The question: *What a mod can do with no screen, which the rest of the mod relies on: how the validator reports a mod split into files; whether its tests run without a sign-in; how a mod command meets the command hooks; whether a mod's timer and its submitted prompts keep working across turns; and whether messages from other sessions can be kept out of a session's conversation.*
 
 - [ ] **Step 1: Read** the mod reference that ships with Claude Code (the `plugin-authoring` skill's `reference.md` and `types/claude-code.d.ts`: `$.clock.every`, `$.prompt.submit`, `prompt.submit`'s `{ drop }`, `session.receive`'s `{ consumed }`, `command.run`'s answer, `claude plugin test`) and record what each says, with the date.
-- [ ] **Step 2: Write the probe.** A mod split into two files (`register.ts` importing `part.ts`, which holds one hook) that: registers a command `digest` answering `{ text: 'probe digest' }`; on `session.start` starts `$.clock.every(5000, …)` logging each fire and, on the third, `$.prompt.submit({ text: 'probe: timer prompt' })`; logs every `prompt.submit` with its origin and answers `{ drop: 'probe' }` for a text beginning `probe-drop:`; logs `session.receive` and answers `{ consumed: 'probe' }` for a text beginning `probe-drop:`. Beside it, a classic UserPromptSubmit hook that logs the prompt it receives.
-- [ ] **Step 3: Run `probes/40-mod-headless/run.js` (agent, Mac).** In a scratch project: `claude plugin validate --json` on the probe (record the report); `claude plugin test` on it with `HOME` set to an empty scratch folder; `claude -p "/digest"` (record what the classic hook saw and whether a model turn ran, from the stream-json events); a long-lived `claude -p --input-format stream-json --output-format stream-json --verbose` session sent one ordinary message, then one beginning `probe-drop:` while idle, then one while a turn runs, left open for 30 seconds after (record the timer's fires, the turn the timer's prompt started, each origin, and whether the dropped text reached the transcript); and, if check 27's route sends a message to a running session, one `probe-drop:` message that way.
+- [ ] **Step 2: Write the probe.** A mod split into two files (`register.ts` importing `part.ts`, which holds one hook) that: registers a command `digest` answering `{ text: 'probe digest' }`; on `session.start` starts `$.clock.every(5000, …)` logging each fire and, on the third, `$.prompt.submit({ text: 'probe: timer prompt' })`; logs every `prompt.submit` with its origin and answers `{ drop: 'probe' }` for a text beginning `probe-drop:`; Beside it, a classic UserPromptSubmit hook that logs the prompt it receives.
+- [ ] **Step 3: Run `probes/40-mod-headless/run.js` (agent, Mac).** In a scratch project: `claude plugin validate --json` on the probe (record the report); `claude plugin test` on it with `HOME` set to an empty scratch folder; `claude -p "/digest"` (record what the classic hook saw and whether a model turn ran, from the stream-json events); a long-lived `claude -p --input-format stream-json --output-format stream-json --verbose` session sent one ordinary message, then one beginning `probe-drop:` while idle, then one while a turn runs, left open for 30 seconds after (record the timer's fires, the turn the timer's prompt started, each origin, and whether the dropped text reached the transcript).
 - [ ] **Step 4: Undo.** Remove the scratch project and folders, and the empty folders the sessions made under `~/.claude/projects/`. Nothing else on the computer changes.
 - [ ] **Step 5: Write the note,** add its row, run `npm test`, commit.
 
@@ -163,8 +165,8 @@ git commit -m "Record check 40: what the mod can do without a screen"
   - `FORBIDDEN_HOOKS = ['tool.check', 'tool.call', 'tool.describe', 'config.set', 'agent.offer', 'plugin.register', 'classic.*']` and `FORBIDDEN_CALLS = ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*', '$.http.*', '$.model.*', '$.command.run', '$.prompt.fill', '$.session.append', '$.process.spawn', '$.env.set']`, where `*` stands for any rest of the name. A hook or call matching one is a problem even if `HOOKS` or `CALLS` names it, and a test asserts the lists never overlap.
   - `moduleFiles(root) -> string[]`: `hooks/register.ts` and every file under `hooks/mod/`; `checkMod({ report, sources })` takes every file's text and runs `membersIn` over each.
   - `bridgeArgv(sources) -> { ok: boolean, why? }`: the sources hold exactly one `$.process.run(`, in `hooks/mod/ask.ts`, whose argv is the literal `['node', `${$.plugin.root}/scripts/mod/bridge.js`]`.
-  - `paneOrigin(sources) -> { ok: boolean, why? }`: the text `'pane'` appears as an origin only inside the functions `cards.tsx` and `settings.tsx` pass as `onPress`.
-  - `bridgeImports(root) -> { files: string[], reaches: string[] }`: the bridge's static import graph, followed through `import … from '…'` in each file; a problem when it reaches `scripts/protection/settings.js`, `scripts/protection/managed.js`, `scripts/protection/locked.js` or anything under `scripts/setup/`, which write Claude Code's settings.
+  - `paneOrigin(sources) -> { ok: boolean, why? }`: `origin: 'pane'` appears only inside functions whose names begin `press` in `cards.tsx` and `settings.tsx`, which those files pass as `onPress` and nothing else calls. *Reviewer's call:* a check by name is one a script can make on the source without a TypeScript parser.
+  - `bridgeImports(root) -> { files: string[], reaches: string[] }`: the bridge's static import graph, followed through `import … from '…'` in each file; a problem when a file in it imports `writeSettings` or `mergeSettings` from `scripts/protection/settings.js`, or when it reaches `scripts/protection/managed.js`, `scripts/protection/locked.js` or anything under `scripts/setup/`, which write Claude Code's settings. *Reviewer's call:* the graph reaches `scripts/protection/settings.js` itself through the watcher's waker, which takes only the pure `featureAllowRules` from it, so the check is on what is imported, not on the file.
   - The `validate` job runs `npm run mod-check` (in place of `claude plugin validate .`), with the Claude Code version the lineage manifest names as its floor (`lineage/manifest.json` `claudeCode.floor`), or the job's current one until that file exists.
 
 - [ ] **Step 1: Write the failing tests,** each from a recorded report or a small source written in the test.
@@ -179,6 +181,7 @@ test('a member used in an imported file but not in the report fails', ...)
 test('a second $.process.run, or one running anything but the bridge, fails', ...)
 test('the pane origin outside a press handler fails', ...)
 test('a bridge that imports the settings writer fails, through any chain of imports', ...)
+test('the waker\'s import of featureAllowRules alone passes', ...)
 ```
 
 - [ ] **Step 2: Run `npm test`.** Expected: FAIL. **Step 3: Implement.** **Step 4: Run `npm test` and `npm run mod-check`.** Expected: PASS; the validator's lines name the first piece's four hooks and its calls.
@@ -195,8 +198,8 @@ git commit -m "Prove from the validator, the source and the bridge's imports tha
 
 **Files:**
 - Create: `scripts/lib/mod-numbers.js`, `scripts/mod/status.js`, `scripts/mod/buttons.js`
-- Modify: `scripts/mod/bridge.js` (`tick`, for the front desk; the answer line's new fields), `scripts/hooks/card-check.js` (exports)
-- Test: `tests/scripts/mod/status.test.js`, `tests/scripts/mod/buttons.test.js`, `tests/scripts/mod/bridge.test.js`, `tests/scripts/hooks/card-check.test.js`
+- Modify: `scripts/mod/bridge.js` (`tick`, for the front desk; the answer line's new fields), `scripts/hooks/card-check.js` (exports), `scripts/board/model.js` (ids on the waiting list)
+- Test: `tests/scripts/mod/status.test.js`, `tests/scripts/mod/buttons.test.js`, `tests/scripts/mod/bridge.test.js`, `tests/scripts/hooks/card-check.test.js`, `tests/scripts/board/model.test.js`
 
 **Interfaces:**
 - Consumes: `loadBoardInputs({ cwd, now, offline: true })`, `boardModel` (its `director.waiting` numbering), `glanceLine`, `oneLine`, `localViews` (the `waiting` view), `plainWords`, `glossaryOf`, `stopState`, `sessionRole`, `recordRole`, `projectOf`, `featureSlug`; `SIGNED_LABELS`, `setLineOf`; the card check's tests of a card's form (front desk, Task 4).
@@ -218,7 +221,8 @@ PaneModel = {
 }
 ```
 
-  - `paneModel({ project, cwd, now }) -> Promise<PaneModel>`: the cards are the `waiting` view's, in the board's numbering (`n` is the number the board and the front desk use for it, so "card 3" means one card everywhere), each with its whole question as `text`, `hash` the first `CARD_HASH_CHARS` of the SHA-256 of that text, and `buttons` and `note` from `cardButtons`. Anything that can't be read becomes one `missing` line, as the board's do.
+  - The board's waiting list (`waitingList` in `scripts/board/model.js`) gives each item its `id`: the card's event id, or `q:<question id>` for a build-loop question no card asks yet. *Reviewer's call:* the board numbers its items without ids, and the pane must number them the same way.
+  - `paneModel({ project, cwd, now }) -> Promise<PaneModel>`: the cards are the `waiting` view's, in the board's numbering (`n` is the number the board and the front desk use for it, so "card 3" means one card everywhere; a build-loop question no card asks yet keeps its number and shows as one line, "A question from the build waits; the front desk will ask it", with no buttons), each with its whole question as `text`, `hash` the first `CARD_HASH_CHARS` of the SHA-256 of that text, and `buttons` and `note` from `cardButtons`. Anything that can't be read becomes one `missing` line, as the board's do.
   - `cardProblems(question: string) -> string[]`, exported from `scripts/hooks/card-check.js`: the card check's own tests of one question's form (the five parts, one set line, its reply code, the first part naming the set line's pull request or commit), so the hook and the pane judge a card by one function.
   - `cardButtons(card) -> { buttons: Array<{ label, does }>, note: string | null }`, in `scripts/mod/buttons.js`:
     - a card whose `kind` has a set line and whose question passes `cardProblems`: its deciding label (the first of its options that `SIGNED_LABELS`, as the build loop extends it, holds) as `record`, then **Not now** as `record`, **Explain more** and **Show me** as `turn`, each only when the card offers it;
@@ -226,8 +230,9 @@ PaneModel = {
     - a `question` card (no set line): each of its options as `turn`;
     - a card with a set line that fails `cardProblems`: **Explain more** only, and the note "This card can't be answered here: ask the front desk about it."
   - `paneStatusFile(project) -> string` (`projects/<p>/status.json`); `writePaneStatus(project, model)` (atomic) and `readPaneStatus(project) -> PaneModel | null`, null for missing, damaged or another version. (Named apart from the feature files' `readStatus` and `writeStatus`.)
-  - The bridge's `{ cmd: 'tick', session, cwd, idle: boolean }` -> `{ ok, role, every, pane?, glance?, submit? }`: `role` from `sessionRole` (recorded with `recordRole`); for the front desk in a project's main folder, `pane` and `glance` from `paneModel`, written to `status.json` first, and `every: TICK_MS`; for a feature session, a Shape 1 foreman, or outside a project, `every: 0`, which tells the mod to stop ticking. Tasks 7 and 8 add the foreman's half and `submit`.
-  - The answer line now carries, beside `ok` and `says`, only `role`, `every`, `pane`, `glance`, `submit`, `rows` and `text`, each when present and of its type.
+  - The bridge's `{ cmd: 'tick', session, cwd, idle: boolean, surface }` -> `{ ok, role, every, pane?, glance?, status?, submit? }`: `role` from `sessionRole` (the role the board-context hook recorded from the first prompt, or `WHEELHOUSE_ROLE`, which the bridge inherits from the session); for the front desk in a project's main folder, `pane` and `glance` from `paneModel`, written to `status.json` first, `status` the glance for the status line, and `every: TICK_MS`; for a feature session, a Shape 1 foreman, or outside a project, `every: 0`, which tells the mod to stop ticking. Tasks 7 and 8 add the foreman's half and `submit`. In the terminal, when the project's local settings name Wheelhouse's own status-line command (board-and-usage, Task 8), `status` is left out, so the glance isn't shown twice. *Reviewer's call.*
+  - The answer line now carries, beside `ok` and `says`, only `role`, `every`, `pane`, `glance`, `status`, `submit`, `rows` and `text`, each when present and of its type.
+  - `runBridge` starts its time limit once the request is read, at `WATCH_BRIDGE_MS` for a foreman's tick and `BRIDGE_MS` for anything else. *Reviewer's call:* the limit is set today before the request is known, and a Shape 2 loop (Task 7) needs longer.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -237,6 +242,9 @@ test('a card\'s text is kept as written; the other lines are one line each, in p
 test('STOP set from the phone shows in the next tick\'s model', ...)                    // Review Focus 4
 test('no state, no helper and no usage still give a model naming what is missing', ...) // Review Focus 4
 test('the model is written to status.json before the tick answers', ...)
+test('the board\'s waiting items carry ids, and the pane numbers them as the board does', ...)
+test('a build-loop question no card asks yet is one line with no buttons', ...)
+test('in the terminal with Wheelhouse\'s status line set, the tick gives no status', ...)
 test('a card with a set line for another pull request than its first part names gets Explain more only', ...)  // Review Focus 2
 test('each kind of card gets its own buttons, and only the options it offers', ...)
 test('the card check hook and cardProblems agree on every composed card', ...)
@@ -263,10 +271,11 @@ git commit -m "Build the pane's model and each card's buttons from the board's i
 - Consumes: `earned`, `keepEarned`, `sendKept`, `SIGNED_LABELS`; `claim`, `answeredInPending`, `recordedAs` (now exported from `reply.js`); `cardButtons` (Task 3); `localViews`; `helperClient` (`/state/write`); the build loop's actions; the front desk's card kinds.
 - Produces:
   - `pressCard({ project, card, hash, label, client, now, liftStop, stopState }) -> Promise<{ made: boolean, says: string, submit?: string[] }>`, refusing in this order, recording nothing: the card isn't in the `waiting` view ("That card has already been answered"); its hash differs ("That card changed: look at it again"); `label` isn't one of `cardButtons`'s ("That card doesn't offer <label>"); it is already answered in pending or claimed (as a reply is). Then:
-    - a `record` label that earns a signed record: `earned({ project, question, label })`, claimed as a reply is, kept with `keepEarned` and sent with `sendKept`, then the plain `card-answer` `{ question, label }` through `/state/write`; when `earned` gives nothing, "That couldn't be recorded: the card no longer matches what it decides" (an approval whose pull request moved, a Lift STOP while STOP is off);
+    - a `record` label that earns a signed record: `earned({ project, question, label })`, claimed as a reply is, kept with `keepEarned` and sent with `sendKept`, then the plain `card-answer` `{ question, label }` through `/state/write`. The signed record is kept before the answer is written, so a stop between the two leaves the record, which closes the card on its own (front desk, Task 1); when `earned` gives nothing, "That couldn't be recorded: the card no longer matches what it decides" (an approval whose pull request moved, a Lift STOP while STOP is off);
     - **Not now**: the `card-answer` alone;
     - a `turn` label: the `card-answer`, and `submit` holding one prompt, `Wheelhouse pane: the director pressed <label> on card <n>.`, or for a `question` card's option `Wheelhouse pane: the director chose "<label>" on card <n>.`.
     `says` names what was recorded ("Recorded: Approve on card 2").
+    **Under STOP** the helper refuses `/state/write` and takes `/state/record`. So a press that earns a signed record still records it, and its card closes by that record; **Not now** records nothing and says "STOP is on, so that wasn't noted; the card stays as it was"; **Explain more** and **Show me** still give their prompt, since reading and explaining carry on. *Reviewer's call*, following the helper as built.
   - The bridge's `{ cmd: 'press', origin: 'pane', cwd, card, hash, label }` -> `pressCard`, for `origin: 'pane'` only. `stop` now also sets STOP for `origin: 'pane'`; `go` now also lifts it for `origin: 'pane'`, answering what was in progress as `/go` does.
 
 - [ ] **Step 1: Write the failing tests,** with a fake helper and signed records checked with `verify`.
@@ -282,6 +291,7 @@ test('two presses at once record once', ...)                                    
 test('an approval whose pull request moved records nothing and says why', ...)              // Review Focus 1
 test('press is refused for any origin but pane; stop and go accept pane', ...)              // Review Focus 2
 test('run where the signing key cannot be read, a press signs nothing and says so', ...)    // Review Focus 2
+test('under STOP, Approve still records and closes its card; Not now says it was not noted', ...)
 ```
 
 - [ ] **Step 2: Run, expect FAIL; implement; run `npm test`, expect PASS.**
@@ -309,7 +319,7 @@ git commit -m "Record a press on a card exactly as its click, and let the pane s
     - **Protection, Notifications** and working hours: no choices, `here: false`, `why` "Changed by asking the front desk" (Protection runs its guided step with the password; the others take times and channels the pane doesn't draw);
     - the advanced settings of design section 14.2 are not rows: the pane says "Advanced settings: ask the front desk".
   - `choiceOf(key, id, { now, timeZone }) -> { value, until? } | null`: the setting a choice sets, worked out at the press, so a choice drawn earlier can't carry an old time; null for an id no longer offered.
-  - `pressSetting({ key, choice, client, now, timeZone }) -> Promise<{ made: boolean, says: string }>`: `choiceOf`, then `checkSetting`; the `setting` event through `/state/write` or `/profile/write`, by the setting's home; then its confirmation (`confirmationFor` the event the route answered), signed, kept and sent as a Confirm click's is. A press is both the change and the director's confirmation of it (design sections 9 and 14.4). `says` is "Pace is now 2, for this project" or why not.
+  - `pressSetting({ key, choice, client, now, timeZone }) -> Promise<{ made: boolean, says: string }>`: `choiceOf`, then `checkSetting`; the `setting` event through `/state/write` or `/profile/write`, by the setting's home; then its confirmation, signed, kept and sent as a Confirm click's is: the route answers the new event's `id`, and the bridge reads that event back from the state or profile clone for `confirmationFor`. *Reviewer's call:* the routes answer `{ ok, id, pushed }`, not the event. Under STOP the helper refuses the write, and the press says "Settings change once STOP is lifted". A press is both the change and the director's confirmation of it (design sections 9 and 14.4). `says` is "Pace is now 2, for this project" or why not.
   - The bridge's `{ cmd: 'settings', cwd }` -> `{ ok, rows }`, and `{ cmd: 'setting', origin: 'pane', cwd, key, choice }` -> `pressSetting`, for `origin: 'pane'` only. The time zone is the bridge's own (`Intl.DateTimeFormat().resolvedOptions().timeZone`).
 
 - [ ] **Step 1: Write the failing tests.**
@@ -324,6 +334,7 @@ test('the value before is the one in force at the press', ...)                  
 test('protection, notifications and working hours offer no choice and say where they change', ...)
 test('budget offers no other level while budget allocation is in the backlog', ...)
 test('setting is refused for any origin but pane', ...)
+test('under STOP a choice records nothing and says when it can', ...)
 ```
 
 - [ ] **Step 2: Run, expect FAIL; implement; run `npm test`, expect PASS.**
@@ -414,9 +425,10 @@ git commit -m "Keep the watcher running from the front desk, and run its loop on
 - Test: `tests/scripts/mod/courier.test.js`
 
 **Interfaces:**
-- Consumes: `PaneModel` (this tick's, and the last one from `readPaneStatus`, read before `writePaneStatus` replaces it); the `waiting` view's `level` and `importance`, and the front desk's importance order (Task 3 of that plan); the effective `presence` (with `until`) and `notifications.quiet`; `takeStartLock`; `COURIER_GAP_MS`, `LEADS`.
+- Consumes: `PaneModel` (this tick's, and the last one from `readPaneStatus`, read before `writePaneStatus` replaces it); the `waiting` view's `level` and `importance`, and the front desk's importance order (`importanceOf`, Task 3 of that plan); the effective `presence` (with `until`) and `notifications.quiet`; `takeStartLock`; `COURIER_GAP_MS`, `LEADS`.
 - Produces:
-  - `needsYou({ before, after }) -> Array<{ id, kind: 'card' | 'stop' | 'incident' | 'health' | 'finished', n?: number, blocking?: boolean }>`: what `after` holds that `before` didn't: a card (`card:<id>`, with `blocking` when the front desk's order puts it above level 3: STOP or an incident, level 4, or one that holds up all work); STOP turned on (`stop:<since>`); an open incident (`incident:<id>`); a health line at its stop level (`health:<text hash>`); a feature finished (`finished:<work>`). Design section 13's needs-you items, previews (which arrive as approval cards), finished features and STOP.
+  - `needsYou({ before, after }) -> Array<{ id, kind: 'card' | 'stop' | 'incident' | 'health' | 'finished', n?: number, blocking?: boolean }>`: what `after` holds that `before` didn't: a card (`card:<id>`, with `blocking` when the front desk's order puts it above level 3: STOP or an incident, level 4, or one that holds up all work, by `importanceOf(card, views)`, which the front desk's Task 3 exports for this; *reviewer's call*, so the two never rank a card differently); STOP turned on (`stop:<since>`); an open incident (`incident:<id>`); a health line at its stop level (`health:<text hash>`); a feature finished (`finished:<work>`). Design section 13's needs-you items, previews (which arrive as approval cards), finished features and STOP.
+  - A tick whose `before` is missing, or older than `STALE_TICKS` ticks, records everything it finds as sent and wakes for nothing: the director has just opened the session, and the visit asks what waits. *Reviewer's call:* otherwise every old card would wake the front desk at every session start.
   - `PRESENCE_LETS = { here: every kind, away: ['stop', 'incident', 'health', blocking cards], dnd: ['stop', 'incident'] }`; inside the quiet hours, as `dnd`.
   - `courierWake({ project, items, presence, quiet, idle, now }) -> { submit: string | null, sent: string[] }`, under a start lock on `projects/<p>/mod/courier.json` (`{ sent: Array<{ id, at }>, lastWakeAt }`, the last 500): drops items already sent; keeps those presence lets through; with none left, or while a turn runs, or within `COURIER_GAP_MS` of the last wake (unless one is `stop` or `incident`), it submits nothing and marks nothing sent, so they wait for the next tick. Otherwise one prompt for all of them: `Wheelhouse courier: <what>. Ask any new cards now, once, then send Claude's notification in one line.`, `<what>` being counts and numbers only ("2 new cards (3 and 4); STOP is on"). Each item is marked sent when its wake is handed back.
   - The front desk's tick answer carries that prompt as `submit` when there is one.
@@ -432,6 +444,7 @@ test('nothing wakes while a turn runs, and the items wait for the next tick', ..
 test('ten cards in a minute make one wake; another comes no sooner than ten minutes on', ...)     // Review Focus 3
 test('STOP wakes at once, inside the ten minutes', ...)
 test('two sessions of one project wake once for an item', ...)                                    // Review Focus 3
+test('the first tick of a session wakes for nothing and marks what it found', ...)
 test('the wake holds counts and card numbers, never a card\'s words', ...)
 ```
 
@@ -454,11 +467,11 @@ git commit -m "Wake the front desk only for what needs the director, by their pr
 **Interfaces:**
 - Consumes: the bridge's `tick` (Task 3); `PANE_ID`, `STALE_TICKS`; `$.ui.open`, `$.ui.panes`, `$.ui.status`, `$.ui.resolve`, `$.state`, `$.clock.every`, `$.session.id`, `$.session.root`, `$.command.register`.
 - Produces:
-  - `hooks/mod/ask.ts`: `ask($, request, { timeoutMs = 5000 }) -> Promise<Answer | null>`, the board-and-usage mod's `ask` moved here unchanged but for `Answer = { ok, says?, role?, every?, pane?, glance?, submit?, rows?, text? }`, and `send($, request)` (its toast). The only `$.process.run` in the mod.
-  - `session.start`: as before (`/go`, the usage reading), then one tick; for the front desk, `$.ui.open({ id: PANE_ID, title: glance })` and `$.ui.status(glance)`, then `$.clock.every(answer.every, tick)` while `every` is above 0. The command `wheelhouse` ("Open Wheelhouse's pane") opens the pane at any width, as the person asked, and answers with the glance.
-  - Each tick: skipped while the last is running; sends `{ cmd: 'tick', session, cwd, idle }` (`idle` from `$.state`'s `busy`, set by `turn.start` and cleared by `turn.complete`); keeps the answer's `pane` in `$.state` (`pane`, with the time it was read), sets `$.ui.status(glance)`, and retitles the pane only when `$.ui.panes()` shows it open, so a pane the director closed stays closed; an `every` of 0 cancels the timer.
+  - `hooks/mod/ask.ts`: `ask($, request, { timeoutMs = 5000 }) -> Promise<Answer | null>`, the board-and-usage mod's `ask` moved here unchanged but for `Answer = { ok, says?, role?, every?, pane?, glance?, status?, submit?, rows?, text? }`, and `send($, request)` (its toast). The only `$.process.run` in the mod.
+  - `session.start`: as before (`/go`, the usage reading), then one tick, not awaited, so the session starts at once as the usage reading does; for the front desk, `$.ui.open({ id: PANE_ID, title: glance })` and `$.ui.status(status)`, then `$.clock.every(answer.every, tick)` while `every` is above 0. The command `wheelhouse` ("Open Wheelhouse's pane") opens the pane at any width, as the person asked, and answers with the glance.
+  - Each tick: skipped while the last is running; sends `{ cmd: 'tick', session, cwd, idle, surface }` (`idle` from `$.state`'s `busy`, set by `turn.start` and cleared by `turn.complete`; `surface` from `session.start`'s input); keeps the answer's `pane` in `$.state` (`pane`, with the time it was read), sets `$.ui.status` to the answer's `status` and clears it when there is none, and retitles the pane only when `$.ui.panes()` shows it open, so a pane the director closed stays closed; an `every` of 0 cancels the timer. A tick whose role is no longer the front desk (a Shape 2 foreman's first prompt arrived after its first tick) closes the pane with `$.ui.close` and clears the status line. *Reviewer's call:* a foreman started by the app's own session starter is known as one only from its first prompt.
   - `ui.render` for `{ component: 'Pane', requestId: PANE_ID }`, `drawPane`: the glance; STOP's line; the waiting cards one at a time, "Card n of m" with **Back** and **Next**, each card's `text` as plain `Text` (Task 10 adds its buttons); the building lines, the health lines and the usage line; each `missing` line; and, when the model is older than `STALE_TICKS` ticks or the last tick failed, "Couldn't read the latest at <time>; showing <time>'s" above it all.
-  - `HOOKS` gains `turn.start`, `turn.complete`, `command.run` for `wheelhouse` and `ui.render` for the pane; `CALLS` gains `$.ui.open`, `$.ui.panes`, `$.ui.status`, `$.ui.resolve`, `$.state.get`, `$.state.set` and `$.clock.every`, each spelled as the validator spells it (check 40).
+  - `HOOKS` gains `turn.start`, `turn.complete`, `command.run` for `wheelhouse` and `ui.render` for the pane; `CALLS` gains `$.ui.open`, `$.ui.close`, `$.ui.panes`, `$.ui.status`, `$.ui.resolve`, `$.state.get`, `$.state.set` and `$.clock.every`, each spelled as the validator spells it (check 40).
 
 - [ ] **Step 1: Write the failing tests** in `tests/mod/pane.test.ts`, with `claude-code/testing`, looped over `['terminal', 'desktop']`, `$.process.run` mocked:
 
@@ -469,6 +482,8 @@ test('a failed tick shows the last picture under a line saying it is old', ...) 
 test('a pane the director closed is not opened again by a tick', ...)                  // Review Focus 4
 test('a tick never starts while the last one runs', ...)
 test('a feature session opens nothing and stops ticking', ...)
+test('a session that turns out to be the foreman closes its pane', ...)
+test('session start does not wait for the first tick', ...)
 test('/wheelhouse opens the pane', ...)
 ```
 
@@ -492,7 +507,8 @@ git commit -m "Draw the side pane and the status line from the bridge's tick"
 - Consumes: the bridge's `press`, `stop`, `go`, `settings`, `setting` (Tasks 4 and 5); `ask`, `send` (Task 9); `$.prompt.submit`, `$.ui.toast`.
 - Produces:
   - `drawCard($, card)`: the card's text and one `Button` per entry of the card's `buttons`, keyed by card id and label. A press first sets `$.state` `pressing` to the card and label, which redraws the button as "Recording…" and toasts "Recording <label> on card <n>", then sends `{ cmd: 'press', origin: 'pane', cwd, card: id, hash, label }`; the bridge's `says` is toasted; each `submit` prompt goes to `$.prompt.submit`; then a tick. A card's `note` is drawn under it.
-  - The pane's top line: **STOP** while STOP is off, sending `{ cmd: 'stop', origin: 'pane' }`; **Lift STOP** while it is on, sending `{ cmd: 'go', origin: 'pane' }` and toasting the bridge's words, which say what was in progress.
+  - One press at a time: while `pressing` is set, every other button but **STOP** is drawn as plain text, so a double click sends once. *Reviewer's call.*
+  - The pane's top line: **STOP** while STOP is off, sending `{ cmd: 'stop', origin: 'pane', cwd }`; **Lift STOP** while it is on, sending `{ cmd: 'go', origin: 'pane', cwd }` and toasting the bridge's words, which say what was in progress.
   - `drawSettings($, rows)`: the settings view, reached by a **Settings** button on the board view and left by **Board**; each row's label, its current choice and where it comes from, and a `Button` per choice (the chosen one `variant="primary"`); a press sends `{ cmd: 'setting', origin: 'pane', cwd, key, choice: id }` and toasts `says`; a row with `here: false` shows its `why` and an **Ask the front desk** button that submits `Wheelhouse pane: the director wants to change <label>.`
   - Buttons stay live during a turn, since each press says at once that it was taken (design section 17.1). `HIDE_WHILE_BUSY = false` in `pane.tsx`; check 41 turns it on if a press made during a turn is lost in Desktop, and then the buttons (STOP included) are drawn as "Wait for Claude to finish, or type stop" while a turn runs.
   - `CALLS` gains `$.prompt.submit`.
@@ -558,15 +574,15 @@ git commit -m "Keep Wheelhouse traffic out of the front desk, hand on the courie
 
 **Files:**
 - Modify: `skills/front-desk/SKILL.md`
-- Create: `tests/eval/mod/36-pane-explain.js`, `tests/eval/mod/37-courier-wake.js`, `docs/evals/mod.md`
+- Create: `tests/eval/mod/<n>-pane-explain.js`, `tests/eval/mod/<n+1>-courier-wake.js` (`<n>` the first free scenario number from 36 on, Global Constraints), `docs/evals/mod.md`
 
 **Interfaces:**
 - Consumes: the playbook (front desk, Task 7); the evaluation harness (`runSession`, `toolCalls`, `finalText`; build loop, Task 3) and its runner across suites (evaluation, Task 3); a stand-in helper.
 
 - [ ] **Step 1: Write the two scenarios,** checked from the events and the transcript only:
-  - 36: *a press of Explain more in the pane.* Setup: a waiting approval card numbered 2, composed by `cli.js card`. Prompt: `Wheelhouse pane: the director pressed Explain more on card 2.` Pass: a plain explanation with an everyday example, then the card asked again once with `AskUserQuestion`, as it is; no approval or other signed record written by the session; no other card asked.
-  - 37: *a courier's wake.* Setup: two new waiting cards, 3 and 4, and STOP off. Prompt: `Wheelhouse courier: 2 new cards (3 and 4). Ask any new cards now, once, then send Claude's notification in one line.` Pass: one `AskUserQuestion` holding both cards; one call to Claude's notification tool, of one line naming no card's words; no briefing, no other text addressed to the director beyond the cards.
-- [ ] **Step 2: Run each without the playbook's new lines,** as `superpowers:writing-skills` asks (`npm run eval -- 36 37 --variant without`), and record what goes wrong.
+  - The pane scenario: *a press of Explain more in the pane.* Setup: a waiting approval card numbered 2, composed by `cli.js card`. Prompt: `Wheelhouse pane: the director pressed Explain more on card 2.` Pass: a plain explanation with an everyday example, then the card asked again once with `AskUserQuestion`, as it is; no approval or other signed record written by the session; no other card asked.
+  - The courier scenario: *a courier's wake.* Setup: two new waiting cards, 3 and 4, and STOP off. Prompt: `Wheelhouse courier: 2 new cards (3 and 4). Ask any new cards now, once, then send Claude's notification in one line.` Pass: one `AskUserQuestion` holding both cards; one call to Claude Code's notification tool (the one check 4 used, by the name the harness's `toolCalls` gives it), of one line naming no card's words; no briefing, no other text addressed to the director beyond the cards.
+- [ ] **Step 2: Run each without the playbook's new lines,** as `superpowers:writing-skills` asks (`npm run eval -- <n> <n+1> --variant without`), and record what goes wrong.
 - [ ] **Step 3: Write the playbook's lines** with `superpowers:writing-skills`: a prompt led `Wheelhouse pane:` is the director's press, on the card it names: Explain more and Show me as the playbook already says for those answers; a chosen option of a question card as the director's answer to it; "wants to change <setting>" as the start of that setting's change. A prompt led `Wheelhouse courier:` is not the director: ask the cards it names, in one call, and send Claude's notification in one line (design section 13), with nothing else; it is never a reason to give the briefing.
 - [ ] **Step 4: Run both with** (`--variant with`), one trial each, three where they disagree with what is expected or are close, and write `docs/evals/mod.md`: each scenario, with and without, pass or fail, why, and its tokens. A failure with Wheelhouse goes back to the playbook's lines before this task is done.
 - [ ] **Step 5: Run `npm test`.** Expected: PASS.
@@ -591,9 +607,9 @@ test('a card answered by its reply code is refused when pressed in the pane afte
 test('Pace 2 from the settings pane is in force at once, confirmed, and shown on the board', ...)
 test('STOP from the pane holds a push; Lift STOP from the pane lets it through, with a signed lift', ...)
 test('a new card wakes the front desk once; away until 18:00 holds a card that blocks nothing', ...)
-test('/digest gives the briefing and the next prompt after a gap gives none', ...)
+test('/digest gives the briefing, and a prompt within the next two hours brings none', ...)
 test('Shape 2: a state event makes one foreman wake line on the next foreman tick', ...)
-test('the bridge run inside the sandbox signs nothing for a press', ...)   // on macOS only, as the safety e2e does
+test('the bridge run where the signing key cannot be read signs nothing for a press', ...)   // the key made unreadable, as the board-and-usage bridge test does
 ```
 
 - [ ] **Step 2: Run `npm test`.** Expected: PASS, the whole suite, on the Mac. Report the count. Run `npm run mod-check`. Expected: PASS.
@@ -615,7 +631,7 @@ The question: *That the mod's pane, status line, buttons, settings pane, STOP bu
 Agents do every step they can (the director's standing rule for Wheelhouse, 18 October 2026). The director is brought only what needs them: one card to approve the sitting, the hot-reloading click (which only the person at the computer can give), the presses (a press by anyone else would prove nothing), locking the screen for the phone test, and being at the Windows computer.
 
 - [ ] **Step 1: Prepare (agent).** A scratch Wheelhouse project with the stand-in host, as the safety sitting made it; four waiting cards composed by `cli.js card` (an approval of a stand-in pull request, a confirmation of a setting, a feature's question, a product question); Remote Control left as the director has it. One card to the director: what the sitting changes on the computer (this worktree's plugin loaded for one session only by hot reloading, as in check 9; a scratch project under the temporary folder; nothing else) and how each is undone; **Go ahead**, **Not now**. If board-and-usage check 33 hasn't run yet, the same card covers it and the sitting runs its steps first, adding about 5 minutes.
-- [ ] **Step 2: Mac (about 10 minutes of the director's time).** The agent opens a Desktop session on the scratch project with `start_session`; the director clicks **Enable for this session** when hot reloading is offered. The agent then asks, one card at a time, for each press, and reads the records after each: whether the pane and the status line are there (a card: **I see both**, **Only the pane**, **Neither**); **Approve** on card 1 while the session is idle; **Not now** on card 2; **Explain more** on card 3, then, while the turn it starts is still running, an answer option on card 3 itself; **Pace: 2** in the settings view; **STOP**, then **Lift STOP**. The agent also runs the bridge itself from its own Bash with `origin: 'pane'` and checks nothing was signed. Then the director locks the screen for three minutes, during which the agent adds a fifth card; on their return, one card asks whether a notification reached the phone. Last, the agent types `/digest` into the session's prompt from a card the director clicks to send it. Pass: each press made a signed, verified record or a card answer, as its click would; the press during a turn too, or, if it was lost, `HIDE_WHILE_BUSY` is turned on and the note says so; Pace 2 is in force and confirmed; STOP set and lifted with a signed lift; the courier woke the front desk once, and the timer fired while the screen was locked (the bridge's own log of ticks); nothing was signed for the agent's run.
+- [ ] **Step 2: Mac (about 10 minutes of the director's time).** The agent opens a Desktop session on the scratch project with `start_session`; the director clicks **Enable for this session** when hot reloading is offered. The agent then asks, one card at a time, for each press, and reads the records after each: whether the pane and the status line are there (a card: **I see both**, **Only the pane**, **Neither**); **Approve** on card 1 while the session is idle; **Not now** on card 2; **Explain more** on card 3, then, while the turn it starts is still running, an answer option on card 3 itself; **Pace: 2** in the settings view; **STOP**, then **Lift STOP**. The agent also runs the bridge itself from its own Bash with `origin: 'pane'` and checks nothing was signed. Then the director locks the screen for three minutes, during which the agent adds a fifth card; on their return, one card asks whether a notification reached the phone. The agent then sends the scratch session, from its own session with `SendMessage`, one line led `Wheelhouse:`, and reads the mod's log and the transcript for whether `session.receive` fired on the Mac (check 9's open point, which the pilot was to settle) and whether the line was kept out of the conversation. Last, the director types `/digest`. Pass: each press made a signed, verified record or a card answer, as its click would; the press during a turn too, or, if it was lost, `HIDE_WHILE_BUSY` is turned on and the note says so; Pace 2 is in force and confirmed; STOP set and lifted with a signed lift; the courier woke the front desk once, while the screen was locked (`courier.json`'s `lastWakeAt` falls inside the three minutes, which shows the timer fired); the line sent from another session never reached the conversation; nothing was signed for the agent's run.
 - [ ] **Step 3: Windows, when the director is next at that computer,** with that visit's other checks: the same steps; the director's part is being there, the approval click, the hot-reloading click and the same presses.
 - [ ] **Step 4: Undo,** write the note with what each step showed, add its row, run `npm test` and `npm run mod-check`, commit.
 
@@ -631,7 +647,7 @@ git commit -m "Record check 41: the mod in Desktop"
 **Files:**
 - Modify: `docs/specs/2026-10-17-wheelhouse-design.md`, `docs/specs/2026-10-18-build-loop-design.md`, `HANDOVER.md`
 
-- [ ] **Step 1: Bring the design up to date:** section 17.1 (the pane's model as `status.json`; the tick; the press origin `pane`; each card's buttons and the form check; the settings pane's rows and that a press is its own confirmation; `/digest` as the command's output; the courier reading state, its presence rules and its wake; Wheelhouse traffic kept out of the front desk; watching under both shapes; the proof's three parts), 5.2 (the glance in the status line and the pane), 9 (a mod click as a confirmation), 12.7 (STOP and Lift STOP from the pane), 13 (the courier's wake and Claude's notification), 14.4 (the settings pane), 17.2 (step 6 done, ahead of the evaluation by the director's decision of 19 October 2026), section 18 (scenarios 36 and 37), section 20 (checks 40 and 41); and the build-loop design's section 11 (Shape 2's wakes carried by the mod's timer, so check 26 is no longer needed for it) and 16 (check 26's note). This plan's calls go into section 21, each marked *Designer's call*.
+- [ ] **Step 1: Bring the design up to date:** section 17.1 (the pane's model as `status.json`; the tick; the press origin `pane`; each card's buttons and the form check; the settings pane's rows and that a press is its own confirmation; `/digest` as the command's output; the courier reading state, its presence rules and its wake; Wheelhouse traffic kept out of the front desk; watching under both shapes; the proof's three parts), 5.2 (the glance in the status line and the pane), 9 (a mod click as a confirmation), 12.7 (STOP and Lift STOP from the pane), 13 (the courier's wake and Claude's notification), 14.4 (the settings pane), 17.2 (step 6 done, ahead of the evaluation by the director's decision of 19 October 2026), section 18 (the pane and courier scenarios), section 20 (checks 40 and 41); and the build-loop design's section 11 (Shape 2's wakes carried by the mod's timer, so check 26 is no longer needed for it) and 16 (check 26's note). This plan's calls go into section 21, each marked *Designer's call*.
 - [ ] **Step 2: Update `HANDOVER.md`:** what this plan built, what checks 40 and 41 found, and the next step in design section 17.2 (the evaluation as a whole, then Wheelhouse used for all work on the first project).
 - [ ] **Step 3: Run `npm test`.** Expected: PASS.
 - [ ] **Step 4: Commit.**
@@ -662,7 +678,27 @@ Settled here without the director, each listed for the design in Task 15:
 15. **The pane opens by itself** only at the front desk's session start and on `/wheelhouse`; a pane the director closed stays closed.
 16. **The mod is split into files** under `hooks/mod/`, by job, once check 40 shows the validator reads them.
 17. **The proof has three parts:** the validator's report against the allowed and forbidden lists, every module file's source, and the bridge's import graph, which never reaches the code that writes Claude Code's settings; CI's `validate` job runs it on every pull request.
-18. **Scenarios 36 and 37** test the front desk's side of the pane's and the courier's prompts.
+18. **Two scenarios** test the front desk's side of the pane's and the courier's prompts, numbered after the real-use ones already written.
+
+## Builder check
+
+Read on 19 October 2026 as the builder would, against design section 17.1, the build-loop design's sections 2 and 11, the mod reference that ships with Claude Code 2.1.299, and the code as built on the board-and-usage branch (`claude/focused-pasteur-70cf64`), the build loop's foreman branch (`claude/build-loop-foreman-9786cf`) and `main`. Nothing needed the director. These gaps were settled in place, each marked *Reviewer's call*, and go into the design with the plan's calls in Task 15:
+
+1. **The bridge's imports** (Task 2) reach `scripts/protection/settings.js` through the watcher's waker, which takes only the pure `featureAllowRules` from it. So the proof checks what is imported (never `writeSettings` or `mergeSettings`), not the file, and still refuses `managed.js`, `locked.js` and setup outright.
+2. **The pane origin** (Task 2) is checked by the press handlers' names, `press…`, which a script can read without a TypeScript parser.
+3. **The board's waiting list has no ids** (Task 3): its items are numbered but not named. They gain their card's id, or `q:<question id>` for a build-loop question no card asks yet, which the pane shows as a line with no buttons.
+4. **The status line in the terminal** (Task 3): where Wheelhouse's own status-line command is set, the tick gives no status, so the glance doesn't show twice.
+5. **The bridge's time limit** (Task 3) is set today before the request is read; it now follows the request, so a Shape 2 loop gets its 45 seconds.
+6. **Who a session is** (Tasks 3 and 9): a foreman started by the app's own session starter is known only from its first prompt, after the mod's first tick, so a tick that finds the session is the foreman closes the pane it opened.
+7. **The first tick doesn't hold up the session** (Task 9): it isn't awaited, as the first piece's usage reading isn't.
+8. **STOP and the helper's writes** (Tasks 4 and 5): under STOP the helper refuses `/state/write` and `/profile/write` but takes `/state/record`. So a deciding press still records and closes its card by its signed record; **Not now** and a setting record nothing and say so; **Explain more** and **Show me** still start their turn. The signed record is always kept before the card's plain answer.
+9. **A setting's confirmation** (Task 5) needs the event, and the write routes answer only its id; the bridge reads the event back from the clone.
+10. **The courier's first tick** (Task 8) records what it finds and wakes for nothing, or every old card would wake the front desk at each session start.
+11. **One rank for a card** (Task 8): the front desk's importance order is exported as `importanceOf`, so the courier's "holds up all work" and the visit's order never disagree.
+12. **One press at a time** (Task 10): while a press is in flight, the other buttons but STOP are plain text, so a double click sends once.
+13. **No script can send a message into a running session** (check 27 found no such route), so `session.receive` and the courier's drop of a message from another session are asked in Desktop (check 41), where the agent's own session sends one with `SendMessage`. That also settles check 9's open point on the Mac, which the pilot was to settle before the director dropped it.
+14. **Scenario numbers** (Task 12): the evaluation and install plans number the problems real use turns up from 36, so this plan's two scenarios take the next free numbers when they are written.
+15. **The check numbers** follow the install plan's count, which gives this plan 40 to 49; it uses 40 and 41.
 
 ## Order
 
