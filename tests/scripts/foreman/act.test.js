@@ -12,6 +12,7 @@ import { main, FOREMAN_QUESTIONS, extraPlanId } from '../../../scripts/foreman/a
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
 import { branchOf } from '../../../scripts/hooks/session-start.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
+import { setStop } from '../../../scripts/lib/stop.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeWaker, sessionFile } from '../../../scripts/watcher/waker.js';
@@ -346,6 +347,55 @@ test('plan-ready records a plan that clashes, or has no slot, and says why it wa
   const fake2 = fakeClient({ views: paced.views });
   const p = await act(['plan-ready', 'mine'], { client: fake2.client });
   assert.match(p.out, /^mine waits: no building slot is free \(pace\)\.$/m);
+}));
+
+test('while an incident is open or STOP is on, start, build and resume refuse, plan-ready records and waits, and only the fix merges (R95)', () => withHome(async () => {
+  const { checkout, views, wt } = await planScene();
+  views.incidents = { open: [{ id: 'site-down', what: 'The site is down', at: '2026-10-19T08:00:00.000Z', fixes: [7] }] };
+  views.work['add-export'] = workView('add-export');
+  views.work.held = workView('held');
+  views.features.held = featureView('held', { step: 'planned', worktree: worktree(checkout, 'held'), plan: 'p.md', files: [] });
+  views.work.rest = workView('rest');
+  views.features.rest = featureView('rest', { step: 'paused', pausedFor: 'five-hour', worktree: worktree(checkout, 'rest'), plan: 'p.md', files: [] });
+  views.work.m = workView('m');
+  views.features.m = featureView('m', { step: 'building', worktree: worktree(checkout, 'm', { pr: { pr: 6, plan: 'a.md' } }) });
+  views.work.x = workView('x');
+  views.features.x = featureView('x', { step: 'building', worktree: worktree(checkout, 'x', { pr: { pr: 7, plan: 'b.md' } }) });
+  const fake = fakeClient({ views, answers: { updateBranch: { ok: true } } });
+  const waker = fakeWaker();
+
+  const start = await act(START, { client: fake.client, wakerFor: waker.wakerFor });
+  refusedInOneLine(start);
+  assert.match(start.err, /^add-export can't start while incident site-down is open: start nothing and give no go-ahead\. Nothing to do until it is over$/m);
+  assert.equal(waker.starts.length, 0);
+  refusedInOneLine(await act(['build', 'held'], { client: fake.client }));
+  const resumed = await act(['resume', 'rest'], { client: fake.client });
+  refusedInOneLine(resumed);
+  assert.match(resumed.err, /^rest can't resume while incident site-down is open/);
+  assert.equal(fake.writes.length, 0);
+
+  // The plan is kept as planned, so the queue offers build once the incident is over.
+  const planned = await act(['plan-ready', 'mine'], { client: fake.client });
+  assert.equal(planned.code, 0, planned.err);
+  assert.equal(planned.out, 'Recorded the plan of mine: docs/plans/mine.md, 2 files.\nmine waits: incident site-down is open.\n');
+  assert.deepEqual(fake.writes.map((w) => w.data.step), ['planned']);
+
+  // Only the incident's recorded fix merges.
+  const frozen = await act(['merge', 'm'], { client: fake.client });
+  refusedInOneLine(frozen);
+  assert.match(frozen.err, /^Pull request #6 for m can't merge while incident site-down is open: only an incident's fix merges\. Nothing to do until it is over$/m);
+  assert.deepEqual(fake.calls.map(([name]) => name), ['prState']);
+  assert.equal((await act(['merge', 'x'], { client: fake.client })).out, 'Merged pull request #7 for x at cccccccccccc.\n');
+
+  // STOP holds everything, the fix too.
+  setStop({ by: 'prompt' });
+  views.incidents = { open: [] };
+  const stopped = fakeClient({ views, answers: { updateBranch: { ok: true } } });
+  const s = await act(START, { client: stopped.client, wakerFor: waker.wakerFor });
+  assert.match(s.err, /^add-export can't start while STOP is on/m);
+  fs.writeFileSync(featurePaths(views.features.x.data.worktree).pr, JSON.stringify({ pr: 7, plan: 'b.md' }));
+  assert.match((await act(['merge', 'x'], { client: stopped.client })).err, /^Pull request #7 for x can't merge while STOP is on/m);
+  assert.equal(stopped.writes.length, 0);
 }));
 
 test('build and resume give the go-ahead once a wait clears; pause records the pause; each again does nothing', () => withHome(async () => {

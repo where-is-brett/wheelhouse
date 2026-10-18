@@ -626,6 +626,27 @@ test('a plan that is ready wakes the foreman once per arrival, not at every obse
   assert.deepEqual(diff(observation(), observation({ features: { 'login-page': feature({ status: null }) } })).filter((e) => e.type === 'plan-ready'), []);
 });
 
+test('a feature whose phase arrives at done wakes the foreman once with report, to close it (R94)', () => {
+  const at = (phase, over = {}) => feature({ status: status({ phase, ...over }) });
+  let cursor = { seen: [], prev: observation({ features: { 'login-page': at('pr-open') } }) };
+  const run = (f, ms) => {
+    const r = step(cursor, observation({ at: iso(ms), awake: 1000, features: { 'login-page': f } }), { handled: new Set() });
+    cursor = r.cursor;
+    return r.events.filter((e) => e.type === 'report');
+  };
+  const done = run(at('done', { updatedAt: iso(1000) }), 1000);
+  assert.deepEqual(done.map((e) => [e.work, e.id, e.detail.phase]), [['login-page', 'report:login-page:0', 'done']]);
+  assert.deepEqual(route(done).foreman.map((e) => e.id), ['report:login-page:0']);
+  assert.deepEqual(route(done).features, {});
+  // Still done: no second wake.
+  assert.deepEqual(run(at('done', { updatedAt: iso(2000) }), 2000), []);
+  // A feature first seen done wakes too (a blocked one ends there with no pull request); one planning does not.
+  const first = diff(observation({ features: {} }), observation({
+    features: { 'login-page': at('done'), 'search-box': feature({ status: status({ work: 'search-box', phase: 'planning' }) }) },
+  }), { handled: new Set() });
+  assert.deepEqual(first.filter((e) => e.type === 'report').map((e) => e.work), ['login-page']);
+});
+
 test('plan-ready is not repeated after a restart from the cursor, and a handled one goes to the digest', () => withHome(() => {
   const at = (phase, ms) => observation({ at: iso(ms), awake: 1000, features: { 'login-page': feature({ status: status({ phase, updatedAt: iso(ms) }) }) } });
   const start = { seen: [], prev: settle(null, at('planning', 0)), held: null };

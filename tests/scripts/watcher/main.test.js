@@ -9,7 +9,9 @@ import path from 'node:path';
 import { runWatcher, healthFile, lockFile, projectConfig, cliOptions } from '../../../scripts/watcher/main.js';
 import { recordHandled } from '../../../scripts/watcher/handled.js';
 import { foremanTools } from '../../../scripts/foreman/tools.js';
-import { makeWaker, readWake, wakesDir, outboxFile, spawnDetached } from '../../../scripts/watcher/waker.js';
+import {
+  makeWaker, readWake, wakesDir, outboxFile, spawnDetached, PROMPTS,
+} from '../../../scripts/watcher/waker.js';
 import { readCursor, writeCursor } from '../../../scripts/watcher/core.js';
 import { LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
@@ -209,7 +211,7 @@ test('a crash after the outbox is saved but before the cursor is written repeats
   live.clear();
   await runWatcher({ project: P, config: config(), observe: looker([]).observe, wakerOptions, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
   assert.equal(calls.length, 2);
-  const merged = path.join(wakesDir(P), path.basename(calls[1].args[1].slice('Wheelhouse foreman: handle '.length)));
+  const merged = path.join(wakesDir(P), path.basename(calls[1].args[1].slice(PROMPTS.foreman('').length)));
   assert.equal(readWake(merged).merged.length, 2);
   assert.deepEqual(readWake(merged).events.map((e) => e.id), ['ev-1']);
 }));
@@ -304,7 +306,7 @@ test('under STOP the loop observes and records, but starts and wakes nothing unt
   liftStop();
   await runWatcher({ project: P, config: config(), observe: looker([]).observe, wakerOptions, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args.slice(0, 2), ['-p', `Wheelhouse foreman: handle ${copyOf(waiting[0].file)}`]);
+  assert.deepEqual(calls[0].args.slice(0, 2), ['-p', `Wheelhouse foreman: follow wheelhouse:foreman to handle ${copyOf(waiting[0].file)}`]);
   assert.equal(calls[0].env.WHEELHOUSE_ROLE, 'foreman');
 }));
 

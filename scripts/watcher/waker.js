@@ -5,7 +5,8 @@
 //
 //   Shape 1, the `print` route. The watcher starts each session itself, as a
 //   detached process with no window:
-//     - the foreman: a fresh `claude -p "Wheelhouse foreman: handle <file>"`
+//     - the foreman: a fresh `claude -p "Wheelhouse foreman: follow
+//       wheelhouse:foreman to handle <file>"`
 //       in the project's main checkout, with the foreman's model from
 //       `config.routing.foreman`, `--permission-mode` from `config.sessionMode`,
 //       `--allowedTools` from `foremanTools` when there are any, and
@@ -88,7 +89,8 @@ import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 
 export const PROMPTS = Object.freeze({
-  foreman: (file) => `Wheelhouse foreman: handle ${file}`,
+  // It names the foreman's playbook, which the foreman may load (ruling R98).
+  foreman: (file) => `Wheelhouse foreman: follow wheelhouse:foreman to handle ${file}`,
   feature: (file) => `Wheelhouse: read ${file}`,
   start: 'Read .wheelhouse/feature/brief.md and follow it.',
 });

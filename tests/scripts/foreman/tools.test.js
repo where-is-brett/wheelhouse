@@ -1,12 +1,16 @@
 // tests/scripts/foreman/tools.test.js
-// The foreman's allowed tools (rulings R45, R63): Read, and exactly its two
-// scripts, wake.js and act.js, from the plugin it sits in.
+// The foreman's allowed tools (rulings R45, R63, R98): Read, its own skill, and
+// exactly its two scripts, wake.js and act.js, from the plugin it sits in.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { foremanTools, foremanCommands, PLUGIN_ROOT } from '../../../scripts/foreman/tools.js';
+import {
+  FOREMAN_SKILL, foremanTools, foremanCommands, PLUGIN_ROOT,
+} from '../../../scripts/foreman/tools.js';
 import { invocation } from '../../../scripts/lib/claude.js';
+import { PROMPTS } from '../../../scripts/watcher/waker.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -26,13 +30,18 @@ const OTHERS = (base) => [
   'git push',
 ];
 
-test('the foreman may Read, and run its two scripts and nothing else', () => {
+test('the foreman may Read, load its own skill, and run its two scripts and nothing else', () => {
   const tools = foremanTools('/plugins/wheelhouse', { platform: 'darwin' });
   assert.deepEqual(tools, [
     'Read',
     "Bash(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)",
     "Bash(node '/plugins/wheelhouse/scripts/foreman/act.js':*)",
+    'Skill(wheelhouse:foreman)',
   ]);
+  // The skill rule names this plugin's own foreman skill by its exact name (R98).
+  const plugin = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8'));
+  assert.equal(FOREMAN_SKILL, `${plugin.name}:foreman`);
+  assert.ok(fs.existsSync(path.join(root, 'skills', 'foreman', 'SKILL.md')));
   assert.deepEqual(foremanCommands('/plugins/wheelhouse', { platform: 'darwin' }), {
     wake: "node '/plugins/wheelhouse/scripts/foreman/wake.js'",
     act: "node '/plugins/wheelhouse/scripts/foreman/act.js'",
@@ -48,7 +57,7 @@ test('the foreman may Read, and run its two scripts and nothing else', () => {
     assert.equal(rule.replace(/[^()]/g, ''), '()', rule);
     assert.doesNotMatch(rule, /[",]/, rule);
   }
-  assert.deepEqual(tools.filter((t) => !t.startsWith('Bash(')), ['Read']);
+  assert.deepEqual(tools.filter((t) => !t.startsWith('Bash(')), ['Read', 'Skill(wheelhouse:foreman)']);
 });
 
 test('the rules are given on Windows too, with the path in forward slashes, and pass through claude.cmd', () => {
@@ -58,10 +67,11 @@ test('the rules are given on Windows too, with the path in forward slashes, and 
     'Read',
     "Bash(node 'C:/Users/a b/plugins/wheelhouse/scripts/foreman/wake.js':*)",
     "Bash(node 'C:/Users/a b/plugins/wheelhouse/scripts/foreman/act.js':*)",
+    'Skill(wheelhouse:foreman)',
   ]);
   // Through the npm shim, as the waker starts a foreman: no argument is refused,
   // and the command line still names exactly the two scripts.
-  const run = invocation({ kind: 'cmd', file: 'C:\\npm\\claude.cmd' }, [], ['--permission-mode', 'acceptEdits', '--allowedTools', ...tools], 'Wheelhouse foreman: handle x.json');
+  const run = invocation({ kind: 'cmd', file: 'C:\\npm\\claude.cmd' }, [], ['--permission-mode', 'acceptEdits', '--allowedTools', ...tools], PROMPTS.foreman('x.json'));
   const line = run.args.at(-1);
   for (const tool of tools) assert.ok(line.includes(tool), tool);
   assert.equal((line.match(/scripts\/foreman\/[a-z]+\.js/g) ?? []).join(' '), 'scripts/foreman/wake.js scripts/foreman/act.js');
@@ -120,5 +130,5 @@ test('a plugin root with accented or non-Latin letters, or a Windows short name,
   }
   // Through claude.cmd, a short-name root passes as an argument.
   const tools = foremanTools('C:\\Users\\JOSE~1\\plugins\\wheelhouse', { platform: 'win32' });
-  assert.doesNotThrow(() => invocation({ kind: 'cmd', file: 'C:\\npm\\claude.cmd' }, [], ['--allowedTools', ...tools], 'Wheelhouse foreman: handle x.json'));
+  assert.doesNotThrow(() => invocation({ kind: 'cmd', file: 'C:\\npm\\claude.cmd' }, [], ['--allowedTools', ...tools], PROMPTS.foreman('x.json')));
 });

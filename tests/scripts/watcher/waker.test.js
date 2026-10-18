@@ -126,7 +126,7 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   const [call] = fake.calls;
   const copy = path.join(main, '.wheelhouse', 'foreman', 'wakes', path.basename(record));
   assert.equal(call.file, 'claude');
-  assert.deepEqual(call.args, ['-p', `Wheelhouse foreman: handle ${copy}`, '--permission-mode', 'plan', '--model', 'model-a']);
+  assert.deepEqual(call.args, ['-p', `Wheelhouse foreman: follow wheelhouse:foreman to handle ${copy}`, '--permission-mode', 'plan', '--model', 'model-a']);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'), 'the copy is the record');
   assert.match(fs.readFileSync(path.join(main, '.git', 'info', 'exclude'), 'utf8'), /^\.wheelhouse\/$/m, 'git-ignored through info/exclude');
   assert.equal(call.cwd, main);
@@ -170,7 +170,7 @@ test('a second bundle while a foreman runs waits for it', () => withHome(async (
   await again.pump();
   // The restarted watcher never learnt the first one's exit code, so its wake goes again, with the second, as one.
   assert.equal(fake.calls.length, 2);
-  const merged = recordOf(fileIn(fake.calls[1].args[1], 'Wheelhouse foreman: handle '));
+  const merged = recordOf(fileIn(fake.calls[1].args[1], PROMPTS.foreman('')));
   assert.deepEqual(readWake(merged).merged, [first, second]);
   assert.deepEqual(readWake(merged).events.map((e) => e.id), ['e1', 'e2']);
 }));
@@ -190,7 +190,7 @@ test('several waiting wakes go as one, each event once, read only from the recor
   fake.end(fake.calls[0].pid, 0);
   await flush();
   assert.equal(fake.calls.length, 2, 'the exit started the next foreman, with no pump called');
-  const merged = recordOf(fileIn(fake.calls[1].args[1], 'Wheelhouse foreman: handle '));
+  const merged = recordOf(fileIn(fake.calls[1].args[1], PROMPTS.foreman('')));
   const wake = readWake(merged);
   assert.deepEqual(wake.events.map((e) => e.id), ['e3', 'e4']);
   assert.deepEqual(wake.digest.map((e) => e.id), ['p1', 'p2']);
@@ -299,7 +299,7 @@ test('a starting record, left by a stop mid-start, holds for 2 minutes, then its
   w.clock.move(1);
   await w.pump();
   assert.equal(fake.calls.length, 1, 'not held for the foreman\'s whole hour');
-  const merged = recordOf(fileIn(fake.calls[0].args[1], 'Wheelhouse foreman: handle '));
+  const merged = recordOf(fileIn(fake.calls[0].args[1], PROMPTS.foreman('')));
   assert.deepEqual(readWake(merged).events.map((e) => e.id), ['e0', 'e1'], 'the left wake goes again, with the new one');
   assert.equal(w.waiting()[0].failures, 0, 'no failure counted');
 }));
@@ -591,7 +591,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   // Shape 2 names the same copy the Shape 1 prompt names.
   const lines = [];
   await waker(fakeRun(), { shape: 2, print: (line) => lines.push(line) }).wakeForeman(record);
-  assert.equal(lines[0].slice('WAKE foreman '.length), fake.calls[0].args[1].slice('Wheelhouse foreman: handle '.length));
+  assert.equal(lines[0].slice('WAKE foreman '.length), fake.calls[0].args[1].slice(PROMPTS.foreman('').length));
 }));
 
 test('under STOP nothing is started or woken; what waits goes once STOP lifts', () => withHome(async () => {
@@ -660,7 +660,7 @@ test('through claude.cmd on Windows, the prompt goes in on stdin', () => withHom
   await w.wakeForeman(record);
   const [call] = fake.calls;
   assert.equal(call.file, 'cmd.exe');
-  assert.equal(call.input, `Wheelhouse foreman: handle ${path.join(foremanCopies(), path.basename(record))}`);
+  assert.equal(call.input, `Wheelhouse foreman: follow wheelhouse:foreman to handle ${path.join(foremanCopies(), path.basename(record))}`);
   assert.equal(call.windowsVerbatimArguments, true);
   assert.ok(call.args.at(-1).includes('--permission-mode acceptEdits --model model-a'));
 }));

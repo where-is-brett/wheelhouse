@@ -55,7 +55,7 @@
 //   - a question's own id (question, extra-plan);
 //   - `<type>:<work>:<head>` for a PR's events;
 //   - a change of state with no id of its own (stop, clash, the brief's events,
-//     plan-ready, stuck with no status) carries the count of the observation
+//     plan-ready, report, stuck with no status) carries the count of the observation
 //     before it, which only ever rises, so a clock set back can never repeat one.
 //
 // The two wakes around a plan (ruling R76). A feature's status phase arriving
@@ -68,6 +68,11 @@
 // build. Each slice's plan in the feature lane goes the same way. An event
 // carrying `brief` records an amendment's hash at the feature's current step
 // (ruling R85) and is never `build`.
+//
+// A feature's end (ruling R94). Its status phase arriving at `done` (merged
+// with no slices left, or a report that ends it blocked or closed) is `report`
+// for the foreman, which records the report and closes the feature. It is
+// raised as plan-ready is, once per arrival.
 //
 // Work that starts with no approval (rulings R60 and R78): quick and bug work
 // that no one is shown first. Its plain `work` event is `work-ready`; any other
@@ -86,7 +91,7 @@ export const DIGEST_CAP = 200;
 
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
-  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready',
+  'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report',
 ]);
 export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'brief-changed', 'answer', 'build']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
@@ -300,6 +305,12 @@ function featureEvents(prev, next, settled, out) {
       out.push({
         type: 'plan-ready', work, id: `plan-ready:${work}:${anchor}`, detail: { phase: status.phase, task: status.task, slice: status.slice },
       });
+    }
+
+    // A feature's end, merged, blocked or closed with its report (ruling R94):
+    // the phase is done now and was not when last seen. The foreman closes it.
+    if (status?.phase === 'done' && ps?.phase !== 'done') {
+      out.push({ type: 'report', work, id: `report:${work}:${anchor}`, detail: { phase: status.phase } });
     }
 
     if (s.still >= STUCK_MS && !((pf?.still ?? 0) >= STUCK_MS)) {

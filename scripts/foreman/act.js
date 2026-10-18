@@ -37,6 +37,12 @@
 //   merge <work>    brings the pull request up to date, then merges it.
 //   close <work>    records the report and closes the feature.
 //
+// STOP and incidents (ruling R95). While STOP is on or an incident is open,
+// `start`, `build` and `resume` refuse, and `plan-ready` records the plan as
+// planned and waits, so the queue offers `build` once it is over; nothing is
+// given the go-ahead, an amendment's resume included. `merge` refuses but for
+// an open incident's recorded fix, and under STOP refuses that too.
+//
 // Every command checks the work id, prints a few short lines, and refuses
 // with one plain line and exit code 1. Each may be run again with nothing
 // more done (a wake may repeat, ruling R27): it says what is so already.
@@ -80,7 +86,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_ROOT } from './tools.js';
 import {
-  ForemanError, NO_PLAN, PLANS_WHILE_HELD, checkoutOf, clashFor, featureOf, laneOf, loadConfig, loadViews, oneLine, openPrWait, pausedBy, planOf, projectHere,
+  ForemanError, NO_PLAN, PLANS_WHILE_HELD, checkoutOf, clashFor, featureOf, haltOf, laneOf, loadConfig, loadViews, oneLine, openPrWait, pausedBy, planOf, projectHere,
   queueToStart, slotFor, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
@@ -194,6 +200,13 @@ function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out 
       return config;
     },
     waker: (cfg) => wakerFor(cfg, (line) => out(`${line}\n`)),
+    // STOP, or an open incident: what holds back every start and go-ahead (R95).
+    halt: (v) => haltOf(v),
+    // Refuses a start or a go-ahead while either holds.
+    refuseHalted(v, what) {
+      const halt = haltOf(v);
+      if (halt !== null) refuse(`${what} while ${halt.why}: start nothing and give no go-ahead. Nothing to do until it is over`);
+    },
     // Records the id as handled, then writes the event through the helper, and
     // lays it over the views this command reads.
     async write(kind, data) {
@@ -234,6 +247,11 @@ const GO = (work) => `${work} may build: recorded building, so its session is wo
 // and has a slot; otherwise says why it waits. `f` is the feature as it stands.
 async function goAhead(ctx, work, f, { lead = '' } = {}) {
   const views = await ctx.views();
+  const halt = ctx.halt(views);
+  if (halt !== null) {
+    ctx.say(`${lead}${work} waits: ${halt.why}.`);
+    return false;
+  }
   const config = await ctx.config();
   const clash = clashFor(views, config, work, Array.isArray(f.files) ? f.files : []);
   const wait = waitText(clash, slotFor(views, work, { now: ctx.now }));
@@ -328,6 +346,7 @@ async function start(ctx, work, rest) {
   const views = await ctx.views();
   const entry = views.work[work];
   if (!isPlain(entry?.work?.data)) refuse(`There is no work named ${work} in state`);
+  ctx.refuseHalted(views, `${work} can't start`);
   const config = await ctx.config();
 
   const existing = featureOf(views, work);
@@ -473,6 +492,7 @@ async function build(ctx, work, rest) {
     refuse(NO_PLAN.includes(lane) ? `${work} is ${lane} work: it builds as soon as it starts` : `${work} has no plan recorded yet: act plan-ready ${work} records it`);
   }
   refuseDirectorsPause(work, f);
+  ctx.refuseHalted(views, `${work} can't build`);
   const ownPr = openPrWait(worktreeOf(ctx.project, views, work));
   if (ownPr !== null) {
     ctx.say(`${work} waits: ${ownPr}.`);
@@ -533,7 +553,10 @@ async function resume(ctx, work, rest, { lead = '', lifted = false } = {}) {
     }
     refuse(`${work} isn't paused (it is at ${f.step})`);
   }
-  if (!lifted) refuseDirectorsPause(work, f);
+  if (!lifted) {
+    refuseDirectorsPause(work, f);
+    ctx.refuseHalted(views, `${work} can't resume`);
+  }
   await resumeOrBuild(ctx, work, f, laneOf(views, work), { lead, lifted });
 }
 
@@ -729,6 +752,9 @@ async function merge(ctx, work, rest) {
     ctx.say(`Pull request #${pr} for ${work} is merged already.`);
     return;
   }
+  // While STOP or an incident holds, only an incident's recorded fix merges.
+  const halt = ctx.halt(views);
+  if (halt !== null && !halt.fixes.includes(pr)) refuse(`Pull request #${pr} for ${work} can't merge while ${halt.why}: only an incident's fix merges. Nothing to do until it is over`);
   const updated = await ctx.client.updateBranch(number);
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
   const merged = await ctx.client.merge(number);

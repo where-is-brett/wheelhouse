@@ -1,7 +1,7 @@
 // scripts/foreman/tools.js
-// The foreman's allowed tools (rulings R45, R63), passed by the watcher to each
-// foreman it starts with --allowedTools: `Read`, and one `Bash(<command>:*)`
-// rule for each of its two scripts, in the form the waker uses for feature
+// The foreman's allowed tools (rulings R45, R63, R98), passed by the watcher to
+// each foreman it starts with --allowedTools: `Read`, its own skill, and one
+// `Bash(<command>:*)` rule for each of its two scripts, in the form the waker uses for feature
 // build commands (scripts/protection/settings.js). A `Bash(x:*)` rule allows
 // `x` and `x` followed by a space and anything, so each allows only that
 // script, by its full path, in this plugin.
@@ -62,8 +62,15 @@ export function foremanCommands(pluginRoot = PLUGIN_ROOT, { platform = process.p
   };
 }
 
-// The foreman's allowed tools: Read, and exactly its two scripts.
+// The foreman's playbook, as Claude Code names a plugin's skill: the plugin's
+// name (.claude-plugin/plugin.json), a colon, the skill's (skills/foreman).
+export const FOREMAN_SKILL = 'wheelhouse:foreman';
+
+// The foreman's allowed tools: Read, exactly its two scripts, and exactly its
+// own skill (ruling R98). `Skill(name)` is Claude Code's rule for one skill by
+// its exact name, which for a plugin's skill is `plugin:skill`
+// (https://code.claude.com/docs/en/skills, read 19 October 2026).
 export function foremanTools(pluginRoot = PLUGIN_ROOT, { platform = process.platform } = {}) {
   const { wake, act } = foremanCommands(pluginRoot, { platform });
-  return ['Read', `Bash(${wake}:*)`, `Bash(${act}:*)`];
+  return ['Read', `Bash(${wake}:*)`, `Bash(${act}:*)`, `Skill(${FOREMAN_SKILL})`];
 }

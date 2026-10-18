@@ -3,13 +3,18 @@
 // design, sections 8, 11 and 15). The foreman is a fresh session at every
 // wake; it reads conclusions, not files, so this works them out:
 //   node wake.js read <file>
-//     One short line per event (its type, its work, the detail that matters
+//     First the two commands exactly as the foreman's allow rules match them
+//     (ruling R96), and while STOP or an incident holds, a line saying so
+//     (ruling R95). Then one short line per event (its type, its work, the detail that matters
 //     and, where the next step is certain, `Next: act …`), the digest counted
 //     by type and never listed, then the queue's answer: what may start, which
 //     recorded plans may build or must wait and why, what is planning and
 //     what is building. Each start names the work's approved document, to
-//     read the brief's goal, done lines and appetite from (ruling R84), and
-//     the rulings in force are listed by id under the starts, for `--ruling`.
+//     read the brief's goal, done lines and appetite from (ruling R84), once
+//     its hash is checked against the approval's (R97); an extra plan's start
+//     names its title and parent (R99). The rulings in force are listed by id
+//     under the starts, for `--ruling`. While STOP or an incident holds, starts
+//     and builds wait, and a merge waits unless it is an incident's fix.
 //     For each `plan-ready` the plan's files are read and
 //     checked for clashes against the running features' recorded files and
 //     the configuration's hot files.
@@ -32,7 +37,8 @@
 // and only from a worktree inside the checkout's .claude/worktrees/.
 //
 // An answer to the foreman's own question (an id from FOREMAN_QUESTIONS up)
-// says so, with the question, for the foreman to act on; any other answer
+// says so, with the question and the chosen option's words (one whole act
+// command, or waiting), for the foreman to act on; any other answer
 // wakes its feature's session and needs nothing from the foreman. A director's
 // pause is never offered back: only their amendment lifts it.
 //
@@ -50,6 +56,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { clashCheck, fileMapOf, nextWork } from './queue.js';
+import { PLUGIN_ROOT, foremanCommands } from './tools.js';
+import { briefHash } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
@@ -57,6 +65,7 @@ import { helperClient } from '../host/helper-client.js';
 import { PACE, questionIdOf } from '../lib/build-loop.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
+import { stopState } from '../lib/stop.js';
 import { projectConfig } from '../watcher/main.js';
 import { inWorktreesFolder, plainWorktreePath } from '../watcher/sources.js';
 import { readWake, watcherDir, watcherFolder } from '../watcher/waker.js';
@@ -67,7 +76,8 @@ export class ForemanError extends Error {}
 // Until the usage plan supplies it.
 export const FIVE_HOUR_TIGHT = false;
 
-const VIEW_NAMES = ['work', 'features', 'reports', 'questions', 'rulebook'];
+const VIEW_NAMES = ['work', 'features', 'reports', 'questions', 'rulebook', 'incidents'];
+const DOCUMENT_BYTES = 1024 * 1024;
 const VIEW_BYTES = 8 * 1024 * 1024;
 const MEASURES_BYTES = 64 * 1024 * 1024;
 const LINE_CHARS = 200;
@@ -145,6 +155,7 @@ export async function loadViews(project, client, { kept = false } = {}) {
       reports: isPlain(views.reports) ? views.reports : {},
       questions: isPlain(views.questions) ? views.questions : {},
       rulebook: Array.isArray(views.rulebook) ? views.rulebook : [],
+      incidents: { open: Array.isArray(views.incidents?.open) ? views.incidents.open.filter(isPlain) : [] },
     },
     fresh,
     ...(fresh ? {} : { why }),
@@ -161,21 +172,43 @@ export async function loadConfig(project, client) {
 export const laneOf = (views, work) => views.work?.[work]?.work?.data?.lane ?? null;
 export const featureOf = (views, work) => (isPlain(views.features?.[work]?.data) ? views.features[work].data : null);
 
-// The document the work names (its brief, design or report), as a full path
-// for the foreman to read its goal, done lines and appetite from (ruling R84):
-// a path in the record is taken from the project's main checkout. Null when it
-// names none.
+// The document the work names (its brief, design or report), for the foreman
+// to read its goal, done lines and appetite from (ruling R84): `{ path,
+// problem }`, the path full (a path in the record is taken from the project's
+// main checkout), and the problem null only when the file is the one approved
+// (ruling R97): its hash is the approval's, or for work that starts with no
+// approval, the one the work event recorded. Null when the work names none.
 export function documentOf(project, views, work) {
-  const doc = views.work?.[work]?.work?.data?.doc;
+  const entry = views.work?.[work];
+  const doc = entry?.work?.data?.doc;
   if (!isPlain(doc) || typeof doc.path !== 'string' || doc.path.trim() === '') return null;
-  if (path.isAbsolute(doc.path)) return oneLine(doc.path, 300);
-  let checkout = null;
-  try {
-    checkout = checkoutOf(project);
-  } catch (error) {
-    if (!(error instanceof ForemanError)) throw error;
+  let full = doc.path;
+  if (!path.isAbsolute(doc.path)) {
+    try {
+      full = path.join(checkoutOf(project), doc.path);
+    } catch (error) {
+      if (!(error instanceof ForemanError)) throw error;
+    }
   }
-  return oneLine(checkout === null ? doc.path : path.join(checkout, doc.path), 300);
+  const text = readCapped(full, DOCUMENT_BYTES);
+  const approved = typeof entry.approval?.hash === 'string' ? entry.approval.hash : doc.hash;
+  let problem = null;
+  if (text === null) problem = "can't be read";
+  else if (briefHash(text) !== approved) problem = 'is not the one approved: it has changed since';
+  return { path: oneLine(full, 300), problem };
+}
+
+// What holds back every start and go-ahead (ruling R95): STOP, or an open
+// incident. Null when neither holds.
+export function haltOf(views, { stopped = () => stopState().on } = {}) {
+  if (stopped()) return { why: 'STOP is on', fixes: [] };
+  const open = Array.isArray(views?.incidents?.open) ? views.incidents.open.filter(isPlain) : [];
+  if (open.length === 0) return null;
+  const ids = open.map((i) => oneLine(i.id, 40));
+  return {
+    why: `${ids.length === 1 ? 'incident' : 'incidents'} ${ids.join(', ')} ${ids.length === 1 ? 'is' : 'are'} open`,
+    fixes: open.flatMap((i) => (Array.isArray(i.fixes) ? i.fixes.filter(Number.isInteger) : [])),
+  };
 }
 
 // The feature's worktree from its record, when it is a feature worktree of the
@@ -296,10 +329,19 @@ function eventLine(e, ctx) {
     case 'extra-plan': return said(e.id, `Next: act extra-plan ${work} ${e.id}`);
     case 'answer': {
       if (questionIdOf(d.questionId)?.foreman !== true) return said(`${d.questionId} answered "${oneLine(d.label, 60)}"`, 'Nothing to do: the watcher wakes its session.');
-      const asked = ctx.views?.questions?.[d.questionId]?.question?.data?.what;
-      return said(`the director answered your question ${d.questionId}${typeof asked === 'string' ? ` ("${oneLine(asked, 100)}")` : ''}: "${oneLine(d.label, 60)}"`, 'Act on it.');
+      // The option chosen, with what it says to do: one whole act command, or waiting.
+      const q = ctx.views?.questions?.[d.questionId]?.question?.data;
+      const asked = typeof q?.what === 'string' ? ` ("${oneLine(q.what, 100)}")` : '';
+      const says = Array.isArray(q?.options) ? q.options.find((o) => isPlain(o) && o.label === d.label)?.says : undefined;
+      const chosen = typeof says === 'string' ? `, which says: ${oneLine(says, 300)}` : ', whose words can\'t be read: ask the director: act ask';
+      return `${head}: the director answered your question ${oneLine(d.questionId, 60)}${asked}: "${oneLine(d.label, 60)}"${chosen}. Act on it.`;
     }
-    case 'merge-ready': return said(`pull request #${e.pr} at ${short(d.head)}`, `Next: act merge ${work}`);
+    case 'merge-ready': {
+      const halt = ctx.halt;
+      const frozen = halt !== null && !halt.fixes.includes(e.pr);
+      return said(`pull request #${e.pr} at ${short(d.head)}`, frozen ? `It waits: ${halt.why}, and merges wait but for an incident's fix` : `Next: act merge ${work}`);
+    }
+    case 'report': return said('it has ended, and its report is written', `Next: act close ${work}`);
     case 'stuck': return said(`no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`, 'Ask the director: act ask');
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
     case 'brief-tampered': return said(`its brief reads ${short(d.found)}, not the ${short(d.recorded)} recorded`, 'Ask the director: act ask');
@@ -313,7 +355,7 @@ function eventLine(e, ctx) {
 }
 
 function planReadyLine(head, work, ctx) {
-  if (ctx.views === null || ctx.config === null) return `${head}: its plan is ready; whether it may build is unknown until ${ctx.unknown}. Next: act plan-ready ${work}, once that is put right`;
+  if (ctx.views === null || ctx.config === null) return `${head}: its plan is ready, but whether it may build is unknown until ${ctx.unknown}. Nothing can be run for it now`;
   let found;
   try {
     found = planOf(worktreeOf(ctx.project, ctx.views, work));
@@ -322,7 +364,7 @@ function planReadyLine(head, work, ctx) {
     return `${head}: its plan can't be read: ${oneLine(error.message)}. Ask the director: act ask`;
   }
   const clash = clashFor(ctx.views, ctx.config, work, found.files);
-  const wait = openPrWait(worktreeOf(ctx.project, ctx.views, work)) ?? waitText(clash, slotFor(ctx.views, work, { now: ctx.now }));
+  const wait = openPrWait(worktreeOf(ctx.project, ctx.views, work)) ?? ctx.halt?.why ?? waitText(clash, slotFor(ctx.views, work, { now: ctx.now }));
   const plan = `plan ${oneLine(found.plan, 120)}, ${plural(found.files.length, 'file')}`;
   return `${head}: ${plan}. ${wait === null ? 'It clears the clash check and a slot is free' : `It waits: ${wait}`}. Next: act plan-ready ${work}`;
 }
@@ -343,13 +385,21 @@ function queueLines(ctx) {
   const { views, config, now } = ctx;
   const lines = [];
   const recorded = (id) => featureOf(views, id) !== null;
-  let offered = false;
+  const flags = '--done … --appetite-sessions … --appetite-tokens …';
+  // What to do about work that may open a session: start it from its approved
+  // document (R84, R97), or for an extra plan from the part of its parent's
+  // document its title names (R99); or wait while STOP or an incident holds (R95).
   const startLine = (id) => {
-    offered = true;
+    if (ctx.halt !== null) return `It waits: ${ctx.halt.why}.`;
+    const data = views.work[id].work.data;
     const doc = documentOf(ctx.project, views, id);
-    return doc === null
-      ? 'It names no document to read its goal from. Ask the director: act ask'
-      : `Next: act start ${id} --goal … --done … --appetite-sessions … --appetite-tokens … (from its approved document, ${doc})`;
+    if (doc === null) return 'It names no document to read its goal from. Ask the director: act ask';
+    if (doc.problem !== null) return `Its document ${doc.path} ${doc.problem}. Ask the director: act ask`;
+    if (typeof data.parent === 'string') {
+      return `It is an extra plan of ${data.parent}, titled "${oneLine(data.title, 120)}". Next: act start ${id} --goal "<its title>" ${flags} `
+        + `(from the part of ${data.parent}'s approved document, ${doc.path}, that its title names)`;
+    }
+    return `Next: act start ${id} --goal … ${flags} (from its approved document, ${doc.path})`;
   };
 
   // Work not started: what may open a session now.
@@ -364,7 +414,7 @@ function queueLines(ctx) {
     lines.push(`- hold ${id} (${lane}): ${whyText(why)}${opens ? `; it may open a session to plan. ${startLine(id)}` : '.'}`);
   }
   // The rulings a brief may carry, by id, when there is work to start.
-  if (offered) {
+  if (lines.some((line) => line.includes('Next: act start '))) {
     const accepted = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => isPlain(r) && r.status === 'accepted' && typeof r.id === 'string');
     lines.push(`Rulings in force: ${accepted.length > 0 ? `${accepted.length}; give each that applies with --ruling <id>.` : 'none.'}`);
     for (const r of accepted) lines.push(`- ruling ${oneLine(r.id, 80)}: ${oneLine(r.words, 160)}`);
@@ -387,7 +437,7 @@ function queueLines(ctx) {
     } catch (error) {
       if (!(error instanceof ForemanError)) throw error;
     }
-    const wait = own ?? waitText(clash, slot);
+    const wait = own ?? ctx.halt?.why ?? waitText(clash, slot);
     lines.push(wait === null
       ? `- ${verb} ${id}: its plan clears the clash check and a slot is free. Next: act ${verb} ${id}`
       : `- ${verb} ${id}: waits: ${wait}.`);
@@ -408,7 +458,9 @@ function queueLines(ctx) {
 }
 
 // The lines `read` prints for the wake in `file`.
-export async function readWakeLines({ file, project, client, now = () => new Date() }) {
+export async function readWakeLines({
+  file, project, client, now = () => new Date(), pluginRoot = PLUGIN_ROOT, platform = process.platform, stopped = () => stopState().on,
+}) {
   const wake = readWake(file);
   if (wake === null) refuse(`This isn't a wake that can be read: ${oneLine(file, 120)}`);
   if (wake.to !== 'foreman') refuse("This wake is for a feature session, not the foreman");
@@ -429,14 +481,28 @@ export async function readWakeLines({ file, project, client, now = () => new Dat
     missing.push(oneLine(error.message, 160));
   }
   const unknown = missing.length > 0 ? missing.join('; ').replace(/^./, (c) => c.toLowerCase()) : null;
+  const halt = haltOf(read?.views ?? null, { stopped });
   const ctx = {
-    project, config, views: read?.views ?? null, now, unknown,
+    project, config, views: read?.views ?? null, now, unknown, halt,
   };
   const events = Array.isArray(wake.events) ? wake.events.filter(isPlain) : [];
   const digest = Array.isArray(wake.digest) ? wake.digest : [];
   const dropped = Number.isInteger(wake.dropped) && wake.dropped > 0 ? wake.dropped : 0;
 
   const lines = [`Wake ${path.basename(file, '.json')}, made ${wake.at}: ${plural(events.length, 'event')}.`];
+  // The commands exactly as the foreman's allow rules match them (ruling R96).
+  let commands = null;
+  try {
+    commands = foremanCommands(pluginRoot, { platform });
+  } catch (error) {
+    lines.push(`The commands can't be given: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}.`);
+  }
+  if (commands !== null) lines.push(`Run wake as: ${commands.wake}`, `Run act as: ${commands.act}`);
+  // While STOP or an incident holds, nothing starts or builds (ruling R95).
+  if (halt !== null) {
+    const fixes = halt.fixes.length > 0 ? ` but for ${halt.fixes.map((n) => `#${n}`).join(', ')}, its fix` : '';
+    lines.push(`Hold: ${halt.why}. Start nothing and give no go-ahead: act start, plan-ready, build and resume wait or refuse, and no pull request merges${fixes}.`);
+  }
   if (typeof wake.note === 'string' && wake.note !== '') lines.push(oneLine(wake.note, 600));
   if (read !== null && !read.fresh) lines.push(`The helper gave no views (${oneLine(read.why, 120)}), so these are the last ones it wrote.`);
   lines.push('Events:');
