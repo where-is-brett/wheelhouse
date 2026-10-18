@@ -29,4 +29,5 @@ The answers to the checks in section 20 of the design, one note per check.
 | 21 | The quick connection on the Mac | Deferred | [21-gh-keychain.md](21-gh-keychain.md) |
 | 22 | GitLab project keys | Yes, with a change | [22-gitlab-keys.md](22-gitlab-keys.md) |
 | 23 | GitLab's protection of `main` | Partly | [23-gitlab-protection.md](23-gitlab-protection.md) |
+| 24 | Pinning through Wheelhouse's marketplace | Partly | [24-pinning.md](24-pinning.md) |
 | 31 | The safety checks tried live | Yes, with three changes | [31-safety-live.md](31-safety-live.md) |

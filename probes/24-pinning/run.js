@@ -1,7 +1,10 @@
 // probes/24-pinning/run.js
 // Check 24: pins Superpowers and Matt Pocock's skills through a scratch
 // marketplace of our own, at project scope, and records what Claude Code does.
-// Usage: node run.js --go
+// Usage: node run.js --go            the shell trial (Steps 5 and 7)
+//        node run.js --sitting       Step 6: the same set-up, then waits while the
+//                                    director looks at a Desktop session in the
+//                                    scratch project, then undoes everything
 //
 // THIS CHANGES THIS COMPUTER'S PLUGIN LIST while it runs (it adds a scratch
 // marketplace and installs two plugins at project scope), then puts it back.
@@ -18,6 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
+import readline from 'node:readline';
 import { promisify } from 'node:util';
 import { appendJsonl, probeLogDir } from '../lib/log.js';
 import { makeScratchProject, assertUnderTmp } from '../lib/scratch.js';
@@ -25,8 +29,9 @@ import { makeScratchMarketplace } from '../lib/marketplace.js';
 
 const execFileAsync = promisify(execFile);
 
-if (!process.argv.includes('--go')) {
-  console.error('Usage: node run.js --go');
+const sitting = process.argv.includes('--sitting');
+if (!sitting && !process.argv.includes('--go')) {
+  console.error('Usage: node run.js --go | --sitting');
   console.error('This adds a scratch marketplace and installs two plugins at project scope on this computer, then removes them.');
   console.error('Run it only after the director has said yes.');
   process.exit(2);
@@ -56,6 +61,9 @@ const MOVED = { [SUPERPOWERS.name]: 'v6.4.2', [MATT.name]: 'main' };
 const MARKETPLACE_KEY = 'pins';
 const MARKETPLACE_NAME = `wheelhouse-probe-${MARKETPLACE_KEY}`;
 const ANTHROPIC_SUPERPOWERS = 'superpowers@claude-plugins-official';
+// The documentation names synced copies <name>@synced. They do not show in
+// `claude plugin list --json`, so they are always named here.
+const SYNCED_COPIES = ['superpowers@synced', 'mattpocock-skills@synced'];
 
 const home = os.homedir();
 // Claude Code keeps its folder at ~/.claude unless CLAUDE_CONFIG_DIR says otherwise.
@@ -362,7 +370,7 @@ try {
   const allIds = JSON.stringify(parseJson(listing.stdout) ?? listing.stdout).match(/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+/g) ?? [];
   const synced = [...new Set(allIds)].filter((id) => /@synced$/.test(id) && /^(superpowers|mattpocock-skills)@/.test(id));
   await note('synced copies found', synced);
-  const off = { [ANTHROPIC_SUPERPOWERS]: false, ...Object.fromEntries(synced.map((id) => [id, false])) };
+  const off = { [ANTHROPIC_SUPERPOWERS]: false, ...Object.fromEntries([...SYNCED_COPIES, ...synced].map((id) => [id, false])) };
   keepGoing();
   const withOff = readJson(settingsPath(project.dir)) ?? {};
   withOff.enabledPlugins = { ...(withOff.enabledPlugins ?? {}), ...off };
@@ -371,25 +379,48 @@ try {
   await claude('list in the project, copies off', ['plugin', 'list', '--json'], project.dir);
   await claude('list in the project, copies off (text)', ['plugin', 'list'], project.dir);
 
-  // 6. Move the refs on, keep the sha, update, and see if anything moved.
-  keepGoing();
-  const file = path.join(marketplace.dir, '.claude-plugin', 'marketplace.json');
-  const manifest = readJson(file);
-  for (const entry of manifest.plugins) entry.source.ref = MOVED[entry.name];
-  fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
-  const gitArgs = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid'];
-  execFileSync('git', [...gitArgs, 'commit', '--quiet', '--all', '-m', 'Move the refs, keep the shas'], { cwd: marketplace.dir, stdio: 'ignore' });
-  await note('refs moved', { to: MOVED, shasKept: true });
-  await claude('marketplace update', ['plugin', 'marketplace', 'update', MARKETPLACE_NAME], project.dir);
-  for (const { plugin, id } of ids) {
-    await claude(`update ${id}`, ['plugin', 'update', id, '--scope', 'project', '--json'], project.dir);
-    const after = describeInstall(id, project.dir);
-    await note(`after update ${id}`, after);
-    await check(
-      `${id}: installed commit and folder did not move`,
-      after.entry?.gitCommitSha === plugin.sha && after.entry?.installPath === first[id].entry?.installPath,
-      `commit ${after.entry?.gitCommitSha}, folder ${after.entry?.installPath}`,
-    );
+  if (sitting) {
+    // Step 6: the director's look. Commit the settings so a Desktop session
+    // that starts from the project's last commit still finds them.
+    execFileSync('git', ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', 'add', '--all'], { cwd: project.dir, stdio: 'ignore' });
+    execFileSync('git', ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', 'commit', '--quiet', '-m', 'Settings for the sitting'], { cwd: project.dir, stdio: 'ignore' });
+    keepGoing();
+    console.log('\n------------------------------------------------------------');
+    console.log('For the director:');
+    console.log(`  Open a new Desktop session in this folder and ask it to list the skills it has:\n    ${project.dir}`);
+    console.log('  Open the folder itself (not a copy of it). Allow the folder if Desktop asks.');
+    console.log('  Pass: only Superpowers and Matt Pocock\'s skills from the pinned copies appear;');
+    console.log('  Anthropic\'s copy of Superpowers and the synced copies do not.');
+    console.log('  When you have the answer, close that session and press Enter here.');
+    console.log('------------------------------------------------------------');
+    await note('sitting: waiting for the director', { folder: project.dir });
+    await new Promise((resolve) => {
+      const lines = readline.createInterface({ input: process.stdin });
+      lines.once('line', () => { lines.close(); resolve(); });
+      lines.once('close', resolve);
+    });
+    await note('sitting: the director pressed Enter', {});
+  } else {
+    // 6. Move the refs on, keep the sha, update, and see if anything moved.
+    keepGoing();
+    const file = path.join(marketplace.dir, '.claude-plugin', 'marketplace.json');
+    const manifest = readJson(file);
+    for (const entry of manifest.plugins) entry.source.ref = MOVED[entry.name];
+    fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    const gitArgs = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid'];
+    execFileSync('git', [...gitArgs, 'commit', '--quiet', '--all', '-m', 'Move the refs, keep the shas'], { cwd: marketplace.dir, stdio: 'ignore' });
+    await note('refs moved', { to: MOVED, shasKept: true });
+    await claude('marketplace update', ['plugin', 'marketplace', 'update', MARKETPLACE_NAME], project.dir);
+    for (const { plugin, id } of ids) {
+      await claude(`update ${id}`, ['plugin', 'update', id, '--scope', 'project', '--json'], project.dir);
+      const after = describeInstall(id, project.dir);
+      await note(`after update ${id}`, after);
+      await check(
+        `${id}: installed commit and folder did not move`,
+        after.entry?.gitCommitSha === plugin.sha && after.entry?.installPath === first[id].entry?.installPath,
+        `commit ${after.entry?.gitCommitSha}, folder ${after.entry?.installPath}`,
+      );
+    }
   }
 } catch (error) {
   results.push({ what: 'the probe ran to the end', ok: false });
