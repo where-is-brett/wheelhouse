@@ -86,6 +86,8 @@ function buildLoopViews(sorted, enrolled) {
   }
 
   const features = latestPerKey(sorted.filter((e) => e.kind === 'feature'), (e) => e.data?.work);
+  // The latest report for each work: how its feature ended (merged, closed or blocked).
+  const reports = latestPerKey(sorted.filter((e) => e.kind === 'report'), (e) => e.data?.work);
 
   // An answer counts for the question as it was shown: it names the hash of the question's data, and
   // one question recorded again with other words or options needs a fresh answer.
@@ -115,7 +117,7 @@ function buildLoopViews(sorted, enrolled) {
       if (found && Number.isInteger(e.data.pr) && !found.fixes.includes(e.data.pr)) found.fixes.push(e.data.pr);
     }
   }
-  return { work, features, questions, incidents: { open: [...open.values()] } };
+  return { work, features, reports, questions, incidents: { open: [...open.values()] } };
 }
 
 export function buildViews(events, enrolled, { damaged = [], now = () => new Date() } = {}) {

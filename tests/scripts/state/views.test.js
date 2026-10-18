@@ -14,7 +14,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'work', 'features', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'work', 'features', 'reports', 'questions', 'incidents'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -450,6 +450,21 @@ test('features hold the latest feature event for each work', async () => {
     assert.equal(v.features['export-csv'].id, b.id);
     assert.equal(v.features['export-csv'].data.step, 'building');
     assert.equal(v.features['export-csv'].at, T(2));
+  });
+});
+
+test('reports hold the latest report event for each work', async () => {
+  await withHome(() => {
+    assert.deepEqual(build([]).reports, {});
+    const a = ev('report', 1, { work: 'export-csv', outcome: 'blocked', summary: 'Stuck', rulings: [] });
+    const b = ev('report', 2, { work: 'export-csv', outcome: 'merged', summary: 'Done', rulings: [], pr: 7 });
+    const c = ev('report', 3, { work: 'login', outcome: 'closed', summary: 'Dropped', rulings: [] });
+    const v = build([c, a, b]);
+    assert.deepEqual(Object.keys(v.reports).sort(), ['export-csv', 'login']);
+    assert.equal(v.reports['export-csv'].id, b.id);
+    assert.equal(v.reports['export-csv'].data.outcome, 'merged');
+    assert.equal(v.reports['export-csv'].at, T(2));
+    assert.equal(v.reports.login.key, 'login');
   });
 });
 
