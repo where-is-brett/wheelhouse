@@ -238,6 +238,8 @@ The session spends no turns writing its status: the script builds it. *Designer'
 
 **Permission mode for feature sessions.** Nobody is in a feature session's chat, so it must never wait on a permission prompt. It starts in the same explicit mode as the foreman (main design, section 8; never bypass), with the project's allow rules covering the build's usual commands. The brief tells it to report, never to ask: where it would need a new permission, it writes a question and pauses (section 10). A session stalled on a prompt anyway shows as stuck after 20 minutes, and the foreman raises it as a card. *Designer's call.*
 
+**On Windows,** where Claude Code has no sandbox, the allow rules for the build's commands follow the project's setting **Build commands on Windows** (main design, sections 12.2 and 14.1): by default a feature session asks for them with a card, and is given them for one run or for the feature once the director clicks; Guarded runs them unattended at low integrity, where its self-test passes on that computer, so they can't change files outside the worktree; and the dangerous level runs them unattended with nothing to hold them, only after the director's click on its own card. The director's decision, 19 October 2026.
+
 ## 12. Running features side by side, and merging
 
 **Before a feature builds:**
