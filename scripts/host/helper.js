@@ -1053,6 +1053,10 @@ export async function startHelper({
       review: latestFor(views.reviews, number),
       approval: latestFor(views.approvals, number),
       enrolled,
+      // Interim values: Tasks 21 and 22 compute the first two, Task 27 reads the third.
+      upToDate: true, // Task 21 brings the branch up to date
+      incident: { open: false }, // Task 22 reads the open incident
+      provenance: { ok: true }, // Task 27 reads the PR's provenance block
     });
     if (!decision.allow) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];

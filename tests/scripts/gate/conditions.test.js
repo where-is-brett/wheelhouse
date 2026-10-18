@@ -33,7 +33,8 @@ const input = (extra = {}) => ({
   stop: false, bypass: false, holdsLock: true, headSha: SHA,
   ci: { sha: SHA, state: 'success' },
   reviewRequired: false, review: null, approvalRequired: false, approval: null,
-  touchesGuardrails: false, enrolled: readEnrolled(), ...extra,
+  touchesGuardrails: false, enrolled: readEnrolled(),
+  upToDate: true, provenance: { ok: true }, incident: { open: false }, ...extra,
 });
 
 test('everything in order is allowed', async () => {
@@ -141,6 +142,151 @@ test('every reason is listed, not just the first', async () => {
       'STOP is on', 'the session is in bypass mode', 'this computer no longer holds the lock',
       'CI has not passed on abcdef1', 'no CLEAN review of abcdef1', 'no approval of abcdef1',
     ]);
+  });
+});
+
+test('every reason is listed, the new conditions after the old', async () => {
+  await withHome(() => {
+    const d = gateDecision(input({
+      stop: true, upToDate: false, provenance: { ok: false, why: 'the model is not in the routing table' },
+      incident: { open: true, id: 'login-down', isFix: false },
+    }));
+    assert.deepEqual(d.reasons, [
+      'STOP is on',
+      'the branch is not up to date with the default branch',
+      "the pull request's provenance does not match the manifest: the model is not in the routing table",
+      'incident login-down is open, so only its fix may merge',
+    ]);
+  });
+});
+
+test('a branch that is not up to date blocks, and only exactly true passes', async () => {
+  await withHome(() => {
+    const why = ['the branch is not up to date with the default branch'];
+    for (const upToDate of [false, 'true', 1, null, undefined]) {
+      assert.deepEqual(gateDecision(input({ upToDate })).reasons, why);
+    }
+    assert.deepEqual(gateDecision(input({ upToDate: true })), { allow: true, reasons: [] });
+  });
+});
+
+test('provenance that does not match the manifest blocks with its reason', async () => {
+  await withHome(() => {
+    assert.deepEqual(gateDecision(input({ provenance: { ok: false, why: 'the block is missing' } })).reasons,
+      ["the pull request's provenance does not match the manifest: the block is missing"]);
+  });
+});
+
+test('missing or malformed provenance blocks with a reason that still reads sensibly', async () => {
+  await withHome(() => {
+    const why = ["the pull request's provenance does not match the manifest: it could not be checked"];
+    for (const provenance of [{ ok: false }, { ok: 'true' }, { ok: false, why: '' }, { why: 'x' }, 'ok', true, null, undefined]) {
+      const reasons = gateDecision(input({ provenance })).reasons;
+      assert.equal(reasons.length, 1);
+      assert.match(reasons[0], /^the pull request's provenance does not match the manifest: .+/);
+    }
+    assert.deepEqual(gateDecision(input({ provenance: undefined })).reasons, why);
+  });
+});
+
+test('an open incident blocks every merge but its fix, and the reason names it', async () => {
+  await withHome(() => {
+    assert.deepEqual(gateDecision(input({ incident: { open: true, id: 'login-down', isFix: false } })).reasons,
+      ['incident login-down is open, so only its fix may merge']);
+    assert.deepEqual(gateDecision(input({ incident: { open: true, id: 'login-down' } })).reasons,
+      ['incident login-down is open, so only its fix may merge']);
+    assert.deepEqual(gateDecision(input({ incident: { open: true, id: 'login-down', isFix: true } })),
+      { allow: true, reasons: [] });
+    assert.deepEqual(gateDecision(input({ incident: { open: false } })), { allow: true, reasons: [] });
+  });
+});
+
+test('a fix still needs everything else', async () => {
+  await withHome(() => {
+    const d = gateDecision(input({ incident: { open: true, id: 'x', isFix: true }, reviewRequired: true }));
+    assert.deepEqual(d.reasons, ['no CLEAN review of abcdef1']);
+  });
+});
+
+test('missing or malformed incident input blocks, with or without an id', async () => {
+  await withHome(() => {
+    for (const incident of [undefined, null, 'none', true, {}, { open: 'false' }, { open: null }, { open: true },
+      { open: true, isFix: 'true' }, { open: true, id: 7, isFix: false }]) {
+      const d = gateDecision(input({ incident }));
+      assert.equal(d.allow, false);
+      assert.equal(d.reasons.length, 1);
+      assert.match(d.reasons[0], /^(an incident|incident \S+) is open.*so only its fix may merge$/);
+      assert.doesNotMatch(d.reasons[0], /undefined|null|\[object/);
+    }
+  });
+});
+
+test('a restore merge under an open incident is refused unless it is the incident\'s fix', async () => {
+  await withHome(() => {
+    // mergeAnswer passes reviewRequired: false for a restore; the incident condition still applies.
+    const restore = { reviewRequired: false, approvalRequired: true, approval: approval() };
+    assert.deepEqual(gateDecision(input({ ...restore, incident: { open: true, id: 'login-down', isFix: false } })).reasons,
+      ['incident login-down is open, so only its fix may merge']);
+    assert.deepEqual(gateDecision(input({ ...restore, incident: { open: true, id: 'login-down', isFix: true } })),
+      { allow: true, reasons: [] });
+    assert.deepEqual(gateDecision(input({ ...restore, incident: { open: false } })), { allow: true, reasons: [] });
+  });
+});
+
+test('a carried CLEAN review of an earlier commit counts', async () => {
+  await withHome(() => {
+    const d = gateDecision(input({ reviewRequired: true, review: { carried: true, record: review(OLD) } }));
+    assert.deepEqual(d, { allow: true, reasons: [] });
+  });
+});
+
+test('a carried approval of an earlier commit counts', async () => {
+  await withHome(() => {
+    const d = gateDecision(input({ approvalRequired: true, approval: { carried: true, record: approval(OLD) } }));
+    assert.deepEqual(d, { allow: true, reasons: [] });
+  });
+});
+
+test('a carried record that does not verify does not count', async () => {
+  await withHome(() => {
+    const r = review(OLD);
+    const forged = { ...r, data: { ...r.data, verdict: 'CLEAN', pr: 8 } };
+    assert.deepEqual(gateDecision(input({ reviewRequired: true, review: { carried: true, record: forged } })).reasons,
+      ['no CLEAN review of abcdef1']);
+    const a = approval(OLD);
+    const forgedA = { ...a, data: { ...a.data, pr: 8 } };
+    assert.deepEqual(gateDecision(input({ approvalRequired: true, approval: { carried: true, record: forgedA } })).reasons,
+      ['no approval of abcdef1']);
+    assert.equal(gateDecision(input({ reviewRequired: true, review: { carried: true, record: review(OLD) }, enrolled: [] })).allow, false);
+  });
+});
+
+test('a carried review that is not CLEAN, or a carried record of the wrong kind, does not count', async () => {
+  await withHome(() => {
+    assert.deepEqual(gateDecision(input({ reviewRequired: true, review: { carried: true, record: review(OLD, 'ISSUES') } })).reasons,
+      ['no CLEAN review of abcdef1']);
+    assert.equal(gateDecision(input({ reviewRequired: true, review: { carried: true, record: approval(OLD) } })).allow, false);
+    assert.equal(gateDecision(input({ approvalRequired: true, approval: { carried: true, record: review(OLD) } })).allow, false);
+  });
+});
+
+test('a carried form that is malformed does not count, and a plain record still has to name the head', async () => {
+  await withHome(() => {
+    for (const carried of [{ carried: true }, { carried: true, record: null }, { carried: 'true', record: review(OLD) },
+      { carried: false, record: review(OLD) }, { record: review(OLD) },
+      { carried: true, record: { carried: true, record: review(OLD) } }]) {
+      assert.deepEqual(gateDecision(input({ reviewRequired: true, review: carried })).reasons, ['no CLEAN review of abcdef1']);
+    }
+    assert.deepEqual(gateDecision(input({ reviewRequired: true, review: review(OLD) })).reasons, ['no CLEAN review of abcdef1']);
+    assert.deepEqual(gateDecision(input({ approvalRequired: true, approval: approval(OLD) })).reasons, ['no approval of abcdef1']);
+  });
+});
+
+test('a carried review does not stand in for an approval, nor the reverse', async () => {
+  await withHome(() => {
+    const d = gateDecision(input({ reviewRequired: true, approvalRequired: true,
+      review: { carried: true, record: approval(OLD) }, approval: { carried: true, record: review(OLD) } }));
+    assert.deepEqual(d.reasons, ['no CLEAN review of abcdef1', 'no approval of abcdef1']);
   });
 });
 
