@@ -83,5 +83,10 @@ The director is a product owner, not a developer. They want their product built 
      - Locked on Windows stays untried until a computer with admin rights is available.
    - **A known gap closed:** Ruling 15 of the state-and-host plan (the caller supplying `approvalRequired` and `touchesGuardrails`) is closed; the helper now works them out.
    - **The next plan: the board, briefing and usage** (design section 17.2).
-4. **The build-loop plan.** Write it from `docs/specs/2026-10-18-build-loop-design.md` with `superpowers:writing-plans`, starting with checks 24 to 30 (its section 16), and pinning through Wheelhouse's own marketplace first (its section 14.2).
+4. **The build-loop plan is written:** `docs/superpowers/plans/2026-10-18-wheelhouse-build-loop.md`, on branch `claude/build-loop-plan-832a69` (cut from `build-loop-design`), not yet reviewed by the director or pushed. It starts once the safety work has merged.
+   - **Part 1 is checks 24 to 30.** Checks 24 (its shell part), 25, 29 (on the Mac) and 30 need nobody and run first. The rest make one Mac sitting of about 20 minutes and one Windows sitting of about 25 (the plan's "The director's sittings"), after one card covering every change to the computer.
+   - **Check 27 picks the watcher's shape.** Only Tasks 13 and 19 wait for it, and each says what it builds for either answer; check 26 runs only for the fallback.
+   - **A numbering clash to know about:** the safety sitting's note was planned as `docs/checks/24-safety-live.md`, but the build-loop design owns 24 to 30. The plan's Task 1 renames it to check 31.
+   - **Then the build, Parts 2 to 7:** the records in state and the four feature files; the status hook; the watcher; the queue, clash check, brief and lanes; the builder, read-only reviewer and tester; the intake and the foreman; the gate's new conditions (up to date, provenance, incidents, shown first); lineage (fingerprints, manifest, pins, register, the session-start warning and the hold, provenance, the upgrade path, the release install and the undo); end-to-end tests for scenarios 26 and 28 to 32, and evaluation runs for 20 to 27 and 33 to 35.
+   - **The plan's calls** are listed in its "Plan's calls" section, for the director to see.
 5. **Next design round:** budget allocation (section 9.1), which the director asked for once usage could be read.
