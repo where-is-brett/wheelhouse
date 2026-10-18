@@ -33,7 +33,7 @@ It does not build the front desk's playbook (how it proposes rulings, learnt pro
 
 Asked once, on cards, with the plan (see the session's summary). Until answered, the recommendation stands for planning, and nothing is built.
 
-- **Card 1, when to build it:** **Start now, alongside the build loop** (recommended), or **After the build loop**. Running both at once draws on the weekly allowance faster; the two touch a few of the same files (`scripts/state/events.js`, `views.js`, `card-lines.js`, `prompt-record.js`, `session-start.js`, `hooks/hooks.json`, `helper.js`), each change here a small addition, and whichever merges second takes the other's in.
+- **Card 1, when to build it:** answered by the director on 18 October 2026: **Start now**, alongside the build loop. Running both at once draws on the weekly allowance faster; the two touch a few of the same files (`scripts/state/events.js`, `views.js`, `card-lines.js`, `prompt-record.js`, `session-start.js`, `hooks/hooks.json`, `helper.js`), each change here a small addition, and whichever merges second takes the other's in.
 - **Card 2, answering a card by typing or from the phone:** **Reply codes** (recommended): each card that decides something carries a four-letter code, and a message typed or sent from the phone that is just the code and an option ("K7QD Approve") counts as the click. Or **Buttons only**, until the rest of the mod draws card buttons. A plain typed "yes" never counts, either way.
 
 ## Global Constraints
