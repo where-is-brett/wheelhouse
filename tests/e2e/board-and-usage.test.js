@@ -482,7 +482,7 @@ test('under STOP, /go from the bridge lifts it and the board shows STOP off', as
     assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'bridge', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
     assert.deepEqual(await c.act(() => stopState()), { on: true, by: 'mod', at: new Date(T0 + MINUTE).toISOString() });
     // The board still answers under STOP, and says so.
-    assert.match(await prompt(c, '/wheelhouse:board'), /\n- STOP is on, since 19 October 2026\n/);
+    assert.match(await prompt(c, '/wheelhouse:board'), /\n- STOP \(the emergency stop\) is on, since 19 October 2026\n/);
 
     // /go run by anything but the director leaves STOP on.
     c.time(10 * MINUTE);
@@ -546,7 +546,7 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     assert.deepEqual(waiting.slice(0, -1), titles.slice(0, waiting.length - 1).map((title, i) => `${i + 1}. ${title}`), 'oldest first, numbered');
     assert.equal(waiting.at(-1), `and ${titles.length - (waiting.length - 1)} more`);
     assert.deepEqual(parts[2].split('\n').slice(1), ['- Sign-in now remembers you for thirty days']);
-    assert.deepEqual(parts[3].split('\n').slice(1), ['- 1 pull request merged']);
+    assert.deepEqual(parts[3].split('\n').slice(1), ['- 1 proposed change added to the product']);
     assert.match(parts[4], /\n- Agents act with your full GitHub or GitLab access, across all your projects\./);
   } finally {
     await c.close();

@@ -219,6 +219,60 @@ test('a command with more lines after it is no command', async () => {
   });
 });
 
+const LABELS = "The PR's CI is red on slice 2";
+const waitingOn = (title) => put(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'), [{ id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title } }]);
+
+test('the board and the briefing come through the glossary', async () => {
+  await withProject(async ({ repo }) => {
+    waitingOn(LABELS);
+    const briefing = contextOf(await run(repo, 'Hello', NOW));
+    assert.ok(briefing.startsWith(`${HEADINGS.briefing}\n\n`), briefing);
+    assert.match(briefing, /The proposed change's automatic check run is red on part 2/);
+    assert.doesNotMatch(briefing, /PR's CI/);
+
+    const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
+    assert.ok(board.startsWith(`${HEADINGS.board}\n\n`), board);
+    assert.match(board, /proposed change's automatic check run is red on part 2/);
+
+    // The settings and the changed sources are texts it adds too.
+    waitingOn('Nothing');
+    put(path.join(sourcesDir(), 'diff', 'models.txt'), '+ The PR was merged on a new branch');
+    const sources = contextOf(await run(repo, '/wheelhouse:sources', NOW));
+    assert.match(sources, /The proposed change was added to the product on a new separate copy of the work/);
+    assert.match(contextOf(await run(repo, '/wheelhouse:settings', NOW)), /Independent check round cap/);
+  });
+});
+
+test('some-terms keeps the terms with their meanings, and a known term is left alone', async () => {
+  await withProject(async ({ repo }) => {
+    waitingOn(LABELS);
+    setProfile({ explanations: 'some-terms', 'known:ci': true });
+    const text = contextOf(await run(repo, '/wheelhouse:board', NOW));
+    assert.match(text, /The PR's CI is red on slice 2/);
+    assert.match(text, /\n\nTerms: pull request means a proposed change[^]*; slice means one finished piece[^]*\.$/);
+    assert.doesNotMatch(text, /CI means/);
+
+    setProfile({ explanations: 'plain', 'known:pull-request': true });
+    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The PR's automatic check run is red on part 2/);
+  });
+});
+
+test('the project\'s glossary is used, and the Terms line survives a long board', async () => {
+  await withProject(async ({ repo }) => {
+    const views = path.join(wheelhouseHome(), 'projects', P, 'views');
+    put(path.join(views, 'glossary.json'), { ci: { key: 'ci', id: 'g1', at: '2026-10-01T00:00:00.000Z', data: { term: 'CI', plain: 'our robot inspector', phrase: 'robot inspector' } } });
+    waitingOn(LABELS);
+    assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The proposed change's robot inspector is red on part 2/);
+
+    put(path.join(views, 'waiting.json'), Array.from({ length: 200 }, (_, i) => ({ id: `c${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Question ${i}: ${LABELS}` } })));
+    setProfile({ explanations: 'some-terms' });
+    const long = contextOf(await run(repo, '/wheelhouse:board', NOW));
+    assert.ok(long.length <= CONTEXT_CHARS, long.length);
+    assert.match(long, /and \d+ more/);
+    assert.match(long, /\n\nTerms: pull request means [^]*CI means our robot inspector[^]*\.$/);
+  });
+});
+
 test('a feature worktree and the foreman get nothing', async () => {
   await withProject(async ({ home, repo }) => {
     const tree = featureWorktree(home, repo);

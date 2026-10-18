@@ -25,6 +25,7 @@ import { readSeen, markSeen } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
 import { sourcesText } from '../sources/check.js';
+import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
 import { readProfileViews } from '../profile/store.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 
@@ -102,6 +103,32 @@ function fitLines(text, limit) {
   return { text: text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, ''), cut: true };
 }
 
+// The words every text it adds goes through: the starter glossary with the project's over it, the
+// explanations setting, and the concepts the director knows. What can't be read gives the defaults.
+function wordsOf(project, settings) {
+  const view = attempt(() => localViews(project, ['glossary'])?.glossary);
+  return {
+    glossary: attempt(() => glossaryOf(isRecord(view) ? view : {}), attempt(() => glossaryOf({}), {})),
+    explanations: settings?.explanations?.value,
+    known: attempt(() => knownConcepts(settings), []),
+  };
+}
+
+// The text `make(limit)` gives, within `room` once it is in plain words. The words are longer than the
+// labels they replace and a "Terms:" line follows them, so the text is cut to a limit that leaves room
+// for both, and the line is never the part cut.
+function inPlainWords(make, room, words) {
+  let limit = room;
+  for (let tries = 0; tries < 4; tries += 1) {
+    const fitted = fitLines(make(limit), limit);
+    const plain = plainWords(fitted.text, words.glossary, words);
+    if (plain.text.length <= room) return { text: plain.text, cut: fitted.cut };
+    limit = Math.max(1, limit - (plain.text.length - room));
+  }
+  const fitted = fitLines(make(limit), limit);
+  return { text: fitLines(plainWords(fitted.text, words.glossary, words).text, room).text, cut: true };
+}
+
 // What `start` gives within `ms`, or null when it throws or is late.
 async function within(start, ms) {
   let timer;
@@ -116,15 +143,16 @@ async function within(start, ms) {
 }
 
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
-async function build(want, { cwd, at, client, load, command, since, briefingModel }) {
+async function build(want, { project, cwd, at, client, load, command, since, briefingModel }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
   const room = CONTEXT_CHARS - HEADINGS[want].length - 2;
   let body;
   let raise = [];
+  let make;
   if (want === 'board') {
-    body = renderBoard(model, { tab: command?.tab ?? settings?.boardTab?.value, limit: room });
+    make = (limit) => renderBoard(model, { tab: command?.tab ?? settings?.boardTab?.value, limit });
   } else if (want === 'settings') {
     body = isRecord(settings) ? settingsText(settings) : '';
     if (body === '') throw new Error('No settings');
@@ -138,7 +166,7 @@ async function build(want, { cwd, at, client, load, command, since, briefingMode
     body = parts.text.split('\n').map(unlinked).join('\n');
     raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, parts.shownWatch) : [];
   }
-  const fitted = fitLines(body, room);
+  const fitted = inPlainWords(make ?? (() => body), room, wordsOf(project, settings));
   // A briefing cut for length here may have lost what it raised, so none of it counts as told.
   return { text: `${HEADINGS[want]}\n\n${fitted.text}`, raise: fitted.cut ? [] : raise };
 }
@@ -160,7 +188,7 @@ export async function decide(input, deps = {}) {
     const command = commandOf(input.prompt);
     const want = command?.name ?? (gapPassed(project, seen.promptAt, at) ? 'briefing' : null);
     const built = want
-      ? await within(() => build(want, { cwd: input.cwd, at, client, load, command, since: seen.briefedAt, briefingModel }), waitMs)
+      ? await within(() => build(want, { project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, briefingModel }), waitMs)
       : null;
     // The director did write, whatever could be shown. A command other than the briefing's
     // leaves the time as it was, so a briefing that was due still comes with the next prompt.

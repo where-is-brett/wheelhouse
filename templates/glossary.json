@@ -1,78 +1,112 @@
 {
   "pull request": {
     "plain": "a proposed change to the product, set aside for checking before it joins the real thing",
+    "phrase": "proposed change",
+    "plural": "proposed changes",
     "example": "Like a draft of a page you hand to an editor: nothing is printed until the editor agrees."
   },
   "CI": {
     "plain": "the automatic checks that run on every change",
+    "phrase": "automatic check run",
+    "plural": "automatic check runs",
     "example": "Like the safety inspection a car goes through before it leaves the factory."
   },
   "merge": {
     "plain": "to join a checked change into the real product",
+    "past": "added to the product",
+    "ing": "adding to the product",
     "example": "Like adding the edited page into the finished book."
   },
   "branch": {
     "plain": "a separate copy of the work where a change is made without touching the real product",
+    "phrase": "separate copy of the work",
+    "plural": "separate copies of the work",
     "example": "Like photocopying a recipe so you can try a new spice without spoiling the original."
   },
   "commit": {
     "plain": "one saved step of the work, with a short note on what changed",
+    "phrase": "saved step",
+    "plural": "saved steps",
+    "past": "saved",
+    "ing": "saving",
     "example": "Like a numbered save point in a game: you can always go back to it."
   },
   "review": {
     "plain": "a second, independent agent reading a change closely and signing off that it is clean; no change joins the product without one",
+    "phrase": "independent check",
+    "plural": "independent checks",
+    "past": "independently checked",
+    "ing": "independently checking",
     "example": "Like a proofreader who must initial the page before it is printed."
   },
   "slice": {
     "plain": "one finished piece of a bigger feature, sent up as its own pull request and kept hidden behind a feature flag until you switch it on",
+    "phrase": "part",
+    "plural": "parts",
     "example": "Like building a house room by room, with each room inspected before the next."
   },
   "lane": {
     "plain": "how much process a piece of work goes through (quick, small, feature or bug); the bigger the lane, the more planning and checking",
+    "phrase": "process level",
+    "plural": "process levels",
     "example": "Like the express and full-service checkouts at a shop."
   },
   "feature flag": {
     "plain": "a switch that keeps finished work hidden from users until you decide to turn it on",
+    "phrase": "hidden-until-ready switch",
+    "plural": "hidden-until-ready switches",
     "example": "Like a curtain over a new shop window until opening day."
   },
   "preview": {
     "plain": "a private copy of the product with the change in it, so you can look before it goes live",
+    "phrase": "private trial copy",
+    "plural": "private trial copies",
     "example": "Like a rehearsal performance before opening night."
   },
   "worktree": {
     "plain": "a separate working folder where one agent builds one piece of work without getting in the way of the others",
+    "phrase": "separate working folder",
+    "plural": "separate working folders",
     "example": "Like giving each builder their own workbench."
   },
   "STOP": {
     "plain": "the big red button: every agent stops until you lift it",
+    "phrase": "STOP (the emergency stop)",
     "example": "Like pulling the emergency cord on a train."
   },
   "Standard": {
     "plain": "the normal protection level, and the default: it guards against agents' mistakes and against being misled by what they read, and asks nothing extra of you",
+    "phrase": "Standard (the normal protection level)",
     "example": "Like an ordinary door lock: it keeps out the wrong turn and the casual try, but not someone set on getting in."
   },
   "Locked": {
     "plain": "the optional stronger protection level, set up once with your computer's password: it stops an agent getting round the safety checks even if it tries, because the checks sit where only an administrator can change them",
+    "phrase": "Locked (the stronger protection level)",
     "example": "Like adding a deadbolt and an alarm to that door. Who signs things off stays the same; what changes is how hard the checks are to get round."
   },
   "the helper": {
     "plain": "a small program on your computer, outside the agents' sandbox, that alone holds the keys to your code host and the signing key; agents can only ask it to act, and its checks apply to every request",
+    "phrase": "the key-holding program on your computer",
     "example": "Like a bank teller who handles the money so the clerks never touch the vault."
   },
   "the foreman": {
     "plain": "the agent that runs a project's building: it queues work, writes briefs, starts and closes the builder sessions, checks for clashes, passes questions to you and merges through the gate, but never builds",
+    "phrase": "the agent that runs the building",
     "example": "Like the site manager on a building job, who is not laying bricks but knows who is."
   },
   "the gate": {
     "plain": "the last checks a change must pass at the moment it merges: tests green on exactly that version, a clean signed review, and still fitting with the latest product",
+    "phrase": "the final check before a change joins the product",
     "example": "Like passport control: nobody walks through without being checked."
   },
   "appetite": {
     "plain": "how much effort a piece of work is worth, set when you approve it; if the work runs past it, it pauses and comes back to you with what was learnt",
+    "phrase": "effort limit",
     "example": "Like deciding a weekend job is worth a weekend, and stopping to ask if it is heading for a month."
   },
   "the done contract": {
     "plain": "the list, agreed before building starts, of what must be true for the work to count as finished; it is turned into tests before any code is written",
+    "phrase": "the agreed list of what counts as finished",
     "example": "Like the checklist a builder and owner sign before the handover walk-through."
   }
 }
