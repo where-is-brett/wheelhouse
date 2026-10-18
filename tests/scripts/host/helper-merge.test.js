@@ -23,7 +23,8 @@ import { as, shortHome, testAddress } from '../../helpers/homes.js';
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
-const BEHIND = 'the branch is not up to date with the default branch';
+// The mirror can't read the pull request, so whether it is up to date is not known.
+const UNCHECKED = 'whether the branch is up to date could not be checked';
 
 function write(dir, files) {
   for (const [name, text] of Object.entries(files)) {
@@ -197,7 +198,7 @@ test('/merge refuses when the fetched head differs from the head the host report
       async after(answer) {
         assert.equal(answer.ok, false);
         // Nor can it be told whether the head is up to date.
-        assert.deepEqual(answer.reasons, ['no approval of fffffff', BEHIND, UNREADABLE]);
+        assert.deepEqual(answer.reasons, ['no approval of fffffff', UNCHECKED, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       },
     }]);
@@ -212,7 +213,7 @@ test('/merge treats unreadable changes or configuration as touching the guardrai
     for (const pr of [bad, missing]) {
       const adapter = fakeAdapter(pr.head);
       // With no pull request ref, whether the head is up to date can't be told either.
-      const behind = pr === missing ? [BEHIND] : [];
+      const behind = pr === missing ? [UNCHECKED] : [];
       await merging(pr, adapter, [
         {
           before: () => reviewed(pr.head),
@@ -227,7 +228,7 @@ test('/merge treats unreadable changes or configuration as touching the guardrai
         {
           before: () => approved(pr.head),
           async after(answer) {
-            if (pr === missing) assert.deepEqual(answer.reasons, [BEHIND, UNREADABLE]);
+            if (pr === missing) assert.deepEqual(answer.reasons, [UNCHECKED, UNREADABLE]);
             else assert.equal(answer.ok, true);
           },
         },

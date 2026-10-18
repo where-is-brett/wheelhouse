@@ -49,13 +49,13 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
     openPr: post('/pr/open'), //     { project, head, base?, title, body, session? }: no base means the default branch
     updatePr: post('/pr/update'), // { project, number, title?, body? }
-    updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts? }: merges the default branch in; refused under STOP
-    carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate }: the gate's carry-over rule, read-only, answered under STOP; with no CLEAN review to weigh, 'none' and upToDate false, unread
+    updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts?, ciPush?: { branch, sha } }: merges the default branch in; refused under STOP; ciPush names the merge commit the director's CI card must approve
+    carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate, earlier }: the gate's carry-over rule, read-only, answered under STOP; with no CLEAN review to weigh, 'none' and upToDate false, unread; earlier: a CLEAN review of an earlier commit is on record
     prState: post('/pr/state'), //   { project, number }
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project } -> { ok, config }: the default branch's, read-only, answered under STOP
-    merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? }
+    merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks
     state: {
       clone: post('/state/clone'), //   { project }
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold)

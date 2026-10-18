@@ -396,6 +396,22 @@ test('an approval of another hash leaves the work unapproved', async () => {
   });
 });
 
+test('the wish to see work first stands once any signed approval said it, in any lane or for any document (R120)', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    assert.equal(Object.hasOwn(build([w, approve(2, H1)]).work['export-csv'], 'shownFirst'), false);
+    // Another document's approval, and another lane's: neither approves the work, but the wish stands.
+    for (const said of [approve(2, H2, { shownFirst: true }), approve(2, H1, { shownFirst: true, lane: 'small' })]) {
+      const v = build([w, said]).work['export-csv'];
+      assert.deepEqual([v.approved, v.shownFirst], [false, true]);
+    }
+    // An approval that came later and said otherwise does not take it back.
+    assert.equal(build([w, approve(2, H1, { shownFirst: true }), approve(3, H1)]).work['export-csv'].shownFirst, true);
+    // An unsigned click says nothing.
+    assert.equal(Object.hasOwn(build([w, unsigned(approve(2, H1, { shownFirst: true }))]).work['export-csv'], 'shownFirst'), false);
+  });
+});
+
 test('a revised work document asks for a new approval', async () => {
   await withHome(() => {
     const v = build([workEv(1), approve(2, H1), workEv(3, { doc: { path: 'd.md', hash: H2 } })]);

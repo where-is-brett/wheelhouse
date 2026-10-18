@@ -30,7 +30,8 @@ const LOCK_REASON = 'this computer no longer holds the lock';
 // These projects' remotes hold no pull request, so its changed files can't be read, nor
 // whether it is up to date; a test that merges puts one there with prOnHost.
 const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
-const BEHIND = 'the branch is not up to date with the default branch';
+// The mirror can't read the pull request in these tests, so whether it is up to date is not known.
+const UNCHECKED = 'whether the branch is up to date could not be checked';
 const openAt = (head) => async () => ({ headSha: head, mergeable: 'mergeable', state: 'open' });
 const NONE_FOUND = { guardrailPaths: [], criticalAreas: [] };
 const unix = process.platform !== 'win32';
@@ -483,7 +484,7 @@ test('the lock and the mirror reach a remote only through the connection\'s envi
 
       await withHelper(fakeAdapter({ prState: openAt(head) }), async (client) => {
         const refused = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(refused.reasons, ['the state could not be brought up to date', LOCK_REASON, BEHIND, UNREADABLE], 'without the environment neither the lock nor the mirror can be read');
+        assert.deepEqual(refused.reasons, ['the state could not be brought up to date', LOCK_REASON, UNCHECKED, UNREADABLE],'without the environment neither the lock nor the mirror can be read');
       });
       const adapter = fakeAdapter({ prState: openAt(head) });
       await withHelper(adapter, async (client) => {
@@ -511,14 +512,14 @@ test('merge is refused with every gate reason when conditions fail', async () =>
         'CI has not passed on abc1234',
         'no CLEAN review of abc1234',
         'no approval of abc1234',
-        BEHIND,
+        UNCHECKED,
         UNREADABLE,
       ]);
       assert.equal(answer.refused, answer.reasons.join('; '));
 
       // A review is always required; with the changed files unreadable, so is the approval.
       const lighter = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false, reviewRequired: false, approvalRequired: false, touchesGuardrails: false });
-      assert.deepEqual(lighter.reasons, [LOCK_REASON, 'CI has not passed on abc1234', 'no CLEAN review of abc1234', 'no approval of abc1234', BEHIND, UNREADABLE]);
+      assert.deepEqual(lighter.reasons, [LOCK_REASON, 'CI has not passed on abc1234', 'no CLEAN review of abc1234', 'no approval of abc1234', UNCHECKED, UNREADABLE]);
       const guardrails = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false, reviewRequired: false, approvalRequired: false, touchesGuardrails: 'no' });
       assert.ok(guardrails.reasons.includes('no CLEAN review of abc1234'));
       assert.ok(guardrails.reasons.includes('no approval of abc1234'));
@@ -552,7 +553,7 @@ test('merge is refused while the STOP file exists, whatever the caller says', as
       fs.writeFileSync(stopFile(), '');
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(answer.reasons, ['STOP is on', BEHIND, UNREADABLE]);
+        assert.deepEqual(answer.reasons, ['STOP is on', UNCHECKED, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       });
     });
@@ -596,7 +597,7 @@ test('merge is refused when this computer has lost the lock', async () => {
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.equal(answer.ok, false);
-        assert.deepEqual(answer.reasons, [LOCK_REASON, BEHIND, UNREADABLE]);
+        assert.deepEqual(answer.reasons, [LOCK_REASON, UNCHECKED, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       });
     });

@@ -24,6 +24,8 @@ const T0 = new Date('2026-10-19T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const BEHIND = 'the branch is not up to date with the default branch';
 const short = (sha) => sha.slice(0, 7);
+// The pull request's branch, named as the foreman names a feature's.
+const BRANCH = 'feature/tweak';
 
 function write(dir, files) {
   for (const [name, text] of Object.entries(files)) {
@@ -47,7 +49,7 @@ async function commit(work, files, message) {
 async function mainMoves(work, files, message = 'Another feature merged') {
   await g(work, 'checkout', '-q', 'main');
   const sha = await commit(work, files, message);
-  await g(work, 'checkout', '-q', 'feature');
+  await g(work, 'checkout', '-q', BRANCH);
   return sha;
 }
 
@@ -58,24 +60,25 @@ async function remoteWithPr({ base = { 'README.md': 'r\n' }, change }) {
   await g(work, 'init', '-q', '-b', 'main');
   await g(work, 'remote', 'add', 'origin', remote.url);
   await commit(work, base, 'Base');
-  await g(work, 'checkout', '-q', '-b', 'feature');
+  await g(work, 'checkout', '-q', '-b', BRANCH);
   const head = await commit(work, change, 'The feature');
   return { remote, work, head };
 }
 
 // The host's view of pull request 7: as GitHub does, its head ref follows the branch.
 async function hostHead(remote) {
-  const head = await g(remote.url, 'rev-parse', 'refs/heads/feature');
+  const head = await g(remote.url, 'rev-parse', `refs/heads/${BRANCH}`);
   await g(remote.url, 'update-ref', 'refs/pull/7/head', head);
   return head;
 }
 
-function fakeAdapter(remote) {
+// `over` changes what the host says of the pull request.
+function fakeAdapter(remote, over = {}) {
   const merges = [];
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: await hostHead(remote), headRef: 'feature', baseRef: 'main', mergeable: 'yes', state: 'open' }),
+    prState: async () => ({ headSha: await hostHead(remote), headRef: BRANCH, baseRef: 'main', mergeable: 'yes', state: 'open', ...over }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
   };
@@ -132,7 +135,7 @@ test('update-branch merges the default branch in and pushes the merge commit', a
       assert.equal(answer.ok, true, JSON.stringify(answer));
       assert.equal(answer.updated, true);
       assert.match(answer.head, /^[0-9a-f]{40}$/);
-      assert.equal(await g(pr.remote.url, 'rev-parse', 'refs/heads/feature'), answer.head);
+      assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), answer.head);
       assert.equal(await g(pr.remote.url, 'rev-parse', `${answer.head}^@`), `${pr.head}\n${main}`);
       assert.equal(await g(pr.remote.url, 'show', `${answer.head}:app.js`), 'feature');
       assert.equal(await g(pr.remote.url, 'show', `${answer.head}:later.txt`), 'later');
@@ -145,7 +148,7 @@ test('update-branch merges the default branch in and pushes the merge commit', a
       await mainMoves(pr.work, { 'third.txt': 'x\n' });
       setStop({ by: 'prompt' });
       assert.deepEqual(await update(client), { ok: false, refused: 'STOP is on' });
-      assert.equal(await g(pr.remote.url, 'rev-parse', 'refs/heads/feature'), answer.head);
+      assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), answer.head);
     });
   } finally { pr.remote.cleanup(); }
 });
@@ -157,7 +160,7 @@ test('update-branch on a conflicting branch refuses, naming the files', async ()
     const home = await project(pr.remote);
     await withHelper(home, fakeAdapter(pr.remote), async (client) => {
       assert.deepEqual(await update(client), { ok: false, refused: 'the branch conflicts with the default branch', conflicts: ['app.js'] });
-      assert.equal(await g(pr.remote.url, 'rev-parse', 'refs/heads/feature'), pr.head);
+      assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), pr.head);
     });
   } finally { pr.remote.cleanup(); }
 });
@@ -173,18 +176,19 @@ test('A merges while B is ready: B is brought up to date and its review carries 
     await withHelper(home, adapter, async (client) => {
       const behind = await merge(client);
       assert.deepEqual([behind.ok, behind.reasons], [false, [BEHIND]]);
-      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: false });
+      // The review names the head itself, so there is no earlier one.
+      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: false, earlier: false });
 
       const updated = await update(client);
       assert.equal(updated.updated, true, JSON.stringify(updated));
       // CI runs on the new head (the stand-in host says it passed); the review of the old head carries over.
-      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true });
+      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true, earlier: true });
       assert.deepEqual(await merge(client), { ok: true, merged: true, sha: updated.head, ...NONE_FOUND });
       assert.deepEqual(adapter.merges, [{ number: 7, sha: updated.head }]);
 
       // /pr/carried only reads, so STOP lets it through.
       setStop({ by: 'prompt' });
-      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true });
+      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true, earlier: true });
     });
   } finally { pr.remote.cleanup(); }
 });
@@ -203,7 +207,8 @@ test('a review does not carry over when the feature\'s own changes moved', async
       assert.equal(updated.updated, true, JSON.stringify(updated));
       const answer = await merge(client);
       assert.deepEqual([answer.ok, answer.reasons], [false, [`no CLEAN review of ${short(updated.head)}`]]);
-      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true });
+      // An earlier commit's CLEAN review is on record, so the watcher can ask for a review of the head (R119).
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true, earlier: true });
       assert.deepEqual(adapter.merges, []);
     });
 
@@ -240,7 +245,7 @@ test('a review does not carry over when the update merge changed code itself', a
     await g(pr.work, 'merge', '-q', '--no-ff', '--no-edit', 'main');
     write(pr.work, MOVED);
     await g(pr.work, 'commit', '-q', '-a', '--amend', '--no-edit');
-    await g(pr.work, 'push', '-q', 'origin', 'feature');
+    await g(pr.work, 'push', '-q', 'origin', BRANCH);
     const head = await g(pr.work, 'rev-parse', 'HEAD');
 
     // The control: the patch-ids match, and the merge is not a clean update.
@@ -259,7 +264,7 @@ test('a review does not carry over when the update merge changed code itself', a
     await withHelper(home, adapter, async (client) => {
       const answer = await merge(client);
       assert.deepEqual([answer.ok, answer.reasons], [false, [`no CLEAN review of ${short(head)}`]]);
-      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true });
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true, earlier: true });
       assert.deepEqual(adapter.merges, []);
     });
   } finally { pr.remote.cleanup(); }
@@ -272,9 +277,9 @@ test('a review does not carry over when the update merge changed code itself', a
     await as(home, () => reviewed(side.head));
     await g(side.work, 'checkout', '-q', '-b', 'side');
     await commit(side.work, MOVED, 'Move the line');
-    await g(side.work, 'checkout', '-q', 'feature');
+    await g(side.work, 'checkout', '-q', BRANCH);
     await g(side.work, 'merge', '-q', '--no-ff', '--no-edit', 'side');
-    await g(side.work, 'push', '-q', 'origin', 'feature');
+    await g(side.work, 'push', '-q', 'origin', BRANCH);
     const merged = await g(side.work, 'rev-parse', 'HEAD');
     await mainMoves(side.work, { 'later.txt': 'later\n' });
 
@@ -290,7 +295,7 @@ test('a review does not carry over when the update merge changed code itself', a
       assert.equal(updated.updated, true, JSON.stringify(updated));
       const answer = await merge(client);
       assert.deepEqual([answer.ok, answer.reasons], [false, [`no CLEAN review of ${short(updated.head)}`]]);
-      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true });
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true, earlier: true });
       assert.deepEqual(adapter.merges, []);
     });
   } finally { side.remote.cleanup(); }
@@ -326,15 +331,99 @@ test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', a
     };
     const adapter = fakeAdapter(pr.remote);
     await withHelper(home, adapter, async (client) => {
-      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false });
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false, earlier: false });
       await as(home, () => reviewed(pr.head, 'FINDINGS'));
-      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false });
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false, earlier: false });
       assert.deepEqual(fetches, []);
       // A CLEAN review to weigh: the mirror is read.
       await as(home, () => reviewed(pr.head));
-      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true });
+      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true, earlier: false });
       assert.ok(fetches.length > 0);
     }, { run: counting });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('a mirror that can\'t say whether the branch is up to date says so, not that it is behind', async () => {
+  // M5: carryFacts throws when the mirror's configuration names a filter.
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    await as(home, () => reviewed(pr.head));
+    const adapter = fakeAdapter(pr.remote);
+    await withHelper(home, adapter, async (client) => {
+      // Reading what carries makes the mirror.
+      assert.equal((await carried(client)).upToDate, true);
+      await g(path.join(stateDir('o__p'), '..', 'mirror.git'), 'config', 'filter.x.clean', 'cat');
+      const answer = await merge(client);
+      assert.deepEqual([answer.ok, answer.reasons], [false, ['whether the branch is up to date could not be checked']]);
+      assert.deepEqual(adapter.merges, []);
+    });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('update-branch brings up to date only a feature branch of this repository, against the default branch', async () => {
+  // M2. The default branch has moved, so each would otherwise be merged and pushed.
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  try {
+    await mainMoves(pr.work, { 'a.js': 'a\n' });
+    const home = await project(pr.remote);
+    const refusedWith = async (adapter, refused) => withHelper(home, adapter, async (client) => {
+      assert.deepEqual(await update(client), { ok: false, refused });
+      assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), pr.head);
+    });
+    await refusedWith(fakeAdapter(pr.remote, { baseRef: 'release' }), 'only a pull request against the default branch is brought up to date');
+    await refusedWith(fakeAdapter(pr.remote, { baseRef: undefined }), 'only a pull request against the default branch is brought up to date');
+    for (const headRef of ['tweak', 'fix/tweak', 'feature/Tweak', 'feature/tweak/a/b']) {
+      await refusedWith(fakeAdapter(pr.remote, { headRef }), 'only a pull request from a feature/<work> branch is brought up to date');
+    }
+
+    // A fork's pull request: its head is not this repository's branch of the same name.
+    await g(pr.work, 'checkout', '-q', '--detach', pr.head);
+    write(pr.work, { 'fork.js': 'fork\n' });
+    await g(pr.work, 'add', '-A');
+    await g(pr.work, 'commit', '-q', '-m', 'From a fork');
+    const forkHead = await g(pr.work, 'rev-parse', 'HEAD');
+    await g(pr.work, 'push', '-q', 'origin', `${forkHead}:refs/pull/7/head`);
+    await g(pr.work, 'checkout', '-q', BRANCH);
+    const fork = { ...fakeAdapter(pr.remote), prState: async () => ({ headSha: forkHead, headRef: BRANCH, baseRef: 'main', mergeable: 'yes', state: 'open' }) };
+    await refusedWith(fork, 'the pull request\'s head is not this repository\'s branch of that name, so it is not brought up to date: it may come from a fork');
+  } finally { pr.remote.cleanup(); }
+});
+
+test('a branch that changes a CI file is brought up to date with the director\'s click on that exact merge (R118)', async () => {
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { '.github/workflows/ci.yml': 'on: push\n', 'b.js': 'b\n' } });
+  try {
+    const main = await mainMoves(pr.work, { 'a.js': 'a\n' });
+    const home = await project(pr.remote);
+    // The helper's clock follows the records, so the click is a fresh one.
+    const clock = () => new Date(T0.getTime() + 1000 * tick + 5000);
+    const pending = () => JSON.parse(fs.readFileSync(path.join(stateDir('o__p'), '..', 'ci-pending.json'), 'utf8'));
+    let sha;
+    await withHelper(home, fakeAdapter(pr.remote), async (client) => {
+      const refused = await update(client);
+      assert.equal(refused.ok, false, JSON.stringify(refused));
+      assert.equal(refused.refused, 'the branch changes a CI file, so it needs the director\'s click on its card');
+      assert.deepEqual(Object.keys(refused.ciPush).sort(), ['branch', 'sha']);
+      assert.equal(refused.ciPush.branch, BRANCH);
+      sha = refused.ciPush.sha;
+      assert.match(sha, /^[0-9a-f]{40}$/);
+      // The card can be shown: the pending entry names that commit.
+      await as(home, () => assert.equal(pending()[BRANCH].sha, sha));
+      assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), pr.head);
+
+      // Built again, the merge commit is the same commit, dated by its later parent.
+      assert.deepEqual(await update(client), refused);
+      assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), pr.head);
+
+      // The director clicks the card for that commit; the next update pushes it.
+      await as(home, () => record('action', { action: 'ci-push', branch: BRANCH, sha, question: 'the card as shown', label: 'Push it' }));
+      assert.deepEqual(await update(client), { ok: true, updated: true, head: sha });
+    }, { now: clock });
+    assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), sha);
+    assert.equal(await g(pr.remote.url, 'rev-parse', `${sha}^@`), `${pr.head}\n${main}`);
+    const dates = await g(pr.remote.url, 'log', '-1', '--format=%at %ct %an %cn', sha);
+    const later = Math.max(...(await g(pr.remote.url, 'log', '--no-walk', '--format=%ct', pr.head, main)).split('\n').map(Number));
+    assert.equal(dates, `${later} ${later} Wheelhouse Wheelhouse`);
   } finally { pr.remote.cleanup(); }
 });
 

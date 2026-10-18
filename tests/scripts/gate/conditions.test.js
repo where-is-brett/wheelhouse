@@ -163,10 +163,27 @@ test('every reason is listed, the new conditions after the old', async () => {
 test('a branch that is not up to date blocks, and only exactly true passes', async () => {
   await withHome(() => {
     const why = ['the branch is not up to date with the default branch'];
-    for (const upToDate of [false, 'true', 1, null, undefined]) {
+    for (const upToDate of [false, 'true', 1, undefined]) {
       assert.deepEqual(gateDecision(input({ upToDate })).reasons, why);
     }
     assert.deepEqual(gateDecision(input({ upToDate: true })), { allow: true, reasons: [] });
+  });
+});
+
+test('an up-to-date check that could not be made blocks, and says so', async () => {
+  await withHome(() => {
+    assert.deepEqual(gateDecision(input({ upToDate: null })), { allow: false, reasons: ['whether the branch is up to date could not be checked'] });
+  });
+});
+
+test('a missing approval of the head is marked, so the caller can ask for it', async () => {
+  await withHome(() => {
+    assert.deepEqual(gateDecision(input({ approvalRequired: true })), { allow: false, reasons: ['no approval of abcdef1'], approvalMissing: true });
+    assert.equal(gateDecision(input({ touchesGuardrails: true, review: review() })).approvalMissing, true);
+    // Any other condition alone leaves it unmarked.
+    for (const extra of [{ reviewRequired: true }, { stop: true }, { upToDate: false }, { approvalRequired: true, approval: approval() }]) {
+      assert.equal(Object.hasOwn(gateDecision(input(extra)), 'approvalMissing'), false, JSON.stringify(Object.keys(extra)));
+    }
   });
 });
 

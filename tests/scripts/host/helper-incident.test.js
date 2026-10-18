@@ -347,6 +347,8 @@ test('a shown-first small change needs the director\'s approval', async () => {
     await withHelper(home, adapter, async (client) => {
       const refused = await merge(client, 7, { approvalRequired: false });
       assert.deepEqual([refused.ok, refused.reasons], [false, [`no approval of ${short(a.headSha)}`]]);
+      // What is missing, in a form the foreman can wait on (R117).
+      assert.deepEqual(refused.needs, { approval: { pr: 7, commit: a.headSha } });
       await as(home, () => approved(7, a.headSha));
       assert.deepEqual(await merge(client, 7), { ok: true, merged: true, sha: a.headSha, ...NONE_FOUND });
     });
@@ -357,22 +359,42 @@ test('a branch that names no approved work, or work approved without shown-first
   const remote = await hostWith();
   try {
     const home = await project(remote);
-    const plain = await readyPr(home, remote, 7, 'feature/seen', { 'a.txt': 'a\n' });
     const quiet = await readyPr(home, remote, 8, 'feature/quiet', { 'b.txt': 'b\n' });
     const other = await readyPr(home, remote, 9, 'fix/thing', { 'c.txt': 'c\n' });
     const unapproved = await readyPr(home, remote, 10, 'feature/waiting', { 'd.txt': 'd\n' });
-    const adapter = fakeAdapter({ 7: plain, 8: quiet, 9: other, 10: unapproved });
+    const adapter = fakeAdapter({ 8: quiet, 9: other, 10: unapproved });
     await as(home, () => {
       approveWork({ id: 'quiet', lane: 'small', shownFirst: false });
-      // Shown first, but the work event moves it to another lane, so the approval does not count.
-      record('work', { id: 'seen', title: 'Seen', lane: 'small', visible: true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
-      click({ action: 'approve-work', work: 'seen', lane: 'feature', hash: H1, shownFirst: true, label: 'Approve' });
       record('work', { id: 'waiting', title: 'Waiting', lane: 'small', visible: true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
       // An unsigned approval counts for nothing.
       click({ action: 'approve-work', work: 'waiting', lane: 'small', hash: H1, shownFirst: true, label: 'Approve' }, { unsigned: true });
     });
     await withHelper(home, adapter, async (client) => {
-      for (const number of [7, 8, 9, 10]) assert.equal((await merge(client, number)).ok, true, `pull request ${number}`);
+      for (const number of [8, 9, 10]) assert.equal((await merge(client, number)).ok, true, `pull request ${number}`);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('shown-first is kept once any signed approval of the work said it, whatever its lane or document (R120)', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    const seen = await readyPr(home, remote, 7, 'feature/seen', { 'a.txt': 'a\n' });
+    const tweak = await readyPr(home, remote, 8, 'feature/tweak', { 'b.txt': 'b\n' });
+    const adapter = fakeAdapter({ 7: seen, 8: tweak });
+    await as(home, () => {
+      // Shown first in another lane than the work's: the approval does not count for the work, but the wish does.
+      record('work', { id: 'seen', title: 'Seen', lane: 'small', visible: true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
+      click({ action: 'approve-work', work: 'seen', lane: 'feature', hash: H1, shownFirst: true, label: 'Approve' });
+      // Approved small and shown first, then moved to the feature lane with its approval there pending.
+      approveWork({ id: 'tweak', lane: 'small', shownFirst: true });
+      record('work', { id: 'tweak', title: 'Tweak', lane: 'feature', visible: true, dependsOn: [], doc: { path: 'd.md', hash: H1 } });
+    });
+    await withHelper(home, adapter, async (client) => {
+      for (const [number, pr] of [[7, seen], [8, tweak]]) {
+        const refused = await merge(client, number);
+        assert.deepEqual([refused.ok, refused.reasons], [false, [`no approval of ${short(pr.headSha)}`]], `pull request ${number}`);
+      }
     });
   } finally { remote.cleanup(); }
 });

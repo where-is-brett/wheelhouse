@@ -84,7 +84,12 @@ function buildLoopViews(sorted, enrolled) {
     }
     // `since` is when the work was first recorded: re-recording it (a changed document) keeps its place in the queue.
     const since = sorted.find((e) => e.kind === 'work' && e.data?.id === id).at;
-    work[id] = { work: { key: id, ...mark(w) }, since, approved: approval !== null, ...(approval ? { approval } : {}) };
+    // The director's wish to see the work before it merges stands once any of their approvals said so,
+    // in whatever lane and for whatever document (ruling R120), so a lapsed approval never drops it.
+    const shownFirst = approvals.some((a) => a.data.work === id && a.data.shownFirst === true);
+    work[id] = {
+      work: { key: id, ...mark(w) }, since, approved: approval !== null, ...(approval ? { approval } : {}), ...(shownFirst ? { shownFirst } : {}),
+    };
   }
 
   const features = latestPerKey(sorted.filter((e) => e.kind === 'feature'), (e) => e.data?.work);

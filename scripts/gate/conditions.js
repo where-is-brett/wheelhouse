@@ -45,8 +45,8 @@ function incidentReason(incident) {
 // with one plain reason for each condition that fails. Missing or malformed
 // input fails the condition it belongs to: `stop` must be exactly false,
 // `bypass` exactly false, `holdsLock` exactly true and `upToDate` exactly true to
-// pass; `provenance` must be { ok: true } and `incident` { open: false } or
-// { open: true, isFix: true }. Never throws.
+// pass (null says the check could not be made); `provenance` must be { ok: true }
+// and `incident` { open: false } or { open: true, isFix: true }. Never throws.
 export function gateDecision(input) {
   const i = input && typeof input === 'object' ? input : {};
   const headSha = typeof i.headSha === 'string' ? i.headSha : '';
@@ -68,16 +68,19 @@ export function gateDecision(input) {
   if (needReview && !(headSha !== '' && reviewCounts(i.review, headSha, i.enrolled))) {
     reasons.push(`no CLEAN review of ${short}`);
   }
-  if (needApproval && !(headSha !== '' && approvalCounts(i.approval, headSha, i.enrolled))) {
-    reasons.push(`no approval of ${short}`);
-  }
+  const approvalMissing = needApproval && !(headSha !== '' && approvalCounts(i.approval, headSha, i.enrolled));
+  if (approvalMissing) reasons.push(`no approval of ${short}`);
 
-  if (i.upToDate !== true) reasons.push('the branch is not up to date with the default branch');
+  // null: the check could not be made, which refuses as being behind does, with its own reason.
+  if (i.upToDate === null) reasons.push('whether the branch is up to date could not be checked');
+  else if (i.upToDate !== true) reasons.push('the branch is not up to date with the default branch');
   if (i.provenance?.ok !== true) {
     reasons.push(`the pull request's provenance does not match the manifest: ${provenanceWhy(i.provenance)}`);
   }
   const incident = incidentReason(i.incident);
   if (incident) reasons.push(incident);
 
-  return { allow: reasons.length === 0, reasons };
+  // `approvalMissing` marks the one condition a director's click on the head can meet, so the
+  // caller can ask for that approval by name rather than by reading the reasons.
+  return { allow: reasons.length === 0, reasons, ...(approvalMissing ? { approvalMissing: true } : {}) };
 }

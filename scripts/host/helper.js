@@ -247,8 +247,8 @@ export function incidentFor(views, number) {
   const open = views.incidents?.open;
   if (!Array.isArray(open)) return { open: true, isFix: false };
   if (open.length === 0) return { open: false };
-  const fixed = open.find((i) => Array.isArray(i.fixes) && i.fixes.includes(number));
-  return { open: true, id: (fixed ?? open[0]).id, isFix: fixed !== undefined };
+  const fixing = open.find((i) => Array.isArray(i.fixes) && i.fixes.includes(number));
+  return { open: true, id: (fixing ?? open[0]).id, isFix: fixing !== undefined };
 }
 
 const STATE_BEHIND = 'the state could not be brought up to date';
@@ -258,17 +258,18 @@ const STATE_DAMAGED = 'the state has damaged events, so an open incident or a sh
 const FEATURE_BRANCH = new RegExp(`^feature/(${SLUG.source.slice(1, -1)})(?:/[^/]+)?$`);
 
 // Whether the work's signed approval makes the director's approval of this pull request needed
-// because the work is shown first (design section 12). The approval is read from the views, which
-// take it from the verified `approve-work` alone, never from the work event or the caller. A branch
-// that names no work, or work with no approval, adds nothing. For feature work, only a pull request
-// that changes one of the project's flag files counts (the switch-on); with no flag files listed,
-// every pull request of the work does.
+// because the work is shown first (design section 12). The wish is read from the views, which
+// take it from the verified `approve-work` alone, never from the work event or the caller, and
+// keep it once any of the work's approvals said it, in any lane or for any document (ruling R120).
+// A branch that names no work, or work never approved shown first, adds nothing. For work now in
+// the feature lane, only a pull request that changes one of the project's flag files counts (the
+// switch-on); with no flag files listed, or in any other lane, every pull request of the work does.
 export function shownFirstNeeded({ views, headRef, paths, config }) {
   const work = FEATURE_BRANCH.exec(typeof headRef === 'string' ? headRef : '')?.[1];
   if (work === undefined || !Object.hasOwn(views.work ?? {}, work)) return false;
-  const approval = views.work[work].approval;
-  if (approval?.shownFirst !== true) return false;
-  if (approval.lane !== 'feature' || config.flagFiles.length === 0) return true;
+  const w = views.work[work];
+  if (w.shownFirst !== true && w.approval?.shownFirst !== true) return false;
+  if (w.work?.data?.lane !== 'feature' || config.flagFiles.length === 0) return true;
   return paths.some((file) => config.flagFiles.some((p) => matchGlob(p, file, { ignoreCase: true })));
 }
 
@@ -327,6 +328,14 @@ export const PUSH_REFUSALS = {
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
   notJson: 'a file in the state push is not JSON, so nothing is pushed',
   prBase: 'a pull request may only be opened against the default branch',
+};
+
+// Why /pr/update-branch leaves a pull request alone: only the loop's own feature branches, in
+// this repository and against the default branch, are brought up to date.
+const UPDATE_REFUSALS = {
+  base: 'only a pull request against the default branch is brought up to date',
+  branch: 'only a pull request from a feature/<work> branch is brought up to date',
+  fork: 'the pull request\'s head is not this repository\'s branch of that name, so it is not brought up to date: it may come from a fork',
 };
 
 // A plain branch name: [A-Za-z0-9._/-], not refs/..., not HEAD, and nothing git
@@ -1150,7 +1159,8 @@ export async function startHelper({
   // the latest signed record for this pull request, in the carried form when it names an
   // earlier commit and still holds for the head (carryFacts); an approval carries only when the
   // screenshots of the two commits match too. Anything the mirror can't say leaves the branch
-  // behind and nothing carried. The one rule behind /merge and /pr/carried.
+  // unknown (null, which the gate refuses with its own reason) and nothing carried. The one rule
+  // behind /merge and /pr/carried.
   async function gateRecords({ project, number, headSha, views, adapter, withApproval = true }, ctx) {
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
@@ -1158,24 +1168,26 @@ export async function startHelper({
       review: review?.data?.verdict === 'CLEAN' && review.data.commit !== headSha ? review.data.commit : null,
       approval: approval !== null && approval.data?.commit !== headSha ? approval.data?.commit : null,
     };
-    let facts = { upToDate: false, review: false, approval: false };
+    let facts = { upToDate: null, review: false, approval: false };
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
       facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
-    } catch { /* not readable: behind, and nothing carries */ }
+    } catch { /* not readable: not known whether it is up to date, and nothing carries */ }
     let shown = false;
     if (facts.approval === true) {
       try { shown = (await screenshotsMatch(from.approval, headSha)) === true; } catch { /* not compared: asked again */ }
     }
     return {
-      upToDate: facts.upToDate === true,
+      upToDate: facts.upToDate === null ? null : facts.upToDate === true,
       review: facts.review === true ? { carried: true, record: review } : review,
       approval: shown ? { carried: true, record: approval } : approval,
     };
   }
 
   // Whether the head of an open pull request counts as reviewed, by the gate's own rule, and
-  // whether it is up to date: for the watcher, which holds no keys. Read-only, so STOP lets it through.
+  // whether it is up to date: for the watcher, which holds no keys. `earlier` says a verified CLEAN
+  // review of an earlier commit of this pull request is on record, so a head that is not reviewed
+  // had one that did not carry over (ruling R119). Read-only, so STOP lets it through.
   async function doCarried({ project, number }, ctx) {
     if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
     const adapter = await ctx.adapter();
@@ -1183,19 +1195,28 @@ export async function startHelper({
     if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
     const skipped = [];
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), readEnrolled(), { damaged: skipped, now });
+    const reviews = views.reviews?.[String(number)] ?? {};
+    const earlier = Object.values(reviews).some((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
     // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
     // read, so the watcher's poll costs no fetch, and upToDate is not known (false).
-    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false };
+    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false, earlier };
     const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false }, ctx);
     const own = found.review?.data?.commit === pr.headSha && found.review?.data?.verdict === 'CLEAN';
-    return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate };
+    return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
   }
 
   // Brings an open pull request's branch up to date with the default branch (design section 12):
   // in the mirror, `git merge-tree --write-tree` of the head and the default branch; when clean
   // and the head is behind, a merge commit of the two, pushed to the pull request's branch with
   // the connection's key through the push rules. A CI file arriving from the default branch is
-  // not the branch's own change, since the rules compare with the merge base. Refused under STOP.
+  // not the branch's own change, since the rules compare with the merge base. Refused under STOP,
+  // and for any pull request but a feature branch of this repository against the default branch.
+  //
+  // The merge commit is the same commit each time it is built from the same two parents: Wheelhouse
+  // as author and committer, and both dates the later of the parents' committer dates (ruling R118).
+  // So when the branch's own changes touch a CI file, the refusal names that commit (`ciPush`)
+  // and keeps the pending entry its card needs; once the director clicks it, the next call builds
+  // the same commit again and pushes it with their own sign-in, as /push does.
   async function doUpdateBranch({ project, number }, ctx) {
     if (stopped()) return STOP_REFUSAL;
     if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
@@ -1205,10 +1226,12 @@ export async function startHelper({
     if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
     if (typeof pr.headSha !== 'string' || !FULL_SHA.test(pr.headSha)) refuse('the head commit is not known');
     const defaultBranch = await defaultBranchOf(project, adapter);
+    if (pr.baseRef !== defaultBranch) return { ok: false, refused: UPDATE_REFUSALS.base };
     const spelled = checkRefspec(pr.headRef, defaultBranch);
     if (!spelled.allowed) return { ok: false, refused: spelled.refused };
     const { branch } = spelled;
     if (branch === STATE_BRANCH || branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+    if (!FEATURE_BRANCH.test(branch)) return { ok: false, refused: UPDATE_REFUSALS.branch };
     if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
     const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
       const git = local(mirror);
@@ -1217,6 +1240,11 @@ export async function startHelper({
       const prRef = `refs/wheelhouse/pr/${number}`;
       try {
         await fetchPr({ mirror, keyed, git, number, headSha: pr.headSha, defaultBranch, project });
+        // A fork's pull request names a branch of the fork: the push would land on this
+        // repository's branch of the same name. Only a head that is that branch is brought up to date.
+        const listed = await keyed('git', [...NO_HOOKS, 'ls-remote', '--heads', REMOTE, `refs/heads/${branch}`], { cwd: mirror, input: '' });
+        if (listed.code !== 0) throw new Error('reading the branch on the host failed');
+        if (listed.stdout.trim().split(/\s+/)[0] !== pr.headSha) return { refused: UPDATE_REFUSALS.fork };
         const onTop = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', BASE_REF, pr.headSha]);
         if (onTop.code === 0) return { current: true };
         if (onTop.code !== 1) throw new Error('comparing the branch with the default branch failed');
@@ -1225,8 +1253,11 @@ export async function startHelper({
         if (merged.code !== 0) throw new Error('git could not merge the default branch in');
         const tree = merged.stdout.split('\0')[0].trim();
         const base = (await git([...NO_HOOKS, 'rev-parse', '--verify', `${BASE_REF}^{commit}`])).stdout.trim();
-        const at = now().toISOString();
-        const commit = await git([...NO_HOOKS, 'commit-tree', tree, '-p', pr.headSha, '-p', base, '-m', `Merge ${defaultBranch} into ${branch}`], {
+        const dated = await git([...NO_HOOKS, 'log', '--no-walk', '--format=%ct', pr.headSha, base]);
+        const seconds = dated.stdout.split('\n').filter((l) => /^\d+$/.test(l.trim())).map(Number);
+        if (dated.code !== 0 || seconds.length !== 2) throw new Error('reading the commits\' dates failed');
+        const at = `${Math.max(...seconds)} +0000`;
+        const commit = await git([...NO_HOOKS, 'commit-tree', '--no-gpg-sign', tree, '-p', pr.headSha, '-p', base, '-m', `Merge ${defaultBranch} into ${branch}`], {
           env: { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
         });
         if (commit.code !== 0 || !FULL_SHA.test(commit.stdout.trim())) throw new Error('making the merge commit failed');
@@ -1242,7 +1273,13 @@ export async function startHelper({
     if (made.current) return { ok: true, updated: false, head: pr.headSha };
     try {
       const pushed = await pushFrom({ project, branch, source: made.mirror, refspec: branch, defaultBranch, ciGuard: true }, ctx);
-      if (!pushed.ok) return pushed.rejected ? { ok: false, refused: 'the branch moved on the host while it was being brought up to date' } : pushed;
+      if (pushed.rejected) return { ok: false, refused: 'the branch moved on the host while it was being brought up to date' };
+      if (!pushed.ok && pushed.refused === PUSH_REFUSALS.ciFile) {
+        // The card for this exact commit, which the next call builds again.
+        writePending(project, { branch, sha: made.commit, at: now().toISOString() });
+        return { ok: false, refused: pushed.refused, ciPush: { branch, sha: made.commit } };
+      }
+      if (!pushed.ok) return pushed;
     } finally {
       await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
     }
@@ -1348,7 +1385,10 @@ export async function startHelper({
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
       const reasons = [...said, ...stateReasons, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
-      return { ok: false, refused: reasons.join('; '), reasons, ...found };
+      // What the director's click can supply, by name, so the foreman can wait for that click
+      // rather than ask (ruling R117). The reasons still list every condition that failed.
+      const needs = decision.approvalMissing === true ? { needs: { approval: { pr: number, commit: headSha } } } : {};
+      return { ok: false, refused: reasons.join('; '), reasons, ...needs, ...found };
     }
     if (stopped() && !restore) {
       const reasons = [...(restoreCheck.matched ? [`restore pull request: ${restoreCheck.why}`] : []), 'STOP is on'];
