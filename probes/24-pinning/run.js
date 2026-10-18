@@ -387,6 +387,8 @@ try {
     keepGoing();
     console.log('\n------------------------------------------------------------');
     console.log('For the director:');
+    console.log('  Heads up: opening the folder changes Claude Code\'s own state file, ~/.claude.json,');
+    console.log('  so the comparison at the end will report it. That is expected; nothing is copied back for you.');
     console.log(`  Open a new Desktop session in this folder and ask it to list the skills it has:\n    ${project.dir}`);
     console.log('  Open the folder itself (not a copy of it). Allow the folder if Desktop asks.');
     console.log('  Pass: only Superpowers and Matt Pocock\'s skills from the pinned copies appear;');
