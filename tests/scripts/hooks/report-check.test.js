@@ -264,3 +264,48 @@ test('a review the helper refuses or never answers stays in pending', async () =
     assert.equal(pendingFiles('record').length, 1);
   });
 });
+
+const none = (text) => text.replace('pr: 7', 'pr: none');
+
+test('pr: none is a complete value, alongside a positive integer', () => {
+  assert.deepEqual(parseReport(none(builder), 'builder').missing, []);
+  assert.deepEqual(parseReport(none(reviewer()), 'reviewer').missing, []);
+  for (const v of ['None', 'NONE', 'n/a', '', '-1', '0', '1.5']) {
+    assert.deepEqual(parseReport(`WHEELHOUSE REPORT\nrole: reviewer\npr: ${v}\ncommit: ${FULL}\nverdict: CLEAN`, 'reviewer').missing, ['pr'], v);
+  }
+  assert.ok(parseReport(none(reviewer()).replace(`commit: ${FULL}`, 'commit: x'), 'reviewer').missing.includes('commit'));
+});
+
+test('a builder report with pr: none is not sent back', async () => {
+  await withHome(async () => {
+    const c = fake();
+    assert.equal(await decide(stop('wheelhouse:builder', none(builder)), deps(c)), undefined);
+    assert.equal(fs.existsSync(countFile()), false);
+    assert.equal(c.calls.write.length, 0);
+    assert.equal(c.calls.record.length, 0);
+  });
+});
+
+test('a reviewer report with pr: none is not sent back, and records nothing or asks the helper nothing', async () => {
+  await withHome(async () => {
+    const c = fake();
+    for (const text of [none(reviewer()), none(reviewer({ check: 'lint abc123' }))]) {
+      assert.equal(await decide(stop('wheelhouse:reviewer', text), deps(c)), undefined);
+    }
+    assert.equal(fs.existsSync(countFile()), false);
+    assert.equal(c.calls.prState.length, 0);
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 0);
+    assert.deepEqual(pendingFiles(), []);
+  });
+});
+
+test('a reviewer report with pr: none and findings is also complete and signs nothing', async () => {
+  await withHome(async () => {
+    const c = fake();
+    const text = `WHEELHOUSE REPORT\nrole: reviewer\npr: none\ncommit: ${FULL}\nverdict: FINDINGS\nfindings: 2`;
+    assert.equal(await decide(stop('wheelhouse:reviewer', text), deps(c)), undefined);
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.prState.length, 0);
+  });
+});
