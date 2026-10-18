@@ -102,6 +102,14 @@ export function parseOptions(argv, env = process.env) {
 // gateway, bare mode). The trials start sessions the way a terminal would:
 // those variables are taken out, except the one that moves the configuration
 // folder. `--inherit-env` keeps them.
+// `--pause-at-end` waits for Enter, which needs a terminal. Without one it is switched off,
+// and the one line saying so is returned (null when nothing changed).
+export function settlePause(options, isTTY) {
+  if (!options.pauseAtEnd || isTTY) return null;
+  options.pauseAtEnd = false;
+  return '--pause-at-end is ignored: standard input is not a terminal, so the sessions are cleaned up as each route ends';
+}
+
 export function strippedNames(env) {
   return Object.keys(env).filter((name) => /^(claude|anthropic_base_url)/i.test(name) && name.toUpperCase() !== 'CLAUDE_CONFIG_DIR');
 }
@@ -715,6 +723,7 @@ export async function main(argv = process.argv.slice(2)) {
   const resolved = resolveClaude();
   const env = makeEnv({ inherit: options.inheritEnv });
   await checkFlags(resolved, env.overrides);
+  const pauseNote = settlePause(options, process.stdin.isTTY);
   const version = await claudeVersion(resolved);
   const log = path.join(probeLogDir('27-sessions'), `trials-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`);
   const ctx = { options, resolved, env, version, log, backgrounded: new Set(), cleanups: new Set(), interrupted: false };
@@ -722,6 +731,7 @@ export async function main(argv = process.argv.slice(2)) {
   console.log(`Routes: ${options.routes.join(', ')}; setting sources: ${options.settingSources}; ${options.inheritEnv ? 'environment inherited' : `${strippedNames(process.env).length} Claude variables left out of the sessions' environment`}`);
   const routes = { print: printRoute, stream: streamRoute, bg: bgRoute };
   const all = [];
+  if (pauseNote) console.log(pauseNote);
   const uninstall = installSignalCleanup(ctx);
   try {
     for (const name of options.routes) {
