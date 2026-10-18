@@ -113,12 +113,12 @@ function dayMonthYear(value) {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
-function tokenWords(value) {
+export function tokenWords(value) {
   if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M tokens`;
   if (value >= 1e3) return `${Math.round(value / 1e3)}K tokens`;
   return `${Math.round(value)} tokens`;
 }
-const dollarWords = (value) => `$${value < 1 ? value.toFixed(2) : Math.round(value)}`;
+export const dollarWords = (value) => `$${value < 1 ? value.toFixed(2) : Math.round(value)}`;
 
 // Section 9: what was written for the director to confirm and isn't confirmed yet. The views keep
 // these without effect, so nothing has been applied without confirmation; they are listed instead.
@@ -182,14 +182,19 @@ function reviewState(record) {
 }
 const findingsOf = (record) => (Number.isInteger(record?.data?.findings) && record.data.findings >= 0 ? record.data.findings : null);
 
+// One unusual item from the usage figures in words, or null when it has no figures to say.
+// The board and the briefing both say it this way.
+export function unusualLine(u) {
+  if (!isRecord(u) || typeof u.tokens !== 'number' || typeof u.median !== 'number') return null;
+  const amount = u.unit === 'usd' ? dollarWords : tokenWords;
+  const name = typeof u.id === 'string' ? u.id.slice(u.id.indexOf(':') + 1) : '';
+  const who = u.kind === 'feature' ? `Work on ${oneLine(name)}` : u.kind === 'day' ? dayMonthYear(name) ?? 'One day' : 'One session';
+  const usual = u.unit === 'usd' ? dollarWords(u.median) : tokenWords(u.median).replace(' tokens', '');
+  return cap(`${who} used ${amount(u.tokens)}, against a usual ${usual}: ${oneLine(u.cause)}`);
+}
+
 function unusualLines(unusual) {
-  return list(unusual).filter((u) => typeof u.tokens === 'number' && typeof u.median === 'number').map((u) => {
-    const amount = u.unit === 'usd' ? dollarWords : tokenWords;
-    const name = typeof u.id === 'string' ? u.id.slice(u.id.indexOf(':') + 1) : '';
-    const who = u.kind === 'feature' ? `Work on ${oneLine(name)}` : u.kind === 'day' ? dayMonthYear(name) ?? 'One day' : 'One session';
-    const usual = u.unit === 'usd' ? dollarWords(u.median) : tokenWords(u.median).replace(' tokens', '');
-    return cap(`${who} used ${amount(u.tokens)}, against a usual ${usual}: ${oneLine(u.cause)}`);
-  });
+  return list(unusual).map(unusualLine).filter((line) => line !== null);
 }
 
 // What the build loop and the sources add to health: open incidents, a model the director's
