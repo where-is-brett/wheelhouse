@@ -17,8 +17,11 @@ import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js'
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir } from '../lib/paths.js';
-import { makeEvent, listEvents, confirmationFor, CONFIRMABLE_KINDS } from '../state/events.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine } from '../state/card-lines.js';
+import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
+import {
+  approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine,
+} from '../state/card-lines.js';
 import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -26,6 +29,14 @@ import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
 const APPROVE = new RegExp(`Approve pull request #([1-9][0-9]*) at commit ${SHA12}`, 'g');
+const ID = '[a-z0-9-]{1,40}';
+const APPROVE_WORK = new RegExp(`Approve (${ID}) \\((quick|small|feature|bug) lane\\) as written, ${SHA12}(, and show it to me before it merges)?`, 'g');
+const ANSWER = /Answer question (q-[a-z0-9-]+-[0-9]+)(?![a-z0-9-])/g;
+const AMEND = new RegExp(`Change the approved (${ID}) to this, ${SHA12}`, 'g');
+const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`, 'g');
+const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
+// Labels that ask for more, or put the card off: never an answer.
+const NOT_AN_ANSWER = ['Explain more', 'Not now'];
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 
 function ciEntry(project, branch, sha12, now) {
@@ -69,8 +80,47 @@ function only(pattern, text) {
   return all.length === 1 ? all[0] : null;
 }
 
-// The labels that can earn a signed record; every other label earns none.
+// The labels a reply code can answer with. The build loop's own labels (an answer, Change it,
+// End it, Merge the fix) earn records from a click; their lines aren't set lines yet, so no reply
+// code is made for their cards.
 export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it'];
+
+// The events of one kind that the state holds, oldest first.
+function held(project, kind) {
+  return listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === kind);
+}
+
+// The record a click on an answer card earns: the question must be one the state
+// holds and the label one of its options.
+function answerOf(project, question, label) {
+  if (NOT_AN_ANSWER.includes(label)) return null;
+  const m = only(ANSWER, question);
+  if (!m || !question.includes(answerLine(m[1]))) return null;
+  const asked = held(project, 'question').filter((e) => e.data?.id === m[1]).at(-1);
+  const options = Array.isArray(asked?.data?.options) ? asked.data.options : [];
+  return options.some((o) => o?.label === label) ? { action: 'answer', questionId: m[1], questionHash: dataHash(asked.data) } : null;
+}
+
+// The record a click on a work card earns: the card's lane and hash must be the latest work event's.
+function approveWorkOf(project, question, match) {
+  const [, work, lane, h12, shown] = match;
+  const shownFirst = shown !== undefined;
+  if (!question.includes(approveWorkLine(work, lane, h12, { shownFirst }))) return null;
+  const latest = held(project, 'work').filter((e) => e.data?.id === work).at(-1);
+  const hash = latest?.data?.doc?.hash;
+  if (latest?.data?.lane !== lane || typeof hash !== 'string' || !hash.startsWith(h12)) return null;
+  return { action: 'approve-work', work, lane, hash, shownFirst };
+}
+
+// The one full hash of a proposed change that the card's twelve characters name, or null.
+function amendmentHash(project, work, h12) {
+  const all = new Set(held(project, 'amendment')
+    .filter((e) => e.data?.work === work && typeof e.data?.hash === 'string' && e.data.hash.startsWith(h12))
+    .map((e) => e.data.hash));
+  return all.size === 1 ? [...all][0] : null;
+}
+
+const declared = (project, id) => held(project, 'incident').some((e) => e.data?.id === id);
 
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
@@ -78,9 +128,22 @@ export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push 
 // passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
 // shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one.
 export async function earned({ project, question, label, client, now, left, stopState = defaultStopState, shownAt }) {
+  const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
+  // A card with an answer line is a question card: its buttons are answers, whatever else it says.
+  if (question.includes('Answer question q-')) {
+    const answer = answerOf(project, question, label);
+    return answer ? action(answer) : null;
+  }
   if (label === 'Approve') {
-    const m = only(APPROVE, question);
-    if (!m || !question.includes(approvalLine(m[1], m[2]))) return null;
+    const prs = [...question.matchAll(APPROVE)];
+    const works = [...question.matchAll(APPROVE_WORK)];
+    if (prs.length + works.length !== 1) return null;
+    if (works.length === 1) {
+      const record = approveWorkOf(project, question, works[0]);
+      return record ? action(record) : null;
+    }
+    const m = prs[0];
+    if (!question.includes(approvalLine(m[1], m[2]))) return null;
     const pr = Number(m[1]);
     const state = await left(client.prState({ project, number: pr }));
     const head = state?.result?.headSha;
@@ -99,7 +162,6 @@ export async function earned({ project, question, label, client, now, left, stop
     if (found.length + inProfile.length !== 1) return null;
     return found.length === 1 ? { made: confirmationFor(found[0]) } : { made: confirmationFor(inProfile[0]), profile: true };
   }
-  const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
   if (label === 'Lift STOP') {
     const stop = stopState();
     if (!question.includes(LIFT_STOP) || !stop.on) return null;
@@ -115,6 +177,22 @@ export async function earned({ project, question, label, client, now, left, stop
     if (!m || !question.includes(ciPushLine(m[1], m[2]))) return null;
     const entry = ciEntry(project, m[1], m[2], now);
     return entry ? action({ action: 'ci-push', branch: entry.branch, sha: entry.sha }) : null;
+  }
+  if (label === 'Change it') {
+    const m = only(AMEND, question);
+    if (!m || !question.includes(amendLine(m[1], m[2]))) return null;
+    const hash = amendmentHash(project, m[1], m[2]);
+    return hash ? action({ action: 'amend', work: m[1], hash }) : null;
+  }
+  if (label === 'End it') {
+    const m = only(LIFT_INCIDENT, question);
+    if (!m || !question.includes(liftIncidentLine(m[1])) || !declared(project, m[1])) return null;
+    return action({ action: 'lift-incident', incident: m[1] });
+  }
+  if (label === 'Merge the fix') {
+    const m = only(INCIDENT_FIX, question);
+    if (!m || !question.includes(incidentFixLine(m[2], m[1])) || !declared(project, m[2])) return null;
+    return action({ action: 'incident-fix', incident: m[2], pr: Number(m[1]) });
   }
   return null;
 }

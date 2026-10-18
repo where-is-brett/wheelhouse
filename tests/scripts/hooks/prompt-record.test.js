@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
-import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 
 const P = 'owner__name';
@@ -44,10 +44,10 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
   };
 }
 
-const BUTTONS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Explain more', 'Not now'].map((label) => ({ label }));
-const input = (answers, { multi = false, response = true } = {}) => ({
+const BUTTONS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Explain more', 'Not now'].map((label) => ({ label }));
+const input = (answers, { multi = false, response = true, options = BUTTONS } = {}) => ({
   cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
-  tool_input: { questions: Object.keys(answers).map((question) => ({ question, options: BUTTONS, multiSelect: multi })), answers },
+  tool_input: { questions: Object.keys(answers).map((question) => ({ question, options, multiSelect: multi })), answers },
   ...(response ? { tool_response: { answers } } : {}),
 });
 const deps = (client) => ({ client, now: () => NOW, projectOf: () => ({ project: P }) });
@@ -438,6 +438,34 @@ test('a Confirm line that matches events in both the state and the profile recor
   });
 });
 
+// --- the build loop's clicks ---
+
+const DOC = 'fedcba9876543210'.repeat(4);
+const NEW_DOC = '0123456789abcdef'.repeat(4);
+const workEvent = (data = {}) => makeEvent({
+  kind: 'work',
+  data: { id: 'export-csv', title: 'Export', lane: 'feature', doc: { path: 'd.md', hash: DOC }, visible: true, dependsOn: [], ...data },
+  now: () => NOW,
+});
+const recorded = (c) => c.calls.record.map((r) => r.event.data);
+
+test('Approve on a card with approveWorkLine records approve-work with the lane, the full hash and shown-first', async () => {
+  await withHome(async () => {
+    keepEvent(workEvent());
+    const c = fake();
+    const plain = `${approveWorkLine('export-csv', 'feature', DOC)}? It adds an export.`;
+    const first = `${approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true })}?`;
+    await decide(input({ [plain]: 'Approve', [first]: 'Approve' }), deps(c));
+    assert.deepEqual(recorded(c), [
+      { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: false, question: plain, label: 'Approve' },
+      { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true, question: first, label: 'Approve' },
+    ]);
+    assert.ok(c.calls.record.every((r) => r.event.kind === 'action' && r.event.sig));
+    assert.equal(c.calls.prState.length, 0);
+    assert.equal(c.calls.write.length, 2);
+  });
+});
+
 const CODED = ['Approve', 'Lift STOP', 'Explain more', 'Not now'].map((label) => ({ label }));
 const coded = (answers, { multi = false } = {}) => {
   const asked = input(answers, { multi });
@@ -506,9 +534,163 @@ test('a shown record the helper cannot take is kept pending like every signed re
   });
 });
 
-test('every label the prompt record can sign for is in SIGNED_LABELS', () => {
+// The build loop's own labels earn records from a click only: their lines aren't set lines yet.
+const CLICK_ONLY = ['Change it', 'End it', 'Merge the fix'];
+
+test('every label the prompt record can sign for is in SIGNED_LABELS, or one the build loop answers by click only', () => {
   const source = fs.readFileSync(new URL('../../../scripts/hooks/prompt-record.js', import.meta.url), 'utf8');
   const handled = [...source.matchAll(/label === '([^']+)'/g)].map((m) => m[1]);
   assert.ok(handled.length >= 5);
-  assert.deepEqual([...new Set(handled)].sort(), [...SIGNED_LABELS].sort());
+  assert.deepEqual([...new Set(handled)].filter((l) => !CLICK_ONLY.includes(l)).sort(), [...SIGNED_LABELS].sort());
+  assert.ok(CLICK_ONLY.every((l) => handled.includes(l)));
+});
+
+test('Approve on a work card records nothing when the work, its lane or its document is not what the card says', async () => {
+  await withHome(async () => {
+    keepEvent(workEvent());
+    const c = fake();
+    await decide(input({
+      [approveWorkLine('other-work', 'feature', DOC)]: 'Approve',
+      [approveWorkLine('export-csv', 'small', DOC)]: 'Approve',
+      [approveWorkLine('export-csv', 'feature', NEW_DOC)]: 'Approve',
+      [`${approveWorkLine('export-csv', 'feature', DOC)} or ${approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true })}`]: 'Approve',
+      [`${approveWorkLine('export-csv', 'feature', DOC)} and ${approvalLine(7, FULL)}`]: 'Approve',
+      [`Approve export-csv (feature lane) as written, ${DOC.slice(0, 12).toUpperCase()}`]: 'Approve',
+      [`Approve export-csv (feature lane) as written, ${DOC.slice(0, 7)}`]: 'Approve',
+      [approveWorkLine('export-csv', 'feature', DOC)]: 'Explain more',
+    }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 8);
+  });
+});
+
+test('Approve on a work card names the document in the latest work event, not an earlier one', async () => {
+  await withHome(async () => {
+    const older = workEvent();
+    keepEvent(older);
+    keepEvent(makeEvent({ kind: 'work', data: { ...older.data, doc: { path: 'd.md', hash: NEW_DOC } }, now: () => new Date(NOW.getTime() + 1000) }));
+    const c = fake();
+    await decide(input({ [approveWorkLine('export-csv', 'feature', DOC)]: 'Approve', [approveWorkLine('export-csv', 'feature', NEW_DOC)]: 'Approve' }), deps(c));
+    assert.deepEqual(recorded(c).map((d) => d.hash), [NEW_DOC]);
+  });
+});
+
+const QUESTION = { id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file', options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2 };
+const OPTIONS = ['Comma', 'Tab', 'Explain more', 'Not now'].map((label) => ({ label }));
+
+test('a click on an answer card records the label; Explain more and Not now record only the card answer', async () => {
+  await withHome(async () => {
+    keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+    const c = fake();
+    const q = `Which separator should the export use? ${answerLine('q-export-csv-1')}`;
+    await decide(input({ [q]: 'Tab' }, { options: OPTIONS }), deps(c));
+    assert.deepEqual(recorded(c), [{ action: 'answer', questionId: 'q-export-csv-1', questionHash: dataHash(QUESTION), question: q, label: 'Tab' }]);
+    assert.equal(c.calls.record[0].event.kind, 'action');
+    assert.ok(c.calls.record[0].event.sig);
+    assert.deepEqual(c.calls.write.map((w) => w.data.label), ['Tab']);
+
+    const other = fake();
+    await decide(input({ [q]: 'Explain more', [`${q} again`]: 'Not now' }, { options: OPTIONS }), deps(other));
+    assert.equal(other.calls.record.length, 0);
+    assert.equal(other.calls.write.length, 2);
+  });
+});
+
+test('an answer card records nothing for a question that is not in the state, an option it does not offer, or two question lines', async () => {
+  await withHome(async () => {
+    keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+    const c = fake();
+    await decide(input({
+      [answerLine('q-export-csv-2')]: 'Tab',
+      [answerLine('q-export-csv-1')]: 'Semicolon',
+      [`${answerLine('q-export-csv-1')} then ${answerLine('q-export-csv-2')}`]: 'Tab',
+      [`Answer question q-export-csv-1x`]: 'Tab',
+    }, { options: [...OPTIONS, { label: 'Semicolon' }] }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    // Typed text is no button.
+    await decide(input({ [answerLine('q-export-csv-1')]: 'Tab' }, { options: [{ label: 'Comma' }] }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+  });
+});
+
+test('a card with an answer line is an answer card whatever else its text says', async () => {
+  await withHome(async () => {
+    keepEvent(makeEvent({ kind: 'question', data: { ...QUESTION, options: [{ label: 'Approve', says: 'Yes' }, { label: 'Lift STOP', says: 'No' }] }, now: () => NOW }));
+    fs.writeFileSync(stopFile(), '{}');
+    const c = fake();
+    const q = `${answerLine('q-export-csv-1')}. ${approvalLine(7, FULL)}. ${LIFT_STOP}`;
+    await decide(input({ [q]: 'Approve' }), deps(c));
+    await decide(input({ [`${q}!`]: 'Lift STOP' }), deps(c));
+    assert.deepEqual(recorded(c).map((d) => [d.action, d.label]), [['answer', 'Approve'], ['answer', 'Lift STOP']]);
+    assert.equal(fs.existsSync(stopFile()), true);
+    assert.equal(c.calls.prState.length, 0);
+  });
+});
+
+test('Change it on a card with amendLine records amend with the full hash of a proposed change', async () => {
+  await withHome(async () => {
+    keepEvent(makeEvent({ kind: 'amendment', data: { work: 'export-csv', change: 'CSV, not Excel', hash: NEW_DOC }, now: () => NOW }));
+    const c = fake();
+    const q = `${amendLine('export-csv', NEW_DOC)}?`;
+    await decide(input({
+      [q]: 'Change it',
+      [amendLine('export-csv', DOC)]: 'Change it',
+      [amendLine('other', NEW_DOC)]: 'Change it',
+      [amendLine('export-csv', NEW_DOC)]: 'Explain more',
+      [`${amendLine('export-csv', NEW_DOC)} and ${amendLine('export-csv', DOC)}`]: 'Change it',
+    }), deps(c));
+    assert.deepEqual(recorded(c), [{ action: 'amend', work: 'export-csv', hash: NEW_DOC, question: q, label: 'Change it' }]);
+  });
+});
+
+test('End it and Merge the fix record only for a declared incident, with the pull request the card names', async () => {
+  await withHome(async () => {
+    keepEvent(makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: () => NOW }));
+    const c = fake();
+    const lift = `${liftIncidentLine('bad-total')}?`;
+    const fix = `${incidentFixLine('bad-total', 31)}?`;
+    await decide(input({
+      [lift]: 'End it',
+      [fix]: 'Merge the fix',
+      [liftIncidentLine('unknown')]: 'End it',
+      [incidentFixLine('unknown', 31)]: 'Merge the fix',
+      [liftIncidentLine('bad-total')]: 'Not now',
+      [`${incidentFixLine('bad-total', 31)} or ${incidentFixLine('bad-total', 32)}`]: 'Merge the fix',
+      [`${liftIncidentLine('bad-total')} and ${liftIncidentLine('other')}`]: 'End it',
+      [`Merge pull request #031 as the fix for incident bad-total`]: 'Merge the fix',
+      [`${incidentFixLine('bad-total', 31)}x`]: 'Merge the fix',
+    }), deps(c));
+    assert.deepEqual(recorded(c), [
+      { action: 'lift-incident', incident: 'bad-total', question: lift, label: 'End it' },
+      { action: 'incident-fix', incident: 'bad-total', pr: 31, question: fix, label: 'Merge the fix' },
+    ]);
+  });
+});
+
+test('the new clicks are signed only on a card whose button the card offered', async () => {
+  await withHome(async () => {
+    keepEvent(workEvent());
+    keepEvent(makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'x' }, now: () => NOW }));
+    const c = fake();
+    const i = input({ [approveWorkLine('export-csv', 'feature', DOC)]: 'Approve', [liftIncidentLine('bad-total')]: 'End it' });
+    i.tool_input.questions.forEach((q) => { q.options = [{ label: 'Explain more' }]; });
+    await decide(i, deps(c));
+    await decide(input({ [approveWorkLine('export-csv', 'feature', DOC)]: ['Approve'] }), deps(c));
+    await decide(input({ [approveWorkLine('export-csv', 'feature', DOC)]: 'Approve' }, { multi: true }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+  });
+});
+
+test('an answer names the question as it stands now, when the question was recorded twice', async () => {
+  await withHome(async () => {
+    keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+    const rewritten = { ...QUESTION, options: [{ label: 'Tab', says: 'Tabs, always' }, { label: 'Semicolon', says: 'Semicolons' }] };
+    keepEvent(makeEvent({ kind: 'question', data: rewritten, now: () => new Date(NOW.getTime() + 1000) }));
+    const c = fake();
+    await decide(input({ [answerLine('q-export-csv-1')]: 'Tab' }, { options: OPTIONS }), deps(c));
+    assert.deepEqual(recorded(c).map((d) => d.questionHash), [dataHash(rewritten)]);
+    // Comma is no longer an option of the question as it stands.
+    await decide(input({ [answerLine('q-export-csv-1')]: 'Comma' }, { options: OPTIONS }), deps(c));
+    assert.equal(c.calls.record.length, 1);
+  });
 });

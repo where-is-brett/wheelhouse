@@ -312,6 +312,76 @@ test('blocker, risk and decision events are accepted as plain kinds', async () =
   });
 });
 
+// --- the build loop's records ---
+
+const H = 'abcdef0123456789'.repeat(4);
+const SHAPES = {
+  work: { id: 'export-csv', title: 'Export as CSV', lane: 'feature', doc: { path: 'docs/specs/export.md', hash: H }, visible: true, dependsOn: ['login'], place: 2, parent: 'export' },
+  feature: { work: 'export-csv', step: 'building', worktree: '/w/export', branch: 'feature/export-csv', session: 's1', plan: 'docs/plans/export.md', files: ['src/a.js'], brief: H, slice: { n: 1, m: 2 } },
+  question: { id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file', options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2 },
+  report: { work: 'export-csv', outcome: 'merged', pr: 12, summary: 'Export now writes CSV.', rulings: ['Totals to the cent'], provenance: { wheelhouse: '1.0.0' } },
+  incident: { id: 'bad-total', what: 'Totals are wrong in production' },
+  amendment: { work: 'export-csv', change: 'Make it CSV, not Excel', hash: H },
+};
+
+test('each new plain kind is accepted with its shape and refused without it', async () => {
+  await withHome(() => {
+    for (const [kind, data] of Object.entries(SHAPES)) {
+      const event = makeEvent({ kind, data });
+      assert.equal(event.sig, undefined, `${kind} is plain`);
+      assert.deepEqual(event.data, data);
+      // The optional fields may all be left out.
+      const required = {
+        work: ['id', 'title', 'lane', 'visible', 'dependsOn'], feature: ['work', 'step'], question: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'],
+        report: ['work', 'outcome', 'summary', 'rulings'], incident: ['id', 'what'], amendment: ['work', 'change', 'hash'],
+      }[kind];
+      const bare = Object.fromEntries(required.map((k) => [k, data[k]]));
+      assert.ok(makeEvent({ kind, data: bare }), `${kind} with only what it must have`);
+      for (const k of required) {
+        const { [k]: _gone, ...without } = data;
+        assert.throws(() => makeEvent({ kind, data: without }), new RegExp(`${kind} event`), `${kind} without ${k}`);
+      }
+      assert.throws(() => makeEvent({ kind, data: null }), new RegExp(`${kind} event`));
+      assert.throws(() => makeEvent({ kind, data: { ...data, extra: 1 } }), /field it should not/);
+    }
+    const w = SHAPES.work;
+    for (const bad of [
+      { ...w, lane: 'huge' }, { ...w, visible: 'yes' }, { ...w, dependsOn: 'login' }, { ...w, dependsOn: ['Not A Slug'] },
+      { ...w, doc: { path: 'x' } }, { ...w, doc: { path: 'x', hash: 'zz' } }, { ...w, place: 'first' }, { ...w, parent: 'No' }, { ...w, title: '' },
+    ]) assert.throws(() => makeEvent({ kind: 'work', data: bad }), /work event/);
+    const f = SHAPES.feature;
+    for (const bad of [{ ...f, step: 'done' }, { ...f, files: 'a' }, { ...f, slice: { n: 3, m: 2 } }, { ...f, slice: { n: 1 } }, { ...f, brief: 4 }]) {
+      assert.throws(() => makeEvent({ kind: 'feature', data: bad }), /feature event/);
+    }
+    const q = SHAPES.question;
+    for (const bad of [
+      { ...q, id: 'q-other-1' }, { ...q, id: 'q-export-csv-x' }, { ...q, level: 5 }, { ...q, level: '2' }, { ...q, options: [] },
+      { ...q, options: [{ label: 'Comma' }] }, { ...q, options: ['Comma'] },
+    ]) assert.throws(() => makeEvent({ kind: 'question', data: bad }), /question event/);
+    const r = SHAPES.report;
+    for (const bad of [{ ...r, outcome: 'won' }, { ...r, pr: 0 }, { ...r, rulings: 'x' }, { ...r, rulings: [3] }, { ...r, provenance: [] }]) {
+      assert.throws(() => makeEvent({ kind: 'report', data: bad }), /report event/);
+    }
+    assert.throws(() => makeEvent({ kind: 'amendment', data: { ...SHAPES.amendment, hash: 'short' } }), /amendment event/);
+    assert.throws(() => makeEvent({ kind: 'incident', data: { id: 'Has Spaces', what: 'x' } }), /incident event/);
+  });
+});
+
+test('a work id that is not a short slug is refused', async () => {
+  await withHome(() => {
+    const ok = (id) => makeEvent({ kind: 'work', data: { ...SHAPES.work, id } });
+    assert.ok(ok('a'));
+    assert.ok(ok('a-1-b'));
+    assert.ok(ok('x'.repeat(40)));
+    for (const id of ['', 'x'.repeat(41), 'Upper', 'has space', 'under_score', 'slash/ed', 'dot.ted', 'é', 7, null, undefined]) {
+      assert.throws(() => ok(id), /work event/, JSON.stringify(id));
+    }
+    for (const kind of ['feature', 'report', 'amendment']) {
+      assert.throws(() => makeEvent({ kind, data: { ...SHAPES[kind], work: 'Bad Id' } }), new RegExp(`${kind} event`));
+    }
+  });
+});
+
 test('a shown event must be signed, with a code, a question and two to six options', async () => {
   await withHome(() => {
     const { computer, publicKey } = makeSigningKey();
@@ -337,5 +407,54 @@ test('a shown event must be signed, with a code, a question and two to six optio
     bad({ ...good, options: ['a', 3] });
     bad({ ...good, options: 'Yes' });
     makeEvent({ kind: 'shown', data: { ...good, options: ['a', 'b', 'c', 'd', 'e', 'f'] }, now: at(1) });
+  });
+});
+
+const CLICK = { question: 'the card as shown', label: 'Approve' };
+const ACTION_SHAPES = {
+  'approve-work': { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: H, shownFirst: true, ...CLICK },
+  answer: { action: 'answer', questionId: 'q-export-csv-1', questionHash: H, question: 'the card as shown', label: 'Comma' },
+  amend: { action: 'amend', work: 'export-csv', hash: H, question: 'the card as shown', label: 'Change it' },
+  'lift-incident': { action: 'lift-incident', incident: 'bad-total', question: 'the card as shown', label: 'End it' },
+  'incident-fix': { action: 'incident-fix', incident: 'bad-total', pr: 31, question: 'the card as shown', label: 'Merge the fix' },
+};
+
+test('each new action needs its own fields and refuses others', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const own = {
+      'approve-work': ['work', 'lane', 'hash', 'shownFirst'], answer: ['questionId', 'questionHash'], amend: ['work', 'hash'],
+      'lift-incident': ['incident'], 'incident-fix': ['incident', 'pr'],
+    };
+    for (const [name, data] of Object.entries(ACTION_SHAPES)) {
+      const event = makeEvent({ kind: 'action', data });
+      assert.equal(verify(event, readEnrolled()), true, `${name} is signed`);
+      for (const k of [...own[name], 'question', 'label']) {
+        const { [k]: _gone, ...without } = data;
+        assert.throws(() => makeEvent({ kind: 'action', data: without }), /action event/, `${name} without ${k}`);
+      }
+      // A field that belongs to another action, or to none, is refused.
+      for (const [other, fields] of Object.entries(own)) {
+        if (other === name) continue;
+        for (const k of fields) {
+          if (own[name].includes(k)) continue;
+          assert.throws(() => makeEvent({ kind: 'action', data: { ...data, [k]: ACTION_SHAPES[other][k] } }), /action event/, `${name} with ${k}`);
+        }
+      }
+      for (const k of ['step', 'branch', 'sha']) assert.throws(() => makeEvent({ kind: 'action', data: { ...data, [k]: 1 } }), /action event/);
+    }
+    // The older actions refuse the new fields.
+    for (const old of [{ action: 'lift-stop' }, { action: 'runbook', step: 1 }, { action: 'ci-push', branch: 'b', sha: 'a'.repeat(40) }]) {
+      for (const k of ['work', 'lane', 'hash', 'shownFirst', 'questionId', 'incident', 'pr']) {
+        assert.throws(() => makeEvent({ kind: 'action', data: { ...old, ...CLICK, [k]: 'x' } }), /action event/, `${old.action} with ${k}`);
+      }
+    }
+    const a = ACTION_SHAPES;
+    for (const bad of [
+      { ...a['approve-work'], lane: 'huge' }, { ...a['approve-work'], shownFirst: 'yes' }, { ...a['approve-work'], hash: 'zz' }, { ...a['approve-work'], work: 'Bad Id' },
+      { ...a.answer, questionId: 'nope' }, { ...a.answer, questionHash: 'zz' }, { ...a.answer, label: 'Explain more' }, { ...a.answer, label: 'Not now' },
+      { ...a.amend, hash: H.slice(0, 11) }, { ...a['lift-incident'], incident: '' }, { ...a['incident-fix'], pr: 0 }, { ...a['incident-fix'], pr: '3' },
+    ]) assert.throws(() => makeEvent({ kind: 'action', data: bad }), /action event/, JSON.stringify(bad));
   });
 });

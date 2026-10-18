@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { startHelper, changedPaths } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
@@ -253,7 +254,7 @@ test('changedPaths reads GitLab\'s merge request ref, and finds the paths from t
     const git = (file, args, options = {}) => run(file, args, { ...options, env: { GIT_TERMINAL_PROMPT: '0' } });
     const found = await changedPaths({ mirror, host: 'gitlab', number: 7, headSha: pr.head, defaultBranch: 'main', run: git });
     assert.deepEqual([...found.paths].sort(), ['dir with space/é.txt', 'docs/a.md']);
-    assert.deepEqual(found.config, { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] });
+    assert.deepEqual(found.config, readConfig(null));
     await assert.rejects(changedPaths({ mirror, host: 'github', number: 7, headSha: pr.head, defaultBranch: 'main', run: git }), /fetching the pull request failed/);
     await assert.rejects(changedPaths({ mirror, host: 'gitlab', number: 7, headSha: 'a'.repeat(40), defaultBranch: 'main', run: git }), /fetched head is not the head the host reported/);
   } finally { pr.cleanup(); fs.rmSync(home, { recursive: true, force: true }); }

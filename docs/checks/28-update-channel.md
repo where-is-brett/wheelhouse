@@ -1,0 +1,55 @@
+<!-- docs/checks/28-update-channel.md -->
+
+# Check 28: Claude Code's update settings in Desktop
+
+**Answer:** Deferred — the documentation is read; the Desktop trials come in the director's sittings. The documentation names two settings that any settings file may hold, `autoUpdatesChannel` (`"stable"`) and `minimumVersion` (a version number), and two that only managed settings may hold. It also says the Code tab in Desktop runs its own copy of Claude Code, downloaded and updated by Desktop, separate from the `claude` command, which suggests the two settings may not govern it. Nothing here shows that either way yet.
+
+## Question
+
+Whether the Desktop app's built-in Claude Code follows the stable channel and minimum version.
+
+## Tested on
+
+18 October 2026, on macOS with Claude Code 2.1.302 (`claude --version`). Documentation read the same day, nothing changed: https://code.claude.com/docs/en/setup (release channel, minimum version, disabling updates), https://code.claude.com/docs/en/settings-reference (the entries for each key), https://code.claude.com/docs/en/env-vars, https://code.claude.com/docs/en/desktop (checking the version, device policies) and https://code.claude.com/docs/en/managed-settings (which surfaces read managed settings). The trials in a Desktop session on macOS and on Windows are not done.
+
+## Method
+
+Reading only. The five pages above were fetched and the entries for the update keys and variables read in full. On the Mac, the keys of the user settings file were listed (not their values), `claude --version` and `claude --help` were run, and the folder where Desktop keeps its own copies of Claude Code was listed. Nothing was changed. The trials are written out in `probes/28-update-channel/run.md` for the director's sittings.
+
+## Evidence
+
+What the documentation says (read 18 October 2026):
+
+- **`autoUpdatesChannel`** (settings reference, "Updates and versioning"). Scope "Any file". A string, `"latest"` (the default when unset) or `"stable"`, which "follows a version that is typically about one week old and skips releases with major regressions". It decides which channel background auto-updates and `claude update` follow. Claude Code writes `"stable"` to the user settings when it is chosen in `/config`, and removes the key when `"latest"` is chosen; `claude install stable` and `claude install latest` also save the channel. Homebrew installs ignore the key: the cask picked decides the channel. Setting it in managed settings enforces one channel across an organisation.
+- **`minimumVersion`** (same page; setup page, "Pin a minimum version"). Scope "Any file". A version string such as `"2.1.100"`; a value that is not a valid version is ignored; unset means no floor. Background auto-updates and `claude update` refuse to install anything below it, so moving to the stable channel does not downgrade a newer latest build. It "only constrains updates": it does not stop Claude Code starting below it. In managed settings it is an organisation-wide minimum that user and project settings cannot lower. The documented example is `{ "autoUpdatesChannel": "stable", "minimumVersion": "2.1.100" }` in the settings file.
+- **`requiredMinimumVersion` and `requiredMaximumVersion`** (settings reference). Scope "Managed" only: Claude Code ignores them elsewhere without a warning. Claude Code exits at startup if its version is below the floor (or above the ceiling), checked at startup only, from version 2.1.163. `claude update`, `claude install` and `claude doctor` keep working so a user can recover. Invalid values are dropped rather than enforced (managed settings page). These are the only documented way to refuse to run an old version, and they need managed settings, which Wheelhouse does not use.
+- **Where the keys may be written.** The settings page lists user (`~/.claude/settings.json`), shared project, project-local and managed levels. Both `autoUpdatesChannel` and `minimumVersion` are marked "Any file", so the user settings file is allowed, and that is where Claude Code itself writes the channel.
+- **`DISABLE_AUTOUPDATER`** (env vars; setup page). Set to `"1"` in the `env` key of settings to stop the background check. Manual `claude update` still works. `DISABLE_UPDATES` set to `"1"` blocks every update path, including `claude update` and `claude install`. The setup page confirms the effect with `claude doctor`, whose `Auto-updates` line then reads `disabled (set by env: DISABLE_AUTOUPDATER)`. Nothing says the channel and floor settings stop working when it is set, but with the updater off the channel has nothing to act on, so Wheelhouse should not set it. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` also disables auto-updates.
+- **The Desktop app.** The Desktop page says the app "reads the same settings files as the CLI", and that "in a local session, the Code tab runs its own copy of Claude Code, which has its own version number. The desktop app downloads and updates that copy, so it can differ from the `claude` command in your terminal, and updating one doesn't update the other." To get a newer version for local sessions the user chooses Check for Updates in the app menu, then starts a new session. The version a session runs is shown by `/status` in the Code tab, on the "Claude Code" row. The managed settings page lists "the desktop app's Code tab" among the surfaces that read managed settings. For remote machines over SSH, Desktop installs its own Claude Code under `~/.claude/remote/` on that machine, one file per version. The page says IT teams can manage the desktop app through MDM on macOS and group policy on Windows, and that the available policies include enabling or disabling the Claude Code feature and controlling auto-updates on macOS and Windows; none of the policies it names is a channel or minimum version for the built-in Claude Code.
+- **Nothing documented** says that Desktop's downloaded copy consults `autoUpdatesChannel` or `minimumVersion`. The two sentences above point both ways: the settings files are shared, but the update of this copy is Desktop's own.
+
+What was seen on the Mac (no settings changed):
+
+- The user settings file held no `autoUpdatesChannel`, no `minimumVersion` and no `env.DISABLE_AUTOUPDATER`, so the defaults applied.
+- The terminal command reported 2.1.302. Desktop's own folder of Claude Code copies held two versions, 2.1.299 and 2.1.295, both older than the terminal's: the copies are separate and update on their own schedule, as the documentation says.
+- The release bucket the setup page names for manifests (`claude-code-releases`) held a `stable` marker reading 2.1.292 and a `latest` marker reading 2.1.302. Desktop's copies (2.1.299, 2.1.295) are newer than stable, and with no channel set that is consistent with either following latest or following nothing. It does not show Desktop ignoring a stable setting, because none was set.
+- `claude update` and `claude install [target]` exist in 2.1.302; `claude --help` describes `install` as taking `stable`, `latest` or a version.
+
+## What it means for the design
+
+- **What Task 24's `claudeCodeSettings({ floor })` should return:** `{ "autoUpdatesChannel": "stable", "minimumVersion": "<floor>" }`, where `<floor>` is `manifest.claudeCode.floor`, a plain version string such as `"2.1.100"`. These are the documented names and values.
+- **Where setup should write it:** the user settings file, `~/.claude/settings.json` (on Windows `%USERPROFILE%\.claude\settings.json`), merged into what is there and leaving other keys alone. Both keys are allowed in any file, and the user file is where Claude Code writes the channel itself. The project's settings file would also be read, but would apply only in that project, and the terminal and Desktop each decide for themselves. Managed settings would be stricter and are not an option on the director's computers (the design says Claude Code cannot be held at one version outside company-managed settings).
+- **Setup must not set `DISABLE_AUTOUPDATER` or `DISABLE_UPDATES`.** Either would stop the channel taking effect; the design wants the stable channel, not frozen updates.
+- **The floor is a floor on updates only.** `minimumVersion` does not stop an old Claude Code from running; only the managed `requiredMinimumVersion` does. So the design's check that a session meets the floor (provenance records the version that built each PR) has to be Wheelhouse's own, reading the version, not something these settings enforce.
+- **Do not rely on the settings for Desktop yet.** Until the trials, the design should treat the built-in copy as unaffected: provenance records the version actually used, and setup tells the director to check `/status` in the Code tab. If the trials show Desktop ignores the settings, the design needs a sentence saying so in section 14.5 and a card telling the director which version their Desktop session runs.
+- **Setup should also install the stable channel for the terminal command** (`claude install stable`, or the same setting) so the CLI follows the settings.
+
+## Needs the director
+
+Two sittings, about ten minutes each on the Mac and on Windows, with an agent working from a terminal (not from a Desktop session, which quitting Desktop would end). Steps in `probes/28-update-channel/run.md`.
+
+- The agent copies the settings file first. Trial A adds the stable channel and a minimum just below the installed version, which is harmless and cannot tell following from ignoring (the stable version is below the installed one, so "no change" fits both). Trial B sets a minimum above every version that exists, and the director restarts Desktop and the agent reads the Code tab's version and Desktop's folder of copies. Trial C removes the two settings as a control.
+- **How the result reads:** if Desktop's copy goes up to a newer version while the minimum is above every version, Desktop ignores the settings. If it stays put in Trial B and moves up in Trial C, it follows them. If it moves in neither, the trial cannot tell, and no trial that avoids installing can tell more. Desktop may update its own copy of Claude Code at any reopening, as it normally does, and that cannot be undone (the updated copy and its new version folder stay, and Desktop may restart itself for an app update). So the agent says so once in an opening card, answered yes or no before anything starts, and asks again before Trial C, the one step that invites an update on purpose. Without the latest version number (if `downloads.claude.ai` is blocked; `claude update` has no check-only form) a rise in Trial B still shows "ignores", and if the copy did not move the answer is "cannot tell". The director types `/status` in Desktop and reads the version out, and how long Desktop was open is recorded for each trial. Looking at the Check for Updates menu is only a look: the director chooses Not now or Cancel.
+- The agent puts the settings file back, removing only its two keys if anything else has changed, and checks it against the copy.
+
+Nothing is needed from the director before then.
