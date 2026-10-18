@@ -1467,6 +1467,13 @@ export async function startHelper({
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
     '/state/views': stateRoute(async ({ project }) => ({ ok: true, views: await writeViews(project, { now }) })),
+    // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
+    '/state/answer': stateRoute(async ({ project, questionId }) => {
+      if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
+      const { questions } = await writeViews(project, { now });
+      const label = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.label : undefined;
+      return { ok: true, answer: typeof label === 'string' ? label : null };
+    }),
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),
@@ -1484,12 +1491,14 @@ export async function startHelper({
       if (stopped()) return STOP_REFUSAL;
       const adapter = await ctx.adapter();
       const defaultBranch = await defaultBranchOf(body.project, adapter);
-      if (body.base !== defaultBranch) return { ok: false, refused: PUSH_REFUSALS.prBase };
+      // A request that names no base means the default branch, which only the helper reads.
+      const base = body.base === undefined ? defaultBranch : body.base;
+      if (base !== defaultBranch) return { ok: false, refused: PUSH_REFUSALS.prBase };
       const spelled = checkRefspec(body.head, defaultBranch);
       if (!spelled.allowed) return { ok: false, refused: spelled.refused };
       if (spelled.branch === STATE_BRANCH || spelled.branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
       if (stopped()) return STOP_REFUSAL;
-      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base: body.base, title: body.title, body: body.body }) };
+      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: body.body }) };
     },
     '/pr/update': writing((a, { number, title, body }) => a.updatePr({ number, title, body })),
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),

@@ -47,7 +47,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
     push: post('/push'), //          { project, dir, refspec }
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
-    openPr: post('/pr/open'), //     { project, head, base, title, body }
+    openPr: post('/pr/open'), //     { project, head, base?, title, body, session? }: no base means the default branch
     updatePr: post('/pr/update'), // { project, number, title?, body? }
     prState: post('/pr/state'), //   { project, number }
     ci: post('/ci'), //              { project, sha }
@@ -60,6 +60,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
       views: post('/state/views'), //   { project } -> { ok, views }
+      answer: post('/state/answer'), // { project, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
     },
     lock: {
       take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }

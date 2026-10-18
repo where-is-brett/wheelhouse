@@ -708,7 +708,7 @@ test('only keys are hidden: a GitLab address in an answer is kept', async () => 
 
 test('the client has the state and lock requests, and no pushFor', async () => {
   const client = helperClient({ address: '/nowhere' });
-  assert.deepEqual(Object.keys(client.state), ['clone', 'write', 'record', 'sync', 'views']);
+  assert.deepEqual(Object.keys(client.state), ['clone', 'write', 'record', 'sync', 'views', 'answer']);
   assert.deepEqual(Object.keys(client.lock), ['take', 'touch', 'read']);
   assert.equal((await import('../../../scripts/host/helper-client.js')).pushFor, undefined);
 });
