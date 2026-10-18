@@ -20,9 +20,14 @@
 //       gone: boolean,                the feature's worktree is missing
 //     }>,
 //     prs: Record<pr, { work, head, ci, mergeable, review } | null>,   null: closed, forget it
-//     testMerges: Array<{ a, b, clean }>,
+//     testMerges: Array<{ a, b, clean, conflicts? }>,   a and b are works
 //     stop: boolean,
+//     polled?: { state?, prs?, testMerge? },   when each was last asked for (sources.js)
+//     stateIds?: string[],    the state events' ids within the look-back (sources.js)
 //   }
+//
+// `settle` keeps `polled` and `stateIds` as they are, so the next observation
+// reads them from the cursor; `diff` does not read them.
 //
 // Task 12 derives `recordedBrief` and `recordedBefore` as the latest two
 // distinct `brief` hashes over all `feature` events for the work, and reads
@@ -92,11 +97,14 @@ function knownPrs(prev, next) {
 
 const pairOf = (m) => [String(m.a), String(m.b)].sort().join('+');
 
-// The test merges as last known, one per pair, in the same way.
+// The test merges as last known, one per pair, in the same way. A pair is
+// kept only while both its features are in `next`: once one has gone, so has
+// the pair, and a clash between the two when both are back wakes again.
 function knownMerges(prev, next) {
   const merges = new Map(list(prev?.testMerges).filter(isPlain).map((m) => [pairOf(m), m]));
   for (const m of list(next?.testMerges)) if (isPlain(m)) merges.set(pairOf(m), m);
-  return [...merges.values()];
+  const observed = (w) => isPlain(next?.features) && Object.hasOwn(next.features, String(w)) && isPlain(next.features[String(w)]);
+  return [...merges.values()].filter((m) => observed(m.a) && observed(m.b));
 }
 
 // Whether the feature is waiting on someone else, so its stillness is no sign of being stuck:

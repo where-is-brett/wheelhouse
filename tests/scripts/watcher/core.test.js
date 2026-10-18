@@ -496,9 +496,10 @@ test('a brief is judged over time: every tampering wakes, and the hash before co
 });
 
 test('observations that leave out PRs and test merges are judged from their last known state', () => {
-  let cursor = { seen: [], prev: observation() };
+  const both = { 'login-page': feature(), 'search-box': feature({ status: status({ work: 'search-box' }) }) };
+  let cursor = { seen: [], prev: observation({ features: both }) };
   const run = (over) => {
-    const r = step(cursor, observation({ awake: 1000, ...over }), { handled: new Set() });
+    const r = step(cursor, observation({ awake: 1000, features: both, ...over }), { handled: new Set() });
     cursor = r.cursor;
     return r.events.map((e) => e.id);
   };
@@ -520,6 +521,29 @@ test('observations that leave out PRs and test merges are judged from their last
   assert.deepEqual(cursor.prev.prs, {});
   // The cursor keeps no events.
   assert.equal(cursor.prev.events, undefined);
+});
+
+test('a remembered test merge is dropped once either of its features is no longer observed', () => {
+  const both = { 'login-page': feature(), 'search-box': feature({ status: status({ work: 'search-box' }) }) };
+  const clash = [{ a: 'login-page', b: 'search-box', clean: false }];
+  let prev = settle(null, observation({ features: both, testMerges: clash }));
+  assert.deepEqual(prev.testMerges, clash);
+
+  // Both features still observed, the pair left out of this observation: it is kept.
+  prev = settle(prev, observation({ features: both }));
+  assert.deepEqual(prev.testMerges, clash);
+
+  // One of them gone from the observation: the pair goes with it.
+  prev = settle(prev, observation({ features: { 'login-page': feature() } }));
+  assert.deepEqual(prev.testMerges, []);
+
+  // A pair named in an observation that does not name both features is not kept either.
+  prev = settle(prev, observation({ features: { 'login-page': feature() }, testMerges: clash }));
+  assert.deepEqual(prev.testMerges, []);
+
+  // When both come back and still clash, the clash wakes again.
+  const { events } = step({ seen: [], prev }, observation({ features: both, testMerges: clash }), { handled: new Set() });
+  assert.deepEqual(events.map((e) => e.type), ['clash']);
 });
 
 test('with no cursor, the first observation is judged against an empty one', () => {

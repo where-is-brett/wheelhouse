@@ -51,6 +51,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     updatePr: post('/pr/update'), // { project, number, title?, body? }
     prState: post('/pr/state'), //   { project, number }
     ci: post('/ci'), //              { project, sha }
+    testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? }
     state: {
       clone: post('/state/clone'), //   { project }

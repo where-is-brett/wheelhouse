@@ -869,6 +869,51 @@ export async function startHelper({
     });
   }
 
+  // Two branches merged in the mirror, to see whether they clash in text
+  // (design section 12). Read-only toward the host, so STOP lets it through.
+  // Both branches are fetched with the connection's key into fixed working
+  // refs; `git merge-tree` then merges them with no checkout and no index.
+  // Nothing from either branch can run: no hooks, every git call has
+  // core.hooksPath set to the null file; the merge itself runs with no system
+  // or user configuration and no attributes from outside the mirror, and is
+  // refused if the mirror's own configuration names any filter or merge
+  // driver, so an attribute in a branch that names one finds nothing to run.
+  // The working refs are dropped afterwards, whatever happened.
+  const TEST_MERGE_REFS = ['refs/wheelhouse/tm/a', 'refs/wheelhouse/tm/b'];
+  const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
+  const MERGE_ONLY = [
+    ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
+  ];
+  function doTestMerge({ project, a, b }, ctx) {
+    if (!plainBranch(a) || !plainBranch(b)) refuse('the branch name is not valid');
+    return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const local = (args) => unkeyed('git', args, { cwd: mirror, input: '', env: { GIT_ATTR_NOSYSTEM: '1' } });
+      try {
+        for (const ref of TEST_MERGE_REFS) await local([...NO_HOOKS, 'update-ref', '-d', ref]);
+        const fetched = await keyed('git', [
+          ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE,
+          `+refs/heads/${a}:${TEST_MERGE_REFS[0]}`, `+refs/heads/${b}:${TEST_MERGE_REFS[1]}`,
+        ], { cwd: mirror, input: '' });
+        if (fetched.code !== 0) {
+          return { ok: false, refused: ctx.signedOut && AUTH_FAILURE.test(fetched.stderr) ? PUSH_REFUSALS.ciSignIn : 'fetching the branches failed' };
+        }
+        const drivers = await local(['config', '--name-only', '--get-regexp', '^(filter|merge)\\.']);
+        if (drivers.code === 0 && drivers.stdout.trim() !== '') {
+          return { ok: false, refused: 'the mirror\'s configuration names a filter or merge driver, so nothing is merged' };
+        }
+        if (drivers.code !== 1 && drivers.code !== 0) return { ok: false, refused: 'the mirror\'s configuration could not be read' };
+        const merged = await local([
+          ...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', TEST_MERGE_REFS[0], TEST_MERGE_REFS[1],
+        ]);
+        if (merged.code !== 0 && merged.code !== 1) return { ok: false, refused: 'git could not merge the two branches' };
+        const conflicts = merged.code === 0 ? [] : merged.stdout.split('\0').slice(1).filter((name) => name !== '');
+        return { ok: true, clean: merged.code === 0, conflicts };
+      } finally {
+        for (const ref of TEST_MERGE_REFS) await local([...NO_HOOKS, 'update-ref', '-d', ref]);
+      }
+    }));
+  }
+
   async function doMerge(body, ctx) {
     try {
       return await mergeAnswer(body, ctx);
@@ -1417,6 +1462,14 @@ export async function startHelper({
     '/pr/update': writing((a, { number, title, body }) => a.updatePr({ number, title, body })),
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),
     '/ci': pass((a, { sha }) => a.ciState(sha)),
+    // Read-only, so STOP lets it through.
+    '/test-merge': async (body, ctx) => {
+      try {
+        return await doTestMerge(body, ctx);
+      } finally {
+        tidyAfterAnswer(body.project);
+      }
+    },
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
