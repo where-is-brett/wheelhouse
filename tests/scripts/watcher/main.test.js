@@ -324,7 +324,7 @@ test('Shape 1 starts a foreman for a due bundle; Shape 2 prints its line', () =>
   assert.match(lines[0], /^WAKE foreman .+\.json$/);
 }));
 
-test('the configuration comes from the default branch through the helper, never the working copy; the defaults stand when it can\'t', () => withHome(async () => {
+test('the configuration comes from the default branch through the helper, never the working copy', () => withHome(async () => {
   const main = checkout();
   // The working copy says Shape 2 and bypass: an agent could have written it. It is never read.
   fs.mkdirSync(path.join(main, '.claude'), { recursive: true });
@@ -333,18 +333,44 @@ test('the configuration comes from the default branch through the helper, never 
   const client = (answer) => ({ config: async (args) => { asked.push(args); return answer; } });
   const branch = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], watcherShape: 2, routing: { foreman: 'model-a' } };
 
-  assert.deepEqual(await projectConfig(P, client({ ok: true, config: branch })), readConfig(JSON.stringify(branch)));
+  assert.deepEqual(await projectConfig(P, client({ ok: true, config: branch })), { config: readConfig(JSON.stringify(branch)) });
   assert.deepEqual(asked, [{ project: P }]);
-  const logged = [];
-  assert.deepEqual(await projectConfig(P, client({ ok: false, refused: 'the helper is not running' }), { log: (m) => logged.push(m) }), readConfig(null));
-  assert.match(logged[0], /defaults stand: the helper is not running/);
-  assert.deepEqual(await projectConfig(P, client({ ok: true, config: { ...branch, sessionMode: 'bypassPermissions' } })), readConfig(null), 'an answer that doesn\'t read');
-  assert.deepEqual(await projectConfig(P, { config: async () => { throw new Error('no socket'); } }), readConfig(null));
+  // One that reads but leaves keys out has the defaults for those.
+  const bare = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.deepEqual((await projectConfig(P, client({ ok: true, config: bare }))).config, readConfig(null));
+  assert.deepEqual(await projectConfig(P, client({ ok: false, refused: 'the helper is not running' })), { config: null, why: 'the helper is not running' });
+  assert.equal((await projectConfig(P, client({ ok: true, config: { ...branch, sessionMode: 'bypassPermissions' } }))).config, null, 'an answer that doesn\'t read');
+  assert.equal((await projectConfig(P, client({ ok: true }))).config, null);
+  assert.equal((await projectConfig(P, { config: async () => { throw new Error('no socket'); } })).config, null);
 
   const c = clock();
   await runWatcher({ project: P, client: client({ ok: true, config: branch }), observe: looker([]).observe, waker: fakeWaker(), loops: 1, now: c.now, sleep: c.sleep, log: quiet });
   assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 2);
-  await runWatcher({ project: P, client: client({ ok: false, refused: 'down' }), observe: looker([]).observe, waker: fakeWaker(), loops: 1, now: c.now, sleep: c.sleep, log: quiet });
-  assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 1, 'the defaults, not the working copy');
   assert.equal(fs.existsSync(lockFile(P)), false);
+}));
+
+test('until the configuration is read, the watcher wakes and starts nothing, asks again each loop, and says why', () => withHome(async () => {
+  checkout();
+  let answer = { ok: false, refused: 'the helper is not running' };
+  let asks = 0;
+  const client = { config: async () => { asks += 1; return answer; } };
+  const { calls, wakerOptions } = starter();
+  const seen = looker();
+  const c = clock();
+  await runWatcher({ project: P, client, observe: seen.observe, wakerOptions, loops: 6, now: c.now, sleep: c.sleep, log: quiet });
+  assert.equal(asks, 6, 'asked at every loop');
+  assert.equal(seen.calls.length, 0, 'nothing observed');
+  assert.equal(calls.length, 0, 'nothing started, not even by the defaults');
+  assert.equal(fs.existsSync(outboxFile(P)), false, 'nothing queued');
+  assert.equal(readCursor(P).prev, null, 'the cursor kept as it was');
+  const health = JSON.parse(fs.readFileSync(healthFile(P), 'utf8'));
+  assert.equal(health.shape, null);
+  assert.match(health.lastError.message, /waiting for the project's configuration .*the helper is not running/);
+
+  // Once it reads, the watcher goes on, and what happened meanwhile wakes the foreman.
+  answer = { ok: true, config: { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], routing: { foreman: 'model-a' } } };
+  await runWatcher({ project: P, client, observe: seen.observe, wakerOptions, loops: 6, now: c.now, sleep: c.sleep, log: quiet });
+  assert.equal(asks, 7, 'asked once more, then kept');
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(healthFile(P), 'utf8')).shape, 1);
 }));

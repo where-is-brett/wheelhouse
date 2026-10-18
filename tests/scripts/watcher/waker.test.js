@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime,
-  outboxFile, runningFile, sessionFile, PROMPTS, MAX_RUN_MS,
+  makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
+  outboxFile, runningFile, sessionFile, PROMPTS, MAX_RUN_MS, STARTING_MS,
 } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
@@ -283,17 +283,84 @@ test('a foreman that runs past its time, or whose pid is now another process, no
   assert.equal(reused.calls.length, count + 1);
 }));
 
-test('a starting record, left by a stop mid-start, holds until the time limit alone', () => withHome(async () => {
+test('a starting record, left by a stop mid-start, holds for 2 minutes, then its wake goes again', () => withHome(async () => {
   checkout();
   const fake = fakeRun();
   const w = waker(fake);
+  const left = writeWake(P, bundle('e0'));
   fs.mkdirSync(path.dirname(runningFile(P, 'foreman')), { recursive: true });
-  fs.writeFileSync(runningFile(P, 'foreman'), JSON.stringify({ state: 'starting', at: new Date(T0).toISOString(), entries: [] }));
+  fs.writeFileSync(runningFile(P, 'foreman'), JSON.stringify({ state: 'starting', at: new Date(T0).toISOString(), entries: ['left'] }));
+  fs.writeFileSync(outboxFile(P), JSON.stringify({ entries: [{ id: 'left', to: 'foreman', file: left, failures: 0, retryAt: null, flight: { at: new Date(T0).toISOString() } }] }));
   await w.wakeForeman(writeWake(P, bundle('e1')));
   assert.equal(fake.calls.length, 0);
-  w.clock.move(MAX_RUN_MS.foreman);
+  w.clock.move(STARTING_MS - 1);
   await w.pump();
-  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.calls.length, 0, 'within its 2 minutes');
+  w.clock.move(1);
+  await w.pump();
+  assert.equal(fake.calls.length, 1, 'not held for the foreman\'s whole hour');
+  const merged = recordOf(fileIn(fake.calls[0].args[1], 'Wheelhouse foreman: handle '));
+  assert.deepEqual(readWake(merged).events.map((e) => e.id), ['e0', 'e1'], 'the left wake goes again, with the new one');
+  assert.equal(w.waiting()[0].failures, 0, 'no failure counted');
+}));
+
+test('a merged wake that fails counts its first failure and waits', () => withHome(async () => {
+  const main = checkout();
+  const fake = fakeRun();
+  const w = waker(fake);
+  setStop({ by: 'prompt' });
+  await w.wakeForeman(writeWake(P, bundle('e1')));
+  await w.wakeForeman(writeWake(P, bundle('e2')));
+  liftStop();
+  fs.rmSync(path.join(main, '.git'), { recursive: true }); // the copy can't be made: no git folder for info/exclude
+  await w.pump();
+  assert.equal(fake.calls.length, 0);
+  const [entry] = w.waiting();
+  assert.equal(w.waiting().length, 1, 'the two are one entry now');
+  assert.equal(entry.failures, 1);
+  assert.equal(Date.parse(entry.retryAt) - T0, MIN);
+  await w.pump();
+  assert.equal(fake.calls.length, 0, 'it waits');
+}));
+
+test('a wakes folder swapped for a link between the check and the copy: the copy is removed and the wake not delivered', { skip: !unix }, () => withHome(async () => {
+  const main = checkout();
+  const elsewhere = tempFolder('wh-elsewhere-');
+  const fake = fakeRun();
+  let swaps = 0;
+  const swap = (dir) => {
+    swaps += 1;
+    fs.renameSync(dir, `${dir}-moved`);
+    fs.symlinkSync(elsewhere, dir);
+  };
+  const w = waker(fake, { beforeCopy: swap });
+  await w.wakeForeman(writeWake(P, bundle('e1')));
+  assert.equal(swaps, 1);
+  assert.equal(fake.calls.length, 0, 'no foreman told to read it');
+  assert.deepEqual(fs.readdirSync(elsewhere), [], 'nothing left through the link');
+  assert.match(w.waiting()[0].lastError, /isn't a real folder where it should be/);
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(wakesDir(P)), 'copies')), [], 'the temporary file went too');
+
+  // A feature's folder, the same way.
+  const dir = worktree();
+  keepSession('login-page', dir);
+  const f = waker(fake, { locate: () => dir, beforeCopy: swap });
+  await f.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+  assert.ok(fs.existsSync(main));
+}));
+
+test('a copy never replaces a link left in its place', { skip: !unix }, () => withHome(async () => {
+  checkout();
+  const elsewhere = tempFolder('wh-elsewhere-');
+  const fake = fakeRun();
+  const record = writeWake(P, bundle('e1'));
+  fs.mkdirSync(foremanCopies(), { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, 'target.json'), path.join(foremanCopies(), path.basename(record)));
+  await waker(fake).wakeForeman(record);
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
 }));
 
 test('a foreman recorded before the computer last started is not running', () => withHome(async () => {
@@ -666,6 +733,35 @@ test('spawnDetached starts a real process detached and gives its exit code; pidA
   assert.equal(await fed.exited, 0, 'input goes in on stdin');
   await assert.rejects(spawnDetached(path.join(tempFolder('wh-none-'), 'no-such-program'), []));
   assert.equal(await processStartTime(0), null);
-  assert.equal(await processStartTime(1, { platform: 'win32', run: async () => ({ code: 0, stdout: '2026-10-19T09:00:00.0000000Z\n' }) }), '2026-10-19T09:00:00.0000000Z');
+  assert.equal(await processStartTime(1, { platform: 'win32', run: async () => ({ code: 0, stdout: '1 2026-10-19T09:00:00.0000000Z\r\n' }) }), '2026-10-19T09:00:00.0000000Z');
   assert.equal(await processStartTime(1, { run: async () => { throw new Error('no ps'); } }), null);
+});
+
+test('start times are asked for every running pid in one call, and kept a minute', async () => {
+  const asked = [];
+  const run = async (file, args) => {
+    asked.push([file, args]);
+    return { code: 0, stdout: '11 2026-10-19T08:00:00.0000000Z\r\n12 2026-10-19T08:30:00.0000000Z\r\n' };
+  };
+  let t = T0;
+  const times = makeStartTimes({ platform: 'win32', run, now: () => new Date(t) });
+  assert.equal(await times.get(11, [11, 12, 13]), '2026-10-19T08:00:00.0000000Z');
+  assert.equal(asked.length, 1, 'one PowerShell call for all of them');
+  const [file, args] = asked[0];
+  assert.equal(file, 'powershell.exe');
+  assert.match(args.at(-1), /^Get-CimInstance Win32_Process -Filter 'ProcessId=11 OR ProcessId=12 OR ProcessId=13'/);
+  assert.equal(await times.get(12, [11, 12, 13]), '2026-10-19T08:30:00.0000000Z');
+  assert.equal(await times.get(13), null, 'gone, and kept as gone');
+  assert.equal(asked.length, 1, 'within the minute, nothing is asked again');
+  t += 60 * 1000;
+  await times.get(11, [11, 12]);
+  assert.equal(asked.length, 2);
+  assert.match(asked[1][1].at(-1), /ProcessId=11 OR ProcessId=12'/);
+  await times.get(11, [], { fresh: true });
+  assert.equal(asked.length, 3, 'a fresh ask, for a process just started');
+
+  const ps = [];
+  const mac = makeStartTimes({ platform: 'darwin', run: async (f, a) => { ps.push([f, a]); return { code: 0, stdout: '   11 Mon Oct 19 08:00:00 2026\n' }; }, now: () => new Date(t) });
+  assert.equal(await mac.get(11, [12]), 'Mon Oct 19 08:00:00 2026');
+  assert.deepEqual(ps, [['ps', ['-o', 'pid=,lstart=', '-p', '11,12']]]);
 });

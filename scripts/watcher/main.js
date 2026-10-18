@@ -25,8 +25,12 @@
 // wake until STOP lifts.
 //
 // The configuration is the default branch's, asked of the helper, which reads
-// it in its own mirror: never the working copy, which an agent can edit. When
-// the helper can't say, the defaults stand.
+// it in its own mirror: never the working copy, which an agent can edit. Until
+// it has been read, the watcher wakes and starts nothing, not even by the
+// defaults: each loop asks again and does nothing else, and health.json says
+// why (its `shape` is null meanwhile). Nothing is lost: the cursor does not
+// move, so what happened meanwhile is found once the configuration is read. A
+// configuration that reads but leaves keys out has the defaults for those.
 //
 // Shape 1: started detached and hidden by the foreman's start script, and by
 // the session start when it isn't running (Task 19). Shape 2: run by a plugin
@@ -55,10 +59,10 @@ export function lockFile(project) {
   return path.join(watcherDir(project), 'watcher.lock');
 }
 
-// The project's configuration from its default branch, through the helper.
-// Anything the helper can't answer, or an answer that doesn't read, gives the
-// defaults (`log` says so); the working copy is never read.
-export async function projectConfig(project, client, { log = () => {} } = {}) {
+// The project's configuration from its default branch, through the helper,
+// as `{ config }`, or `{ config: null, why }` when the helper can't answer or
+// its answer doesn't read. The working copy is never read.
+export async function projectConfig(project, client) {
   let answer;
   try {
     answer = await client.config({ project });
@@ -67,11 +71,12 @@ export async function projectConfig(project, client, { log = () => {} } = {}) {
   }
   if (answer?.ok === true) {
     try {
-      return readConfig(JSON.stringify(answer.config));
-    } catch { /* the defaults below */ }
+      return { config: readConfig(JSON.stringify(answer.config)) };
+    } catch {
+      return { config: null, why: 'the configuration on the default branch can\'t be read' };
+    }
   }
-  log(`The project's configuration couldn't be read from its default branch, so the defaults stand: ${answer?.refused ?? 'no answer'}`);
-  return readConfig(null);
+  return { config: null, why: typeof answer?.refused === 'string' ? answer.refused : 'the helper gave no answer' };
 }
 
 // The awake time since the last loop: none on the first, never below nothing
@@ -135,14 +140,14 @@ export async function runWatcher({
   };
 
   try {
-    const settings = config ?? await projectConfig(project, client, { log });
-    const shape = settings.watcherShape;
     const health = { lastOk: null, lastError: null };
     const fault = (message) => {
       health.lastError = { at: now().toISOString(), message };
       log(message);
     };
-    const wake = waker ?? makeWaker({ shape, project, config: settings, now, onError: fault, ...wakerOptions });
+    let settings = config;
+    let shape = settings?.watcherShape ?? null;
+    let wake = null;
 
     let cursor = readCursor(project);
     let bundler = makeBundler({ now, held: cursor.held });
@@ -162,6 +167,24 @@ export async function runWatcher({
       const t = now();
       const awake = awakeSince(last, t.getTime(), cap);
       last = t.getTime();
+
+      // No configuration yet: ask again, and do nothing else this loop.
+      if (settings === null) {
+        const read = await projectConfig(project, client);
+        if (read.config === null) fault(`The watcher is waiting for the project's configuration from its default branch: ${read.why}`);
+        else {
+          settings = read.config;
+          shape = settings.watcherShape;
+        }
+      }
+      if (settings !== null && wake === null) {
+        try {
+          wake = waker ?? makeWaker({ shape, project, config: settings, now, onError: fault, ...wakerOptions });
+        } catch (error) {
+          fault(`The watcher can't wake sessions with this configuration: ${error.message}`);
+        }
+      }
+
       try {
         writeJsonFile(healthFile(project), {
           pid: process.pid, at: t.toISOString(), shape, ...(health.lastOk ? { lastOk: health.lastOk } : {}), ...(health.lastError ? { lastError: health.lastError } : {}),
@@ -169,6 +192,7 @@ export async function runWatcher({
       } catch (error) {
         log(`The watcher's health can't be written: ${error.message}`);
       }
+      if (wake === null) continue; // nothing observed, nothing woken, the cursor kept as it is
 
       if (pruned === null || t.getTime() - pruned >= PRUNE_MS) {
         pruned = t.getTime();

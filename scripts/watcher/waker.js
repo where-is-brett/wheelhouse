@@ -38,7 +38,8 @@
 // main checkout's `.wheelhouse/foreman/wakes/` (git-ignored through
 // info/exclude) for the foreman, the worktree's `.wheelhouse/feature/wakes/`
 // for a feature. Each folder must be a real folder whose real path is where it
-// should be. Merging reads only the records, never a copy.
+// should be, checked again just before and after each copy (see copyWake).
+// Merging reads only the records, never a copy.
 //
 // The outbox. Every wake goes into projects/<p>/watcher/outbox.json first.
 // When its session is started it is marked in flight, and it leaves the
@@ -56,8 +57,10 @@
 // last started, when the running process's start time is not the recorded one
 // (its pid was reused), or when its maximum run time has passed: 60 minutes
 // for the foreman, 8 hours for a feature. An overrun is reported. A record
-// whose process can't be checked (a `starting` one, or no start time to be
-// had) ends at the time limit alone.
+// with no start time to be had ends at the time limit alone. A `starting`
+// record names no process yet: it ends after 2 minutes, and its wakes go
+// again. Start times are asked for every running pid in one call (`ps`, or
+// one PowerShell call on Windows) and kept for a minute.
 //
 // Under STOP nothing is started, woken or printed (it is checked again right
 // before each start), and startFeature is refused. Bypass mode is refused at
@@ -94,6 +97,8 @@ export const ROLE_VARIABLE = 'WHEELHOUSE_ROLE';
 const MINUTE = 60 * 1000;
 // The longest a session's process counts as running.
 export const MAX_RUN_MS = Object.freeze({ foreman: 60 * MINUTE, feature: 8 * 60 * MINUTE });
+// The longest a `starting` record, which names no process yet, counts as running.
+export const STARTING_MS = 2 * MINUTE;
 // The waits after a failed start or a failed exit, in order; the last repeats.
 export const BACKOFF_MS = Object.freeze([MINUTE, 5 * MINUTE, 15 * MINUTE]);
 // From this many failures on, each is reported.
@@ -269,6 +274,7 @@ function mergeWakes(project, to, work, files, now) {
 // Makes `parts` one by one under `root`, each a real folder (a link or a file
 // is refused), and checks the last one's real path is the one under the
 // root's real path, so nothing written there can land anywhere else.
+// Returns `{ dir, expected }`: the folder and the real path it must keep.
 function realFolderUnder(root, parts, fail) {
   const rootReal = realOf(root);
   if (rootReal === null) fail();
@@ -286,8 +292,9 @@ function realFolderUnder(root, parts, fail) {
     }
     if (!lstatOf(dir)?.isDirectory()) fail();
   }
-  if (realOf(dir) !== path.join(rootReal, ...parts)) fail();
-  return dir;
+  const expected = path.join(rootReal, ...parts);
+  if (realOf(dir) !== expected) fail();
+  return { dir, expected };
 }
 
 // The foreman's copies: the main checkout's .wheelhouse/foreman/wakes/,
@@ -305,13 +312,40 @@ export function featureWakesDir(worktree) {
   return realFolderUnder(worktree, ['.wheelhouse', 'feature', 'wakes'], fail);
 }
 
-// Copies the record `file` into `dir` under its own name, and returns the copy's path.
-function copyWake(file, dir) {
+// Copies the record `file` into the session's folder `place` (from
+// foremanWakesDir or featureWakesDir) under the record's own name, and returns
+// the copy's path. The session can change its folder at any moment, so: the
+// copy is made from a temporary file in the watcher's own folder; the folder
+// is checked again (a real folder, at its expected real path) just before
+// copying; the copy never replaces anything but a regular file and is made
+// with COPYFILE_EXCL, so it never follows a link left in its place; and the
+// folder is checked once more after. If it moved, the copy is removed and the
+// wake counts as not delivered. `beforeCopy(dir)` is for tests.
+function copyWake(project, file, place, { beforeCopy = () => {} } = {}) {
+  const moved = () => { throw new Error("The wakes folder isn't a real folder where it should be"); };
   const text = readCapped(file, WAKE_BYTES);
   if (text === null) throw new Error("The wake's record can't be read");
-  const copy = path.join(dir, path.basename(file));
-  writeWholeText(copy, text, () => { throw new Error("The wake's copy can't be written"); });
-  return copy;
+  const temp = path.join(watcherFolder(project, 'copies'), `${crypto.randomUUID()}.json`);
+  fs.writeFileSync(temp, text, { flag: 'wx' });
+  try {
+    const sound = () => lstatOf(place.dir)?.isDirectory() === true && realOf(place.dir) === place.expected;
+    if (!sound()) moved();
+    beforeCopy(place.dir);
+    const copy = path.join(place.dir, path.basename(file));
+    const there = lstatOf(copy);
+    if (there !== null) {
+      if (!there.isFile()) throw new Error("The wake's copy can't be written");
+      fs.rmSync(copy, { force: true }); // an earlier copy of the same wake
+    }
+    fs.copyFileSync(temp, copy, fs.constants.COPYFILE_EXCL);
+    if (!sound()) {
+      fs.rmSync(copy, { force: true });
+      moved();
+    }
+    return copy;
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
 }
 
 // Removes the wake files in `dir` older than the look-back, except those whose
@@ -421,20 +455,53 @@ export function pidAlive(pid) {
   }
 }
 
-// When the process with this id started, as the system says it, or null when
-// that can't be had: `ps -o lstart=` on macOS and Linux, the process's start
-// time through PowerShell on Windows.
-export async function processStartTime(pid, { platform = process.platform, run = runProgram } = {}) {
-  if (!Number.isInteger(pid) || pid < 1) return null;
+// When each of these processes started, as the system says it, in one call:
+// `ps -o pid=,lstart= -p <pids>` on macOS and Linux, Win32_Process's
+// CreationDate through one PowerShell call on Windows. A Map from pid to the
+// start time, or to null when it can't be had (the process has gone, or the
+// system won't say).
+export async function processStartTimes(pids, { platform = process.platform, run = runProgram } = {}) {
+  const wanted = [...new Set(pids)].filter((pid) => Number.isInteger(pid) && pid > 0);
+  const found = new Map(wanted.map((pid) => [pid, null]));
+  if (wanted.length === 0) return found;
   try {
+    const filter = wanted.map((pid) => `ProcessId=${pid}`).join(' OR ');
     const answer = platform === 'win32'
-      ? await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`], { timeoutMs: 15000 })
-      : await run('ps', ['-o', 'lstart=', '-p', String(pid)], { timeoutMs: 5000 });
-    const text = answer.code === 0 ? answer.stdout.trim() : '';
-    return text === '' ? null : text;
-  } catch {
-    return null;
-  }
+      ? await run('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        `Get-CimInstance Win32_Process -Filter '${filter}' | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.CreationDate.ToUniversalTime().ToString('o') }`,
+      ], { timeoutMs: 15000 })
+      : await run('ps', ['-o', 'pid=,lstart=', '-p', wanted.join(',')], { timeoutMs: 5000 });
+    for (const line of String(answer.stdout ?? '').split(/\r?\n/)) {
+      const m = /^\s*(\d+)\s+(\S.*?)\s*$/.exec(line);
+      if (m && found.has(Number(m[1]))) found.set(Number(m[1]), m[2]);
+    }
+  } catch { /* none can be had */ }
+  return found;
+}
+
+// When one process started, or null.
+export async function processStartTime(pid, options = {}) {
+  return (await processStartTimes([pid], options)).get(pid) ?? null;
+}
+
+// Start times kept for `ttlMs`, so a watcher checking its running sessions
+// every loop asks the system at most once a minute, and for every pid at
+// once. `get(pid, others)` asks for `pid` and every one of `others` not
+// fresh; `{ fresh: true }` asks again whatever is kept.
+export function makeStartTimes({ platform = process.platform, run = runProgram, now = () => new Date(), ttlMs = 60 * 1000 } = {}) {
+  const kept = new Map();
+  const isFresh = (pid) => kept.has(pid) && now().getTime() - kept.get(pid).at < ttlMs;
+  return {
+    async get(pid, others = [], { fresh = false } = {}) {
+      if (!fresh && isFresh(pid)) return kept.get(pid).time;
+      const asked = [pid, ...others.filter((p) => p !== pid && !isFresh(p))];
+      const found = await processStartTimes(asked, { platform, run });
+      const at = now().getTime();
+      for (const [p, time] of found) kept.set(p, { at, time });
+      return found.get(pid) ?? null;
+    },
+  };
 }
 
 const bootTime = () => Date.now() - os.uptime() * 1000;
@@ -450,7 +517,7 @@ export function makeWaker({
   print = (line) => process.stdout.write(`${line}\n`),
   now = () => new Date(),
   alive = pidAlive,
-  startTimeOf = (pid) => processStartTime(pid),
+  startTimeOf = null,
   bootedAt = bootTime,
   stopped = () => stopState().on,
   locate = locateFeature(project),
@@ -458,6 +525,7 @@ export function makeWaker({
   baseEnv = process.env,
   platform = process.platform,
   onError = () => {},
+  beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
   sessionModeOf(config);
@@ -465,6 +533,10 @@ export function makeWaker({
     throw new Error("The foreman's tools are a list of tool rules");
   }
   watcherDir(project); // a project name that is not a folder name throws here
+  // Start times, asked of this system for every running pid at once and kept a minute.
+  const startTimes = makeStartTimes({ now });
+  const timeOf = startTimeOf ?? ((pid, others, options) => startTimes.get(pid, others, options));
+  const copyInto = (file, place) => copyWake(project, file, place, { beforeCopy });
 
   // --- The outbox ---
   const outboxFail = () => { throw new Error("The watcher's outbox can't be read or written"); };
@@ -540,22 +612,36 @@ export function makeWaker({
     if (r !== null && r.pid === pid) fs.rmSync(runningFile(project, target), { force: true });
   };
 
+  // The pids of every recorded running process, so their start times are asked for together.
+  const runningPids = () => {
+    let names;
+    try {
+      names = fs.readdirSync(path.join(watcherDir(project), 'running'));
+    } catch {
+      return [];
+    }
+    return names.filter((n) => n.endsWith('.json'))
+      .map((n) => readJson(path.join(watcherDir(project), 'running', n))?.pid)
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  };
+
   // Whether the target's recorded process still runs: `{ live }`, `{ ended,
-  // why }` (why: 'gone' or 'overran'), or null when nothing is recorded.
+  // why }` (why: 'gone' or 'overran'), or null when nothing is recorded. A
+  // `starting` record, left by a watcher that stopped mid-start, has no pid
+  // to check and ends after STARTING_MS; its wakes go again.
   async function stateOf(target) {
     const r = readRunning(target);
     if (r === null) return null;
     const at = Date.parse(r.at);
     const t = now().getTime();
     if (Number.isNaN(at) || at < bootedAt()) return { ended: r, why: 'gone' };
-    if (r.state !== 'starting') {
-      if (!Number.isInteger(r.pid) || !alive(r.pid)) return { ended: r, why: 'gone' };
-      if (typeof r.startTime === 'string') {
-        const current = await startTimeOf(r.pid);
-        if (current !== null && current !== r.startTime) return { ended: r, why: 'gone' };
-      }
+    if (r.state === 'starting') return t - at >= STARTING_MS ? { ended: r, why: 'gone' } : { live: r };
+    if (!Number.isInteger(r.pid) || !alive(r.pid)) return { ended: r, why: 'gone' };
+    if (typeof r.startTime === 'string') {
+      const current = await timeOf(r.pid, runningPids());
+      if (current !== null && current !== r.startTime) return { ended: r, why: 'gone' };
     }
-    // Still running, or a `starting` record with no pid to check: the time limit decides.
+    // Still running: the time limit decides.
     if (t - at >= maxRunOf(target)) return { ended: r, why: 'overran' };
     return { live: r };
   }
@@ -590,7 +676,7 @@ export function makeWaker({
       fs.rmSync(file0, { force: true });
       throw error;
     }
-    const startTime = await startTimeOf(started.pid);
+    const startTime = await timeOf(started.pid, [], { fresh: true });
     writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries });
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
@@ -677,14 +763,14 @@ export function makeWaker({
       if (stopped()) break;
       let copy;
       try {
-        if (e.to === 'foreman') copy = copyWake(e.file, foremanWakesDir(checkoutOf()));
+        if (e.to === 'foreman') copy = copyInto(e.file, foremanWakesDir(checkoutOf()));
         else {
           const worktree = locate(e.work);
           if (worktree === null) {
             settle([e.id], 'done'); // the feature has closed or gone
             continue;
           }
-          copy = copyWake(e.file, featureWakesDir(worktree));
+          copy = copyInto(e.file, featureWakesDir(worktree));
         }
       } catch (error) {
         settle([e.id], 'failed', error.message);
@@ -742,9 +828,10 @@ export function makeWaker({
       try {
         cwd ??= checkoutOf();
         gathered = gather(entries, waiting, work === undefined ? 'foreman' : 'feature', work);
-        copy = copyWake(gathered.entry.file, work === undefined ? foremanWakesDir(cwd) : featureWakesDir(cwd));
+        copy = copyInto(gathered.entry.file, work === undefined ? foremanWakesDir(cwd) : featureWakesDir(cwd));
       } catch (error) {
-        settle(waiting.map((e) => e.id), 'failed', error.message);
+        // Once gathered, the waiting wakes are one entry: that is the one that failed.
+        settle(gathered ? [gathered.entry.id] : waiting.map((e) => e.id), 'failed', error.message);
         continue;
       }
       if (stopped()) return delivered;

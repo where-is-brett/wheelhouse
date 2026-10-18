@@ -77,14 +77,15 @@ export function credentialRules() {
   return allCredentials().flatMap((c) => [`Read(~/${c})`, `Read(~/${c}/**)`]);
 }
 
-// The allow rules for feature sessions (build-loop design, section 11): one
-// `Bash(<command>:*)` for each of the configuration's build commands, so a
-// session nobody watches never waits on a prompt for them. A deny rule still
-// wins over any of them. `claude -p` does not apply allow rules from a
-// committed .claude/settings.json (check 25), so the watcher's Shape 1 starter
-// also passes these with --allowedTools. On Windows there are none: the
-// sandbox does not run there, so a rule such as `Bash(node:*)` would let a
-// session run anything unasked. The commands are still checked there.
+// The allow rules for feature sessions the watcher starts (build-loop design,
+// section 11): one `Bash(<command>:*)` for each of the configuration's build
+// commands, so a session nobody watches never waits on a prompt for them. A
+// deny rule still wins over any of them. They are passed only with the Shape 1
+// starter's --allowedTools, never written into the project's settings: that
+// file is shared by every computer, Windows ones too, so an interactive
+// session asks. On Windows there are none: the sandbox does not run there, so
+// a rule such as `Bash(node:*)` would let a session run anything unasked. The
+// commands are still checked there.
 export function featureAllowRules(config, { platform = process.platform } = {}) {
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
   if (!Array.isArray(commands)) throw new Error('The build commands are not a list');
@@ -93,7 +94,7 @@ export function featureAllowRules(config, { platform = process.platform } = {}) 
   return unique(commands.map((c) => `Bash(${c}:*)`));
 }
 
-export function projectSettings(config, { platform = process.platform } = {}) {
+export function projectSettings(config) {
   const credentials = allCredentials();
   const deny = unique([
     'Read(**/.env)', 'Read(**/.env.*)',
@@ -105,7 +106,7 @@ export function projectSettings(config, { platform = process.platform } = {}) {
     ...RUNNERS.flatMap((r) => unique([...HOST_TOOLS, ...PACKAGE_NAMES]).flatMap((t) => [`Bash(${r} ${t}:*)`, `Bash(${r} ${t}@*)`])),
   ]);
   return {
-    permissions: { allow: featureAllowRules(config, { platform }), deny },
+    permissions: { deny },
     sandbox: {
       enabled: true,
       allowUnsandboxedCommands: false,
