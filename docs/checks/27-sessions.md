@@ -6,7 +6,7 @@
 
 ## Question
 
-Whether a background Node.js process can start a fresh foreman session per batch of events, and start or wake a feature session, in Desktop on macOS and Windows, building on check 1. The answer picks the watcher's shape (build-loop design, section 11): Shape 1, a background process outside any session; or Shape 2, one long-lived foreman session hosting the watcher as a plugin monitor.
+Starting and waking sessions from a script: whether a background Node.js process can start a fresh foreman session per batch of events, and start or wake a feature session, in Desktop on macOS and Windows, building on check 1. The answer picks the watcher's shape (section 11).
 
 ## Tested on
 
@@ -50,20 +50,22 @@ No `claude send` or `claude message` command exists in the documentation or in `
 
 The script starts its sessions with the host session's own variables left out of the environment, as a terminal would; `--inherit-env` keeps them. It logs times, token counts and session ids (no transcript text) outside the repository.
 
-**Run on the Mac** from a shell inside a Claude Code session, three times for `print` and `stream` (once with the inherited environment) and twice for `bg`.
+**Run on the Mac** from a shell inside a Claude Code session. `print` ran four times: one run timed out (below), one failed only the fresh-session check as first written (below), and two passed in full, one of them with the inherited environment. `stream` ran twice and passed both times (once with the inherited environment). `bg` ran three times: one blocked by trust (below) and two passed. The ranges in the table are over every run that reached a result, including the print run whose fresh-session check was wrong.
 
-- `claude --bg` refuses to start in a folder Claude Code does not trust, and the throwaway folders under the temporary folder are not trusted. So the `bg` trials ran with `--worktrees-of <this checkout>`, which makes each throwaway project a detached worktree of a repository that is already trusted (trust is keyed on the main checkout; documentation). That loads the checkout's `CLAUDE.md`, so the `bg` token counts are higher than the others. Before the script was finished, the same background steps were also tried by hand in such a worktree.
+- `claude --bg` refuses to start in a folder Claude Code does not trust, and the throwaway folders under the temporary folder are not trusted. So the `bg` trials ran with `--worktrees-of <this checkout>`, which makes each throwaway project a detached worktree of a repository that is already trusted (trust is keyed on the main checkout; documentation). That loads the checkout's `CLAUDE.md`, so the `bg` token counts are higher than the others. Before the script was finished, the same background steps were also tried by hand in such a worktree. The script's `--wait-for-trust` option, which pauses so the director can accept the trust question in a scratch folder and then retries, was never exercised: it is untried.
 - The first `print` run timed out in all four trials at the script's 4-minute limit with no output (the app hosting the shell session was quit around then); it was discarded and run again. The first fresh-session check also failed, because the third session read `pong.txt` in the shared folder; the check was changed to look at the conversation, not at files on disk.
 
 ## Evidence
 
-All trials passed on the Mac in the final runs: `print` 4 of 4, `stream` 4 of 4 (also 4 of 4 with the inherited environment), `bg` 4 of 4 plus one information step. Times are to the file, in seconds; tokens are what the session read and wrote.
+All trials passed on the Mac in the final runs (`print` 4 of 4, `stream` 4 of 4, `bg` 4 of 4 plus one information step). Times are seconds from starting the command to the file holding the expected text, as the lowest and highest over the runs that reached a result.
 
 | Route | 1. start | 2. second, in a worktree | 3. wake (one line) | 4. fresh third |
 |---|---|---|---|---|
-| `print` | 3.2 to 4.0 s (about 48,000 in, 285 out) | 4.3 s | 3.5 to 9.9 s over three runs (a new process each time; 9.9 s was the slowest) | 2.3 s, fresh |
-| `stream` | 3.3 to 3.5 s | 2.4 to 3.7 s | 1.3 to 1.5 s (a line to the open process; about 50,000 in, 194 out) | 2.1 s, fresh |
-| `bg` | 4.8 s; the `claude --bg` command itself returned in 0.7 to 1.1 s (about 73,000 in, 550 out) | 4.1 s | 3.0 s (stop, then resume; the same session id answered; 86,000 in, 191 out) | 6.1 s, fresh |
+| `print` (3 runs) | 3.2 to 4.0 s | 2.7 to 5.5 s | 3.5 to 9.9 s (a new process each time) | 2.3 to 5.7 s |
+| `stream` (2 runs) | 3.3 to 3.5 s | 2.4 to 3.7 s | 1.3 to 1.5 s (a line to the open process) | 2.1 to 2.8 s |
+| `bg` (2 runs) | 4.6 to 4.8 s; the `claude --bg` command itself returned in 0.7 to 1.1 s | 4.1 to 4.2 s | 3.0 to 3.3 s (stop, then resume; the same session id answered) | 3.4 to 6.1 s |
+
+Tokens read by a fresh session: about 38,000 to 74,000 for `print` and `stream` (the higher figures with the inherited environment, which loads more), and 73,000 to 129,000 for `bg` (its projects were worktrees of this checkout, which loads its `CLAUDE.md`); a few hundred written. Token figures for the wakes are left out: the `bg` wake's was counted once and as the transcript's growth, and the `stream` figure is a result event's own number and may be a running total.
 
 - **`print` wake:** `claude -p --resume <id>` resumed the same session. The permission mode and model had to be given again.
 - **`stream` wake** is the fastest: the process stays alive, so a line written to it starts the next turn in about a second and a half. The script holds the process, so the foreman could not be fresh per batch this way, and the watcher dying would end the session.
@@ -76,11 +78,12 @@ All trials passed on the Mac in the final runs: `print` 4 of 4, `stream` 4 of 4 
 
 ## What it means for the design
 
-- On the Mac, section 11's Shape 1 is workable: a Node.js process outside any session can start a session in a named folder with an explicit mode and model (`claude -p` or `claude --bg`), and wake one by id in about 3 to 10 seconds (`print` resume, or `bg` stop then resume). A fresh foreman per batch is a plain new `claude -p` or `claude --bg` each time (about 3 to 5 seconds to first action).
+- The two shapes (build-loop design, section 11): Shape 1, a background Node.js process outside any session that starts a fresh foreman per batch and starts or wakes feature sessions; Shape 2, the fallback, one long-lived foreman session hosting the watcher as a plugin monitor.
+- On the Mac, Shape 1 is workable: a Node.js process outside any session can start a session in a named folder with an explicit mode and model (`claude -p` or `claude --bg`), and wake one by id in about 3 to 10 seconds (`print` resume, or `bg` stop then resume). A fresh foreman per batch is a plain new `claude -p` or `claude --bg` each time (2.3 to 6.1 s to the first file across all runs).
 - The route for a feature session that must keep its own conversation is `claude --bg`, then `claude stop <id>` and `claude --resume <session id> --bg "<one line>"` with no other flags. The watcher must not add flags to the resume (the session keeps the mode and model it started with) and must not skip the stop (it would fork a copy). Keeping the session id from `claude agents --json` is the watcher's job.
-- `claude --bg` only works in folders the director has trusted. The project's own folder will be (the director works there); each new project folder, and each feature worktree of a trusted repository, is covered by the repository's trust. A throwaway folder is not, which is why trials need `--worktrees-of` or one manual trust.
+- `claude --bg` only works in folders the director has trusted (the wait-and-retry for a scratch folder is untried; the fallback is `--worktrees-of`, as run.md says). The project's own folder will be (the director works there); each new project folder, and each feature worktree of a trusted repository, is covered by the repository's trust. A throwaway folder is not, which is why trials need `--worktrees-of` or one manual trust.
 - Not settled, and needed before the answer: whether the sessions a script starts appear in Desktop and can be opened there; whether everything above works on Windows, where check 1 found the command line's own sign-in failing; and whether `claude --bg` and its background service work on Windows. The Shape 1 rule in the plan (every trial passes on both systems) is not met until then. If Windows fails, Shape 2 and Task 6 follow.
-- Section 8's explicit-mode rule held: every session here was started with `--permission-mode acceptEdits` and a named model, and the resume of a background session keeps those.
+- Section 8's explicit-mode rule held for starts: every session here was started with `--permission-mode acceptEdits` and a named model. For a background wake, the claim that the resumed session keeps that mode and model rests on the command line's own message ("woke session ... with its saved options"); the trials did not check the mode or model of the resumed session.
 
 ## Needs the director
 

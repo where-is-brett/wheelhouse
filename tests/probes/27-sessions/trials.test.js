@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import {
   parseOptions, makeEnv, strippedNames, waitForText, judgeFresh, transcriptUsage, subtractUsage, findTranscript, parseTranscript, MESSAGES,
+  once, runCleanups, installSignalCleanup, sessionName, isOurSession,
 } from '../../../probes/27-sessions/trials.js';
 
 test('the model must be named, by option or by variable, and looks like a name', () => {
@@ -93,4 +95,69 @@ test('a transcript is found by session id in any project folder, and half-writte
   assert.equal(findTranscript('abc', path.join(dir, 'nowhere')), null);
   assert.deepEqual(parseTranscript(fs.readFileSync(findTranscript('abc', dir), 'utf8')), [{ type: 'user' }]);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a cleanup runs once however many callers ask, and runCleanups runs each registered one', async () => {
+  let calls = 0;
+  const cleanup = once(async () => { calls += 1; });
+  await Promise.all([cleanup(), cleanup()]);
+  await cleanup();
+  assert.equal(calls, 1);
+  const order = [];
+  const ctx = { cleanups: new Set([once(async () => order.push('a')), once(async () => { order.push('b'); throw new Error('x'); }), once(async () => order.push('c'))]) };
+  await runCleanups(ctx);
+  assert.deepEqual(order, ['a', 'b', 'c']);
+});
+
+test('Ctrl+C runs the cleanups once, then leaves; a second signal leaves at once', async () => {
+  const target = new EventEmitter();
+  const exits = [];
+  let cleaned = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const ctx = { cleanups: new Set([async () => { cleaned += 1; await gate; }]), interrupted: false };
+  const quiet = console.error;
+  console.error = () => {};
+  const uninstall = installSignalCleanup(ctx, { exit: (code) => exits.push(code), target });
+  try {
+    target.emit('SIGINT', 'SIGINT');
+    assert.equal(ctx.interrupted, true);
+    assert.deepEqual(exits, []);
+    target.emit('SIGINT', 'SIGINT');
+    assert.deepEqual(exits, [130]);
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cleaned, 1);
+    assert.deepEqual(exits, [130, 130]);
+    uninstall();
+    assert.equal(target.listenerCount('SIGINT'), 0);
+    assert.equal(target.listenerCount('SIGTERM'), 0);
+  } finally {
+    console.error = quiet;
+  }
+});
+
+test('a termination signal leaves with 143', async () => {
+  const target = new EventEmitter();
+  const exits = [];
+  const ctx = { cleanups: new Set(), interrupted: false };
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    installSignalCleanup(ctx, { exit: (code) => exits.push(code), target });
+    target.emit('SIGTERM', 'SIGTERM');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(exits, [143]);
+  } finally {
+    console.error = quiet;
+  }
+});
+
+test('the trials recognise their own background sessions by name and process', () => {
+  assert.equal(sessionName('one', 42), 'probe27-one-42');
+  assert.equal(isOurSession('probe27-two-42', 42), true);
+  assert.equal(isOurSession('probe27-two-43', 42), false);
+  assert.equal(isOurSession('my-session-42', 42), false);
+  assert.equal(isOurSession(undefined, 42), false);
 });

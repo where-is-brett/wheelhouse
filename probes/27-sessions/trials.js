@@ -366,6 +366,7 @@ const streamRoute = {
     return wake;
   },
   async finish(ctx, handle) {
+    if (ctx.interrupted) killTree(handle.child);
     handle.child.stdin.end();
     const timer = setTimeout(() => killTree(handle.child), 30000);
     await handle.closed;
@@ -381,6 +382,16 @@ async function waitForTurn(handle, count) {
 
 class NotTrusted extends Error {}
 
+// Every background session the trials start is named like this, so cleaning up can find
+// them again even when `claude --bg` did not print an id.
+export function sessionName(label, pid = process.pid) {
+  return `probe27-${label}-${pid}`;
+}
+
+export function isOurSession(name, pid = process.pid) {
+  return typeof name === 'string' && name.startsWith('probe27-') && name.endsWith(`-${pid}`);
+}
+
 async function agentsJson(ctx) {
   const result = await runClaude(ctx, { args: ['agents', '--json', '--all'], cwd: os.tmpdir(), timeoutMs: 60000 });
   try {
@@ -395,7 +406,7 @@ const bgRoute = {
   name: 'bg',
   async start(ctx, { dir, prompt, label }) {
     const startedAt = Date.now();
-    const name = `probe27-${label}-${process.pid}`;
+    const name = sessionName(label);
     const args = ['--bg', '--name', name, ...baseFlags(ctx), prompt];
     let result = await runClaude(ctx, { args, cwd: dir, timeoutMs: 120000 });
     if (result.code !== 0 && /not trusted/i.test(result.stdout + result.stderr) && ctx.options.waitForTrust && process.stdin.isTTY) {
@@ -403,6 +414,8 @@ const bgRoute = {
       result = await runClaude(ctx, { args, cwd: dir, timeoutMs: 120000 });
     }
     const text = (result.stdout + result.stderr).trim();
+    // A start that timed out may still have made a session; it is found again by its name when cleaning up.
+    if (result.timedOut) throw new Error('claude --bg did not return in 2 minutes; any session it made is stopped by name when the trials clean up');
     if (result.code !== 0) {
       if (/not trusted/i.test(text)) throw new NotTrusted(text.split('\n')[0]);
       throw new Error(`claude --bg exited ${result.code}: ${text.slice(-300)}`);
@@ -465,6 +478,7 @@ const bgRoute = {
 function askEnter(question) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.on('SIGINT', () => { rl.close(); process.emit('SIGINT', 'SIGINT'); resolve(); });
     rl.question(question, () => { rl.close(); resolve(); });
   });
 }
@@ -524,9 +538,22 @@ export async function runRoute(ctx, route) {
     : await makeScratchProject({ name: `sessions-${route.name}`, files: { 'README.md': 'A scratch project for check 27.\n' } });
   const handles = [];
   let second = null;
-  let worktree = null;
+  let worktree = `${project.dir}-second`;
+  // Everything this route made, undone once, in this order: the background sessions are
+  // stopped before the worktrees they run in are removed. It runs when the route ends
+  // and also if the script is interrupted.
+  ctx.backgrounded = new Set();
+  const cleanup = once(async () => {
+    await stopBackgrounded(ctx);
+    for (const handle of handles) {
+      try { await route.finish(ctx, handle); } catch { /* best effort */ }
+    }
+    await removeWorktree(project, worktree).catch(() => {});
+    await project.cleanup();
+  });
+  ctx.cleanups.add(cleanup);
   try {
-    worktree = await makeWorktree(project);
+    await makeWorktree(project);
 
     // 1. a fresh session in the scratch project
     let first;
@@ -557,7 +584,7 @@ export async function runRoute(ctx, route) {
     const settled3 = await wake.settle();
     const mainUntouched = readTrimmed(file1) === 'pong-1';
     await note(3, 'wake it with a message', {
-      pass: msToFile3 !== null && mainUntouched,
+      pass: msToFile3 !== null && mainUntouched && settled3.sameSession === true,
       why: msToFile3 === null ? 'the worktree\'s pong.txt never held pong-2' : `the worktree's pong.txt holds pong-2, the project's still holds ${mainUntouched ? 'pong-1' : 'something else'}; ${settled3.sameSession ? 'the same session answered' : 'a different session answered (a copy)'}`,
       msToFile: msToFile3,
       msToExit: settled3.msToExit,
@@ -592,25 +619,58 @@ export async function runRoute(ctx, route) {
     await note(4, 'start a fresh third', { pass: msToFile4 !== null && fresh.pass, why: msToFile4 === null ? 'pong-3.txt never held pong-3' : fresh.why, msToFile: msToFile4, msToExit: settled4.msToExit, usage: settled4.usage, sessionId: settled4.sessionId, startCommandMs: third.startCommandMs, detail: settled4.note });
     return results;
   } finally {
-    if (ctx.options.pauseAtEnd && process.stdin.isTTY) {
+    if (ctx.options.pauseAtEnd && process.stdin.isTTY && !ctx.interrupted) {
       await askEnter(`Route ${route.name} is done; its sessions are still there to look at in Desktop. Press Enter to clean up... `);
     }
-    for (const handle of handles) {
-      try { await route.finish(ctx, handle); } catch { /* best effort */ }
-    }
-    await removeWorktree(project, worktree ?? `${project.dir}-second`).catch(() => {});
-    await project.cleanup();
+    await cleanup();
+    ctx.cleanups.delete(cleanup);
   }
 }
 
-// Stops and removes the background sessions the trials started (their
-// transcripts stay on disk, as `claude rm` leaves them).
-async function removeBackgrounded(ctx) {
-  for (const id of ctx.backgrounded) {
-    if (!id) continue;
+// A function that runs once; every caller gets the same promise.
+export function once(fn) {
+  let promise = null;
+  return () => {
+    promise ??= Promise.resolve().then(fn);
+    return promise;
+  };
+}
+
+// Runs every cleanup that is still registered. Used when the script is interrupted.
+export async function runCleanups(ctx) {
+  for (const cleanup of [...ctx.cleanups]) {
+    try { await cleanup(); } catch { /* best effort */ }
+  }
+}
+
+// Stops and removes the background sessions the trials started: those whose ids
+// were printed, and any in `claude agents --all` named as the trials name theirs
+// (which finds one whose `claude --bg` timed out before printing an id). Their
+// transcripts stay on disk, as `claude rm` leaves them.
+async function stopBackgrounded(ctx) {
+  const ids = new Set([...ctx.backgrounded].filter(Boolean));
+  try {
+    for (const entry of await agentsJson(ctx)) if (isOurSession(entry.name) && entry.id) ids.add(entry.id);
+  } catch { /* the listing is best effort */ }
+  for (const id of ids) {
     await runClaude(ctx, { args: ['stop', id], cwd: os.tmpdir(), timeoutMs: 60000 }).catch(() => {});
     await runClaude(ctx, { args: ['rm', id], cwd: os.tmpdir(), timeoutMs: 60000 }).catch(() => {});
   }
+}
+
+// Ctrl+C or a termination signal: clean up once, then leave. A second signal leaves at once.
+export function installSignalCleanup(ctx, { exit = (code) => process.exit(code), target = process } = {}) {
+  let started = false;
+  const handler = (signal) => {
+    if (started) { exit(130); return; }
+    started = true;
+    ctx.interrupted = true;
+    console.error(`\n${signal}: stopping the trials' sessions and removing their projects first (press again to leave at once)`);
+    runCleanups(ctx).finally(() => exit(signal === 'SIGINT' ? 130 : 143));
+  };
+  const signals = ['SIGINT', 'SIGTERM'];
+  for (const signal of signals) target.on(signal, handler);
+  return () => { for (const signal of signals) target.off(signal, handler); };
 }
 
 async function claudeVersion(resolved) {
@@ -637,15 +697,17 @@ export async function main(argv = process.argv.slice(2)) {
   await checkFlags(resolved, env.overrides);
   const version = await claudeVersion(resolved);
   const log = path.join(probeLogDir('27-sessions'), `trials-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`);
-  const ctx = { options, resolved, env, version, log, backgrounded: new Set() };
+  const ctx = { options, resolved, env, version, log, backgrounded: new Set(), cleanups: new Set(), interrupted: false };
   console.log(`Check 27, starting and waking sessions, on ${process.platform} with Claude Code ${version}`);
   console.log(`Routes: ${options.routes.join(', ')}; setting sources: ${options.settingSources}; ${options.inheritEnv ? 'environment inherited' : `${strippedNames(process.env).length} Claude variables left out of the sessions' environment`}`);
   const routes = { print: printRoute, stream: streamRoute, bg: bgRoute };
   const all = [];
+  const uninstall = installSignalCleanup(ctx);
   try {
     for (const name of options.routes) all.push(...await runRoute(ctx, routes[name]));
   } finally {
-    await removeBackgrounded(ctx);
+    await runCleanups(ctx);
+    uninstall();
   }
   const failed = all.filter((entry) => !entry.pass);
   console.log(`Check 27 on ${process.platform}: ${failed.length ? 'FAIL' : 'PASS'} (${all.length - failed.length} of ${all.length} trials passed)`);
