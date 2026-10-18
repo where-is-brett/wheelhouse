@@ -40,6 +40,7 @@ function fakeAdapter(overrides = {}) {
     prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     branchHead: async () => HEAD,
+    hasCi: async () => true,
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async (args) => ({ number: 7, url: `https://example.invalid/pr/7?h=${args.head}` }),
     updatePr: async () => ({ number: 7 }),
@@ -1026,17 +1027,15 @@ test('/host/facts says whether protection is on and whether the default branch h
   const p = await project({ lock: false });
   try {
     await as(p.home, async () => {
-      const heads = [];
-      const none = fakeAdapter({ branchHead: async (branch) => { heads.push(branch); return HEAD; }, ciState: async (sha) => ({ sha, state: 'none' }) });
+      const asked = [];
+      const none = fakeAdapter({ hasCi: async (sha, branch) => { asked.push([sha, branch]); return false; } });
       await withHelper(none, async (client) => {
         assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'none', ci: 'none' });
-        assert.deepEqual(heads, ['main'], 'the head asked for is the default branch\'s');
+        assert.deepEqual(asked, [[HEAD, 'main']], 'the default branch\'s head and name are what is asked about');
       }, { run: freePlanRun });
-      for (const state of ['success', 'pending', 'failure']) {
-        await withHelper(fakeAdapter({ ciState: async (sha) => ({ sha, state }) }), async (client) => {
-          assert.equal((await client.host.facts({ project: 'o__p' })).ci, 'present', state);
-        }, { run: freePlanRun });
-      }
+      await withHelper(fakeAdapter({ hasCi: async () => true }), async (client) => {
+        assert.equal((await client.host.facts({ project: 'o__p' })).ci, 'present');
+      }, { run: freePlanRun });
     });
   } finally { p.cleanup(); }
 });
@@ -1045,10 +1044,14 @@ test('/host/facts says unknown for what the host would not tell, and still answe
   const p = await project({ lock: false });
   try {
     await as(p.home, async () => {
-      const broken = fakeAdapter({ branchHead: async () => { throw new Error('the host is down'); } });
-      await withHelper(broken, async (client) => {
-        assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'none', ci: 'unknown' });
-      }, { run: freePlanRun });
+      for (const broken of [
+        fakeAdapter({ branchHead: async () => { throw new Error('the host is down'); } }),
+        fakeAdapter({ hasCi: async () => { throw new Error('the lookup failed'); } }),
+      ]) {
+        await withHelper(broken, async (client) => {
+          assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'none', ci: 'unknown' });
+        }, { run: freePlanRun });
+      }
       const refused = async () => ({ code: 1, stdout: '', stderr: 'gh: Bad credentials (HTTP 401)' });
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'unknown', ci: 'present' });

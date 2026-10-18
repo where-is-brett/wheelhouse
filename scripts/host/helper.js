@@ -1604,7 +1604,7 @@ export async function startHelper({
     const protection = async () => {
       try {
         const token = ctx.env?.GITLAB_TOKEN;
-        const api = host === 'gitlab' ? gitlabApi({ baseUrl: connection.baseUrl ?? 'https://gitlab.com', token, fetch }) : undefined;
+        const api = host === 'gitlab' ? gitlabApi({ baseUrl: checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com'), token, fetch }) : undefined;
         const status = await protectionStatus({ host, repo, run, api, env: ctx.env });
         return status.on ? 'on' : (status.available ? 'unknown' : 'none');
       } catch { return 'unknown'; }
@@ -1612,8 +1612,8 @@ export async function startHelper({
     const ci = async () => {
       try {
         const adapter = await ctx.adapter();
-        const head = await adapter.branchHead(await defaultBranchOf(project, adapter));
-        return (await adapter.ciState(head)).state === 'none' ? 'none' : 'present';
+        const branch = await defaultBranchOf(project, adapter);
+        return await adapter.hasCi(await adapter.branchHead(branch), branch) ? 'present' : 'none';
       } catch { return 'unknown'; }
     };
     const [onOrNot, checks] = await Promise.all([protection(), ci()]);

@@ -66,7 +66,9 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     const commit = await ask(['api', `${project}/repository/commits/${pipeline.sha}`]);
     return Array.isArray(commit?.parent_ids) && commit.parent_ids.includes(sha);
   }
-  async function mergedResults(sha) {
+  // With `strict`, a failed lookup is thrown instead of read as 'none' (the health read tells
+  // not being able to look from having looked and found nothing; the gate keeps the 'none').
+  async function mergedResults(sha, { strict = false } = {}) {
     try {
       const requests = await ask(['api', `${project}/repository/commits/${sha}/merge_requests`]);
       const open = (Array.isArray(requests) ? requests : []).filter((r) => r?.state === 'opened' && Number.isInteger(r.iid));
@@ -79,7 +81,10 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
           break; // the newest merged-results pipeline is the one that counts
         }
       }
-    } catch { /* not readable: no pipeline is claimed */ }
+    } catch (error) {
+      if (strict) throw error;
+      /* not readable: no pipeline is claimed */
+    }
     return 'none';
   }
 
@@ -107,6 +112,19 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     async prState(number) {
       const mr = await ask(['mr', 'view', String(number), ...R, '--output', 'json']);
       return { headSha: mr.sha, ...(typeof mr.source_branch === 'string' ? { headRef: mr.source_branch } : {}), ...(typeof mr.target_branch === 'string' ? { baseRef: mr.target_branch } : {}), mergeable: mergeable(mr.detailed_merge_status), state: STATE[mr.state] ?? 'unknown' };
+    },
+
+    async hasCi(sha, branch) {
+      // Any pipeline on the head counts, a skipped one too: it was run, and ran nothing.
+      const pipelines = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`]);
+      if (!Array.isArray(pipelines)) throw new Error('GitLab did not list the commit\'s pipelines');
+      if (pipelines.length > 0 || await mergedResults(sha, { strict: true }) !== 'none') return true;
+      // Pipelines that run only for merge requests leave none on the branch's head, and a head just
+      // pushed has none yet: the configuration file says whether CI is set up.
+      const { code, stdout, stderr } = await attempt(['api', `${project}/repository/files/.gitlab-ci.yml?ref=${encodeURIComponent(branch)}`]);
+      if (code === 0) return true;
+      if (/\b404\b|not found/i.test(`${stderr}\n${stdout}`)) return false;
+      throw new Error('GitLab could not say whether the project has a CI configuration');
     },
 
     async branchHead(branch) {

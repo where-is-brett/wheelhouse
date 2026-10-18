@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { healthLines, readHostFacts, QUICK_LINE } from '../../../scripts/board/health.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
@@ -9,7 +10,7 @@ import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { HOST_FACTS_MAX_AGE_MS } from '../../../scripts/lib/core-numbers.js';
-import { as, shortHome } from '../../helpers/homes.js';
+import { as, shortHome, testAddress } from '../../helpers/homes.js';
 
 // This computer's ID is made and kept in the home, so the tests that read it use their own.
 process.env.WHEELHOUSE_HOME = shortHome();
@@ -127,6 +128,7 @@ function fakeClient(answer) {
   };
 }
 const cacheFile = (project) => path.join(stateDir(project), '..', 'host-facts.json');
+const triedFile = (project) => path.join(stateDir(project), '..', 'host-facts-tried.json');
 const keep = (project, body) => {
   fs.mkdirSync(path.dirname(cacheFile(project)), { recursive: true });
   fs.writeFileSync(cacheFile(project), typeof body === 'string' ? body : JSON.stringify(body));
@@ -178,6 +180,7 @@ test('a helper that fails, refuses or is slow falls back to the old cache, and w
       assert.deepEqual(JSON.parse(fs.readFileSync(cacheFile('o__p'), 'utf8')).facts, FACTS, 'and left as it was');
     }
     // A damaged cache is no cache.
+    fs.rmSync(triedFile('o__p'), { force: true });
     keep('o__p', '{not json');
     assert.equal(await readHostFacts('o__p', { client: fakeClient(failures[0]), now: at(0) }), null);
     keep('o__p', { at: NOW.toISOString(), facts: { protection: 'on', ci: 'nonsense' } });
@@ -185,4 +188,60 @@ test('a helper that fails, refuses or is slow falls back to the old cache, and w
     // A project name that isn't a folder name has no facts.
     assert.equal(await readHostFacts('../x', { client: fakeClient({ ok: true, ...FACTS }), now: at(0) }), null);
   });
+});
+
+test('a helper that is slow is not waited on again for ten minutes, and the old cache is used meanwhile', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const never = () => new Promise(() => {});
+    const first = fakeClient(never);
+    assert.equal(await readHostFacts('o__p', { client: first, now: at(0), waitMs: 50 }), null);
+    assert.equal(first.calls.length, 1);
+    assert.equal(JSON.parse(fs.readFileSync(triedFile('o__p'), 'utf8')).at, NOW.toISOString());
+
+    // Within ten minutes: not asked at all.
+    const second = fakeClient({ ok: true, ...FACTS });
+    assert.equal(await readHostFacts('o__p', { client: second, now: at(9 * 60 * 1000), waitMs: 50 }), null);
+    assert.equal(second.calls.length, 0);
+    keep('o__p', { at: new Date(NOW.getTime() - 3 * HOST_FACTS_MAX_AGE_MS).toISOString(), facts: FACTS });
+    assert.deepEqual(await readHostFacts('o__p', { client: second, now: at(9 * 60 * 1000), waitMs: 50 }), FACTS, 'a stale cache is used meanwhile');
+    assert.equal(second.calls.length, 0);
+
+    // After ten minutes: asked again, and an answer clears the mark.
+    assert.deepEqual(await readHostFacts('o__p', { client: second, now: at(10 * 60 * 1000), waitMs: 50 }), FACTS);
+    assert.equal(second.calls.length, 1);
+    assert.equal(fs.existsSync(triedFile('o__p')), false);
+
+    // A helper that is simply down (answers at once) leaves no mark.
+    const down = fakeClient({ ok: false, refused: 'the host helper could not be reached: is it running?' });
+    await readHostFacts('o__p', { client: down, now: at(3 * HOST_FACTS_MAX_AGE_MS), waitMs: 50 });
+    assert.equal(fs.existsSync(triedFile('o__p')), false);
+  });
+});
+
+test('a helper that accepts and never answers is given up on in about two seconds, and its connection is closed', async () => {
+  const home = shortHome();
+  const address = testAddress(home);
+  const connections = [];
+  const closed = [];
+  const server = net.createServer((socket) => {
+    connections.push(socket);
+    socket.on('data', () => {}); // takes the request and never answers
+    closed.push(new Promise((resolve) => socket.on('close', resolve)));
+  });
+  await new Promise((resolve) => server.listen(address, resolve));
+  try {
+    await as(home, async () => {
+      const started = Date.now();
+      assert.equal(await readHostFacts('o__p', { address, now: at(0), waitMs: 300 }), null);
+      assert.ok(Date.now() - started < 2000, 'returned in good time');
+      assert.equal(connections.length, 1);
+      // The client closed the request itself: the helper's side sees the connection end.
+      await Promise.race([Promise.all(closed), new Promise((_, reject) => setTimeout(() => reject(new Error('the request was left open')), 2000))]);
+      assert.equal(fs.existsSync(triedFile('o__p')), true, 'and the next reading will not wait');
+    });
+  } finally {
+    for (const socket of connections) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

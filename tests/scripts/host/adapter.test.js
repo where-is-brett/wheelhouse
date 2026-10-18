@@ -534,3 +534,59 @@ test('branchHead refuses an answer that is not a commit, and a branch that is no
   await assert.rejects(none.a.branchHead(''), /branch/);
   assert.equal(none.calls.length, 0);
 });
+
+// --- hasCi: whether the project has CI, telling "found nothing" from "could not look" ---
+
+const NOT_FOUND = { code: 1, stderr: 'gh: Not Found (HTTP 404)' };
+
+test('GitHub hasCi: checks on the head, or workflows on the branch, mean CI; neither means none', async () => {
+  const withChecks = adapter('github', { stdout: gh('ci-success.json') });
+  assert.equal(await withChecks.a.hasCi(SHA, 'main'), true);
+  assert.equal(withChecks.calls.length, 1, 'the workflows are not asked about when the head has checks');
+
+  const workflows = adapter('github', { stdout: gh('ci-none.json') }, { stdout: JSON.stringify([{ name: 'test.yml', path: '.github/workflows/test.yml' }]) });
+  assert.equal(await workflows.a.hasCi(SHA, 'main'), true);
+  assert.deepEqual(workflows.calls[1].args, ['api', `repos/${REPO}/contents/.github/workflows?ref=main`]);
+
+  assert.equal(await adapter('github', { stdout: gh('ci-none.json') }, NOT_FOUND).a.hasCi(SHA, 'main'), false);
+  assert.equal(await adapter('github', { stdout: gh('ci-none.json') }, { stdout: '[]' }).a.hasCi(SHA, 'main'), false);
+});
+
+test('GitHub hasCi throws when it could not look, so it is never read as none', async () => {
+  await assert.rejects(adapter('github', { code: 1, stderr: 'HTTP 502' }).a.hasCi(SHA, 'main'));
+  await assert.rejects(adapter('github', { stdout: gh('ci-none.json') }, { code: 1, stderr: 'gh: Server Error (HTTP 500)' }).a.hasCi(SHA, 'main'), /CI workflows/);
+  await assert.rejects(adapter('github', { stdout: gh('ci-none.json') }, { stdout: 'not json' }).a.hasCi(SHA, 'main'));
+});
+
+const GL_NOT_FOUND = { code: 1, stderr: 'glab: 404 Not Found (HTTP 404)' };
+
+test('GitLab hasCi: a pipeline on the head (a skipped one too) or a CI configuration means CI; neither means none', async () => {
+  const pipelines = JSON.parse(gl('pipelines.json'));
+  const running = adapter('gitlab', { stdout: JSON.stringify(pipelines) });
+  assert.equal(await running.a.hasCi(GL_SHA, 'main'), true);
+  const skipped = adapter('gitlab', { stdout: JSON.stringify([{ ...pipelines[0], status: 'skipped' }]) });
+  assert.equal(await skipped.a.hasCi(GL_SHA, 'main'), true, 'a skipped pipeline is still a pipeline');
+  assert.equal((await adapter('gitlab', { stdout: JSON.stringify([{ ...pipelines[0], status: 'skipped' }]) }).a.ciState(GL_SHA)).state, 'none', 'the gate still reads it as none');
+
+  const configured = adapter('gitlab', { stdout: '[]' }, { stdout: '[]' }, { stdout: '{"file_name":".gitlab-ci.yml"}' });
+  assert.equal(await configured.a.hasCi(GL_SHA, 'main'), true);
+  assert.deepEqual(configured.calls[2].args, ['api', 'projects/a-director%2Fproduct/repository/files/.gitlab-ci.yml?ref=main']);
+  assert.equal(await adapter('gitlab', { stdout: '[]' }, { stdout: '[]' }, GL_NOT_FOUND).a.hasCi(GL_SHA, 'main'), false);
+});
+
+test('GitLab hasCi throws when any lookup fails, while ciState keeps reading it as none for the gate', async () => {
+  const lookup = (configFile) => makeAdapter({ host: 'gitlab', repo: REPO, env: ENV, run: async (file, args) => {
+    const path = args[1] ?? '';
+    if (path.includes('/pipelines?sha=')) return { code: 0, stdout: '[]', stderr: '' };
+    if (path.includes('/merge_requests')) throw new Error('the lookup blew up');
+    return configFile;
+  } });
+  await assert.rejects(lookup(GL_NOT_FOUND).hasCi(GL_SHA, 'main'), /blew up/);
+  assert.deepEqual(await lookup(GL_NOT_FOUND).ciState(GL_SHA), { sha: GL_SHA, state: 'none' });
+  const server = makeAdapter({ host: 'gitlab', repo: REPO, env: ENV, run: async (file, args) => (
+    (args[1] ?? '').includes('/pipelines?sha=') ? { code: 0, stdout: '[]', stderr: '' }
+      : (args[1] ?? '').includes('/merge_requests') ? { code: 0, stdout: '[]', stderr: '' }
+        : { code: 1, stdout: '', stderr: 'glab: 500 Internal Server Error' }) });
+  await assert.rejects(server.hasCi(GL_SHA, 'main'), /CI configuration/);
+  await assert.rejects(adapter('gitlab').a.hasCi('nope', 'main'), /commit/);
+});

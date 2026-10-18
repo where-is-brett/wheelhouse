@@ -10,10 +10,13 @@ import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
+import { helperClient } from '../host/helper-client.js';
 
 export const QUICK_LINE = 'Agents act with your full GitHub or GitLab access, across all your projects.';
 
 const HELPER_WAIT_MS = 2000;
+// After a helper that did not answer in time, the next reading does not wait on it again for this long.
+const TRIED_FOR_MS = 10 * 60 * 1000;
 const PROTECTION = ['on', 'none', 'unknown'];
 const CI = ['present', 'none', 'unknown'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -60,15 +63,32 @@ function writeCache(file, at, facts) {
   }
 }
 
-// Asks the helper, giving up after `waitMs`. Null when it can't say.
+function triedFile(project) {
+  return path.join(stateDir(project), '..', 'host-facts-tried.json');
+}
+
+// Whether the helper was tried, without an answer in time, within the last ten minutes.
+function triedLately(file, at) {
+  try {
+    const tried = Date.parse(JSON.parse(fs.readFileSync(file, 'utf8'))?.at);
+    return !Number.isNaN(tried) && tried <= at && at - tried < TRIED_FOR_MS;
+  } catch {
+    return false;
+  }
+}
+
+// Asks the helper: { facts } when it answers, { facts: null, late: true } when it did not answer
+// within `waitMs`. The client carries the same limit, so a request that is not answered is
+// closed and leaves nothing running; the race is a second guard for a client that does not.
 async function ask(client, project, waitMs) {
   let timer;
-  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), waitMs); });
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve('late'), waitMs); });
   try {
     const answer = await Promise.race([Promise.resolve().then(() => client.host.facts({ project })), late]);
-    return answer?.ok === true ? factsFrom(answer) : null;
+    if (answer === 'late') return { facts: null, late: true };
+    return { facts: answer?.ok === true ? factsFrom(answer) : null, late: /did not answer in time/.test(String(answer?.refused ?? '')) };
   } catch {
-    return null;
+    return { facts: null, late: false };
   } finally {
     clearTimeout(timer);
   }
@@ -76,22 +96,29 @@ async function ask(client, project, waitMs) {
 
 // What the host says about the project: { protection, ci }. From the cache while it
 // is under a day old; otherwise asked of the helper (within 2 seconds) and kept. A helper
-// that can't answer leaves an older cache in use; with none, the answer is null.
-export async function readHostFacts(project, { client, now = () => new Date(), waitMs = HELPER_WAIT_MS } = {}) {
+// that can't answer leaves an older cache in use; with none, the answer is null. A helper that
+// was too slow is not waited on again for ten minutes. `client` is for a caller that has its own;
+// it should carry the same time limit.
+export async function readHostFacts(project, { client, address, now = () => new Date(), waitMs = HELPER_WAIT_MS } = {}) {
   let file;
+  let tried;
   try {
     file = cacheFile(project);
+    tried = triedFile(project);
   } catch {
     return null;
   }
   const at = now().getTime();
   const cached = readCache(file);
   if (cached && cached.at <= at && at - cached.at < HOST_FACTS_MAX_AGE_MS) return cached.facts;
-  const asked = await ask(client, project, waitMs);
-  if (asked) {
-    writeCache(file, at, asked);
-    return asked;
+  if (triedLately(tried, at)) return cached?.facts ?? null;
+  const { facts, late } = await ask(client ?? helperClient({ address, timeout: waitMs }), project, waitMs);
+  if (facts) {
+    writeCache(file, at, facts);
+    fs.rmSync(tried, { force: true });
+    return facts;
   }
+  if (late) writeCache(tried, at, undefined);
   return cached?.facts ?? null;
 }
 
