@@ -149,7 +149,8 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   const offered = card.options.filter((o) => typeof o === 'string' && fold(o) === fold(reply.label));
   if (offered.length !== 1) return no(`That card doesn't offer ${reply.label}`);
   const [label] = offered;
-  // On an answer card the question's own options answer it; earned checks the label is one of them.
+  // On an answer card the question's own options answer it; earned checks the label is one of them
+  // and repeats the PUT_OFF check.
   const answers = line.startsWith('Answer question ') && !PUT_OFF.includes(label);
   if (!SIGNED_LABELS.includes(label) && !answers) return no('That option doesn\'t need a reply code');
   if (typeof card.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(card.id)) return no('No card has that code');

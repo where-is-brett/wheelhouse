@@ -394,6 +394,11 @@ test('a reply earns the record the click would have on each of the build loop\'s
       assert.ok(reply.calls.record[0].event.sig);
       assert.equal(reply.calls.write.length, 0);
       assert.equal(reply.calls.prState.length, 0);
+      // A code is good once.
+      const again = fake();
+      const second = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: again, now: () => LATER });
+      assert.deepEqual(second, { made: false, says: 'That code has been used' }, label);
+      assert.equal(again.calls.record.length, 0, label);
     }
   });
 });

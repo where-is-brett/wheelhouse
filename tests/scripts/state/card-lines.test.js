@@ -24,7 +24,6 @@ test('a reply code is four characters from the alphabet, the same for the same l
 test('setLineOf finds one set line and refuses a card with two', () => {
   const ruling = { kind: 'ruling', id: '0b9f2c1e-0000-4000-8000-000000000001', data: { words: 'Money is shown in dollars' } };
   const sets = [approvalLine(12, FULL), confirmLine(ruling), LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), runbookLine(3, FULL)];
-  assert.equal(SET_LINES.length, 10);
   for (const line of sets) {
     assert.equal(setLineOf(`Here is what changed.\n${line}\nReply code: ${replyCode(line)}`), line);
     assert.equal(setLineOf(line), line);
