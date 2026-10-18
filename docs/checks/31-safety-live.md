@@ -1,6 +1,6 @@
-<!-- docs/checks/24-safety-live.md -->
+<!-- docs/checks/31-safety-live.md -->
 
-# Check 24: the safety checks, live on the Mac
+# Check 31: the safety checks tried live
 
 **Answer:** Yes, with three changes. At Standard and at Locked, every guard held in a real session. A sandboxed agent reaches the helper's socket inside the denied `~/.wheelhouse/`, so the planned fallback is not needed. The changes are to the trials and to what an agent is told after STOP is lifted.
 
