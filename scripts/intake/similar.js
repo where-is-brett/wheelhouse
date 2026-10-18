@@ -1,6 +1,7 @@
 // scripts/intake/similar.js
 // The intake's duplicate check (build-loop design, section 3): which open work, ideas and
 // rejections share words with a request, so the front desk reads a few lines, not the lists.
+// It reads the views' work, reports (to leave out work that has ended), ideas and rejections.
 
 // Words that say nothing about what is asked for: articles, pronouns, linking words and the
 // usual ways of asking.
@@ -33,10 +34,15 @@ function wordsOf(text) {
 
 const textOf = (x) => (typeof x === 'string' ? x : '');
 
+// How a work's report says it ended, when it no longer counts as open work.
+const ENDED = ['merged', 'closed'];
+
 // Each item as { kind, id, title, words }: its title, its text fields and the words of its slug.
+// Work counts only while it is open: its latest report, if any, does not say it ended.
 function itemsOf(views) {
   const items = [];
   for (const [id, entry] of Object.entries(views?.work ?? {})) {
+    if (ENDED.includes(views?.reports?.[id]?.data?.outcome)) continue;
     const data = entry?.work?.data ?? {};
     items.push({ kind: 'work', id, title: textOf(data.title) || id, texts: [data.title, data.id] });
   }

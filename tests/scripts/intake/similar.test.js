@@ -90,6 +90,24 @@ test('the limit caps the lines, five by default', () => {
   assert.equal(similar('invoice export', many, { limit: 20 }).length, 8);
 });
 
+test('only open work is checked: work whose report says merged or closed is left out', () => {
+  const report = (work, outcome, n) => plain(work, { work, outcome, summary: 'done', rulings: [] }, n);
+  const ended = {
+    work: {
+      'export-a': workItem('export-a', 'Invoice export', 1),
+      'export-b': workItem('export-b', 'Invoice export', 2),
+      'export-c': workItem('export-c', 'Invoice export', 3),
+      'export-d': workItem('export-d', 'Invoice export', 4),
+    },
+    reports: {
+      'export-a': report('export-a', 'merged', 5),
+      'export-b': report('export-b', 'closed', 6),
+      'export-c': report('export-c', 'blocked', 7),
+    },
+  };
+  assert.deepEqual(similar('invoice export', ended).map((f) => f.id), ['export-c', 'export-d']);
+});
+
 test('missing views and empty text give no lines', () => {
   assert.deepEqual(similar('dark mode', {}), []);
   assert.deepEqual(similar('', views), []);
