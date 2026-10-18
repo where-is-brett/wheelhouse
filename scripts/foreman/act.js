@@ -19,7 +19,12 @@
 //       the session recorded) and its files (`planned`), then the go-ahead
 //       (`building`) when it clears. When the slice in hand has merged and
 //       this is the next slice's plan, the slice moves on by one (R88).
-//   build <work>    the go-ahead for a recorded plan whose wait has cleared.
+//       While the feature's own pull request (pr.json) is not merged, it
+//       waits and records nothing: the merge raises plan-ready again.
+//   build <work>    the go-ahead for a recorded plan whose wait has cleared;
+//       it waits, too, while the feature's own pull request is open.
+//   `start --plan` is refused with `--slices` above 1: the brief's plan would
+//       stand in for every slice's.
 //   pause <work>    a pause for the five-hour window (`pausedFor: five-hour`).
 //   resume <work>   lifts such a pause. A pause the director's amendment made
 //       (`pausedFor: director`) is lifted only by their amendment beginning
@@ -75,7 +80,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_ROOT } from './tools.js';
 import {
-  ForemanError, NO_PLAN, PLANS_WHILE_HELD, checkoutOf, clashFor, featureOf, laneOf, loadConfig, loadViews, oneLine, pausedBy, planOf, projectHere,
+  ForemanError, NO_PLAN, PLANS_WHILE_HELD, checkoutOf, clashFor, featureOf, laneOf, loadConfig, loadViews, oneLine, openPrWait, pausedBy, planOf, projectHere,
   queueToStart, slotFor, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
@@ -263,6 +268,8 @@ const RISKY_SECTIONS = Object.freeze(['filter', 'include', 'includeif']);
 // Refuses when <checkout>/.git/config (or its config.worktree) holds a
 // filter.*, include.* or includeIf.* key, read with fs, never with git.
 function checkRepoConfig(checkout) {
+  // A `.git` file (a linked checkout or a submodule) keeps its config elsewhere: refused, not followed.
+  if (!lstatOf(path.join(checkout, '.git'))?.isDirectory()) refuse("The main checkout's .git isn't a folder of its own, so its config can't be checked and no worktree was made");
   for (const name of ['config', 'config.worktree']) {
     const file = path.join(checkout, '.git', name);
     const stat = lstatOf(file);
@@ -350,6 +357,9 @@ async function start(ctx, work, rest) {
   const slicesText = single(found, 'slices');
   if (slicesText !== undefined && !/^[1-9][0-9]{0,3}$/.test(slicesText)) refuse('--slices is a whole number of slices, from 1');
   const slices = slicesText === undefined ? undefined : Number(slicesText);
+  // The brief's plan comes before the one the session records, so a brief that
+  // named one could never move on to slice 2 (R87, R88).
+  if (plan && slices > 1) refuse('--plan names one plan, so it can\'t be given for work in several slices: each slice\'s plan is recorded by its session');
   const lane = entry.work.data.lane;
   const routing = Object.fromEntries(Object.entries(config.routing ?? {}).filter(([, m]) => typeof m === 'string' && m !== ''));
   const fields = {
@@ -363,7 +373,7 @@ async function start(ctx, work, rest) {
     refuse(`The brief can't be written: ${oneLine(error.message, 200)}`);
   }
 
-  // The queue: work it lets start, or small, feature or bug work held for pace or a dependency (R60).
+  // The queue: work it lets start, or small or feature work held for pace or a dependency (R60, R89).
   const q = queueToStart(views, { now: ctx.now });
   let held = null;
   if (!q.start.includes(work)) {
@@ -426,6 +436,13 @@ async function planReady(ctx, work, rest) {
     ctx.say(`${work} is building this plan already.`);
     return;
   }
+  // The slice in hand's pull request is still open: the next plan waits, unrecorded,
+  // so the slice can move on once it merges (R88).
+  const ownPr = openPrWait(worktree);
+  if (ownPr !== null) {
+    ctx.say(`${work} waits: ${ownPr}.`);
+    return;
+  }
   const data = { ...carried(f), plan: read.plan, files: read.files, ...(slice ? { slice } : {}) };
   const recordedLine = `Recorded the plan of ${work}: ${oneLine(read.plan, 120)}, ${plural(read.files.length, 'file')}.`;
   if (f.step === 'paused') {
@@ -456,6 +473,11 @@ async function build(ctx, work, rest) {
     refuse(NO_PLAN.includes(lane) ? `${work} is ${lane} work: it builds as soon as it starts` : `${work} has no plan recorded yet: act plan-ready ${work} records it`);
   }
   refuseDirectorsPause(work, f);
+  const ownPr = openPrWait(worktreeOf(ctx.project, views, work));
+  if (ownPr !== null) {
+    ctx.say(`${work} waits: ${ownPr}.`);
+    return;
+  }
   await resumeOrBuild(ctx, work, f, lane);
 }
 

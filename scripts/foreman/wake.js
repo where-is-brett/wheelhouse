@@ -47,7 +47,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { clashCheck, fileMapOf, nextWork } from './queue.js';
-import { loadFeature, readCapped, readPlan, safeFeatureFolder } from '../feature/status.js';
+import {
+  loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
+} from '../feature/status.js';
 import { helperClient } from '../host/helper-client.js';
 import { PACE, questionIdOf } from '../lib/build-loop.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -177,10 +179,18 @@ export function planOf(worktree) {
   } catch {
     refuse("the feature's brief can't be read");
   }
-  if (feature.plan === null) refuse("the feature's brief names no plan");
+  if (feature.plan === null) refuse('no plan is named in its brief or recorded with `plan`');
   const text = readPlan(worktree, feature.plan);
   if (text === null) refuse(`the plan ${feature.plan} can't be read in its worktree`);
   return { plan: feature.plan, files: fileMapOf(text) };
+}
+
+// Why a feature's next plan waits on its own pull request: the one pr.json
+// keeps is not merged yet, so building now would go into it. Null when there
+// is none or it has merged; the merge's phase change raises plan-ready again.
+export function openPrWait(worktree) {
+  const kept = readPrRecord(worktree);
+  return kept !== null && !kept.merged ? `its pull request #${kept.pr} is still open; the next plan is checked once it merges` : null;
 }
 
 // The features whose recorded files are being changed, other than `work`'s.
@@ -292,7 +302,7 @@ function planReadyLine(head, work, ctx) {
     return `${head}: its plan can't be read: ${oneLine(error.message)}. Ask the director: act ask`;
   }
   const clash = clashFor(ctx.views, ctx.config, work, found.files);
-  const wait = waitText(clash, slotFor(ctx.views, work, { now: ctx.now }));
+  const wait = openPrWait(worktreeOf(ctx.project, ctx.views, work)) ?? waitText(clash, slotFor(ctx.views, work, { now: ctx.now }));
   const plan = `plan ${oneLine(found.plan, 120)}, ${plural(found.files.length, 'file')}`;
   return `${head}: ${plan}. ${wait === null ? 'It clears the clash check and a slot is free' : `It waits: ${wait}`}. Next: act plan-ready ${work}`;
 }
@@ -338,7 +348,13 @@ function queueLines(ctx) {
     const verb = step === 'paused' ? 'resume' : 'build';
     const clash = clashFor(views, config, id, Array.isArray(f.data.files) ? f.data.files : []);
     const slot = toBuild.start.includes(id) ? { ok: true } : { ok: false, why: held.get(id) ?? 'unknown' };
-    const wait = waitText(clash, slot);
+    let own = null;
+    try {
+      own = step === 'planned' ? openPrWait(worktreeOf(ctx.project, views, id)) : null;
+    } catch (error) {
+      if (!(error instanceof ForemanError)) throw error;
+    }
+    const wait = own ?? waitText(clash, slot);
     lines.push(wait === null
       ? `- ${verb} ${id}: its plan clears the clash check and a slot is free. Next: act ${verb} ${id}`
       : `- ${verb} ${id}: waits: ${wait}.`);

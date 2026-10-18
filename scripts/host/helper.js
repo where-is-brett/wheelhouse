@@ -64,8 +64,12 @@ const EVENT_FILE = /^events\/\d{4}\/\d{2}\/[A-Za-z0-9._-]+\.json$/;
 // A version 4 UUID as crypto.randomUUID writes it.
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
+// The most of one kept record that is read: a signed click is a few kilobytes.
+const PENDING_BYTES = 256 * 1024;
+
 // The ids of the records the hooks kept in projects/<p>/pending/ to send later:
-// a signed record's own id, or a write's given id. A file that won't read is passed over.
+// a signed record's own id, or a write's given id. Only regular files of at
+// most PENDING_BYTES are read; anything else, or a file that won't read, is passed over.
 function pendingIds(project) {
   const ids = new Set();
   let names = [];
@@ -74,7 +78,10 @@ function pendingIds(project) {
   } catch { /* none kept */ }
   for (const name of names) {
     try {
-      const { body } = JSON.parse(fs.readFileSync(path.join(pendingDir(project), name), 'utf8'));
+      const file = path.join(pendingDir(project), name);
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.size > PENDING_BYTES) continue;
+      const { body } = JSON.parse(fs.readFileSync(file, 'utf8'));
       for (const id of [body?.event?.id, body?.id]) if (typeof id === 'string') ids.add(id);
     } catch { /* not a record */ }
   }

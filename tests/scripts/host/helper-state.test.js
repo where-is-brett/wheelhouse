@@ -236,6 +236,10 @@ test('a caller-made id can\'t take a kept signed click\'s place: the write is re
       const write = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'first in' }, id: click.id });
       assert.equal(write.ok, false);
       assert.match(write.refused, /waiting to be sent/);
+      // Only so much of a kept file is read: an oversized one is passed over, not read whole.
+      const bigId = '1f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0';
+      keep(PROJECT, 'record', { project: PROJECT, event: { id: bigId }, pad: 'x'.repeat(300 * 1024) }, at(750));
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'big' }, id: bigId })).ok, true);
 
       // Were another event under its id anyway, the click is refused in words the hook does not take as sent.
       const other = makeEvent({ kind: 'review', data: { pr: 10, commit: 'abc1234', verdict: 'CLEAN' }, now: at(800) });

@@ -19,8 +19,9 @@ import { run as runProgram } from '../../../scripts/lib/run.js';
 import { g } from '../../helpers/git-fixture.js';
 import { withHome } from '../../helpers/homes.js';
 import {
-  P, T0, HASH, config, emptyViews, fakeClient, featureView, project, recordInState, reportText, workView, worktree,
+  P, T0, HASH, config, emptyViews, fakeClient, featureView, planText, project, recordInState, reportText, workView, worktree,
 } from '../../helpers/foreman.js';
+import { buildStatus } from '../../../scripts/feature/status.js';
 import { amendBrief } from '../../../scripts/feature/brief.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -133,12 +134,18 @@ test('start gives slices and a plan to the brief, and a feature started before i
   const views = startViews();
   views.work['add-export'] = workView('add-export', { lane: 'feature' });
   const fake = fakeClient({ views });
-  const r = await act([...START, '--plan', 'docs/plans/x.md', '--slices', '3'], { client: fake.client, wakerFor: () => ({ startFeature: async () => { throw new Error('STOP is on: no session is started'); } }) });
+  // One plan can't be named for work in several slices: each slice's is recorded by its session.
+  const both = await act([...START, '--plan', 'docs/plans/x.md', '--slices', '3'], { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(both);
+  assert.match(both.err, /--plan names one plan, so it can't be given for work in several slices/);
+  assert.equal(fake.writes.length, 0);
+
+  const r = await act([...START, '--slices', '3'], { client: fake.client, wakerFor: () => ({ startFeature: async () => { throw new Error('STOP is on: no session is started'); } }) });
   refusedInOneLine(r);
   assert.match(r.err, /STOP is on/);
   const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
   const { fields } = parseBrief(fs.readFileSync(featurePaths(wt).brief, 'utf8'));
-  assert.equal(fields.plan, 'docs/plans/x.md');
+  assert.equal(fields.plan, undefined);
   assert.equal(fields.slices, 3);
   assert.equal(fields.shownFirst, false);
   assert.deepEqual(fake.writes[0].data.slice, { n: 1, m: 3 });
@@ -150,6 +157,15 @@ test('start gives slices and a plan to the brief, and a feature started before i
   assert.match(again.out, /^add-export was started already, but its session had not begun\.$/m);
   assert.deepEqual(waker.starts, [{ work: 'add-export', worktree: wt }]);
   assert.equal(fake.writes.length, 1);
+}));
+
+test('start gives a known plan to the brief of work in one slice', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const fake = fakeClient({ views: startViews() });
+  const r = await act([...START, '--plan', 'docs/plans/x.md'], { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  assert.equal(r.code, 0, r.err);
+  const { fields } = parseBrief(fs.readFileSync(featurePaths(path.join(checkout, '.claude', 'worktrees', 'add-export')).brief, 'utf8'));
+  assert.equal(fields.plan, 'docs/plans/x.md');
 }));
 
 test('under Shape 2 start passes on the waker\'s START line', () => withHome(async () => {
@@ -217,6 +233,19 @@ test('start refuses a repository whose config sets a filter or an include, befor
   fs.writeFileSync(config, plain);
   const fake = fakeClient({ views: startViews() });
   assert.equal((await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor })).code, 0);
+}));
+
+test('start refuses a main checkout whose .git is a file, whose config lives elsewhere (R93)', () => withHome(async () => {
+  const checkout = await project();
+  fs.rmSync(path.join(checkout, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.git'), 'gitdir: /somewhere/else/.git/worktrees/x\n');
+  const gitCalls = [];
+  const fake = fakeClient({ views: startViews() });
+  const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run: (...a) => { gitCalls.push(a); return runProgram(...a); } });
+  refusedInOneLine(r);
+  assert.match(r.err, /\.git isn't a folder of its own/);
+  assert.equal(gitCalls.length, 0);
+  assert.equal(fake.writes.length, 0);
 }));
 
 test('start refuses what it may not start, in one line, and writes nothing', () => withHome(async () => {
@@ -397,31 +426,62 @@ test('a paused feature keeps its pause when its plan arrives, and one paused bef
   assert.equal(fake.writes.length, 2);
 }));
 
-test('plan-ready moves a feature on to its next slice once the slice in hand has merged (R88)', () => withHome(async () => {
-  const { views, wt } = await planScene();
+test('a slice\'s next plan waits while its pull request is open, then the slice moves on, and the last slice\'s merge reads done (R88)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature' });
+  const wt = worktree(checkout, 'mine', { brief: { lane: 'feature', slices: 2 } });
+  const p = featurePaths(wt);
+  for (const n of [1, 2]) {
+    fs.mkdirSync(path.join(wt, 'docs', 'plans'), { recursive: true });
+    fs.writeFileSync(path.join(wt, 'docs', 'plans', `slice-${n}.md`), planText([`src/slice-${n}.js`]));
+  }
   views.features.mine = featureView('mine', {
-    step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 1, m: 3 }, plan: 'docs/plans/slice-1.md', files: [],
+    step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 1, m: 2 }, plan: 'docs/plans/slice-1.md', files: ['src/slice-1.js'],
   });
-  const fake = fakeClient({ views });
-  // Slice 1's pull request is still open: the brief's plan reads as a plan of its own, but the slice stays.
-  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 5, plan: 'docs/plans/slice-1.md' }));
-  await act(['plan-ready', 'mine'], { client: fake.client });
-  assert.deepEqual(fake.writes.at(-1).data.slice, { n: 1, m: 3 });
+  const fake = fakeClient({ views, answers: { updateBranch: { ok: true } } });
+  const phase = () => buildStatus({
+    worktree: wt, now, answered: () => new Set(), slice: () => fake.views.features.mine.data.slice,
+  }).phase;
 
-  // Merged, with the next slice's plan recorded: slice 2 of 3.
-  fake.views.features.mine = featureView('mine', {
-    step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 1, m: 3 }, plan: 'docs/plans/slice-1.md', files: [],
-  });
-  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 5, plan: 'docs/plans/slice-1.md', merged: true }));
+  // Slice 1's pull request is open, and the session has recorded slice 2's plan, as the lane says.
+  fs.writeFileSync(p.pr, JSON.stringify({ pr: 5, plan: 'docs/plans/slice-1.md' }));
+  fs.writeFileSync(p.plan, JSON.stringify({ plan: 'docs/plans/slice-2.md' }));
+  assert.equal(phase(), 'pr-open');
+  const early = await act(['plan-ready', 'mine'], { client: fake.client });
+  assert.equal(early.code, 0, early.err);
+  assert.equal(early.out, 'mine waits: its pull request #5 is still open; the next plan is checked once it merges.\n');
+  assert.equal(fake.writes.length, 0, 'nothing is recorded while the pull request is open');
+
+  // The merge marks pr.json; the status reads ready-to-build, which raises plan-ready again.
+  assert.equal((await act(['merge', 'mine'], { client: fake.client })).code, 0);
+  assert.equal(phase(), 'ready-to-build');
   const r = await act(['plan-ready', 'mine'], { client: fake.client });
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(fake.writes.at(-2).data, {
-    work: 'mine', step: 'planned', worktree: wt, branch: 'feature/mine', slice: { n: 2, m: 3 }, plan: 'docs/plans/mine.md', files: ['src/mine.js', 'package.json'],
-  });
-  assert.equal(fake.writes.at(-1).data.step, 'building');
+  assert.deepEqual(fake.writes.map((w) => w.data), [
+    { work: 'mine', step: 'planned', worktree: wt, branch: 'feature/mine', slice: { n: 2, m: 2 }, plan: 'docs/plans/slice-2.md', files: ['src/slice-2.js'] },
+    { work: 'mine', step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 2, m: 2 }, plan: 'docs/plans/slice-2.md', files: ['src/slice-2.js'] },
+  ]);
   // Again: it is building slice 2's plan; the slice doesn't move again.
   assert.equal((await act(['plan-ready', 'mine'], { client: fake.client })).out, 'mine is building this plan already.\n');
   refusedInOneLine(await act(['plan-ready', 'mine', '--slice', '2'], { client: fake.client }));
+
+  // Slice 2's pull request opens with the report written, and merges: the feature is done.
+  fs.writeFileSync(p.pr, JSON.stringify({ pr: 6, plan: 'docs/plans/slice-2.md' }));
+  fs.writeFileSync(p.report, reportText('mine'));
+  assert.equal(phase(), 'pr-open');
+  assert.equal((await act(['merge', 'mine'], { client: fake.client })).code, 0);
+  assert.equal(phase(), 'done');
+}));
+
+test('build waits while the feature\'s own pull request is open', () => withHome(async () => {
+  const { views, wt } = await planScene();
+  views.features.mine = featureView('mine', { step: 'planned', worktree: wt, plan: 'docs/plans/mine.md', files: [] });
+  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 5, plan: 'docs/plans/old.md' }));
+  const fake = fakeClient({ views });
+  const r = await act(['build', 'mine'], { client: fake.client });
+  assert.equal(r.out, 'mine waits: its pull request #5 is still open; the next plan is checked once it merges.\n');
+  assert.equal(fake.writes.length, 0);
 }));
 
 // --- questions ---

@@ -101,8 +101,23 @@ test('wake read: a plan that clears takes a free slot; one held for pace says so
   });
   const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
   assert.match(text, /^- plan-ready p: plan plans\/p\.md, 1 file\. It waits: no building slot is free \(pace\)\. Next: act plan-ready p$/m);
-  assert.match(text, /^- plan-ready q: its plan can't be read: the feature's brief names no plan\./m);
+  assert.match(text, /^- plan-ready q: its plan can't be read: no plan is named in its brief or recorded with `plan`\./m);
   assert.match(text, /^Digest: none\.$/m);
+}));
+
+test('wake read: a next plan waits while the feature\'s own pull request is open', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.s = workView('s', { lane: 'feature' });
+  const wt = worktree(checkout, 's', { plan: { path: 'plans/s2.md', files: ['src/s.js'] }, pr: { pr: 5, plan: 'plans/s1.md' } });
+  views.features.s = featureView('s', { step: 'building', worktree: wt, plan: 'plans/s1.md', files: [] });
+  views.work.t = workView('t');
+  views.features.t = featureView('t', { step: 'planned', worktree: worktree(checkout, 't', { pr: 9 }), plan: 'p.md', files: [] });
+  const { client } = fakeClient({ views });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('plan-ready', 's', 'p1')] });
+  const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  assert.match(text, /^- plan-ready s: plan plans\/s2\.md, 1 file\. It waits: its pull request #5 is still open; the next plan is checked once it merges\. Next: act plan-ready s$/m);
+  assert.match(text, /^- build t: waits: its pull request #9 is still open; the next plan is checked once it merges\.$/m);
 }));
 
 test('wake read falls back to the views kept on disk when the helper gives none, and says so', () => withHome(async (home) => {
