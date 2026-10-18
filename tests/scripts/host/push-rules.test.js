@@ -11,6 +11,12 @@ import { helperAddress } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { takeLock } from '../../../scripts/state/lock.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { stateDir, computerId } from '../../../scripts/lib/paths.js';
+import { eventPath } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
+import { ciPushLine } from '../../../scripts/state/card-lines.js';
+import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
 
 // A run that must not be called: the spelling alone decides these.
@@ -30,9 +36,9 @@ function write(dir, rel, text) {
 }
 
 // A working clone on `branch`, with origin pointing at a fresh bare remote.
-async function workOn(branch) {
-  const remote = await makeBareRemote();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-pr-'));
+async function workOn(branch, { repo } = {}) {
+  const remote = await makeBareRemote({ repo });
+  const dir = tempFolder('wh-pr-');
   await g(dir, 'init', '-q');
   await g(dir, 'symbolic-ref', 'HEAD', `refs/heads/${branch}`);
   await g(dir, 'remote', 'add', 'origin', remote.url);
@@ -202,14 +208,17 @@ test('the default branch is read from the host, not assumed to be main', async (
   assert.equal((await check('main', { defaultBranch: undefined })).allowed, false, 'an unknown default branch refuses');
 
   // Through the helper: the adapter says the default branch is trunk, asked once per project.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-'));
+  const home = tempFolder('wh-');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
-  const work = await workOn('main');
+  const work = await workOn('main', { repo: 'o/p' });
   let asked = 0;
   const adapter = { defaultBranch: async () => { asked += 1; return 'trunk'; } };
   let helper;
   try {
+    writeProject('o__p', {
+      folder: work.dir, remoteUrl: work.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+    });
     await cloneState({ project: 'o__p', remoteUrl: work.remote.url });
     assert.equal((await takeLock({ project: 'o__p', push: plainPush })).taken, true);
     write(work.dir, 'a.txt', 'a\n');
@@ -233,4 +242,336 @@ test('the default branch is read from the host, not assumed to be main', async (
     if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+// --- CI files, the project's folder, partial clones, state files ---
+
+const NOW = new Date('2026-10-18T02:00:00.000Z');
+const minutesAgo = (m) => () => new Date(NOW.getTime() - m * 60000);
+const FAKE_KEY = 'ghs_FAKEKEY0123456789abcdefSECRET';
+const adapterFor = () => ({
+  defaultBranch: async () => 'main',
+  openPr: async (args) => ({ number: 7, args }),
+});
+
+// A project whose folder holds a clone on `feature`: `base` files on main, `change` files on feature.
+async function scenario({ base = { 'README.md': 'x\n' }, change, files = {} }) {
+  const remote = await makeBareRemote({ repo: 'o/p' });
+  const home = fs.realpathSync.native(shortHome());
+  const work = path.join(home, 'work');
+  fs.mkdirSync(work);
+  const out = { remote, home, work };
+  await as(home, async () => {
+    writeProject('o__p', {
+      folder: work, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'narrow', project: 'o/p' },
+    });
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: () => NOW })).taken, true);
+    await g(work, 'init', '-q', '-b', 'main');
+    for (const [name, text] of Object.entries(base)) write(work, name, text);
+    await g(work, 'add', '-A');
+    await g(work, 'commit', '-q', '-m', 'Base');
+    await g(work, 'remote', 'add', 'origin', remote.url);
+    await g(work, 'push', '-q', 'origin', 'main');
+    await g(work, 'checkout', '-q', '-b', 'feature');
+    for (const [name, text] of Object.entries(change ?? files)) write(work, name, text);
+    await g(work, 'add', '-A');
+    await g(work, 'commit', '-q', '-m', 'Change');
+    out.sha = (await g(work, 'rev-parse', 'HEAD')).trim();
+  });
+  out.cleanup = () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); };
+  return out;
+}
+
+function click(overrides = {}, ago = 1) {
+  // Signed directly, so a malformed action can be built on purpose: makeEvent refuses those.
+  const event = sign({
+    v: 1,
+    id: crypto.randomUUID(),
+    at: minutesAgo(ago)().toISOString(),
+    computer: computerId(),
+    kind: 'action',
+    data: { action: 'ci-push', branch: 'feature', sha: overrides.sha, question: 'Push it?', label: 'Push', ...overrides },
+  });
+  const file = path.join(stateDir('o__p'), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+}
+
+async function viaHelper(s, fn, { env = {}, runWith = run } = {}) {
+  await as(s.home, async () => {
+    const helper = await startHelper({ address: testAddress(s.home), adapterFor, envFor: async () => env, now: () => NOW, run: runWith });
+    try { await fn(helperClient({ address: helper.address }), helper); } finally { await helper.close(); }
+  });
+}
+const heads = async (s) => (await run('git', ['for-each-ref', '--format=%(refname)', 'refs/heads'], { cwd: s.remote.url })).stdout;
+
+test('a branch that changes .github/workflows is refused, naming the rule', async () => {
+  const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n', 'src/a.js': 'a\n' } });
+  try {
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.ciFile });
+    });
+    assert.doesNotMatch(await heads(s), /feature/);
+  } finally { s.cleanup(); }
+});
+
+test('a branch that changes .gitlab-ci.yml or a file the configuration lists in ciFiles is refused', async () => {
+  const gl = await scenario({ change: { '.gitlab-ci.yml': 'a: b\n' } });
+  try {
+    await viaHelper(gl, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: gl.work, refspec: 'feature' })).refused, PUSH_REFUSALS.ciFile);
+    });
+  } finally { gl.cleanup(); }
+  const config = `${JSON.stringify({ v: 1, criticalAreas: [], ciFiles: ['build/**'], mcpServers: [], webDomains: [] })}\n`;
+  const own = await scenario({ base: { '.claude/wheelhouse.json': config }, change: { 'build/Run.sh': 'x\n' } });
+  const upper = await scenario({ change: { '.GitHub/Workflows/ci.yml': 'x\n' } });
+  try {
+    await viaHelper(own, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: own.work, refspec: 'feature' })).refused, PUSH_REFUSALS.ciFile);
+    });
+    await viaHelper(upper, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: upper.work, refspec: 'feature' })).refused, PUSH_REFUSALS.ciFile, 'case is ignored');
+    });
+  } finally { own.cleanup(); upper.cleanup(); }
+});
+
+test('a branch whose CI file matches the default branch\'s is allowed', async () => {
+  const s = await scenario({ base: { '.github/workflows/ci.yml': 'on: push\n' }, change: { 'src/a.js': 'a\n' } });
+  try {
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: true });
+    });
+    assert.match(await heads(s), /refs\/heads\/feature/);
+  } finally { s.cleanup(); }
+});
+
+test('a CI change with the director\'s fresh click for this commit is pushed with the director\'s sign-in, not the key', async () => {
+  const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n' } });
+  const env = { GH_TOKEN: FAKE_KEY, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraHeader', GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x:${FAKE_KEY}`).toString('base64')}` };
+  const calls = [];
+  const recording = async (file, args, options) => { calls.push({ file, args, env: options?.env }); return run(file, args, options); };
+  try {
+    await as(s.home, async () => click({ sha: s.sha }, 9));
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: true });
+    }, { env, runWith: recording });
+    assert.match(await heads(s), /refs\/heads\/feature/);
+    const pushes = calls.filter((c) => c.args.includes('push'));
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].env.GH_TOKEN, undefined);
+    assert.equal(pushes[0].env.GIT_CONFIG_VALUE_0, undefined);
+    assert.equal(pushes[0].env.GIT_CONFIG_NOSYSTEM, undefined, 'the system and global git configuration stay');
+    assert.equal(pushes[0].env.GIT_CONFIG_GLOBAL, undefined);
+  } finally { s.cleanup(); }
+});
+
+test('where the director is not signed in, the CI push says so', async () => {
+  const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n' } });
+  const env = { GH_TOKEN: FAKE_KEY };
+  const failsWithoutKey = async (file, args, options) => (args.includes('push') && !options?.env?.GH_TOKEN
+    ? { code: 1, stdout: '', stderr: 'fatal: could not read Username', timedOut: false }
+    : run(file, args, options));
+  try {
+    await as(s.home, async () => click({ sha: s.sha }));
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }),
+        { ok: false, refused: 'sign in to GitHub (or GitLab) on this computer to push the CI change' });
+    }, { env, runWith: failsWithoutKey });
+  } finally { s.cleanup(); }
+});
+
+test('a click for another commit, another branch, or older than ten minutes does not count', async () => {
+  const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n' } });
+  try {
+    await as(s.home, async () => {
+      click({ sha: 'a'.repeat(40) });
+      click({ sha: s.sha, branch: 'other' });
+      click({ sha: s.sha }, 11);
+      click({ sha: s.sha.slice(0, 7) });
+      click({ sha: s.sha, action: 'runbook' });
+    });
+    await viaHelper(s, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' })).refused, PUSH_REFUSALS.ciFile);
+    });
+    assert.doesNotMatch(await heads(s), /feature/);
+  } finally { s.cleanup(); }
+});
+
+test('/ci-push/line gives the card line and records the pending push', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  try {
+    await viaHelper(s, async (client) => {
+      const answer = await client.ciPushLine({ project: 'o__p', branch: 'feature', sha: s.sha });
+      assert.deepEqual(answer, { ok: true, line: ciPushLine('feature', s.sha) });
+      assert.equal(answer.line, `Push the CI change on feature at commit ${s.sha.slice(0, 12)} with your own sign-in`);
+      await client.ciPushLine({ project: 'o__p', branch: 'other', sha: 'b'.repeat(40) });
+      await client.ciPushLine({ project: 'o__p', branch: 'feature', sha: 'c'.repeat(40) });
+      assert.equal((await client.ciPushLine({ project: 'o__p', branch: 'feature', sha: 'short' })).ok, false);
+      assert.equal((await client.ciPushLine({ project: 'o__p', branch: '--force', sha: s.sha })).ok, false);
+    });
+    const pending = JSON.parse(fs.readFileSync(path.join(s.home, 'projects', 'o__p', 'ci-pending.json'), 'utf8'));
+    assert.deepEqual(Object.keys(pending).sort(), ['feature', 'other']);
+    assert.deepEqual(pending.feature, { branch: 'feature', sha: 'c'.repeat(40), at: NOW.toISOString() });
+  } finally { s.cleanup(); }
+});
+
+test('a push from a folder outside the project is refused', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  const outside = tempFolder('wh-out-');
+  try {
+    await g(outside, 'init', '-q', '-b', 'feature');
+    await g(outside, 'commit', '-q', '--allow-empty', '-m', 'Elsewhere');
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: outside, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.outsideProject });
+      // A link inside the project that leads outside is outside too.
+      const link = path.join(s.work, 'link');
+      fs.symlinkSync(outside, link, 'dir');
+      assert.equal((await client.push({ project: 'o__p', dir: link, refspec: 'feature' })).refused, PUSH_REFUSALS.outsideProject);
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: true });
+    });
+  } finally { s.cleanup(); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('a push from a partial clone is refused, and git never ran in it', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  const seen = [];
+  const watching = async (file, args, options) => { seen.push(options?.cwd); return run(file, args, options); };
+  try {
+    for (const line of ['[extensions]\n\tpartialClone = origin\n', '[remote "origin"]\n\tPROMISOR = true\n']) {
+      fs.appendFileSync(path.join(s.work, '.git', 'config'), line);
+      await viaHelper(s, async (client) => {
+        assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.partialClone });
+      }, { runWith: watching });
+      fs.writeFileSync(path.join(s.work, '.git', 'config'), fs.readFileSync(path.join(s.work, '.git', 'config'), 'utf8').replace(line, ''));
+    }
+    assert.equal(seen.includes(s.work), false);
+    // A linked worktree's .git file leads to the same check, through commondir.
+    const linked = path.join(s.home, 'work', 'linked');
+    await g(s.work, 'worktree', 'add', '-q', '-b', 'other', linked);
+    fs.appendFileSync(path.join(s.work, '.git', 'config'), '[extensions]\n\tpartialclone = origin\n');
+    await viaHelper(s, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: linked, refspec: 'other' })).refused, PUSH_REFUSALS.partialClone);
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a state push holding a file that is not JSON is refused', async () => {
+  const work = await workOn('wheelhouse-state');
+  try {
+    write(work.dir, 'events/2026/10/one.json', '{"id":"1"}\n');
+    await work.commit('Add one');
+    await work.pushPlain();
+    write(work.dir, 'events/2026/10/two.json', 'this is not json\n');
+    await work.commit('Add two');
+    assert.deepEqual(await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', run }),
+      { allowed: false, refused: PUSH_REFUSALS.notJson });
+  } finally { work.cleanup(); }
+});
+
+test('a state push with a key hidden as \\u escapes in JSON is refused', async () => {
+  const work = await workOn('wheelhouse-state');
+  try {
+    const escaped = [...'ghp_0123456789abcdefghijklmnopqrstuvwxyz'].map((c) => `\\u00${c.charCodeAt(0).toString(16)}`).join('');
+    write(work.dir, 'events/2026/10/one.json', `{"text":"${escaped}"}\n`);
+    await work.commit('Add one');
+    const r = await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', run });
+    assert.equal(r.allowed, false);
+    assert.match(r.refused, /matched/);
+    assert.equal(r.refused.includes('ghp_0123'), false);
+  } finally { work.cleanup(); }
+});
+
+test('/pr/open refuses a base other than the default branch, and a head the push rules refuse', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  try {
+    await viaHelper(s, async (client) => {
+      const base = await client.openPr({ project: 'o__p', head: 'feature', base: 'release', title: 't', body: '' });
+      assert.deepEqual(base, { ok: false, refused: PUSH_REFUSALS.prBase });
+      assert.deepEqual(await client.openPr({ project: 'o__p', head: 'main', base: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.defaultBranch });
+      assert.deepEqual(await client.openPr({ project: 'o__p', head: '+feature', base: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.force });
+      assert.equal((await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '' })).ok, true);
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a folder with no repository of its own, beside a partial clone named <folder>.git, is refused', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  const seen = [];
+  const watching = async (file, args, options) => { seen.push(options?.cwd); return run(file, args, options); };
+  try {
+    const bare = path.join(s.home, 'work', 'foo');
+    fs.mkdirSync(bare);
+    fs.cpSync(path.join(s.work, '.git'), `${bare}.git`, { recursive: true });
+    fs.appendFileSync(path.join(`${bare}.git`, 'config'), '[remote "origin"]\n\tpromisor = true\n');
+    await viaHelper(s, async (client) => {
+      const answer = await client.push({ project: 'o__p', dir: bare, refspec: 'feature' });
+      assert.equal(answer.ok, false);
+      assert.ok([PUSH_REFUSALS.unchecked, PUSH_REFUSALS.missing].includes(answer.refused), answer.refused);
+    }, { runWith: watching });
+  } finally { s.cleanup(); }
+});
+
+test('a config that includes another file is refused, as the included file is not read', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  try {
+    fs.writeFileSync(path.join(s.home, 'more.cfg'), '[remote "origin"]\n\tpromisor = true\n');
+    fs.appendFileSync(path.join(s.work, '.git', 'config'), `[Include]\n\tpath = ${path.join(s.home, 'more.cfg')}\n`);
+    await viaHelper(s, async (client) => {
+      assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.partialClone });
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a sibling folder whose name starts with the project folder\'s name is outside the project', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  try {
+    const sibling = `${s.work}-other`;
+    fs.cpSync(s.work, sibling, { recursive: true });
+    await viaHelper(s, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: sibling, refspec: 'feature' })).refused, PUSH_REFUSALS.outsideProject);
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a branch that deletes a CI file is refused', async () => {
+  const s = await scenario({ base: { '.github/workflows/ci.yml': 'on: push\n' }, change: { 'b.txt': 'b\n' } });
+  try {
+    await as(s.home, async () => {
+      await g(s.work, 'rm', '-q', '.github/workflows/ci.yml');
+      await g(s.work, 'commit', '-q', '-m', 'Drop CI');
+    });
+    await viaHelper(s, async (client) => {
+      assert.equal((await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' })).refused, PUSH_REFUSALS.ciFile);
+    });
+  } finally { s.cleanup(); }
+});
+
+test('/pr/open sends the plain branch name, and refuses the state and lock branches', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  try {
+    await viaHelper(s, async (client) => {
+      const opened = await client.openPr({ project: 'o__p', head: 'feature:feature', base: 'main', title: 't', body: '' });
+      assert.equal(opened.result.args.head, 'feature');
+      for (const head of ['wheelhouse-state', 'wheelhouse-lock']) {
+        assert.deepEqual(await client.openPr({ project: 'o__p', head, base: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.ownRequests });
+      }
+    });
+  } finally { s.cleanup(); }
+});
+
+test('a non-authentication failure of the director\'s CI push is reported as git\'s own', async () => {
+  const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n' } });
+  const env = { GH_TOKEN: FAKE_KEY };
+  const broken = async (file, args, options) => (args.includes('push') && !options?.env?.GH_TOKEN
+    ? { code: 1, stdout: '', stderr: 'fatal: remote hung up', timedOut: false }
+    : run(file, args, options));
+  try {
+    await as(s.home, async () => click({ sha: s.sha }));
+    await viaHelper(s, async (client) => {
+      assert.match((await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' })).refused, /^git could not push/);
+    }, { env, runWith: broken });
+  } finally { s.cleanup(); }
 });

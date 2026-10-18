@@ -72,10 +72,43 @@ export function readEnrolled() {
   }
 }
 
-// Adds a computer, replacing any earlier entry for the same one.
+const isEntry = (e) => e !== null && typeof e === 'object' && !Array.isArray(e)
+  && typeof e.computer === 'string' && e.computer !== '' && typeof e.publicKey === 'string' && e.publicKey !== '';
+
+// The list on disk as it is, or [] when there is no file. Throws when the file
+// is there but cannot be read, is not JSON, or is not a list of entries.
+function loadEnrolled() {
+  let text;
+  try {
+    text = fs.readFileSync(enrolledFile(), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw new Error('enrolled.json could not be read, so nothing was changed');
+  }
+  let list;
+  try {
+    list = JSON.parse(text);
+  } catch {
+    list = undefined;
+  }
+  if (!Array.isArray(list) || !list.every(isEntry)) throw new Error('enrolled.json is damaged, so nothing was changed');
+  return list;
+}
+
+// Adds a computer, replacing any earlier entry for the same one. A damaged list is
+// never overwritten, and the new list is written whole: a temporary file, then a rename.
 export function enrol(entry) {
-  const list = readEnrolled().filter((e) => e?.computer !== entry.computer);
+  if (!isEntry(entry)) throw new Error('An enrolment needs a computer id and a public key');
+  const list = loadEnrolled().filter((e) => e.computer !== entry.computer);
   list.push({ computer: entry.computer, publicKey: entry.publicKey, enrolledAt: entry.enrolledAt });
-  fs.mkdirSync(path.dirname(enrolledFile()), { recursive: true });
-  fs.writeFileSync(enrolledFile(), `${JSON.stringify(list, null, 2)}\n`);
+  const file = enrolledFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(list, null, 2)}\n`);
+    fs.renameSync(temp, file);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
 }

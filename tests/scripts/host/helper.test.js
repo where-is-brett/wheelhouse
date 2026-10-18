@@ -4,19 +4,21 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import { spawn } from 'node:child_process';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { startHelper, PUSH_REFUSALS, secretsOf } from '../../../scripts/host/helper.js';
-import { helperClient, pushFor } from '../../../scripts/host/helper-client.js';
+import { helperClient } from '../../../scripts/host/helper-client.js';
 import { helperAddress, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
-import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
-import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 
 const HEAD = `abc1234${'0'.repeat(33)}`;
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -24,14 +26,11 @@ const at = (ms) => () => new Date(T0.getTime() + ms);
 const HOUR = 3600000;
 const FAKE_KEY = 'ghs_FAKEKEY0123456789abcdefSECRET';
 const LOCK_REASON = 'this computer no longer holds the lock';
+// These projects' remotes hold no pull request, so its changed files can't be read.
+const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
+const NONE_FOUND = { guardrailPaths: [], criticalAreas: [] };
 const unix = process.platform !== 'win32';
 const unixOnly = unix ? false : 'socket files exist only on macOS and Linux';
-
-async function g(dir, ...args) {
-  const r = await run('git', ['-c', 'user.name=T', '-c', 'user.email=t@invalid', ...args], { cwd: dir, env: { GIT_TERMINAL_PROMPT: '0' } });
-  if (r.code !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
-  return r.stdout.trim();
-}
 
 function fakeAdapter(overrides = {}) {
   const merges = [];
@@ -75,9 +74,12 @@ function raw(address, { method = 'POST', path: p, body }) {
 
 // A home with an enrolled signing key, a state clone, and (optionally) the lock taken.
 async function project({ lock = true } = {}) {
-  const remote = await makeBareRemote();
+  const remote = await makeBareRemote({ repo: 'o/p' });
   const home = shortHome();
   await as(home, async () => {
+    writeProject('o__p', {
+      folder: os.tmpdir(), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+    });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
     await cloneState({ project: 'o__p', remoteUrl: remote.url });
@@ -99,7 +101,7 @@ function reviewAndApproval() {
 
 // An agent's folder: a clone of the project's remote, outside ~/.wheelhouse.
 async function agentClone(remoteUrl, branch = 'wheelhouse-state') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ag-'));
+  const dir = tempFolder('wh-ag-');
   await g(os.tmpdir(), 'clone', '-q', '--branch', branch, remoteUrl, dir);
   return dir;
 }
@@ -108,11 +110,22 @@ const remoteHeads = async (remoteUrl) => (await run('git', ['for-each-ref', '--f
 
 // --- the address ---
 
+const PLUGIN_VERSION = JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8')).version;
+
+test('/health answers with the plugin version, read from the plugin\'s own plugin.json', async () => {
+  const home = shortHome();
+  try {
+    await as(home, () => withHelper(fakeAdapter(), async (client) => {
+      assert.deepEqual(await client.health(), { ok: true, version: PLUGIN_VERSION });
+    }));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
 test('the helper answers on a socket, and on a named pipe on Windows', async () => {
   const home = shortHome();
   try {
     await as(home, () => withHelper(fakeAdapter(), async (client, helper) => {
-      assert.deepEqual(await client.health(), { ok: true });
+      assert.equal((await client.health()).ok, true);
       const state = await client.prState({ project: 'o__p', number: 7 });
       assert.deepEqual(state, { ok: true, result: { headSha: HEAD, mergeable: 'mergeable', state: 'open' } });
       if (unix) assert.equal(fs.statSync(helper.address).mode & 0o077, 0);
@@ -139,7 +152,7 @@ test('a second helper refuses to start while the first answers', async () => {
         startHelper({ address: helper.address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }),
         /already running/,
       );
-      assert.deepEqual(await client.health(), { ok: true }, 'the first is untouched');
+      assert.equal((await client.health()).ok, true, 'the first is untouched');
     }));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
@@ -158,7 +171,7 @@ test('a stale socket file is removed and the helper starts', { skip: unixOnly },
       if (!fs.existsSync(address)) fs.renameSync(linked, address); else fs.rmSync(linked);
       assert.equal(fs.lstatSync(address).isSocket(), true);
       await withHelper(fakeAdapter(), async (client) => {
-        assert.deepEqual(await client.health(), { ok: true });
+        assert.equal((await client.health()).ok, true);
       });
     });
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -177,7 +190,7 @@ test('unknown requests get 404, malformed JSON 400, and an oversized request 413
       // The helper answers 413 and closes the connection; the sender may see either.
       const big = await raw(helper.address, { path: '/push', body: JSON.stringify({ project: 'o__p', pad: 'x'.repeat(2 * 1024 * 1024) }) });
       assert.ok(big.status === 413 || ['ECONNRESET', 'EPIPE'].includes(big.error), JSON.stringify(big));
-      assert.deepEqual(await client.health(), { ok: true }, 'the helper is still answering');
+      assert.equal((await client.health()).ok, true, 'the helper is still answering');
       const badProject = await client.prState({ project: '../x', number: 7 });
       assert.equal(badProject.ok, false);
     }));
@@ -202,29 +215,27 @@ test('concurrent requests share one call to envFor per project', async () => {
 
 // --- pushing ---
 
-test('push answers ok, rejected when not fast-forward, and carries state events', async () => {
+test('a state write goes through even when the remote moved on, and /push refuses a force and a missing folder', async () => {
   const p = await project({ lock: false });
   try {
     await as(p.home, () => withHelper(fakeAdapter(), async (client) => {
-      const pushed = await writeEvent({ project: 'o__p', event: makeEvent({ kind: 'note', data: { words: 'hello' }, now: at(0) }), push: pushFor(client, 'o__p') });
-      assert.equal(pushed.pushed, true);
+      const first = await client.state.write({ project: 'o__p', kind: 'note', data: { words: 'hello' } });
+      assert.equal(first.pushed, true);
 
-      // Another clone moves the branch on; this clone's next push is not a fast-forward.
+      // Another clone moves the branch on; this clone's next push is not a fast-forward, so the helper pulls and tries again.
       const other = await agentClone(p.remote.url);
       fs.mkdirSync(path.join(other, 'events', 'x'), { recursive: true });
       fs.writeFileSync(path.join(other, 'events', 'x', 'a.json'), '{}\n');
       await g(other, 'add', '-A');
       await g(other, 'commit', '-q', '-m', 'x');
       await g(other, 'push', '-q', 'origin', 'wheelhouse-state');
-      const dir = stateDir('o__p');
-      fs.mkdirSync(path.join(dir, 'events', 'y'), { recursive: true });
-      fs.writeFileSync(path.join(dir, 'events', 'y', 'b.json'), '{}\n');
-      await g(dir, 'add', '-A');
-      await g(dir, 'commit', '-q', '-m', 'y');
-      assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'wheelhouse-state' }), { ok: false, rejected: 'non-fast-forward' });
+      const second = await client.state.write({ project: 'o__p', kind: 'note', data: { words: 'after the move' } });
+      assert.equal(second.pushed, true);
+      assert.ok((await remoteFile(p.remote.url, 'wheelhouse-state', 'events/x/a.json')).includes('{}'), 'the other clone\'s file is still there');
 
+      const dir = stateDir('o__p');
       assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: '+wheelhouse-state' }), { ok: false, refused: PUSH_REFUSALS.force });
-      const missing = await client.push({ project: 'o__p', dir: path.join(dir, 'nowhere'), refspec: 'wheelhouse-state' });
+      const missing = await client.push({ project: 'o__p', dir: path.join(dir, 'nowhere'), refspec: 'feature' });
       assert.equal(missing.ok, false);
       fs.rmSync(other, { recursive: true, force: true });
     }));
@@ -239,7 +250,7 @@ test('a code push is refused when this computer does not hold the lock', async (
       await g(dir, 'branch', 'feature');
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: LOCK_REASON });
-        assert.equal(await takeLock({ project: 'o__p', push: pushFor(client, 'o__p'), now: at(0) }).then((r) => r.taken), true, 'a lock push needs no lock');
+        assert.equal((await client.lock.take({ project: 'o__p' })).result.taken, true, 'a lock push needs no lock');
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true });
       });
     });
@@ -248,9 +259,9 @@ test('a code push is refused when this computer does not hold the lock', async (
 
 // An event on the remote, written through the helper, and an agent's clone of it.
 async function stateWithEvent(p, client) {
-  const written = await writeEvent({ project: 'o__p', event: makeEvent({ kind: 'note', data: { words: 'original' }, now: at(0) }), push: pushFor(client, 'o__p') });
+  const written = await client.state.write({ project: 'o__p', kind: 'note', data: { words: 'original' } });
   assert.equal(written.pushed, true);
-  const rel = path.relative(stateDir('o__p'), written.path).split(path.sep).join('/');
+  const rel = (await run('git', ['ls-tree', '-r', '--name-only', 'wheelhouse-state', 'events'], { cwd: p.remote.url })).stdout.trim();
   const original = await remoteFile(p.remote.url, 'wheelhouse-state', rel);
   const agent = await agentClone(p.remote.url);
   return { rel, original, agent };
@@ -271,69 +282,34 @@ test('a state or lock push from an agent\'s folder is refused, whatever its remo
       await g(agent, 'push', '-q', decoy.url, `${tampered}:refs/heads/wheelhouse-state`);
       await g(agent, 'remote', 'set-url', 'origin', decoy.url);
       await g(agent, 'remote', 'set-url', '--push', 'origin', p.remote.url);
-      assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'wheelhouse-state' }), { ok: false, refused: PUSH_REFUSALS.stateFolder });
+      assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'wheelhouse-state' }), { ok: false, refused: PUSH_REFUSALS.ownRequests });
       assert.equal(await remoteFile(p.remote.url, 'wheelhouse-state', rel), original);
 
-      // A plain new event from the agent's copy is refused too: only the state clone pushes state.
+      // A plain new event from the agent's copy is refused too: only the state route pushes state.
       await g(agent, 'reset', '-q', '--hard', 'HEAD~1');
       fs.mkdirSync(path.join(agent, 'events', 'n'), { recursive: true });
       fs.writeFileSync(path.join(agent, 'events', 'n', 'forged.json'), '{}\n');
       await g(agent, 'add', '-A');
       await g(agent, 'commit', '-q', '-m', 'A new event');
-      assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'wheelhouse-state' }), { ok: false, refused: PUSH_REFUSALS.stateFolder });
+      assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'wheelhouse-state' }), { ok: false, refused: PUSH_REFUSALS.ownRequests });
       assert.equal(await remoteFile(p.remote.url, 'wheelhouse-state', 'events/n/forged.json'), '');
-
-      // The state clone reached by another spelling of its path still pushes.
-      const roundabout = path.join(stateDir('o__p'), 'events', '..');
-      assert.deepEqual(await client.push({ project: 'o__p', dir: roundabout, refspec: 'wheelhouse-state' }), { ok: true });
+      // Not even the clone's own folder, nor a spelling of its path.
+      for (const dir of [stateDir('o__p'), path.join(stateDir('o__p'), 'events', '..')]) {
+        assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'wheelhouse-state' }), { ok: false, refused: PUSH_REFUSALS.ownRequests });
+      }
       fs.rmSync(agent, { recursive: true, force: true });
 
-      // The lock branch: the lock clone may push it, an agent's copy may not, nor may the state clone.
-      assert.equal((await takeLock({ project: 'o__p', push: pushFor(client, 'o__p'), now: at(0) })).taken, true);
+      // The lock branch: an agent's copy is refused, and so is the lock clone itself.
+      assert.equal((await client.lock.take({ project: 'o__p' })).result.taken, true);
       const lockCopy = await agentClone(p.remote.url, 'wheelhouse-lock');
       fs.writeFileSync(path.join(lockCopy, 'lock.json'), '{"holder":"someone else"}\n');
       await g(lockCopy, 'commit', '-q', '-am', 'Take the lock');
-      assert.deepEqual(await client.push({ project: 'o__p', dir: lockCopy, refspec: 'wheelhouse-lock' }), { ok: false, refused: PUSH_REFUSALS.lockFolder });
-      assert.deepEqual(await client.push({ project: 'o__p', dir: stateDir('o__p'), refspec: 'wheelhouse-lock' }), { ok: false, refused: PUSH_REFUSALS.lockFolder });
+      assert.deepEqual(await client.push({ project: 'o__p', dir: lockCopy, refspec: 'wheelhouse-lock' }), { ok: false, refused: PUSH_REFUSALS.ownRequests });
+      assert.deepEqual(await client.push({ project: 'o__p', dir: path.join(stateDir('o__p'), '..', 'lock'), refspec: 'wheelhouse-lock' }), { ok: false, refused: PUSH_REFUSALS.ownRequests });
       assert.doesNotMatch(await remoteFile(p.remote.url, 'wheelhouse-lock', 'lock.json'), /someone else/);
       fs.rmSync(lockCopy, { recursive: true, force: true });
     }));
   } finally { p.cleanup(); decoy.cleanup(); }
-});
-
-test('a link to the state clone repointed at an agent\'s copy during the push gets nothing forged pushed', async () => {
-  const p = await project({ lock: false });
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ln-'));
-  try {
-    await as(p.home, async () => {
-      const agent = path.join(work, 'agent');
-      await g(work, 'clone', '-q', '--branch', 'wheelhouse-state', p.remote.url, agent);
-      fs.mkdirSync(path.join(agent, 'events', 'x'), { recursive: true });
-      fs.writeFileSync(path.join(agent, 'events', 'x', 'forged.json'), '{"kind":"card-answer"}\n');
-      await g(agent, 'add', '-A');
-      await g(agent, 'commit', '-q', '-m', 'A forged event');
-      const link = path.join(work, 'link');
-      fs.symlinkSync(stateDir('o__p'), link, 'junction');
-      // After the folder check, just before the objects are copied in, the link is repointed.
-      let swapped = false;
-      const swapping = async (file, args, options) => {
-        if (!swapped && args.includes('update-ref') && args.includes('-d')) {
-          fs.rmSync(link, { force: true, recursive: false });
-          fs.symlinkSync(agent, link, 'junction');
-          swapped = true;
-        }
-        return run(file, args, options);
-      };
-      await withHelper(fakeAdapter(), async (client) => {
-        await client.push({ project: 'o__p', dir: link, refspec: 'wheelhouse-state' });
-      }, { run: swapping });
-      assert.equal(swapped, true, 'the link was repointed during the push');
-      assert.equal(await remoteFile(p.remote.url, 'wheelhouse-state', 'events/x/forged.json'), '');
-    });
-  } finally {
-    p.cleanup();
-    fs.rmSync(work, { recursive: true, force: true });
-  }
 });
 
 test('a replace ref in the state clone cannot hide a changed event', async () => {
@@ -353,7 +329,12 @@ test('a replace ref in the state clone cannot hide a changed event', async () =>
       const innocent = await g(dir, 'rev-parse', 'HEAD');
       await g(dir, 'checkout', '-q', 'wheelhouse-state');
       await g(dir, 'replace', tampered, innocent);
-      assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'wheelhouse-state' }), { ok: false, refused: PUSH_REFUSALS.state });
+      const synced = await client.state.sync({ project: 'o__p' });
+      assert.equal(synced.ok, true);
+      assert.ok(synced.unpushed > 0, 'the changed event was not pushed');
+      const retry = await client.state.write({ project: 'o__p', kind: 'note', data: { words: 'again' } });
+      assert.equal(retry.pushed, false);
+      assert.equal(retry.refused, PUSH_REFUSALS.state);
       assert.equal(await remoteFile(p.remote.url, 'wheelhouse-state', rel), original);
     }));
   } finally { p.cleanup(); }
@@ -370,14 +351,14 @@ test('a shallow marker in the state clone cannot hide a changed event', async ()
       const tampered = await tamper(dir, rel);
       const shallow = path.join(dir, '.git', 'shallow');
       fs.appendFileSync(shallow, `${tampered}\n`);
-      const answer = await client.push({ project: 'o__p', dir, refspec: 'wheelhouse-state' });
-      assert.equal(answer.ok, false);
+      const answer = await client.state.write({ project: 'o__p', kind: 'note', data: { words: 'while shallow' } });
+      assert.equal(answer.pushed, false);
       assert.ok([PUSH_REFUSALS.state, PUSH_REFUSALS.shallow, PUSH_REFUSALS.missing].includes(answer.refused), answer.refused);
       assert.equal(await remoteFile(p.remote.url, 'wheelhouse-state', rel), original);
       // The mirror is not left shallow: once the clone is put right, a plain event push still goes through.
       fs.rmSync(shallow, { force: true });
       await g(dir, 'reset', '-q', '--hard', tip);
-      const next = await writeEvent({ project: 'o__p', event: makeEvent({ kind: 'note', data: { words: 'after' }, now: at(2000) }), push: pushFor(client, 'o__p') });
+      const next = await client.state.write({ project: 'o__p', kind: 'note', data: { words: 'after' } });
       assert.equal(next.pushed, true);
     }));
   } finally { p.cleanup(); }
@@ -403,8 +384,8 @@ test('a state push carrying a secret is refused, naming the pattern and file but
         fs.writeFileSync(path.join(dir, rel), body);
         await g(dir, 'add', '-A');
         await g(dir, 'commit', '-q', '-m', 'An event');
-        const answer = await client.push({ project: 'o__p', dir, refspec: 'wheelhouse-state' });
-        assert.equal(answer.ok, false, rel);
+        const answer = await client.state.write({ project: 'o__p', kind: 'note', data: { words: 'after the file' } });
+        assert.equal(answer.pushed, false, rel);
         assert.ok(answer.refused.includes(rel), answer.refused);
         assert.ok(answer.refused.includes(pattern), answer.refused);
         assert.ok(!answer.refused.includes(key) && !answer.refused.includes(aws), 'the value is never repeated');
@@ -416,14 +397,15 @@ test('a state push carrying a secret is refused, naming the pattern and file but
       fs.writeFileSync(path.join(dir, 'events', 's', 'clean.json'), '{"text":"nothing here"}\n');
       await g(dir, 'add', '-A');
       await g(dir, 'commit', '-q', '-m', 'A clean event');
-      assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'wheelhouse-state' }), { ok: true });
+      assert.deepEqual(await client.state.sync({ project: 'o__p' }), { ok: true, pulled: true, unpushed: 0 });
+      assert.equal(await remoteFile(p.remote.url, 'wheelhouse-state', 'events/s/clean.json'), '{"text":"nothing here"}\n');
     }));
   } finally { p.cleanup(); }
 });
 
 test('the folder\'s own git config never runs with the key: sshCommand, credential helper, proxy, askpass', async () => {
   const p = await project();
-  const leaks = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-lk-'));
+  const leaks = tempFolder('wh-lk-');
   const leak = (name) => path.join(leaks, name).split(path.sep).join('/');
   const env = { GH_TOKEN: FAKE_KEY, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader', GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${FAKE_KEY}`).toString('base64')}` };
   try {
@@ -496,11 +478,11 @@ test('the lock and the mirror reach a remote only through the connection\'s envi
 
       await withHelper(fakeAdapter(), async (client) => {
         const refused = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(refused.reasons, [LOCK_REASON], 'without the environment the lock cannot be read');
+        assert.deepEqual(refused.reasons, [LOCK_REASON, UNREADABLE], 'without the environment the lock cannot be read');
       });
       const adapter = fakeAdapter();
       await withHelper(adapter, async (client) => {
-        assert.deepEqual(await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false }), { ok: true, merged: true, sha: HEAD });
+        assert.deepEqual(await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false }), { ok: true, merged: true, sha: HEAD, ...NONE_FOUND });
         assert.deepEqual(await client.push({ project: 'o__p', dir: stateDir('o__p'), refspec: 'feature' }), { ok: true });
       }, { envFor: async () => env });
       assert.match(await remoteHeads(p.remote.url), /refs\/heads\/feature /);
@@ -515,7 +497,7 @@ test('merge is refused with every gate reason when conditions fail', async () =>
   try {
     const adapter = fakeAdapter({ ciState: async (sha) => ({ sha, state: 'failure' }) });
     await as(p.home, () => withHelper(adapter, async (client) => {
-      const answer = await client.merge({ project: 'o__p', number: 7, stop: true });
+      const answer = await client.merge({ project: 'o__p', number: 7, stop: true, bypass: true });
       assert.equal(answer.ok, false);
       assert.deepEqual(answer.reasons, [
         'STOP is on',
@@ -524,12 +506,13 @@ test('merge is refused with every gate reason when conditions fail', async () =>
         'CI has not passed on abc1234',
         'no CLEAN review of abc1234',
         'no approval of abc1234',
+        UNREADABLE,
       ]);
       assert.equal(answer.refused, answer.reasons.join('; '));
 
-      // A review is always required; the approval only when the caller says false.
+      // A review is always required; with the changed files unreadable, so is the approval.
       const lighter = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false, reviewRequired: false, approvalRequired: false, touchesGuardrails: false });
-      assert.deepEqual(lighter.reasons, [LOCK_REASON, 'CI has not passed on abc1234', 'no CLEAN review of abc1234']);
+      assert.deepEqual(lighter.reasons, [LOCK_REASON, 'CI has not passed on abc1234', 'no CLEAN review of abc1234', 'no approval of abc1234', UNREADABLE]);
       const guardrails = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false, reviewRequired: false, approvalRequired: false, touchesGuardrails: 'no' });
       assert.ok(guardrails.reasons.includes('no CLEAN review of abc1234'));
       assert.ok(guardrails.reasons.includes('no approval of abc1234'));
@@ -546,7 +529,7 @@ test('merge pins the head commit when the gate allows it', async () => {
       reviewAndApproval();
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(answer, { ok: true, merged: true, sha: HEAD });
+        assert.deepEqual(answer, { ok: true, merged: true, sha: HEAD, ...NONE_FOUND });
         assert.deepEqual(adapter.merges, [{ number: 7, sha: HEAD }]);
       });
     });
@@ -562,7 +545,7 @@ test('merge is refused while the STOP file exists, whatever the caller says', as
       fs.writeFileSync(stopFile(), '');
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(answer.reasons, ['STOP is on']);
+        assert.deepEqual(answer.reasons, ['STOP is on', UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       });
     });
@@ -584,7 +567,7 @@ test('merge is refused when the pull request is not open, or the host declines',
       const declines = fakeAdapter({ merge: async () => ({ merged: false, reason: 'the head moved' }) });
       await withHelper(declines, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(answer, { ok: false, refused: 'the head moved' });
+        assert.deepEqual(answer, { ok: false, refused: 'the head moved', ...NONE_FOUND });
       });
     });
   } finally { p.cleanup(); }
@@ -605,7 +588,7 @@ test('merge is refused when this computer has lost the lock', async () => {
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.equal(answer.ok, false);
-        assert.deepEqual(answer.reasons, [LOCK_REASON]);
+        assert.deepEqual(answer.reasons, [LOCK_REASON, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       });
     });
@@ -622,9 +605,15 @@ test('a push or merge refusal never includes a key', async () => {
   const basic = Buffer.from(`x-access-token:${FAKE_KEY}`).toString('base64');
   const env = {
     GH_TOKEN: FAKE_KEY,
-    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_COUNT: '3',
     GIT_CONFIG_KEY_0: 'http.https://127.0.0.1/.extraheader',
     GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    // The address below can be read (so the lock, whose remote must be the state clone's, holds)
+    // but a push to it goes nowhere.
+    GIT_CONFIG_KEY_1: `url.${p.remote.url}.insteadOf`,
+    GIT_CONFIG_VALUE_1: 'https://127.0.0.1:9/o/p.git',
+    GIT_CONFIG_KEY_2: 'url.https://127.0.0.1:9/nowhere/.pushInsteadOf',
+    GIT_CONFIG_VALUE_2: 'https://127.0.0.1:9/o/',
   };
   const calls = [];
   const recordingRun = async (file, args, options) => {
@@ -658,7 +647,7 @@ test('a push or merge refusal never includes a key', async () => {
         await g(dir, 'remote', 'set-url', 'origin', 'https://127.0.0.1:9/o/p.git');
         const pushed = await client.push({ project: 'o__p', dir, refspec: 'feature' });
         assert.equal(pushed.ok, false);
-        assert.match(pushed.refused, /git could not push/);
+        assert.match(pushed.refused, /git could not push|could not be checked/);
         hidden(pushed);
         const spelled = await client.push({ project: 'o__p', dir, refspec: `${FAKE_KEY}:main` });
         assert.equal(spelled.ok, false);
@@ -678,7 +667,7 @@ test('a push or merge refusal never includes a key', async () => {
         assert.equal(call.args.join(' ').includes(basic), false);
       }
       const pushes = calls.filter((c) => c.args.includes('push'));
-      assert.ok(pushes.some((c) => c.env?.GIT_CONFIG_VALUE_0 === env.GIT_CONFIG_VALUE_0));
+      assert.ok(calls.some((c) => c.args.includes('fetch') && c.env?.GIT_CONFIG_VALUE_0 === env.GIT_CONFIG_VALUE_0), 'the key reached git, through its environment');
       assert.ok(pushes.every((c) => !c.args.some((a) => a === '--force' || a === '-f' || a.startsWith('--force') || a.startsWith('+'))));
       // The copy from the folder runs with no key at all.
       const copies = calls.filter((c) => c.args.includes('fetch') && c.args.includes(dir));
@@ -717,12 +706,11 @@ test('only keys are hidden: a GitLab address in an answer is kept', async () => 
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-test('pushFor adapts the helper client to the injected push', async () => {
-  const asked = [];
-  const client = { push: async (args) => { asked.push(args); return { ok: true }; } };
-  const push = pushFor(client, 'o__p');
-  assert.deepEqual(await push('/some/dir', 'wheelhouse-state'), { ok: true });
-  assert.deepEqual(asked, [{ project: 'o__p', dir: '/some/dir', refspec: 'wheelhouse-state' }]);
+test('the client has the state and lock requests, and no pushFor', async () => {
+  const client = helperClient({ address: '/nowhere' });
+  assert.deepEqual(Object.keys(client.state), ['clone', 'write', 'record', 'sync', 'views']);
+  assert.deepEqual(Object.keys(client.lock), ['take', 'touch', 'read']);
+  assert.equal((await import('../../../scripts/host/helper-client.js')).pushFor, undefined);
 });
 
 test('the client answers plainly when no helper is running', async () => {
@@ -786,9 +774,9 @@ test('quick keeps the system and user git config for keyed calls; narrow switche
   } finally { p.cleanup(); }
 });
 
-test('a partial clone in the folder cannot fetch through its own remote, even when the helper inherits GIT_NO_LAZY_FETCH=0', async () => {
+test('a partial clone in the folder is refused before git runs in it, so nothing it names runs, even when the helper inherits GIT_NO_LAZY_FETCH=0', async () => {
   const p = await project();
-  const leaks = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-lk-'));
+  const leaks = tempFolder('wh-lk-');
   try {
     await withProcessEnv({ GIT_NO_LAZY_FETCH: '0' }, () => as(p.home, async () => {
       const agent = await agentClone(p.remote.url);
@@ -808,7 +796,7 @@ test('a partial clone in the folder cannot fetch through its own remote, even wh
       await withHelper(fakeAdapter(), async (client) => {
         const started = Date.now();
         const answer = await client.push({ project: 'o__p', dir: agent, refspec: 'feature' });
-        assert.deepEqual(answer, { ok: false, refused: PUSH_REFUSALS.missing });
+        assert.deepEqual(answer, { ok: false, refused: PUSH_REFUSALS.partialClone });
         assert.ok(Date.now() - started < 30000, 'refused promptly');
       }, { envFor: async () => ({ GH_TOKEN: FAKE_KEY }) });
       assert.deepEqual(fs.readdirSync(leaks).filter((f) => f.endsWith('.txt')), []);
@@ -853,4 +841,172 @@ test('pushes and merges at once share the lock clone without tripping over each 
       });
     });
   } finally { p.cleanup(); }
+});
+
+test('a half-made state clone gives its hint through a state route', async () => {
+  const p = await project({ lock: false });
+  try {
+    await as(p.home, async () => {
+      // the remote's branch was never copied in, as after a start cut short before its push
+      await g(stateDir('o__p'), 'update-ref', '-d', 'refs/remotes/origin/wheelhouse-state');
+      await withHelper(fakeAdapter(), async (client) => {
+        const answer = await client.state.sync({ project: 'o__p' });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /Delete the folder and run again/);
+      });
+    });
+  } finally { p.cleanup(); }
+});
+
+// ---- Task 16 ----
+
+test('a push that times out is refused, saying so', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      const dir = stateDir('o__p');
+      await g(dir, 'branch', 'feature');
+      const slowHost = async (file, args, options) => (args.includes('push')
+        ? { code: 1, stdout: '', stderr: '', timedOut: true }
+        : run(file, args, options));
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: 'the host did not answer the push in time' });
+      }, { run: slowHost });
+      assert.doesNotMatch(await remoteHeads(p.remote.url), /refs\/heads\/feature /);
+    });
+  } finally { p.cleanup(); }
+});
+
+test('the mirror drops its per-request refs, keeps the base, and tidies after the answer, behind it in the queue', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      reviewAndApproval();
+      const dir = stateDir('o__p');
+      const mirror = path.join(dir, '..', 'mirror.git');
+      await g(dir, 'branch', 'feature');
+      await g(dir, 'branch', 'second');
+      const calls = [];
+      const recording = async (file, args, options) => { calls.push({ args, cwd: options?.cwd }); return run(file, args, options); };
+      const refs = async () => (await run('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror })).stdout.trim();
+      const collected = (from) => calls.slice(from).some((c) => c.args.includes('gc') && c.args.includes('--auto') && c.cwd === mirror);
+      // The tidy runs after the answer, behind it on the same queue: wait until it has run.
+      const waitForGc = async (from) => {
+        for (let i = 0; i < 100 && !collected(from); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+        return collected(from);
+      };
+      await withHelper(fakeAdapter(), async (client) => {
+        let mark = calls.length;
+        assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true });
+        assert.equal(await waitForGc(mark), true, 'git gc --auto ran after the push');
+        assert.equal(await refs(), '', 'no per-request ref is left after a push');
+
+        // The base is the ref the next fetch negotiates from; the rest are made per request.
+        const head = await g(dir, 'rev-parse', 'feature');
+        for (const name of ['base', 'pr/7', 'incoming', 'pr/9']) await run('git', ['update-ref', `refs/wheelhouse/${name}`, head], { cwd: mirror });
+        mark = calls.length;
+        const merged = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(merged.ok, true, JSON.stringify(merged));
+        assert.equal(await waitForGc(mark), true, 'git gc --auto ran after the merge');
+        assert.equal(await refs(), 'refs/wheelhouse/base');
+
+        mark = calls.length;
+        assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'second' }), { ok: true });
+        assert.equal(await waitForGc(mark), true);
+        assert.equal(await refs(), 'refs/wheelhouse/base', 'the base survives the tidy after a push');
+        assert.match(await remoteHeads(p.remote.url), /refs\/heads\/second /);
+      }, { run: recording });
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a folder\'s own uploadpack.packObjectsHook is not run', async () => {
+  const p = await project();
+  const scratch = tempFolder('wh-hook-');
+  try {
+    await as(p.home, async () => {
+      const agent = await agentClone(p.remote.url);
+      await g(agent, 'checkout', '-q', '-b', 'feature');
+      await g(agent, 'commit', '-q', '--allow-empty', '-m', 'Work');
+      const slash = (file) => file.split(path.sep).join('/');
+      const script = path.join(scratch, 'hook.js');
+      const marker = path.join(scratch, 'ran-in-folder');
+      const control = path.join(scratch, 'ran-from-command-line');
+      fs.writeFileSync(script, 'require("node:fs").writeFileSync(process.argv[2], "ran"); process.exit(1);\n');
+      const hook = (file) => `node ${slash(script)} ${slash(file)}`;
+      await g(agent, 'config', 'uploadpack.packObjectsHook', hook(marker));
+
+      // The control: the same hook in global configuration is run by upload-pack, so the marker can appear.
+      const globalConfig = path.join(scratch, 'global-config');
+      fs.writeFileSync(globalConfig, `[uploadpack]\n\tpackObjectsHook = ${hook(control)}\n`);
+      const probe = tempFolder('wh-probe-');
+      await run('git', ['init', '-q', '--bare', probe]);
+      await run('git', ['fetch', '-q', agent, 'feature:refs/heads/x'], { cwd: probe, env: { GIT_CONFIG_GLOBAL: globalConfig, GIT_TERMINAL_PROMPT: '0' } });
+      fs.rmSync(probe, { recursive: true, force: true });
+      assert.equal(fs.existsSync(control), true, 'the hook is one git runs when it is in global configuration');
+
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'feature' }), { ok: true });
+      });
+      assert.equal(fs.existsSync(marker), false, 'a repository\'s own setting is not honoured by git, so the hook did not run');
+      fs.rmSync(agent, { recursive: true, force: true });
+    });
+  } finally { p.cleanup(); fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test('two helpers starting at once leave one running and none orphaned', { skip: unixOnly }, async () => {
+  const home = shortHome();
+  try {
+    await as(home, async () => {
+      for (let round = 0; round < 8; round += 1) {
+        const address = testAddress(home);
+        const start = () => startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
+        const settled = await Promise.allSettled([start(), start(), start()]);
+        const running = settled.filter((s) => s.status === 'fulfilled').map((s) => s.value);
+        try {
+          assert.equal(running.length, 1, `round ${round}: ${settled.map((s) => s.status).join(', ')}`);
+          for (const s of settled.filter((x) => x.status === 'rejected')) assert.match(s.reason.message, /already/i);
+          // The one that is left answers on the path the others would have used.
+          assert.equal((await helperClient({ address }).health()).ok, true);
+          assert.equal(fs.lstatSync(address).isSocket(), true);
+          assert.equal(fs.existsSync(`${address}.start`), false, 'the start lock is released');
+        } finally {
+          await Promise.all(running.map((h) => h.close()));
+        }
+      }
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('a start lock left by a process that has gone is taken over', { skip: unixOnly }, async () => {
+  const home = shortHome();
+  try {
+    await as(home, async () => {
+      const address = testAddress(home);
+      const gone = await new Promise((resolve) => {
+        const child = spawn(process.execPath, ['-e', '0']);
+        child.on('exit', () => resolve(child.pid));
+      });
+      fs.writeFileSync(`${address}.start`, `${gone}\n`);
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.equal((await client.health()).ok, true);
+      });
+      assert.equal(fs.existsSync(`${address}.start`), false);
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('a helper that finds another starting says so in its own words', { skip: unixOnly }, async () => {
+  const home = shortHome();
+  try {
+    await as(home, async () => {
+      const address = testAddress(home);
+      fs.writeFileSync(`${address}.start`, `${process.pid}\n`);
+      await assert.rejects(
+        startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}), startWaitMs: 150 }),
+        /Another helper is starting/,
+      );
+      assert.equal(fs.existsSync(`${address}.start`), true, 'a lock that is not ours is left alone');
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

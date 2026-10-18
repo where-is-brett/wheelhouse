@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { scanText, scanFiles, scanContent } from '../../../scripts/state/secret-scan.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 // Every sample is assembled at runtime from fragments, so this file holds no real-looking secret.
 const rep = (ch, n) => ch.repeat(n);
@@ -63,7 +64,7 @@ test('a postgres URL with a password is found; one without is not', () => {
 });
 
 test('scanFiles reports file, pattern and line; unreadable files fail closed', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-scan-'));
+  const dir = tempFolder('wh-scan-');
   const secret = ['gh', 'p_', b62(40)].join('');
   const dirty = path.join(dir, 'dirty.txt');
   const clean = path.join(dir, 'clean.txt');
@@ -104,4 +105,47 @@ test('scanContent reads plain text too, and names patterns only', () => {
   assert.deepEqual(scanContent(`not json\n${key}\n`), ['github-token']);
   assert.deepEqual(scanContent('{"text":"nothing here"}'), []);
   assert.ok(!JSON.stringify(scanContent(key)).includes(key));
+});
+
+test('database-url is found in capitals and not across a slash', () => {
+  const url = (scheme, rest) => [scheme, '://', rest].join('');
+  assert.equal(scanText(url('POSTGRES', 'U:PW@H/DB')).length, 1);
+  assert.equal(scanText(url('Mongodb+Srv', 'user:pw@cluster/db')).length, 1);
+  // an empty user, as redis writes it
+  assert.equal(scanText(url('redis', ':password@host')).length, 1);
+  assert.equal(scanText(url('rediss', ':pw@h:6380/0')).length, 1);
+  assert.equal(scanText(url('REDIS', ':PW@H')).length, 1);
+  // near misses: no password, no user, a slash before the colon or the at sign
+  assert.equal(scanText(url('postgres', 'u@h:5432/db')).length, 0);
+  assert.equal(scanText(url('postgres', 'u:@h/db')).length, 0);
+  assert.equal(scanText(url('https', 'example.com:8080/path/to@v1')).length, 0);
+  assert.equal(scanText(url('https', 'github.com:443/o/p@v1')).length, 0);
+  assert.equal(scanText(url('http', 'host/a:b@c')).length, 0);
+  assert.equal(scanText('mailto:someone:else@example.com').length, 0);
+  assert.equal(scanText('see ://u:pw@h').length, 0);
+  assert.equal(scanText('name:value@example.com').length, 0);
+  assert.equal(scanText(url('postgres', 'u:p w@h')).length, 0);
+});
+
+test('a 100,000-character line is scanned in under a second', () => {
+  const lines = [
+    'a'.repeat(100000),
+    `http://${'a:'.repeat(50000)}`,
+    'http://a:'.repeat(11000),
+    `postgres://${'u'.repeat(100000)}`,
+    `postgres://u:${'p'.repeat(100000)}`,
+    'sk-'.repeat(33000),
+    `eyJ${'a'.repeat(100000)}`,
+    'eyJ.'.repeat(25000),
+    'a+'.repeat(50000),
+    `redis://${':'.repeat(100000)}`,
+    'redis://:'.repeat(11000),
+    `${'a-'.repeat(50000)}://`,
+  ];
+  for (const line of lines) {
+    const started = Date.now();
+    scanText(line);
+    const took = Date.now() - started;
+    assert.ok(took < 1000, `${line.slice(0, 12)}... took ${took} ms`);
+  }
 });

@@ -19,7 +19,7 @@ const CI_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){reposito
 const PR_ADDRESS = /(https:\/\/\S+\/pull\/(\d+))/;
 const ISSUE_ADDRESS = /(https:\/\/\S+\/issues\/(\d+))/;
 
-export function githubCommands({ call, attempt, json, repo, fromAddress, reason }) {
+export function githubCommands({ call, attempt, json, repo, fromAddress, refusal, settle }) {
   const [owner, name] = repo.split('/');
   const R = ['--repo', repo];
   const ask = async (args, input) => json(args, await call(args, input));
@@ -46,22 +46,30 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, reason 
     },
 
     async prState(number) {
-      const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'number,url,headRefOid,mergeable,state']);
-      return { headSha: pr.headRefOid, mergeable: MERGEABLE[pr.mergeable] ?? 'unknown', state: STATE[pr.state] ?? 'closed' };
+      const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'number,url,headRefOid,headRefName,baseRefName,mergeable,state']);
+      return { headSha: pr.headRefOid, ...(typeof pr.headRefName === 'string' ? { headRef: pr.headRefName } : {}), ...(typeof pr.baseRefName === 'string' ? { baseRef: pr.baseRefName } : {}), mergeable: MERGEABLE[pr.mergeable] ?? 'unknown', state: STATE[pr.state] ?? 'unknown' };
     },
 
     async ciState(sha) {
       const answer = await ask(['api', 'graphql', '-f', `query=${CI_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `sha=${sha}`]);
+      // A GraphQL answer can carry errors with a 200; that is not the absence of checks.
+      if ((Array.isArray(answer?.errors) && answer.errors.length > 0) || answer?.data === null || typeof answer?.data !== 'object') throw new Error('GitHub could not read the commit\'s checks');
       const rollup = answer?.data?.repository?.object?.statusCheckRollup;
       return { sha, state: rollup ? (ROLLUP[rollup.state] ?? 'pending') : 'none' };
     },
 
     // A refusal (the head has moved, the branch is protected, a check failed)
-    // is an answer, not an error.
+    // is an answer, not an error; it is told by kind and never quotes GitHub.
     async merge({ number, sha }) {
       const { code, stdout, stderr } = await attempt(['pr', 'merge', String(number), ...R, '--merge', '--match-head-commit', sha]);
-      if (code === 0) return { merged: true };
-      return { merged: false, reason: reason(stderr || stdout) || 'GitHub did not merge the pull request' };
+      if (code !== 0) return { merged: false, reason: refusal(`${stderr}\n${stdout}`, 'GitHub did not merge the pull request') };
+      // The success line is not read: the pull request is, and it says merged, queued or unknown.
+      return settle({
+        state: async () => (await ask(['pr', 'view', String(number), ...R, '--json', 'state'])).state,
+        merged: 'MERGED',
+        open: 'OPEN',
+        takeBack: () => call(['pr', 'merge', String(number), ...R, '--disable-auto']),
+      });
     },
 
     issue: {

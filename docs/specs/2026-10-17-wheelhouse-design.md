@@ -171,6 +171,7 @@ The rules for cards:
 - Unavoidable terms are explained in place, and every label comes from the glossary.
 - A card is presented with clickable options (Claude Code's multiple-choice question), plus free text: **Approve**, **Not now**, **Explain more**, **Show me**. They render as clickable options in Desktop on macOS and Windows (check 2, `docs/checks/02-clickable-questions.md`).
 - Until the mod exists, a click on a card is the only way to approve or confirm anything. A typed "yes" is read and acted on as an instruction, but it is not an approval (section 12.3).
+- A card carries one set line naming exactly what is being decided. There are five kinds: an approval (the pull request and its commit), a confirmation of a ruling, level or setting, lifting STOP, a CI push (the branch and its commit), and a runbook step. A click counts only if the card carries that line, and the answer is one of the options the card offered. Commits are named by their first 12 characters, because a shorter prefix can be matched by brute force in minutes. One script writes the lines and the prompt-record hook checks for them (section 12.5). *Designer's call.*
 - A card about a safety change (level 4, section 12.4) says in plain words what the change does to the checks, not just what it does to the product.
 
 **Depth on demand:**
@@ -342,13 +343,14 @@ Every idea not taken now is recorded with:
 - **Commits and pushes.** Each event is committed and pushed straight to the branch: no pull request and no CI, because these are working notes, not code. Pushes go through the host helper (section 11), which refuses a force-push. Before every push, a secret scan checks the new files, and the push is refused if it finds one (section 12.6).
 - **Who writes.** Only Wheelhouse's state command writes to the state clone, and it refuses the protected kinds (confirmations, approvals, reviews), which only hooks or a mod click write. Builders and reviewers can't reach the folder at all (section 12.2). Builders don't need it: each brief carries the rulings that apply.
 - **Protected records are signed.** Confirmations, approvals and reviews are signed by Wheelhouse's hooks with a key kept out of every agent's reach. Each computer's key is enrolled at setup, and the list of enrolled keys lives in the profile. The gate accepts only records signed by an enrolled key. So a record that arrives any other way, for example pushed to the branch from somewhere else, counts for nothing. *Designer's call.*
-- **Confirmation.** A ruling, a level change or a settings change takes effect only when a matching confirmation exists: a signed record of the director's card click, or, once the mod exists, of their own message or mod click (section 12.5). The state reload shows the director anything without one, first thing, and it has no effect meanwhile.
+- **Confirmation.** A ruling, a level change or a settings change takes effect only when a matching confirmation exists: a signed record of the director's card click, or, once the mod exists, of their own message or mod click (section 12.5). The state reload shows the director anything without one, first thing, and it has no effect meanwhile. A proposed ruling that a confirmed one has replaced is shown as superseded, not as waiting. *Designer's call.*
 - **One computer at a time.** A lock decides which computer holds the front desk and foreman.
   - **Taking it** is a push to a separate lock branch that must fast-forward from the version last seen. If another computer moved it first, the push is refused, so two computers can't both take it.
   - **A fencing token.** Each take of the lock increases a counter. The merge gate checks with the host, before every merge or code push, that the counter is still this computer's. A computer that wakes after losing the lock can't merge or push code, even mid-step.
   - **Opening on the other computer:** the front desk shows the board read-only and offers **Take over here**.
   - **A stale lock:** one more than two hours old with no writes can be taken over at once.
-  - **Nothing captured is lost.** A computer without the lock can still push state events, because they never conflict. So a computer that wakes after a takeover first pushes whatever it saved while away (a ruling, a captured request), then shows the board read-only.
+  - **A damaged lock.** A lock file on the host that can't be read counts as taken, never as free, so no computer can take it. There is no repair route yet: the director must mend the file on the host by hand.
+  - **Nothing captured is lost.** A computer without the lock can still push state events, because they never conflict. So a computer that wakes after a takeover first pushes whatever it saved while away (a ruling, a captured request), then shows the board read-only. A signed record that can't reach the helper at the time is kept as a pending file and sent, oldest first, at the next session start.
 - **Backup.** Once a week, a `git bundle` of the state branch goes into the profile, whose private repository takes it off the computer.
 - **What stays on `main`:** a feature's pitch, design and plan, which are reviewed in its first pull request, and a short handover file that points at the state.
 
@@ -359,7 +361,7 @@ Every idea not taken now is recorded with:
 | Glossary | Every label the front desk may use with the director, in plain words | Front desk |
 | Ideas, rejections | The ideas list (section 7.6), and what the director turned down and why | Front desk |
 | Waiting list | Open question cards and their state | Front desk and foreman |
-| `features/<slug>/` | Briefs, reports, ledger, assumptions. The pitch, design and plan are on `main` | Foreman |
+| `features/<slug>/` | Briefs, reports, ledger, assumptions. The pitch, design and plan are on `main`. The feature branch's naming and the ledger's file name are settled when the foreman is built | Foreman |
 | Confirmations | Each director message or click that confirms a ruling, level or setting: its ID, the director's words, the time | The prompt-record hook or a mod click. Never an agent |
 | Approvals | Each director yes: the PR, the head commit shown, the director's words, and the confirmation it rests on | The prompt-record hook or a mod click. Never an agent |
 | Reviews | Each review result: the PR, the head commit reviewed, CLEAN or the findings, any deterministic check's result and fingerprint, and the Claude Code and model versions | The report-check hook, from a reviewer's report. Never an agent |
@@ -412,13 +414,18 @@ The aim is that compaction is automatic and harmless, and the director never typ
 3. **About 200,000 tokens: prepare.** The session finishes its current step, saves state and carries on.
 4. **About 300,000 tokens: compact.** `autoCompactWindow` is set to 300,000, so it compacts on its own.
 5. **A PreCompact guard** blocks an automatic compaction while a marker shows unsaved work. It has escape hatches: it never blocks near the hard limit, and it gives up two minutes after its first block. A blocked compaction is tried again within seconds, so a count of blocks would run out in about a minute (check 3, `docs/checks/03-precompact-retry.md`). *Designer's call.*
+   - **The give-up runs once per episode,** not once per session: each time the guard lets a compaction through, the two minutes start afresh for the next. *Designer's call.*
+   - **The guard only informs.** If it crashes, the compaction goes ahead, because a crashed guard that blocked would have no give-up and could wedge a full session. The cost is a compaction with unsaved notes, which the save at 200,000 already covers. *Designer's call.*
+   - **The marker** is a file `.claude/state/unsaved-<session>` at the root of the session's worktree. Who writes it is settled when the foreman is built; until then nothing writes it and the guard never blocks.
 6. **A SessionStart hook on `compact`** reloads:
    - the rulebook;
    - the levels;
    - the waiting-on-you list;
    - the current status, including STOP;
    - anything changed without the director's confirmation;
-   - for the foreman, the active feature's ledger.
+   - for the foreman, a pointer to the active feature's ledger on the state branch.
+
+   The reload stays within 8 seconds, inside the hook's 10-second limit: if the sync with the host runs out, it says so and uses the views as they are, and each list is capped, with "and N more". On Windows it also states once per session that the computer has no sandbox. *Designer's call.*
 
    A "Compact instructions" section in `CLAUDE.md` tells the summary what to keep.
 7. **The front desk's context should rarely reach the first mark,** because the build traffic lives in the foreman. The foreman starts fresh per feature.
@@ -445,28 +452,29 @@ The host is detected from the git remote and can be overridden in project settin
 
 - **What it is.** A small local program, started by a Wheelhouse hook at the start of each session and running outside the sandbox. It runs the adapter, and it alone holds the system's keys: the host connection's key (below) and the signing key. Wheelhouse's own keys are kept in a file under `~/.wheelhouse/`, not in the keychain, because a sandboxed agent can read the keychain (check 11, `docs/checks/11-host-helper.md`). The sandbox denies that folder to agents' commands, and permission rules deny it to Claude's own file tools, which run outside the sandbox. Agents reach the helper on a socket file that the sandbox allows by name.
 - **Agents ask it; they can't go round it.** Agents' sandboxes have no network route to the host and can't read the keys file or the credential files of logged-in tools (section 12.2), and can't start their own helper (check 11). So the only way an agent reaches the host is to ask the helper.
-- **On Windows** there is no sandbox (check 10, `docs/checks/10-sandbox-windows.md`), so nothing stops an agent's command from reaching the host or reading a login file directly. The helper still carries the gate's checks, and the deny rules and the gate still apply, but the helper isn't the only route there. The director accepted this, and the board says so (section 22).
+- **On Windows** there is no sandbox (check 10, `docs/checks/10-sandbox-windows.md`), so nothing stops an agent's command from reaching the host or reading a login file directly. The helper still carries the gate's checks, and the deny rules and the gate still apply, but the helper isn't the only route there. The director accepted this, and the board says so (section 22). There, a process an agent runs can also read the helper's keys file and so sign any record, since every signing hook shares that key; on the Mac the sandbox's denial of the folder holds.
 - **It carries the gate's checks itself.** It merges only when the merge gate's conditions hold (section 12.3), and it refuses any push to `main`, any force-push, and any push to the state branch other than new state events. So the gate holds even if a hook were skipped, and even on a host plan with no server-side protection.
 - **Builders** commit in their worktrees and ask the helper to push their branch and open the pull request.
+- **Merge queues are not supported for now.** If the host queues a merge instead of making it, the helper takes it back out of the queue and refuses it, with the words "This project's host queues merges; Wheelhouse merges only directly for now", because a queued merge would land later, past STOP and the lock. A project that requires a merge queue can't merge through Wheelhouse yet. The take-back (`--disable-auto` on GitHub) is not read back, and may not dequeue a pull request already in GitHub's merge queue. *Designer's call.*
 
 **The connection: two ways, chosen at setup** (the director's decision, section 22). Other agent tools do the same two things: those that run on the person's computer use their existing sign-in, and cloud ones use a narrow connection of their own (`docs/research/agent-host-access-2026-10.md`). Either way, the helper is what pushes and merges, and the gate's checks hold.
 
 | | **Quick: the existing sign-in** | **Narrow: Wheelhouse's own connection** |
 |---|---|---|
 | **What the director does** | Nothing, if `gh` or `glab` is already signed in; otherwise its usual browser sign-in | GitHub: types a short code on GitHub's page, clicks **Authorise**, then ticks the project and profile repositories on the Wheelhouse app's **Install** page; each later project is one more tick on the app's settings page. GitLab: nothing more where GitLab lets setup make a project key; otherwise a token, pasted into the system's own box |
-| **What agents could reach if one got the key** | Everything the director's account can: every repository, with full control, including settings, visibility and deletion | GitHub: only the repositories the app is installed on, normally the project and the profile: their code, pull requests and issues. Not settings, visibility, secrets, CI workflows or other repositories (check 20). GitLab: only the project, with its code, merge requests and settings, though a Developer-level key can't change its protection (checks 22 and 23). A pasted GitLab token is the director's own, and reaches more (below) |
+| **What agents could reach if one got the key** | Everything the director's account can: every repository, with full control, including settings, visibility and deletion | GitHub: only the repositories the app is installed on, normally the project and the profile: their code, pull requests and issues. Not settings, visibility, secrets, CI workflows or other repositories (check 20). GitLab: only the project, with its code, merge requests and settings API, though by the documentation a Developer-level key is refused changes to its protection and settings (checks 22 and 23). A pasted GitLab token is the director's own, and reaches more (below) |
 | **How long a stolen key works** | Until the director signs out and revokes it | GitHub: 8 hours for an access key; the 6-month renewal key is the weak point. GitLab: the project key's or token's expiry |
 | **Locked** | Not allowed | Required |
 | **For** | Hobby and personal projects | Projects with real users, or anything the director can't afford to lose |
 
-- **Quick.** The helper calls `gh` or `glab` with the director's own sign-in. Setup says plainly, on the card where it is chosen, the same on the Mac as on Windows: "Agents act with your full GitHub (or GitLab) access, across all your projects. Fine for personal projects. An agent could read it directly." The board's health line repeats it in one line. On the Mac the sandbox denies agents the sign-in's files and the host's network, but `gh` keeps its sign-in in the keychain, which a sandboxed agent can read (check 11). Whether an agent can read `gh`'s own item couldn't be measured, so the Mac gets no gentler wording than Windows (check 21, `docs/checks/21-gh-keychain.md`).
+- **Quick.** The helper calls `gh` or `glab` with the director's own sign-in. It clears git's own environment variables first, so a `GIT_SSH_COMMAND` the director has set for their own use isn't passed on, and a remote that needs one isn't reached this way. *Designer's call.* Setup says plainly, on the card where it is chosen, the same on the Mac as on Windows: "Agents act with your full GitHub (or GitLab) access, across all your projects. Fine for personal projects. An agent could read it directly." The board's health line repeats it in one line. On the Mac the sandbox denies agents the sign-in's files and the host's network, but `gh` keeps its sign-in in the keychain, which a sandboxed agent can read (check 11). Whether an agent can read `gh`'s own item couldn't be measured, so the Mac gets no gentler wording than Windows (check 21, `docs/checks/21-gh-keychain.md`).
 - **Narrow on GitHub: the Wheelhouse GitHub App.** The Wheelhouse project registers one public GitHub App, asking for Contents, Pull requests, Issues and Metadata only, never Workflows or Administration. The director signs in to it with a code, as `gh auth login` does, and installs it on chosen repositories: the project and the profile. The helper keeps the renewal key in `~/.wheelhouse/` and makes 8-hour access keys from it. Renewing needs only the app's client ID, which is public, so the plugin ships no client secret (check 20, `docs/checks/20-github-app.md`).
   - **A later project** can't be added to the installation by the helper: GitHub refused it with the app's key and with the director's own `gh` sign-in alike (check 20). So setup opens the app's settings page and the director ticks the new repository, one click. Installing on **All repositories** instead, so that later projects need nothing, stays available, but isn't recommended: the key could then reach every repository's code, pull requests and issues, though still no settings (the director's decision, section 22). Nothing is pasted either way.
   - **What the key can't do.** A settings change was refused with the app's key, as the table says (check 20).
   - Pull requests show the director's name, via the app, on GitHub only (on GitLab, see below). Without the Workflows permission, a change to CI needs the director's own hand, which is a guardrail in itself (section 12.4). Registering the app is a level-4 step for the director, before the pilot.
 - **Narrow on GitLab: a project key.** GitLab has no installable app like GitHub's, and its own code sign-in can't be narrowed to one project, only to a kind of access (check 22, `docs/checks/22-gitlab-keys.md`). So setup uses the director's sign-in once to make a project access token, a "project key", and keeps it in `~/.wheelhouse/`, with nothing to copy or paste. `glab`'s own sign-in is accepted for this (check 22).
   - **Which plans.** By the documentation, project keys come with GitLab.com Premium and Ultimate, and with any self-managed or Dedicated plan. But the trial made one on GitLab.com Free, against the documentation, so the plan is no reliable guide. Setup tries the key first on every plan, and falls back to the pasted token only if GitLab refuses (check 22).
-  - **What it reaches.** The key needs two scopes: `write_repository` to push, and `api` to open and merge merge requests. `api` covers the whole project's API, settings included, so the key is limited to that one project, with its code, merge requests and settings. That is wider than GitHub's app, whose key can't reach settings (check 22).
+  - **What it reaches.** The key needs two scopes: `write_repository` to push, and `api` to open and merge merge requests. `api` covers the whole project's API, settings included, so the key is limited to that one project, with its code, merge requests and settings API. That is wider than GitHub's app, whose key can't reach settings (check 22). Whether the key can change settings depends on its role, below.
   - **Developer level, so it can't undo the protection.** The key is made at Developer level, and `main` is protected with push "No one", merge "Developers + Maintainers" and no force-push (below). Such a key can push branches and open merge requests, but not push to `main`, and, by the documentation, not change the protection or the project's settings, which are for Maintainers. The trial refused it both a direct push and an unprotect (checks 22 and 23). A Maintainer-level key could unprotect `main` and then push to it, so it is never the default; if one is ever used, protection on GitLab stops a mistake but not a determined holder of the key, and on Premium and Ultimate setup also limits who can unprotect to the director (check 23, `docs/checks/23-gitlab-protection.md`). *Designer's call.*
   - **Merging with a Developer key is untried.** The trial closed its merge request rather than merging it. GitLab lets a Developer merge when merge access is "Developers + Maintainers", but that is still the documentation's word, and is left for the pilot, on the first real project with a pipeline (checks 22 and 23).
   - **Merge requests show the key's bot user,** a member of the project made with the key, not the director (check 22).
@@ -496,24 +504,36 @@ Chosen at setup (the director's decision, section 22):
 - the host helper as the only route to the host, holding the host connection's key and the signing key (section 11);
 - the hooks in section 12.3;
 - the deny rules in sections 12.2 and 12.6;
-- the sandbox (section 12.2), except on Windows, where Claude Code has none (check 10);
+- the sandbox (section 12.2), except on Windows, where Claude Code has none (check 10), with `allowUnsandboxedCommands: false`, so a command that fails in the sandbox can't be run outside it. The project's settings carry it as Locked's file does, so Standard has it too. *Designer's call.*
+- the project's settings setting `disableAllHooks` and `enableAllProjectMcpServers` to false, which win over a personal setting for these, and the network allowlist cleaned as it is written: lower case, with anything holding a scheme, a path, a colon (so a `host:port` too), whitespace or a bare `*` dropped, so a domain written oddly is left out until it is mended;
 - server-side protection where the host allows it (section 12.3).
 
 **What Standard can't stop.** Its hooks and settings live in files the director's account can change. An agent set on getting round them could, in principle, edit the plugin's hook scripts or a personal setting, where the sandbox doesn't cover them, or a mod could approve something a hook refused. Standard is built for mistakes and misdirection, not for that.
 
+A director's own settings can weaken Standard too. A `sandbox.excludedCommands` list lets named commands out of the sandbox, and `enabledPlugins` and `extraKnownMarketplaces` can bring in other code. Setup keeps the director's settings when it adds its own, and is meant to name each of these on its card so the director decides; that is not built yet (section 12.9).
+
 **Locked adds** a computer-wide settings file holding:
 
 - all of Wheelhouse's hooks and the helper's start, with their scripts copied into the same administrator-only folder, so an agent can't edit them or switch them off;
-- the deny rules and the sandbox settings, with `allowUnsandboxedCommands: false` and `allowManagedDomainsOnly: true`, so the sandbox can't be widened by a project (check 12, `docs/checks/12-locked.md`);
+- the deny rules and the sandbox settings, with `allowUnsandboxedCommands: false` and `allowManagedDomainsOnly: true`, so the sandbox can't be widened by a project (check 12, `docs/checks/12-locked.md`). The file does not switch the sandbox on computer-wide, because that would change the director's other projects. Locked's own hook instead refuses Bash and PowerShell commands in a Locked project whose settings don't switch it on (section 22);
+- the network allowlist: every project registered on this computer, plus the package registry, not only the Locked ones. A project registered later needs Locked updated, and the install line says so. The domains are read from each project's main folder as it stands in the working copy, not from the default branch's commit. *Designer's call.*
 - `disableBypassPermissionsMode`, so no session can skip permission checks.
 
 Locked also requires the narrow connection (section 11). An agent trying to get round the checks would otherwise find the director's full sign-in on the computer.
 
 On Windows, Locked's file holds the hooks and the deny rules, but no sandbox (check 10).
 
+**How Locked's hooks sit beside the plugin's.** *Designer's call* for each.
+
+- **Its own Node.js.** The password step copies this computer's Node.js into the administrator-only folder, checks that the copy runs before anything is installed, and names it in the hooks. A Node.js upgrade in the director's account then can't stop every tool call on the computer, and a swapped binary can't run in the hooks' place. Updating Locked after an upgrade is needed only for new Node.js features.
+- **A hand-over marker.** The plugin's copy of a hook goes silent in a Locked project only once Locked's session start has written a marker for that session. The mere presence of the file isn't enough, because Claude Code can skip a computer-wide file when a higher-ranked setting wins ("first wins"). Locked refuses to install where a device-management profile for Claude Code exists. Where the organisation manages Claude Code from Anthropic's console, those settings win under first-wins and Locked's file is the one skipped; then the plugin's hooks run alone, with no administrator protection.
+- **Guards everywhere, informing hooks only in Locked projects.** Locked's copy runs the guards in every project and the informing hooks only in Locked ones, so nothing runs twice.
+- **The recorded plugin root.** Install records where the plugin really is, and Locked's STOP guard lets the runbook run from there or from its own folder. After a plugin update without updating Locked, the runbook is refused under STOP in a Locked project until the director updates Locked.
+- **A plugin loaded with `--plugin-dir`** instead of installed loses its write guard in Locked projects.
+
 **Locked is computer-wide by nature.** The file applies to every Claude Code session on that computer. So:
 
-- its hooks first check whether the current project is a Locked Wheelhouse project, by the session's working folder, and do nothing otherwise. This works on macOS and Windows; on Windows the hook's command quotes Node.js's path, which has a space in it (check 12);
+- its hooks first check whether the current project is a Locked Wheelhouse project, by the session's working folder, and do nothing otherwise. This works on macOS and Windows; the hook runs Locked's own copy of Node.js in exec form, so the path needs no quoting even with a space in it (check 12);
 - its deny rules are limited to what is safe everywhere, such as never reading `.env*` files;
 - it does not use the setting that allows only managed hooks, because that would switch off every other hook on the computer, in every project.
 
@@ -526,20 +546,30 @@ A managed hook's refusal holds: a project's own hook answering allow didn't over
 ### 12.2 What agents can touch
 
 - **The sandbox.** Every agent's commands run in Claude Code's sandbox:
-  - **Files:** a builder writes only inside its own worktree. Writes to `~/.wheelhouse/` (the state clones, the profile, STOP, the keys), `~/.claude/` and Wheelhouse's own files are denied to every agent.
-  - **Reading secrets:** denied for `.env*` files (except `.env.example`), the helper's keys file under `~/.wheelhouse/`, and the credential files of logged-in tools, such as `~/.ssh/`, `~/.config/gh/`, `~/.npmrc` and deployment tools' login files. The sandbox can't keep agents from the keychain (check 11), so nothing of Wheelhouse's is kept there. For the same reason, the keychain item where `gh` or `glab` keeps the director's sign-in is treated as readable by agents: the file denial covers `~/.config/gh/`, which holds no token when `gh` uses the keychain, but not the item itself (check 21). With the quick connection on the Mac, the deny rule on calling `gh` and `glab` directly is then the only barrier, and a Bash deny rule can be walked round (M1). That is why Locked requires the narrow connection (section 12.1).
+  - **Files:** a builder writes only inside its own worktree. Writes to `~/.wheelhouse/` (the state clones, the profile, STOP, the keys), `~/.claude/` and Wheelhouse's own files are denied to every agent. The project's own `.claude/settings.json`, `.claude/settings.local.json` and `.claude/hooks/**` are shut too, by deny rules, the sandbox and the tool guard: a hook added there could fill in a card's answer, and plugin entries could bring in a second plugin called wheelhouse. Wheelhouse writes those files itself, and an agent that wants a change asks the director. *Designer's call.*
+  - **Reading secrets:** denied for `.env*` files, the helper's keys file under `~/.wheelhouse/`, and the credential files of logged-in tools, such as `~/.ssh/`, `~/.config/gh/`, `~/.npmrc` and deployment tools' login files.
+    - The project's settings name the credential paths of every platform, since the file is shared by every computer and a rule may match nothing on a given one. They include `~/.git-credentials`, `~/.claude/.credentials.json` and the hosting tools' own stores. *Designer's call.*
+    - `.env.example` stays denied too, in commands as well. A relative `!` carve-out was possible, but the designer chose to fail closed, so an agent that needs the example asks. *Designer's call.*
+    - The sandbox can't keep agents from the keychain (check 11), so nothing of Wheelhouse's is kept there. For the same reason, the keychain item where `gh` or `glab` keeps the director's sign-in is treated as readable by agents: the file denial covers `~/.config/gh/`, which holds no token when `gh` uses the keychain, but not the item itself (check 21).
+    - With the quick connection on the Mac, the deny rule on calling `gh` and `glab` directly is then the only barrier, and a Bash deny rule can be walked round (M1). That is why Locked requires the narrow connection (section 12.1).
+  - **A gap on Windows:** a process an agent runs can read the helper's keys file, and so sign any record, because there is no sandbox to deny it (section 11). Inside a project, a search with no file pattern is allowed, so where the deny rules don't reach (Windows) an agent can search `.env` contents; a search over the home folder or a folder holding a guarded one is refused.
   - **Network:** an allowlist: the package registry, the project's documentation sources, and the host helper on the computer itself. Not the host: agents reach it only through the helper (section 11). Anything else asks, and builders are told to report rather than ask.
 - **Reviewers can't write** (section 8).
 - **Deny rules** that the sandbox backs up. They cover Claude's own file tools as well as commands, everywhere, because those tools run outside the sandbox (check 10):
   - reading `.env*` files, in any folder;
   - force-pushing, and pushing to `main`;
   - calling `gh` or `glab` directly;
-  - spend tools, such as buying a domain;
+  - spend and deployment tools, such as buying a domain, whether called bare or through a package runner (`npx`, `npm exec`, `pnpm dlx`, `bunx`, `yarn dlx`) (*Designer's call*);
   - contacting anyone outside the project;
   - changing repository visibility or secrets;
-  - all connector and MCP tools (`mcp__*`) and deployment tools, except an allowlist in the project settings. Denying `mcp__*` removes claude.ai connectors from local sessions too. A wildcard is ignored in an allow rule, so the allowlist is built by denying each unwanted server by name, or by denying `mcp__*` and asking for the allowed ones; the safety plan settles which (check 18, `docs/checks/18-connectors.md`).
+- **Connectors and MCP tools** are held by a hook, not a deny rule. A wildcard is ignored in an allow rule, and denying `mcp__*` would remove claude.ai connectors from local sessions too, so a hook holds the list instead: the tool guard refuses every `mcp__` tool whose server isn't named in `mcpServers` in `.claude/wheelhouse.json`. That settles the open point of check 18 (`docs/checks/18-connectors.md`). *Designer's call.* The limits are accepted:
+  - a connector from a plugin arrives as `mcp__plugin_<plugin>_<server>__<tool>`, so the list must name `plugin_<plugin>_<server>`;
+  - a server key that itself holds `__` can pose as a listed one;
+  - the list is read from the main folder's working copy, not the default branch's commit, so the two can differ until the working copy is updated;
+  - a missing file means no connectors, and a file that can't be read refuses every connector while the file and command checks carry on.
+- **A command guard behind the deny rules.** The tool guard reads a command as words, split at spaces and at shell operators (`;`, `&`, `|`, brackets, backticks, `$(`, redirects, new lines). It refuses any `gh` or `glab` word, the commands `git-push`, `git-send-pack` and `git-receive-pack`, any `git` command whose subcommand is `push`, `send-pack` or `receive-pack` or that defines an alias on the line (`git stash push` and `git log --grep push` pass), a `.env` file named in a command, `pwsh` or `powershell` with any short form of `-EncodedCommand` (`-e`, `-ec`, `-enc` and so on, and the `/` forms on Windows), and an unclosed quote. It reads the Monitor tool's command as it reads Bash's, and holds the MCP resource tools by the server they name, against the project's list of connectors. It checks credential paths for Claude's file tools only, not inside Bash commands, where the sandbox and the deny rules hold them. It applies in any folder inside a registered project. It over-refuses on purpose (`git commit -m gh`, `cat .envrc` and `echo .env >> .gitignore` are refused), and a few forms still pass it, such as `.[e]nv`, so the sandbox stays the main barrier. *Designer's call.*
 - **Why the sandbox and not deny rules alone:** a Bash deny rule doesn't match the same program called by its full path or inside `sh -c` (M1). The sandbox limits what any program can do, however it is called.
-- **On Windows** there is no sandbox (check 10). Agents there are held by the deny rules, the gate and the helper's checks only, and the board says plainly that Windows has no sandbox (the director's decision, section 22).
+- **On Windows** there is no sandbox (check 10). Agents there are held by the deny rules, the gate and the helper's checks only, with the tool guard holding the PowerShell tool as it holds Bash (PowerShell gets no deny rules of its own, because a scoped PowerShell rule would keep the tool on where a Bash rule turns it off, so the tool guard alone holds it), and the board says plainly that Windows has no sandbox (the director's decision, section 22).
 
 ### 12.3 Enforcement: hooks and the host
 
@@ -547,20 +577,28 @@ A managed hook's refusal holds: a project's own hook answering allow didn't over
 |---|---|
 | **Merge gate** (PreToolUse on merges and pushes, and inside the host helper) | Blocks unless all of these hold:<br>• STOP is off.<br>• The session is not in bypass mode.<br>• This computer still holds the lock, by its fencing counter, checked with the host.<br>• CI is green on the exact head commit. A commit with no pipeline at all hasn't passed, so the gate refuses it, on either host, as GitLab's own rule does (check 23).<br>• Where a review is required, a signed CLEAN review exists for that same commit.<br>• Where the change is shown first, or is level 4, the director's signed approval exists. It must name that commit, or a later one whose screenshots of every changed page are identical. Otherwise the director is asked again.<br>• A change touching the guardrails (section 12.4) has both an independent review and the director's approval |
 | **STOP** (PreToolUse on everything) | While STOP is on, refuses writes, pushes, merges and new agents, except the runbook's steps (section 12.7) |
-| **Prompt record** (PostToolUse on the clickable-question tool; UserPromptSubmit for STOP) | When the director clicks an answer on a card, records it, signed, with its ID and words. Until the mod exists, card clicks are the only source of confirmations and approvals: a project's `UserPromptSubmit` hook can't tell the director's typing from a message relayed by another session or submitted by a mod, so a typed message never counts as one (check 8, `docs/checks/08-prompt-record.md`). A `UserPromptSubmit` hook still sets STOP on `/stop` or "stop", since a false alarm costs only a pause. Once the mod exists, it also records typed messages, by origin (section 17.1) |
-| **Report check** (SubagentStop) | Checks that builder and reviewer reports have the required fields. Writes a review record only from a session whose agent type is `reviewer` |
+| **Prompt record** (PostToolUse on the clickable-question tool; UserPromptSubmit for STOP) | When the director clicks an answer on a card, records it, signed, with its ID and words, if the card carries the set line for it (section 5.3). Until the mod exists, card clicks are the only source of confirmations and approvals: a project's `UserPromptSubmit` hook can't tell the director's typing from a message relayed by another session or submitted by a mod, so a typed message never counts as one (check 8, `docs/checks/08-prompt-record.md`). A `UserPromptSubmit` hook still sets STOP on `/stop` or "stop", since a false alarm costs only a pause. Once the mod exists, it also records typed messages, by origin (section 17.1) |
+| **Report check** (SubagentStop) | Checks that builder and reviewer reports have the required fields. Writes a review record only from a session whose agent type is `reviewer`. If this hook itself crashes, no review is recorded, so the gate stays shut |
 | **State reload** (SessionStart on startup, resume and compact) | Reloads the files listed in section 10 |
 | **Context gauge, PreCompact guard** | Section 10 |
 | **Usage pressure** | Never lowers a level or relaxes a review. Enforced by the merge gate, not by memory |
 
 Hooks are written in Node.js and tested.
 
+**How the gate is split.** *Designer's call.* The PreToolUse part of the merge gate is the tool guard's refusal of any push or merge an agent tries directly, which leaves the helper as the only way. The conditions themselves are checked in the helper, which works out STOP, bypass, whether a change touches the guardrails and whether approval is needed on its own. A caller may only raise a condition: a caller's "true" adds to the helper's, and its "false" changes nothing. Bypass is read from markers the hooks write when a session runs in bypass mode, each counted for two hours.
+
+**How hooks behave.**
+
+- **Hooks never run `git` in a folder an agent controls,** because a folder's own git configuration can run a command and hooks run outside the sandbox. They read `.git` files directly, and anything that needs git goes to the helper, which runs it only in its own repositories. *Designer's call.*
+- **A hook that guards refuses when it can't run,** answering in the form its event takes, with "Wheelhouse's check could not run". A hook that only informs (the reload, the gauge, the PreCompact guard, the report check, the STOP word) says nothing when it fails, so a crash can't trap a session or block the word "stop". *Designer's call.* The guards on PreToolUse carry `"onFailure": "block"` in `hooks/hooks.json`, so a guard that crashes or runs out of time stops the tool call too. Claude Code reads that field from version 2.1.295; an older one lets the call through, so the session start says when Claude Code is older than that, read from the session's transcript, and says nothing when it can't tell.
+- **A hook ends its own process once it has answered,** because Claude Code kills a hook at its time limit and drops its answer. *Designer's call.*
+
 **Server-side protection (M1).** The host helper is the main line of defence, and the host's own protection is a second one, in case anything on the computer is got round. Setup, using the director's login once (section 11), asks the host to:
 
 - refuse direct pushes and force-pushes to `main` and to the state branch;
 - require CI to pass before a merge. On GitLab this ("pipelines must succeed") makes every merge request unmergeable, the helper's included, in a project with no pipeline. So setup switches it on only where the project already has a pipeline, or after asking the director (check 23). *Designer's call.*
 
-GitLab's setting is a second lock, not the rule: the gate's own check of CI is. A Developer-level key can't switch the setting off, but a Maintainer-level one could (check 23).
+GitLab's setting is a second lock, not the rule: the gate's own check of CI is. By the documentation, a Developer-level key can't switch the setting off, but a Maintainer-level one could (check 23).
 
 It doesn't require a code owner's review in a project. On GitHub, pull requests appear under the director's own name, and the host won't let anyone approve their own; on GitLab they appear under the project key's bot user (check 22). Either way, the gate's need for the director's approval does that job.
 
@@ -572,11 +610,16 @@ Where the host's plan doesn't offer this, the board says so once, and the helper
 
 - `.claude/`, including the project's Claude Code settings: permissions, sandbox, network and connector allowlists, plugins and hooks;
 - the project's Wheelhouse configuration on `main`: the routing table, and the critical areas;
+- `.mcp.json`, which names the connectors agents get;
 - the deterministic checks that the critical areas rely on, since a review that trusts a check is only as good as the check;
 - `CLAUDE.md`;
 - CI workflows.
 
 The card says in plain words what the change does to the checks. The one exception is moving a model pin after the evaluation passes (section 9.1).
+
+**The configuration and the patterns.** *Designer's call.* The project's configuration is one file, `.claude/wheelhouse.json`, which the helper reads from the default branch's commit, never from a pull request or a working folder. It holds the critical areas (their paths and their checks), the CI file patterns, the allowed connectors, the allowed web domains and, optionally, the containment step (section 12.7). A pull request touches the guardrails if it changes anything under `.claude/`, any `CLAUDE.md`, `.mcp.json`, a CI file (`.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml`, `.gitlab/` and the project's own patterns) or a critical area's check files. Case is ignored in the match, because macOS and Windows treat `.Claude` as the same folder, and a false match only costs an extra approval.
+
+**A change to CI files needs the director's one click.** *Designer's call, as the director decided (section 22).* A CI file decides what runs on the host's computers with the project's CI secrets, and on GitLab and with the quick connection a pushed branch would run its own CI file before anyone reviewed it. So the helper never pushes a CI change with the connection's key. The agent drafts it, a card says in plain words what it changes, and the director's click lets the helper push that exact commit with the director's own sign-in. The merge then needs a review and the director's approval, like any guardrail change. The ordinary CI push needs the director's click and the director's own sign-in on GitLab too. The one exception is the runbook's restore branch on GitLab, where a project key may push CI files, so the restore is pushed with it (section 12.7).
 
 **Dependencies are pinned:**
 
@@ -597,7 +640,7 @@ Text from outside the director can carry instructions aimed at an agent. The cha
 **The rules:**
 
 - **Content is data.** Agents are told, and reviewers check, that instructions found in any of these are reported, never followed.
-- **Approvals and confirmations come only from the director:** from a card click, recorded by the prompt-record hook, or, once the mod exists, from a mod click or a message the mod saw arrive from the director (section 17.1). The front desk can't write one by acting on a message. A message relayed from another session never counts, and neither does a card answer the agent filled in itself (checks 8 and 9).
+- **Approvals and confirmations come only from the director:** from a card click, recorded by the prompt-record hook, or, once the mod exists, from a mod click or a message the mod saw arrive from the director (section 17.1). The front desk can't write one by acting on a message. A message relayed from another session never counts, and neither does a card answer the agent filled in itself (checks 8 and 9). A click also counts only if the card carries the set line for it, naming the commit by its first 12 characters (section 5.3); if the card holds two lines of one kind, nothing is recorded. *Designer's call.*
 - **"It matches the source" means the project's deterministic check**, with the check's fingerprint of what it read saved in the review record.
 - **CLEAN comes only from a reviewer** (section 12.3).
 
@@ -610,7 +653,7 @@ The director's general rule (section 22):
 - **Live data stays live.** Setup asks "does this project have live data?" and, if so, keeps agents on a practice copy by default: a free copy of the database or service where the provider offers one, otherwise test data only. A fresh practice copy can be made on request when an agent investigates a live problem.
 - **No read-only logins to live data either** (the director's ruling, section 22). An agent investigating a live problem gets a fresh practice copy, never a login to the live data, however limited.
 - **File permissions are not protection against agents.** `chmod 600`, or `icacls` on Windows, stops other accounts on the computer, not agents, because agents run as the director. Setup never presents them as a safeguard.
-- **A secret scan** runs before every state push, and on every quote taken from a transcript (section 9).
+- **A secret scan** runs before every state push, and on every quote taken from a transcript (section 9). It finds a password inside a web address, such as a database's, but not one written with a raw `/` in it, which an address doesn't allow and which more often marks a port and a path.
 - **No secret is ever pasted into the chat.** Where setup needs one (a GitLab token, where GitLab refuses a project key: section 11), it is typed into the system's own hidden-entry box, which works from Desktop on macOS and Windows (check 16, `docs/checks/16-secret-box.md`), and stored in the helper's keys file (section 11), not the keychain.
 
 **Why (M2):** with a live password in a `.env*` file, or a logged-in deployment tool, a builder investigating a problem could change live data with no pull request and no review.
@@ -619,10 +662,11 @@ The director's general rule (section 22):
 
 **STOP** halts every agent at once:
 
-- **How to set it:** the mod's STOP button; `/stop` typed by the director; or, from the phone, a Remote Control message that is just the word "stop". In each case a hook or the mod sets it, never an agent. A false alarm costs only a pause. Phone messages reach the session on macOS and Windows, and reach a mod marked as Remote Control (`bridge`) (check 4, `docs/checks/04-remote-control.md`).
+- **How to set it:** the mod's STOP button; `/stop` typed by the director; or, from the phone, a Remote Control message that is just the word "stop". In each case a hook, the helper or the mod sets it, and anyone may set it, through the helper too, because a false alarm costs only a pause. The hook for the typed word sets it before doing anything else, so a failure elsewhere can't swallow the word. *Designer's call.* Phone messages reach the session on macOS and Windows, and reach a mod marked as Remote Control (`bridge`) (check 4, `docs/checks/04-remote-control.md`).
 - **What it does:** the STOP hook refuses writes, pushes, merges and new agents. Reading and reporting carry on, so the front desk can explain what was happening.
-- **Lifting it:** only the director, and the front desk first says what was in progress. Until the mod exists, lifting it is a card click, not a typed `/go`, because a hook can't tell the director's typing from a relayed message (check 8). Once the mod exists, its button, or `/go` typed or sent from the phone, which the mod sees by origin. *Designer's call.*
-- **Agents can't write it.** The flag is a file in `~/.wheelhouse/`, which the sandbox denies to every agent.
+- **Lifting it:** only the director, and the front desk first says what was in progress. Until the mod exists, lifting it is a card click, not a typed `/go`, because a hook can't tell the director's typing from a relayed message (check 8). Once the mod exists, its button, or `/go` typed or sent from the phone, which the mod sees by origin. No other route lifts it. *Designer's call.*
+- **What it covers.** STOP applies by the session's working folder, not by what a tool touches: in any folder inside a registered project, found by path because an agent can rewrite a worktree's `.git` file. Reading tools carry on, and so do TaskStop and KillShell, which only halt work. WebFetch stays allowed, though a web request can have side effects. Processes already running in the background are not ended. On Windows the PowerShell tool has no runbook allowance, so no runbook step can be run through it under STOP. *Designer's call.*
+- **The flag is not an agent's to write.** It is a file in `~/.wheelhouse/`, which the sandbox denies to every agent.
 
 **A one-page runbook** (`docs/runbook.md` in each project), in plain words. The system does each step on the director's click, through the runbook's own script, which STOP lets through:
 
@@ -631,6 +675,15 @@ The director's general rule (section 22):
 3. Return `main` to the last good release.
 4. Restore state from the weekly backup.
 5. Contain any live harm the project has defined.
+
+**How the steps run.** *Designer's call* for each.
+
+- **The allowance is narrow.** The runbook script is found from its own location, never from the environment, and STOP lets through only a command made of exactly its words. A shell control character, a glob, `${…}` or an empty word is refused, and the script checks its arguments before it asks the helper.
+- **Each click is used once** for steps 2, 4 and 5.
+- **After step 2 the director's own sign-in is used.** Once the narrow key is gone, steps 3 to 5 run with the director's own sign-in, and ask for it if it is missing. So do reading a pull request and recording the director's signed clicks, so the approval of the restore pull request is still read and kept. Every other write still needs the key.
+- **The runbook command sends its folder.** The sandbox denies agents `~/.wheelhouse/`, so the runbook command never reads it: it sends the folder it runs in, and the helper, outside the sandbox, works out the project.
+- **Step 3 is a pull request.** The restore opens a pull request from a branch named `wheelhouse-restore-` and the first 12 characters of the commit, whose files are exactly that release's. It is not a push to `main`. The merge passes STOP only for that branch, only when its files match that commit, and only within 24 hours of the director's click on the step's card. It needs CI and the director's approval but not a review, because the release passed one. It holds whether STOP is on or not. If the release changes CI files on GitHub, the push and the merge use the director's own sign-in and the answer says so. On GitLab, a project key may push CI files, so the push and the merge use the project key.
+- **Step 5 can outlast a Bash call.** The project names its containment step in the configuration, with a command (run without a shell, for up to ten minutes) and a plain description. A containment that takes longer than a Bash call waits keeps running, and the answer and the runbook say so. The runbook template holds `{{contain.describe}}`, which is filled with that description where each project's `docs/runbook.md` is written, a job of the agents plan.
 
 STOP and the runbook are evaluation scenario 12 (section 18).
 
@@ -644,6 +697,17 @@ A short data note (`docs/data.md`, shipped with Wheelhouse) tells the director, 
 - **Telemetry** stays on the computer and records counts, not content. Claude Code sends the director's email and account IDs with every figure; the receiver keeps only the session, model, kind, count and time, and the data note says nothing else is stored (check 7). Summaries are kept for 90 days. *Designer's call.*
 - **State** lives on the project's host, on its state branch, for as long as the project does. If the repository is ever made public, the state branch's history goes public with it. That fact is on the level-4 card for changing visibility.
 - **Optional channels** (section 13) carry links only, never content.
+
+### 12.9 What the safety build leaves for later
+
+The safety build leaves these out, and they are not promised for any date:
+
+- **A sitting with the director on a Mac.** Locked's password step, its copy of Node.js, its recovery from a half-finished swap, and the helper's socket inside the folder denied to agents are built and tested but not yet tried for real. If the socket can't be reached there, it moves to a folder outside the denial.
+- **Approval of a later commit.** Section 12.3 lets the director's approval cover a later commit whose screenshots of every changed page are identical. The screenshots belong to the agents plan, so until then only the exact commit counts and the director is asked again.
+- **What the agents plan names.** Who writes the unsaved marker (section 10), the feature branch's name and the ledger's file name (section 9), and the runbook's description of containment (section 12.7).
+- **The board.** It does not yet say when a project has no CI, though the gate already refuses a merge without it.
+- **Setup naming the director's own settings.** Setup does not yet name a director's `sandbox.excludedCommands`, `enabledPlugins` and `extraKnownMarketplaces` (section 12.1); that comes with setup.
+- **GitLab.** A Developer key merging, and merged-results pipelines, are untried live (section 11).
 
 ## 13. Notifications
 
@@ -744,14 +808,14 @@ Wheelhouse's own non-negotiables:
 | 3 | **The host.** Sign in through the browser, unless `gh` or `glab` already is. A new product gets a private repository. Setup makes the private profile repository and turns on server-side protection where the plan allows (on GitLab, "pipelines must succeed" only where the project has a pipeline, or after asking: section 12.3). Then one card: **Quick** (the existing sign-in, with its warning) or **Narrow** (section 11). Narrow on GitHub is a code, **Authorise**, and the app's **Install** page, where setup recommends ticking the project and profile repositories rather than **All repositories** (the director's decision, section 22). On GitLab, setup tries to make a project key first, on any plan, and only if GitLab refuses asks for a token pasted into the system's own box (check 22). A Locked project skips the card: it is Narrow | One click (Quick); or a code, two clicks and two ticks (Narrow) | 1 to 3 min; the app's part took under 4 minutes on a fresh account, including registering the app (check 20) |
 | 4 | **Three questions,** as cards: what the product is and who uses it; does it have live data (section 12.6); does it have real users (if yes, Locked is offered, on macOS for now: section 12.1) | Three clicks | 2 min |
 | 5 | **Rules found** in an existing project, as one card (section 9) | One click | 1 min |
-| 6 | **Changes to this computer,** listed on one card: telemetry on this computer only, transcript retention, Wheelhouse never updating on its own, this computer's signing key, and phone notifications (Claude Code's mobile push) | One click | 1 min |
+| 6 | **Changes to this computer,** listed on one card: telemetry on this computer only, transcript retention, Wheelhouse never updating on its own, this computer's signing key, phone notifications (Claude Code's mobile push), and any of the director's own settings that would weaken Standard, each named (not built yet, section 12.9) | One click | 1 min |
 | 7 | **Locked only:** the system's own password prompt | Their password | 1 min |
 | 8 | **Phone notifications:** setup shows where to switch on Remote Control in Claude Desktop, switches on both push options (on the step-6 card), and asks the director to allow Claude's notifications on their phone. Remote Control alone isn't enough (check 4). It then asks the director to lock the screen for two minutes, sends one test, and asks on their return whether it arrived, since a push is skipped while they are at the computer | One switch, one on the phone, a locked screen | 3 min |
 | 9 | **Health check:** setup runs every check against a scratch copy (the gate refuses a bad merge, STOP halts, `.env` can't be read, an agent can't reach the host) and shows a green board | Nothing | 1 min |
 
 **Undoing it.** `/wheelhouse:uninstall` removes everything setup added, including the changes to the computer. Leaving Locked asks for the password.
 
-**A later project,** with the narrow connection on GitHub, opens the app's settings page, and the director ticks the new repository: one click. The helper can't add it itself (check 20). On GitLab, setup makes the new project its own key.
+**A later project,** with the narrow connection on GitHub, opens the app's settings page, and the director ticks the new repository: one click. The helper can't add it itself (check 20). On GitLab, setup makes the new project its own key, or, where GitLab refuses one, asks for a pasted token (section 11).
 
 **A second computer** runs steps 1, 2, 3 (signing in, and for Narrow its own sign-in to the app or its own project key), 6, 7 and 8. The project and profile come from the host.
 
@@ -978,50 +1042,74 @@ The added costs are:
 15. **Install and pinning:** what the one pasted line can do in Desktop (adding the source, installing, reloading); that a plugin can be installed at a tag or commit; that auto-update can be kept off for it; and whether a plugin can declare its pinned dependencies. **Answer:** Yes, with a change: pin the commit as well as the tag. `docs/checks/15-install-and-pinning.md`
 16. **The password-style box:** that setup can open the operating system's own dialog for the token from Desktop, on macOS and Windows, so the token never enters the chat. **Answer:** Yes, on both systems. `docs/checks/16-secret-box.md`
 17. **Keyless signing** of release tags in CI, and how a director or contributor can check one. **Answer:** Deferred to the release plan. `docs/checks/17-keyless-signing.md`
-18. **Connectors:** whether claude.ai connectors reach local sessions, so the `mcp__*` deny rule covers them. **Answer:** Yes. `docs/checks/18-connectors.md`
+18. **Connectors:** whether claude.ai connectors reach local sessions, so a rule on `mcp__*` tools could cover them. **Answer:** Yes. The allowlist is held by a hook, not a deny rule (section 12.2). `docs/checks/18-connectors.md`
 19. **Setup time:** a timed run on a fresh account on macOS and on Windows, including installing git, Node.js and the host tool. **Answer:** Deferred to the setup plan. `docs/checks/19-setup-time.md`
 
 **Added after the first checks** (the director's decision on connecting to the host, section 22):
 
 20. **The Wheelhouse GitHub App:** the code sign-in and the Install page, timed on a fresh account; whether renewing an access key needs the app's client secret (if so, it is shipped in the plugin, as `gh` ships its own); and whether the helper can add a later project's repository to the installation with the director's sign-in. **Answer:** Yes, with a change. Under 4 minutes, and renewing needs no secret; but the helper can't add a later project, so the director ticks it on the app's page. `docs/checks/20-github-app.md`
 21. **The quick connection on the Mac:** whether a sandboxed agent can read `gh`'s or `glab`'s sign-in from the keychain. The answer goes into the quick connection's warning. **Answer:** Deferred. The sandboxed run couldn't be made; the warning on the Mac is the same as on Windows. `docs/checks/21-gh-keychain.md`
-22. **GitLab project keys:** whether setup can make a project access token from the director's sign-in, on which GitLab plans, and with which scopes; and whether GitLab's own code sign-in can be narrowed to one project. **Answer:** Yes, with a change. Setup made a Developer-level key with `api` and `write_repository`, on GitLab.com Free against the documentation, so setup tries it on every plan; the key reaches the project's settings; the code sign-in can't be narrowed to one project. A Developer key merging is left for the pilot. `docs/checks/22-gitlab-keys.md`
+22. **GitLab project keys:** whether setup can make a project access token from the director's sign-in, on which GitLab plans, and with which scopes; and whether GitLab's own code sign-in can be narrowed to one project. **Answer:** Yes, with a change. Setup made a Developer-level key with `api` and `write_repository`, on GitLab.com Free against the documentation, so setup tries it on every plan; the key's scope reaches the project's settings API, though by the documentation a Developer role is refused changes there; the code sign-in can't be narrowed to one project. A Developer key merging is left for the pilot. `docs/checks/22-gitlab-keys.md`
 23. **GitLab's protection of `main`:** that setup can read whether it is on, and switch it on where the director's role allows. **Answer:** Partly. Setup read it and set push "No one" on GitLab.com Free, and a Developer key was refused a push and an unprotect; a Developer key merging, and a Maintainer key, are untried. `docs/checks/23-gitlab-protection.md`
 
 ## 21. The designer's calls (the director may override)
 
-- the profile in a private repository that setup makes, holding backups and the enrolled keys (section 5.5);
-- the 150-word briefing limit, and two hours as the "gap" for a briefing;
-- the 200,000 and 300,000 compaction marks, and the guard giving up two minutes after its first block (section 10);
-- review round cap of three;
-- a two-week delegation review;
 - critical areas, named per project (section 3);
 - the rulebook wins over the project's other documents and `CLAUDE.md` (section 3);
 - personal settings changed only with consent on one setup card, replacing "left alone, with a checklist" (section 3);
+- the 150-word briefing limit, and two hours as the "gap" for a briefing (section 5.2);
+- the card lines a click must match, with commits named by 12 characters (sections 5.3 and 12.5);
+- the profile in a private repository that setup makes, holding backups and the enrolled keys (section 5.5);
+- a two-week delegation review (section 6);
+- review round cap of three (section 8);
+- the foreman in a second Desktop session by default on both systems (section 8);
 - state on its own branch, in a separate clone outside the project, one file per event, views built locally, a fast-forward lock with a fencing counter, a weekly backup (section 9);
 - approvals, confirmations and reviews signed by the hooks, and checked against enrolled keys (sections 9 and 12);
 - an existing project's rules confirmed once, with the director's original words where they exist (section 9);
+- a proposed ruling that a confirmed one has replaced shown as superseded (section 9);
 - usage measured from Claude Code's telemetry, unusual use raised at three times the median, a weekly model check (section 9.1);
 - models pinned by full ID, moving to a newer model at level 2 only after the evaluation passes, replacing aliases (sections 8 and 9.1);
+- the 200,000 and 300,000 compaction marks, and the guard giving up two minutes after its first block (section 10);
+- the give-up running once per episode, and the PreCompact guard only informing, so a crash lets a compaction through (section 10);
+- the state reload capped and kept within 8 seconds (section 10);
 - GitLab supported by the adapter (section 11);
 - the host helper as agents' only route to the host, its keys in a file under `~/.wheelhouse/` rather than the keychain; for the narrow connection, the Wheelhouse GitHub App's permissions, and GitLab project keys made by setup at Developer level, tried on every plan, with a pasted token only where GitLab refuses (section 11);
+- the quick connection clearing git's environment variables, so the director's `GIT_SSH_COMMAND` is not passed on (section 11);
+- merge queues not supported for now: a merge the host queues is taken back out and refused (section 11);
 - on GitLab, `main` protected with push "No one", merge "Developers + Maintainers" and no force-push, read back and shown to the director; "pipelines must succeed" only where the project has a pipeline, or after asking (sections 11 and 12.3);
+- what goes in Standard and in Locked, Locked's hooks limiting themselves to Locked projects, Locked's file holding the sandbox's limits but leaving the sandbox itself to the project, and not using the managed-hooks-only setting (section 12.1);
+- `allowUnsandboxedCommands: false` in Standard as well, and the project's settings switching off `disableAllHooks` and `enableAllProjectMcpServers` (section 12.1);
 - Locked requiring the narrow connection (section 12.1);
-- the foreman in a second Desktop session by default on both systems (section 8);
-- what goes in Standard and in Locked, Locked's hooks limiting themselves to Locked projects, Locked making the sandbox admin-required, and not using the managed-hooks-only setting (section 12.1);
+- Locked's network list covering every project registered on the computer, read from each main folder's working copy (section 12.1);
+- Locked running on its own copy of Node.js, handing over from the plugin's hooks by a marker, refusing to install under a device-management profile, and recording the plugin's root for the runbook (section 12.1);
+- the project's own settings and hooks shut to agents, and every platform's credential paths denied (section 12.2);
+- `.env.example` denied in commands too (section 12.2);
+- spend and deployment tools denied through package runners as well as bare (section 12.2);
+- the connector allowlist held by the tool guard, from `.claude/wheelhouse.json` (section 12.2);
+- the tool guard's reading of commands, and its accepted false refusals (section 12.2);
+- the merge gate's PreToolUse part being the tool guard's refusal of direct pushes and merges, with the conditions checked in the helper, which the caller can only raise (section 12.3);
+- bypass read from markers the hooks write (section 12.3);
+- hooks never running `git` in agents' folders (section 12.3);
+- guards failing closed, informing hooks staying silent when they fail, and every hook ending its own process (section 12.3);
 - approvals only from card clicks until the mod exists, and then also from messages the mod sees typed or sent from the phone (sections 12.3 and 17.1);
 - the guardrail files at level 4, including the critical areas' checks (section 12.4);
-- guardrail settings on `main` and everyday settings on the state branch (section 14.3);
-- STOP set by a hook or click, lifted only by the director (by a card click until the mod exists), with the runbook allowed through (section 12.7);
+- the configuration file `.claude/wheelhouse.json` and the guardrail patterns, matched without regard to case (section 12.4);
+- a change to CI files pushed only on the director's one click, with their own sign-in, except a runbook restore on GitLab (section 12.4);
+- STOP set by a hook, the helper or a click by anyone, lifted only by the director (by a card click until the mod exists), with the runbook allowed through (section 12.7);
+- what STOP covers, by the session's folder, with reading, TaskStop and KillShell let through and WebFetch left open (section 12.7);
+- the runbook's narrow allowance, its clicks used once, the director's own sign-in after step 2, and the restore as a pull request that STOP lets through (section 12.7);
 - telemetry keeping only session, model, kind, count and time (section 12.8);
-- needs-you items never relying on the phone alone (section 13);
 - 30 days for transcripts and 90 for telemetry summaries (section 12.8);
+- needs-you items never relying on the phone alone (section 13);
+- the settings, their levels and defaults (section 14);
+- guardrail settings on `main` and everyday settings on the state branch (section 14.3);
 - practice copies made per provider, test data otherwise (section 15);
 - keyless signing of releases, and a seven-day acknowledgement in the security policy (section 16);
 - the first public release proposed after two weeks of the pilot meeting its measures (section 17.2);
 - removing duplicate copies of skills once the plugins are confirmed (section 17.2);
-- evaluation runs in a throwaway copy, one trial first, and the targets (section 18);
-- the settings, their levels and defaults (section 14).
+- evaluation runs in a throwaway copy, one trial first, and the targets (section 18).
+
+Cards A and B of the safety plan, answered by the director, are in section 22.
 
 ## 22. Decided by the director
 
@@ -1043,6 +1131,8 @@ Answered on 17 October 2026:
 | The designer's calls from the checks | Kept: approvals by card click until the mod's first piece; lifting STOP by card click; nothing urgent relying on the phone alone; setup asking to allow Claude's notifications on the phone |
 | How Wheelhouse connects to GitHub and GitLab | Decided 18 October 2026, after research: two ways, chosen at setup. Quick uses the director's existing sign-in, with its risks shown plainly; narrow uses a Wheelhouse GitHub App, or a GitLab project key or token (section 11). "Offer a tier of using existing sign in … easy to set up, likely fine for most personal hobby vibe coders. But do warn implications" |
 | Which repositories the Wheelhouse GitHub App goes on (check 20) | Decided 18 October 2026: setup recommends installing it on chosen repositories, and each new project opens the app's settings page for one tick. **All repositories** stays available, but isn't the recommendation (section 11) |
+| Changes to CI files (card A of the safety plan) | Decided 18 October 2026: "One click from me." The helper never pushes a CI change with the connection's key; the agent drafts it, a card says what it changes, and the director's click pushes that commit with their own sign-in, except a restore on GitLab, which the project key pushes (section 12.4) |
+| What Locked changes on the Mac (card B of the safety plan) | Decided 18 October 2026: "Locked projects only." Locked's file holds the hooks, the deny rules safe everywhere and the sandbox's limits, but doesn't switch the sandbox on computer-wide; the director's other projects stay as they are (section 12.1) |
 | Read-only access to live data? | No. Agents only ever work on practice copies, with a fresh copy made on request to investigate a live problem (section 12.6) |
 | The licence | Apache 2.0 (section 16) |
 | What goes public | A fresh history, with the research kept and personal details and private paths removed (section 16) |

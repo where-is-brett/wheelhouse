@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
-import { git } from './git.js';
+import { git, sameRemote } from './git.js';
 
 export const LOCK_BRANCH = 'wheelhouse-lock';
 export const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
@@ -34,6 +34,9 @@ function clearHeld(project) {
 // (a free lock) when the remote has none. An existing folder is never cleared.
 async function ensureClone(project, env) {
   const dir = lockDir(project);
+  const origin = await git(stateDir(project), ['remote', 'get-url', 'origin'], env);
+  if (origin.code !== 0 || !origin.stdout.trim()) throw new Error('The project has no state clone to find the repository from');
+  const remoteUrl = origin.stdout.trim();
   if (fs.existsSync(path.join(dir, '.git'))) {
     const gitDir = path.join(dir, '.git');
     if (fs.existsSync(path.join(gitDir, 'rebase-merge')) || fs.existsSync(path.join(gitDir, 'rebase-apply'))) {
@@ -43,11 +46,12 @@ async function ensureClone(project, env) {
     if (branch.code !== 0 || branch.stdout.trim() !== LOCK_BRANCH) {
       throw new Error(`The folder ${dir} holds a clone that is not this project's lock branch, so it was left alone`);
     }
+    const lockOrigin = await git(dir, ['remote', 'get-url', 'origin'], env); // as the state clone's is read, so both see the same rewrites
+    if (lockOrigin.code !== 0 || !sameRemote(lockOrigin.stdout.trim(), remoteUrl)) {
+      throw new Error(`The folder ${dir} holds a lock clone whose remote is not the state clone's remote, so it was left alone`);
+    }
     return dir;
   }
-  const origin = await git(stateDir(project), ['remote', 'get-url', 'origin'], env);
-  if (origin.code !== 0 || !origin.stdout.trim()) throw new Error('The project has no state clone to find the repository from');
-  const remoteUrl = origin.stdout.trim();
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   const fail = (message) => {
@@ -67,30 +71,47 @@ async function ensureClone(project, env) {
   return dir;
 }
 
-// Fetches the lock branch. Returns false when the remote has none (a free lock);
-// throws a plain error when the remote cannot be reached.
+// Fetches the lock branch in one round trip to the host. Returns false when the remote
+// has none (a free lock); throws a plain error when the remote cannot be reached.
 async function fetchRemote(dir, env) {
-  const listed = await git(dir, ['ls-remote', '--heads', 'origin', LOCK_BRANCH], env);
-  if (listed.code !== 0) throw new Error('The lock repository could not be reached');
-  if (!listed.stdout.trim()) {
+  const fetched = await git(dir, ['fetch', 'origin', `+refs/heads/${LOCK_BRANCH}:${REMOTE_REF}`], { ...env, LC_ALL: 'C', LANG: 'C' });
+  if (fetched.code === 0) return true;
+  if (/couldn't find remote ref/i.test(fetched.stderr)) {
     await git(dir, ['update-ref', '-d', REMOTE_REF], env);
     return false;
   }
-  const fetched = await git(dir, ['fetch', 'origin', `+refs/heads/${LOCK_BRANCH}:${REMOTE_REF}`], env);
-  if (fetched.code !== 0) throw new Error('The lock branch could not be fetched');
-  return true;
+  throw new Error('The lock repository could not be reached');
 }
 
+const cannotRead = () => new Error('the lock can\'t be read');
+
+// Only a lock that is whole counts; any other is refused, never taken for a free one.
+function checkLock(lock) {
+  const ok = lock !== null && typeof lock === 'object' && !Array.isArray(lock)
+    && typeof lock.computer === 'string' && lock.computer !== ''
+    && Number.isInteger(lock.counter) && lock.counter >= 1
+    && typeof lock.takenAt === 'string' && Number.isFinite(Date.parse(lock.takenAt))
+    && typeof lock.lastWriteAt === 'string' && Number.isFinite(Date.parse(lock.lastWriteAt));
+  if (!ok) throw cannotRead();
+  return lock;
+}
+
+// The lock on the fetched branch: null when the branch has no lock.json (a free lock);
+// throws "the lock can't be read" when there is one that cannot be read or is not whole.
 async function readRemoteLock(dir, present, env) {
   if (!present) return null;
+  const listed = await git(dir, ['ls-tree', '--name-only', REMOTE_REF, '--', 'lock.json'], env);
+  if (listed.code !== 0) throw cannotRead();
+  if (!listed.stdout.trim()) return null;
   const shown = await git(dir, ['show', `${REMOTE_REF}:lock.json`], env);
-  if (shown.code !== 0) return null;
+  if (shown.code !== 0) throw cannotRead();
+  let lock;
   try {
-    const lock = JSON.parse(shown.stdout);
-    return lock && typeof lock === 'object' ? lock : null;
+    lock = JSON.parse(shown.stdout);
   } catch {
-    return null;
+    throw cannotRead();
   }
+  return checkLock(lock);
 }
 
 // Puts the local lock branch level with the fetched remote, or empties it when the remote has none.

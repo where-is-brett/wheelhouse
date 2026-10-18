@@ -7,10 +7,11 @@ import path from 'node:path';
 import {
   wheelhouseHome, computerId, stateDir, keysDir, profileDir, helperAddress, projectSlug,
 } from '../../../scripts/lib/paths.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 // Runs fn with WHEELHOUSE_HOME pointing at a fresh temporary folder.
 function withHome(name, fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-paths-')), name);
+  const home = path.join(tempFolder('wh-paths-'), name);
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {

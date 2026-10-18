@@ -88,7 +88,7 @@ test('renewKeys exchanges the renewal key with the client ID alone, never a secr
   assert.equal(calls[0].url, 'https://github.com/login/oauth/access_token');
   assert.deepEqual(calls[0].form, { client_id: 'Iv1.abc', grant_type: 'refresh_token', refresh_token: 'ghr_OLD' });
 
-  await renewKeys({ clientId: 'Iv1.abc', clientSecret: 'shh', refreshToken: 'ghr_OLD', fetch, now });
+  await renewKeys({ clientId: 'Iv1.abc', refreshToken: 'ghr_OLD', fetch, now });
   assert.deepEqual(calls[1].form, { client_id: 'Iv1.abc', grant_type: 'refresh_token', refresh_token: 'ghr_OLD' });
 });
 
@@ -98,7 +98,7 @@ test('keys with expiry switched off come back with null expiries and no renewal 
   assert.deepEqual(keys, { accessToken: 'ghu_FOREVER', accessExpiresAt: null, refreshToken: null, refreshExpiresAt: null });
 });
 
-test('waitForSignIn waits five seconds when GitHub gave no interval', async () => {
+test('a missing interval waits five seconds, not none', async () => {
   for (const interval of [undefined, null, 0, NaN, 'x']) {
     const { fetch } = fakeFetch({ body: { error: 'authorization_pending' } }, { body: { error: 'slow_down' } }, { body: tokens });
     const sleeps = [];
@@ -107,7 +107,7 @@ test('waitForSignIn waits five seconds when GitHub gave no interval', async () =
   }
 });
 
-test('an answer that is not JSON, or is null, is named without quoting it', async () => {
+test('a reply that is not JSON, or null, is a plain refusal quoting nothing', async () => {
   const notJson = async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token g in "ghu_LEAKED"'); } });
   const nullBody = async () => ({ ok: true, status: 200, json: async () => null });
   for (const fetch of [notJson, nullBody]) {
@@ -132,12 +132,12 @@ test('no function puts a key in a thrown message', async () => {
     () => startDeviceSignIn({ clientId: 'Iv1.abc', fetch: fakeFetch({ status: 500, body: { message: leaky } }).fetch }),
     () => waitForSignIn({ clientId: 'Iv1.abc', deviceCode: 'dev123', interval: 5, fetch: fakeFetch({ status: 500, body: { access_token: leaky } }).fetch, sleep: async () => {} }),
     () => waitForSignIn({ clientId: 'Iv1.abc', deviceCode: 'dev123', interval: 5, fetch: fakeFetch({ body: { error: leaky } }).fetch, sleep: async () => {} }),
-    () => renewKeys({ clientId: 'Iv1.abc', clientSecret: 'shh', refreshToken: 'ghr_OLD', fetch: fakeFetch({ status: 500, body: { refresh_token: leaky } }).fetch }),
-    () => renewKeys({ clientId: 'Iv1.abc', clientSecret: 'shh', refreshToken: 'ghr_OLD', fetch: fakeFetch({ body: { error: leaky } }).fetch }),
+    () => renewKeys({ clientId: 'Iv1.abc', refreshToken: 'ghr_OLD', fetch: fakeFetch({ status: 500, body: { refresh_token: leaky } }).fetch }),
+    () => renewKeys({ clientId: 'Iv1.abc', refreshToken: 'ghr_OLD', fetch: fakeFetch({ body: { error: leaky } }).fetch }),
   ];
   for (const attempt of failures) {
     await assert.rejects(attempt(), (error) => {
-      assert.doesNotMatch(error.message, /LEAKED|shh|ghr_OLD/);
+      assert.doesNotMatch(error.message, /LEAKED|ghr_OLD/);
       return true;
     });
   }
@@ -146,4 +146,19 @@ test('no function puts a key in a thrown message', async () => {
 test('installUrl points at the install page for the app', () => {
   assert.equal(installUrl('wheelhouse-check-1a2b'), 'https://github.com/apps/wheelhouse-check-1a2b/installations/new');
   assert.throws(() => installUrl('../evil?x=1'), /app name/);
+});
+
+test('a refusal carries GitHub\'s short error code, and nothing else of its body', async () => {
+  const { fetch } = fakeFetch({ body: { error: 'bad_refresh_token', error_description: 'ghr_LEAKED' } }, { body: { error: 'Not A Code ghr_LEAKED' } });
+  await assert.rejects(renewKeys({ clientId: 'Iv1.abc', refreshToken: 'ghr_OLD', fetch, now }), (error) => {
+    assert.equal(error.code, 'bad_refresh_token');
+    assert.match(error.message, /bad_refresh_token/);
+    assert.doesNotMatch(error.message, /LEAKED/);
+    return true;
+  });
+  await assert.rejects(renewKeys({ clientId: 'Iv1.abc', refreshToken: 'ghr_OLD', fetch, now }), (error) => {
+    assert.equal(error.code, undefined);
+    assert.doesNotMatch(error.message, /LEAKED/);
+    return true;
+  });
 });

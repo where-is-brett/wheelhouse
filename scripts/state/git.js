@@ -1,4 +1,5 @@
 // scripts/state/git.js
+import path from 'node:path';
 import { run, withoutGitVars } from '../lib/run.js';
 
 // Every git call for the state and lock clones goes through here: no shell, a
@@ -15,3 +16,33 @@ export function git(dir, args, env = {}) {
     env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', ...env },
   });
 }
+
+const DEFAULT_PORT = { https: '443', http: '80', ssh: '22', git: '9418' };
+const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
+
+// A remote address reduced to what names the repository: for a host address, the
+// host and the owner/name path (host in lower case, no user, port, `.git` or
+// trailing slash, and the same whether it is written for ssh or https); for a local
+// path or a file:// address, the full path.
+export function remoteKey(url) {
+  const text = String(url ?? '').trim().replaceAll('\\', '/');
+  const bare = (p) => p.replace(/\/+$/, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+  const local = (p) => {
+    const full = bare(path.resolve(p));
+    return `path:${caseBlind ? full.toLowerCase() : full}`;
+  };
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/(?:[^/@]*@)?([^/:]*)(?::(\d*))?(\/.*)?$/.exec(text);
+  if (scheme) {
+    const kind = scheme[1].toLowerCase();
+    if (kind === 'file') return local(decodeURIComponent((scheme[4] ?? '/').replace(/^\/([A-Za-z]:)/, '$1')));
+    // The port stays unless it is the scheme's own default, so another port names another server.
+    const port = scheme[3] && DEFAULT_PORT[kind] !== scheme[3] ? `:${scheme[3]}` : '';
+    return `host:${scheme[2].toLowerCase()}${port}/${bare((scheme[4] ?? '').replace(/^\/+/, '')).toLowerCase()}`;
+  }
+  const scp = /^(?:[^/@\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
+  if (scp) return `host:${scp[1].toLowerCase()}/${bare(scp[2].replace(/^\/+/, '')).toLowerCase()}`;
+  return local(text);
+}
+
+// Whether two remote addresses name the same repository.
+export const sameRemote = (a, b) => remoteKey(a) === remoteKey(b);

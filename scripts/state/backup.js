@@ -15,9 +15,12 @@ export async function writeBackup({ project, now = () => new Date() }) {
   if (typeof project !== 'string' || /[\\/]/.test(project) || /^\.+$/.test(project)) throw new Error('A project folder name may not hold a path');
   const folder = path.join(profileDir(), 'backups', project);
   fs.mkdirSync(folder, { recursive: true });
-  const existing = () => fs.readdirSync(folder).filter((f) => NAME.test(f)).sort();
   const at = now();
-  const recent = existing().filter((f) => at.getTime() - Date.parse(`${f.slice(0, 10)}T00:00:00.000Z`) < WEEK_MS);
+  // A bundle dated after now (a clock set wrong once) counts for nothing: it neither
+  // holds back the backup nor takes one of the eight places.
+  const age = (f) => at.getTime() - Date.parse(`${f.slice(0, 10)}T00:00:00.000Z`);
+  const existing = () => fs.readdirSync(folder).filter((f) => NAME.test(f) && age(f) >= 0).sort();
+  const recent = existing().filter((f) => age(f) < WEEK_MS);
   if (recent.length) return path.join(folder, recent[recent.length - 1]);
 
   const file = path.join(folder, `${at.toISOString().slice(0, 10)}.bundle`);

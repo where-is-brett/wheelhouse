@@ -1,11 +1,9 @@
 // tests/scripts/host/connection.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { childEnv, installationCovers, renewalDue } from '../../../scripts/host/connection.js';
 import { readKey, writeKey } from '../../../scripts/host/keys.js';
+import { withHome } from '../../helpers/homes.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
 
 const NOW = new Date('2026-10-18T01:00:00.000Z');
@@ -13,18 +11,6 @@ const now = () => NOW;
 const at = (ms) => new Date(NOW.getTime() + ms).toISOString();
 const MINUTE = 60 * 1000;
 const DAY = 24 * 60 * MINUTE;
-
-async function withHome(fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-conn-')), 'home');
-  const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
-  try {
-    return await fn(home);
-  } finally {
-    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
-    else process.env.WHEELHOUSE_HOME = before;
-  }
-}
 
 // A fake fetch: records each request and answers from a queue.
 function fakeFetch(...answers) {
@@ -311,5 +297,75 @@ test('renewalDue uses the GitLab project key or pasted token expiry', async () =
 test('renewalDue is false for quick', async () => {
   await withHome(async () => {
     assert.deepEqual(renewalDue({ host: 'github', mode: 'quick', project: 'a/b' }, now), { due: false });
+  });
+});
+
+// --- Task 16: renewal edge cases and a GitLab served under a path ---
+
+test('a null renewal key or expiry is handled: the connection asks for a sign-in again', async () => {
+  await withHome(async () => {
+    writeKey('github-app', githubKeys({ accessExpiresAt: at(-MINUTE), refreshToken: null, refreshExpiresAt: null }));
+    await assert.rejects(childEnv(GITHUB, { fetch: noFetch, now }), /sign in to the Wheelhouse app again/);
+    writeKey('github-app', githubKeys({ accessExpiresAt: null, refreshToken: null, refreshExpiresAt: null }));
+    assert.equal((await childEnv(GITHUB, { fetch: noFetch, now })).GH_TOKEN, 'ghu_CURRENT');
+    assert.deepEqual(renewalDue(GITHUB, now), { due: false });
+    writeKey('github-app', githubKeys({ refreshExpiresAt: null }));
+    assert.deepEqual(renewalDue(GITHUB, now), { due: false });
+  });
+});
+
+test('a renewal reply without a new renewal key keeps the old one and raises the card', async () => {
+  await withHome(async () => {
+    const expiry = at(10 * DAY);
+    writeKey('github-app', githubKeys({ accessExpiresAt: at(-MINUTE), refreshExpiresAt: expiry }));
+    const { fetch } = fakeFetch({ body: { access_token: 'ghu_RENEWED', expires_in: 28800, token_type: 'bearer' } });
+    const env = await childEnv(GITHUB, { fetch, now });
+    assert.equal(env.GH_TOKEN, 'ghu_RENEWED');
+    const saved = readKey('github-app');
+    assert.equal(saved.refreshToken, 'ghr_CURRENT');
+    assert.equal(saved.refreshExpiresAt, expiry);
+    assert.equal(renewalDue(GITHUB, now).due, true, 'the board still raises the renewal card');
+  });
+});
+
+test('a malformed access-key expiry renews once, not every call', async () => {
+  await withHome(async () => {
+    for (const bad of ['soon', '', 12, {}]) {
+      writeKey('github-app', githubKeys({ accessExpiresAt: bad }));
+      const { fetch, calls } = fakeFetch({ body: renewed });
+      assert.equal((await childEnv(GITHUB, { fetch, now })).GH_TOKEN, 'ghu_RENEWED');
+      assert.equal((await childEnv(GITHUB, { fetch: noFetch, now })).GH_TOKEN, 'ghu_RENEWED');
+      assert.equal(calls.length, 1, String(bad));
+    }
+    // A reply that gives no expiry would leave the key as it is, with nothing malformed kept.
+    writeKey('github-app', githubKeys({ accessExpiresAt: 'soon' }));
+    const { fetch } = fakeFetch({ body: { access_token: 'ghu_RENEWED', token_type: 'bearer' } });
+    await childEnv(GITHUB, { fetch, now });
+    assert.equal(readKey('github-app').accessExpiresAt, null);
+    assert.equal((await childEnv(GITHUB, { fetch: noFetch, now })).GH_TOKEN, 'ghu_RENEWED');
+  });
+});
+
+test('the refusal code from GitHub reaches the answer', async () => {
+  await withHome(async () => {
+    writeKey('github-app', githubKeys({ accessExpiresAt: at(-MINUTE) }));
+    const { fetch } = fakeFetch({ body: { error: 'bad_refresh_token', error_description: 'ghr_LEAKED' } });
+    await assert.rejects(childEnv(GITHUB, { fetch, now }), (error) => {
+      assert.match(error.message, /renew/);
+      assert.match(error.message, /bad_refresh_token/);
+      assert.doesNotMatch(error.message, /LEAKED|CURRENT/);
+      return true;
+    });
+  });
+});
+
+test('GITLAB_HOST keeps a GitLab served under a path', async () => {
+  await withHome(async () => {
+    writeKey('gitlab-project-4242', { kind: 'project-key', token: 'glpat-PROJECTKEY', expiresAt: '2027-10-01' });
+    const env = await childEnv({ ...GITLAB, baseUrl: 'https://example.org:8443/gitlab/' }, { fetch: noFetch, now });
+    assert.equal(env.GITLAB_HOST, 'example.org:8443/gitlab');
+    assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://example.org:8443/gitlab/.extraheader');
+    const plain = await childEnv({ ...GITLAB, baseUrl: 'https://gitlab.com' }, { fetch: noFetch, now });
+    assert.equal(plain.GITLAB_HOST, 'gitlab.com');
   });
 });

@@ -2,22 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { readKey, writeKey } from '../../../scripts/host/keys.js';
+import { withHome } from '../../helpers/homes.js';
 import { keysDir } from '../../../scripts/lib/paths.js';
-
-function withHome(fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-keys-')), 'home');
-  const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
-  try {
-    return fn(home);
-  } finally {
-    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
-    else process.env.WHEELHOUSE_HOME = before;
-  }
-}
 
 test('writeKey keeps a key in keys/<name>.json and readKey reads it back', () => {
   withHome(() => {

@@ -4,7 +4,10 @@
 //                              the access key, the renewal key and their
 //                              expiries; never a client secret (check 20).
 //   gitlab-project-<id>.json   { kind: 'project-key' | 'pasted-token', token,
-//                              expiresAt } for one GitLab project (check 22).
+//                              expiresAt, id? } for one GitLab project (check 22);
+//                              id is the token's own number, kept when the key is
+//                              made (makeProjectKey returns it) so the runbook can
+//                              revoke it by number if GitLab refuses the self form.
 // Files are written with mode 0o600 where the system supports it; that is
 // tidiness, not protection (design section 12.6). Errors name the file, never
 // what is in it.
@@ -60,5 +63,15 @@ export function writeKey(name, value) {
   } catch {
     fs.rmSync(temp, { force: true });
     throw new Error(`Could not save the key file ${name}.json`);
+  }
+}
+
+// Removes the key kept under this name. A key that is not there is already gone.
+export function deleteKey(name) {
+  const file = fileFor(name);
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    throw new Error(`Could not remove the key file ${name}.json`);
   }
 }
