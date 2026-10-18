@@ -46,6 +46,7 @@
 //   (`npx wrangler@3 ...`) gets its own `@*` rule.
 import fs from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 
@@ -76,6 +77,19 @@ export function credentialRules() {
   return allCredentials().flatMap((c) => [`Read(~/${c})`, `Read(~/${c}/**)`]);
 }
 
+// The allow rules for feature sessions (build-loop design, section 11): one
+// `Bash(<command>:*)` for each of the configuration's build commands, so a
+// session nobody watches never waits on a prompt for them. A deny rule still
+// wins over any of them. `claude -p` does not apply allow rules from a
+// committed .claude/settings.json (check 25), so the watcher's Shape 1 starter
+// also passes these with --allowedTools.
+export function featureAllowRules(config) {
+  const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
+  if (!Array.isArray(commands)) throw new Error('The build commands are not a list');
+  for (const c of commands) if (!isBuildCommand(c)) throw new Error(`This build command can't be made into an allow rule: ${JSON.stringify(c)}`);
+  return unique(commands.map((c) => `Bash(${c}:*)`));
+}
+
 export function projectSettings(config) {
   const credentials = allCredentials();
   const deny = unique([
@@ -88,7 +102,7 @@ export function projectSettings(config) {
     ...RUNNERS.flatMap((r) => unique([...HOST_TOOLS, ...PACKAGE_NAMES]).flatMap((t) => [`Bash(${r} ${t}:*)`, `Bash(${r} ${t}@*)`])),
   ]);
   return {
-    permissions: { deny },
+    permissions: { allow: featureAllowRules(config), deny },
     sandbox: {
       enabled: true,
       allowUnsandboxedCommands: false,

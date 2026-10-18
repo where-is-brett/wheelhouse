@@ -6,8 +6,23 @@
 // The project's configuration is .claude/wheelhouse.json on the default branch:
 //   Config = { v: 1, criticalAreas: [{ name, paths: [glob], checks: [glob] }],
 //              ciFiles: [glob], mcpServers: [string], webDomains: [string],
-//              runbook?: { contain?: { describe: string, command: [string] } } }
+//              runbook?: { contain?: { describe: string, command: [string] } },
+//              routing?: { foreman, builder, reviewer, reviewerCritical, tester, mechanical },
+//              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2 }
 // Other keys are kept and ignored.
+//
+// The build loop's keys (build-loop design, section 11; main design, section 8),
+// filled in by readConfig when left out:
+//   - routing: each role's model name, or null for the command line's own
+//     default (the default for every role, so no model is ever named here).
+//     A name may not start with `-`, so it can never read as a flag. Other
+//     roles in the table are kept.
+//   - sessionMode: the explicit permission mode sessions start in, default
+//     `acceptEdits`. Bypass mode is refused.
+//   - buildCommands: the commands feature sessions may run without asking,
+//     each made into a `Bash(<command>:*)` rule; default `npm test`, `npm run`
+//     and `node`. Words of letters, digits and `._/@=-`, one space apart.
+//   - watcherShape: how the watcher wakes sessions (check 27), default 1.
 import { matchGlob } from './glob.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
@@ -22,8 +37,44 @@ const strings = (x) => Array.isArray(x) && x.every((s) => typeof s === 'string')
 // A glob with an empty segment (a leading, trailing or doubled `/`) would never match.
 const globs = (x) => strings(x) && x.every((s) => s !== '' && s.split('/').every((seg) => seg !== ''));
 
+export const ROLES = Object.freeze(['foreman', 'builder', 'reviewer', 'reviewerCritical', 'tester', 'mechanical']);
+// Claude Code's permission modes, less bypass.
+export const SESSION_MODES = Object.freeze(['acceptEdits', 'auto', 'default', 'dontAsk', 'plan']);
+export const DEFAULT_SESSION_MODE = 'acceptEdits';
+export const DEFAULT_BUILD_COMMANDS = Object.freeze(['npm test', 'npm run', 'node']);
+export const WATCHER_SHAPES = Object.freeze([1, 2]);
+
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]-]{0,127}$/;
+// Its first word starts with a letter or digit, so it never reads as a flag.
+const BUILD_COMMAND = /^[A-Za-z0-9][A-Za-z0-9._/@=-]*( [A-Za-z0-9._/@=-]+)*$/;
+
+export const isModelName = (m) => typeof m === 'string' && MODEL_NAME.test(m);
+const modelOk = (m) => m === null || isModelName(m);
+export const isBuildCommand = (c) => typeof c === 'string' && c.length <= 200 && BUILD_COMMAND.test(c);
+
 function emptyConfig() {
-  return { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  return withDefaults({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] });
+}
+
+// The build loop's keys, filled in where the configuration leaves them out.
+function withDefaults(c) {
+  const routing = Object.fromEntries(ROLES.map((role) => [role, null]));
+  for (const [role, model] of Object.entries(c.routing ?? {})) Object.defineProperty(routing, role, { value: model, enumerable: true, writable: true, configurable: true });
+  return {
+    ...c,
+    routing,
+    sessionMode: c.sessionMode ?? DEFAULT_SESSION_MODE,
+    buildCommands: c.buildCommands ?? [...DEFAULT_BUILD_COMMANDS],
+    watcherShape: c.watcherShape ?? 1,
+  };
+}
+
+function buildLoopOk(c) {
+  if (c.routing !== undefined && !(isObject(c.routing) && Object.values(c.routing).every(modelOk))) return false;
+  if (c.sessionMode !== undefined && !SESSION_MODES.includes(c.sessionMode)) return false;
+  if (c.buildCommands !== undefined && !(Array.isArray(c.buildCommands) && c.buildCommands.every(isBuildCommand))) return false;
+  if (c.watcherShape !== undefined && !WATCHER_SHAPES.includes(c.watcherShape)) return false;
+  return true;
 }
 
 function shapeOk(c) {
@@ -38,11 +89,11 @@ function shapeOk(c) {
     if (contain !== undefined && !(isObject(contain) && typeof contain.describe === 'string' && contain.describe !== '' && strings(contain.command)
       && contain.command.length > 0 && contain.command[0] !== '')) return false;
   }
-  return true;
+  return buildLoopOk(c);
 }
 
 // `null` (no file) is the empty configuration. Anything else must parse and fit
-// the shape, or this throws.
+// the shape, or this throws. Either way the build loop's keys are filled in.
 export function readConfig(text) {
   if (text === null) return emptyConfig();
   let parsed;
@@ -52,7 +103,7 @@ export function readConfig(text) {
     throw new Error(UNREADABLE);
   }
   if (!shapeOk(parsed)) throw new Error(UNREADABLE);
-  return parsed;
+  return withDefaults(parsed);
 }
 
 // Case is ignored: on macOS and Windows a file named .Claude/settings.json is
