@@ -651,11 +651,14 @@ test('the foreman recording a feature as building wakes that session to build', 
       featureEvent('ev-planned', { step: 'planned' }),
       featureEvent('ev-build', { step: 'building', slice: { n: 1, m: 2 } }),
       featureEvent('ev-paused', { step: 'paused' }),
+      // An amendment's hash, recorded at the feature's current step (ruling R85), is not a go-ahead.
+      featureEvent('ev-amended-hash', { step: 'building', brief: 'h' }),
     ],
   });
   const events = diff(observation(), next, { handled: new Set() });
   const builds = events.filter((e) => e.type === 'build');
-  assert.deepEqual(builds.map((e) => [e.work, e.id]), [['login-page', 'ev-build']], 'only building, with the state event\'s own id');
+  assert.deepEqual(builds.map((e) => [e.work, e.id]), [['login-page', 'ev-build']], 'only building with no brief, with the state event\'s own id');
+  assert.deepEqual(diff(observation(), observation({ events: [featureEvent('ev-h', { step: 'building', brief: 'h' })] })).filter((e) => e.type === 'build'), []);
   assert.deepEqual(builds[0].detail, { slice: { n: 1, m: 2 } });
 
   const routed = route(builds);
@@ -664,7 +667,7 @@ test('the foreman recording a feature as building wakes that session to build', 
   assert.deepEqual(routed.digest, []);
 
   // The foreman wrote it, so it is among the handled ids: it still reaches the session, and never the foreman.
-  const handled = route(diff(observation(), next, { handled: new Set(['ev-started', 'ev-planned', 'ev-build', 'ev-paused']) }));
+  const handled = route(diff(observation(), next, { handled: new Set(['ev-started', 'ev-planned', 'ev-build', 'ev-paused', 'ev-amended-hash']) }));
   assert.deepEqual(handled.features['login-page'].map((e) => e.id), ['ev-build']);
   assert.deepEqual(handled.foreman, []);
   assert.deepEqual(handled.digest.filter((e) => e.type === 'build'), []);

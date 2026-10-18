@@ -73,18 +73,20 @@ export function clashCheck({ files, running, hotFiles }) {
 const FEATURE_LANE = 'feature';
 // The lanes whose work needs no approval unless it is shown to the director first (rulings R60, R78).
 const STARTS_UNAPPROVED = ['quick', 'bug'];
+// The lanes with no plan, whose work builds as soon as it starts.
+const NO_PLAN = ['quick', 'bug'];
 // A report with one of these outcomes ends the work; a blocked one leaves it in the queue.
 const ENDED = ['merged', 'closed'];
 
 // Which work may take a building slot now. `work`, `features` and `reports` are the state views.
-// A slot is held by a feature that is building, or by quick work that has started (it has no plan,
-// so it builds at once). Work needs the director's approval to start unless it is quick or bug
+// A slot is held by a feature that is building, or by quick or bug work that has started (it has
+// no plan, so it builds at once). Work needs the director's approval to start unless it is quick or bug
 // work that is not shown to them first. `now` is accepted for the interface; the order never
 // reads the clock. With `fiveHourTight` nothing starts, and the newest slot-holding feature pauses.
 export function nextWork({ work, features, reports, now, fiveHourTight }) {
   const laneOf = (id) => work?.[id]?.work?.data?.lane;
   const stepOf = (id) => features?.[id]?.data?.step;
-  const holdsSlot = (id) => stepOf(id) === 'building' || (stepOf(id) === 'started' && laneOf(id) === 'quick');
+  const holdsSlot = (id) => stepOf(id) === 'building' || (stepOf(id) === 'started' && NO_PLAN.includes(laneOf(id)));
 
   const slots = Object.keys(features ?? {}).filter(holdsSlot);
   let building = slots.length;

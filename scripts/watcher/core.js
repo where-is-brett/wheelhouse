@@ -61,9 +61,13 @@
 // The two wakes around a plan (ruling R76). A feature's status phase arriving
 // at `ready-to-build` (from any other phase, from no status, or first seen
 // there) is `plan-ready` for the foreman, which checks the plan for clashes,
-// pace and dependencies. The foreman then records a `feature` event at step
-// `building`, which is `build` for that feature's session: only then does it
-// build. Each slice's plan in the feature lane goes the same way.
+// pace and dependencies. A status read as null between two reads at
+// `ready-to-build` raises it again: wakes are at least once (ruling R27). The
+// foreman then records a `feature` event at step `building` carrying no
+// `brief`, which is `build` for that feature's session: only then does it
+// build. Each slice's plan in the feature lane goes the same way. An event
+// carrying `brief` records an amendment's hash at the feature's current step
+// (ruling R85) and is never `build`.
 //
 // Work that starts with no approval (rulings R60 and R78): quick and bug work
 // that no one is shown first. Its plain `work` event is `work-ready`; any other
@@ -225,7 +229,7 @@ function stateEvents(next, out) {
     if (kind === 'work') {
       if (STARTS_UNAPPROVED.includes(data.lane) && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: data.lane } });
     } else if (kind === 'feature') {
-      if (data.step === 'building' && typeof data.work === 'string') out.push({ type: 'build', work: data.work, id, detail: { slice: data.slice ?? null } });
+      if (data.step === 'building' && data.brief === undefined && typeof data.work === 'string') out.push({ type: 'build', work: data.work, id, detail: { slice: data.slice ?? null } });
     } else if (kind === 'incident') {
       out.push({ type: 'incident', id, detail: { incident: data.id, what: data.what } });
     } else if (kind === 'action' && e.verified === true) {

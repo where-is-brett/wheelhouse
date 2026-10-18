@@ -69,6 +69,7 @@ const mkWork = (id, lane, n, extra = {}) => ({
   work: { key: id, id: `w-${id}`, at: T(n), data: { id, title: id, lane, visible: false, dependsOn: [], ...extra } },
   approved: lane !== 'quick',
 });
+const unapprovedBug = (id, n) => ({ ...mkWork(id, 'bug', n), approved: false });
 const worksOf = (...list) => Object.fromEntries(list.map((w) => [w.work.key, w]));
 const mkFeature = (id, step, n) => ({ key: id, id: `f-${id}-${n}`, at: T(n), data: { work: id, step } });
 const featuresOf = (...list) => Object.fromEntries(list.map((f) => [f.key, f]));
@@ -133,6 +134,19 @@ test('small and feature work never starts without an approval; quick work and bu
   // Approved, each starts in its turn.
   const approved = worksOf(mkWork('s2', 'small', 1), { ...mkWork('b-seen', 'bug', 2, { visible: true }), approved: true });
   assert.deepEqual(next({ work: approved }).start, ['s2', 'b-seen']);
+});
+
+test('a bug that has started holds a slot as quick work does: it has no plan, so it builds at once', () => {
+  const work = worksOf(
+    unapprovedBug('b1', 1), unapprovedBug('b2', 2), mkWork('s1', 'small', 3), mkWork('s2', 'small', 4),
+  );
+  // Two bugs started and one feature building fill the three slots.
+  const found = next({ work: { ...work, ...worksOf(mkWork('f1', 'feature', 0)) }, features: featuresOf(mkFeature('b1', 'started', 5), mkFeature('b2', 'started', 6), mkFeature('f1', 'building', 7)) });
+  assert.deepEqual(found.start, []);
+  assert.deepEqual(found.hold, [{ work: 's1', why: 'pace' }, { work: 's2', why: 'pace' }]);
+  // Under five-hour pressure a started bug can be the one to pause.
+  const tight = next({ work, features: featuresOf(mkFeature('s1', 'building', 5), mkFeature('b1', 'started', 9)), fiveHourTight: true });
+  assert.deepEqual(tight.pause, ['b1']);
 });
 
 test('work whose dependencies have not merged waits', () => {

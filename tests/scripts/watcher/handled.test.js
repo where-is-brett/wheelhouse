@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { recordHandled, readHandled, handledFile, HANDLED_CAP } from '../../../scripts/watcher/handled.js';
+import { recordHandled, readHandled, handledFile, HANDLED_CAP, ID_MAX } from '../../../scripts/watcher/handled.js';
 import { LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
 import { withHome } from '../../helpers/homes.js';
 
@@ -31,6 +31,19 @@ test('the ids written are read back, each once', () => withHome(() => {
   assert.throws(() => recordHandled(P, ['ok', ''], { now: at(0) }), /handled/);
   assert.throws(() => recordHandled(P, [7], { now: at(0) }), /handled/);
   assert.throws(() => recordHandled(P, 'ev-1', { now: at(0) }), /handled/);
+}));
+
+test('an id longer than ID_MAX is refused, so a full list always fits the file\'s cap', () => withHome(() => {
+  assert.throws(() => recordHandled(P, ['x'.repeat(ID_MAX + 1)], { now: at(0) }), /handled/);
+  // A full list of the longest ids is written and read back whole.
+  const long = Array.from({ length: HANDLED_CAP }, (_, i) => `${String(i).padStart(6, '0')}${'x'.repeat(ID_MAX - 6)}`);
+  recordHandled(P, long, { now: at(0) });
+  assert.equal(readHandled(P, { now: at(0) }).size, HANDLED_CAP);
+  // One planted in the file past the cap is left out on reading, not the whole file.
+  const kept = JSON.parse(fs.readFileSync(handledFile(P), 'utf8'));
+  kept.entries.push({ id: 'y'.repeat(ID_MAX + 1), at: new Date(T0).toISOString() });
+  fs.writeFileSync(handledFile(P), JSON.stringify(kept));
+  assert.equal(readHandled(P, { now: at(0) }).size, HANDLED_CAP);
 }));
 
 test('ids older than the look-back are dropped, and the list is bounded', () => withHome(() => {

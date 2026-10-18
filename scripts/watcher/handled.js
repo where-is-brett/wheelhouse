@@ -6,11 +6,19 @@
 // digest, not to a wake, so the foreman never wakes itself. A `build` the
 // foreman wrote still reaches its feature (core's `route`).
 //
+// The writer's order: record the id here before writing the state event it
+// names. The watcher reads `handled` after each observation, so in the other
+// order an observation in between could find the event and wake the foreman on
+// its own write. Writers run one at a time: there is no lock, and two at once
+// could lose one's ids.
+//
 // The file is written whole, to a temporary name renamed over the old one,
 // keeping only entries within the look-back (an older state event is never
-// sent, so its id is no longer needed) and at most HANDLED_CAP of them. A
-// file that is missing, damaged, too big or not a regular file reads as no
-// ids: the watcher must never stop on it.
+// sent, so its id is no longer needed) and at most HANDLED_CAP of them. An id
+// is at most ID_MAX characters, so a full list always fits under the size a
+// reading accepts. A file that is missing, damaged, too big or not a regular
+// file reads as no ids, and an entry that is not right is left out: the
+// watcher must never stop on it.
 import path from 'node:path';
 import { SEEN_CAP } from './core.js';
 import { LOOKBACK_MS } from './sources.js';
@@ -19,10 +27,13 @@ import { readCapped } from '../feature/status.js';
 
 // How many handled ids are kept: as many as the cursor's seen list.
 export const HANDLED_CAP = SEEN_CAP;
+// The longest id kept. HANDLED_CAP entries of this length, with their times,
+// come to about 1.3 MB, under HANDLED_BYTES.
+export const ID_MAX = 200;
 const HANDLED_BYTES = 2 * 1024 * 1024;
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const isId = (x) => typeof x === 'string' && x !== '' && !/[\r\n]/.test(x);
+const isId = (x) => typeof x === 'string' && x !== '' && x.length <= ID_MAX && !/[\r\n]/.test(x);
 
 export function handledFile(project) {
   return path.join(watcherDir(project), 'handled.json');
@@ -60,11 +71,11 @@ export function readHandled(project, { now = () => new Date() } = {}) {
   }
 }
 
-// Adds `ids` to the file, each at `now`; an id already there moves to its
+// Adds `ids` to the file, each at `now`, before their state events are written; an id already there moves to its
 // latest time. Throws when the ids are not a list of ids, or the file can't be
 // written (a link or folder in its place, or in the watcher folder's).
 export function recordHandled(project, ids, { now = () => new Date() } = {}) {
-  if (!Array.isArray(ids) || !ids.every(isId)) throw new Error('The handled ids are a list of event ids');
+  if (!Array.isArray(ids) || !ids.every(isId)) throw new Error(`The handled ids are a list of event ids, each at most ${ID_MAX} characters`);
   const t = now();
   const at = t.toISOString();
   const fresh = new Set(ids);
