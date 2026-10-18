@@ -8,6 +8,7 @@ import { Readable } from 'node:stream';
 import fs from 'node:fs';
 import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir } from './kit.js';
 import { words } from './shell-words.js';
+import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 
@@ -44,8 +45,6 @@ function isRunbook(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/runbook/runbook.js');
   return args !== null && args.length > 0;
 }
-
-const QUESTION_ID = /^q-[a-z0-9-]+-[0-9]+$/;
 
 // A feature session's two commands that only read and report: `answer <questionId>` and
 // `report`. `ask` and `open-pr` write, so they stay refused.

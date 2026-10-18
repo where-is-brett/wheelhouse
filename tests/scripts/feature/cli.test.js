@@ -218,13 +218,48 @@ test('open-pr opens against the default branch and keeps the number', async () =
   assert.equal(calls.length, 1);
 });
 
-test('open-pr with no report or session yet sends an empty body and no session, and a refusal keeps nothing', async () => {
+test('open-pr is refused while the report is missing or incomplete, and the host is never asked', async () => {
   const tree = feature();
   const p = featurePaths(tree);
   const calls = [];
+  const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
+  const open = () => openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] });
+
+  await assert.rejects(open(), (e) => e instanceof CliError && /report\.md is not there/.test(e.message) && !e.message.includes('\n'));
+
+  write(p.report, 'Shipped.\n');
+  await assert.rejects(open(), /json/);
+
+  const { tests, ...partial } = reportFields();
+  write(p.report, `${fence(partial)}\nShipped.\n`);
+  await assert.rejects(open(), /tests/);
+
+  // A ruling the report leaves out holds the pull request back too.
+  write(p.rulings, `${JSON.stringify('Ruling: use A')}\n`);
+  write(p.report, `${fence(reportFields())}\nShipped.\n`);
+  await assert.rejects(open(), /Ruling: use A/);
+
+  write(p.report, `${fence(reportFields({ rulings: ['Ruling: use A'] }))}\n${'word '.repeat(REPORT_WORDS + 5)}\n`);
+  await assert.rejects(open(), new RegExp(`${REPORT_WORDS}`));
+
+  assert.equal(calls.length, 0);
+  assert.equal(fs.existsSync(p.pr), false);
+
+  // Once the report passes, its text is the body.
+  write(p.report, `${fence(reportFields({ rulings: ['Ruling: use A'] }))}\n  Shipped it.  \n`);
+  assert.deepEqual(await open(), { number: 7, already: false });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body, 'Shipped it.');
+});
+
+test('open-pr sends no session when there is none, and a refusal or an odd answer keeps nothing', async () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  write(p.report, `${fence(reportFields())}\nShipped.\n`);
+  const calls = [];
   const refusing = { openPr: async (args) => { calls.push(args); return { ok: false, refused: 'STOP is on' }; } };
   await assert.rejects(openPr({ client: refusing, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), /STOP is on/);
-  assert.equal(calls[0].body, '');
+  assert.equal(calls[0].body, 'Shipped.');
   assert.equal('session' in calls[0], false);
   assert.equal(fs.existsSync(p.pr), false);
 
@@ -241,6 +276,21 @@ test('open-pr with no report or session yet sends an empty body and no session, 
   // A detached head has no branch to open from.
   write(path.join(tree, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
   await assert.rejects(openPr({ client: odd, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), /branch/);
+});
+
+test('report and open-pr read nothing from a feature folder that is a link to somewhere else', { skip: process.platform === 'win32' }, async () => {
+  const tree = feature();
+  const elsewhere = real(tempFolder('wh-cli-elsewhere-'));
+  write(path.join(elsewhere, 'report.md'), `${fence(reportFields())}\nShipped.\n`);
+  write(path.join(elsewhere, 'pr.json'), `${JSON.stringify({ pr: 5 })}\n`);
+  const dir = featurePaths(tree).dir;
+  fs.rmSync(dir, { recursive: true });
+  fs.symlinkSync(elsewhere, dir, 'dir');
+  assert.match(report({ worktree: tree }).missing[0], /real folder/);
+  const calls = [];
+  const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
+  await assert.rejects(openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), /real folder/);
+  assert.equal(calls.length, 0);
 });
 
 test('the project for a helper call comes from the folder, through a worktree under the checkout', async () => {

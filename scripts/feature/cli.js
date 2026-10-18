@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { QUESTION_KINDS, featurePaths, parseReport, readQuestions } from './files.js';
+import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions } from './files.js';
 import { readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES } from './status.js';
 import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
@@ -22,7 +22,7 @@ import { REPORT_WORDS } from '../lib/build-loop.js';
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-const QUESTION_ID = /^q-[a-z0-9-]+-[0-9]+$/;
+const FOLDER = "The feature's folder isn't a real folder inside this worktree";
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const QUESTIONS_BYTES = 8 * 1024 * 1024;
 const REPORT_BYTES = 1024 * 1024;
@@ -99,7 +99,7 @@ export function ask({ worktree, argv }) {
   if (!options.some((o) => o.label === recommendation)) throw new CliError(`--recommend must be the label of one option (${options.map((o) => o.label).join(', ')})`);
 
   const brief = readBriefOrSay(worktree);
-  if (!safeFeatureFolder(worktree)) throw new CliError("The feature's folder isn't a real folder inside this worktree");
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const p = featurePaths(worktree);
   const id = nextQuestionId(p.questions, brief.work);
   const question = { id, kind, what, why, options, recommendation, level: Number(levelText), ...(kind === 'extra-plan' ? { plan } : {}) };
@@ -159,8 +159,10 @@ function missingFields(text) {
 
 const quoted = (text) => (text.length > 100 ? `${text.slice(0, 97)}...` : text);
 
-// What report.md lacks, as `{ missing: [text] }`; empty when it is whole.
-export function report({ worktree }) {
+// What report.md lacks, as `{ missing: [text], body }`: nothing missing when it is whole, and then
+// `body` is its text after the fields.
+function inspect(worktree) {
+  if (!safeFeatureFolder(worktree)) return { missing: [FOLDER] };
   const p = featurePaths(worktree);
   const text = readCapped(p.report, REPORT_BYTES);
   if (text === null) return { missing: ['report.md is not there: write it in the feature folder'] };
@@ -196,7 +198,12 @@ export function report({ worktree }) {
       if (!reported.has(ruling.trim())) missing.push(`A ruling is missing from the report's rulings: ${quoted(ruling)}`);
     }
   }
-  return { missing };
+  return { missing, body: missing.length === 0 ? parsed.body.trim() : null };
+}
+
+// What report.md lacks, as `{ missing: [text] }`; empty when it is whole.
+export function report({ worktree }) {
+  return { missing: inspect(worktree).missing };
 }
 
 // --- open-pr ---
@@ -219,31 +226,23 @@ function keptSession(file) {
   }
 }
 
-// The report's text after its fields, or '' when there is no report yet.
-function reportBody(file) {
-  const text = readCapped(file, REPORT_BYTES);
-  if (text === null) return '';
-  try {
-    return parseReport(text).body.trim();
-  } catch {
-    return '';
-  }
-}
-
 // Opens the pull request from the worktree's branch against the default branch (the helper
 // takes a missing base for it) and keeps its number in pr.json. A pull request kept already is
-// not opened again.
+// not opened again. The report becomes the pull request's body, so nothing is opened until the
+// report passes the `report` check.
 export async function openPr({ client, project, worktree, argv }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const p = featurePaths(worktree);
   const already = keptPr(p.pr);
   if (already !== null) return { number: already, already: true };
   const head = branchOf(worktree);
   if (head === null) throw new CliError("This worktree isn't on a branch, so there is nothing to open a pull request from");
-  if (!safeFeatureFolder(worktree)) throw new CliError("The feature's folder isn't a real folder inside this worktree");
+  const checked = inspect(worktree);
+  if (checked.missing.length > 0) throw new CliError(`The pull request is not opened until the report passes. ${checked.missing.join(' ')}`);
   const session = keptSession(p.session);
-  const opened = await client.openPr({ project, head, title, body: reportBody(p.report), ...(session ? { session } : {}) });
+  const opened = await client.openPr({ project, head, title, body: checked.body, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
   if (!Number.isSafeInteger(number) || number < 1) throw new CliError('The host opened a pull request but gave no number for it');

@@ -192,8 +192,10 @@ export function writeStatus(file, status) {
 const QUESTION_KEYS = ['id', 'kind', 'what', 'why', 'options', 'recommendation', 'level', 'plan'];
 
 // `q-<work>-<n>`, the same id the state's question record carries.
+export const QUESTION_ID = /^q-([a-z0-9-]+)-[0-9]+$/;
+
 function isQuestionId(id) {
-  const m = typeof id === 'string' ? /^q-([a-z0-9-]+)-[0-9]+$/.exec(id) : null;
+  const m = typeof id === 'string' ? QUESTION_ID.exec(id) : null;
   return m !== null && SLUG.test(m[1]);
 }
 

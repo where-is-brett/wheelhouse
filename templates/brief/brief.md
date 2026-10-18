@@ -52,10 +52,11 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 
 # How to finish
 
-- When your work is built, checked and reviewed, open the pull request: `{{cli}} open-pr --title "<what the pull request does>"`. It goes up through the host helper on your own branch.
+- When your work is built, checked and reviewed, write your report to `{{featureDir}}/report.md`: a fenced json block, then at most {{reportWords}} words on what shipped, the tests, your assumptions and your concerns. Put every ruling from your Superpowers ledger in `rulings`. Then run `{{cli}} report`; it names anything missing, so put that right and run it again.
+- Once `report` passes, open the pull request: `{{cli}} open-pr --title "<what the pull request does>"`. The report becomes the pull request's body, and `open-pr` refuses until the report passes. It goes up through the host helper on your own branch.
 - Then the pull request is yours until it merges. When a wake tells you of red checks, review findings or a conflict, fix them, have each fix reviewed again, and push. You never merge it yourself: the foreman merges once the checks pass.
 - Do not offer a menu of choices and do not wait for a person to tell you what to do next.
-- At the end, write your report to `{{featureDir}}/report.md`: a fenced json block, then at most {{reportWords}} words on what shipped, the tests, your assumptions and your concerns. Put every ruling from your Superpowers ledger in `rulings`. Then run `{{cli}} report`.
+- At the feature's close, bring `report.md` up to date (the pull request's number in `pr`, the head commit, and anything that has changed since) and run `{{cli}} report` again.
 
 ```json
 { "v": 1, "work": "{{work}}", "status": "done", "pr": 1, "head": "<head commit>", "tests": "<what ran and the result>", "assumptions": [], "concerns": [], "rulings": [] }
