@@ -86,14 +86,14 @@ async function check(what, ok, detail) {
   await note(`check: ${what}`, { ok, detail });
 }
 
-// Set when a stop signal arrives. Once set, no new command starts except the undo's.
+// Set when a stop signal arrives. Once set, no new command starts except the
+// undo's own, which say so with { undo: true }.
 let stopping = false;
-let undoing = false;
 const inflight = new Set();
 
 // Runs a command and never throws: failures are results to record. The child
 // is tracked so a stop signal can wait for it to finish.
-function run(file, args, options = {}) {
+function run(file, args, options = {}, { track = true } = {}) {
   const started = Date.now();
   return new Promise((resolve) => {
     const child = execFile(file, args, { timeout: 300_000, maxBuffer: 20 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
@@ -110,14 +110,14 @@ function run(file, args, options = {}) {
         child,
       });
     });
-    if (!undoing) inflight.add(child);
+    if (track) inflight.add(child);
     child.finished = new Promise((done) => child.once('close', done));
   });
 }
 
 // The main flow calls this between steps: once a stop signal has arrived, it stops.
 function keepGoing() {
-  if (stopping && !undoing) throw new Error('stopped by a signal');
+  if (stopping) throw new Error('stopped by a signal');
 }
 
 function parseJson(text) {
@@ -134,9 +134,9 @@ function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
-async function claude(step, args, cwd) {
-  keepGoing();
-  const result = await run('claude', args, { cwd });
+async function claude(step, args, cwd, { undo = false } = {}) {
+  if (!undo) keepGoing();
+  const result = await run('claude', args, { cwd }, { track: !undo });
   await note(step, {
     command: `claude ${args.join(' ')}`,
     code: result.code,
@@ -220,14 +220,13 @@ async function attempt(what, work) {
 // The undo: runs once, from the end of the run or from Ctrl-C / a termination signal.
 function undo() {
   undoPromise ??= (async () => {
-    undoing = true;
     if (ownsMarketplace && project) {
       for (const id of PLUGIN_IDS) {
-        await claude(`uninstall ${id}`, ['plugin', 'uninstall', id, '--scope', 'project'], project.dir);
+        await claude(`uninstall ${id}`, ['plugin', 'uninstall', id, '--scope', 'project'], project.dir, { undo: true });
       }
-      await claude('remove marketplace (project scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME, '--scope', 'project'], project.dir);
+      await claude('remove marketplace (project scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME, '--scope', 'project'], project.dir, { undo: true });
       if ((readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME]) {
-        await claude('remove marketplace (every scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME], project.dir);
+        await claude('remove marketplace (every scope)', ['plugin', 'marketplace', 'remove', MARKETPLACE_NAME], project.dir, { undo: true });
       }
     }
     // Uninstall leaves the old version folders to age out; take away only the
@@ -256,8 +255,8 @@ function undo() {
       if (differences.length) {
         console.error(`These differ from the copies in ${backupDir}. Only the ones that differ are listed; nothing is copied back for you:`);
         for (const file of differences) {
-          const own = file === CLAUDE_STATE_FILE ? "  # Claude Code's own state: copy back only if you know the probe changed it" : '';
-          console.error(`  ${copyBackCommand(file)}${own}`);
+          if (file === CLAUDE_STATE_FILE) console.error("  Claude Code's own state, so copy it back only if you know the probe changed it:");
+          console.error(`  ${copyBackCommand(file)}`);
         }
       }
     });
@@ -272,6 +271,8 @@ function undo() {
   return undoPromise;
 }
 
+// Installed before anything is made: the undo cleans up whichever of the
+// scratch project and marketplace exist by then.
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, async () => {
     console.error(`\n${signal}: stopping, then undoing what this run added.`);
