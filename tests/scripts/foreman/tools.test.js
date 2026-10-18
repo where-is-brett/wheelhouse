@@ -94,3 +94,31 @@ test('a plugin root outside the allowed characters is refused', () => {
   }
   assert.doesNotThrow(() => foremanTools('D:/plugins/wheelhouse', { platform: 'win32' }));
 });
+
+test('a plugin root with accented or non-Latin letters, or a Windows short name, is taken', () => {
+  const roots = [
+    ['/Users/José/.claude/plugins/wheelhouse', 'darwin'],
+    ['/Users/Jose\u0301/.claude/plugins/wheelhouse', 'darwin'], // the accent as a combining mark
+    ['/home/Søren Ørsted/plugins/wheelhouse', 'linux'],
+    ['/home/田中/plugins/wheelhouse', 'linux'],
+    ['/home/Дмитрий/plugins/wheelhouse', 'linux'],
+    ['C:\\Users\\JOSE~1\\.claude\\plugins\\wheelhouse', 'win32'],
+    ['C:\\Users\\Zoë\\plugins\\wheelhouse', 'win32'],
+  ];
+  for (const [root, platform] of roots) {
+    const [, wake, act] = foremanTools(root, { platform });
+    const slashed = platform === 'win32' ? root.replaceAll('\\', '/') : root;
+    assert.equal(wake, `Bash(node '${slashed}/scripts/foreman/wake.js':*)`, root);
+    assert.equal(act, `Bash(node '${slashed}/scripts/foreman/act.js':*)`, root);
+  }
+  // The other refusals stand beside the letters now allowed.
+  for (const bad of ['/Users/José/a"b', "/Users/José/a'b", '/Users/田中/$HOME', '/Users/田中/(x)', '/Users/José/a,b', '/Users/José/%x%', '/Users/José/a b ', '/Users/José/*']) {
+    assert.throws(() => foremanTools(bad, { platform: 'darwin' }), /plugin/, bad);
+  }
+  for (const bad of ['C:\\Users\\JOSE~1\\a"b', 'C:\\Users\\Zoë\\a%b%', 'C:\\Users\\Zoë\\a(b)']) {
+    assert.throws(() => foremanTools(bad, { platform: 'win32' }), /plugin/, bad);
+  }
+  // Through claude.cmd, a short-name root passes as an argument.
+  const tools = foremanTools('C:\\Users\\JOSE~1\\plugins\\wheelhouse', { platform: 'win32' });
+  assert.doesNotThrow(() => invocation({ kind: 'cmd', file: 'C:\\npm\\claude.cmd' }, [], ['--allowedTools', ...tools], 'Wheelhouse foreman: handle x.json'));
+});

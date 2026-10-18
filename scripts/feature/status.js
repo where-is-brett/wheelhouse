@@ -225,7 +225,7 @@ export function loadFeature(worktree, { brief = readBrief(worktree), ledger } = 
 }
 
 // The plan's text, from a path inside the worktree only.
-function readPlan(worktree, plan) {
+export function readPlan(worktree, plan) {
   const file = path.resolve(worktree, plan);
   const rel = path.relative(worktree, file);
   if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
@@ -275,7 +275,7 @@ function readTasks(ledger) {
 // --- The other feature files ---
 
 // The pull request number open-pr kept in pr.json as `{ pr }`, or null.
-function readPr(worktree) {
+export function readPr(worktree) {
   try {
     const kept = JSON.parse(readCapped(featurePaths(worktree).pr, SMALL_BYTES) ?? 'null');
     return isPlain(kept) && Number.isSafeInteger(kept.pr) && kept.pr >= 1 ? kept.pr : null;

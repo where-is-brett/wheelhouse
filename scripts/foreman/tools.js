@@ -15,11 +15,14 @@
 // through.
 //
 // The plugin root is checked against an allow-list, as build commands are
-// (scripts/gate/guardrails.js): a full path of letters, digits and `._/@=-`,
+// (scripts/gate/guardrails.js): a full path of letters, digits and `._/@=~-`,
 // with single spaces between words, and on Windows a drive letter and its
-// colon in front. Nothing else can reach a rule: no quote, `$`, `%`, `*`,
-// comma or parenthesis, any of which could change what the command or the
-// rule means, or how --allowedTools is split.
+// colon in front. Letters and digits are any script's, with their combining
+// marks (a user folder may be `José` or `田中`), and `~` is there for a
+// Windows short name such as `JOSE~1`: none of them means anything to bash in
+// single quotes or to cmd.exe. Nothing else can reach a rule: no quote, `$`,
+// `%`, `*`, comma or parenthesis, any of which could change what the command
+// or the rule means, or how --allowedTools is split.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,7 +33,7 @@ const SCRIPTS = Object.freeze({ wake: 'scripts/foreman/wake.js', act: 'scripts/f
 
 // A full path in the allowed characters: each part after a slash is words of
 // those characters with single spaces between them.
-const ALLOWED_PATH = /^(\/[A-Za-z0-9._@=-]+( [A-Za-z0-9._@=-]+)*)+\/?$/;
+const ALLOWED_PATH = /^(\/[\p{L}\p{M}\p{N}._@=~-]+( [\p{L}\p{M}\p{N}._@=~-]+)*)+\/?$/u;
 
 // The plugin root as it is written in a command: on Windows, forward slashes
 // after its drive letter.

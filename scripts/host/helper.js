@@ -59,6 +59,8 @@ const NO_HARM = 'This project has defined no live harm to contain';
 const BACKUP_FILE = /^\d{4}-\d{2}-\d{2}\.bundle$/;
 const BACKUP_REF = 'refs/wheelhouse/backup';
 const EVENT_FILE = /^events\/\d{4}\/\d{2}\/[A-Za-z0-9._-]+\.json$/;
+// A version 4 UUID as crypto.randomUUID writes it.
+const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MOST_OUTPUT = 2000;
 const MOST_KEPT = 64 * 1024;
 // Text from git, gh or glab that says the sign-in is missing or refused.
@@ -842,11 +844,18 @@ export async function startHelper({
     ok: true, id: made.event.id, pushed: made.result.pushed, ...(made.result.refused ? { refused: made.result.refused } : {}),
   });
 
-  async function doWrite({ project, kind, data }, ctx) {
+  // A plain event, made here: its time and computer are the helper's. Its id is
+  // made here too, unless the caller made it (the foreman's act command does,
+  // to record the id as handled before the event exists, ruling R86): then it
+  // must be shaped as a random UUID and not one the state holds already.
+  async function doWrite({ project, kind, data, id }, ctx) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
-    const event = makeEvent({ kind, data, now });
+    if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
+    if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
+    const made = makeEvent({ kind, data, now });
+    const event = id === undefined ? made : { ...made, id };
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     return written({ event, result });
   }
