@@ -104,13 +104,55 @@ export function projectSettings(config) {
   };
 }
 
-// The socket's path names this computer's home folder, so it stays out of the
-// shared file.
-export function localSettings({ address }) {
-  return { sandbox: { network: { allowUnixSockets: [address] } } };
+// The command that runs the status line: the Node that is running this, and the script in the
+// plugin. Both paths are quoted, since either may hold spaces.
+export function statusLineCommand({ node, pluginRoot }) {
+  return `"${node}" "${path.join(pluginRoot, 'scripts', 'statusline.js')}"`;
 }
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Whether a status line is the one Wheelhouse sets: its command names scripts/statusline.js.
+function isOwnStatusLine(statusLine) {
+  return isObject(statusLine) && typeof statusLine.command === 'string'
+    && /scripts[\\/]statusline\.js/.test(statusLine.command);
+}
+
+// The status line in the director's own settings, or null: the user settings, the project's
+// shared settings, then this computer's local settings. A status line that names
+// scripts/statusline.js is Wheelhouse's own from an earlier setup, so it is not the director's.
+// A file that is missing or damaged names none.
+export function directorStatusLine({ claudeHome, projectDir }) {
+  const files = [
+    path.join(claudeHome, 'settings.json'),
+    path.join(projectDir, '.claude', 'settings.json'),
+    path.join(projectDir, '.claude', 'settings.local.json'),
+  ];
+  for (const file of files) {
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      continue;
+    }
+    const line = isObject(parsed) && Object.hasOwn(parsed, 'statusLine') ? parsed.statusLine : null;
+    if (line !== null && line !== undefined && !isOwnStatusLine(line)) return line;
+  }
+  return null;
+}
+
+// The socket's path names this computer's home folder, so it stays out of the
+// shared file. The status line is added only when `node` and `pluginRoot` are given and the
+// director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
+// stays and the share comes from the mod alone.
+export function localSettings({ address, node, pluginRoot, ownStatusLine = null }) {
+  const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
+  if (node && pluginRoot && !ownStatusLine) {
+    settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
+  }
+  return settings;
+}
+
 const own = (o, k) => Object.hasOwn(o, k);
 // A plain assignment would turn a `__proto__` key into the prototype.
 const set = (o, k, v) => Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true });

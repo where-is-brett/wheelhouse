@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { projectSettings, localSettings, mergeSettings, writeSettings, sandboxFlag } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, mergeSettings, writeSettings, sandboxFlag } from '../../../scripts/protection/settings.js';
+import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
@@ -140,4 +141,45 @@ test('mergeSettings looks at own keys only and keeps constructor and __proto__ a
   const ours = mergeSettings({}, { constructor: { name: 'y' } });
   assert.equal(Object.getOwnPropertyDescriptor(ours, 'constructor').value.name, 'y');
   assert.deepEqual(mergeSettings({ toString: ['a'] }, { toString: ['b'] }).toString, ['a', 'b']);
+});
+
+test('the local settings name the status line only when the director has none of their own', () => {
+  const address = '/h/.wheelhouse/helper.sock';
+  const base = { address, node: '/usr/local/bin/node', pluginRoot: '/plugins/wheelhouse' };
+  const command = '"/usr/local/bin/node" "/plugins/wheelhouse/scripts/statusline.js"';
+  assert.deepEqual(localSettings({ ...base, ownStatusLine: null }).statusLine, { type: 'command', command });
+  assert.deepEqual(localSettings(base).statusLine, { type: 'command', command });
+  assert.equal(localSettings({ ...base, ownStatusLine: { type: 'command', command: 'my-line.sh' } }).statusLine, undefined);
+  // Without a node and a plugin root there is nothing to name.
+  assert.equal(localSettings({ address }).statusLine, undefined);
+  // The socket stays as it was.
+  assert.deepEqual(localSettings(base).sandbox, { network: { allowUnixSockets: [address] } });
+});
+
+test('the director\'s own status line is found in their user, project or local settings, and Wheelhouse\'s own is not theirs', () => {
+  const root = tempFolder('wh-statusline-settings-');
+  const claudeHome = path.join(root, 'home', '.claude');
+  const project = path.join(root, 'project');
+  const put = (file, value) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
+  };
+  const find = () => directorStatusLine({ claudeHome, projectDir: project });
+  assert.equal(find(), null); // nothing there at all
+  put(path.join(claudeHome, 'settings.json'), '{not json');
+  assert.equal(find(), null); // damaged file
+  put(path.join(claudeHome, 'settings.json'), { model: 'x' });
+  assert.equal(find(), null);
+  put(path.join(project, '.claude', 'settings.local.json'), { statusLine: { type: 'command', command: '"/usr/bin/node" "/p/scripts/statusline.js"' } });
+  assert.equal(find(), null); // Wheelhouse's own, from an earlier setup
+  put(path.join(project, '.claude', 'settings.local.json'), { statusLine: { type: 'command', command: '"C:\\Program Files\\node.exe" "C:\\p\\scripts\\statusline.js"' } });
+  assert.equal(find(), null); // the same on Windows
+  put(path.join(project, '.claude', 'settings.local.json'), { statusLine: { type: 'command', command: 'theirs.sh' } });
+  assert.deepEqual(find(), { type: 'command', command: 'theirs.sh' });
+  fs.rmSync(path.join(project, '.claude', 'settings.local.json'));
+  put(path.join(project, '.claude', 'settings.json'), { statusLine: { type: 'command', command: 'project.sh' } });
+  assert.deepEqual(find(), { type: 'command', command: 'project.sh' });
+  fs.rmSync(path.join(project, '.claude', 'settings.json'));
+  put(path.join(claudeHome, 'settings.json'), { statusLine: { type: 'command', command: 'user.sh' } });
+  assert.deepEqual(find(), { type: 'command', command: 'user.sh' });
 });
