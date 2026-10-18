@@ -46,6 +46,10 @@
 //       hook would, so the watcher sees it move to the next slice or to done.
 //       When bringing it up to date made a new head, it stops there: the merge
 //       waits for CI on that commit, and the next merge-ready wakes the foreman.
+//       When all the gate lacks is a click of the director's (their approval of
+//       the head, or their push of an update that changes a CI file), it records
+//       a `gate-asks` event once for that click and commit, and waits: the
+//       watcher wakes the foreman once the click is on record (ruling R117).
 //   close <work>    records the report and closes the feature. Work that ended
 //       partial or blocked is put to the director (ruling R102), and it ends
 //       by saying to read the wake again: a slot or a dependency may be free.
@@ -810,6 +814,34 @@ function writeFeatureStatus(ctx, views, work, worktree) {
   return next;
 }
 
+const FULL_COMMIT = /^[0-9a-f]{40}$/;
+
+// The director's CI push the update-branch refusal names, when that is all it lacks, or null.
+function ciPushNeeded(answer) {
+  const c = answer.ciPush;
+  return isPlain(c) && typeof c.branch === 'string' && c.branch !== '' && typeof c.sha === 'string' && FULL_COMMIT.test(c.sha) ? c : null;
+}
+
+// The director's approval the merge refusal names, when it is the only condition unmet (one
+// reason, and the need names this pull request and a full commit), or null: anything else unmet
+// is put to the director as before.
+function approvalNeeded(answer, pr) {
+  const needs = answer.needs;
+  if (!isPlain(needs) || Object.keys(needs).length !== 1 || !Array.isArray(answer.reasons) || answer.reasons.length !== 1) return null;
+  const a = needs.approval;
+  return isPlain(a) && a.pr === pr && typeof a.commit === 'string' && FULL_COMMIT.test(a.commit) ? a : null;
+}
+
+// The gate waits for one click of the director's (ruling R117): a `gate-asks` record says which,
+// once per pull request, click and commit, for the card that asks for it; the watcher wakes the
+// foreman when the click is on record. Nothing is asked here.
+async function gateAsks(ctx, data, what) {
+  const recorded = stateEvents(ctx.project).some((e) => e.kind === 'gate-asks' && isPlain(e.data)
+    && e.data.pr === data.pr && e.data.ask === data.ask && e.data.sha === data.sha);
+  if (!recorded) await ctx.write('gate-asks', data);
+  ctx.say(`Pull request #${data.pr} for ${data.work} waits for the director's click on #${data.pr} at ${short(data.sha)}: ${what}. Nothing to do.`);
+}
+
 async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
@@ -843,6 +875,11 @@ async function merge(ctx, work, rest) {
   const halt = ctx.halt(views);
   if (halt !== null && !halt.fixes.includes(pr)) refuse(`Pull request #${pr} for ${work} can't merge while ${halt.why}: only an incident's fix merges. Nothing to do until it is over`);
   const updated = await ctx.client.updateBranch(number);
+  const ciPush = updated?.ok === false ? ciPushNeeded(updated) : null;
+  if (ciPush !== null) {
+    await gateAsks(ctx, { work, pr, ask: 'ci-push', sha: ciPush.sha, branch: ciPush.branch }, `their push of ${ciPush.branch}, which changes a CI file`);
+    return;
+  }
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
   // A new head needs CI on that exact commit before the gate lets it merge (design section 12).
   if (updated.updated === true) {
@@ -850,6 +887,11 @@ async function merge(ctx, work, rest) {
     return;
   }
   const merged = await ctx.client.merge(number);
+  const approval = merged?.ok === false ? approvalNeeded(merged, pr) : null;
+  if (approval !== null) {
+    await gateAsks(ctx, { work, pr, ask: 'approval', sha: approval.commit }, 'their approval of that commit');
+    return;
+  }
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
   const phase = markMerged();
   ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.`);

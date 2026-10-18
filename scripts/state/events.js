@@ -13,7 +13,7 @@ import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '.
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note',
-  'work', 'feature', 'question', 'report', 'incident', 'amendment',
+  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'gate-asks',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -98,7 +98,11 @@ const PLAIN_SHAPES = {
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
+  // The click the merge gate waits for (ruling R117): the director's approval of a pull request's
+  // head, or their CI push of the update merge `sha` to `branch`. Recorded by the foreman's merge.
+  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch'] },
 };
+const GATE_ASKS = ['approval', 'ci-push'];
 
 function checkPlain(kind, data) {
   const bad = (why) => { throw new Error(`A ${kind} event ${why}`); };
@@ -155,6 +159,13 @@ function checkPlain(kind, data) {
     slug('work');
     text('change');
     if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the changed document');
+  } else if (kind === 'gate-asks') {
+    slug('work');
+    if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');
+    if (!GATE_ASKS.includes(data.ask)) bad('needs ask to be approval or ci-push');
+    if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
+    if (data.ask === 'ci-push' && !isText(data.branch)) bad('needs the branch the CI push is for');
+    if (data.ask !== 'ci-push' && data.branch !== undefined) bad('has a branch it should not');
   }
 }
 
