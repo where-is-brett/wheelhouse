@@ -29,4 +29,10 @@ The answers to the checks in section 20 of the design, one note per check.
 | 21 | The quick connection on the Mac | Deferred | [21-gh-keychain.md](21-gh-keychain.md) |
 | 22 | GitLab project keys | Yes, with a change | [22-gitlab-keys.md](22-gitlab-keys.md) |
 | 23 | GitLab's protection of `main` | Partly | [23-gitlab-protection.md](23-gitlab-protection.md) |
-| 24 | The safety checks, live on the Mac | Yes, with three changes | [24-safety-live.md](24-safety-live.md) |
+| 24 | Pinning through Wheelhouse's marketplace | Yes | [24-pinning.md](24-pinning.md) |
+| 27 | Starting and waking sessions from a script | Deferred | [27-sessions.md](27-sessions.md) |
+| 25 | The override wins | Yes, for Superpowers' hand-offs | [25-override.md](25-override.md) |
+| 28 | Claude Code's update settings in Desktop | Deferred | [28-update-channel.md](28-update-channel.md) |
+| 29 | The hold | Partly | [29-hold.md](29-hold.md) |
+| 30 | The undo | Partly | [30-undo.md](30-undo.md) |
+| 31 | The safety checks tried live | Yes, with three changes | [31-safety-live.md](31-safety-live.md) |
