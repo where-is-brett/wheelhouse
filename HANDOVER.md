@@ -93,4 +93,4 @@ The director is a product owner, not a developer. They want their product built 
    - **The director decided on 18 October 2026:** build it now, alongside the build loop; and answer cards by reply code now (typed, or from the phone), keeping the codes beside the mod's card buttons once those come. Pushed for review on 18 October 2026; not yet approved to build.
    - **Agents can't read `~/.wheelhouse/`,** so the board, briefing and settings reach the front desk as a hook's context, never from a script it runs. Check 32 (no sitting) confirms the hook can answer a command, and that the mod's own commands run outside the sandbox; check 33 is a 10-minute Desktop sitting per computer.
    - **Its calls** are in its "Plan's calls" section, including Pace defaulting to 3 (the build-loop design's limit) rather than the main design's 2.
-6. **Next design round:** budget allocation (section 9.1), which the director asked for once usage could be read.
+6. **Backlog:** budget allocation (section 9.1), which the director asked for once usage could be read. The director put it in the backlog on 18 October 2026.
