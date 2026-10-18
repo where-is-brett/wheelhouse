@@ -8,13 +8,14 @@ import { readLock, takeLock, touchLock, holdsLock, heldCounter } from '../../../
 import { cloneState } from '../../../scripts/state/clone.js';
 import { run } from '../../../scripts/lib/run.js';
 import { makeBareRemote, push } from '../../helpers/git-fixture.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const HOUR = 3600000;
 
 function makeHome() {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-lk-')), 'Zoë home');
+  return path.join(tempFolder('wh-lk-'), 'Zoë home');
 }
 async function as(home, fn) {
   const before = process.env.WHEELHOUSE_HOME;
@@ -145,4 +146,98 @@ test('holdsLock fails closed when the remote cannot be reached', async () => {
   await as(a, () => takeLock({ project: 'o__p', push, now: at(0) }));
   remote.cleanup();
   await as(a, async () => assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), false));
+});
+
+// Puts a lock.json with this text on the remote's lock branch, as another computer's push would.
+async function plant(remote, text) {
+  const scratch = tempFolder('wh-plant-');
+  const id = ['-c', 'user.name=T', '-c', 'user.email=t@invalid'];
+  try {
+    await run('git', ['init', '-q'], { cwd: scratch });
+    await run('git', ['symbolic-ref', 'HEAD', 'refs/heads/wheelhouse-lock'], { cwd: scratch });
+    fs.writeFileSync(path.join(scratch, 'lock.json'), text);
+    await run('git', ['add', '--', 'lock.json'], { cwd: scratch });
+    await run('git', [...id, 'commit', '-q', '-m', 'plant'], { cwd: scratch });
+    await run('git', ['push', '-q', '-f', remote.url, 'wheelhouse-lock'], { cwd: scratch });
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+}
+
+test('an unreadable or malformed lock.json refuses the lock instead of counting it free', async () => {
+  for (const text of ['{ not json', '', 'null', '[]', '"x"', '7']) {
+    const remote = await makeBareRemote();
+    try {
+      const [a] = await setup(remote);
+      await plant(remote, text);
+      await as(a, async () => {
+        await assert.rejects(takeLock({ project: 'o__p', push, now: at(5 * HOUR) }), /the lock can't be read/);
+        assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), false);
+        const heads = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-lock']);
+        assert.equal(heads.stdout.trim(), 'plant', 'nothing was pushed over it');
+      });
+    } finally { remote.cleanup(); }
+  }
+});
+
+test('readLock checks the shape it returns', async () => {
+  const good = { computer: 'aaaaaaaa', counter: 3, takenAt: '2026-10-18T01:00:00.000Z', lastWriteAt: '2026-10-18T01:00:00.000Z' };
+  const bad = [
+    { ...good, computer: 5 }, { ...good, computer: '' }, { ...good, counter: '3' }, { ...good, counter: 1.5 }, { ...good, counter: -1 }, { ...good, counter: 0 }, { ...good, takenAt: 'yesterday' },
+    { ...good, takenAt: 1 }, { ...good, lastWriteAt: undefined }, { ...good, lastWriteAt: 'yesterday' }, {},
+  ];
+  for (const lock of bad) {
+    const remote = await makeBareRemote();
+    try {
+      const [a] = await setup(remote);
+      await plant(remote, JSON.stringify(lock));
+      await as(a, async () => {
+        await assert.rejects(readLock({ project: 'o__p' }), /the lock can't be read/, JSON.stringify(lock));
+      });
+    } finally { remote.cleanup(); }
+  }
+  const remote = await makeBareRemote();
+  try {
+    const [a] = await setup(remote);
+    await plant(remote, JSON.stringify(good));
+    await as(a, async () => assert.deepEqual(await readLock({ project: 'o__p' }), good));
+  } finally { remote.cleanup(); }
+});
+
+test('the lock clone\'s remote must be the state clone\'s', async () => {
+  const remote = await makeBareRemote();
+  const other = await makeBareRemote();
+  try {
+    const [a] = await setup(remote);
+    await as(a, async () => {
+      assert.equal(await readLock({ project: 'o__p' }), null);
+      const lockClone = path.join(a, 'projects', 'o__p', 'lock');
+      await run('git', ['remote', 'set-url', 'origin', other.url], { cwd: lockClone });
+      await assert.rejects(readLock({ project: 'o__p' }), /state clone/);
+      await assert.rejects(takeLock({ project: 'o__p', push, now: at(0) }), /state clone/);
+      assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), false);
+      // the same repository spelled another way is the same remote
+      await run('git', ['remote', 'set-url', 'origin', `file://${remote.url}`], { cwd: lockClone });
+      assert.equal(await readLock({ project: 'o__p' }), null);
+    });
+  } finally { remote.cleanup(); other.cleanup(); }
+});
+
+test('holdsLock makes one round trip to the host', async () => {
+  const remote = await makeBareRemote();
+  try {
+    const [a] = await setup(remote);
+    await as(a, async () => {
+      await takeLock({ project: 'o__p', push, now: at(0) });
+      const trips = async () => {
+        const trace = path.join(a, 'trace.txt');
+        fs.rmSync(trace, { force: true });
+        await holdsLock({ project: 'o__p', counter: 1, env: { GIT_TRACE: trace } });
+        const lines = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8').split('\n') : [];
+        return lines.filter((l) => /\bgit (fetch|ls-remote|pull|clone)\b/.test(l) && !/run_command|exec/.test(l)).length;
+      };
+      assert.equal(await trips(), 1);
+      // and the same when the remote has no lock branch
+      await run('git', ['--git-dir', remote.url, 'update-ref', '-d', 'refs/heads/wheelhouse-lock']);
+      assert.equal(await trips(), 1);
+    });
+  } finally { remote.cleanup(); }
 });

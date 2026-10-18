@@ -1,6 +1,14 @@
 // scripts/lib/run.js
 import { spawn } from 'node:child_process';
 
+// Ends a process and everything it started, on Windows, where killing the process
+// alone leaves its children running and holding the pipes.
+function taskkill(file, args) {
+  try {
+    spawn(file, args, { stdio: 'ignore', windowsHide: true, shell: false }).on('error', () => {}).unref();
+  } catch { /* the process may already be gone */ }
+}
+
 // The environment with every GIT_* variable taken out, so git run from inside
 // a hook or another git command does not pick up that command's repository,
 // config or settings.
@@ -11,13 +19,18 @@ export function withoutGitVars(env = process.env) {
 // Runs a program without a shell. `env` is merged over `baseEnv` (process.env
 // unless given); `input`, when given, is written to stdin and stdin is closed.
 // With `timeoutMs`, a program still running then is killed and the result
-// carries `timedOut: true`. Resolves with the exit code and the collected
+// carries `timedOut: true`; on Windows it is ended with `taskkill /pid <pid> /T /F`, which
+// takes its children too (`platform` and `killer` are for tests). A variable in `env`
+// whose value is undefined or null is removed from the environment. With `limit` (bytes), only about the newest `limit`
+// bytes of each stream are kept while it runs. Resolves with the exit code and the collected
 // output; rejects only if the program cannot be started.
-export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs } = {}) {
+export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill } = {}) {
   return new Promise((resolve, reject) => {
+    const merged = { ...baseEnv, ...env };
+    for (const name of Object.keys(merged)) if (merged[name] === undefined || merged[name] === null) delete merged[name];
     const child = spawn(file, args, {
       cwd,
-      env: { ...baseEnv, ...env },
+      env: merged,
       shell: false,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -31,6 +44,7 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
+        if (platform === 'win32' && Number.isInteger(child.pid)) killer('taskkill', ['/pid', String(child.pid), '/T', '/F']);
         child.kill('SIGKILL');
         // A grandchild may still hold the pipes open; stop waiting for them.
         child.stdout.destroy();
@@ -38,8 +52,17 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
         resolve({ code: 1, ...text(), timedOut: true });
       }, timeoutMs);
     }
-    child.stdout.on('data', (d) => out.push(d));
-    child.stderr.on('data', (d) => err.push(d));
+    const keep = (chunks) => {
+      let size = 0;
+      return (d) => {
+        chunks.push(d);
+        size += d.length;
+        // Drop whole old chunks while the rest still holds `limit` bytes.
+        while (Number.isFinite(limit) && chunks.length > 1 && size - chunks[0].length >= limit) size -= chunks.shift().length;
+      };
+    };
+    child.stdout.on('data', keep(out));
+    child.stderr.on('data', keep(err));
     child.on('error', (error) => {
       clearTimeout(timer);
       if (!settled) { settled = true; reject(error); }

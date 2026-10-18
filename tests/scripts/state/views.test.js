@@ -9,14 +9,16 @@ import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.
 import { listEvents, makeEvent, confirmationFor, eventHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-views-')), 'Zoë home');
+  const home = path.join(tempFolder('wh-views-'), 'Zoë home');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {
@@ -290,5 +292,74 @@ test('a setting is accepted by a confirmation of its own hash', async () => {
     assert.equal(build([s1, conf(2, s1)]).settings.quiet.value, true);
     const altered = { ...s1, data: { key: 'quiet', value: false } };
     assert.deepEqual(build([altered, conf(2, s1)]).settings, {});
+  });
+});
+
+test('a review with its sig removed does not count; a missing enrolled list counts nothing', async () => {
+  await withHome(() => {
+    const kept = ev('review', 1, { pr: 7, commit: 'a' });
+    const stripped = { ...ev('review', 2, { pr: 7, commit: 'b' }) };
+    delete stripped.sig;
+    const v = build([kept, stripped]);
+    assert.deepEqual(Object.keys(v.reviews['7']), ['a']);
+    for (const missing of [undefined, null]) {
+      const none = buildViews([kept, ev('approval', 3, { pr: 7, commit: 'a' })], missing, { now });
+      assert.deepEqual(none.reviews, {});
+      assert.deepEqual(none.approvals, {});
+    }
+  });
+});
+
+test('views are replaced all at once', async () => {
+  await withHome(async (home) => {
+    const dir = stateDir('o__p');
+    fs.mkdirSync(path.join(dir, 'events', '2026', '10'), { recursive: true });
+    const out = path.join(home, 'projects', 'o__p', 'views');
+    // an earlier build, a stale file in it, and the leftovers of a crashed one
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, 'stale.json'), '{}');
+    fs.mkdirSync(`${out}.new`, { recursive: true });
+    fs.writeFileSync(path.join(`${out}.new`, 'junk.json'), '{}');
+    fs.mkdirSync(`${out}.old`, { recursive: true });
+    await writeViews('o__p', { now });
+    const names = fs.readdirSync(out).sort();
+    assert.ok(!names.includes('stale.json'), 'the old folder was replaced whole');
+    assert.ok(!names.includes('junk.json'));
+    assert.equal(names.length, VIEW_NAMES.length);
+    assert.deepEqual(fs.readdirSync(path.dirname(out)).filter((n) => n.startsWith('views')), ['views']);
+    // a rename that fails puts the earlier views back
+    const before = fs.readFileSync(path.join(out, 'status.json'), 'utf8');
+    const real = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (to === out && from.endsWith('.new')) throw new Error('locked');
+      return real(from, to);
+    };
+    try {
+      await assert.rejects(writeViews('o__p', { now: () => new Date('2026-10-19T00:00:00.000Z') }), /locked/);
+    } finally {
+      fs.renameSync = real;
+    }
+    assert.equal(fs.readFileSync(path.join(out, 'status.json'), 'utf8'), before);
+  });
+});
+
+// --- final review ---
+
+test('a card-answer with no card id closes the card whose question it quotes', async () => {
+  await withHome(() => {
+    const asked = ev('card', 10, { title: 'Pick a size', question: 'Approve pull request #7 at commit abcdef123456?' });
+    const titled = ev('card', 11, { title: 'Pick a shape' });
+    const other = ev('card', 12, { title: 'Pick a sound', question: 'Which sound?' });
+    const answers = [
+      // The prompt record's shape: the question as shown, and the label clicked.
+      ev('card-answer', 20, { question: 'Approve pull request #7 at commit abcdef123456?', label: 'Approve' }),
+      ev('card-answer', 21, { question: 'Pick a shape', label: 'Round' }),
+      ev('card-answer', 22, { question: 'Something nobody asked', label: 'Yes' }),
+      // A card id wins over the question: this one names c002, whatever it quotes.
+      ev('card-answer', 23, { card: 'c002', question: 'Which sound?', label: 'Bell' }),
+    ];
+    const v = build([...base(), asked, titled, other, ...answers]);
+    assert.deepEqual(v.waiting.map((c) => c.id), [other.id]);
+    assert.equal(v.status.waitingCount, 1);
   });
 });

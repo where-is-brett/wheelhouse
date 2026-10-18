@@ -4,6 +4,7 @@
 // Developers (or Maintainers if asked), no force-push, and "pipelines must succeed" on the project.
 // Errors name the step and the HTTP status, never GitLab's message text.
 import { projectPath } from './gitlab-key.js';
+import { scrub } from './adapter.js';
 
 const NO_ONE = 0;
 const DEVELOPERS = 30;
@@ -22,6 +23,14 @@ function levels(list) {
     (one) => one.access_level_description ?? LEVEL_NAMES.get(one.access_level) ?? `level ${one.access_level}`,
   );
 }
+
+// What the GitLab client throws when the network fails, or what Node gives: said as "could not be
+// reached" and never quoted. Any other error is said as it is, with anything key-like hidden.
+const NETWORK_CODE = /^(?:ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|EPIPE|ENETUNREACH|EHOSTUNREACH|UND_ERR)/;
+const isNetworkError = (error) => error?.message === 'Could not reach GitLab'
+  || NETWORK_CODE.test(String(error?.code ?? '')) || NETWORK_CODE.test(String(error?.cause?.code ?? ''))
+  || error?.name === 'AbortError' || error?.name === 'TimeoutError';
+const saidAsItIs = (error, doing) => `${scrub(error instanceof Error ? error.message : '') || 'GitLab could not be asked'} (while ${doing})`;
 
 const onlyLevel = (list, level) => Array.isArray(list) && list.length === 1 && list[0].access_level === level;
 
@@ -67,10 +76,11 @@ export async function protectGitlabBranch({ api, projectId, branch, mergeAccess 
   const found = await api.get(branchPath(projectId, branch));
   if (found.status !== 200 && found.status !== 404) throw new Error(refusal(found.status, 'reading the branch protection'));
 
-  const already = found.status === 200
-    && onlyLevel(found.body?.push_access_levels, pushAccess)
-    && onlyLevel(found.body?.merge_access_levels, mergeAccess)
-    && found.body?.allow_force_push !== true;
+  const right = (read) => read.status === 200
+    && onlyLevel(read.body?.push_access_levels, pushAccess)
+    && onlyLevel(read.body?.merge_access_levels, mergeAccess)
+    && read.body?.allow_force_push !== true;
+  const already = right(found);
 
   if (!already) {
     const protectWith = (push, merge, force) => api.post(`${projectPath(projectId)}/protected_branches`, {
@@ -87,18 +97,36 @@ export async function protectGitlabBranch({ api, projectId, branch, mergeAccess 
       const removed = await api.delete(branchPath(projectId, branch));
       if (!succeeded(removed)) throw new Error(refusal(removed.status, 'removing the old branch protection'));
     }
-    // A dropped connection is handled like a refusal: the old protection is
-    // put back where there was one.
+    // A dropped connection is read back before anything is said: the change may
+    // have landed. If it did not, it is handled like a refusal, and the old
+    // protection is put back where there was one.
     let made;
+    let failure = null;
+    let readBack = true;
     try {
       made = await protectWith(pushAccess, mergeAccess, false);
-    } catch {
+    } catch (error) {
       made = { status: 0 };
+      failure = error;
+      try {
+        const back = await api.get(branchPath(projectId, branch));
+        if (back.status !== 200 && back.status !== 404) readBack = false;
+        else if (right(back)) made = { status: 200 };
+      } catch {
+        readBack = false;
+      }
+    }
+    // Neither the change nor the read-back got an answer: nothing is re-created, because the
+    // change may have landed, and a second one could undo it.
+    if (!succeeded(made) && made.status === 0 && !readBack) {
+      throw new Error('Wheelhouse can\'t tell whether the change landed: check the project\'s protected branches page (Settings, Repository, Protected branches)');
     }
     if (!succeeded(made)) {
-      const message = made.status === 0
-        ? 'GitLab could not be reached while asking it to protect the branch'
-        : refusal(made.status, 'asking GitLab to protect the branch');
+      const message = made.status !== 0
+        ? refusal(made.status, 'asking GitLab to protect the branch')
+        : isNetworkError(failure)
+          ? 'GitLab could not be reached while asking it to protect the branch'
+          : saidAsItIs(failure, 'asking GitLab to protect the branch');
       if (found.status !== 200) throw new Error(message);
       // The old protection is gone; put it back if it can be put back by role.
       const [oldPush, oldMerge] = [found.body?.push_access_levels, found.body?.merge_access_levels];
@@ -174,8 +202,12 @@ async function inspectGithub(gh, repo) {
   let available = info.private !== true;
   if (!available) {
     const owner = info.owner ?? {};
+    // The plan is the owner's. For a person it is readable only when the owner is the signed-in
+    // user; for anyone else it is not known, and the repository's own answer to rulesets decides.
     const planAnswer = await gh('GET', owner.type === 'Organization' ? `orgs/${owner.login}` : 'user');
-    const plan = planAnswer.status === 200 ? planAnswer.body?.plan?.name : undefined;
+    const theirs = planAnswer.status === 200 && (owner.type === 'Organization'
+      || String(planAnswer.body?.login ?? '').toLowerCase() === String(owner.login ?? '').toLowerCase());
+    const plan = theirs ? planAnswer.body?.plan?.name : undefined;
     if (typeof plan === 'string') {
       available = plan.toLowerCase() !== 'free';
     } else {
@@ -212,8 +244,18 @@ async function existingRulesets(gh, repo) {
 }
 
 const hasRules = (ruleset, wanted, forbidden = []) => {
-  const types = (ruleset?.rules ?? []).map((r) => r.type);
+  const rules = ruleset?.rules ?? [];
+  const types = rules.map((r) => r.type);
+  // A rule asking for checks but naming none asks for nothing.
+  const checksNamed = rules.filter((r) => r.type === 'required_status_checks')
+    .every((r) => (r.parameters?.required_status_checks ?? []).length > 0);
   return ruleset?.enforcement === 'active'
+    // GitHub shows bypass_actors only to callers who can write the ruleset: absent is unknown,
+    // not empty. And when it says whether this caller could bypass, the answer must be never.
+    && Array.isArray(ruleset.bypass_actors) && ruleset.bypass_actors.length === 0
+    && (ruleset.current_user_can_bypass === undefined || ruleset.current_user_can_bypass === 'never')
+    && (ruleset.conditions?.ref_name?.exclude ?? []).length === 0
+    && checksNamed
     && wanted.every((t) => types.includes(t))
     && forbidden.every((t) => !types.includes(t));
 };
@@ -248,7 +290,10 @@ async function githubStatus(gh, repo) {
 async function seenChecks(gh, repo, branch) {
   const [owner, name] = repo.split('/');
   const answer = await gh('POST', 'graphql', { query: CI_QUERY, variables: { owner, name, branch: ref(branch) } });
-  const nodes = must(answer, 'reading the checks')?.data?.repository?.ref?.target?.statusCheckRollup?.contexts?.nodes ?? [];
+  const reply = must(answer, 'reading the checks');
+  // A 200 can carry errors: that is not the absence of checks.
+  if ((Array.isArray(reply?.errors) && reply.errors.length > 0) || reply?.data == null) throw new Error('GitHub could not read the checks, so protection was not switched on');
+  const nodes = reply.data.repository?.ref?.target?.statusCheckRollup?.contexts?.nodes ?? [];
   return [...new Set(nodes.map((n) => n.name ?? n.context).filter((n) => typeof n === 'string' && n))];
 }
 
@@ -283,15 +328,19 @@ async function switchOnGithub(gh, repo) {
     if ((refused.status === 403 || refused.status === 404) && refused.upgrade) return { on: false, line: FREE_PLAN_LINE };
     throw new Error(ghFailure(refused.status, 'reading the rulesets'));
   }
+  let lost = false;
   for (const body of wanted) {
     const old = found[body.name];
     const answer = old
       ? await gh('PUT', `repos/${repo}/rulesets/${old.id}`, body)
       : await gh('POST', `repos/${repo}/rulesets`, body);
     if (answer.status === 403 && answer.upgrade) return { on: false, line: FREE_PLAN_LINE };
+    // No HTTP answer at all (a dropped connection): read back below before saying anything.
+    if (answer.status === 0) { lost = true; continue; }
     must(answer, 'asking GitHub to protect the branches');
   }
   const after = await githubStatus(gh, repo);
+  if (lost && !after.on) throw new Error('GitHub did not answer while asking it to protect the branches, and the protection is not in place');
   return { on: after.on, line: after.line };
 }
 

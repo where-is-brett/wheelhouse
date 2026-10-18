@@ -85,12 +85,18 @@ async function githubAccessKey({ fetch, now }) {
       fetch,
       now: () => new Date(timeOf(now)),
     });
-  } catch {
-    // The underlying message could name GitHub's reply; only the step is said.
-    throw new Error('Could not renew the GitHub access key: sign in to the Wheelhouse app again if this goes on');
+  } catch (error) {
+    // The underlying message could name GitHub's reply; only the step is said,
+    // and GitHub's own short error code when it gave one.
+    const code = typeof error?.code === 'string' && /^[a-z_]{1,40}$/.test(error.code) ? ` (${error.code})` : '';
+    throw new Error(`Could not renew the GitHub access key${code}: sign in to the Wheelhouse app again if this goes on`);
   }
   const { clientSecret, ...kept } = keys; // a client secret is never kept
-  writeKey('github-app', { ...kept, ...fresh });
+  // A reply that gives no new renewal key leaves the old one, and its expiry, in place.
+  const renewal = typeof fresh.refreshToken === 'string' && fresh.refreshToken !== ''
+    ? { refreshToken: fresh.refreshToken, refreshExpiresAt: fresh.refreshExpiresAt }
+    : {};
+  writeKey('github-app', { ...kept, accessToken: fresh.accessToken, accessExpiresAt: fresh.accessExpiresAt, ...renewal });
   return fresh.accessToken;
 }
 
@@ -105,14 +111,16 @@ export async function childEnv(connection, { fetch = globalThis.fetch, now = () 
     const key = await githubAccessKey({ fetch, now });
     return { GH_TOKEN: key, ...gitHeader(GITHUB_HEADER, 'x-access-token', key) };
   }
-  const base = new URL(checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com'));
+  const root = checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com');
+  const base = new URL(root);
   const { token } = gitlabKey(connection);
   return {
     GITLAB_TOKEN: token,
     // glab api takes no repository option, so the host is how a self-managed
     // GitLab is reached.
-    GITLAB_HOST: base.host,
-    ...gitHeader(`http.${base.origin}/.extraheader`, 'oauth2', token),
+    // A GitLab served under a path keeps it.
+    GITLAB_HOST: `${base.host}${base.pathname.replace(/\/+$/, '')}`,
+    ...gitHeader(`http.${root}/.extraheader`, 'oauth2', token),
   };
 }
 

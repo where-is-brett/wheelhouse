@@ -14,7 +14,11 @@ const PATTERNS = [
   { name: 'slack-token', re: new RegExp(`${START}xox[abprs]-[A-Za-z0-9-]{10,}`) },
   { name: 'stripe-live-key', re: new RegExp(`${START}[sr]k_live_[A-Za-z0-9]{16,}`) },
   { name: 'private-key-block', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
-  { name: 'database-url', re: /[a-z+]+:\/\/[^:\s/]+:[^@\s]+@/ },
+  // The scheme starts where no scheme character comes before, and neither the user nor the
+  // password may hold a slash, so a match never spans a path and the scan stays linear. The
+  // user may be empty (redis://:password@host). A raw `/` in a password is deliberately not
+  // matched: it is invalid in a URL, and leaving it out ends false positives on `host:port/path@v`.
+  { name: 'database-url', re: /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^:\s/@]*:[^@\s/]+@/i },
   { name: 'jwt', re: new RegExp(`${START}eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}`) },
 ];
 

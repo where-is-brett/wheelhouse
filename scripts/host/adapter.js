@@ -11,13 +11,24 @@ import { gitlabCommands } from './gitlab.js';
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
 
 // Text in a CLI's error output that could be a key: known key prefixes, an
-// Authorization header's value, and anything set as `token=...`.
+// Authorization header's value, and anything set as `token=...`. The value after `Bearer`,
+// or after `password=`, `token=`, `access_token=`, `private_token=` (and any name ending in
+// token, secret or password), is hidden whatever its letters. After the looser forms
+// (`Basic x`, `token x`, `password: x`) a value goes only when it is long enough and holds
+// a digit or punctuation, as keys do, so "token expired" or "Basic authentication" stays
+// readable.
 const KEY_LIKE = [
   /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+/g,
   /\bgl[a-z]{1,6}-[A-Za-z0-9_\-.]{8,}/g,
-  /\b(Bearer|Basic|token)\s+[A-Za-z0-9_\-.=+/]+/gi,
-  /\b([A-Za-z_]*(?:token|secret|password)[A-Za-z_]*\s*[=:]\s*)\S+/gi,
+  /\b(Bearer)\s+[A-Za-z0-9_\-.=+/]+/gi,
+  /\b([A-Za-z_]*(?:token|secret|password)[A-Za-z_]*\s*=\s*)\S+/gi,
+  /\b(Basic|token)\s+(?=[A-Za-z0-9_\-.=+/]*[0-9_\-.=+/])[A-Za-z0-9_\-.=+/]{8,}/gi,
+  /\b([A-Za-z_]*(?:token|secret|password)[A-Za-z_]*\s*:\s*)(?=\S*[0-9_\-.=+/])\S{6,}/gi,
 ];
+// Environment values that are settings, not keys: an address or a count. A short value is
+// not hidden either, so a variable such as `1` or `main` does not blank ordinary words.
+const NOT_SECRET = /^(?:GITLAB_HOST|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+)$/;
+const SHORTEST_SECRET = 8;
 const MOST_SHOWN = 500;
 
 // The address, and the number at its end, of the pull request, merge request or
@@ -32,18 +43,34 @@ function fromAddress(stdout, pattern) {
 // a CLI's output before it goes into an error or a refusal.
 export function scrub(text, env = {}) {
   let out = String(text ?? '');
-  for (const value of Object.values(env ?? {})) {
-    if (typeof value === 'string' && value.length >= 8) out = out.split(value).join('[hidden]');
+  for (const [name, value] of Object.entries(env ?? {})) {
+    if (typeof value === 'string' && value.length >= SHORTEST_SECRET && !NOT_SECRET.test(name)) out = out.split(value).join('[hidden]');
   }
   out = out
     .replace(KEY_LIKE[0], '[hidden]')
     .replace(KEY_LIKE[1], '[hidden]')
     .replace(KEY_LIKE[2], '$1 [hidden]')
     .replace(KEY_LIKE[3], '$1[hidden]')
+    .replace(KEY_LIKE[4], '$1 [hidden]')
+    .replace(KEY_LIKE[5], '$1[hidden]')
     .replace(/\s+/g, ' ')
     .trim();
   return out.length > MOST_SHOWN ? `${out.slice(0, MOST_SHOWN)}...` : out;
 }
+
+// What a refused merge says, in the adapter's own words: the host's text is read
+// to tell the kinds apart and is never repeated.
+function refusalOf(output, fallback) {
+  const text = String(output ?? '');
+  if (/head branch was modified|sha does not match|match-head-commit|head commit/i.test(text)) return 'the head of the pull request has moved since it was checked';
+  if (/conflict/i.test(text)) return 'the pull request has a merge conflict';
+  if (/status check|required check|checks? .*(?:fail|pending|expected|not pass)|pipeline|ci must|must succeed/i.test(text)) return 'the host\'s required checks have not passed';
+  if (/approving review|review.*required|not approved|needs? (?:an? )?approval/i.test(text)) return 'the host needs an approving review on the pull request';
+  if (/\b403\b|forbidden|not accessible|permission|you are not allowed|not authori[sz]ed|protected branch/i.test(text)) return 'this sign-in is not allowed to merge it';
+  return fallback;
+}
+
+const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
 function hostOf(remoteUrl) {
   const text = String(remoteUrl ?? '').trim();
@@ -111,7 +138,22 @@ export function makeAdapter({ host, repo, run, env }) {
       throw new Error(`${file} ${args.slice(0, 2).join(' ')} did not answer in JSON`);
     }
   }
-  const tools = { call, attempt, json, repo, fromAddress, reason: (output) => scrub(output, env) };
+  // After a merge command that exited 0: the state is read back. Merged is merged; open means
+  // the host queued the merge instead of making it, so it is taken back out of the queue and
+  // refused; anything else, or a state that cannot be read, is unknown and refused.
+  async function settle({ state, merged, open, takeBack }) {
+    let seen = null;
+    try { seen = await state(); } catch { /* unknown */ }
+    if (seen === merged) return { merged: true };
+    if (seen !== open) return { merged: false, reason: 'the host did not confirm that the pull request was merged, so it is treated as not merged: could not confirm' };
+    try {
+      await takeBack();
+    } catch {
+      return { merged: false, queued: true, reason: `${QUEUE_LINE}, and it could not be taken back out of the queue: take it out on the host` };
+    }
+    return { merged: false, queued: true, reason: QUEUE_LINE };
+  }
+  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf };
   const c = commands(tools);
 
   return {

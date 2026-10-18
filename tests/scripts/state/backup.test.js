@@ -8,10 +8,11 @@ import { writeBackup } from '../../../scripts/state/backup.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { run } from '../../../scripts/lib/run.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 test('writeBackup makes a bundle that git can verify, at most weekly, keeping eight', async () => {
   const remote = await makeBareRemote();
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-bk-')), 'Zoë home');
+  const home = path.join(tempFolder('wh-bk-'), 'Zoë home');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {
@@ -33,6 +34,25 @@ test('writeBackup makes a bundle that git can verify, at most weekly, keeping ei
     fs.writeFileSync(path.join(path.dirname(first), 'notes.txt'), 'keep');
     await writeBackup({ project: 'o__p', now: day(200) });
     assert.ok(fs.existsSync(path.join(path.dirname(first), 'notes.txt')));
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
+    remote.cleanup();
+  }
+});
+
+test('a bundle dated in the future does not stop the weekly backup', async () => {
+  const remote = await makeBareRemote();
+  const home = path.join(tempFolder('wh-bk-'), 'home');
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    const folder = path.join(home, 'profile', 'backups', 'o__p');
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, '2099-01-01.bundle'), 'not a bundle');
+    const made = await writeBackup({ project: 'o__p', now: () => new Date(Date.UTC(2026, 0, 1, 12)) });
+    assert.equal(path.basename(made), '2026-01-01.bundle');
+    assert.ok(fs.existsSync(path.join(folder, '2099-01-01.bundle')), 'the future file is left alone');
   } finally {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
     remote.cleanup();

@@ -10,10 +10,11 @@ import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/st
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { makeBareRemote, push } from '../../helpers/git-fixture.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 // Each "computer" is a home folder (with a space and an accent, to prove paths cope).
 async function withHome(fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ev-')), 'Zoë home');
+  const home = path.join(tempFolder('wh-ev-'), 'Zoë home');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {
@@ -194,7 +195,8 @@ test('an event committed while the push failed is pushed by the next sync', asyn
       assert.equal(r.refused, 'protected branch');
       const before = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-state']);
       assert.ok(!before.stdout.includes(event.id));
-      await syncState({ project: 'o__p', push });
+      assert.deepEqual(await syncState({ project: 'o__p', push: refusing }), { pulled: true, unpushed: 1 }, 'the commit is still the remote\'s to receive');
+      assert.deepEqual(await syncState({ project: 'o__p', push }), { pulled: true, unpushed: 0 });
       const after = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-state']);
       assert.ok(after.stdout.includes(event.id));
     });
@@ -253,6 +255,43 @@ test('an unreadable event file is refused, naming the file and leaving nothing c
       } finally { fs.readFileSync = real; }
       assert.equal(fs.existsSync(path.join(dir, eventPath(event))), false);
       assert.equal((await git(dir, ['status', '--porcelain'])).stdout.trim(), '');
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a review needs the pull request and the commit, and typed optional fields', async () => {
+  await withHome(async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const good = { pr: 3, commit: 'a'.repeat(40), verdict: 'FINDINGS', findings: 2, check: 'lint abc', claudeCode: '2.1.0', model: 'unknown' };
+    assert.ok(makeEvent({ kind: 'review', data: good }).sig);
+    for (const bad of [
+      { ...good, commit: 7 }, { ...good, pr: 0 }, { ...good, verdict: 3 },
+      { ...good, findings: -1 }, { ...good, model: 4 }, null,
+    ]) {
+      assert.throws(() => makeEvent({ kind: 'review', data: bad }), /review event/);
+    }
+  });
+});
+
+test('a failed commit leaves no empty month folder', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const hook = path.join(dir, '.git', 'hooks', 'pre-commit');
+      fs.mkdirSync(path.dirname(hook), { recursive: true });
+      fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const event = makeEvent({ kind: 'note', data: { text: 'plain' }, now: () => new Date('2031-03-04T05:06:07.000Z') });
+      await assert.rejects(writeEvent({ project: 'o__p', event, push }), /could not be committed/);
+      assert.equal(fs.existsSync(path.join(dir, 'events', '2031')), false, 'the year and month folders are gone');
+      // an earlier month's folder, with an event in it, stays
+      fs.rmSync(hook);
+      const earlier = makeEvent({ kind: 'note', data: { text: 'first' }, now: () => new Date('2031-02-04T05:06:07.000Z') });
+      await writeEvent({ project: 'o__p', event: earlier, push });
+      fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      await assert.rejects(writeEvent({ project: 'o__p', event, push }), /could not be committed/);
+      assert.deepEqual(fs.readdirSync(path.join(dir, 'events', '2031')), ['02']);
     });
   } finally { remote.cleanup(); }
 });

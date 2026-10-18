@@ -7,12 +7,13 @@ import path from 'node:path';
 import { gateDecision } from '../../../scripts/gate/conditions.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
 const OLD = '1111111222222233333334444444555555566666';
 
 async function withHome(fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-gate-')), 'home');
+  const home = path.join(tempFolder('wh-gate-'), 'home');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {

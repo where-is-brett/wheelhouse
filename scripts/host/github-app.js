@@ -39,8 +39,10 @@ async function post({ url, fields, fetch, step }) {
 // GitHub reports most refusals as a 200 with an "error" code. Only a short
 // lowercase code is repeated; anything else is not.
 function refusal(body, step) {
-  const code = ERROR_CODE.test(body.error ?? '') ? body.error : 'unrecognised';
-  return new Error(`GitHub refused the ${step} (${code})`);
+  const known = typeof body.error === 'string' && ERROR_CODE.test(body.error);
+  const error = new Error(`GitHub refused the ${step} (${known ? body.error : 'unrecognised'})`);
+  if (known) error.code = body.error;
+  return error;
 }
 
 function plus(now, seconds) {

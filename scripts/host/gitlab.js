@@ -10,16 +10,16 @@
 //
 //   mergeable                                   -> yes
 //   unchecked, checking, preparing,
-//   approvals_syncing                           -> unknown (GitLab is still working it out)
+//   approvals_syncing, ci_still_running         -> unknown (not settled yet: not yes, not no)
 //   any other documented value, such as
 //   conflict, need_rebase, not_open, draft_status,
 //   discussions_not_resolved, ci_must_pass,
-//   ci_still_running, not_approved, blocked_status,
+//   not_approved, blocked_status,
 //   requested_changes, merge_time, ...          -> no (it cannot merge now)
 //   a value not listed here                     -> unknown, never yes
-const UNKNOWN = new Set(['unchecked', 'checking', 'preparing', 'approvals_syncing']);
+const UNKNOWN = new Set(['unchecked', 'checking', 'preparing', 'approvals_syncing', 'ci_still_running']);
 const CANNOT = new Set([
-  'blocked_status', 'broken_status', 'ci_must_pass', 'ci_still_running', 'commits_status', 'conflict',
+  'blocked_status', 'broken_status', 'ci_must_pass', 'commits_status', 'conflict',
   'discussions_not_resolved', 'draft_status', 'jira_association_missing', 'locked_lfs_files', 'locked_paths',
   'merge_request_blocked', 'merge_time', 'need_rebase', 'not_approved', 'not_open', 'requested_changes',
   'security_policy_violations', 'security_policy_pipeline_check', 'status_checks_must_pass', 'title_regex',
@@ -32,7 +32,8 @@ function mergeable(status) {
   return 'unknown';
 }
 
-const STATE = { opened: 'open', merged: 'merged', closed: 'closed', locked: 'closed' };
+// 'locked' (a merge in progress) and any state not listed are unknown, never closed.
+const STATE = { opened: 'open', merged: 'merged', closed: 'closed' };
 
 // The newest pipeline for the commit. A skipped pipeline ran nothing, so it
 // counts as none; anything not yet finished is pending.
@@ -47,10 +48,40 @@ const PIPELINE = {
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
 const ISSUE_ADDRESS = /(https?:\/\/\S+\/-\/(?:issues|work_items)\/(\d+))/;
 
-export function gitlabCommands({ call, attempt, json, repo, fromAddress, reason }) {
+export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle }) {
   const R = ['-R', repo];
   const project = `projects/${encodeURIComponent(repo)}`;
   const ask = async (args, input) => json(args, await call(args, input));
+
+  // A pipeline for merged results runs on a merge commit of the target and the head, so the
+  // `sha` filter does not find it. For each open merge request of the head, its own
+  // `head_pipeline` is used first, when it ran on the head or on a merged-results commit that
+  // has the head as a parent; failing that, the merge request's list of pipelines is searched
+  // the same way. Anything not found, or not readable, is 'none'.
+  const MERGE_REF = /^refs\/merge-requests\/\d+\/merge$/;
+  async function ranOnHead(pipeline, sha) {
+    if (typeof pipeline?.sha !== 'string') return false;
+    if (pipeline.sha === sha) return true;
+    if (typeof pipeline.ref !== 'string' || !MERGE_REF.test(pipeline.ref)) return false;
+    const commit = await ask(['api', `${project}/repository/commits/${pipeline.sha}`]);
+    return Array.isArray(commit?.parent_ids) && commit.parent_ids.includes(sha);
+  }
+  async function mergedResults(sha) {
+    try {
+      const requests = await ask(['api', `${project}/repository/commits/${sha}/merge_requests`]);
+      const open = (Array.isArray(requests) ? requests : []).filter((r) => r?.state === 'opened' && Number.isInteger(r.iid));
+      for (const request of open.slice(0, 5)) {
+        const full = await ask(['api', `${project}/merge_requests/${request.iid}`]);
+        if (await ranOnHead(full?.head_pipeline, sha)) return PIPELINE[full.head_pipeline.status] ?? 'pending';
+        const list = await ask(['api', `${project}/merge_requests/${request.iid}/pipelines?per_page=5`]);
+        for (const pipeline of (Array.isArray(list) ? list : []).filter((p) => MERGE_REF.test(String(p?.ref)))) {
+          if (await ranOnHead(pipeline, sha)) return PIPELINE[pipeline.status] ?? 'pending';
+          break; // the newest merged-results pipeline is the one that counts
+        }
+      }
+    } catch { /* not readable: no pipeline is claimed */ }
+    return 'none';
+  }
 
   return {
     async defaultBranch() {
@@ -75,13 +106,14 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, reason 
 
     async prState(number) {
       const mr = await ask(['mr', 'view', String(number), ...R, '--output', 'json']);
-      return { headSha: mr.sha, mergeable: mergeable(mr.detailed_merge_status), state: STATE[mr.state] ?? 'closed' };
+      return { headSha: mr.sha, ...(typeof mr.source_branch === 'string' ? { headRef: mr.source_branch } : {}), ...(typeof mr.target_branch === 'string' ? { baseRef: mr.target_branch } : {}), mergeable: mergeable(mr.detailed_merge_status), state: STATE[mr.state] ?? 'unknown' };
     },
 
     async ciState(sha) {
       const pipelines = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`]);
       const newest = Array.isArray(pipelines) ? pipelines[0] : undefined;
-      return { sha, state: newest ? (PIPELINE[newest.status] ?? 'pending') : 'none' };
+      if (newest) return { sha, state: PIPELINE[newest.status] ?? 'pending' };
+      return { sha, state: await mergedResults(sha) };
     },
 
     // --auto-merge=false: otherwise, with a pipeline running, glab queues the
@@ -89,8 +121,13 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, reason 
     // answer, not an error.
     async merge({ number, sha }) {
       const { code, stdout, stderr } = await attempt(['mr', 'merge', String(number), ...R, '--sha', sha, '--auto-merge=false', '--yes']);
-      if (code === 0) return { merged: true };
-      return { merged: false, reason: reason(stderr || stdout) || 'GitLab did not merge the merge request' };
+      if (code !== 0) return { merged: false, reason: refusal(`${stderr}\n${stdout}`, 'GitLab did not merge the merge request') };
+      return settle({
+        state: async () => (await ask(['mr', 'view', String(number), ...R, '--output', 'json'])).state,
+        merged: 'merged',
+        open: 'opened',
+        takeBack: () => call(['api', '--method', 'POST', `${project}/merge_requests/${number}/cancel_merge_when_pipeline_succeeds`]),
+      });
     },
 
     issue: {

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run, withoutGitVars } from '../../../scripts/lib/run.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 test('run returns code, stdout and stderr, and never uses a shell', async () => {
   const ok = await run(process.execPath, ['-e', 'console.log("a b")']);
@@ -39,7 +40,7 @@ test('run writes input to stdin and closes it', async () => {
 });
 
 test('run uses the given cwd', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-run-')));
+  const dir = fs.realpathSync(tempFolder('wh-run-'));
   assert.notEqual(dir, fs.realpathSync(process.cwd()));
   const r = await run(process.execPath, ['-e', 'console.log(process.cwd())'], { cwd: dir });
   assert.equal(r.stdout.trim(), dir);
@@ -65,4 +66,42 @@ test('run takes a base environment in place of process.env, and withoutGitVars d
   assert.deepEqual(base, { PATH: process.env.PATH, HOME: 'h' });
   const r = await run(process.execPath, ['-e', 'console.log(JSON.stringify([process.env.GIT_DIR ?? null, process.env.A]))'], { baseEnv: base, env: { A: 'b' } });
   assert.equal(r.stdout.trim(), '[null,"b"]');
+});
+
+test('run keeps at most about `limit` bytes of the newest output from each stream', async () => {
+  const code = 'process.stdout.write("a".repeat(500000)); process.stdout.write("END"); process.stderr.write("b".repeat(500000)); process.stderr.write("FIN")';
+  const capped = await run(process.execPath, ['-e', code], { limit: 64 * 1024 });
+  assert.ok(capped.stdout.length <= 128 * 1024 && capped.stdout.endsWith('END'));
+  assert.ok(capped.stderr.length <= 128 * 1024 && capped.stderr.endsWith('FIN'));
+  const whole = await run(process.execPath, ['-e', code]);
+  assert.equal(whole.stdout.length, 500003, 'with no limit everything is kept');
+});
+
+// ---- Task 16 ----
+
+test('run can unset a variable', async () => {
+  const show = ['-e', 'process.stdout.write(JSON.stringify([process.env.WH_SET, process.env.WH_OTHER ?? null]))'];
+  const kept = await run(process.execPath, show, { baseEnv: { ...process.env, WH_SET: 'from-base', WH_OTHER: 'x' }, env: { WH_OTHER: 'y' } });
+  assert.deepEqual(JSON.parse(kept.stdout), ['from-base', 'y']);
+  for (const gone of [undefined, null]) {
+    const result = await run(process.execPath, show, { baseEnv: { ...process.env, WH_SET: 'from-base' }, env: { WH_SET: gone } });
+    assert.deepEqual(JSON.parse(result.stdout), [null, null], 'unset, not the string "undefined"');
+  }
+});
+
+test('on Windows a timed-out command is killed with its children', async () => {
+  const sent = [];
+  const killer = (file, args) => { sent.push({ file, args }); };
+  const sleeper = ['-e', 'setInterval(() => {}, 1000)'];
+  const result = await run(process.execPath, sleeper, { timeoutMs: 100, platform: 'win32', killer });
+  assert.equal(result.timedOut, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].file, 'taskkill');
+  assert.deepEqual(sent[0].args.slice(0, 1), ['/pid']);
+  assert.match(sent[0].args[1], /^\d+$/);
+  assert.deepEqual(sent[0].args.slice(2), ['/T', '/F']);
+  // Anywhere else the child alone is killed, and no taskkill is run.
+  sent.length = 0;
+  await run(process.execPath, sleeper, { timeoutMs: 100, platform: 'linux', killer });
+  assert.deepEqual(sent, []);
 });

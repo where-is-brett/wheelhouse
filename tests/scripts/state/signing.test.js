@@ -2,22 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { makeSigningKey, sign, verify, readEnrolled, enrol } from '../../../scripts/state/signing.js';
 import { computerId, keysDir, profileDir } from '../../../scripts/lib/paths.js';
-
-function withHome(fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-sign-')), 'home');
-  const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
-  try {
-    return fn(home);
-  } finally {
-    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
-    else process.env.WHEELHOUSE_HOME = before;
-  }
-}
+import { withHome } from '../../helpers/homes.js';
 
 function enrolled() {
   const { computer, publicKey } = makeSigningKey();
@@ -129,5 +117,59 @@ test('enrol creates folders, keeps entries, and replaces the same computer', () 
       { computer: 'bbbbbbbb', publicKey: 'k2', enrolledAt: 't2' },
       { computer: 'aaaaaaaa', publicKey: 'k3', enrolledAt: 't3' },
     ]);
+  });
+});
+
+const enrolledPath = () => path.join(profileDir(), 'keys', 'enrolled.json');
+const entry = (computer) => ({ computer, publicKey: 'AAAA', enrolledAt: '2026-10-18T00:00:00.000Z' });
+
+test('enrol refuses to write when enrolled.json is damaged, and writes atomically', () => {
+  withHome(() => {
+    fs.mkdirSync(path.dirname(enrolledPath()), { recursive: true });
+    for (const damaged of ['{ not json', '{"computer":"aaaaaaaa"}', '[1, 2]', '[{"computer":"aaaaaaaa"}]', 'null']) {
+      fs.writeFileSync(enrolledPath(), damaged);
+      assert.throws(() => enrol(entry('bbbbbbbb')), /enrolled\.json/);
+      assert.equal(fs.readFileSync(enrolledPath(), 'utf8'), damaged, 'the damaged file was left as it was');
+    }
+    fs.rmSync(enrolledPath());
+    enrol(entry('aaaaaaaa'));
+    enrol(entry('bbbbbbbb'));
+    enrol(entry('aaaaaaaa'));
+    assert.deepEqual(readEnrolled().map((e) => e.computer).sort(), ['aaaaaaaa', 'bbbbbbbb']);
+    // a temporary file, then a rename: nothing else is left in the folder
+    assert.deepEqual(fs.readdirSync(path.dirname(enrolledPath())), ['enrolled.json']);
+    // a failed write leaves the earlier list whole
+    const before = fs.readFileSync(enrolledPath(), 'utf8');
+    const spy = fs.renameSync;
+    fs.renameSync = () => { throw new Error('disk full'); };
+    try {
+      assert.throws(() => enrol(entry('cccccccc')), /disk full/);
+    } finally {
+      fs.renameSync = spy;
+    }
+    assert.equal(fs.readFileSync(enrolledPath(), 'utf8'), before);
+    assert.deepEqual(fs.readdirSync(path.dirname(enrolledPath())), ['enrolled.json']);
+  });
+});
+
+test('enrol refuses an entry without a computer id and a public key', () => {
+  withHome(() => {
+    for (const bad of [undefined, null, {}, { computer: 'aaaaaaaa' }, { publicKey: 'AAAA' }, { computer: '', publicKey: 'AAAA' },
+      { computer: 'aaaaaaaa', publicKey: '' }, { computer: 5, publicKey: 'AAAA' }, { computer: 'aaaaaaaa', publicKey: 7 }]) {
+      assert.throws(() => enrol(bad), /computer/i);
+    }
+    assert.equal(fs.existsSync(enrolledPath()), false, 'nothing was written');
+  });
+});
+
+test('a record with its sig removed does not verify, and a missing enrolled list verifies nothing', () => {
+  withHome(() => {
+    const list = enrolled();
+    const record = sign({ kind: 'review', n: 1 });
+    const { sig, ...bare } = record; // eslint-disable-line no-unused-vars
+    assert.equal(verify(bare, list), false);
+    assert.equal(verify({ ...record, sig: undefined }, list), false);
+    for (const missing of [undefined, null, {}, 'x']) assert.equal(verify(record, missing), false);
+    assert.equal(verify(record, list), true);
   });
 });

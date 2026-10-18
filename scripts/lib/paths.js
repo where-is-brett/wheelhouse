@@ -74,6 +74,11 @@ export function stopFile() {
   return path.join(wheelhouseHome(), 'STOP');
 }
 
+// One marker file per session in bypass mode, named by the session's ID.
+export function bypassDir() {
+  return path.join(wheelhouseHome(), 'bypass');
+}
+
 // The helper's socket file, or on Windows its named pipe.
 export function helperAddress({ platform = process.platform, user = os.userInfo().username } = {}) {
   if (platform === 'win32') {

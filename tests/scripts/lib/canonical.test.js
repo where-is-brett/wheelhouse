@@ -19,3 +19,16 @@ test('canonicalJson refuses undefined, functions and non-finite numbers', () => 
   assert.throws(() => canonicalJson({ a: Infinity }));
   assert.throws(() => canonicalJson({ a: -Infinity }));
 });
+
+test('canonicalJson refuses Date, Map, Set and sparse arrays', () => {
+  assert.throws(() => canonicalJson(new Date(0)));
+  assert.throws(() => canonicalJson({ at: new Date(0) }));
+  assert.throws(() => canonicalJson(new Map([['a', 1]])));
+  assert.throws(() => canonicalJson(new Set([1])));
+  // eslint-disable-next-line no-sparse-arrays
+  assert.throws(() => canonicalJson([1, , 3]));
+  assert.throws(() => canonicalJson(new Array(2)));
+  assert.throws(() => canonicalJson([1, undefined]));
+  assert.throws(() => canonicalJson({ a: 1n }));
+  assert.equal(canonicalJson(Object.create(null)), '{}');
+});

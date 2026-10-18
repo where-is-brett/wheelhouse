@@ -6,7 +6,7 @@
 import http from 'node:http';
 import { helperAddress } from '../lib/paths.js';
 
-function ask(address, method, path, body) {
+function ask(address, method, path, body, timeout) {
   return new Promise((resolve) => {
     const payload = body === undefined ? '' : JSON.stringify(body);
     const req = http.request({
@@ -29,29 +29,55 @@ function ask(address, method, path, body) {
       res.on('error', () => resolve({ ok: false, refused: 'the host helper\'s answer was cut off' }));
     });
     req.on('error', () => resolve({ ok: false, refused: 'the host helper could not be reached: is it running?' }));
+    if (timeout !== undefined) {
+      // A helper that does not answer in time is an answer too.
+      req.setTimeout(timeout, () => {
+        resolve({ ok: false, refused: 'the host helper did not answer in time' });
+        req.destroy();
+      });
+    }
     req.end(payload);
   });
 }
 
-export function helperClient({ address = helperAddress() } = {}) {
-  const post = (path) => (args = {}) => ask(address, 'POST', path, args);
+export function helperClient({ address = helperAddress(), timeout } = {}) {
+  const post = (path) => (args = {}) => ask(address, 'POST', path, args, timeout);
   return {
-    health: () => ask(address, 'GET', '/health'),
+    health: () => ask(address, 'GET', '/health', undefined, timeout),
+    stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
     push: post('/push'), //          { project, dir, refspec }
+    ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
     openPr: post('/pr/open'), //     { project, head, base, title, body }
     updatePr: post('/pr/update'), // { project, number, title?, body? }
     prState: post('/pr/state'), //   { project, number }
     ci: post('/ci'), //              { project, sha }
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? }
+    state: {
+      clone: post('/state/clone'), //   { project }
+      write: post('/state/write'), //   { project, kind, data }: a plain kind; the helper makes the event
+      record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
+      sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
+      views: post('/state/views'), //   { project } -> { ok, views }
+    },
+    lock: {
+      take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }
+      touch: post('/lock/touch'), // { project } -> { ok, result: { touched } }
+      read: post('/lock/read'), //   { project } -> { ok, result: the lock, or null }
+    },
+    // Each runbook request names its project, or gives `cwd`, a full path, and the helper
+    // places the project from it (runbook.js runs where ~/.wheelhouse cannot be read).
+    runbook: {
+      cutAccess: post('/runbook/cut-access'), //     { project } -> { ok, message, url? }: step 2
+      restoreMain: post('/runbook/restore-main'), // { project, sha } -> { ok, number, url, branch }: step 3, opens the pull request
+      restoreMerge: post('/runbook/restore-merge'), // { project, number }: step 3, merges the restore pull request
+      restoreState: post('/runbook/restore-state'), // { project } -> { ok, added, skipped }: step 4
+      contain: post('/runbook/contain'), //          { project } -> { ok, message, output? }: step 5
+      candidates: post('/runbook/candidates'), //    { project } -> { ok, candidates: [{ sha, sha12, at, title }] }
+    },
     issue: {
       create: post('/issue/create'), // { project, title, body, labels? }
       update: post('/issue/update'), // { project, number, body }
       list: post('/issue/list'), //     { project, label }
     },
   };
-}
-
-// The `push(dir, branch)` that events.js and lock.js take, sent through the helper.
-export function pushFor(client, project) {
-  return (dir, branch) => client.push({ project, dir, refspec: branch });
 }

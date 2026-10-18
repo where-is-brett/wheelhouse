@@ -9,7 +9,7 @@ What `gh` printed, as the adapter's tests feed it back. Owner and repository are
 | File | Command |
 |---|---|
 | `repo-view.json` | `gh repo view <repo> --json defaultBranchRef` |
-| `pr-view-open.json` | `gh pr view 3 --repo <repo> --json number,url,headRefOid,mergeable,state` |
+| `pr-view-open.json` | `gh pr view 3 --repo <repo> --json number,url,headRefOid,headRefName,baseRefName,mergeable,state` (recorded before `headRefName` and `baseRefName` were asked for, so the file lacks them; the adapter's tests add them) |
 | `pr-view-merged.json` | the same, for a merged pull request (`mergeable` comes back `UNKNOWN`) |
 | `ci-success.json` | `gh api graphql` with the commit's `statusCheckRollup` (the query is in `scripts/host/github.js`) |
 | `ci-none.json` | the same, for a commit with no checks (`statusCheckRollup` is null) |

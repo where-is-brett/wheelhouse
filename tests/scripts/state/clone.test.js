@@ -4,12 +4,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { cloneState } from '../../../scripts/state/clone.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 async function withHome(fn) {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-cl-')), 'Zoë home');
+  const home = path.join(tempFolder('wh-cl-'), 'Zoë home');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try { return await fn(home); } finally {
@@ -104,7 +107,7 @@ test('a clone with an unpushed commit and a mismatched origin is refused and kep
 
 test('an interrupted rebase is aborted and the clone reused', async () => {
   const remote = await makeBareRemote();
-  const other = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-other-')), 'o');
+  const other = path.join(tempFolder('wh-other-'), 'o');
   try {
     await withHome(async () => {
       const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
@@ -123,4 +126,121 @@ test('an interrupted rebase is aborted and the clone reused', async () => {
       assert.match(log.stdout, /ours/);
     });
   } finally { remote.cleanup(); fs.rmSync(path.dirname(other), { recursive: true, force: true }); }
+});
+
+test('a clone left half-made by a crash is refused with what to do', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      const dir = stateDir('o__p');
+      // a start that stopped after `git init`: no remote
+      fs.mkdirSync(dir, { recursive: true });
+      await run('git', ['init', '-q'], { cwd: dir });
+      await assert.rejects(cloneState({ project: 'o__p', remoteUrl: remote.url }), /half-made.*delete the folder and run again/is);
+      assert.ok(fs.existsSync(path.join(dir, '.git')), 'nothing was removed');
+      // a start that stopped before the push: a remote and a commit, but no remote branch
+      await run('git', ['symbolic-ref', 'HEAD', 'refs/heads/wheelhouse-state'], { cwd: dir });
+      await run('git', ['remote', 'add', 'origin', remote.url], { cwd: dir });
+      fs.writeFileSync(path.join(dir, 'README.md'), 'x');
+      await run('git', ['add', '--', 'README.md'], { cwd: dir });
+      await run('git', ['-c', 'user.name=W', '-c', 'user.email=w@invalid', 'commit', '-m', 'Start'], { cwd: dir });
+      await assert.rejects(cloneState({ project: 'o__p', remoteUrl: remote.url }), /delete the folder and run again/i);
+      // after the folder is deleted, the next run works
+      fs.rmSync(dir, { recursive: true, force: true });
+      assert.equal(await cloneState({ project: 'o__p', remoteUrl: remote.url }), dir);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('an origin spelled differently but naming the same repository is accepted', async () => {
+  const remote = await makeBareRemote({ repo: 'o/p' });
+  try {
+    await withHome(async () => {
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const setOrigin = (url) => run('git', ['remote', 'set-url', 'origin', url], { cwd: dir });
+      await setOrigin('https://GitHub.com/Owner/Name.git');
+      for (const same of [
+        'https://github.com/owner/name', 'git@github.com:Owner/Name.git', 'ssh://git@GITHUB.COM/owner/name.git',
+        'https://github.com/owner/name/', 'https://user@github.com:443/owner/name.git',
+      ]) {
+        assert.equal(await cloneState({ project: 'o__p', remoteUrl: same }), dir, same);
+      }
+      for (const other of [
+        'https://github.com/owner/other.git', 'https://github.com/other/name.git', 'https://gitlab.com/owner/name.git',
+        'https://github.com/x/owner/name.git',
+      ]) {
+        await assert.rejects(cloneState({ project: 'o__p', remoteUrl: other }), /left alone/, other);
+      }
+      // a port that is not the default names another server; the default port may be written or left out
+      await setOrigin('https://github.com:8443/owner/name.git');
+      await assert.rejects(cloneState({ project: 'o__p', remoteUrl: 'https://github.com/owner/name.git' }), /left alone/);
+      assert.equal(await cloneState({ project: 'o__p', remoteUrl: 'https://github.com:8443/Owner/Name' }), dir);
+      await setOrigin('https://github.com/owner/name.git');
+      assert.equal(await cloneState({ project: 'o__p', remoteUrl: 'https://github.com:443/owner/name' }), dir);
+      await assert.rejects(cloneState({ project: 'o__p', remoteUrl: 'https://github.com:8443/owner/name' }), /left alone/);
+      await setOrigin('ssh://git@github.com/owner/name.git');
+      assert.equal(await cloneState({ project: 'o__p', remoteUrl: 'ssh://git@github.com:22/owner/name' }), dir);
+      assert.equal(await cloneState({ project: 'o__p', remoteUrl: 'git@github.com:owner/name.git' }), dir);
+      await assert.rejects(cloneState({ project: 'o__p', remoteUrl: 'ssh://git@github.com:2222/owner/name' }), /left alone/);
+      // a local path, plain or as a file address
+      await setOrigin(remote.url);
+      assert.equal(await cloneState({ project: 'o__p', remoteUrl: `file://${remote.url}` }), dir);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('two cloneState calls at once on one computer leave one clone', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async (home) => {
+      const results = await Promise.all([1, 2, 3].map(() => cloneState({ project: 'o__p', remoteUrl: remote.url })));
+      assert.equal(new Set(results).size, 1);
+      const roots = await run('git', ['--git-dir', remote.url, 'rev-list', '--max-parents=0', 'wheelhouse-state']);
+      assert.equal(roots.stdout.trim().split('\n').length, 1, 'the branch was started once');
+      assert.deepEqual(fs.readdirSync(path.join(home, 'projects', 'o__p')), ['state'], 'no lock file is left behind');
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a clone whose settings cannot be read is not called half-made', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      fs.appendFileSync(path.join(dir, '.git', 'config'), '\n[remote \"origin\"\n  this is not a setting\n');
+      await assert.rejects(cloneState({ project: 'o__p', remoteUrl: remote.url }), (e) => {
+        assert.match(e.message, /settings can't be read/);
+        assert.ok(e.message.includes(dir), 'names the folder');
+        assert.doesNotMatch(e.message, /delete|half-made/i);
+        return true;
+      });
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a start lock whose process has gone is taken over at once, and a live holder is waited for', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async (home) => {
+      const lock = path.join(stateDir('o__p'), '..', 'state.lock');
+      fs.mkdirSync(path.dirname(lock), { recursive: true });
+      // a process that has exited
+      const child = spawnSync(process.execPath, ['-e', '']);
+      const gone = child.pid;
+      fs.writeFileSync(lock, `${gone}\n`);
+      const started = Date.now();
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      assert.ok(Date.now() - started < 5000, 'no waiting for a dead holder');
+      assert.deepEqual(fs.readdirSync(path.dirname(dir)), ['state'], 'the lock and its taken-over copy are gone');
+      // a holder that is alive (this process) is waited for
+      fs.writeFileSync(lock, `${process.pid}\n`);
+      let done = false;
+      const second = cloneState({ project: 'o__p', remoteUrl: remote.url }).then(() => { done = true; });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      assert.equal(done, false);
+      fs.rmSync(lock);
+      await second;
+      assert.equal(done, true);
+    });
+  } finally { remote.cleanup(); }
 });

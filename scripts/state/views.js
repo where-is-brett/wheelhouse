@@ -106,8 +106,16 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const ideas = latestPerKey(sorted.filter((e) => e.kind === 'idea'), keyOrId);
   const rejections = latestPerKey(sorted.filter((e) => e.kind === 'rejection'), keyOrId);
 
-  const answered = new Set(sorted.filter((e) => e.kind === 'card-answer').map((e) => e.data?.card));
-  const waiting = sorted.filter((e) => e.kind === 'card' && !answered.has(e.id))
+  // An answer names its card by id (data.card) or, as the prompt record writes it, quotes the
+  // question shown (data.question): that matches a card's question, or its title when it has none.
+  // Two cards asking the same question both close on one answer.
+  const answers = sorted.filter((e) => e.kind === 'card-answer');
+  const answeredIds = new Set(answers.map((e) => e.data?.card).filter((c) => typeof c === 'string'));
+  const answeredQuestions = new Set(answers.filter((e) => e.data?.card === undefined || e.data?.card === null)
+    .map((e) => e.data?.question).filter((q) => typeof q === 'string'));
+  const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
+  const answered = (card) => answeredIds.has(card.id) || answeredQuestions.has(questionOf(card));
+  const waiting = sorted.filter((e) => e.kind === 'card' && !answered(e))
     .map((e) => ({ id: e.id, at: e.at, data: e.data }));
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
@@ -145,12 +153,29 @@ export async function writeViews(project, { now = () => new Date() } = {}) {
   const events = listEvents(dir, { report: () => {}, skipped: damaged });
   const views = buildViews(events, readEnrolled(), { damaged, now });
   const out = path.join(wheelhouseHome(), 'projects', project, 'views');
-  fs.mkdirSync(out, { recursive: true });
-  for (const [name, value] of Object.entries(views)) {
-    const target = path.join(out, `${name}.json`);
-    const temp = `${target}.tmp`;
-    fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`);
-    fs.renameSync(temp, target);
+  // Built whole in a new folder, which then takes the old one's place. The old folder is
+  // renamed aside first because Windows will not rename over a folder that has files in it.
+  // Between the two renames there is no `views` folder, only `views.old` (a reader that
+  // finds `views` missing falls back to it); after them, all of the new views.
+  const fresh = `${out}.new`;
+  const aside = `${out}.old`;
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.rmSync(fresh, { recursive: true, force: true });
+  fs.rmSync(aside, { recursive: true, force: true });
+  fs.mkdirSync(fresh);
+  try {
+    for (const [name, value] of Object.entries(views)) fs.writeFileSync(path.join(fresh, `${name}.json`), `${JSON.stringify(value, null, 2)}\n`);
+    const hadOld = fs.existsSync(out);
+    if (hadOld) fs.renameSync(out, aside);
+    try {
+      fs.renameSync(fresh, out);
+    } catch (error) {
+      if (hadOld) fs.renameSync(aside, out);
+      throw error;
+    }
+  } finally {
+    fs.rmSync(fresh, { recursive: true, force: true });
   }
+  fs.rmSync(aside, { recursive: true, force: true });
   return views;
 }

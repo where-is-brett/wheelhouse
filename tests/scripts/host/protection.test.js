@@ -12,6 +12,9 @@ function fakeApi(...answers) {
   return { api: { get: call('GET'), post: call('POST'), put: call('PUT'), delete: call('DELETE') }, calls };
 }
 
+// A dropped connection, as the GitLab client reports one: a network code, and a message that is never passed on.
+const dropped = () => Object.assign(new Error('connect failed, PRIVATE-TOKEN glpat-LEAKED'), { code: 'ECONNRESET' });
+
 const protectedMain = (push, merge, force = false) => ({
   status: 200,
   body: {
@@ -165,7 +168,7 @@ test('protectGitlabBranch treats a dropped connection on the new protection like
     post: async (path, body) => {
       calls.push(body);
       posts += 1;
-      if (posts === 1) throw new Error('connect failed, PRIVATE-TOKEN glpat-LEAKED');
+      if (posts === 1) throw dropped();
       return { status: 201, body: {} };
     },
     put: async () => ({ status: 200, body: {} }),
@@ -180,7 +183,7 @@ test('protectGitlabBranch treats a dropped connection on the new protection like
   // POST throws, and so does the restore.
   const failing = {
     ...api,
-    post: async () => { throw new Error('connect failed, PRIVATE-TOKEN glpat-LEAKED'); },
+    post: async () => { throw dropped(); },
   };
   await assert.rejects(protectGitlabBranch({ api: failing, projectId: 1, branch: 'main' }), (error) => {
     assert.match(error.message, /now unprotected/);
@@ -192,7 +195,7 @@ test('protectGitlabBranch treats a dropped connection on the new protection like
 test('protectGitlabBranch on a branch that was not protected just reports a dropped connection', async () => {
   const api = {
     get: async () => ({ status: 404, body: {} }),
-    post: async () => { throw new Error('glpat-LEAKED'); },
+    post: async () => { throw dropped(); },
     delete: async () => { throw new Error('not called'); },
     put: async () => ({ status: 200, body: {} }),
   };
@@ -391,4 +394,155 @@ test('GitLab switch-on requires pipelines where the default branch already has o
   const result = await switchOnProtection({ host: 'gitlab', repo: 'group/app', api });
   assert.match(result.line, /requires pipelines to pass/);
   assert.equal(calls.filter((c) => c.method === 'PUT').length, 1);
+});
+
+// ---- Task 16 ---------------------------------------------------------------
+
+test('protection: an error that is not a network error is said as it is', async () => {
+  const api = {
+    get: async () => ({ status: 404, body: {} }),
+    post: async () => { throw new Error('The sign-in is missing'); },
+    delete: async () => { throw new Error('not called'); },
+    put: async () => ({ status: 200, body: {} }),
+  };
+  await assert.rejects(protectGitlabBranch({ api, projectId: 1, branch: 'main' }), (error) => {
+    assert.match(error.message, /The sign-in is missing/);
+    assert.doesNotMatch(error.message, /could not be reached/);
+    return true;
+  });
+  const plain = { ...api, post: async () => { throw new Error('Could not reach GitLab'); } };
+  await assert.rejects(protectGitlabBranch({ api: plain, projectId: 1, branch: 'main' }), /could not be reached/);
+  // A key in such a message is still hidden.
+  const keyed = { ...api, post: async () => { throw new Error('bad PRIVATE-TOKEN=glpat-abcdefghijklmnopqrst'); } };
+  await assert.rejects(protectGitlabBranch({ api: keyed, projectId: 1, branch: 'main' }), (error) => {
+    assert.doesNotMatch(error.message, /abcdefghijkl/);
+    return true;
+  });
+});
+
+test('protection: a dropped answer to a change is read back before saying anything', async () => {
+  // GitLab: the answer to the POST is lost, but the protection was made. It is read back and found right.
+  let made = false;
+  const api = {
+    get: async () => (made ? protectedMain(noOne, [{ id: 3, access_level: 30 }]) : { status: 404, body: {} }),
+    post: async () => { made = true; throw dropped(); },
+    delete: async () => ({ status: 204, body: null }),
+    put: async () => ({ status: 200, body: {} }),
+  };
+  await protectGitlabBranch({ api, projectId: 1, branch: 'main' });
+
+  // Where the old protection was removed and the new one's answer is lost, but it landed, it is not called unprotected.
+  made = false;
+  const replacing = {
+    ...api,
+    get: async () => (made ? protectedMain(noOne, [{ id: 3, access_level: 30 }]) : protectedMain(maintainers, maintainers)),
+  };
+  await protectGitlabBranch({ api: replacing, projectId: 1, branch: 'main' });
+
+  // GitHub: the same, for a ruleset.
+  const repo = publicRepo();
+  let dropNext = true;
+  const run = async (file, args, options) => {
+    const written = args.includes('POST') && args[1] === 'repos/a-director/product/rulesets';
+    const answer = await repo.run(file, args, options);
+    if (written && dropNext) { dropNext = false; return { code: 1, stdout: '', stderr: 'read tcp: connection reset by peer' }; }
+    return answer;
+  };
+  const result = await switchOnProtection({ host: 'github', repo: 'a-director/product', run });
+  assert.equal(result.on, true);
+  assert.equal(repo.store.length, 2);
+});
+
+test('GitHub protection notices bypass actors and changed rules', async () => {
+  const changes = [
+    ['a bypass actor', (r) => { r.bypass_actors = [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; }],
+    ['an excluded branch pattern', (r) => { r.conditions.ref_name.exclude = ['refs/heads/release/*']; }],
+    ['evaluate only', (r) => { r.enforcement = 'evaluate'; }],
+    ['a rule removed', (r) => { r.rules = r.rules.filter((x) => x.type !== 'non_fast_forward'); }],
+    ['no pull request rule on the default branch', (r, i) => { if (i === 0) r.rules = r.rules.filter((x) => x.type !== 'pull_request'); else r.bypass_actors = [{ actor_id: 1 }]; }],
+    ['checks emptied', (r, i) => { if (i === 0) r.rules.push({ type: 'required_status_checks', parameters: { required_status_checks: [] } }); else r.bypass_actors = [{ actor_id: 1 }]; }],
+  ];
+  for (const [what, change] of changes) {
+    const { run, store } = publicRepo();
+    await switchOnProtection({ host: 'github', repo: 'a-director/product', run });
+    assert.equal((await protectionStatus({ host: 'github', repo: 'a-director/product', run })).on, true, what);
+    store.forEach((r, i) => change(r, i));
+    const status = await protectionStatus({ host: 'github', repo: 'a-director/product', run });
+    assert.equal(status.on, false, what);
+    // Switching on again puts it right.
+    assert.equal((await switchOnProtection({ host: 'github', repo: 'a-director/product', run })).on, true, what);
+  }
+});
+
+test('GitHub protection reads the owner\'s plan, not the signed-in user\'s', async () => {
+  const route = (extra) => fakeGh({
+    'GET repos/a-director/product': ok(gh('repo-private-free.json')),
+    'GET repos/a-director/product/rulesets': ok(gh('rulesets-empty.json')),
+    ...extra,
+  });
+  // The signed-in user is someone else, on the free plan: that says nothing about this owner,
+  // so the repository's own answer to the rulesets decides.
+  const other = route({ 'GET user': ok(JSON.stringify({ login: 'someone-else', plan: { name: 'free' } })) });
+  assert.equal((await protectionStatus({ host: 'github', repo: 'a-director/product', run: other.run })).available, true);
+  const paid = route({ 'GET user': ok(JSON.stringify({ login: 'someone-else', plan: { name: 'pro' } })) });
+  const run = async (file, args, options) => (args[1] === 'repos/a-director/product/rulesets' ? refusedFree() : paid.run(file, args, options));
+  assert.deepEqual(await protectionStatus({ host: 'github', repo: 'a-director/product', run }), { available: false, on: false, line: FREE_LINE });
+  // The signed-in user is the owner: their plan counts.
+  const self = route({ 'GET user': ok(JSON.stringify({ login: 'A-Director', plan: { name: 'pro' } })) });
+  assert.equal((await protectionStatus({ host: 'github', repo: 'a-director/product', run: self.run })).available, true);
+  // An organisation's plan is read from the organisation.
+  const org = fakeGh({
+    'GET repos/acme/product': ok(JSON.stringify({ default_branch: 'main', private: true, owner: { login: 'acme', type: 'Organization' } })),
+    'GET orgs/acme': ok(JSON.stringify({ login: 'acme', plan: { name: 'free' } })),
+  });
+  assert.equal((await protectionStatus({ host: 'github', repo: 'acme/product', run: org.run })).available, false);
+  assert.ok(org.calls.every((c) => c.path !== 'user'));
+});
+
+test('a GraphQL answer with errors is not read as no checks (protection)', async () => {
+  const { run } = publicRepo({ checks: JSON.stringify({ errors: [{ message: 'rate limited' }], data: null }) });
+  await assert.rejects(switchOnProtection({ host: 'github', repo: 'a-director/product', run }), /checks/);
+});
+
+// ---- Task 16, fix round 1 ----
+
+test('GitHub protection is not on when bypass actors are not shown, or the caller could bypass', async () => {
+  const { run, store } = publicRepo();
+  await switchOnProtection({ host: 'github', repo: 'a-director/product', run });
+  const status = async () => (await protectionStatus({ host: 'github', repo: 'a-director/product', run })).on;
+  assert.equal(await status(), true);
+  // GitHub shows bypass_actors only to callers who can write the ruleset: absent is unknown, not empty.
+  const kept = store.map((r) => r.bypass_actors);
+  store.forEach((r) => { delete r.bypass_actors; });
+  assert.equal(await status(), false, 'absent bypass_actors');
+  store.forEach((r, i) => { r.bypass_actors = kept[i]; });
+  assert.equal(await status(), true);
+  store.forEach((r) => { r.current_user_can_bypass = 'always'; });
+  assert.equal(await status(), false, 'the caller can bypass');
+  store.forEach((r) => { r.current_user_can_bypass = 'pull_requests_only'; });
+  assert.equal(await status(), false, 'the caller can bypass pull requests');
+  store.forEach((r) => { r.current_user_can_bypass = 'never'; });
+  assert.equal(await status(), true);
+});
+
+test('GitLab: when a dropped change cannot be read back, the old protection is not re-created', async () => {
+  const posts = [];
+  let reads = 0;
+  const api = {
+    get: async () => {
+      reads += 1;
+      if (reads === 1) return protectedMain(maintainers, maintainers);
+      throw dropped();
+    },
+    delete: async () => ({ status: 204, body: null }),
+    post: async (path, body) => { posts.push(body); throw dropped(); },
+    put: async () => ({ status: 200, body: {} }),
+  };
+  await assert.rejects(protectGitlabBranch({ api, projectId: 1, branch: 'main' }), (error) => {
+    assert.match(error.message, /Wheelhouse can't tell whether the change landed: check the project's protected branches page/);
+    assert.match(error.message, /Settings.*Repository.*Protected branches/);
+    assert.doesNotMatch(error.message, /LEAKED|put back/);
+    return true;
+  });
+  assert.equal(posts.length, 1, 'only the one attempt was made');
 });
