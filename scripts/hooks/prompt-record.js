@@ -7,6 +7,8 @@
 // it, so a hook cut short by its time limit loses nothing; the next session
 // start sends what is left. A confirmation of a setting in the director's
 // profile goes to the profile; the answer itself still goes to the project.
+// A card carrying one set line and its reply code also gets a signed shown record,
+// so a later reply with that code (scripts/mod/reply.js) can count as the click.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,6 +19,8 @@ import { liftStop as defaultLift } from '../lib/stop.js';
 import { profileDir, stateDir } from '../lib/paths.js';
 import { makeEvent, listEvents, confirmationFor, CONFIRMABLE_KINDS } from '../state/events.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine } from '../state/card-lines.js';
+import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
+import { localViews } from './session-start.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -64,9 +68,12 @@ function only(pattern, text) {
   return all.length === 1 ? all[0] : null;
 }
 
+// The labels that can earn a signed record; every other label earns none.
+export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it'];
+
 // Works out the signed record a click earns, if any. May ask the helper for a
-// pull request's head. Returns { made, undo? }, or null.
-async function earned({ project, question, label, client, now, left }) {
+// pull request's head. Returns { made, profile?, lift? }, or null.
+export async function earned({ project, question, label, client, now, left }) {
   if (label === 'Approve') {
     const m = only(APPROVE, question);
     if (!m || !question.includes(approvalLine(m[1], m[2]))) return null;
@@ -132,6 +139,51 @@ function clicks(input) {
 
 export { sendPending, BUDGET_MS };
 
+// Signs what an answer earned and keeps it pending, then lifts STOP when it asks to; a lift
+// that fails leaves no record. Returns what sendKept sends. Shared by a click and a reply code.
+export function keepEarned(project, got, { now, liftStop = defaultLift }) {
+  const event = makeEvent({ ...got.made, now });
+  const route = got.profile ? 'profile-record' : 'record';
+  const body = got.profile ? { event } : { project, event };
+  const file = keep(project, route, body, now);
+  try {
+    if (got.lift) liftStop();
+  } catch (error) {
+    fs.rmSync(file, { force: true });
+    throw error;
+  }
+  return { file, body, route };
+}
+
+// Sends one kept record, removing it once the helper has it. True when it was taken.
+export async function sendKept(api, left, { file, body, route }) {
+  const result = await left(route === 'profile-record' ? api.profile.record(body) : api.state.record(body));
+  if (!taken(result)) return false;
+  fs.rmSync(file, { force: true });
+  return true;
+}
+
+// The shown records a card asks for: one for each single-choice question that carries exactly
+// one set line and the line with that line's reply code, whatever was clicked, unless the shown
+// view already holds the code for this question. The options are the card's own labels.
+function shownFor(project, input) {
+  const questions = input.tool_input?.questions;
+  if (!Array.isArray(questions)) return [];
+  const held = localViews(project, ['shown'])?.shown;
+  const out = [];
+  for (const q of questions) {
+    if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
+    const line = setLineOf(q.question);
+    if (line === null) continue;
+    const code = replyCode(line);
+    const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
+    if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
+    if (held && Object.hasOwn(held, code) && held[code]?.question === q.question) continue;
+    out.push({ kind: 'shown', data: { code, question: q.question, options: q.options.map((o) => o?.label) } });
+  }
+  return out;
+}
+
 export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS, liftStop = defaultLift } = {}) {
   if (input.tool_name !== 'AskUserQuestion') return undefined;
   const found = find(input.cwd, { dir });
@@ -142,29 +194,34 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const left = withinBudget(end);
   const out = clicks(input);
 
-  // First the signed records, each written down before it is sent.
+  // First the signed records, each written down before it is sent. The cards' shown records
+  // go first and are dated a millisecond before the clicks, so a record a click earns sorts
+  // after its card's shown record and spends the code.
   const queued = [];
-  for (const click of out) {
-    if (!click.signable) continue;
-    let file = null;
+  const shownAt = new Date(now().getTime() - 1);
+  let cards = [];
+  try {
+    cards = shownFor(project, input);
+  } catch {
+    // No reply codes this time; the clicks are still recorded.
+  }
+  for (const made of cards) {
     try {
-      const got = await earned({ project, ...click, client: api, now, left });
-      if (!got) continue;
-      const event = makeEvent({ ...got.made, now });
-      const route = got.profile ? 'profile-record' : 'record';
-      const body = got.profile ? { event } : { project, event };
-      file = keep(project, route, body, now);
-      if (got.lift) liftStop();
-      queued.push({ file, body, route });
+      queued.push(keepEarned(project, { made }, { now: () => shownAt, liftStop }));
     } catch {
-      // One question failing does not stop the rest; a lift that did not happen leaves no record.
-      if (file) fs.rmSync(file, { force: true });
+      // A card whose options a shown record can't hold has no reply code.
     }
   }
-  for (const { file, body, route } of queued) {
-    const result = await left(route === 'profile-record' ? api.profile.record(body) : api.state.record(body));
-    if (taken(result)) fs.rmSync(file, { force: true });
+  for (const click of out) {
+    if (!click.signable) continue;
+    try {
+      const got = await earned({ project, ...click, client: api, now, left });
+      if (got) queued.push(keepEarned(project, got, { now, liftStop }));
+    } catch {
+      // One question failing does not stop the rest; a lift that did not happen leaves no record.
+    }
   }
+  for (const kept of queued) await sendKept(api, left, kept);
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
     const body = { project, kind: 'card-answer', data: { question, label } };

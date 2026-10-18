@@ -7,7 +7,7 @@ import path from 'node:path';
 import { decide, sendPending } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 
 const P = 'owner__name';
@@ -414,5 +414,64 @@ test('a Confirm line that matches events in both the state and the profile recor
     assert.equal(c.calls.record.length, 0);
     assert.equal(c.calls.profileRecord.length, 0);
     assert.equal(c.calls.write.length, 2);
+  });
+});
+
+const CODED = ['Approve', 'Lift STOP', 'Explain more', 'Not now'].map((label) => ({ label }));
+const coded = (answers, { multi = false } = {}) => {
+  const asked = input(answers, { multi });
+  asked.tool_input.questions = asked.tool_input.questions.map((q) => ({ ...q, options: CODED }));
+  return asked;
+};
+
+test('a card with a set line and its code becomes a signed shown record; one with a wrong code does not', async () => {
+  await withHome(async (home) => {
+    const line = approvalLine(12, FULL);
+    const code = replyCode(line);
+    const good = `Pull request 12 changes the sign-in.\n${line}\n${replyCodeLine(code)}`;
+    const wrong = `${approvalLine(13, FULL)}\n${replyCodeLine(code)}`;
+    const none = `${LIFT_STOP}`;
+    const c = fake();
+    await decide(coded({ [good]: 'Not now', [wrong]: 'Not now', [none]: 'Not now' }), deps(c));
+    const shown = c.calls.record.filter((r) => r.event.kind === 'shown');
+    assert.equal(shown.length, 1);
+    assert.deepEqual(shown[0].event.data, { code, question: good, options: CODED.map((b) => b.label) });
+    assert.equal(shown[0].project, P);
+    assert.ok(shown[0].event.sig);
+    assert.equal(c.calls.write.length, 3);
+
+    // A click that earns a record sorts after the card's shown record, so it spends the code.
+    const click = fake();
+    await decide(coded({ [good]: 'Approve' }), deps(click));
+    assert.deepEqual(kinds(click), ['shown', 'approval']);
+    const [s, a] = click.calls.record.map((r) => r.event);
+    assert.ok(s.at < a.at);
+
+    // A multi-select card, or one already in the shown view with this question, writes no shown record.
+    const multi = fake();
+    await decide(coded({ [good]: ['Approve'] }, { multi: true }), deps(multi));
+    assert.equal(multi.calls.record.length, 0);
+    const views = path.join(home, 'projects', P, 'views');
+    fs.mkdirSync(views, { recursive: true });
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: NOW.toISOString(), question: good, options: ['Approve', 'Not now'], spent: false } }));
+    const again = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(again));
+    assert.equal(again.calls.record.length, 0);
+    fs.writeFileSync(path.join(views, 'shown.json'), JSON.stringify({ [code]: { id: 'x', at: NOW.toISOString(), question: 'Another?', options: ['A', 'B'], spent: false } }));
+    const other = fake();
+    await decide(coded({ [good]: 'Not now' }), deps(other));
+    assert.deepEqual(kinds(other), ['shown']);
+  });
+});
+
+test('a shown record the helper cannot take is kept pending like every signed record', async () => {
+  await withHome(async () => {
+    const line = LIFT_STOP;
+    const q = `${line}\n${replyCodeLine(replyCode(line))}`;
+    const c = fake({ refuse: true });
+    await decide(coded({ [q]: 'Not now' }), deps(c));
+    const folder = path.join(stateDir(P), '..', 'pending');
+    const kept = fs.readdirSync(folder).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')));
+    assert.deepEqual(kept.filter((k) => k.route === 'record').map((k) => k.body.event.kind), ['shown']);
   });
 });
