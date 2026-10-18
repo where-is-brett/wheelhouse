@@ -16,6 +16,7 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
+import { setStop } from '../../../scripts/lib/stop.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
@@ -284,6 +285,38 @@ test('a state that can\'t be brought up to date refuses the merge', async () => 
       assert.equal(refused.ok, false);
       assert.ok(refused.reasons.includes('the state could not be brought up to date'), JSON.stringify(refused.reasons));
     });
+  } finally { remote.cleanup(); }
+});
+
+test('a restore is not refused because the state can\'t be brought up to date', async () => {
+  const remote = await hostWith({ 'app.js': 'release\n' });
+  try {
+    const home = await project(remote);
+    const restore = await restorePr(remote, home);
+    const other = await readyPr(home, remote, 8, 'feature/totals', { 'a.txt': 'a\n' });
+    // A tracked file changed in the state clone: the pull is refused, whatever the host holds. (The mirror
+    // finds the host through the clone's origin, so an unreachable origin would stop a restore's own checks.)
+    await as(home, () => fs.appendFileSync(path.join(stateDir('o__p'), 'README.md'), 'changed here\n'));
+    const adapter = fakeAdapter({ 7: restore, 8: other });
+    await withHelper(home, adapter, async (client) => {
+      const refused = await merge(client, 8);
+      assert.ok(refused.reasons.includes('the state could not be brought up to date'), JSON.stringify(refused.reasons));
+      assert.deepEqual(await merge(client, 7), { ok: true, merged: true, sha: restore.headSha, ...NONE_FOUND });
+    }, { now: at(60 * 1000) });
+  } finally { remote.cleanup(); }
+});
+
+test('a restore merges under STOP, through the state sync whose push is refused', async () => {
+  const remote = await hostWith({ 'app.js': 'release\n' });
+  try {
+    const home = await project(remote);
+    const restore = await restorePr(remote, home);
+    const adapter = fakeAdapter({ 7: restore });
+    await withHelper(home, adapter, async (client) => {
+      await as(home, () => setStop({ by: 'prompt' }));
+      assert.deepEqual(await merge(client), { ok: true, merged: true, sha: restore.headSha, ...NONE_FOUND });
+      assert.deepEqual(adapter.merges, [{ number: 7, sha: restore.headSha }]);
+    }, { now: at(60 * 1000) });
   } finally { remote.cleanup(); }
 });
 

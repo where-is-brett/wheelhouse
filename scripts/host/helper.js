@@ -1309,9 +1309,10 @@ export async function startHelper({
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const ci = await adapter.ciState(headSha);
     // The state clone is brought up to date first, so an incident declared on another computer is
-    // seen (Ruling 115); when it can't be, the merge waits.
+    // seen (Ruling 115); when it can't be, the merge waits, a restore excepted, since the runbook
+    // restores the product (step 3) before the state (step 4) (Ruling 116).
     const stateReasons = [];
-    if (!(await stateFresh(project, ctx))) stateReasons.push(STATE_BEHIND);
+    if (!(await stateFresh(project, ctx)) && !restore) stateReasons.push(STATE_BEHIND);
     const skipped = [];
     const enrolled = readEnrolled();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
