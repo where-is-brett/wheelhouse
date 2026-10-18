@@ -42,7 +42,7 @@ import { featurePaths, briefHash, parseBrief, parseReport, readQuestions, readSt
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { stateDir } from '../lib/paths.js';
-import { isInsideFolder, readProject } from '../lib/projects.js';
+import { readProject } from '../lib/projects.js';
 import { stopState } from '../lib/stop.js';
 import { listEvents, PROTECTED_KINDS } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
@@ -138,23 +138,42 @@ export function plainWorktreePath(p, platform = process.platform) {
   return path.posix.isAbsolute(p);
 }
 
-// Whether `p`, spelt as it is, lies in `folder` (for a worktree that is not
-// there, so has no real path).
+// Whether `p`, spelt as it is, lies strictly inside `folder` (for a worktree
+// that is not there, so has no real path).
 function speltInside(folder, p) {
   const key = (x) => (caseBlind ? x.toLowerCase() : x);
   const base = key(path.resolve(folder));
   const target = key(path.resolve(p));
-  return target === base || target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+  return target !== base && target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+}
+
+// The folder feature worktrees are made in: `<checkout>/.claude/worktrees`.
+export const worktreesFolder = (checkout) => path.join(checkout, '.claude', 'worktrees');
+
+// Whether `worktree` lies, by its real path, strictly inside the checkout's
+// `.claude/worktrees/` (also by its real path): never the folder itself, and
+// never anywhere else in the checkout.
+export function inWorktreesFolder(checkout, worktree) {
+  if (!isText(checkout) || !isText(worktree)) return false;
+  let base;
+  let target;
+  try {
+    base = fs.realpathSync.native(worktreesFolder(checkout));
+    target = fs.realpathSync.native(worktree);
+  } catch {
+    return false;
+  }
+  return speltInside(base, target);
 }
 
 // A feature's files, read only from `<worktree>/.wheelhouse/feature/`. The
 // worktree must pass plainWorktreePath, be a real folder (a link is not
-// followed), and lie, by its real path, in the project's main checkout,
-// which holds `.claude/worktrees/` where feature worktrees are made; the
-// feature folder must be a real folder under it. Otherwise nothing is read.
-// Only a worktree in the project's folder that is plainly not there is
-// `gone`. Each file is read with a cap, and refused when it is not a regular
-// file, without waiting on it.
+// followed), and lie, by its real path, strictly inside the project's
+// `.claude/worktrees/`, where feature worktrees are made; the feature folder
+// must be a real folder under it. Otherwise nothing is read. Only a worktree
+// spelt inside that folder that is plainly not there is `gone`. Each file is
+// read with a cap, and refused when it is not a regular file, without
+// waiting on it.
 function readFeature(work, worktree, checkout) {
   const nothing = { status: null, questions: [], extraPlans: [], skipped: 0, briefHash: null, appetite: null, report: false, gone: false };
   if (!plainWorktreePath(worktree) || !isText(checkout)) return nothing;
@@ -163,7 +182,7 @@ function readFeature(work, worktree, checkout) {
     const missing = stat.code === 'ENOENT' || stat.code === 'ENOTDIR';
     return missing && spelt(checkout, worktree) ? { ...nothing, gone: true } : nothing;
   }
-  if (!stat.isDirectory() || !isInsideFolder(checkout, worktree) || !safeFeatureFolder(worktree)) return nothing;
+  if (!stat.isDirectory() || !inWorktreesFolder(checkout, worktree) || !safeFeatureFolder(worktree)) return nothing;
 
   const p = featurePaths(worktree);
   const status = readStatus(p.status);
@@ -194,12 +213,12 @@ function readFeature(work, worktree, checkout) {
   };
 }
 
-// The main checkout's folder as recorded, and as its real path, either of
-// which a missing worktree may be spelt under.
+// The worktrees folder as recorded, and by the checkout's real path, either
+// of which a missing worktree may be spelt under.
 function spelt(checkout, worktree) {
-  if (speltInside(checkout, worktree)) return true;
+  if (speltInside(worktreesFolder(checkout), worktree)) return true;
   try {
-    return speltInside(fs.realpathSync.native(checkout), worktree);
+    return speltInside(worktreesFolder(fs.realpathSync.native(checkout)), worktree);
   } catch {
     return false;
   }

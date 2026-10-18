@@ -355,11 +355,22 @@ test('worktree paths from state are followed only inside the project\'s checkout
   // Inside by its spelling, outside by its real path.
   const escape = path.join(checkout(), '.claude', 'worktrees', 'escape');
   if (unix) fs.symlinkSync(outside, path.join(checkout(), '.claude', 'worktrees', 'up'));
-  for (const [work, wt] of [['outside', outside], ['a-file', file], ['missing', missing], ['escape', unix ? path.join(checkout(), '.claude', 'worktrees', 'up', '.') : escape]]) {
+  // In the checkout, but not in its .claude/worktrees/; and that folder itself.
+  const elsewhere = path.join(checkout(), 'src');
+  fs.mkdirSync(featurePaths(elsewhere).dir, { recursive: true });
+  fs.writeFileSync(featurePaths(elsewhere).status, JSON.stringify(status('elsewhere')));
+  const folder = path.join(checkout(), '.claude', 'worktrees');
+  fs.mkdirSync(featurePaths(folder).dir, { recursive: true });
+  fs.writeFileSync(featurePaths(folder).status, JSON.stringify(status('the-folder')));
+  const gonePlaces = [['missing-in-checkout', path.join(checkout(), 'removed')], ['missing-folder', path.join(checkout(), '.claude', 'worktrees-old', 'x')]];
+  for (const [work, wt] of [
+    ['outside', outside], ['a-file', file], ['missing', missing], ['escape', unix ? path.join(checkout(), '.claude', 'worktrees', 'up', '.') : escape],
+    ['elsewhere', elsewhere], ['the-folder', folder], ...gonePlaces,
+  ]) {
     record('feature', { work, step: 'building', worktree: wt, branch: work }, 0);
   }
   const obs = await observe({ project: P, client: fakeClient(), now: at(SEC) });
-  for (const work of ['outside', 'a-file', 'missing', 'escape']) {
+  for (const work of ['outside', 'a-file', 'missing', 'escape', 'elsewhere', 'the-folder', 'missing-in-checkout', 'missing-folder']) {
     assert.equal(obs.features[work].status, null, work);
     assert.equal(obs.features[work].briefHash, null, work);
     assert.equal(obs.features[work].gone, false, work);

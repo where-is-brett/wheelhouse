@@ -82,15 +82,18 @@ export function credentialRules() {
 // session nobody watches never waits on a prompt for them. A deny rule still
 // wins over any of them. `claude -p` does not apply allow rules from a
 // committed .claude/settings.json (check 25), so the watcher's Shape 1 starter
-// also passes these with --allowedTools.
-export function featureAllowRules(config) {
+// also passes these with --allowedTools. On Windows there are none: the
+// sandbox does not run there, so a rule such as `Bash(node:*)` would let a
+// session run anything unasked. The commands are still checked there.
+export function featureAllowRules(config, { platform = process.platform } = {}) {
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
   if (!Array.isArray(commands)) throw new Error('The build commands are not a list');
   for (const c of commands) if (!isBuildCommand(c)) throw new Error(`This build command can't be made into an allow rule: ${JSON.stringify(c)}`);
+  if (platform === 'win32') return [];
   return unique(commands.map((c) => `Bash(${c}:*)`));
 }
 
-export function projectSettings(config) {
+export function projectSettings(config, { platform = process.platform } = {}) {
   const credentials = allCredentials();
   const deny = unique([
     'Read(**/.env)', 'Read(**/.env.*)',
@@ -102,7 +105,7 @@ export function projectSettings(config) {
     ...RUNNERS.flatMap((r) => unique([...HOST_TOOLS, ...PACKAGE_NAMES]).flatMap((t) => [`Bash(${r} ${t}:*)`, `Bash(${r} ${t}@*)`])),
   ]);
   return {
-    permissions: { allow: featureAllowRules(config), deny },
+    permissions: { allow: featureAllowRules(config, { platform }), deny },
     sandbox: {
       enabled: true,
       allowUnsandboxedCommands: false,

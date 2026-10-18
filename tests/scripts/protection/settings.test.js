@@ -69,7 +69,7 @@ test('the local settings allow only the helper\'s socket', () => {
 
 test('mergeSettings keeps the director\'s own keys and adds ours once', () => {
   const existing = { model: 'x', permissions: { deny: ['Bash(rm:*)', 'Read(**/.env)'], allow: ['Bash(ls:*)'] }, sandbox: { enabled: false, network: { allowedDomains: ['mine.com'] } }, autoCompactWindow: 200000 };
-  const ours = projectSettings(config);
+  const ours = projectSettings(config, { platform: 'darwin' });
   const before = JSON.stringify(existing);
   const ourBefore = JSON.stringify(ours);
   const merged = mergeSettings(existing, ours);
@@ -143,11 +143,20 @@ test('mergeSettings looks at own keys only and keeps constructor and __proto__ a
 });
 
 test('feature sessions may run the build\'s usual commands: one allow rule for each', () => {
-  assert.deepEqual(featureAllowRules(config), ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)'], 'the default commands');
-  assert.deepEqual(featureAllowRules({ ...config, buildCommands: ['make check', 'make check', 'pytest'] }), ['Bash(make check:*)', 'Bash(pytest:*)']);
-  assert.deepEqual(featureAllowRules({ ...config, buildCommands: [] }), []);
-  assert.deepEqual(projectSettings({ ...config, buildCommands: ['pytest'] }).permissions.allow, ['Bash(pytest:*)']);
-  assert.deepEqual(projectSettings(config).permissions.allow, ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
+  const mac = { platform: 'darwin' };
+  assert.deepEqual(featureAllowRules(config, mac), ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)'], 'the default commands');
+  assert.deepEqual(featureAllowRules({ ...config, buildCommands: ['make check', 'make check', 'pytest'] }, mac), ['Bash(make check:*)', 'Bash(pytest:*)']);
+  assert.deepEqual(featureAllowRules({ ...config, buildCommands: [] }, mac), []);
+  assert.deepEqual(projectSettings({ ...config, buildCommands: ['pytest'] }, mac).permissions.allow, ['Bash(pytest:*)']);
+  assert.deepEqual(projectSettings(config, mac).permissions.allow, ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
+});
+
+test('on Windows, where no sandbox runs, the build commands get no allow rules', () => {
+  assert.deepEqual(featureAllowRules(config, { platform: 'win32' }), []);
+  assert.deepEqual(projectSettings(config, { platform: 'win32' }).permissions.allow, []);
+  assert.deepEqual(featureAllowRules(config, { platform: 'darwin' }), ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
+  assert.deepEqual(projectSettings(config, { platform: 'linux' }).permissions.allow, ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
+  assert.throws(() => featureAllowRules({ ...config, buildCommands: ['rm *'] }, { platform: 'win32' }), /build command/, 'still checked');
 });
 
 test('a build command a rule cannot hold safely is refused, not allowed', () => {

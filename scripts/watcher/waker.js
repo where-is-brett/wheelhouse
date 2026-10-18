@@ -7,18 +7,20 @@
 //   detached process with no window:
 //     - the foreman: a fresh `claude -p "Wheelhouse foreman: handle <file>"`
 //       in the project's main checkout, with the foreman's model from
-//       `config.routing.foreman`, `--permission-mode` from `config.sessionMode`
-//       and WHEELHOUSE_ROLE=foreman in its environment;
-//     - a feature: `claude -p --resume <session id> "Wheelhouse: read <file>"`
-//       in its worktree, the session id from the hook's session.json. The mode
-//       and model are given again, since check 27 found `--resume` needs them;
-//     - a new feature: `claude -p "Read .wheelhouse/feature/brief.md and follow
-//       it."` in its worktree.
+//       `config.routing.foreman`, `--permission-mode` from `config.sessionMode`,
+//       `--allowedTools` from `foremanTools` when there are any, and
+//       WHEELHOUSE_ROLE=foreman in its environment;
+//     - a new feature: `claude -p --session-id <id> "Read
+//       .wheelhouse/feature/brief.md and follow it."` in its worktree. The id
+//       is made here and kept in the watcher's own folder;
+//     - a feature: `claude -p --resume <that id> "Wheelhouse: read <file>"` in
+//       its worktree. Only the id the watcher kept is resumed, never one from
+//       a file the session can write. The mode and model are given again,
+//       since check 27 found `--resume` needs them.
 //     A feature session gets the builder's model from `config.routing.builder`
 //     and the feature allow rules with --allowedTools, since `claude -p` does
 //     not apply the allow rules of a committed .claude/settings.json (check
-//     25); nothing is written into the worktree. No feature session gets
-//     WHEELHOUSE_ROLE, even when the watcher's own environment has it.
+//     25); on Windows there are none (settings.js). Its mode may not be `auto`.
 //     One process runs at a time for each session: a wake that falls due while
 //     its session runs waits, and goes when the process has ended. Several that
 //     waited together go as one wake listing them all (`merged`).
@@ -26,29 +28,55 @@
 //   wake, which the plugin monitor delivers to the long-lived foreman session:
 //     WAKE foreman <file> | WAKE feature <work> <file> | START feature <work> <worktree>
 //
-// Every wake first goes into the outbox, projects/<p>/watcher/outbox.json, and
-// leaves it once delivered, so a wake that is waiting (for its session to end,
-// for STOP to lift, or for `claude` to start) survives the watcher stopping.
-// Under STOP nothing is started, woken or printed; startFeature is refused.
-// What runs is recorded in projects/<p>/watcher/running/, so a restarted
-// watcher still knows a foreman is running. A record made before the computer
-// last started is taken as ended, since its process id may now be another's.
+// Every started session gets the watcher's environment less the variables a
+// host Claude Code session sets (scripts/lib/claude.js) and less
+// WHEELHOUSE_ROLE; the foreman alone gets WHEELHOUSE_ROLE=foreman.
 //
-// Bypass mode is refused at every call, whatever the configuration says.
+// The wake files. The record of each wake is written under the watcher's
+// folder, projects/<p>/watcher/wakes/, which no session can read or write.
+// What a session is told to read is a copy of it in a folder of its own: the
+// main checkout's `.wheelhouse/foreman/wakes/` (git-ignored through
+// info/exclude) for the foreman, the worktree's `.wheelhouse/feature/wakes/`
+// for a feature. Each folder must be a real folder whose real path is where it
+// should be. Merging reads only the records, never a copy.
+//
+// The outbox. Every wake goes into projects/<p>/watcher/outbox.json first.
+// When its session is started it is marked in flight, and it leaves the
+// outbox only when that process exits with 0. A process that exits otherwise,
+// or cannot be started, puts its wakes back with a wait of 1, 5, then 15
+// minutes; from the third failure on, each is reported (health.json's
+// `lastError`) and it keeps trying every 15 minutes. A watcher that restarts
+// cannot learn an exit code, so a wake whose process has gone is sent again.
+// A wake may therefore repeat, and never goes missing. An outbox that is there
+// but cannot be read is never overwritten: the call throws.
+//
+// What runs is recorded in projects/<p>/watcher/running/: a `starting` record
+// before the process is started, replaced by its pid and start time after. A
+// record ends when its process has gone, when it was made before the computer
+// last started, when the running process's start time is not the recorded one
+// (its pid was reused), or when its maximum run time has passed: 60 minutes
+// for the foreman, 8 hours for a feature. An overrun is reported. A record
+// whose process can't be checked (a `starting` one, or no start time to be
+// had) ends at the time limit alone.
+//
+// Under STOP nothing is started, woken or printed (it is checked again right
+// before each start), and startFeature is refused. Bypass mode is refused at
+// every call, whatever the configuration says.
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DIGEST_CAP } from './core.js';
-import { plainWorktreePath } from './sources.js';
-import { invocation, resolveClaude } from '../eval/harness.js';
-import { featurePaths } from '../feature/files.js';
+import { inWorktreesFolder, LOOKBACK_MS, plainWorktreePath } from './sources.js';
+import { ensureIgnored, featurePaths } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../gate/guardrails.js';
 import { SLUG } from '../lib/build-loop.js';
+import { invocation, resolveClaude, withoutHostVariables } from '../lib/claude.js';
 import { stateDir } from '../lib/paths.js';
-import { isInsideFolder, readProject } from '../lib/projects.js';
+import { readProject } from '../lib/projects.js';
+import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
 import { featureAllowRules } from '../protection/settings.js';
@@ -63,9 +91,15 @@ export const PROMPTS = Object.freeze({
 });
 
 export const ROLE_VARIABLE = 'WHEELHOUSE_ROLE';
+const MINUTE = 60 * 1000;
+// The longest a session's process counts as running.
+export const MAX_RUN_MS = Object.freeze({ foreman: 60 * MINUTE, feature: 8 * 60 * MINUTE });
+// The waits after a failed start or a failed exit, in order; the last repeats.
+export const BACKOFF_MS = Object.freeze([MINUTE, 5 * MINUTE, 15 * MINUTE]);
+// From this many failures on, each is reported.
+export const FAILURES_REPORTED = 3;
 
-// A session id as the feature-status hook keeps it; it never starts with `-`, so it never reads as a flag.
-const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const WAKE_BYTES = 8 * 1024 * 1024;
 const SMALL_BYTES = 64 * 1024;
 
@@ -86,6 +120,14 @@ function lstatOf(p) {
   }
 }
 
+function realOf(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+}
+
 // --- The watcher's folder, projects/<p>/watcher ---
 
 export function watcherDir(project) {
@@ -96,9 +138,10 @@ export function wakesDir(project) {
   return path.join(watcherDir(project), 'wakes');
 }
 
-const outboxFile = (project) => path.join(watcherDir(project), 'outbox.json');
+export const outboxFile = (project) => path.join(watcherDir(project), 'outbox.json');
 const outboxLock = (project) => path.join(watcherDir(project), 'outbox.lock');
-const runningFile = (project, target) => path.join(watcherDir(project), 'running', `${target}.json`);
+export const runningFile = (project, target) => path.join(watcherDir(project), 'running', `${target}.json`);
+export const sessionFile = (project, work) => path.join(watcherDir(project), 'sessions', `${work}.json`);
 
 // Makes `sub` under the watcher's folder, refusing any part of it that is there
 // but is not a real folder (a link above all). Returns the folder.
@@ -114,18 +157,22 @@ export function watcherFolder(project, sub = null, fail = () => { throw new Erro
   return dirs.at(-1);
 }
 
-// Writes JSON whole to a temporary name renamed over `file`, refusing a `file`
-// that is there but is not a regular file.
-export function writeJsonFile(file, value, fail = () => { throw new Error(`${path.basename(file)} can't be written`); }) {
+// Writes text whole to a temporary name renamed over `file`, refusing a
+// `file` that is there but is not a regular file.
+function writeWholeText(file, text, fail) {
   const stat = lstatOf(file);
   if (stat !== null && !stat.isFile()) fail();
-  const temp = `${file}.${crypto.randomUUID().slice(0, 12)}.tmp`;
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID().slice(0, 12)}.tmp`);
   try {
-    fs.writeFileSync(temp, `${JSON.stringify(value)}\n`, { flag: 'wx' });
+    fs.writeFileSync(temp, text, { flag: 'wx' });
     fs.renameSync(temp, file);
   } finally {
     fs.rmSync(temp, { force: true });
   }
+}
+
+export function writeJsonFile(file, value, fail = () => { throw new Error(`${path.basename(file)} can't be written`); }) {
+  writeWholeText(file, `${JSON.stringify(value)}\n`, fail);
 }
 
 function readJson(file, max = SMALL_BYTES) {
@@ -146,10 +193,10 @@ function wakeNote(bundle) {
   return notes.join(' ');
 }
 
-// Writes the bundle as projects/<p>/watcher/wakes/<time>.json and returns the
-// file's path, which the wake message names. Each wake gets a name of its own
-// (`<time>-<n>.json` when the time is taken), is written to a temporary file
-// and renamed into place, and a wakes folder that is a link is refused.
+// Writes the bundle's record as projects/<p>/watcher/wakes/<time>.json and
+// returns its path. Each wake gets a name of its own (`<time>-<n>.json` when
+// the time is taken), is written to a temporary file and renamed into place,
+// and a wakes folder that is a link is refused.
 export function writeWake(project, bundle, { now = () => new Date() } = {}) {
   const fail = () => { throw new Error("The wake can't be written"); };
   if (!isPlain(bundle) || !['foreman', 'feature'].includes(bundle.to)) fail();
@@ -193,8 +240,9 @@ export function readWake(file) {
   return isPlain(wake) && ['foreman', 'feature'].includes(wake.to) ? wake : null;
 }
 
-// One wake from several that waited: each event once, the digests in order
-// (the newest DIGEST_CAP kept, the rest counted in `dropped`).
+// One record from several that waited: each event once, the digests in order
+// (the newest DIGEST_CAP kept, the rest counted in `dropped`). Reads only
+// records under the watcher's folder.
 function mergeWakes(project, to, work, files, now) {
   const events = [];
   const ids = new Set();
@@ -218,6 +266,71 @@ function mergeWakes(project, to, work, files, now) {
   return writeWake(project, { to, work, events, digest, dropped, merged: files }, { now });
 }
 
+// Makes `parts` one by one under `root`, each a real folder (a link or a file
+// is refused), and checks the last one's real path is the one under the
+// root's real path, so nothing written there can land anywhere else.
+function realFolderUnder(root, parts, fail) {
+  const rootReal = realOf(root);
+  if (rootReal === null) fail();
+  let dir = root;
+  for (const part of parts) {
+    dir = path.join(dir, part);
+    const before = lstatOf(dir);
+    if (before !== null && !before.isDirectory()) fail();
+    if (before === null) {
+      try {
+        fs.mkdirSync(dir);
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
+    }
+    if (!lstatOf(dir)?.isDirectory()) fail();
+  }
+  if (realOf(dir) !== path.join(rootReal, ...parts)) fail();
+  return dir;
+}
+
+// The foreman's copies: the main checkout's .wheelhouse/foreman/wakes/,
+// git-ignored through the repository's info/exclude.
+export function foremanWakesDir(checkout) {
+  const fail = () => { throw new Error("The foreman's wakes folder isn't a real folder in the project"); };
+  ensureIgnored(checkout, { mainCheckout: checkout });
+  return realFolderUnder(checkout, ['.wheelhouse', 'foreman', 'wakes'], fail);
+}
+
+// A feature's copies: its worktree's .wheelhouse/feature/wakes/.
+export function featureWakesDir(worktree) {
+  const fail = () => { throw new Error("The feature's wakes folder isn't a real folder in its worktree"); };
+  if (!safeFeatureFolder(worktree)) fail();
+  return realFolderUnder(worktree, ['.wheelhouse', 'feature', 'wakes'], fail);
+}
+
+// Copies the record `file` into `dir` under its own name, and returns the copy's path.
+function copyWake(file, dir) {
+  const text = readCapped(file, WAKE_BYTES);
+  if (text === null) throw new Error("The wake's record can't be read");
+  const copy = path.join(dir, path.basename(file));
+  writeWholeText(copy, text, () => { throw new Error("The wake's copy can't be written"); });
+  return copy;
+}
+
+// Removes the wake files in `dir` older than the look-back, except those whose
+// names are in `keep`.
+function pruneFolder(dir, keep, nowMs) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json') || keep.has(name)) continue;
+    const file = path.join(dir, name);
+    const stat = lstatOf(file);
+    if (stat?.isFile() && nowMs - stat.mtimeMs > LOOKBACK_MS) fs.rmSync(file, { force: true });
+  }
+}
+
 // --- What sessions start with ---
 
 // The explicit permission mode sessions start in: the configuration's, or
@@ -229,6 +342,13 @@ export function sessionModeOf(config) {
   return mode;
 }
 
+// A feature session's mode: as sessionModeOf, and never `auto`, on any system.
+export function featureModeOf(config) {
+  const mode = sessionModeOf(config);
+  if (mode === 'auto') throw new Error('A feature session is never started in auto mode');
+  return mode;
+}
+
 // The role's model from the routing table, or null for the command line's own default.
 function modelOf(config, role) {
   const model = config?.routing?.[role] ?? null;
@@ -236,24 +356,20 @@ function modelOf(config, role) {
   return model;
 }
 
-// The environment with every spelling of WHEELHOUSE_ROLE taken out.
-function withoutRole(env) {
-  return Object.fromEntries(Object.entries(env).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE));
-}
-
-// The feature session's id from its session.json, or null.
-export function featureSession(worktree) {
-  const kept = readJson(featurePaths(worktree).session);
-  return isPlain(kept) && typeof kept.sessionId === 'string' && SESSION_ID.test(kept.sessionId) ? kept.sessionId : null;
+// The environment a started session gets: the host session's variables and
+// every spelling of WHEELHOUSE_ROLE taken out.
+export function sessionEnv(env) {
+  return Object.fromEntries(Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE));
 }
 
 // Whether `worktree` is a feature worktree of the project: a full path, a real
-// folder (not a link) inside the project's main checkout, with a real feature folder.
+// folder (not a link) strictly inside the main checkout's .claude/worktrees/,
+// with a real feature folder.
 function featureWorktreeOk(project, worktree) {
   if (!plainWorktreePath(worktree) || /[\r\n]/.test(worktree)) return false;
   if (!lstatOf(worktree)?.isDirectory()) return false;
   const checkout = readProject(project)?.folder;
-  return typeof checkout === 'string' && isInsideFolder(checkout, worktree) && safeFeatureFolder(worktree);
+  return typeof checkout === 'string' && inWorktreesFolder(checkout, worktree) && safeFeatureFolder(worktree);
 }
 
 // Finds a running feature's worktree from the features view, or null when the
@@ -270,7 +386,7 @@ export function locateFeature(project) {
 
 // Starts `file` with `args` detached from the watcher, with no window and no
 // output kept; `input`, when given, is written to its stdin. Resolves once the
-// process has started, with its pid and a promise that settles when it exits.
+// process has started, with its pid and a promise of its exit code.
 export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbatimArguments = false } = {}) {
   return new Promise((resolve, reject) => {
     let child;
@@ -282,7 +398,7 @@ export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbati
       reject(error);
       return;
     }
-    const exited = new Promise((done) => { child.once('exit', () => done()); });
+    const exited = new Promise((done) => { child.once('exit', (code) => done(Number.isInteger(code) ? code : 1)); });
     child.once('error', reject);
     child.once('spawn', () => {
       if (input) {
@@ -305,6 +421,22 @@ export function pidAlive(pid) {
   }
 }
 
+// When the process with this id started, as the system says it, or null when
+// that can't be had: `ps -o lstart=` on macOS and Linux, the process's start
+// time through PowerShell on Windows.
+export async function processStartTime(pid, { platform = process.platform, run = runProgram } = {}) {
+  if (!Number.isInteger(pid) || pid < 1) return null;
+  try {
+    const answer = platform === 'win32'
+      ? await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`], { timeoutMs: 15000 })
+      : await run('ps', ['-o', 'lstart=', '-p', String(pid)], { timeoutMs: 5000 });
+    const text = answer.code === 0 ? answer.stdout.trim() : '';
+    return text === '' ? null : text;
+  } catch {
+    return null;
+  }
+}
+
 const bootTime = () => Date.now() - os.uptime() * 1000;
 
 // --- The waker ---
@@ -313,28 +445,52 @@ export function makeWaker({
   shape,
   project,
   config,
+  foremanTools = [],
   run = spawnDetached,
   print = (line) => process.stdout.write(`${line}\n`),
   now = () => new Date(),
   alive = pidAlive,
+  startTimeOf = (pid) => processStartTime(pid),
   bootedAt = bootTime,
   stopped = () => stopState().on,
   locate = locateFeature(project),
   claude = null,
   baseEnv = process.env,
+  platform = process.platform,
+  onError = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
   sessionModeOf(config);
+  if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
+    throw new Error("The foreman's tools are a list of tool rules");
+  }
   watcherDir(project); // a project name that is not a folder name throws here
 
-  const outboxFail = () => { throw new Error("The watcher's outbox can't be written"); };
-  const validEntry = (e) => isPlain(e) && typeof e.file === 'string'
+  // --- The outbox ---
+  const outboxFail = () => { throw new Error("The watcher's outbox can't be read or written"); };
+  const validEntry = (e) => isPlain(e) && typeof e.id === 'string' && typeof e.file === 'string'
     && (e.to === 'foreman' || (e.to === 'feature' && typeof e.work === 'string' && SLUG.test(e.work)));
-  const load = () => list(readJson(outboxFile(project), WAKE_BYTES)?.entries).filter(validEntry);
+  // The entries, oldest first. No outbox is an empty one; one that is there
+  // but is not a regular file, is too big, or does not read throws.
+  const load = () => {
+    const file = outboxFile(project);
+    const stat = lstatOf(file);
+    if (stat === null) return [];
+    if (!stat.isFile()) outboxFail();
+    let kept;
+    try {
+      kept = JSON.parse(readCapped(file, WAKE_BYTES) ?? '');
+    } catch {
+      outboxFail();
+    }
+    if (!isPlain(kept) || !Array.isArray(kept.entries)) outboxFail();
+    return kept.entries.filter(validEntry);
+  };
   const save = (entries) => {
     watcherFolder(project, null, outboxFail);
     writeJsonFile(outboxFile(project), { entries }, outboxFail);
   };
+  const newEntry = (fields) => ({ id: crypto.randomUUID(), at: now().toISOString(), failures: 0, retryAt: null, flight: null, ...fields });
 
   // One change at a time: in this process by a chain, across processes by a lock file.
   let chain = Promise.resolve();
@@ -352,132 +508,283 @@ export function makeWaker({
     return next;
   };
 
-  // --- What is running (Shape 1) ---
-  const targetOf = (work) => (work === undefined ? 'foreman' : `feature-${work}`);
-  const runningOf = (target) => {
-    const r = readJson(runningFile(project, target));
-    if (!isPlain(r) || !Number.isInteger(r.pid) || r.pid < 1) return null;
-    const at = Date.parse(r.at);
-    if (Number.isNaN(at) || at < bootedAt()) return null;
-    return alive(r.pid) ? r : null;
-  };
-  const record = (target, pid, file) => {
-    watcherFolder(project, 'running');
-    writeJsonFile(runningFile(project, target), { pid, at: now().toISOString(), file });
-  };
-  const forget = (target, pid) => {
-    const r = readJson(runningFile(project, target));
-    if (isPlain(r) && r.pid === pid) fs.rmSync(runningFile(project, target), { force: true });
+  // How each entry in `ids` turned out: `done` leaves the outbox; `failed`
+  // waits and counts a failure; `again` is sent again with no failure counted.
+  const settle = (ids, outcome, why) => {
+    const wanted = new Set(ids);
+    if (wanted.size === 0) return;
+    const entries = load();
+    const kept = [];
+    for (const e of entries) {
+      if (!wanted.has(e.id)) kept.push(e);
+      else if (outcome === 'again') kept.push({ ...e, flight: null });
+      else if (outcome === 'failed') {
+        const failures = (Number.isInteger(e.failures) ? e.failures : 0) + 1;
+        const wait = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1];
+        kept.push({ ...e, flight: null, failures, retryAt: new Date(now().getTime() + wait).toISOString(), lastError: why });
+        if (failures >= FAILURES_REPORTED) onError(`A wake for ${e.to === 'foreman' ? 'the foreman' : e.work} has failed ${failures} times: ${why}`);
+      }
+    }
+    save(kept);
   };
 
-  async function launch({ target, cwd, prompt, args, env, file }) {
+  // --- What is running (Shape 1) ---
+  const targetOf = (work) => (work === undefined ? 'foreman' : `feature-${work}`);
+  const maxRunOf = (target) => (target === 'foreman' ? MAX_RUN_MS.foreman : MAX_RUN_MS.feature);
+  const readRunning = (target) => {
+    const r = readJson(runningFile(project, target));
+    return isPlain(r) && typeof r.at === 'string' ? r : null;
+  };
+  const forget = (target, pid) => {
+    const r = readRunning(target);
+    if (r !== null && r.pid === pid) fs.rmSync(runningFile(project, target), { force: true });
+  };
+
+  // Whether the target's recorded process still runs: `{ live }`, `{ ended,
+  // why }` (why: 'gone' or 'overran'), or null when nothing is recorded.
+  async function stateOf(target) {
+    const r = readRunning(target);
+    if (r === null) return null;
+    const at = Date.parse(r.at);
+    const t = now().getTime();
+    if (Number.isNaN(at) || at < bootedAt()) return { ended: r, why: 'gone' };
+    if (r.state !== 'starting') {
+      if (!Number.isInteger(r.pid) || !alive(r.pid)) return { ended: r, why: 'gone' };
+      if (typeof r.startTime === 'string') {
+        const current = await startTimeOf(r.pid);
+        if (current !== null && current !== r.startTime) return { ended: r, why: 'gone' };
+      }
+    }
+    // Still running, or a `starting` record with no pid to check: the time limit decides.
+    if (t - at >= maxRunOf(target)) return { ended: r, why: 'overran' };
+    return { live: r };
+  }
+
+  // Ends a record that has ended: its wakes go again (an overrun counts as a failure).
+  function endRecord(target, state) {
+    const ids = list(state.ended.entries).filter((x) => typeof x === 'string');
+    fs.rmSync(runningFile(project, target), { force: true });
+    if (state.why === 'overran') {
+      const minutes = Math.round(maxRunOf(target) / MINUTE);
+      onError(`The ${target === 'foreman' ? 'foreman' : target.slice('feature-'.length)} session ran past its ${minutes} minutes`);
+      settle(ids, 'failed', 'its session ran past its time');
+    } else {
+      settle(ids, 'again');
+    }
+  }
+
+  // Starts claude for `target`, recording it as starting first and as running
+  // after. Resolves with the pid; the exit code settles `entries`.
+  async function launch({ target, cwd, prompt, args, env, file, entries = [] }) {
     const resolved = claude ?? resolveClaude({ env: baseEnv });
     const call = invocation(resolved, [], args, prompt);
-    const started = await run(call.file, call.args, { cwd, env, input: call.input, windowsVerbatimArguments: call.verbatim });
-    if (!Number.isInteger(started?.pid)) throw new Error('claude did not start');
-    record(target, started.pid, file);
+    watcherFolder(project, 'running');
+    const file0 = runningFile(project, target);
+    const at = now().toISOString();
+    writeJsonFile(file0, { state: 'starting', at, file, entries });
+    let started;
+    try {
+      started = await run(call.file, call.args, { cwd, env, input: call.input, windowsVerbatimArguments: call.verbatim });
+      if (!Number.isInteger(started?.pid)) throw new Error('claude did not start');
+    } catch (error) {
+      fs.rmSync(file0, { force: true });
+      throw error;
+    }
+    const startTime = await startTimeOf(started.pid);
+    writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries });
     if (started.exited && typeof started.exited.then === 'function') {
-      started.exited.then(() => {
+      started.exited.then((code) => serial(async () => {
         forget(target, started.pid);
-        return api.pump();
-      }).catch(() => {});
+        if (code === 0) settle(entries, 'done');
+        else {
+          settle(entries, 'failed', `its session exited with code ${code}`);
+          if (entries.length === 0) onError(`The ${target.slice('feature-'.length)} session exited with code ${code}`);
+        }
+        return deliver();
+      })).catch(() => {});
     }
     return started.pid;
   }
 
   const foremanArgs = () => {
     const model = modelOf(config, 'foreman');
-    return ['--permission-mode', sessionModeOf(config), ...(model ? ['--model', model] : [])];
+    return [
+      '--permission-mode', sessionModeOf(config),
+      ...(model ? ['--model', model] : []),
+      ...(foremanTools.length > 0 ? ['--allowedTools', ...foremanTools] : []),
+    ];
   };
   const featureArgs = () => {
     const model = modelOf(config, 'builder');
-    const allowed = featureAllowRules(config);
+    const allowed = featureAllowRules(config, { platform });
     return [
-      '--permission-mode', sessionModeOf(config),
+      '--permission-mode', featureModeOf(config),
       ...(model ? ['--model', model] : []),
       ...(allowed.length > 0 ? ['--allowedTools', ...allowed] : []),
     ];
   };
 
-  const startForeman = (file) => {
-    const cwd = readProject(project)?.folder;
-    if (typeof cwd !== 'string') throw new Error("The project's folder isn't known");
-    return launch({
-      target: 'foreman', cwd, prompt: PROMPTS.foreman(file), args: foremanArgs(), env: { ...withoutRole(baseEnv), [ROLE_VARIABLE]: 'foreman' }, file,
-    });
+  const checkoutOf = () => {
+    const folder = readProject(project)?.folder;
+    if (typeof folder !== 'string') throw new Error("The project's folder isn't known");
+    return folder;
   };
 
-  const lineOf = (e) => {
-    const line = e.to === 'foreman' ? `WAKE foreman ${e.file}` : `WAKE feature ${e.work} ${e.file}`;
-    if (/[\r\n]/.test(line)) throw new Error('A wake line must be one line');
-    return line;
+  // The session id the watcher made for the feature in this worktree, or null.
+  const keptSession = (work, worktree) => {
+    const kept = readJson(sessionFile(project, work));
+    if (!isPlain(kept) || typeof kept.sessionId !== 'string' || !UUID.test(kept.sessionId)) return null;
+    return typeof kept.worktree === 'string' && path.resolve(kept.worktree) === path.resolve(worktree) ? kept.sessionId : null;
+  };
+
+  // The features whose wakes wait for a session the watcher started, already reported.
+  const unstarted = new Set();
+
+  const ready = (e) => e.flight === null || e.flight === undefined
+    ? (typeof e.retryAt !== 'string' || Date.parse(e.retryAt) <= now().getTime())
+    : false;
+
+  // The waiting wakes for one target as one entry: several are merged into a
+  // new record, which takes their place in the outbox.
+  function gather(entries, waiting, to, work) {
+    if (waiting.length === 1) return { entries, entry: waiting[0] };
+    const file = mergeWakes(project, to, work, waiting.map((e) => e.file), now);
+    const failures = Math.max(0, ...waiting.map((e) => (Number.isInteger(e.failures) ? e.failures : 0)));
+    const entry = newEntry({ to, ...(work === undefined ? {} : { work }), file, failures });
+    const gone = new Set(waiting.map((e) => e.id));
+    const next = [...entries.filter((e) => !gone.has(e.id)), entry];
+    save(next);
+    return { entries: next, entry };
+  }
+
+  const markFlight = (entries, entry) => {
+    const next = entries.map((e) => (e.id === entry.id ? { ...e, flight: { at: now().toISOString() } } : e));
+    save(next);
+    return next;
   };
 
   // Delivers what can go now and keeps the rest. Returns what was delivered.
   async function deliver() {
     sessionModeOf(config);
     if (stopped()) return [];
-    const entries = load();
-    if (shape === 2) {
-      for (const e of entries) print(lineOf(e));
-      save([]);
-      return entries;
-    }
-    const done = new Set();
+    return shape === 2 ? deliverByLine() : deliverByStart();
+  }
+
+  async function deliverByLine() {
     const delivered = [];
-    const foreman = entries.filter((e) => e.to === 'foreman');
-    if (foreman.length > 0 && runningOf('foreman') === null) {
+    for (const e of load()) {
+      if (!ready(e)) continue;
+      if (stopped()) break;
+      let copy;
       try {
-        const file = foreman.length === 1 ? foreman[0].file : mergeWakes(project, 'foreman', undefined, foreman.map((e) => e.file), now);
-        const pid = await startForeman(file);
-        for (const e of foreman) done.add(e);
-        delivered.push({ to: 'foreman', file, pid });
-      } catch { /* it waits for the next try */ }
-    }
-    const works = [...new Set(entries.filter((e) => e.to === 'feature').map((e) => e.work))];
-    for (const work of works) {
-      const waiting = entries.filter((e) => e.to === 'feature' && e.work === work);
-      if (runningOf(targetOf(work)) !== null) continue;
-      const worktree = locate(work);
-      if (worktree === null) {
-        for (const e of waiting) done.add(e); // the feature has closed or gone
+        if (e.to === 'foreman') copy = copyWake(e.file, foremanWakesDir(checkoutOf()));
+        else {
+          const worktree = locate(e.work);
+          if (worktree === null) {
+            settle([e.id], 'done'); // the feature has closed or gone
+            continue;
+          }
+          copy = copyWake(e.file, featureWakesDir(worktree));
+        }
+      } catch (error) {
+        settle([e.id], 'failed', error.message);
         continue;
       }
-      const session = featureSession(worktree);
-      if (session === null) continue; // its session has not run a tool yet
-      try {
-        const file = waiting.length === 1 ? waiting[0].file : mergeWakes(project, 'feature', work, waiting.map((e) => e.file), now);
-        const pid = await launch({
-          target: targetOf(work), cwd: worktree, prompt: PROMPTS.feature(file), args: ['--resume', session, ...featureArgs()], env: withoutRole(baseEnv), file,
-        });
-        for (const e of waiting) done.add(e);
-        delivered.push({ to: 'feature', work, file, pid });
-      } catch { /* it waits for the next try */ }
+      const line = e.to === 'foreman' ? `WAKE foreman ${copy}` : `WAKE feature ${e.work} ${copy}`;
+      if (/[\r\n]/.test(line)) {
+        settle([e.id], 'failed', 'its line would not be one line');
+        continue;
+      }
+      print(line);
+      settle([e.id], 'done');
+      delivered.push({ to: e.to, work: e.work, file: copy });
     }
-    if (done.size > 0) save(entries.filter((e) => !done.has(e)));
+    return delivered;
+  }
+
+  async function deliverByStart() {
+    const delivered = [];
+    const works = [...new Set(load().filter((e) => e.to === 'feature').map((e) => e.work))];
+    for (const work of [undefined, ...works]) {
+      const target = targetOf(work);
+      const state = await stateOf(target);
+      if (state?.ended) endRecord(target, state);
+      else if (state?.live) continue;
+      let entries = load();
+      const mine = (e) => (work === undefined ? e.to === 'foreman' : e.to === 'feature' && e.work === work);
+      // In flight with no live process: its process went before this watcher saw it exit.
+      const lost = entries.filter((e) => mine(e) && !ready(e) && e.flight);
+      if (lost.length > 0) {
+        settle(lost.map((e) => e.id), 'again');
+        entries = load();
+      }
+      const waiting = entries.filter((e) => mine(e) && ready(e));
+      if (waiting.length === 0) continue;
+
+      let cwd;
+      let session = null;
+      if (work !== undefined) {
+        cwd = locate(work);
+        if (cwd === null) {
+          settle(entries.filter(mine).map((e) => e.id), 'done'); // the feature has closed or gone
+          continue;
+        }
+        session = keptSession(work, cwd);
+        if (session === null) {
+          if (!unstarted.has(work)) onError(`The ${work} session was not started by the watcher, so its wakes wait`);
+          unstarted.add(work); // said once
+          continue;
+        }
+        unstarted.delete(work);
+      }
+      let gathered;
+      let copy;
+      try {
+        cwd ??= checkoutOf();
+        gathered = gather(entries, waiting, work === undefined ? 'foreman' : 'feature', work);
+        copy = copyWake(gathered.entry.file, work === undefined ? foremanWakesDir(cwd) : featureWakesDir(cwd));
+      } catch (error) {
+        settle(waiting.map((e) => e.id), 'failed', error.message);
+        continue;
+      }
+      if (stopped()) return delivered;
+      markFlight(gathered.entries, gathered.entry);
+      try {
+        const pid = work === undefined
+          ? await launch({
+            target, cwd, prompt: PROMPTS.foreman(copy), args: foremanArgs(), env: { ...sessionEnv(baseEnv), [ROLE_VARIABLE]: 'foreman' }, file: gathered.entry.file, entries: [gathered.entry.id],
+          })
+          : await launch({
+            target, cwd, prompt: PROMPTS.feature(copy), args: ['--resume', session, ...featureArgs()], env: sessionEnv(baseEnv), file: gathered.entry.file, entries: [gathered.entry.id],
+          });
+        delivered.push({ to: work === undefined ? 'foreman' : 'feature', work, file: copy, pid });
+      } catch (error) {
+        settle([gathered.entry.id], 'failed', error.message);
+      }
+    }
     return delivered;
   }
 
   const enqueue = (entry) => serial(async () => {
-    save([...load(), entry]);
+    save([...load(), newEntry(entry)]);
     return deliver();
   });
 
   const api = {
-    // Wakes a fresh foreman for the wake in `file`, now or once the running one ends.
+    // Wakes a fresh foreman for the wake whose record is `file`, now or once the running one ends.
     async wakeForeman(file) {
       sessionModeOf(config);
       return enqueue({ to: 'foreman', file });
     },
-    // Wakes the feature's own session with the wake in `file`.
+    // Wakes the feature's own session with the wake whose record is `file`.
     async wakeFeature(work, file) {
-      sessionModeOf(config);
+      featureModeOf(config);
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       return enqueue({ to: 'feature', work, file });
     },
     // Starts the feature's session in its worktree, reading its brief.
     async startFeature({ work, worktree, briefFile } = {}) {
-      sessionModeOf(config);
+      featureModeOf(config);
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
       const brief = featurePaths(worktree).brief;
@@ -489,16 +796,36 @@ export function makeWaker({
           print(`START feature ${work} ${worktree}`);
           return { printed: true };
         }
-        if (runningOf(targetOf(work)) !== null) throw new Error(`The ${work} session is already running`);
+        const target = targetOf(work);
+        const state = await stateOf(target);
+        if (state?.live) throw new Error(`The ${work} session is already running`);
+        if (state?.ended) endRecord(target, state);
+        const sessionId = crypto.randomUUID();
+        watcherFolder(project, 'sessions');
+        writeJsonFile(sessionFile(project, work), { sessionId, worktree, at: now().toISOString() });
+        if (stopped()) throw new Error('STOP is on: no session is started');
         const pid = await launch({
-          target: targetOf(work), cwd: worktree, prompt: PROMPTS.start, args: featureArgs(), env: withoutRole(baseEnv), file: brief,
+          target, cwd: worktree, prompt: PROMPTS.start, args: ['--session-id', sessionId, ...featureArgs()], env: sessionEnv(baseEnv), file: brief,
         });
-        return { pid };
+        return { pid, sessionId };
       });
     },
-    // Delivers what has been waiting: a session has ended, STOP has lifted, or claude can start now.
+    // Delivers what has been waiting: a session has ended, STOP has lifted, a wait has passed.
     pump() {
       return serial(deliver);
+    },
+    // Removes wake files older than the look-back, keeping every one the outbox still names.
+    prune() {
+      return serial(async () => {
+        const keep = new Set(load().map((e) => path.basename(e.file)));
+        const t = now().getTime();
+        pruneFolder(wakesDir(project), keep, t);
+        const checkout = readProject(project)?.folder;
+        if (typeof checkout === 'string') {
+          const dir = path.join(checkout, '.wheelhouse', 'foreman', 'wakes');
+          if (lstatOf(dir)?.isDirectory() && realOf(dir) === path.join(realOf(checkout) ?? '', '.wheelhouse', 'foreman', 'wakes')) pruneFolder(dir, keep, t);
+        }
+      });
     },
     // The wakes not yet delivered, oldest first.
     waiting() {

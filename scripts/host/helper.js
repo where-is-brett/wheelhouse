@@ -935,6 +935,17 @@ export async function startHelper({
     }));
   }
 
+  // The project's configuration as the default branch has it, from the mirror: never a
+  // working copy an agent can edit. For the watcher, which holds no keys.
+  async function doConfig({ project }, ctx) {
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+      await defaultHistory(must, defaultBranch);
+      return { ok: true, config: await baseConfig(must) };
+    }));
+  }
+
   async function doMerge(body, ctx) {
     try {
       return await mergeAnswer(body, ctx);
@@ -1487,6 +1498,14 @@ export async function startHelper({
     '/test-merge': async (body, ctx) => {
       try {
         return await doTestMerge(body, ctx);
+      } finally {
+        tidyAfterAnswer(body.project);
+      }
+    },
+    // Read-only, so STOP lets it through.
+    '/config': async (body, ctx) => {
+      try {
+        return await doConfig(body, ctx);
       } finally {
         tidyAfterAnswer(body.project);
       }
