@@ -194,13 +194,14 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   };
 }
 
-// Reads the clone and writes views/*.json beside it, outside the clone.
-export async function writeViews(project, { now = () => new Date() } = {}) {
-  const dir = stateDir(project);
+// Reads the clone and writes views/*.json beside it, outside the clone. `dir` and `out`
+// name another clone of events and its views folder, such as the profile's.
+export async function writeViews(project, {
+  now = () => new Date(), dir = stateDir(project), out = path.join(wheelhouseHome(), 'projects', project, 'views'),
+} = {}) {
   const damaged = [];
   const events = listEvents(dir, { report: () => {}, skipped: damaged });
   const views = buildViews(events, readEnrolled(), { damaged, now });
-  const out = path.join(wheelhouseHome(), 'projects', project, 'views');
   // Built whole in a new folder, which then takes the old one's place. The old folder is
   // renamed aside first because Windows will not rename over a folder that has files in it.
   // Between the two renames there is no `views` folder, only `views.old` (a reader that

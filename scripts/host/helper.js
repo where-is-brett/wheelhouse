@@ -39,8 +39,8 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { eventHash } from '../state/events.js';
-import { writeBackup } from '../state/backup.js';
-import { PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
+import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
+import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -220,6 +220,7 @@ export const PUSH_REFUSALS = {
   notJson: 'a file in the state push is not JSON, so nothing is pushed',
   prBase: 'a pull request may only be opened against the default branch',
   profile: 'a profile push may only add new event files under events/, and add or remove bundles under backups/',
+  profileNotJson: 'a file in the profile push is not JSON, so nothing is pushed',
 };
 
 // A plain branch name: [A-Za-z0-9._/-], not refs/..., not HEAD, and nothing git
@@ -247,14 +248,13 @@ const ALLOWED_CHANGE = {
 
 // What a profile push may carry: new plain event files, and bundles added to or removed
 // from backups/<project>/. Nothing under keys/, nothing changed in place.
-const BACKUP_PATH = /^backups\/[A-Za-z0-9._-]+\/\d{4}-\d{2}-\d{2}\.bundle$/;
 const PROFILE_CHANGE = (status, mode, file) => (ALLOWED_CHANGE[STATE_BRANCH](status, mode, file))
-  || (BACKUP_PATH.test(file) && ((status === 'A' && mode === '100644') || (status === 'D' && mode === '000000')));
+  || (BUNDLE_PATH.test(file) && ((status === 'A' && mode === '100644') || (status === 'D' && mode === '000000')));
 
 // Checks every commit up to `sha` that the remote's copy of `branch` lacks.
 // The remote's copy is fetched first; with none, every commit is checked, the
 // root commit included.
-async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = false }) {
+async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = false, push = 'state' }) {
   const git = (args) => run('git', args, { cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1' } });
   const tracking = `refs/remotes/${REMOTE}/${branch}`;
   let range = [sha];
@@ -282,7 +282,7 @@ async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = fa
       if (typeof file !== 'string' || !allowed(status, newMode, file)) return { allowed: false, refused };
       // `scan` is true for every file, or picks the files to scan.
       if (scan === true || (typeof scan === 'function' && scan(file))) {
-        const found = await scanAdded(git, newId, file);
+        const found = await scanAdded(git, newId, file, push);
         if (found) return { allowed: false, refused: found };
       }
     }
@@ -290,16 +290,16 @@ async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = fa
   return { allowed: true };
 }
 
-// The secret scan on one file a state push adds (design section 9): its text
+// The secret scan on one file a state or profile push adds (design section 9): its text
 // and every decoded string in it. A refusal names the patterns and the file,
 // never the value; a file name that itself matches is not repeated.
-async function scanAdded(git, blob, file) {
-  if (scanText(file).length > 0) return 'a file in the state push has a name that looks like a secret, so nothing is pushed';
+async function scanAdded(git, blob, file, push = 'state') {
+  if (scanText(file).length > 0) return `a file in the ${push} push has a name that looks like a secret, so nothing is pushed`;
   const read = await git(['cat-file', 'blob', blob]);
   if (read.code !== 0) return PUSH_REFUSALS.unchecked;
   const found = scanContent(read.stdout);
-  if (found.length > 0) return `the state push was refused because ${file} matched: ${found.join(', ')}`;
-  try { JSON.parse(read.stdout); } catch { return PUSH_REFUSALS.notJson; }
+  if (found.length > 0) return `the ${push} push was refused because ${file} matched: ${found.join(', ')}`;
+  try { JSON.parse(read.stdout); } catch { return push === 'profile' ? PUSH_REFUSALS.profileNotJson : PUSH_REFUSALS.notJson; }
   return null;
 }
 
@@ -893,9 +893,51 @@ export async function startHelper({
     };
   }
 
+  const PROFILE_TRACKING = `refs/remotes/${REMOTE}/${PROFILE_BRANCH}`;
+  const inRebase = (dir) => ['rebase-merge', 'rebase-apply'].some((d) => fs.existsSync(path.join(dir, '.git', d)));
+
+  // Brings the profile clone up to date with a rebase. Two computers that back up the same
+  // project on the same day each add backups/<project>/<date>.bundle: the same state, so
+  // where the rebase stops only on bundles, the remote's copy is taken and this computer's
+  // commit of it is dropped. A stop on anything else is abandoned and said.
+  async function pullProfile(ctx) {
+    const dir = profileDir();
+    const env = ctx.gitEnv;
+    const pulled = await stateGit(dir, ['pull', '--rebase', REMOTE, PROFILE_BRANCH], env);
+    if (pulled.code === 0) return { ok: true };
+    if (!inRebase(dir)) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
+    for (let round = 0; round < 100 && inRebase(dir); round++) {
+      const listed = await stateGit(dir, ['diff', '--name-only', '--diff-filter=U', '-z']);
+      const paths = listed.stdout.split('\0').filter(Boolean);
+      if (listed.code !== 0 || paths.length === 0 || !paths.every((p) => BUNDLE_PATH.test(p))) break;
+      // During a rebase "ours" is the remote's side.
+      for (const p of paths) {
+        const taken = await stateGit(dir, ['checkout', '--ours', '--', p]);
+        await stateGit(dir, taken.code === 0 ? ['add', '--', p] : ['rm', '-q', '--', p]);
+      }
+      const nothingLeft = (await stateGit(dir, ['diff', '--cached', '--quiet'])).code === 0;
+      await stateGit(dir, nothingLeft ? ['rebase', '--skip'] : ['-c', 'core.editor=true', 'rebase', '--continue'], env);
+    }
+    if (!inRebase(dir)) return { ok: true };
+    await stateGit(dir, ['rebase', '--abort'], env);
+    return { ok: false, why: 'the profile here and in its repository differ in a way that needs looking at, so nothing more was pushed' };
+  }
+
+  // Pushes the profile, bringing the clone up to date and trying again when the remote
+  // has moved on. Never answers that the push was declined without saying why.
+  async function pushProfile(ctx) {
+    for (let attempt = 0; ; attempt++) {
+      const answer = await pushProfileOnce(ctx);
+      if (answer.rejected !== 'non-fast-forward') return answer;
+      if (attempt === 3) return { ok: false, refused: 'the profile\'s repository kept moving on, so the push did not go through; the next sync tries again' };
+      const pulled = await pullProfile(ctx);
+      if (!pulled.ok) return { ok: false, refused: pulled.why };
+    }
+  }
+
   // Pushes the profile branch straight from the helper's own clone, once every commit the
   // remote lacks has passed the profile's push rules. Never a force-push.
-  async function pushProfile(ctx) {
+  async function pushProfileOnce(ctx) {
     if (stopped()) return STOP_REFUSAL;
     const dir = profileDir();
     const keyed = gitIn(ctx.gitEnv);
@@ -907,13 +949,13 @@ export async function startHelper({
     const sha = resolved.stdout.trim();
     if (resolved.code !== 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return { ok: false, refused: PUSH_REFUSALS.missing };
     const checked = await checkCommits({
-      dir, branch: PROFILE_BRANCH, sha, run: keyed, allowed: PROFILE_CHANGE, refused: PUSH_REFUSALS.profile, scan: (file) => file.startsWith('events/'),
+      dir, branch: PROFILE_BRANCH, sha, run: keyed, allowed: PROFILE_CHANGE, refused: PUSH_REFUSALS.profile, scan: (file) => file.startsWith('events/'), push: 'profile',
     });
     if (!checked.allowed) return { ok: false, refused: checked.refused };
     if (stopped()) return STOP_REFUSAL;
     const pushed = await inClone(['push', '--no-verify', '--porcelain', REMOTE, `${sha}:refs/heads/${PROFILE_BRANCH}`]);
     if (pushed.code === 0) {
-      await unkeyed('git', ['update-ref', `refs/remotes/${REMOTE}/${PROFILE_BRANCH}`, sha], { cwd: dir });
+      await unkeyed('git', ['update-ref', PROFILE_TRACKING, sha], { cwd: dir });
       return { ok: true };
     }
     if (pushed.timedOut) return { ok: false, refused: 'the host did not answer the push in time' };
@@ -925,15 +967,31 @@ export async function startHelper({
   const profilePush = (ctx) => () => pushProfile(ctx);
   const inProfile = () => ({ dir: profileDir(), branch: PROFILE_BRANCH });
 
-  // Commits the bundles added to or removed from backups/ since the last commit, so the
-  // folder is clean for a pull. A bundle changed in place, or any other file, is left alone.
+  // Whether the keep rule removed this bundle: the backup keeps the newest BUNDLES_KEPT of
+  // a project, so a bundle with that many newer ones beside it is one it pruned.
+  function prunedByKeepRule(file) {
+    const name = file.split('/').at(-1);
+    let names = [];
+    try { names = fs.readdirSync(path.join(profileDir(), ...file.split('/').slice(0, -1))); } catch { /* none */ }
+    return names.filter((n) => BACKUP_FILE.test(n) && n > name).length >= BUNDLES_KEPT;
+  }
+
+  // Commits the new bundles under backups/, and the removal of those the keep rule pruned,
+  // so the folder is clean for a pull. A bundle missing for any other reason (a start cut
+  // short, a slip) or changed in place is put back from the branch; any other file is left alone.
   async function commitBackups() {
     const dir = profileDir();
     const listed = await stateGit(dir, ['status', '--porcelain=v1', '-z', '-uall', '--', 'backups/']);
     if (listed.code !== 0) refuse('the profile\'s backups could not be read');
-    const changed = listed.stdout.split('\0')
-      .filter((entry) => (entry.startsWith('?? ') || entry.startsWith(' D ')) && BACKUP_PATH.test(entry.slice(3)))
-      .map((entry) => entry.slice(3));
+    const entries = listed.stdout.split('\0').filter((entry) => BUNDLE_PATH.test(entry.slice(3)));
+    const having = (code) => entries.filter((entry) => entry.startsWith(code)).map((entry) => entry.slice(3));
+    const deleted = having(' D ');
+    const pruned = deleted.filter(prunedByKeepRule);
+    const putBack = [...having(' M '), ...deleted.filter((f) => !pruned.includes(f))];
+    if (putBack.length > 0 && (await stateGit(dir, ['checkout', '-q', '--', ...putBack])).code !== 0) {
+      refuse('the profile\'s backups could not be put back');
+    }
+    const changed = [...having('?? '), ...pruned];
     if (changed.length === 0) return;
     const committed = (await stateGit(dir, ['add', '-A', '--', ...changed])).code === 0
       && (await stateGit(dir, ['commit', '-q', '-m', 'Back up the state', '--', ...changed])).code === 0;
@@ -959,7 +1017,17 @@ export async function startHelper({
     await commitBackups();
     const event = makeEvent({ kind, data, now });
     const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
-    return written({ event, result });
+    return profileWritten({ event, result });
+  }
+
+  // As `written`, and when the event did not reach the profile's repository, how many
+  // commits there still lack, so work that is stuck is said plainly.
+  async function profileWritten(made) {
+    const answer = written(made);
+    if (answer.pushed) return answer;
+    const ahead = await stateGit(profileDir(), ['rev-list', '--count', `${PROFILE_TRACKING}..HEAD`]);
+    const count = Number.parseInt(ahead.stdout.trim(), 10);
+    return { ...answer, unpushed: ahead.code === 0 && Number.isInteger(count) ? count : 1 };
   }
 
   async function doProfileRecord({ event }, ctx) {
@@ -976,12 +1044,13 @@ export async function startHelper({
     }
     await commitBackups();
     const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
-    return written({ event, result });
+    return profileWritten({ event, result });
   }
 
   // The answer carries the last push's refusal, when the push rules refused it.
   async function doProfileSync(_body, ctx) {
     await commitBackups();
+    await pullProfile(ctx); // what it can't settle, the push below says
     let refused;
     const push = async () => {
       const pushed = await pushProfile(ctx);
@@ -992,12 +1061,28 @@ export async function startHelper({
     return refused === undefined ? { ok: true, ...synced } : { ok: false, ...synced, refused };
   }
 
-  // This week's bundle of the project's state branch, into the profile's backups/.
+  // This week's bundle of the project's state branch, into the profile's backups/. The
+  // profile is brought up to date first, so a bundle another computer made today is found
+  // and not made again. Without the profile's repository the bundle is still made here.
   async function doBackup({ project }) {
+    const profileCtx = await profileContext();
+    await ensureProfileClone({ remote: profileRemote(), env: profileCtx.gitEnv });
+    await commitBackups();
+    await pullProfile(profileCtx);
+    const today = `backups/${project}/${now().toISOString().slice(0, 10)}.bundle`;
+    if ((await stateGit(profileDir(), ['cat-file', '-e', `HEAD:${today}`])).code === 0) {
+      return { ok: true, file: today, made: false, why: 'The profile already holds today\'s backup of this project' };
+    }
     let before = [];
     try { before = fs.readdirSync(path.join(profileDir(), 'backups', project)); } catch { /* none yet */ }
     const file = await writeBackup({ project, now });
-    return { ok: true, file: path.relative(profileDir(), file).replaceAll('\\', '/'), made: !before.includes(path.basename(file)) };
+    const made = !before.includes(path.basename(file));
+    return {
+      ok: true,
+      file: path.relative(profileDir(), file).replaceAll('\\', '/'),
+      made,
+      ...(made ? {} : { why: 'A backup of this project from the last seven days is already kept' }),
+    };
   }
 
   // The changed files and the configuration, in the mirror. One at a time per

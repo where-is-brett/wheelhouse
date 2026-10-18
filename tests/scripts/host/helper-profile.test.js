@@ -38,10 +38,11 @@ const profileJson = (url) => ({
 
 // One computer: an enrolled key, a project whose state is on a bare repository, the
 // profile's own bare repository named in profile.json (unless `profile` is false), and a helper.
-async function computer({ profile = true } = {}) {
+// Two computers share the repositories when the first's are passed to the second.
+async function computer({ profile = true, shared } = {}) {
   const home = shortHome();
-  const stateRemote = await makeBareRemote({ repo: 'o/p' });
-  const profileRemote = await makeBareRemote({ repo: 'o/profile' });
+  const stateRemote = shared?.stateRemote ?? await makeBareRemote({ repo: 'o/p' });
+  const profileRemote = shared?.profileRemote ?? await makeBareRemote({ repo: 'o/profile' });
   await as(home, async () => {
     enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
     writeProject(PROJECT, {
@@ -65,8 +66,10 @@ async function computer({ profile = true } = {}) {
     close: async () => {
       await helper.close();
       fs.rmSync(home, { recursive: true, force: true });
-      stateRemote.cleanup();
-      profileRemote.cleanup();
+      if (!shared) {
+        stateRemote.cleanup();
+        profileRemote.cleanup();
+      }
     },
   };
 }
@@ -189,8 +192,32 @@ test('a profile push that changes keys/ or an existing event is refused', async 
       assert.equal((await c.client.profile.sync({})).refused, PUSH_REFUSALS.profile);
       await g(dir, 'reset', '-q', '--hard', 'HEAD~1');
 
+      // A bundle changed in place.
+      putInProfile('backups/o__p/2026-10-11.bundle', 'kept as it is');
+      assert.equal((await c.client.profile.sync({})).ok, true);
+      putInProfile('backups/o__p/2026-10-11.bundle', 'changed');
+      await g(dir, 'commit', '-q', '-a', '-m', 'bundle changed');
+      assert.equal((await c.client.profile.sync({})).refused, PUSH_REFUSALS.profile);
+      await g(dir, 'reset', '-q', '--hard', 'HEAD~1');
+
+      // A file under backups/ that is not a bundle.
+      putInProfile('backups/o__p/notes.txt', 'not a bundle');
+      await g(dir, 'add', '--', 'backups/o__p/notes.txt');
+      await g(dir, 'commit', '-q', '-m', 'notes');
+      assert.equal((await c.client.profile.sync({})).refused, PUSH_REFUSALS.profile);
+      await g(dir, 'reset', '-q', '--hard', 'HEAD~1');
+
+      // A new event file that holds a key: the scan names the profile push.
+      const leaky = makeEvent({ kind: 'setting', data: { key: 'briefing', value: `ghp_${'a1'.repeat(18)}` }, now: c.now });
+      putInProfile(eventPath(leaky), JSON.stringify(leaky));
+      await g(dir, 'add', '--', eventPath(leaky).replaceAll('\\', '/'));
+      await g(dir, 'commit', '-q', '-m', 'leaky');
+      assert.match((await c.client.profile.sync({})).refused, /^the profile push was refused because events\/.+ matched: /);
+      await g(dir, 'reset', '-q', '--hard', 'HEAD~1');
+
       assert.deepEqual(await c.client.profile.sync({}), { ok: true, pulled: true, unpushed: 0 });
       assert.equal(await remoteText(c.profileRemote.url, eventFile), original);
+      assert.equal(await remoteText(c.profileRemote.url, 'backups/o__p/2026-10-11.bundle'), 'kept as it is');
     });
     assert.ok(!(await remoteFiles(c.profileRemote.url)).some((n) => n.startsWith('keys/')));
   } finally { await c.close(); }
@@ -201,13 +228,15 @@ test('old bundles may be removed from backups/ and new ones added', async () => 
   try {
     await c.as(async () => {
       assert.equal((await c.client.profile.clone({})).ok, true);
-      putInProfile('backups/o__p/2026-09-01.bundle', 'one');
-      putInProfile('backups/o__p/2026-09-08.bundle', 'two');
+      // Eight weekly bundles, the most the backup keeps.
+      const week = (i) => `backups/o__p/${new Date(Date.UTC(2026, 6, 1 + 7 * i)).toISOString().slice(0, 10)}.bundle`;
+      for (let i = 0; i < 8; i++) putInProfile(week(i), `week ${i}`);
       assert.deepEqual(await c.client.profile.sync({}), { ok: true, pulled: true, unpushed: 0 });
-      assert.deepEqual(await remoteFiles(c.profileRemote.url, 'backups'), ['backups/o__p/2026-09-01.bundle', 'backups/o__p/2026-09-08.bundle']);
+      assert.deepEqual(await remoteFiles(c.profileRemote.url, 'backups'), [0, 1, 2, 3, 4, 5, 6, 7].map(week));
 
-      fs.rmSync(path.join(profileDir(), 'backups', 'o__p', '2026-09-01.bundle'));
-      putInProfile('backups/o__p/2026-09-15.bundle', 'three');
+      // A ninth: the oldest is pruned, as the backup's keep rule does.
+      fs.rmSync(path.join(profileDir(), week(0)));
+      putInProfile(week(8), 'week 8');
       putInProfile('backups/o__p/notes.txt', 'not a bundle');
       putInProfile('backups/o__p/2026-09-22.bundle.partial', 'half made');
 
@@ -222,10 +251,76 @@ test('old bundles may be removed from backups/ and new ones added', async () => 
       await g(other, 'push', '-q', 'origin', PROFILE_BRANCH);
 
       assert.deepEqual(await c.client.profile.sync({}), { ok: true, pulled: true, unpushed: 0 });
-      assert.deepEqual(await remoteFiles(c.profileRemote.url, 'backups'), ['backups/o__p/2026-09-08.bundle', 'backups/o__p/2026-09-15.bundle']);
+      assert.deepEqual(await remoteFiles(c.profileRemote.url, 'backups'), [1, 2, 3, 4, 5, 6, 7, 8].map(week));
       assert.equal((await remoteFiles(c.profileRemote.url, 'events')).length, 1, 'the other computer\'s event is still there');
+
+      // A bundle missing that the keep rule did not prune is put back, and its removal never pushed.
+      fs.rmSync(path.join(profileDir(), week(5)));
+      assert.deepEqual(await c.client.profile.sync({}), { ok: true, pulled: true, unpushed: 0 });
+      assert.deepEqual(await remoteFiles(c.profileRemote.url, 'backups'), [1, 2, 3, 4, 5, 6, 7, 8].map(week));
+      assert.equal(fs.readFileSync(path.join(profileDir(), week(5)), 'utf8'), 'week 5');
     });
   } finally { await c.close(); }
+});
+
+test('two computers backing up the same project on the same day both go on writing', async () => {
+  const a = await computer();
+  const b = await computer({ shared: a });
+  const c = await computer({ shared: a });
+  try {
+    // Both back up before either has pushed, so each makes today's bundle.
+    await a.as(async () => assert.equal((await a.client.state.backup({ project: PROJECT })).made, true));
+    await b.as(async () => assert.equal((await b.client.state.backup({ project: PROJECT })).made, true));
+    // Then both write a profile setting: both are pushed.
+    await a.as(async () => {
+      const wrote = await a.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short' } });
+      assert.equal(wrote.pushed, true, JSON.stringify(wrote));
+    });
+    await b.as(async () => {
+      const wrote = await b.client.profile.write({ kind: 'setting', data: { key: 'boardTab', value: 'build' } });
+      assert.equal(wrote.pushed, true, JSON.stringify(wrote));
+      assert.deepEqual(await b.client.profile.sync({}), { ok: true, pulled: true, unpushed: 0 });
+      assert.equal(await g(profileDir(), 'status', '--porcelain'), '', 'nothing is left stuck on this computer');
+    });
+    const events = await remoteFiles(a.profileRemote.url, 'events');
+    assert.equal(events.filter((n) => n.includes('_setting_')).length, 2);
+    assert.deepEqual(await remoteFiles(a.profileRemote.url, 'backups'), ['backups/o__p/2026-10-18.bundle']);
+    // A third computer backing up later the same day finds today's bundle in the profile.
+    await c.as(async () => {
+      assert.deepEqual(await c.client.state.backup({ project: PROJECT }), {
+        ok: true, file: 'backups/o__p/2026-10-18.bundle', made: false, why: 'The profile already holds today\'s backup of this project',
+      });
+    });
+  } finally { await c.close(); await b.close(); await a.close(); }
+});
+
+test('a profile clone whose start was cut short is finished, and no bundle is removed', async () => {
+  for (const stopAfter of ['update-ref', 'reset']) {
+    const a = await computer();
+    const b = await computer({ shared: a });
+    try {
+      await a.as(async () => {
+        assert.equal((await a.client.profile.clone({})).ok, true);
+        putInProfile('backups/o__p/2026-10-04.bundle', 'one');
+        putInProfile('backups/o__p/2026-10-11.bundle', 'two');
+        assert.equal((await a.client.profile.sync({})).ok, true);
+      });
+      await b.as(async () => {
+        // The first steps of joining the branch, then the start is cut short.
+        const dir = profileDir();
+        await g(dir, 'init', '-q');
+        await g(dir, 'symbolic-ref', 'HEAD', `refs/heads/${PROFILE_BRANCH}`);
+        await g(dir, 'remote', 'add', '-t', PROFILE_BRANCH, 'origin', a.profileRemote.url);
+        await g(dir, 'fetch', '-q', 'origin');
+        await g(dir, 'update-ref', `refs/heads/${PROFILE_BRANCH}`, `refs/remotes/origin/${PROFILE_BRANCH}`);
+        if (stopAfter === 'reset') await g(dir, 'reset', '-q');
+        assert.deepEqual(await b.client.profile.sync({}), { ok: true, pulled: true, unpushed: 0 }, stopAfter);
+        assert.equal(fs.readFileSync(path.join(dir, 'backups', 'o__p', '2026-10-04.bundle'), 'utf8'), 'one');
+        assert.equal(await g(dir, 'status', '--porcelain'), '');
+      });
+      assert.deepEqual(await remoteFiles(a.profileRemote.url, 'backups'), ['backups/o__p/2026-10-04.bundle', 'backups/o__p/2026-10-11.bundle'], stopAfter);
+    } finally { await b.close(); await a.close(); }
+  }
 });
 
 test('/state/backup writes this week\'s bundle once; /profile/sync pushes it', async () => {
@@ -234,7 +329,9 @@ test('/state/backup writes this week\'s bundle once; /profile/sync pushes it', a
     await c.as(async () => {
       assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'kept' } })).ok, true);
       assert.deepEqual(await c.client.state.backup({ project: PROJECT }), { ok: true, file: 'backups/o__p/2026-10-18.bundle', made: true });
-      assert.deepEqual(await c.client.state.backup({ project: PROJECT }), { ok: true, file: 'backups/o__p/2026-10-18.bundle', made: false });
+      assert.deepEqual(await c.client.state.backup({ project: PROJECT }), {
+        ok: true, file: 'backups/o__p/2026-10-18.bundle', made: false, why: 'The profile already holds today\'s backup of this project',
+      });
       assert.deepEqual(fs.readdirSync(path.join(profileDir(), 'backups', PROJECT)), ['2026-10-18.bundle']);
       const refused = await c.client.state.backup({ project: '../elsewhere' });
       assert.equal(refused.ok, false);

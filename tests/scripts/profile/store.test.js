@@ -37,6 +37,8 @@ test('profileRemote is null while profile.json is missing or damaged', async () 
       JSON.stringify({ host: 'github' }),
       JSON.stringify({ ...remoteFor('/r/profile.git'), remoteUrl: '' }),
       JSON.stringify(remoteFor('https://someone:secret@github.com/o/profile.git')),
+      JSON.stringify(remoteFor('https://ghs_STANDINTOKEN0123456789@github.com/o/profile.git')),
+      JSON.stringify(remoteFor('ssh://git:secret@github.com/o/profile.git')),
       JSON.stringify({ ...remoteFor('/r/profile.git'), connection: null }),
       JSON.stringify({ ...remoteFor('/r/profile.git'), repo: 7 }),
     ];
@@ -44,8 +46,10 @@ test('profileRemote is null while profile.json is missing or damaged', async () 
       writeProfileJson(text);
       assert.equal(profileRemote(), null, text);
     }
-    writeProfileJson(remoteFor('/somewhere/o/profile.git'));
-    assert.deepEqual(profileRemote(), remoteFor('/somewhere/o/profile.git'));
+    for (const url of ['/somewhere/o/profile.git', 'https://github.com/o/profile.git', 'git@github.com:o/profile.git', 'ssh://git@github.com/o/profile.git']) {
+      writeProfileJson(remoteFor(url));
+      assert.deepEqual(profileRemote(), remoteFor(url), url);
+    }
   });
 });
 
@@ -78,6 +82,8 @@ test('the clone is made in place, keeps keys and backups, and never commits keys
     await as(shortHome(), async () => {
       put('keys/enrolled.json', '{"second":true}\n');
       put('backups/o__p/2026-10-12.bundle', 'second bundle');
+      // The same day's bundle of the same project, made here too: the branch's is taken.
+      put('backups/o__p/2026-10-11.bundle', 'second, same day');
       assert.deepEqual(await ensureProfileClone({ remote: remoteFor(remote.url), env: {} }), { made: true });
       assert.equal(read('keys/enrolled.json'), '{"second":true}\n');
       assert.equal(read('backups/o__p/2026-10-12.bundle'), 'second bundle');
