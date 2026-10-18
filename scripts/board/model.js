@@ -144,17 +144,21 @@ function namesQuestion(card, id) {
 // The cards waiting are the waiting view's, so one rule, in views.js, says what waits. (Whether a
 // card put off with Not now stays waiting is the front desk plan's change to that rule.) Then the
 // build loop's questions that nobody has answered and no card asked, waiting or not, names.
-// Oldest first, numbered from 1.
-function waitingList(views, events, questions) {
+// Oldest first, numbered from 1. Each item says where it came from: `card` is a waiting card's
+// id, `question` a build-loop question's id. The front desk numbers a card by this list.
+export function numberedWaiting(views, events) {
+  const questions = isRecord(views?.work) && isRecord(views?.features) && isRecord(views?.questions) ? views.questions : {};
   const cards = list(views?.waiting);
-  const named = [...cards, ...events.filter((e) => e.kind === 'card')];
-  const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at) }));
+  const named = [...cards, ...list(events).filter((e) => e.kind === 'card')];
+  const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), card: card.id }));
   for (const [id, entry] of Object.entries(questions)) {
     if (!isRecord(entry) || entry.answer || named.some((card) => namesQuestion(card, id))) continue;
-    items.push({ what: oneLine(entry.question?.data?.what) || 'A question from the build', since: timeOf(entry.question?.at) });
+    items.push({ what: oneLine(entry.question?.data?.what) || 'A question from the build', since: timeOf(entry.question?.at), question: id });
   }
   return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));
 }
+
+const waitingList = (views, events) => numberedWaiting(views, events).map(({ n, what, since }) => ({ n, what, since }));
 
 function workInfo(work, id) {
   const data = isRecord(work[id]) && isRecord(work[id].work?.data) ? work[id].work.data : {};
@@ -243,7 +247,6 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
   if (!loop) missing.push(NO_BUILD_LOOP);
   const work = loop ? loop.work : {};
   const features = loop ? loop.features : {};
-  const questions = loop && isRecord(loop.questions) ? loop.questions : {};
   const all = list(events);
   const reports = all.filter((e) => e.kind === 'report' && isRecord(e.data));
   const merges = all.filter((e) => e.kind === 'merge' && isRecord(e.data));
@@ -303,7 +306,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
 
   const director = {
     first: part(missing, 'unconfirmed changes', () => firstLines(state, profileUnconfirmed), []),
-    waiting: part(missing, 'waiting list', () => waitingList(state, all, questions), []),
+    waiting: part(missing, 'waiting list', () => waitingList(state, all), []),
     launch,
     inProgress,
     changed: part(missing, 'changes for users', () => merges.filter((m) => timeOf(m.at)).sort(newestFirst).slice(0, 20).map((m) => ({

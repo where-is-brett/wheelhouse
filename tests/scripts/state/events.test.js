@@ -477,6 +477,8 @@ test('a card event needs its kind, options and level', async () => {
     assert.equal(make(CARD_DATA).kind, 'card');
     // A card with no line or code (a product question), and the optional topic and concepts.
     make({ ...CARD_DATA, kind: 'question', line: null, code: null, topic: 'colours', concepts: ['pull request'] });
+    // The words on each button, one for each option, so the card can be asked again as composed.
+    make({ ...CARD_DATA, descriptions: ['Approve it.', 'Wait.', 'Say it plainer.', 'Show it.'] });
     for (const kind of ['approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'question']) {
       make({ ...CARD_DATA, kind });
     }
@@ -499,6 +501,9 @@ test('a card event needs its kind, options and level', async () => {
     bad({ line: 7 });
     bad({ code: 7 });
     bad({ importance: 'high' });
+    bad({ descriptions: ['Approve it.'] });
+    bad({ descriptions: ['a', 'b', 'c', ''] });
+    bad({ descriptions: 'Approve it.' });
     bad({ topic: '' });
     bad({ concepts: 'pull request' });
     bad({ concepts: [3] });

@@ -100,7 +100,7 @@ const PLAIN_SHAPES = {
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['line', 'code', 'importance', 'topic', 'concepts'] },
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'importance', 'topic', 'concepts'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
 };
@@ -169,6 +169,9 @@ function checkPlain(kind, data) {
       bad(`needs two to ${CARD.options} options, each text`);
     }
     if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
+    if (data.descriptions !== undefined && !(Array.isArray(data.descriptions) && data.descriptions.length === data.options.length && data.descriptions.every(isText))) {
+      bad('has descriptions that are not one text for each option');
+    }
     for (const k of ['line', 'code']) if (data[k] !== undefined && data[k] !== null && !isText(data[k])) bad(`has a ${k} that is neither text nor null`);
     if (data.importance !== undefined && !Number.isFinite(data.importance)) bad('has an importance that is not a number');
     optionalText('topic');

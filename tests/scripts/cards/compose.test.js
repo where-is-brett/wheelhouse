@@ -97,6 +97,7 @@ test("each kind's card carries the five parts in order, its set line and its rep
     assert.equal(card.kind, kind);
     assert.equal(card.level, 3);
     assert.deepEqual(card.options, question.options.map((o) => o.label));
+    assert.deepEqual(card.descriptions, question.options.map((o) => o.description));
     // The state accepts the card data as composed.
     assert.doesNotThrow(() => makeEvent({ kind: 'card', data: card, now: () => NOW }), kind);
   }

@@ -237,6 +237,8 @@ export function composeCard(input) {
     question: text,
     header: question.header,
     options: buttons.map((b) => b.label),
+    // What each button says, as AskUserQuestion shows it, so the card can be asked again as composed.
+    descriptions: question.options.map((o) => o.description),
     kind,
     level,
     line,
