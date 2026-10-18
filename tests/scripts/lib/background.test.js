@@ -4,9 +4,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startBackground, weeklyDue } from '../../../scripts/lib/background.js';
+import { startBackground as startWithBackground, weeklyDue } from '../../../scripts/lib/background.js';
 
 const ROOT = '/plugin/root';
+// The weekly jobs are not due unless a test says so, whatever the home holds.
+const startBackground = (options) => startWithBackground({ weeklyDue: () => false, ...options });
 const NOW = new Date('2026-10-19T01:00:00.000Z');
 
 async function withHome(fn) {
@@ -156,12 +158,15 @@ test('a spawn that throws is a failure to start, not an error', async () => {
   });
 });
 
-test('the weekly job is started only when it is due; until it is built it never is', async () => {
-  await withHome(async () => {
-    assert.equal(weeklyDue(NOW), false);
+test('the weekly job is started only when it is due', async () => {
+  await withHome(async (home) => {
+    assert.equal(weeklyDue(NOW), true, 'with no record of a run it is due');
+    fs.mkdirSync(path.join(home, 'jobs'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'jobs', 'weekly.json'), JSON.stringify({ lastRun: NOW.toISOString() }));
+    assert.equal(weeklyDue(NOW), false, 'it ran just now');
     const r = fakeReceiver({ up: true });
     const base = { pluginRoot: ROOT, session: 's1', cwd: '/x', project: 'owner__name', env: {}, spawn: r.spawn, now: () => NOW, health: r.health };
-    assert.equal((await startBackground(base)).weekly, 'not-due');
+    assert.equal((await startWithBackground(base)).weekly, 'not-due', 'the real check: it ran just now');
     assert.equal(r.state.spawns.length, 0);
     const out = await startBackground({ ...base, weeklyDue: () => true });
     assert.equal(out.weekly, 'started');

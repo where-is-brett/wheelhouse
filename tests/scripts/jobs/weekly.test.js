@@ -1,0 +1,233 @@
+// tests/scripts/jobs/weekly.test.js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { withHome, tempFolder } from '../../helpers/homes.js';
+import { jobsDir, sourcesDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { WEEK_MS } from '../../../scripts/lib/core-numbers.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
+import { weeklyDue, runWeekly } from '../../../scripts/jobs/weekly.js';
+import { weeklyDue as backgroundWeeklyDue } from '../../../scripts/lib/background.js';
+
+const NOW = '2026-10-19T09:00:00.000Z';
+const at = (offsetMs) => new Date(Date.parse(NOW) + offsetMs).toISOString();
+const recordFile = () => path.join(jobsDir(), 'weekly.json');
+const readRecord = () => JSON.parse(fs.readFileSync(recordFile(), 'utf8'));
+const writeRecord = (body) => {
+  fs.mkdirSync(jobsDir(), { recursive: true });
+  fs.writeFileSync(recordFile(), typeof body === 'string' ? body : JSON.stringify(body));
+};
+const bareRoot = () => tempFolder('wh-root-');
+
+// A fetch answering every address with a short page, and noting what was asked.
+function pageFetch() {
+  const calls = [];
+  const fetch = async (url) => {
+    calls.push(String(url));
+    return new Response('<p>a page</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+  };
+  fetch.calls = calls;
+  return fetch;
+}
+const brokenFetch = async () => { throw new Error('the network is down'); };
+
+function addProject(name, { settings, config, folder } = {}) {
+  const dir = folder ?? tempFolder('wh-proj-');
+  writeProject(name, {
+    folder: dir, remoteUrl: `https://github.com/${name.replace('__', '/')}.git`, host: 'github', repo: name.replace('__', '/'),
+    connection: { host: 'github', mode: 'narrow', project: name.replace('__', '/') },
+  });
+  if (config !== undefined) {
+    fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude', 'wheelhouse.json'), typeof config === 'string' ? config : JSON.stringify(config));
+  }
+  if (settings !== undefined) {
+    const views = path.join(wheelhouseHome(), 'projects', name, 'views');
+    fs.mkdirSync(views, { recursive: true });
+    fs.writeFileSync(path.join(views, 'settings.json'), JSON.stringify(settings));
+  }
+  return dir;
+}
+
+// A client that records its calls; `backup` and `sync` choose the answers.
+function fakeClient({ backup = () => ({ ok: true, made: true }), sync = () => ({ ok: true, unpushed: 0 }) } = {}) {
+  const calls = [];
+  return {
+    calls,
+    state: { backup: async (args) => { calls.push(['backup', args.project]); return backup(args.project); } },
+    profile: { sync: async () => { calls.push(['sync']); return sync(); } },
+  };
+}
+
+test('the jobs are due with no record, a week after the last run, or when the last run is in the future', () => withHome(() => {
+  assert.equal(weeklyDue(NOW), true, 'no record');
+  writeRecord('not json {');
+  assert.equal(weeklyDue(NOW), true, 'a damaged record');
+  writeRecord({ result: {} });
+  assert.equal(weeklyDue(NOW), true, 'no last run');
+  writeRecord({ lastRun: 'last Tuesday' });
+  assert.equal(weeklyDue(NOW), true, 'a last run that is not a time');
+  writeRecord({ lastRun: at(-WEEK_MS + 1) });
+  assert.equal(weeklyDue(NOW), false, 'a moment short of a week');
+  assert.equal(weeklyDue(new Date(NOW)), false, 'a Date works as well');
+  writeRecord({ lastRun: at(-WEEK_MS) });
+  assert.equal(weeklyDue(NOW), true, 'exactly a week');
+  writeRecord({ lastRun: at(-1000) });
+  assert.equal(weeklyDue(NOW), false, 'a minute ago');
+  writeRecord({ lastRun: at(60 * 1000) });
+  assert.equal(weeklyDue(NOW), true, 'in the future');
+  assert.equal(backgroundWeeklyDue, weeklyDue, 'the session start uses the same check');
+}));
+
+test('a failed sources check still backs up each project and syncs the profile', () => withHome(async () => {
+  addProject('owner__one');
+  addProject('owner__two');
+  const client = fakeClient();
+  const out = await runWeekly({ now: NOW, fetch: brokenFetch, client, root: bareRoot() });
+  // The check itself reports each unread page; an exception inside it would leave sources null.
+  assert.ok(out.sources, 'the check ran and reported');
+  assert.deepEqual(client.calls, [['backup', 'owner__one'], ['backup', 'owner__two'], ['sync']]);
+  assert.deepEqual(out.backups, [{ project: 'owner__one', ok: true }, { project: 'owner__two', ok: true }]);
+  assert.equal(out.profile.ok, true);
+  assert.equal(readRecord().lastRun, NOW);
+  assert.equal(weeklyDue(at(1000)), false);
+}));
+
+test('a sources check that throws is no report, and the rest still runs', () => withHome(async () => {
+  addProject('owner__one');
+  const client = fakeClient();
+  const out = await runWeekly({ now: 'not a time at all', fetch: pageFetch(), client, root: bareRoot() }).catch((e) => e);
+  assert.ok(out instanceof Error, 'a time that cannot be read is refused before anything runs');
+  assert.equal(client.calls.length, 0);
+  assert.equal(fs.existsSync(recordFile()), false);
+
+  const thrown = await runWeekly({
+    now: NOW, fetch: pageFetch(), client, root: bareRoot(),
+    sourcesCheck: async () => { throw new Error('the check broke'); },
+  });
+  assert.equal(thrown.sources, null);
+  assert.deepEqual(client.calls, [['backup', 'owner__one'], ['sync']]);
+  const kept = readRecord();
+  assert.equal(kept.result.sources.ok, false);
+  assert.match(kept.result.sources.why, /check broke/);
+}));
+
+test('a project whose backup fails is named; the others carry on', () => withHome(async () => {
+  addProject('owner__a');
+  addProject('owner__b');
+  addProject('owner__c');
+  const client = fakeClient({
+    backup: (project) => {
+      if (project === 'owner__b') return { ok: false, why: 'The profile isn\'t set up on this computer yet' };
+      if (project === 'owner__c') throw new Error('the helper fell over');
+      return { ok: true, made: false, why: 'Today\'s bundle is already there' };
+    },
+  });
+  const out = await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot() });
+  assert.deepEqual(out.backups, [
+    { project: 'owner__a', ok: true, why: 'Today\'s bundle is already there' },
+    { project: 'owner__b', ok: false, why: 'The profile isn\'t set up on this computer yet' },
+    { project: 'owner__c', ok: false, why: 'the helper fell over' },
+  ]);
+  assert.deepEqual(client.calls.map((c) => c[0]), ['backup', 'backup', 'backup', 'sync']);
+  const kept = readRecord().result;
+  assert.deepEqual(kept.backups, out.backups);
+}));
+
+test('a refused profile sync is a failure with the reason in plain words', () => withHome(async () => {
+  const client = fakeClient({ sync: () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) });
+  const out = await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot() });
+  assert.deepEqual(out.profile, { ok: false, why: 'the host helper could not be reached: is it running?' });
+  const down = await runWeekly({
+    now: at(WEEK_MS), fetch: pageFetch(), root: bareRoot(),
+    client: fakeClient({ sync: () => { throw new Error('boom'); } }),
+  });
+  assert.deepEqual(down.profile, { ok: false, why: 'boom' });
+}));
+
+test('the record keeps counts and whys, written only after all three have been tried', () => withHome(async () => {
+  addProject('owner__one');
+  let seenWhenSyncing;
+  const client = fakeClient({ sync: () => { seenWhenSyncing = fs.existsSync(recordFile()); return { ok: true, unpushed: 2 }; } });
+  const out = await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot() });
+  assert.equal(seenWhenSyncing, false, 'nothing is recorded before the sync has been tried');
+  const kept = readRecord();
+  assert.equal(kept.lastRun, NOW);
+  assert.equal(kept.result.sources.ok, true);
+  assert.equal(kept.result.sources.checked, DEFAULT_SOURCES.length);
+  assert.equal(kept.result.sources.unread, 0);
+  assert.equal('sources' in kept.result.sources && Array.isArray(kept.result.sources.sources), false, 'not the whole report');
+  assert.deepEqual(kept.result.backups, [{ project: 'owner__one', ok: true }]);
+  assert.deepEqual(kept.result.profile, { ok: true, unpushed: 2 });
+  assert.equal(out.sources.sources.length >= DEFAULT_SOURCES.length, true);
+  assert.ok(fs.existsSync(path.join(sourcesDir(), 'report.json')));
+}));
+
+test('two runs started together run once', () => withHome(async () => {
+  addProject('owner__one');
+  const client = fakeClient();
+  const fetch = pageFetch();
+  const [a, b] = await Promise.all([
+    runWeekly({ now: NOW, fetch, client, root: bareRoot() }),
+    runWeekly({ now: NOW, fetch, client, root: bareRoot() }),
+  ]);
+  const skipped = [a, b].filter((r) => r.skipped === true);
+  const ran = [a, b].filter((r) => r.skipped !== true);
+  assert.equal(skipped.length, 1);
+  assert.equal(ran.length, 1);
+  assert.match(skipped[0].why, /weekly/i);
+  assert.equal(client.calls.filter((c) => c[0] === 'sync').length, 1);
+  assert.equal(fs.existsSync(path.join(jobsDir(), 'weekly.lock')), false, 'the lock is released');
+}));
+
+test('a run that finds the week already done once it holds the lock returns without running', () => withHome(async () => {
+  writeRecord({ lastRun: at(-1000), result: {} });
+  const client = fakeClient();
+  const out = await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot() });
+  assert.equal(out.skipped, true);
+  assert.deepEqual(client.calls, []);
+  assert.equal(readRecord().lastRun, at(-1000), 'the record is left as it was');
+}));
+
+test('the lock is released when the jobs fail, so the next run can go', () => withHome(async () => {
+  const out = await runWeekly({ now: NOW, fetch: brokenFetch, client: fakeClient(), root: bareRoot() });
+  assert.notEqual(out.skipped, true);
+  assert.equal(fs.existsSync(path.join(jobsDir(), 'weekly.lock')), false);
+}));
+
+test('the sources checked are the defaults plus those the projects\' settings name, each once', () => withHome(async () => {
+  const own = 'https://example.org/docs/notes';
+  const other = 'https://example.net/changes';
+  addProject('owner__one', { settings: { sources: { key: 'sources', value: [DEFAULT_SOURCES[0].url, own] } } });
+  addProject('owner__two', { settings: { sources: { key: 'sources', value: [own, other] } } });
+  addProject('owner__three'); // no views on disk: its settings can't be read
+  const fetch = pageFetch();
+  await runWeekly({ now: NOW, fetch, client: fakeClient(), root: bareRoot() });
+  const asked = fetch.calls;
+  assert.equal(new Set(asked).size, asked.length, 'no address twice');
+  for (const url of [...DEFAULT_SOURCES.map((s) => s.url), own, other]) assert.ok(asked.includes(url), url);
+  assert.equal(asked.length, DEFAULT_SOURCES.length + 2);
+}));
+
+test('with no settings to read, the defaults are checked', () => withHome(async () => {
+  addProject('owner__one', {});
+  const fetch = pageFetch();
+  await runWeekly({ now: NOW, fetch, client: fakeClient(), root: bareRoot() });
+  assert.deepEqual([...fetch.calls].sort(), DEFAULT_SOURCES.map((s) => s.url).sort());
+}));
+
+test('the routed models are those a project\'s routing names; missing and damaged files add none', () => withHome(async () => {
+  const deprecations = DEFAULT_SOURCES.find((s) => s.id === 'deprecations').url;
+  const fixture = fs.readFileSync(new URL('../../fixtures/sources/deprecations.html', import.meta.url), 'utf8');
+  const fetch = async (url) => new Response(String(url) === deprecations ? fixture : '<p>x</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+  addProject('owner__one', { config: { routing: { builder: 'claude-sample-9', reviewer: 'claude-sample-9', note: 7 } } });
+  addProject('owner__two', { config: '{ damaged' });
+  addProject('owner__three');
+  const out = await runWeekly({ now: '2026-10-19T09:00:00.000Z', fetch, client: fakeClient(), root: bareRoot() });
+  const byModel = Object.fromEntries(out.sources.retiring.map((r) => [r.model, r.routed]));
+  assert.equal(byModel['claude-sample-9'], true);
+  assert.equal(byModel['claude-sample-5'], false);
+  assert.ok(Object.keys(byModel).length >= 2);
+}));

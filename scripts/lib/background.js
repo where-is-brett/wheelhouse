@@ -9,6 +9,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { featureSlug } from '../hooks/session-start.js';
 import { receiverPort } from '../telemetry/main.js';
 import { recordSession } from '../usage/store.js';
+import { weeklyDue } from '../jobs/weekly.js';
 import { takeStartLock } from './start-lock.js';
 import { usageDir, wheelhouseHome } from './paths.js';
 
@@ -16,10 +17,8 @@ export const BACKGROUND_MS = 1000;
 const HEALTH_MS = 300;
 const POLL_MS = 50;
 
-// Whether the weekly job is due. A stub until the weekly job exists; it replaces this.
-export function weeklyDue() {
-  return false;
-}
+// Whether the weekly job is due is answered by the job's own module.
+export { weeklyDue };
 
 // Whether something answers /health on the port as the receiver does.
 export function askHealth(port, timeoutMs = HEALTH_MS) {
