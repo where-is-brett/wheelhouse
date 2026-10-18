@@ -122,11 +122,29 @@ function stringsIn(value, depth, into) {
   }
 }
 
+const CONFIG_MAX_BYTES = 256 * 1024;
+
+// The project's configuration, read only when it is a regular file (not a link, not a pipe)
+// of reasonable size, inside a `.claude` that is a real folder: the project's folder is one an
+// agent controls, and opening a pipe there would wait forever.
+function readConfig(folder) {
+  try {
+    const dir = path.join(folder, '.claude');
+    const file = path.join(dir, 'wheelhouse.json');
+    if (!fs.lstatSync(dir).isDirectory()) return undefined;
+    const info = fs.lstatSync(file);
+    if (!info.isFile() || info.size > CONFIG_MAX_BYTES) return undefined;
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
 // Every model named in a project's `.claude/wheelhouse.json` routing. A missing or damaged file adds none.
 function routedModels(projects) {
   const models = new Set();
   for (const { record } of projects) {
-    const config = readJson(path.join(record.folder, '.claude', 'wheelhouse.json'));
+    const config = readConfig(record.folder);
     if (isObject(config) && isObject(config.routing)) stringsIn(config.routing, 0, models);
   }
   models.delete('');

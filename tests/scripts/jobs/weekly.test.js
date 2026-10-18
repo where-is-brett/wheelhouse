@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { jobsDir, sourcesDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { WEEK_MS } from '../../../scripts/lib/core-numbers.js';
@@ -230,4 +231,46 @@ test('the routed models are those a project\'s routing names; missing and damage
   assert.equal(byModel['claude-sample-9'], true);
   assert.equal(byModel['claude-sample-5'], false);
   assert.ok(Object.keys(byModel).length >= 2);
+}));
+
+// Runs the jobs over one deprecations page and says which models were taken as routed.
+async function routedAfter() {
+  fs.rmSync(recordFile(), { force: true }); // each look is a fresh week
+  const deprecations = DEFAULT_SOURCES.find((s) => s.id === 'deprecations').url;
+  const fixture = fs.readFileSync(new URL('../../fixtures/sources/deprecations.html', import.meta.url), 'utf8');
+  const fetch = async (url) => new Response(String(url) === deprecations ? fixture : '<p>x</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+  const out = await runWeekly({ now: NOW, fetch, client: fakeClient(), root: bareRoot() });
+  return out.sources.retiring.filter((r) => r.routed).map((r) => r.model);
+}
+const ROUTING = JSON.stringify({ routing: { builder: 'claude-sample-9' } });
+
+test('a configuration that is a link, or too large, names no models', () => withHome(async () => {
+  const linked = addProject('owner__a');
+  const target = path.join(tempFolder('wh-elsewhere-'), 'real.json');
+  fs.writeFileSync(target, ROUTING);
+  fs.mkdirSync(path.join(linked, '.claude'), { recursive: true });
+  fs.symlinkSync(target, path.join(linked, '.claude', 'wheelhouse.json'));
+  const big = addProject('owner__b', { config: JSON.stringify({ routing: { builder: 'claude-sample-9' }, padding: 'x'.repeat(300 * 1024) }) });
+  assert.ok(fs.statSync(path.join(big, '.claude', 'wheelhouse.json')).size > 256 * 1024);
+  assert.deepEqual(await routedAfter(), []);
+  // The same routing in an ordinary file of ordinary size is read.
+  addProject('owner__c', { config: ROUTING });
+  assert.deepEqual(await routedAfter(), ['claude-sample-9']);
+}));
+
+test('a configuration folder that is a link names no models', () => withHome(async () => {
+  const folder = addProject('owner__a');
+  const elsewhere = tempFolder('wh-elsewhere-');
+  fs.writeFileSync(path.join(elsewhere, 'wheelhouse.json'), ROUTING);
+  fs.symlinkSync(elsewhere, path.join(folder, '.claude'), 'dir');
+  assert.deepEqual(await routedAfter(), []);
+}));
+
+test('a named pipe where the configuration should be does not hang the jobs', { skip: process.platform === 'win32' }, () => withHome(async () => {
+  const folder = addProject('owner__a');
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  const fifo = path.join(folder, '.claude', 'wheelhouse.json');
+  const made = spawnSync('mkfifo', [fifo]);
+  if (made.status !== 0) return; // no mkfifo here
+  assert.deepEqual(await routedAfter(), []);
 }));
