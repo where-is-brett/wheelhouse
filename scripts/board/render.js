@@ -11,6 +11,7 @@
 import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { sayTime } from '../settings/effective.js';
 import { NO_STATE, oneLine } from './model.js';
+import { STOP_LINE } from './health.js';
 
 const GLANCE_CHARS = 80;
 const LANES = [['quick', 'Quick lane'], ['small', 'Small lane'], ['feature', 'Feature lane'], ['bug', 'Bug lane']];
@@ -148,16 +149,26 @@ function sectionLines(section) {
   if (section.items === null) return [section.heading];
   if (section.items.length === 0) return [section.heading, 'None'];
   const lines = [section.heading, ...section.items.slice(0, section.shown)];
-  if (section.shown < section.items.length) lines.push(`- and ${section.items.length - section.shown} more`);
+  if (section.shown < section.items.length) lines.push(more(section));
   return lines;
 }
-const sectionLength = (section) => sectionLines(section).join('\n').length;
+const more = (section) => `- and ${section.items.length - section.shown} more`;
 
-// Cuts the longest sections, entry by entry from their ends, until the whole fits.
+// A section's length as sectionLines would join it, from the characters of its shown entries
+// (each with the new line before it), without joining them.
+function lengthOf(section, shownChars) {
+  if (section.items === null) return section.heading.length;
+  if (section.items.length === 0) return section.heading.length + '\nNone'.length;
+  const cut = section.shown < section.items.length ? 1 + more(section).length : 0;
+  return section.heading.length + shownChars + cut;
+}
+
+// Cuts the longest sections, entry by entry from their ends, until the whole fits. Each cut
+// costs a look along the sections, never a join of their entries. If the headings alone are
+// too long, the text ends at the last whole line within the limit.
 function fit(sections, limit) {
-  const join = (all) => all.map((s) => sectionLines(s).join('\n')).join('\n\n');
-  let lengths = sections.map(sectionLength);
   const shownChars = sections.map((s) => (s.items ?? []).reduce((sum, item) => sum + item.length + 1, 0));
+  const lengths = sections.map((s, i) => lengthOf(s, shownChars[i]));
   let total = lengths.reduce((sum, n) => sum + n, 0) + 2 * (sections.length - 1);
   while (total > limit) {
     let longest = -1;
@@ -168,18 +179,22 @@ function fit(sections, limit) {
     const section = sections[longest];
     section.shown -= 1;
     shownChars[longest] -= section.items[section.shown].length + 1;
-    const length = sectionLength(section);
+    const length = lengthOf(section, shownChars[longest]);
     total += length - lengths[longest];
-    lengths = lengths.map((n, i) => (i === longest ? length : n));
+    lengths[longest] = length;
   }
-  const text = join(sections);
-  return text.length <= limit ? text : `${text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
+  const text = sections.map((s) => sectionLines(s).join('\n')).join('\n\n');
+  if (text.length <= limit) return text;
+  const within = text.slice(0, limit + 1);
+  const end = within.lastIndexOf('\n');
+  return end > 0 ? within.slice(0, end).trimEnd() : `${text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
 }
 
-// renderBoard(model, { tab }): the chosen tab first ('director' unless 'build' is asked for), then
-// the other. Changes waiting for the director's confirmation come before both, and what couldn't
-// be read after both, each only when there is some.
-export function renderBoard(model, { tab = 'director' } = {}) {
+// renderBoard(model, { tab, limit }): the chosen tab first ('director' unless 'build' is asked for),
+// then the other. Changes waiting for the director's confirmation come before both, and what
+// couldn't be read after both, each only when there is some. `limit` is CONTEXT_CHARS unless a
+// caller that adds words of its own asks for less.
+export function renderBoard(model, { tab = 'director', limit = CONTEXT_CHARS } = {}) {
   try {
     const m = isRecord(model) ? model : {};
     const director = directorSections(isRecord(m.director) ? m.director : {});
@@ -206,7 +221,7 @@ export function renderBoard(model, { tab = 'director' } = {}) {
       ...tabs[order[1]],
       ...(missing.length > 0 ? [section('## What couldn\'t be read', missing)] : []),
     ];
-    return fit(sections, CONTEXT_CHARS);
+    return fit(sections, Number.isInteger(limit) && limit > 0 && limit <= CONTEXT_CHARS ? limit : CONTEXT_CHARS);
   } catch {
     return 'Wheelhouse\'s board couldn\'t be put into words this time.';
   }
@@ -225,7 +240,7 @@ export function glanceLine(model) {
     if (building > 0) parts.push(`${building} building`);
     const share = model.director?.budget?.share;
     if (isNumber(share)) parts.push(`week ${Math.round(share)}%`);
-    if (records(model.director?.health).some((line) => line.level === 'stop' && /^STOP is on\b/.test(String(line.text)))) parts.push('STOP on');
+    if (records(model.director?.health).some((line) => line.level === 'stop' && (line.text === STOP_LINE || String(line.text).startsWith(`${STOP_LINE}, `)))) parts.push('STOP on');
     const line = parts.join(' · ');
     return line.length <= GLANCE_CHARS ? line : `${line.slice(0, GLANCE_CHARS - 1)}…`;
   } catch {

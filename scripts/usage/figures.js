@@ -186,6 +186,24 @@ function unusualOf(kind, items, factor) {
   return found.sort((a, b) => b.ratio - a.ratio);
 }
 
+// The weekly allowance's share used, while its window is the current one: { share, shareAt },
+// each null when there is none.
+function shareOf(allowance, nowMs) {
+  const weekly = allowance?.windows.find((window) => window.kind === 'seven_day') ?? null;
+  const resetMs = weekly && typeof weekly.resetsAt === 'string' ? Date.parse(weekly.resetsAt) : NaN;
+  if (weekly && Number.isFinite(weekly.percentUsed) && Number.isFinite(resetMs) && resetMs > nowMs
+    && Date.parse(allowance.at) > resetMs - WEEK_MS) {
+    return { share: weekly.percentUsed, shareAt: allowance.at };
+  }
+  return { share: null, shareAt: null };
+}
+
+// weeklyShare({ now }): the share alone, from the allowance file and nothing else, for a reader
+// that can't wait for the days to be read (the status line).
+export function weeklyShare({ now } = {}) {
+  return shareOf(readAllowance(), instant(now));
+}
+
 // usageFigures({ project, now, factor }): the figures described at the top of this file.
 // `project` limits the week, the parts, the features and unusual use to sessions whose session file
 // names that project (all sessions when null); the share is the account's whatever the project.
@@ -205,13 +223,7 @@ export function usageFigures({ project = null, now, factor } = {}) {
   // from the date the allowance's window began (that day's earlier use is counted with it).
   const firstWeekDate = ownWeek ? dateOf(fromMs) : dateOf(nowMs - 6 * DAY_MS);
 
-  let share = null;
-  let shareAt = null;
-  if (weekly && Number.isFinite(weekly.percentUsed) && Number.isFinite(resetMs) && resetMs > nowMs
-    && Date.parse(allowance.at) > resetMs - WEEK_MS) {
-    share = weekly.percentUsed;
-    shareAt = allowance.at;
-  }
+  const { share, shareAt } = shareOf(allowance, nowMs);
 
   const dates = [];
   for (let back = UNUSUAL.windowDays - 1; back >= 0; back -= 1) dates.push(dateOf(nowMs - back * DAY_MS));

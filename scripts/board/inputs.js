@@ -4,10 +4,16 @@
 // raw events in the state clone, the settings views, the usage store, the sources report, STOP,
 // the project's record and the host facts' cache. The helper is asked only for whether it is
 // up, who holds the project's lock and, once a day, the host facts, each within HELPER_WAIT_MS
-// and all of them together within it too. With `offline` (the status line, which has half a
-// second) nothing is asked of the helper, no raw events are read (the glance needs none), and
-// what only the helper knows is left out. Nothing here throws: what can't be read is passed on
-// as missing, and boardModel names it.
+// and all of them together within it too.
+//
+// With `offline` (the status line, which has half a second and whose reads can't be interrupted)
+// only what the glance needs is read, each a file of known size or a view by name: the waiting,
+// questions, work and features views, STOP, the weekly share from the allowance file alone, and
+// the small files health reads (the host facts' cache, the profile's address). No raw events,
+// other views, settings, usage days, sources or key files are read, and nothing is asked of the helper, so
+// the model is the glance's, not the board's.
+//
+// Nothing here throws: what can't be read is passed on as missing, and boardModel names it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { boardModel } from './model.js';
@@ -15,7 +21,7 @@ import { healthLines, readHostFacts } from './health.js';
 import { projectOf } from '../hooks/kit.js';
 import { localViews } from '../hooks/session-start.js';
 import { listEvents } from '../state/events.js';
-import { usageFigures } from '../usage/figures.js';
+import { usageFigures, weeklyShare } from '../usage/figures.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { readProfileViews, profileRemote } from '../profile/store.js';
 import { stopState } from '../lib/stop.js';
@@ -25,6 +31,11 @@ import { helperClient } from '../host/helper-client.js';
 
 export const HELPER_WAIT_MS = 2000;
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
+// readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
+// the helper as tried, before the reading as a whole stops waiting.
+const FACTS_MARGIN_MS = 150;
+// The views the glance counts from.
+const GLANCE_VIEWS = ['waiting', 'questions', 'work', 'features'];
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const LATE = Symbol('late');
@@ -59,6 +70,13 @@ function readSources() {
   });
 }
 
+// The usage figures the glance needs: the week's share alone, never the days. A clock that
+// can't be read gives no share.
+function glanceUsage(clock, clockRead) {
+  const { share, shareAt } = clockRead ? attempt(() => weeklyShare({ now: clock }), {}) : {};
+  return { week: { share: share ?? null, shareAt: shareAt ?? null }, missing: [] };
+}
+
 // What the helper knows: whether it is up and who holds the lock (undefined when unknown, so
 // healthLines leaves their lines out), and the host facts, from their cache when it is fresh.
 async function helperFacts(project, { client, address, now, offline, clockRead }) {
@@ -66,16 +84,18 @@ async function helperFacts(project, { client, address, now, offline, clockRead }
     return { helperUp: undefined, lock: undefined, facts: await readHostFacts(project, { now, ask: false }).catch(() => null) };
   }
   const asker = attempt(() => client ?? helperClient({ address, timeout: HELPER_WAIT_MS }));
-  const [health, lock, facts] = await Promise.all([
+  const [health, lock, asked] = await Promise.all([
     asker ? within(() => asker.health(), HELPER_WAIT_MS) : null,
     asker ? within(() => asker.lock.read({ project }), HELPER_WAIT_MS) : null,
-    // It builds its own client, with the same limit, so a request not answered is closed.
-    within(() => readHostFacts(project, { now, address, waitMs: HELPER_WAIT_MS, ask: clockRead }), HELPER_WAIT_MS),
+    // It builds its own client with its own, shorter limit, so a request not answered is closed
+    // and the helper marked as tried before this stops waiting. The race is a second guard.
+    within(() => readHostFacts(project, { now, address, waitMs: HELPER_WAIT_MS - FACTS_MARGIN_MS, ask: clockRead }), HELPER_WAIT_MS),
   ]);
+  const facts = asked === LATE ? await readHostFacts(project, { now, ask: false }).catch(() => null) : asked;
   return {
     helperUp: health?.ok === true,
     lock: lock !== LATE && lock?.ok === true ? (isRecord(lock.result) ? lock.result : null) : undefined,
-    facts: facts === LATE ? null : facts,
+    facts,
   };
 }
 
@@ -99,15 +119,15 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const clock = () => attempt(() => new Date(typeof now === 'function' ? now() : now), new Date(NaN));
   const clockRead = !Number.isNaN(clock().getTime());
 
-  const views = attempt(() => localViews(project, null));
+  const views = attempt(() => localViews(project, offline ? GLANCE_VIEWS : null));
   const events = offline ? [] : attempt(() => listEvents(stateDir(project), { report: () => {}, skipped: [] }), []);
-  const profileViews = attempt(() => readProfileViews());
-  const settings = attempt(() => effectiveSettings({
+  const profileViews = offline ? null : attempt(() => readProfileViews());
+  const settings = offline ? null : attempt(() => effectiveSettings({
     project: isRecord(views?.settings) ? views.settings : {}, profile: isRecord(profileViews?.settings) ? profileViews.settings : {}, now: clock,
   }));
   const factor = settings?.unusualFactor?.value;
-  const usage = attempt(() => usageFigures({ project, now: clock, factor }));
-  const sources = readSources();
+  const usage = offline ? glanceUsage(clock, clockRead) : attempt(() => usageFigures({ project, now: clock, factor }));
+  const sources = offline ? null : readSources();
 
   const known = await helperFacts(project, { client, address, now: clock, offline, clockRead }).catch(() => ({}));
   const health = attempt(() => healthLines({
@@ -117,7 +137,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     lock: known.lock,
     helperUp: known.helperUp,
     facts: known.facts ?? null,
-    renewal: attempt(() => renewalDue(record.connection, clock)),
+    // Offline, no key file is opened: the glance has no renewal to show.
+    renewal: offline ? null : attempt(() => renewalDue(record.connection, clock)),
     profile: attempt(() => profileRemote()),
     platform: process.platform,
     realUsers: settings?.phase?.value === 'launched',

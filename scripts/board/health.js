@@ -12,6 +12,8 @@ import { FREE_PLAN_LINE } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 
+// The STOP line starts with these words, alone or followed by ", since <date>".
+export const STOP_LINE = 'STOP is on';
 export const QUICK_LINE = 'Agents act with your full GitHub or GitLab access, across all your projects.';
 
 const HELPER_WAIT_MS = 2000;
@@ -130,7 +132,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
 
   if (stop?.on) {
     const since = dayMonthYear(stop.at);
-    add('stop', since ? `STOP is on, since ${since}` : 'STOP is on');
+    add('stop', since ? `${STOP_LINE}, since ${since}` : STOP_LINE);
   }
   add('ok', locked ? 'Protection: Locked' : 'Protection: Standard');
   if (!locked && realUsers && platform === 'darwin') add('watch', 'This project has real users: Locked would protect it more');

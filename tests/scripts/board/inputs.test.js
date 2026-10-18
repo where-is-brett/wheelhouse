@@ -2,11 +2,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
-import { sourcesDir, stateDir, stopFile, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
@@ -157,5 +160,72 @@ test('with every file missing, a project still gets a model that names what is m
     const unread = await loadBoardInputs({ cwd: repo, client: fakeClient(), address: testAddress(home), now: () => { throw new Error('no clock'); } });
     assert.equal(unread.model.builtAt, null);
     assert.ok(unread.model.missing.includes('The board\'s clock couldn\'t be read'));
+  });
+});
+
+test('a helper that takes the request and never answers still leaves the cached facts, and is marked as tried', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    keepEverything();
+    const address = testAddress(home);
+    const held = new Set();
+    // Accepts every connection and never answers.
+    const server = net.createServer((socket) => { held.add(socket); socket.on('close', () => held.delete(socket)); socket.on('error', () => {}); });
+    await new Promise((resolve) => server.listen(address, resolve));
+    try {
+      const started = Date.now();
+      const found = await loadBoardInputs({ cwd: repo, address, now: () => NOW });
+      const took = Date.now() - started;
+      assert.ok(took < 2200, `took ${took} ms`);
+      const lines = texts(found);
+      assert.ok(lines.includes(NO_CI), 'the old cache still speaks');
+      assert.ok(lines.includes(NO_HELPER));
+      // Marked before the reading returned, so a hook that exits straight after doesn't wait on it again.
+      const tried = JSON.parse(fs.readFileSync(path.join(stateDir(P), '..', 'host-facts-tried.json'), 'utf8'));
+      assert.equal(tried.at, NOW.toISOString());
+    } finally {
+      for (const socket of held) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+const INPUTS = fileURLToPath(new URL('../../../scripts/board/inputs.js', import.meta.url));
+const RENDER = fileURLToPath(new URL('../../../scripts/board/render.js', import.meta.url));
+
+test('offline, only the files the glance needs are read: no other view, usage day, event, setting or report', { skip: process.platform === 'win32' }, async (t) => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    keepEverything();
+    // Each of these is a pipe nobody writes to: reading one would wait for ever.
+    const today = NOW.toISOString().slice(0, 10);
+    const pipes = [
+      path.join(wheelhouseHome(), 'projects', P, 'views', 'ideas.json'),
+      path.join(wheelhouseHome(), 'projects', P, 'views', 'settings.json'),
+      path.join(usageDir(), 'records', `${today}.jsonl`),
+      path.join(usageDir(), 'mod', `${today}.jsonl`),
+      path.join(stateDir(P), 'events', '2026', 'm2.json'),
+      path.join(profileViewsDir(), 'settings.json'),
+      path.join(sourcesDir(), 'report.json'),
+    ];
+    for (const pipe of pipes) {
+      fs.mkdirSync(path.dirname(pipe), { recursive: true });
+      fs.rmSync(pipe, { force: true });
+      if (spawnSync('mkfifo', [pipe]).status !== 0) {
+        t.skip('no mkfifo here');
+        return;
+      }
+    }
+    const script = `const { loadBoardInputs } = await import(${JSON.stringify(INPUTS)});
+const { glanceLine } = await import(${JSON.stringify(RENDER)});
+const found = await loadBoardInputs({ cwd: ${JSON.stringify(repo)}, now: () => new Date(${JSON.stringify(NOW.toISOString())}), offline: true });
+process.stdout.write(glanceLine(found.model));
+process.exit(0);`;
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home }, timeout: 5000 });
+    assert.equal(run.error, undefined, 'it read a pipe and waited');
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout, 'Wheelhouse · 1 waiting · 1 building · week 34% · STOP on');
   });
 });

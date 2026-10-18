@@ -181,3 +181,17 @@ test('with every input missing, the board and the glance still come out and name
     assert.equal(glanceLine(bad), 'Wheelhouse');
   }
 });
+
+test('a limit too small for the headings ends the board at a whole line', () => {
+  const m = fullModel();
+  const whole = renderBoard(m).split('\n');
+  for (const limit of [120, 300, 777]) {
+    const cut = renderBoard(m, { limit });
+    assert.ok(cut.length <= limit, `${cut.length} > ${limit}`);
+    assert.ok(cut.length > 0);
+    for (const line of cut.split('\n')) assert.ok(line === '' || whole.includes(line) || /^- and \d+ more$/.test(line), line);
+  }
+  // A limit above CONTEXT_CHARS, or one that isn't a whole number, is CONTEXT_CHARS.
+  assert.equal(renderBoard(m, { limit: CONTEXT_CHARS * 2 }), renderBoard(m));
+  assert.equal(renderBoard(m, { limit: 'x' }), renderBoard(m));
+});
