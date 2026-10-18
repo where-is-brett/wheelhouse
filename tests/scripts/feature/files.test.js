@@ -179,7 +179,7 @@ test('a malformed status reads as null', () => {
 test('malformed question lines are skipped and counted; reading stops at 64 KB', () => {
   const dir = tempFolder('wh-feat-');
   const file = path.join(dir, 'questions.jsonl');
-  assert.deepEqual(readQuestions(file), { questions: [], skipped: 0 });
+  assert.deepEqual(readQuestions(file), { questions: [], skipped: 0, truncated: false });
   const extra = question(2, { kind: 'extra-plan', plan: 'docs/plans/part-two.md' });
   const lines = [
     JSON.stringify(question(1)),
@@ -196,6 +196,7 @@ test('malformed question lines are skipped and counted; reading stops at 64 KB',
   const got = readQuestions(file);
   assert.deepEqual(got.questions, [question(1), extra]);
   assert.equal(got.skipped, 6);
+  assert.equal(got.truncated, false);
 
   // Past the limit nothing is read, and a line cut short is counted as skipped.
   const first = JSON.stringify(question(1));
@@ -204,11 +205,12 @@ test('malformed question lines are skipped and counted; reading stops at 64 KB',
   const capped = readQuestions(file);
   assert.deepEqual(capped.questions.map((q) => q.id), ['q-login-page-1']);
   assert.equal(capped.skipped, 1);
+  assert.equal(capped.truncated, true);
   assert.equal(readQuestions(file, { maxBytes: 1 << 20 }).questions.length, 3);
 
   // A file that ends exactly on a line boundary at the limit loses nothing.
   fs.writeFileSync(file, `${first}\n`);
-  assert.deepEqual(readQuestions(file, { maxBytes: Buffer.byteLength(`${first}\n`) }), { questions: [question(1)], skipped: 0 });
+  assert.deepEqual(readQuestions(file, { maxBytes: Buffer.byteLength(`${first}\n`) }), { questions: [question(1)], skipped: 0, truncated: false });
 });
 
 test('a report over 300 words is reported with its count', () => {
@@ -228,6 +230,41 @@ test('a report over 300 words is reported with its count', () => {
   assert.throws(() => parseReport(fence({ ...fields, concerns: 'none' })), cant);
   assert.throws(() => parseReport(fence({ ...fields, tests: 3 })), cant);
   assert.throws(() => parseReport(fence({ ...fields, extra: 1 })), cant);
+});
+
+test('a multi-byte character cut by the limit leaves no broken line behind', () => {
+  const dir = tempFolder('wh-feat-');
+  const file = path.join(dir, 'questions.jsonl');
+  const first = `${JSON.stringify(question(1))}\n`;
+  const second = `${JSON.stringify(question(2, { what: 'é'.repeat(50) }))}\n`;
+  fs.writeFileSync(file, first + second);
+  const start = Buffer.byteLength(first) + Buffer.byteLength('{"id":"q-login-page-2","kind":"question","what":"');
+  for (const cutAt of [start + 1, start + 2, start + 3]) {
+    const got = readQuestions(file, { maxBytes: cutAt });
+    assert.deepEqual(got.questions.map((q) => q.id), ['q-login-page-1']);
+    assert.equal(got.skipped, 1);
+    assert.equal(got.truncated, true);
+  }
+});
+
+test('question lines ending in CRLF are read', () => {
+  const dir = tempFolder('wh-feat-');
+  const file = path.join(dir, 'questions.jsonl');
+  fs.writeFileSync(file, `${JSON.stringify(question(1))}\r\n${JSON.stringify(question(2))}\r\n`);
+  assert.deepEqual(readQuestions(file), { questions: [question(1), question(2)], skipped: 0, truncated: false });
+});
+
+test('a lone carriage return hashes as a line ending', () => {
+  assert.equal(briefHash('a\rb\r\nc'), briefHash('a\nb\nc'));
+});
+
+test('a status over 64 KB reads as null', () => {
+  const dir = tempFolder('wh-feat-');
+  const file = path.join(dir, 'status.json');
+  fs.writeFileSync(file, `${JSON.stringify(status())}${' '.repeat(70000)}`);
+  assert.equal(readStatus(file), null);
+  fs.writeFileSync(file, JSON.stringify(status()));
+  assert.deepEqual(readStatus(file), status());
 });
 
 function bareRepo(root) {
@@ -252,13 +289,13 @@ test('ensureIgnored adds the entry once, from the folder itself and from a workt
   const before = process.env.PATH;
   process.env.PATH = ''; // Git cannot be found, so any attempt to run it would fail.
   try {
-    ensureIgnored(main);
-    ensureIgnored(main);
+    ensureIgnored(main, { mainCheckout: main });
+    ensureIgnored(main, { mainCheckout: main });
     assert.equal(fs.readFileSync(exclude, 'utf8'), '.wheelhouse/\n');
     const tree = path.join(base, 'tree');
     fakeWorktree(main, tree, 'tree');
-    ensureIgnored(tree);
-    ensureIgnored(path.join(tree, 'sub', 'deeper'));
+    ensureIgnored(tree, { mainCheckout: main });
+    ensureIgnored(tree, { mainCheckout: main });
     assert.equal(fs.readFileSync(exclude, 'utf8'), '.wheelhouse/\n');
     assert.equal(fs.existsSync(path.join(tree, '.gitignore')), false);
     assert.equal(fs.existsSync(path.join(main, '.gitignore')), false);
@@ -267,14 +304,66 @@ test('ensureIgnored adds the entry once, from the folder itself and from a workt
   }
   // Existing entries are kept, a missing final newline is supplied, and a line already naming it counts.
   fs.writeFileSync(exclude, '# mine\n*.log');
-  ensureIgnored(main);
+  ensureIgnored(main, { mainCheckout: main });
   assert.equal(fs.readFileSync(exclude, 'utf8'), '# mine\n*.log\n.wheelhouse/\n');
   fs.writeFileSync(exclude, '/.wheelhouse/\r\n');
-  ensureIgnored(main);
+  ensureIgnored(main, { mainCheckout: main });
   assert.equal(fs.readFileSync(exclude, 'utf8'), '/.wheelhouse/\r\n');
 });
 
-test('ensureIgnored refuses a folder that is in no repository', () => {
+const refused = { message: "The worktree's git folder isn't the project's" };
+
+test('ensureIgnored refuses a worktree whose .git file points at another repository', () => {
+  const base = tempFolder('wh-ign-');
+  const main = path.join(base, 'main');
+  const other = path.join(base, 'other');
+  bareRepo(main);
+  const otherGit = bareRepo(other);
+  // A fake folder outside the project whose commondir leads to the other repository's .git.
+  const fake = path.join(base, 'fake');
+  fs.mkdirSync(fake);
+  fs.writeFileSync(path.join(fake, 'commondir'), `${otherGit}\n`);
+  const tree = path.join(base, 'tree');
+  fs.mkdirSync(tree);
+  fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${fake}\n`);
+  assert.throws(() => ensureIgnored(tree, { mainCheckout: main }), refused);
+  assert.throws(() => ensureIgnored(tree, { mainCheckout: other }), refused);
+  assert.equal(fs.existsSync(path.join(otherGit, 'info', 'exclude')), false);
+  assert.equal(fs.existsSync(path.join(main, '.git', 'info', 'exclude')), false);
+  // A genuine worktree of one project is no worktree of another.
+  const real = path.join(base, 'real');
+  fakeWorktree(other, real, 'real');
+  assert.throws(() => ensureIgnored(real, { mainCheckout: main }), refused);
+  assert.equal(fs.existsSync(path.join(main, '.git', 'info', 'exclude')), false);
+  // A .git file whose folder is the project's but not under worktrees/ is refused too.
+  const stray = path.join(base, 'stray');
+  fs.mkdirSync(stray);
+  fs.writeFileSync(path.join(stray, '.git'), `gitdir: ${path.join(main, '.git')}\n`);
+  fs.writeFileSync(path.join(main, '.git', 'commondir'), '.\n');
+  assert.throws(() => ensureIgnored(stray, { mainCheckout: main }), refused);
+});
+
+test('ensureIgnored refuses a symlinked .git and writes nothing', { skip: process.platform === 'win32' }, () => {
+  const base = tempFolder('wh-ign-');
+  const main = path.join(base, 'main');
+  const git = bareRepo(main);
+  const tree = path.join(base, 'tree');
+  fs.mkdirSync(tree);
+  fs.symlinkSync(git, path.join(tree, '.git'));
+  assert.throws(() => ensureIgnored(tree, { mainCheckout: main }), refused);
+  assert.equal(fs.existsSync(path.join(git, 'info', 'exclude')), false);
+  // A symlinked main .git is refused as well.
+  const linked = path.join(base, 'linked');
+  fs.mkdirSync(linked);
+  fs.symlinkSync(git, path.join(linked, '.git'));
+  assert.throws(() => ensureIgnored(linked, { mainCheckout: linked }), refused);
+  assert.equal(fs.existsSync(path.join(git, 'info', 'exclude')), false);
+});
+
+test('ensureIgnored refuses a folder that is in no repository, or without the project named', () => {
   const dir = tempFolder('wh-ign-');
-  assert.throws(() => ensureIgnored(dir), { message: "Can't find the repository's git folder" });
+  assert.throws(() => ensureIgnored(dir, { mainCheckout: dir }), refused);
+  const main = path.join(dir, 'main');
+  bareRepo(main);
+  assert.throws(() => ensureIgnored(main), refused);
 });

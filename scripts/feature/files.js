@@ -7,7 +7,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findRepoRoot } from '../hooks/kit.js';
 import { LANES, SLUG } from '../lib/build-loop.js';
 
 export const FEATURE_DIR = '.wheelhouse/feature';
@@ -17,8 +16,8 @@ export const WAITING_ON = Object.freeze(['question', 'clash', 'pace', 'dependenc
 export const QUESTION_KINDS = Object.freeze(['question', 'extra-plan']);
 export const REPORT_STATUSES = Object.freeze(['done', 'blocked', 'partial']);
 
-// The most of a question file that is read.
-const QUESTION_BYTES = 65536;
+// The most of a question file, or of a status file, that is read.
+const READ_BYTES = 65536;
 
 export function featurePaths(worktree) {
   const dir = path.join(worktree, ...FEATURE_DIR.split('/'));
@@ -112,10 +111,20 @@ function validStatus(s) {
     && isTime(s.updatedAt);
 }
 
-// The status in `file`, or null when it is missing, not JSON or not the right shape.
+// The status in `file`, or null when it is missing, over 64 KB, not JSON or not the right shape.
 export function readStatus(file) {
   try {
-    const status = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const fd = fs.openSync(file, 'r');
+    let text;
+    try {
+      const size = fs.fstatSync(fd).size;
+      if (size > READ_BYTES) return null;
+      const buffer = Buffer.alloc(size);
+      text = buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, size, 0));
+    } finally {
+      fs.closeSync(fd);
+    }
+    const status = JSON.parse(text);
     return validStatus(status) ? status : null;
   } catch {
     return null;
@@ -162,8 +171,9 @@ function validQuestion(q) {
 
 // The questions in `file`, one JSON object per line. Lines that are not a valid
 // question are skipped and counted. No more than `maxBytes` of the file is read;
-// a line the limit cuts short counts as skipped. A missing file holds none.
-export function readQuestions(file, { maxBytes = QUESTION_BYTES } = {}) {
+// a line the limit cuts short counts as skipped, and `truncated` says the limit
+// was reached. A missing file holds none.
+export function readQuestions(file, { maxBytes = READ_BYTES } = {}) {
   let text;
   let cut = false;
   try {
@@ -178,7 +188,7 @@ export function readQuestions(file, { maxBytes = QUESTION_BYTES } = {}) {
       fs.closeSync(fd);
     }
   } catch {
-    return { questions: [], skipped: 0 };
+    return { questions: [], skipped: 0, truncated: false };
   }
   let skipped = 0;
   if (cut) {
@@ -199,7 +209,7 @@ export function readQuestions(file, { maxBytes = QUESTION_BYTES } = {}) {
       skipped += 1;
     }
   }
-  return { questions, skipped };
+  return { questions, skipped, truncated: cut };
 }
 
 // --- The report ---
@@ -232,28 +242,71 @@ export function parseReport(text) {
 
 // --- Keeping the files out of git ---
 
-// Adds `.wheelhouse/` once to `info/exclude` in the repository's common git
-// folder, so no project's own .gitignore is touched. The folder is found with
-// fs, following a worktree's .git file and its commondir, and git never runs.
-export function ensureIgnored(worktree) {
-  const root = findRepoRoot(path.resolve(worktree));
-  const gitDir = root === null ? null : path.join(root, '.git');
-  let isDir = false;
+const NOT_THE_PROJECTS = "The worktree's git folder isn't the project's";
+
+// The real path of `p`, or null when it does not exist.
+function real(p) {
   try {
-    isDir = gitDir !== null && fs.statSync(gitDir).isDirectory();
+    return fs.realpathSync(p);
   } catch {
-    // Not a folder.
+    return null;
   }
-  if (!isDir) throw new Error("Can't find the repository's git folder");
-  const file = path.join(gitDir, 'info', 'exclude');
-  let current = '';
+}
+
+function lstatOf(p) {
   try {
-    current = fs.readFileSync(file, 'utf8');
+    return fs.lstatSync(p);
   } catch {
-    // No exclude file yet.
+    return null;
   }
+}
+
+function readText(p) {
+  try {
+    return fs.readFileSync(p, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// Adds `.wheelhouse/` once to `info/exclude` in the project's git folder, so no
+// project's own .gitignore is touched. `mainCheckout` is the project's main
+// checkout, named by the caller that made the worktree. The worktree's git
+// folder is found with fs, following its .git file and that folder's commondir,
+// and it is used only when it is the project's own: the common folder must be
+// the real `<mainCheckout>/.git`, and a worktree's own folder must sit under
+// its `worktrees/`. A `.git` that is a symlink, or a crafted `.git` file that
+// points elsewhere, is refused and nothing is written. Git never runs.
+// For the main checkout itself, `worktree` and `mainCheckout` are the same.
+export function ensureIgnored(worktree, { mainCheckout } = {}) {
+  if (typeof worktree !== 'string' || typeof mainCheckout !== 'string' || !path.isAbsolute(worktree) || !path.isAbsolute(mainCheckout)) {
+    throw new Error(NOT_THE_PROJECTS);
+  }
+  const mainDot = path.join(mainCheckout, '.git');
+  const common = lstatOf(mainDot)?.isDirectory() ? real(mainDot) : null;
+  if (common === null) throw new Error(NOT_THE_PROJECTS);
+
+  const dot = path.join(worktree, '.git');
+  const stat = lstatOf(dot);
+  if (stat === null || stat.isSymbolicLink()) throw new Error(NOT_THE_PROJECTS);
+  if (stat.isDirectory()) {
+    if (real(dot) !== common) throw new Error(NOT_THE_PROJECTS);
+  } else if (stat.isFile()) {
+    const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(readText(dot) ?? '');
+    const gitdir = pointer ? real(path.resolve(worktree, pointer[1])) : null;
+    const named = gitdir === null ? null : readText(path.join(gitdir, 'commondir'))?.trim();
+    const own = named ? real(path.resolve(gitdir, named)) : null;
+    if (own !== common || !gitdir.startsWith(path.join(common, 'worktrees') + path.sep)) throw new Error(NOT_THE_PROJECTS);
+  } else {
+    throw new Error(NOT_THE_PROJECTS);
+  }
+
+  const info = path.join(common, 'info');
+  const file = path.join(info, 'exclude');
+  if (lstatOf(info)?.isSymbolicLink() || lstatOf(file)?.isSymbolicLink()) throw new Error(NOT_THE_PROJECTS);
+  const current = readText(file) ?? '';
   if (current.split(/\r?\n/).some((line) => ['.wheelhouse/', '/.wheelhouse/', '.wheelhouse', '/.wheelhouse'].includes(line.trim()))) return;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(info, { recursive: true });
   const lead = current === '' || current.endsWith('\n') ? '' : '\n';
   fs.appendFileSync(file, `${lead}.wheelhouse/\n`);
 }
