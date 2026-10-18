@@ -30,3 +30,4 @@ The answers to the checks in section 20 of the design, one note per check.
 | 22 | GitLab project keys | Yes, with a change | [22-gitlab-keys.md](22-gitlab-keys.md) |
 | 23 | GitLab's protection of `main` | Partly | [23-gitlab-protection.md](23-gitlab-protection.md) |
 | 24 | The safety checks, live on the Mac | Yes, with three changes | [24-safety-live.md](24-safety-live.md) |
+| 32 | The mod's commands and the sandbox | Yes | [32-mod-sandbox.md](32-mod-sandbox.md) |
