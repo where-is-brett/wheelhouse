@@ -4,7 +4,10 @@
 // when `weeklyDue` says a week has passed or a retry is due; the process calls `runWeekly`.
 //
 // Under jobsDir():
-//   weekly.json   { sourcesRun, lastRun, retryAt, result }  written once the run's jobs have been tried.
+//   weekly.json   { sourcesRun, lastRun, retryAt, result }  written as soon as the week's sources
+//                 check has run (with retryAt now and no lastRun, so a run that dies during the
+//                 backups or the sync is retried without checking the sources again), and again
+//                 once the run's jobs have been tried.
 //                 sourcesRun  when this week's sources check ran: the first try of the week, which
 //                             the week counts from
 //                 lastRun     when the backups and the sync were tried with the helper reachable:
@@ -263,6 +266,7 @@ export async function runWeekly({ now, fetch = globalThis.fetch, client, root, s
       } catch (error) {
         sourcesResult = { ok: false, why: whyOf(error) };
       }
+      writeWhole(recordFile(), `${JSON.stringify({ sourcesRun, retryAt: at, result: { sources: sourcesResult } }, null, 2)}\n`);
     }
     const answers = [];
     const backups = await backUp(client, projects, answers);

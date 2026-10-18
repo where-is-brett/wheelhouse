@@ -262,14 +262,25 @@ test('with the helper back the next day, the week is done; the next week counts 
   assert.equal(readRecord().lastRun, at(WEEK_MS));
 }));
 
-test('the record keeps counts and whys, written only after all three have been tried', () => withHome(async () => {
+test('the sources part is kept as soon as the check has run; the last run only once the backups and the sync have been tried', () => withHome(async () => {
   addProject('owner__one');
+  let seenWhenBackingUp;
   let seenWhenSyncing;
-  const client = fakeClient({ sync: () => { seenWhenSyncing = fs.existsSync(recordFile()); return { ok: true, unpushed: 2 }; } });
+  const client = fakeClient({
+    backup: () => { seenWhenBackingUp = readRecord(); return { ok: true, made: true }; },
+    sync: () => { seenWhenSyncing = readRecord(); return { ok: true, unpushed: 2 }; },
+  });
   const out = await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot() });
-  assert.equal(seenWhenSyncing, false, 'nothing is recorded before the sync has been tried');
+  for (const seen of [seenWhenBackingUp, seenWhenSyncing]) {
+    assert.equal(seen.sourcesRun, NOW, 'the sources check is recorded before the backups');
+    assert.equal(seen.lastRun, undefined, 'the week is not done yet');
+    assert.equal(seen.retryAt, NOW, 'a run that dies here is retried at once');
+    assert.equal(seen.result.sources.ok, true);
+    assert.equal(seen.result.backups, undefined);
+  }
   const kept = readRecord();
   assert.equal(kept.lastRun, NOW);
+  assert.equal(kept.retryAt, undefined);
   assert.equal(kept.result.sources.ok, true);
   assert.equal(kept.result.sources.checked, DEFAULT_SOURCES.length);
   assert.equal(kept.result.sources.unread, 0);
@@ -278,6 +289,71 @@ test('the record keeps counts and whys, written only after all three have been t
   assert.deepEqual(kept.result.profile, { ok: true, unpushed: 2 });
   assert.equal(out.sources.sources.length >= DEFAULT_SOURCES.length, true);
   assert.ok(fs.existsSync(path.join(sourcesDir(), 'report.json')));
+}));
+
+test('a run that dies during the backups leaves sourcesRun on disk, and the next run that day does not run the check', () => withHome(async () => {
+  addProject('owner__one');
+  const check = countedCheck();
+  // The backup never answers: the process is killed or the machine restarts while it waits.
+  let backingUp;
+  const started = new Promise((resolve) => { backingUp = resolve; });
+  const hung = { state: { backup: () => { backingUp(); return new Promise(() => {}); } }, profile: { sync: async () => ({ ok: true }) } };
+  runWeekly({ now: NOW, fetch: pageFetch(), client: hung, root: bareRoot(), sourcesCheck: check });
+  await started;
+  const kept = readRecord();
+  assert.equal(kept.sourcesRun, NOW);
+  assert.equal(kept.lastRun, undefined);
+  assert.equal(kept.result.sources.ok, true);
+  assert.equal(check.runs, 1);
+
+  // The dead run's lock names a process that is gone, so the next run takes it over.
+  fs.writeFileSync(path.join(jobsDir(), 'weekly.lock'), '2147483646\n');
+  assert.equal(weeklyDue(at(HOUR)), true, 'the backups and the sync are due again');
+  const next = fakeClient();
+  const out = await runWeekly({ now: at(HOUR), fetch: pageFetch(), client: next, root: bareRoot(), sourcesCheck: check });
+  assert.equal(check.runs, 1, 'the sources check is not run again');
+  assert.equal(out.sources, null);
+  assert.deepEqual(next.calls, [['backup', 'owner__one'], ['sync']]);
+  assert.equal(readRecord().sourcesRun, NOW);
+  assert.equal(readRecord().lastRun, at(HOUR));
+  assert.equal(readRecord().result.sources.ok, true, 'the first try\'s sources result is kept');
+}));
+
+test('a week start in the future is a new week', () => withHome(async () => {
+  addProject('owner__one');
+  writeRecord({ sourcesRun: at(HOUR), retryAt: at(HOUR), result: {} });
+  assert.equal(weeklyDue(NOW), true);
+  const check = countedCheck();
+  await runWeekly({ now: NOW, fetch: pageFetch(), client: fakeClient(), root: bareRoot(), sourcesCheck: check });
+  assert.equal(check.runs, 1);
+  assert.equal(readRecord().sourcesRun, NOW);
+}));
+
+test('a retry time more than a day ahead is a clock that was wrong: the retry is due', () => withHome(async () => {
+  addProject('owner__one');
+  writeRecord({ sourcesRun: at(-HOUR), retryAt: at(DAY), result: { sources: { ok: true } } });
+  assert.equal(weeklyDue(NOW), false, 'exactly a day ahead waits');
+  writeRecord({ sourcesRun: at(-HOUR), retryAt: at(DAY + 1000), result: { sources: { ok: true } } });
+  assert.equal(weeklyDue(NOW), true);
+  const check = countedCheck();
+  const client = fakeClient();
+  await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot(), sourcesCheck: check });
+  assert.equal(check.runs, 0, 'a retry, not a new week');
+  assert.deepEqual(client.calls, [['backup', 'owner__one'], ['sync']]);
+  assert.equal(readRecord().lastRun, NOW);
+}));
+
+test('a record with a week start but no last run and no retry time is a retry', () => withHome(async () => {
+  addProject('owner__one');
+  writeRecord({ sourcesRun: at(-HOUR), result: { sources: { ok: true } } });
+  assert.equal(weeklyDue(NOW), true);
+  const check = countedCheck();
+  const client = fakeClient();
+  await runWeekly({ now: NOW, fetch: pageFetch(), client, root: bareRoot(), sourcesCheck: check });
+  assert.equal(check.runs, 0);
+  assert.deepEqual(client.calls, [['backup', 'owner__one'], ['sync']]);
+  assert.equal(readRecord().sourcesRun, at(-HOUR));
+  assert.equal(readRecord().lastRun, NOW);
 }));
 
 test('two runs started together run once', () => withHome(async () => {
