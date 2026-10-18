@@ -78,10 +78,14 @@ function worktree(files) {
 }
 
 // A stand-in for the helper's client, answering from `prs` and `merges`, and keeping every call.
-function fakeClient({ prs = {}, merges = {}, onSync = () => {} } = {}) {
+// With `carried`, it answers /pr/carried with it (a function throws or answers in its place).
+function fakeClient({ prs = {}, merges = {}, onSync = () => {}, carried } = {}) {
   const calls = [];
   return {
     calls,
+    ...(carried === undefined ? {} : {
+      carried: async (args) => { calls.push(['carried', args]); return typeof carried === 'function' ? carried(args) : carried; },
+    }),
     state: { sync: async (args) => { calls.push(['sync', args]); onSync(); return { ok: true, pulled: true, unpushed: 0 }; } },
     prState: async (args) => {
       calls.push(['prState', args]);
@@ -325,6 +329,37 @@ test('a feature\'s status never takes another feature\'s pull request', () => wi
   const merged = { 7: { headSha: HEAD, headRef: 'aaa', mergeable: 'unknown', state: 'merged' } };
   obs = await observe({ project: P, client: fakeClient({ prs: merged }), now: at(2 * SEC) });
   assert.deepEqual(obs.prs, {});
+}));
+
+test('a head with no signed review of its own counts as reviewed when the helper says its review carried over', () => withHome(async () => {
+  enrolHere();
+  const wt = worktree({ status: JSON.stringify(status('login-page')) });
+  record('feature', { work: 'login-page', step: 'building', worktree: wt, branch: 'login-page' }, 0);
+  // The signed review names an earlier commit: the gate brought the branch up to date since.
+  record('review', { pr: 7, commit: 'e'.repeat(40), verdict: 'CLEAN' }, SEC);
+  const open = { 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'yes', state: 'open' } };
+  const review = async (carried) => {
+    const client = fakeClient({ prs: open, carried });
+    const obs = await observe({ project: P, client, now: at(2 * SEC) });
+    return { review: obs.prs[7].review, calls: client.calls.filter(([n]) => n === 'carried').map(([, a]) => a) };
+  };
+
+  assert.deepEqual(await review({ ok: true, review: 'clean', upToDate: true }), { review: 'clean', calls: [{ project: P, number: 7 }] });
+  // Any other answer, a refusal or a throw leaves it unreviewed.
+  for (const answer of [{ ok: true, review: 'none', upToDate: true }, { ok: false, refused: 'no' }, { ok: true }, null, () => { throw new Error('down'); }]) {
+    assert.equal((await review(answer)).review, 'none', JSON.stringify(answer));
+  }
+  // A green CI on the brought-up-to-date head, with the carried review, raises merge-ready.
+  const green = fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } });
+  green.ci = async (args) => ({ ok: true, result: { sha: args.sha, state: 'success' } });
+  const obs = await observe({ project: P, client: green, now: at(2 * SEC) });
+  assert.ok(diff(null, obs, { seen: new Set() }).some((e) => e.type === 'merge-ready' && e.work === 'login-page'));
+
+  // A head with its own signed review needs no asking.
+  record('review', { pr: 7, commit: HEAD, verdict: 'FINDINGS' }, 2 * SEC);
+  const own = fakeClient({ prs: open, carried: { ok: true, review: 'clean', upToDate: true } });
+  assert.equal((await observe({ project: P, client: own, now: at(3 * SEC) })).prs[7].review, 'findings');
+  assert.deepEqual(names(own.calls).filter((n) => n === 'carried'), []);
 }));
 
 test('worktree paths from state are followed only inside the project\'s checkout', () => withHome(async () => {

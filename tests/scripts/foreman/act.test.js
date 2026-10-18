@@ -884,7 +884,7 @@ test('an amendment that says to pause pauses the feature, and one that says to r
 
 // --- merge and close ---
 
-test('merge brings the pull request up to date, then merges it; a refusal is one line for the director, never tried again', () => withHome(async () => {
+test('merge brings the pull request up to date, then merges it, or waits for CI on the new head; a refusal is one line for the director, never tried again', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
   views.work.mine = workView('mine');
@@ -899,13 +899,22 @@ test('merge brings the pull request up to date, then merges it; a refusal is one
   assert.deepEqual(refused.calls.map(([name]) => name), ['prState', 'updateBranch']);
   assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md' });
 
-  const gate = fakeClient({ views, answers: { updateBranch: { ok: true }, merge: { ok: false, refused: 'no signed CLEAN review on the head commit' } } });
+  // Brought up to date: a new head, so the merge waits for CI on it, and the next merge-ready wakes the foreman.
+  const behind = fakeClient({ views, answers: { updateBranch: { ok: true, updated: true, head: 'd'.repeat(40) } } });
+  const brought = await act(['merge', 'mine'], { client: behind.client });
+  assert.equal(brought.code, 0, brought.err);
+  assert.equal(brought.out, 'Brought pull request #12 for mine up to date at dddddddddddd; the merge waits for CI on that commit, and the next merge-ready wakes the foreman.\n');
+  assert.deepEqual(behind.calls.map(([name]) => name), ['prState', 'updateBranch']);
+  assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md' });
+
+  const current = { ok: true, updated: false, head: 'b'.repeat(40) };
+  const gate = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: 'no signed CLEAN review on the head commit' } } });
   const no = await act(['merge', 'mine'], { client: gate.client });
   refusedInOneLine(no);
   assert.match(no.err.trim(), /^Pull request #12 for mine was not merged: no signed CLEAN review on the head commit\. Ask the director; don't try again\.$/);
   assert.equal(kept().merged, undefined);
 
-  const ok = fakeClient({ views, answers: { updateBranch: { ok: true } } });
+  const ok = fakeClient({ views, answers: { updateBranch: current } });
   const merged = await act(['merge', 'mine'], { client: ok.client });
   assert.equal(merged.code, 0, merged.err);
   assert.equal(merged.out, 'Merged pull request #12 for mine at cccccccccccc; its status reads planning.\n');

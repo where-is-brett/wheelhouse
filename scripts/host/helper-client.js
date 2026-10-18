@@ -49,7 +49,8 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
     openPr: post('/pr/open'), //     { project, head, base?, title, body, session? }: no base means the default branch
     updatePr: post('/pr/update'), // { project, number, title?, body? }
-    updateBranch: post('/pr/update-branch'), // { project, number }: brings the branch up to date with the default branch (the route comes with the gate's update, Task 21)
+    updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts? }: merges the default branch in; refused under STOP
+    carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate }: the gate's carry-over rule, read-only, answered under STOP
     prState: post('/pr/state'), //   { project, number }
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP

@@ -235,6 +235,19 @@ function reviewOf(views, pr, head) {
   return 'none';
 }
 
+// A head with no signed review of its own counts as reviewed when the helper, by the gate's
+// own carry-over rule (/pr/carried), says an earlier commit's CLEAN review still holds for it:
+// so a branch the gate brought up to date raises merge-ready again once CI is green. Any
+// other answer, or none, leaves it unreviewed.
+async function carriedReview({ project, client, number }) {
+  try {
+    const answer = await client.carried({ project, number });
+    return answer?.ok === true && answer.review === 'clean' ? 'clean' : 'none';
+  } catch {
+    return 'none';
+  }
+}
+
 // One pull request as the host has it, for the first of `works` whose branch
 // is the pull request's head branch: its state, or null once it has closed or
 // merged. Undefined when the helper could not say, or no claimant's branch
@@ -259,12 +272,13 @@ async function readPr({ project, client, number, works, branchOf, views }) {
     return undefined;
   }
   if (ci?.ok !== true || !CI.includes(ci.result?.state)) return undefined;
+  const own = reviewOf(views, number, pr.headSha);
   return {
     work,
     head: pr.headSha,
     ci: ci.result.state,
     mergeable: MERGEABLE.includes(pr.mergeable) ? pr.mergeable : 'unknown',
-    review: reviewOf(views, number, pr.headSha),
+    review: own === 'none' ? await carriedReview({ project, client, number }) : own,
   };
 }
 

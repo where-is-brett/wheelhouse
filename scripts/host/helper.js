@@ -185,6 +185,46 @@ async function branchChanges({ mirror, sha, defaultBranch, run: git }) {
   return { paths: listed.split('\0').filter((p) => p !== ''), config };
 }
 
+// git in the mirror runs no hooks, and a merge reads no attributes from outside it.
+const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
+const MERGE_ONLY = [
+  ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
+];
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+// The patch-id of what `head` changes from its merge base with `base` (design section 12):
+// `git diff` of the two, binary files included, through `git patch-id --stable`, which
+// ignores line numbers and whitespace. `git(args, options)` runs git in the mirror. Empty
+// when nothing changes; throws when git fails.
+export async function patchIdOf({ git, base, head }) {
+  const common = await git([...NO_HOOKS, 'merge-base', base, head], { input: '' });
+  if (common.code !== 0) throw new Error('finding the merge base failed');
+  const diff = await git([...MERGE_ONLY, 'diff', '--no-ext-diff', '--no-textconv', '--binary', common.stdout.trim(), head, '--'], { input: '' });
+  if (diff.code !== 0) throw new Error('reading the change failed');
+  const id = await git(['patch-id', '--stable'], { input: diff.stdout });
+  if (id.code !== 0) throw new Error('reading the patch-id failed');
+  return id.stdout.trim().split(/\s+/)[0] ?? '';
+}
+
+// Whether `commit` is a clean update merge: two parents, and its tree is the tree `git
+// merge-tree --write-tree` makes of them, so the merge itself changed nothing by hand.
+export async function cleanUpdate({ git, commit }) {
+  if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return false;
+  const listed = await git([...NO_HOOKS, 'rev-parse', `${commit}^{commit}`, `${commit}^@`], { input: '' });
+  if (listed.code !== 0) return false;
+  const [, ...parents] = listed.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (parents.length !== 2) return false;
+  const merged = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--no-messages', ...parents], { input: '' });
+  if (merged.code !== 0) return false;
+  const own = await git([...NO_HOOKS, 'rev-parse', '--verify', '-q', `${commit}^{tree}`], { input: '' });
+  return own.code === 0 && own.stdout.trim() === merged.stdout.split('\n')[0].trim();
+}
+
+// The author and committer of the commits the helper makes itself.
+const WHEELHOUSE_AUTHOR = {
+  GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid',
+};
+
 const ciPatterns = (config) => [...CI_FILES, ...config.ciFiles];
 const touchesCi = (paths, config) => paths.some((file) => ciPatterns(config).some((p) => matchGlob(p, file, { ignoreCase: true })));
 
@@ -540,6 +580,10 @@ function readBody(req, res) {
 
 export async function startHelper({
   address = helperAddress(), adapterFor, envFor, now = () => new Date(), run = realRun, onArrive = () => {}, fetch = globalThis.fetch, startWaitMs = 30 * 1000,
+  // Whether the preview's screenshots of every changed page are the same at two commits, for an
+  // approval to carry over (design section 12). It answers false until the front desk's plan
+  // builds the comparison, so the director is asked again meanwhile.
+  screenshotsMatch = async () => false,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -941,10 +985,6 @@ export async function startHelper({
   //     a branch that names a filter or a merge driver finds nothing to run.
   // The working refs are dropped afterwards, whatever happened.
   const TEST_MERGE_REFS = ['refs/wheelhouse/tm/a', 'refs/wheelhouse/tm/b'];
-  const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
-  const MERGE_ONLY = [
-    ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
-  ];
   const CONFIG_REFUSED = {
     some: 'the git configuration names a hook, filter or merge driver, so nothing is merged',
     unreadable: 'the git configuration could not be read, so nothing is merged',
@@ -985,6 +1025,178 @@ export async function startHelper({
       await defaultHistory(must, defaultBranch);
       return { ok: true, config: await baseConfig(must) };
     }));
+  }
+
+  // git in the mirror with no key, no system or user configuration and no system attributes.
+  const local = (mirror) => (args, options = {}) => unkeyed('git', args, {
+    cwd: mirror, input: '', ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env },
+  });
+
+  // The checks /test-merge makes, for a merge or a diff in the mirror: no hook in the
+  // configuration a keyed fetch reads, and no hook, filter, merge or diff driver in the
+  // mirror's own. The refusal, or null.
+  async function mirrorRefusal(mirror, keyed) {
+    const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
+    for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook|diff)\\.')]) {
+      if (said !== 'none') return CONFIG_REFUSED[said];
+    }
+    return null;
+  }
+
+  const prSource = (project, number) => (recordOf(project).host === 'gitlab' ? `refs/merge-requests/${number}/head` : `refs/pull/${number}/head`);
+
+  // Fetches the pull request's head and the default branch into the mirror with the key, and
+  // checks the head is the one the host reported. Throws otherwise.
+  async function fetchPr({ mirror, keyed, git, number, headSha, defaultBranch, project }) {
+    const prRef = `refs/wheelhouse/pr/${number}`;
+    const fetched = await keyed('git', [
+      ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE,
+      `+${prSource(project, number)}:${prRef}`, `+refs/heads/${defaultBranch}:${BASE_REF}`,
+    ], { cwd: mirror, input: '' });
+    if (fetched.code !== 0) throw new Error('fetching the pull request failed');
+    const head = await git([...NO_HOOKS, 'rev-parse', '--verify', '--end-of-options', `${prRef}^{commit}`]);
+    if (head.code !== 0 || head.stdout.trim() !== headSha) throw new Error('the fetched head is not the head the host reported');
+    return prRef;
+  }
+
+  // The facts the gate's carry-over rule needs, read in the mirror (design section 12): whether
+  // the default branch's head is an ancestor of the pull request's head, and, for each earlier
+  // commit named in `from`, whether what was signed for it still holds for the head. It holds
+  // when its patch-id (against its merge base with the default branch) is the head's, and every
+  // commit after it on the head's first-parent line is a clean update merge. A commit of the
+  // feature's own after it, or an update merge whose resolution changed code, needs the head
+  // signed again. Read-only toward the host. Throws when the mirror cannot say.
+  function carryFacts({ project, number, headSha, defaultBranch, from }, ctx) {
+    if (!plainBranch(defaultBranch)) throw new Error('the default branch is not known');
+    if (typeof headSha !== 'string' || !FULL_SHA.test(headSha)) throw new Error('the head commit is not known');
+    return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const git = local(mirror);
+      const refusal = await mirrorRefusal(mirror, keyed);
+      if (refusal) throw new Error(refusal);
+      const prRef = `refs/wheelhouse/pr/${number}`;
+      try {
+        await fetchPr({ mirror, keyed, git, number, headSha, defaultBranch, project });
+        const onTop = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', BASE_REF, headSha]);
+        if (onTop.code !== 0 && onTop.code !== 1) throw new Error('comparing the branch with the default branch failed');
+        let headPatch = null;
+        const holds = async (commit) => {
+          if (typeof commit !== 'string' || !FULL_SHA.test(commit) || commit === headSha) return false;
+          // The commits after `commit` on the head's first-parent line, newest first; the oldest must sit on it.
+          const after = await git([...NO_HOOKS, 'rev-list', '--first-parent', headSha, `^${commit}`, '--']);
+          const line = after.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+          if (after.code !== 0 || line.length === 0) return false;
+          const first = await git([...NO_HOOKS, 'rev-parse', '--verify', '-q', `${line.at(-1)}^1`]);
+          if (first.code !== 0 || first.stdout.trim() !== commit) return false;
+          for (const c of line) if (!(await cleanUpdate({ git, commit: c }))) return false;
+          headPatch ??= await patchIdOf({ git, base: BASE_REF, head: headSha });
+          return headPatch !== '' && (await patchIdOf({ git, base: BASE_REF, head: commit })) === headPatch;
+        };
+        const out = { upToDate: onTop.code === 0 };
+        for (const [name, commit] of Object.entries(from)) out[name] = await holds(commit);
+        return out;
+      } finally {
+        await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
+      }
+    }));
+  }
+
+  // The review and the approval the gate weighs, and whether the branch is up to date. Each is
+  // the latest signed record for this pull request, in the carried form when it names an
+  // earlier commit and still holds for the head (carryFacts); an approval carries only when the
+  // screenshots of the two commits match too. Anything the mirror can't say leaves the branch
+  // behind and nothing carried. The one rule behind /merge and /pr/carried.
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true }, ctx) {
+    const review = latestFor(views.reviews, number);
+    const approval = withApproval ? latestFor(views.approvals, number) : null;
+    const from = {
+      review: review?.data?.verdict === 'CLEAN' && review.data.commit !== headSha ? review.data.commit : null,
+      approval: approval !== null && approval.data?.commit !== headSha ? approval.data?.commit : null,
+    };
+    let facts = { upToDate: false, review: false, approval: false };
+    try {
+      const defaultBranch = await defaultBranchOf(project, adapter);
+      facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
+    } catch { /* not readable: behind, and nothing carries */ }
+    let shown = false;
+    if (facts.approval === true) {
+      try { shown = (await screenshotsMatch(from.approval, headSha)) === true; } catch { /* not compared: asked again */ }
+    }
+    return {
+      upToDate: facts.upToDate === true,
+      review: facts.review === true ? { carried: true, record: review } : review,
+      approval: shown ? { carried: true, record: approval } : approval,
+    };
+  }
+
+  // Whether the head of an open pull request counts as reviewed, by the gate's own rule, and
+  // whether it is up to date: for the watcher, which holds no keys. Read-only, so STOP lets it through.
+  async function doCarried({ project, number }, ctx) {
+    if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
+    const adapter = await ctx.adapter();
+    const pr = await adapter.prState(number);
+    if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { now });
+    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false }, ctx);
+    const own = found.review?.data?.commit === pr.headSha && found.review?.data?.verdict === 'CLEAN';
+    return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate };
+  }
+
+  // Brings an open pull request's branch up to date with the default branch (design section 12):
+  // in the mirror, `git merge-tree --write-tree` of the head and the default branch; when clean
+  // and the head is behind, a merge commit of the two, pushed to the pull request's branch with
+  // the connection's key through the push rules. A CI file arriving from the default branch is
+  // not the branch's own change, since the rules compare with the merge base. Refused under STOP.
+  async function doUpdateBranch({ project, number }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
+    if (bypassActive({ now })) return { ok: false, refused: BYPASS_PUSH };
+    const adapter = await ctx.adapter();
+    const pr = await adapter.prState(number);
+    if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
+    if (typeof pr.headSha !== 'string' || !FULL_SHA.test(pr.headSha)) refuse('the head commit is not known');
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const spelled = checkRefspec(pr.headRef, defaultBranch);
+    if (!spelled.allowed) return { ok: false, refused: spelled.refused };
+    const { branch } = spelled;
+    if (branch === STATE_BRANCH || branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+    if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
+    const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const git = local(mirror);
+      const refusal = await mirrorRefusal(mirror, keyed);
+      if (refusal) return { refused: refusal };
+      const prRef = `refs/wheelhouse/pr/${number}`;
+      try {
+        await fetchPr({ mirror, keyed, git, number, headSha: pr.headSha, defaultBranch, project });
+        const onTop = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', BASE_REF, pr.headSha]);
+        if (onTop.code === 0) return { current: true };
+        if (onTop.code !== 1) throw new Error('comparing the branch with the default branch failed');
+        const merged = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', pr.headSha, BASE_REF]);
+        if (merged.code === 1) return { conflicts: merged.stdout.split('\0').slice(1).filter((name) => name !== '') };
+        if (merged.code !== 0) throw new Error('git could not merge the default branch in');
+        const tree = merged.stdout.split('\0')[0].trim();
+        const base = (await git([...NO_HOOKS, 'rev-parse', '--verify', `${BASE_REF}^{commit}`])).stdout.trim();
+        const at = now().toISOString();
+        const commit = await git([...NO_HOOKS, 'commit-tree', tree, '-p', pr.headSha, '-p', base, '-m', `Merge ${defaultBranch} into ${branch}`], {
+          env: { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+        });
+        if (commit.code !== 0 || !FULL_SHA.test(commit.stdout.trim())) throw new Error('making the merge commit failed');
+        const kept = await git([...NO_HOOKS, 'update-ref', `refs/heads/${branch}`, commit.stdout.trim()]);
+        if (kept.code !== 0) throw new Error('keeping the merge commit failed');
+        return { commit: commit.stdout.trim(), mirror };
+      } finally {
+        await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
+      }
+    }));
+    if (made.refused) return { ok: false, refused: made.refused };
+    if (made.conflicts) return { ok: false, refused: 'the branch conflicts with the default branch', conflicts: made.conflicts };
+    if (made.current) return { ok: true, updated: false, head: pr.headSha };
+    try {
+      const pushed = await pushFrom({ project, branch, source: made.mirror, refspec: branch, defaultBranch, ciGuard: true }, ctx);
+      if (!pushed.ok) return pushed.rejected ? { ok: false, refused: 'the branch moved on the host while it was being brought up to date' } : pushed;
+    } finally {
+      await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
+    }
+    return { ok: true, updated: true, head: made.commit };
   }
 
   async function doMerge(body, ctx) {
@@ -1038,6 +1250,7 @@ export async function startHelper({
     const enrolled = readEnrolled();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
     const holdsLock = await lockHeld(project, ctx);
+    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter }, ctx);
     // STOP and bypass are read last, just before the decision, so one set during the
     // fetches above is seen. The caller may only raise them.
     const decision = gateDecision({
@@ -1050,11 +1263,11 @@ export async function startHelper({
       reviewRequired: !restore,
       approvalRequired,
       touchesGuardrails,
-      review: latestFor(views.reviews, number),
-      approval: latestFor(views.approvals, number),
+      review,
+      approval,
       enrolled,
-      // Interim values: Tasks 21 and 22 compute the first two, Task 27 reads the third.
-      upToDate: true, // Task 21 brings the branch up to date
+      upToDate,
+      // Interim values until Tasks 22 and 27.
       incident: { open: false }, // Task 22 reads the open incident
       provenance: { ok: true }, // Task 27 reads the PR's provenance block
     });
@@ -1269,7 +1482,6 @@ export async function startHelper({
     const defaultBranch = await defaultBranchOf(project, adapter);
     const branch = `${RESTORE_PREFIX}${sha12}`;
     const onGithub = recordOf(project).host === 'github';
-    const author = { GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid' };
     const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed, must }) => {
       const { head, history } = await defaultHistory(must, defaultBranch);
       if (sha === head || !history.includes(sha)) return { refused: NOT_EARLIER };
@@ -1279,7 +1491,7 @@ export async function startHelper({
         return { refused: 'the default branch already holds exactly those files' };
       }
       const commit = await keyed('git', ['commit-tree', tree, '-p', head, '-m', `Put the product back to release ${sha12}`], {
-        cwd: mirror, input: '', env: { ...author, GIT_AUTHOR_DATE: now().toISOString(), GIT_COMMITTER_DATE: now().toISOString() },
+        cwd: mirror, input: '', env: { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: now().toISOString(), GIT_COMMITTER_DATE: now().toISOString() },
       });
       if (commit.code !== 0) throw new Error('making the restore commit failed');
       await must(['update-ref', `refs/heads/${branch}`, commit.stdout.trim()], 'keeping the restore commit');
@@ -1553,6 +1765,23 @@ export async function startHelper({
       try {
         return await doTestMerge(body, ctx);
       } finally {
+        tidyAfterAnswer(body.project);
+      }
+    },
+    '/pr/update-branch': (body, ctx) => oneAtATime(`merge:${body.project}`, async () => {
+      try {
+        return await doUpdateBranch(body, ctx);
+      } finally {
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
+        tidyAfterAnswer(body.project);
+      }
+    }),
+    // Read-only, so STOP lets it through.
+    '/pr/carried': async (body, ctx) => {
+      try {
+        return await doCarried(body, ctx);
+      } finally {
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
         tidyAfterAnswer(body.project);
       }
     },

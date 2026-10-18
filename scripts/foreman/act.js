@@ -44,6 +44,8 @@
 //   merge <work>    brings the pull request up to date, merges it, marks the
 //       merge in pr.json and writes the feature's status again, as its status
 //       hook would, so the watcher sees it move to the next slice or to done.
+//       When bringing it up to date made a new head, it stops there: the merge
+//       waits for CI on that commit, and the next merge-ready wakes the foreman.
 //   close <work>    records the report and closes the feature. Work that ended
 //       partial or blocked is put to the director (ruling R102), and it ends
 //       by saying to read the wake again: a slot or a dependency may be free.
@@ -842,6 +844,11 @@ async function merge(ctx, work, rest) {
   if (halt !== null && !halt.fixes.includes(pr)) refuse(`Pull request #${pr} for ${work} can't merge while ${halt.why}: only an incident's fix merges. Nothing to do until it is over`);
   const updated = await ctx.client.updateBranch(number);
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
+  // A new head needs CI on that exact commit before the gate lets it merge (design section 12).
+  if (updated.updated === true) {
+    ctx.say(`Brought pull request #${pr} for ${work} up to date at ${short(updated.head)}; the merge waits for CI on that commit, and the next merge-ready wakes the foreman.`);
+    return;
+  }
   const merged = await ctx.client.merge(number);
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
   const phase = markMerged();
