@@ -8,17 +8,36 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
+import { LANES, FEATURE_STEPS, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note',
+  'work', 'feature', 'question', 'report', 'incident', 'amendment',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push'];
-const ACTION_KEYS = ['action', 'step', 'branch', 'sha', 'question', 'label'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix'];
+// The fields each action carries beyond the card's question and the label clicked.
+const ACTION_OWN = {
+  'lift-stop': [],
+  runbook: ['step', 'sha'],
+  'ci-push': ['branch', 'sha'],
+  'approve-work': ['work', 'lane', 'hash', 'shownFirst'],
+  answer: ['questionId', 'questionHash'],
+  amend: ['work', 'hash'],
+  'lift-incident': ['incident'],
+  'incident-fix': ['incident', 'pr'],
+};
+const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
+// Labels that ask for more, or put the card off: a click on one is never an answer.
+const NOT_AN_ANSWER = ['Explain more', 'Not now'];
+
+const isSlug = (x) => typeof x === 'string' && SLUG.test(x);
+const isText = (x) => typeof x === 'string' && x !== '';
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 // What a click that sets something going must carry (design section 9).
 function checkAction(data) {
@@ -27,6 +46,12 @@ function checkAction(data) {
   if (Object.keys(data).some((k) => !ACTION_KEYS.includes(k))) bad('has a field it should not');
   if (!ACTIONS.includes(data.action)) bad('names an action Wheelhouse does not know');
   if (typeof data.question !== 'string' || typeof data.label !== 'string') bad('needs the question and the label');
+  // A field that belongs to another action is refused here, before the action's own checks.
+  const own = ACTION_OWN[data.action];
+  if (Object.keys(data).some((k) => !['action', 'question', 'label'].includes(k) && !own.includes(k))) {
+    // The runbook's older message about a branch stays what it was.
+    if (!(data.action === 'runbook' && data.branch !== undefined)) bad('carries a field that belongs to another action');
+  }
   if (data.action === 'runbook') {
     if (!Number.isInteger(data.step) || data.step < 1 || data.step > 5) bad('needs a runbook step from 1 to 5');
     if (data.branch !== undefined) bad('has a branch it should not');
@@ -36,8 +61,99 @@ function checkAction(data) {
     if (typeof data.branch !== 'string' || data.branch === '') bad('needs a branch');
     if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
     if (data.step !== undefined) bad('has a step it should not');
+  } else if (data.action === 'approve-work') {
+    if (!isSlug(data.work)) bad('needs the work, named by a short slug');
+    if (!LANES.includes(data.lane)) bad('needs the work\'s lane');
+    if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the document approved');
+    if (typeof data.shownFirst !== 'boolean') bad('needs to say whether the director is to see it before it merges');
+  } else if (data.action === 'answer') {
+    if (typeof data.questionId !== 'string' || !questionIdOf(data.questionId)) bad('needs the question it answers');
+    if (typeof data.questionHash !== 'string' || !HASH.test(data.questionHash)) bad('needs the hash of the question it answers');
+    if (NOT_AN_ANSWER.includes(data.label)) bad('has a label that is not an answer');
+  } else if (data.action === 'amend') {
+    if (!isSlug(data.work)) bad('needs the work, named by a short slug');
+    if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the change');
+  } else if (data.action === 'lift-incident') {
+    if (!isSlug(data.incident)) bad('needs the incident, named by a short slug');
+  } else if (data.action === 'incident-fix') {
+    if (!isSlug(data.incident)) bad('needs the incident, named by a short slug');
+    if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
+  }
+}
+
+// The work a question id names (`q-<work>-<n>`), or null when it is not one.
+function questionIdOf(id) {
+  const m = /^q-([a-z0-9-]+)-([0-9]+)$/.exec(id);
+  return m && isSlug(m[1]) ? { work: m[1], n: Number(m[2]) } : null;
+}
+
+// What the build loop's plain records must carry. Each guards the shape; what the
+// records mean is read from them by the views and by the foreman.
+const PLAIN_SHAPES = {
+  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent'] },
+  feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice'] },
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: [] },
+  report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
+  incident: { must: ['id', 'what'], may: [] },
+  amendment: { must: ['work', 'change', 'hash'], may: [] },
+};
+
+function checkPlain(kind, data) {
+  const bad = (why) => { throw new Error(`A ${kind} event ${why}`); };
+  if (!isPlain(data)) bad('needs data');
+  const { must, may } = PLAIN_SHAPES[kind];
+  if (Object.keys(data).some((k) => !must.includes(k) && !may.includes(k))) bad('has a field it should not');
+  for (const k of must) if (data[k] === undefined) bad(`needs its ${k}`);
+  const text = (k) => { if (!isText(data[k])) bad(`needs ${k} to be text`); };
+  const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
+  const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };
+  const pr = () => { if (data.pr !== undefined && (!Number.isInteger(data.pr) || data.pr < 1)) bad('has a pull request number that is not one'); };
+  if (kind === 'work') {
+    slug('id');
+    text('title');
+    if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
+    if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
+    if (!Array.isArray(data.dependsOn) || !data.dependsOn.every(isSlug)) bad('needs dependsOn to be a list of work ids');
+    if (data.doc !== undefined && !(isPlain(data.doc) && Object.keys(data.doc).length === 2 && isText(data.doc.path) && typeof data.doc.hash === 'string' && HASH.test(data.doc.hash))) {
+      bad('has a doc that is not a path and a hash');
+    }
+    if (data.place !== undefined && !Number.isFinite(data.place)) bad('has a place that is not a number');
+    if (data.parent !== undefined) slug('parent');
+  } else if (kind === 'feature') {
+    slug('work');
+    if (!FEATURE_STEPS.includes(data.step)) bad('needs its step to be one the build loop knows');
+    for (const k of ['worktree', 'branch', 'session', 'plan', 'brief']) optionalText(k);
+    if (data.files !== undefined && !(Array.isArray(data.files) && data.files.every(isText))) bad('has files that are not a list of paths');
+    if (data.slice !== undefined) {
+      const s = data.slice;
+      if (!(isPlain(s) && Object.keys(s).length === 2 && Number.isInteger(s.n) && Number.isInteger(s.m) && s.n >= 1 && s.n <= s.m)) bad('has a slice that is not n of m');
+    }
+  } else if (kind === 'question') {
+    slug('work');
+    const named = typeof data.id === 'string' ? questionIdOf(data.id) : null;
+    if (!named || named.work !== data.work) bad('needs its id to be q-<work>-<n>');
+    for (const k of ['what', 'why', 'recommendation']) text(k);
+    const options = data.options;
+    if (!Array.isArray(options) || options.length === 0 || !options.every((o) => isPlain(o) && Object.keys(o).length === 2 && isText(o.label) && typeof o.says === 'string')) {
+      bad('needs options, each with a label and what it says');
+    }
+    if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
+  } else if (kind === 'report') {
+    slug('work');
+    if (!REPORT_OUTCOMES.includes(data.outcome)) bad('needs its outcome to be merged, closed or blocked');
+    pr();
+    text('summary');
+    if (!Array.isArray(data.rulings) || !data.rulings.every((x) => typeof x === 'string')) bad('needs its rulings to be a list of text');
+    if (data.provenance !== undefined && !isPlain(data.provenance)) bad('has a provenance that is not an object');
+  } else if (kind === 'incident') {
+    slug('id');
+    text('what');
+  } else if (kind === 'amendment') {
+    slug('work');
+    text('change');
+    if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the changed document');
   }
 }
 
@@ -60,6 +176,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (!KINDS.has(kind)) throw new Error('Unknown event kind');
   if (kind === 'action') checkAction(data);
   if (kind === 'review') checkReview(data);
+  if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
     id: crypto.randomUUID(),
@@ -79,6 +196,11 @@ export const CONFIRMABLE_KINDS = ['ruling', 'level', 'setting'];
 export function eventHash(event) {
   const { sig, ...unsigned } = event ?? {};
   return crypto.createHash('sha256').update(canonicalJson(unsigned)).digest('hex');
+}
+
+// The sha256 of a record's data in canonical JSON: what an answer names, so it answers the question as shown.
+export function dataHash(data) {
+  return crypto.createHash('sha256').update(canonicalJson(data)).digest('hex');
 }
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.

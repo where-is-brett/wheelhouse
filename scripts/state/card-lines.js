@@ -35,3 +35,29 @@ export function runbookLine(step, sha) {
   const base = `Runbook step ${step}: ${RUNBOOK_TITLES[step]}`;
   return sha === undefined || sha === null ? base : `${base}, to commit ${sha12(sha)}`;
 }
+
+// The line that asks the director to approve a piece of work as written. With
+// `shownFirst`, the director is to see it before it merges.
+export function approveWorkLine(work, lane, hash, { shownFirst = false } = {}) {
+  return `Approve ${work} (${lane} lane) as written, ${sha12(hash)}${shownFirst ? ', and show it to me before it merges' : ''}`;
+}
+
+// The line on a question card; the click on an option answers the question.
+export function answerLine(questionId) {
+  return `Answer question ${questionId}`;
+}
+
+// The line that asks the director to change approved work to a proposed change.
+export function amendLine(work, hash) {
+  return `Change the approved ${work} to this, ${sha12(hash)}`;
+}
+
+// The line that asks the director to end an incident.
+export function liftIncidentLine(id) {
+  return `End incident ${id} and let merges carry on`;
+}
+
+// The line that asks the director to merge a pull request as an incident's fix.
+export function incidentFixLine(id, pr) {
+  return `Merge pull request #${pr} as the fix for incident ${id}`;
+}
