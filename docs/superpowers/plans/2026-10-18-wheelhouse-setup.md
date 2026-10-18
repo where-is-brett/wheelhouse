@@ -130,7 +130,7 @@ git add probes/35-node docs/checks
 git commit -m "Record check 35: Node.js and the hooks on a fresh account"
 ```
 
-**If the answers differ:** if a session with the plugin and no `node` refuses every tool call, Node.js comes before the plugin: the README's first line asks Claude to check for Node.js and git and start their official installers, before the install line (Task 16). If the hooks don't find an installed `node` from Desktop, setup records the full path in the project's local settings as the hooks' command (Task 13).
+**If the answers differ:** Node.js comes before the plugin whatever this check finds (Task 7), so this check says only how a session behaves when it is missing, for the README's wording. If the hooks don't find an installed `node` from Desktop, setup records the full path in the project's local settings as the hooks' command (Task 13).
 
 ### Task 2: Check 36, telemetry in Desktop sessions
 
@@ -237,7 +237,7 @@ git commit -m "Keep a journal of every change setup makes, with the value before
 
 **Files:**
 - Create: `scripts/setup/steps.js`, `scripts/setup/cli.js`
-- Modify: `scripts/state/card-lines.js`, `scripts/state/events.js`, `scripts/hooks/prompt-record.js`, `scripts/hooks/session-start.js`, `scripts/host/helper.js`, `scripts/host/helper-client.js`, `scripts/hooks/stop-guard.js` (the command's reading forms)
+- Modify: `scripts/state/card-lines.js`, `scripts/state/events.js`, `scripts/hooks/prompt-record.js`, `scripts/hooks/session-start.js`, `scripts/hooks/kit.js` (a folder being set up), `scripts/host/helper.js`, `scripts/host/helper-client.js`, `scripts/hooks/stop-guard.js` (the command's reading forms), `scripts/cards/compose.js` (the `setup` kind)
 - Test: `tests/scripts/setup/steps.test.js`, `tests/scripts/host/helper-setup.test.js`, `tests/scripts/hooks/prompt-record.test.js`, `tests/scripts/hooks/session-start.test.js`
 
 **Interfaces:**
@@ -245,9 +245,10 @@ git commit -m "Keep a journal of every change setup makes, with the value before
 - Produces:
   - `setupLine(step, hash) -> 'Set up step <step> as listed, <hash12>'`; label `Go ahead`. A signed `action` `setup` `{ step, hash, question, label }`.
   - **Before a state branch exists,** the setup click is kept in `<wheelhouseHome()>/setup/clicks/` as a signed record, since there is no state to record it in; the helper reads it from there, and Task 13 copies the clicks into state once the state branch exists.
+  - **Outside a registered project.** The hooks act only in a Wheelhouse project, and the folder being set up isn't one yet. So in a folder with a setup run (or none and no project record) the session start starts the helper as it would in a project, and the prompt record handles exactly one kind of click there, a card carrying `setupLine`, written straight to `setup/clicks/`. The guards (STOP, the tool guard) act there too, from the first session, as they would in a project. *Reviewer's call.*
   - **The first key.** In a folder with no project record and the plugin installed, the session start makes this computer's signing key (`makeSigningKey`) when there is none, and enrols it in this computer's own list when the list is empty, so the director's first click can be signed and checked. A computer that already has a list adds nothing to it here. *Plan's call:* the key's file is out of agents' reach on the Mac (the sandbox), so trusting it on first use is as safe as the key itself.
   - `CardInput` is the front-desk composer's input (its Task 2: `kind`, `what`, `why`, `options`, `recommend`, `because`, `meanwhile`, `target`, `level`), with kind `setup` added there and `target: { step, hash }` giving `setupLine`.
-  - `STEPS: Array<{ n: number, title: string, plan(ctx) -> Promise<{ changes: Change[], card: CardInput, director: string }>, apply(ctx, changes) -> Promise<Change[]>, long?: boolean }>`, the steps of design section 15 (Tasks 7 to 13), in order. `planHash(changes) -> string` (SHA-256 of their canonical JSON).
+  - `STEPS: Array<{ n: number, title: string, plan(ctx) -> Promise<{ changes: Change[], card: CardInput, director: string }>, apply(ctx, changes) -> Promise<Change[]>, long?: boolean }>`, the steps of design section 15 (Tasks 7 to 13), in this order, numbered 1 to 10: 1 install, 2 tools, 3 the host and the connection, 4 the three questions, 5 rules found, 6 the changes to this computer, 7 the project's files, pins and protection (Task 13), 8 Locked, 9 phone notifications, 10 the health check. Cards use the design's titles. *Reviewer's call:* the project's files must go up before protection is switched on (Task 13), and before Locked, whose hook refuses commands in a Locked project until the project's settings switch the sandbox on, which would also refuse the playbook's own `cli.js`. `planHash(changes) -> string` (SHA-256 of their canonical JSON).
   - Helper routes, each taking `folder` (a project's folder; refused outside `~/Projects` and the folders already registered, unless setup's step 3 is making it):
     - `/setup/plan { folder, step }` → `{ ok, changes, hash, card }`. Read-only.
     - `/setup/apply { folder, step, hash }` → `{ ok, started: true }`, only with a signed `setup` click from the last `CLICK_FRESH_MS` naming this step and hash, and only when a fresh `plan` gives the same hash; a long step runs in a detached child and its progress goes to the journal.
@@ -260,6 +261,8 @@ git commit -m "Keep a journal of every change setup makes, with the value before
 
 ```js
 test('a fresh computer gets a signing key and enrols it once', ...)
+test('in a folder being set up, the helper starts and a setup click is recorded; no other click is', ...)
+test('the guards act in a folder being set up', ...)
 test('apply is refused without a fresh click naming this step and this list', ...)
 test('a list that changed between the card and the click is refused', ...)     // Review Focus 3
 test('an apply with a list of the caller\'s own is refused', ...)               // Review Focus 3
@@ -292,10 +295,11 @@ git commit -m "Apply each setup step only after the director's click on its exac
 - Consumes: checks 35 and 38; `run`; `NODE_FLOOR`.
 - Produces:
   - `toolsStatus({ platform, run }) -> Promise<Record<'git' | 'node' | 'gh' | 'glab', { found: boolean, version: string | null, path: string | null, ok: boolean }>>`: `node` at or above `NODE_FLOOR`; `gh` or `glab` only for the project's host.
-  - `startInstaller({ tool: 'git' | 'node', platform, run, fetch }) -> Promise<{ started: boolean, waitsFor: 'password' | 'admin' | 'click' }>`: macOS git by `xcode-select --install` (Apple's own dialog); Windows git by Git for Windows' official installer; Node.js by its official LTS `.pkg` or `.msi`, each fetched into a new, empty temporary folder, checked against the published checksum, then opened, so the system shows its own prompt.
+  - `startInstaller({ tool: 'git', platform, run, fetch }) -> Promise<{ started: boolean, waitsFor: 'password' | 'admin' | 'click' }>`: macOS by `xcode-select --install` (Apple's own dialog); Windows by Git for Windows' official installer, fetched into a new, empty temporary folder, checked against the published checksum, then opened, so the system shows its own prompt. Node.js is already there (below); `toolsStatus` still reports it, and a version below the floor stops setup with the README's Node.js line.
   - `fetchHostTool({ tool: 'gh' | 'glab', platform, arch, fetch, run }) -> Promise<{ path, version }>`: by check 38, into `<wheelhouseHome()>/tools/<tool>/`, checked against the release's checksums. The adapter runs that copy when present, so `gh` or `glab` needs no installer and no password. *Plan's call:* only the helper runs them, so no other program needs them on the path.
   - Step 2's plan lists each missing tool, how long it is likely to take, and what the director will see; its apply starts every installer at once, first, then hands back so step 3's and step 4's cards are asked while they run (design section 15).
   - Step 1 is the director's: the install line (Task 16). Its time is read from the session's first message.
+  - **Node.js comes before the plugin, always.** The helper and every hook are Node.js, so step 2 can't install Node.js through them. The README's first pasted line asks Claude, before Wheelhouse is installed, to check for Node.js 22 or later and start its official installer if it is missing (the director's password); step 2 then installs only git and fetches `gh` or `glab`. Check 35 still decides where Desktop finds `node`. *Reviewer's call:* one more paste and, where Node.js is missing, one password, before the 15 minutes start.
 
 - [ ] **Step 1: Write the failing tests,** with a fake `run` and `fetch`.
 
@@ -303,7 +307,8 @@ git commit -m "Apply each setup step only after the director's click on its exac
 test('Node.js below 22 counts as missing', ...)
 test('each installer is fetched into an empty folder and checked before it is opened', ...)
 test('a checksum that does not match is refused and nothing is opened', ...)
-test('all missing installers start at once and the step hands back', ...)
+test('git\'s installer starts at once and the step hands back', ...)
+test('Node.js missing or too old stops setup with the README\'s line, and nothing is installed', ...)
 test('gh is fetched into the tools folder and the adapter runs that copy', ...)
 test('an installer path with a space is quoted', ...)                           // Review Focus 4
 ```
@@ -332,7 +337,7 @@ git commit -m "Start the missing installers first, and fetch gh and glab for the
   - `connectionCard({ host, locked }) -> CardInput`: **Quick** with `QUICK_LINE` as its cost, or **Narrow**, as design section 11's table says; a Locked project skips it (Narrow).
   - Narrow on GitHub: the code sign-in, keys to `writeKey('github-app')`, then the app's Install page opened, recommending the project and profile repositories, not **All repositories**; read back with `installationCovers` and said plainly.
   - Narrow on GitLab: `makeProjectKey` at Developer level; on refusal, `tokenUrl` opened and the token typed into `askSecret`, straight to `writeKey`.
-  - Protection: `switchOnProtection`, then `protectionStatus` read back and shown; on GitLab, "pipelines must succeed" only where the project has a pipeline, else a card (design section 12.3).
+  - Protection is planned here, shown on step 3's card, and switched on at the end of step 7, once the setup commit is up (Task 13): `switchOnProtection`, then `protectionStatus` read back and shown; on GitLab, "pipelines must succeed" only where the project has a pipeline, else a card (design section 12.3).
   - Then `writeProject` and `cloneState`.
 
 - [ ] **Step 1: Write the failing tests,** with the stand-in host and a fake device sign-in.
@@ -368,7 +373,7 @@ git commit -m "Connect to the host at setup, quick or narrow, with the profile a
 - Produces:
   - The three cards (design section 15, step 4): what the product is and who uses it (recorded as a `glossary` entry for the product and the `phase` setting); live data (the configuration's `liveData: true`, with agents on test data only and the director told once, design section 12.6); real users (`realUsers: true`, and on a Mac the offer of Locked, design section 12.1).
   - `findRules(folder) -> Array<{ words: string, source: { file, line } }>`: rule-like lines (imperatives and "always", "never", "must", "don't" sentences) in `CLAUDE.md`, the README and `docs/`, each quoted with its source.
-  - `matchWords(rule, transcripts) -> { words: string, original: boolean }`: the director's own words from the folder's past transcripts (`~/.claude/projects/<folder's name>/*.jsonl`, read by the helper, outside the sandbox) when a typed message holds the rule's words, else the rule as found, marked "paraphrase" (design section 9). Every quote goes through `scanContent` before it is kept.
+  - `matchWords(rule, transcripts) -> { words: string, original: boolean }`: the director's own words from the folder's past transcripts (the `~/.claude/projects/*/*.jsonl` files whose entries' `cwd` is this folder, matched by that field rather than by the folder's name, read by the helper, outside the sandbox; *reviewer's call*) when a typed message holds the rule's words, else the rule as found, marked "paraphrase" (design section 9). Every quote goes through `scanContent` before it is kept.
   - `confirmAllLine(hash) -> 'Confirm all <n> rules as listed, <hash12>'`, label `Confirm all`, a signed `action` `confirm-all` `{ hash, ids }`, from which the prompt record writes one confirmation per ruling (each by `confirmationFor`). **Let me correct some** asks one card per rule. *Plan's call:* a card may carry only one set line, and design section 9 asks for one card.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -390,7 +395,7 @@ git add scripts tests
 git commit -m "Ask setup's three questions, and confirm the rules found in one card"
 ```
 
-### Task 10: Steps 6 and 7: the changes to this computer, and Locked
+### Task 10: Steps 6 and 8: the changes to this computer, and Locked
 
 **Files:**
 - Create: `scripts/setup/computer.js`, `scripts/setup/telemetry.js`
@@ -409,7 +414,7 @@ git commit -m "Ask setup's three questions, and confirm the rules found in one c
     - each of the director's own settings that weakens Standard, named one by one (`weakening`, below), with what it does.
   - `weakening(settings) -> Array<{ key, value, says }>`: `sandbox.excludedCommands` (each command named), `enabledPlugins` entries other than Wheelhouse's and its pins, `extraKnownMarketplaces` other than Wheelhouse's (design sections 12.1 and 12.9). Setup changes none of them; the card names each so the director decides, and a later card can switch one off.
   - `telemetryOn({ port, route, platform, run }) -> Change[]`: by check 36's route: `user-settings` writes `telemetryEnv(port)` into `~/.claude/settings.json`'s `env` by key; `launch-env` sets the same variables for the account (macOS `launchctl setenv` and a login item that sets them again; Windows the user's environment variables), and the card asks for a Desktop restart. Both record their changes for uninstall.
-  - Step 7, Locked only: `installLocked` (its password prompt), after the narrow connection is in place.
+  - Step 8, Locked only: `installLocked` (its password prompt), after the narrow connection and the project's settings (step 7) are in place.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -429,7 +434,7 @@ git add scripts tests
 git commit -m "List and make the changes to this computer on one card, and install Locked"
 ```
 
-### Task 11: Step 8: phone notifications
+### Task 11: Step 9: phone notifications
 
 **Files:**
 - Create: `scripts/setup/notify.js`
@@ -438,7 +443,7 @@ git commit -m "List and make the changes to this computer on one card, and insta
 
 **Interfaces:**
 - Consumes: check 4; the session's push tool (the playbook sends the test, since only a session can).
-- Produces: step 8's card and its plain steps: where to switch on Remote Control in Desktop, that both push options are on (step 6), allowing Claude's notifications on the phone; then "Lock your screen for two minutes." The playbook waits `PUSH_TEST_WAIT_MS`, sends one test push, and on the director's return asks one card: **It arrived**, **It didn't**. `pushTestResult(label) -> Change`: recorded in the journal, and on the board's health when it didn't arrive (a push is skipped while the director is at the computer, check 4).
+- Produces: step 9's card and its plain steps: where to switch on Remote Control in Desktop, that both push options are on (step 6), allowing Claude's notifications on the phone; then "Lock your screen for two minutes." The playbook waits `PUSH_TEST_WAIT_MS`, sends one test push, and on the director's return asks one card: **It arrived**, **It didn't**. `pushTestResult(label) -> Change`: recorded in the journal, and on the board's health when it didn't arrive (a push is skipped while the director is at the computer, check 4).
 
 - [ ] **Step 1: Write the failing tests** for the card's steps and for recording either answer.
 - [ ] **Step 2: Run, expect FAIL; implement; run `npm test`, expect PASS.**
@@ -449,7 +454,7 @@ git add scripts tests
 git commit -m "Set up phone notifications and test one with the screen locked"
 ```
 
-### Task 12: Step 9: the health check
+### Task 12: Step 10: the health check
 
 **Files:**
 - Create: `scripts/setup/health.js`
@@ -477,7 +482,7 @@ git add scripts tests
 git commit -m "End setup with the health check and a green board"
 ```
 
-### Task 13: The project's own files, the pins, and starting work
+### Task 13: Step 7: the project's own files, the pins and protection, and starting work
 
 **Files:**
 - Create: `scripts/setup/project-files.js`
@@ -489,7 +494,7 @@ git commit -m "End setup with the health check and a green board"
 - Produces:
   - `starterConfig({ answers, host }) -> Config`: `.claude/wheelhouse.json` with the defaults of each plan, `liveData` and `realUsers` from step 4, and `routing` from Wheelhouse's own defaults file.
   - `projectFilesChange({ folder, config }) -> Change[]`: `.claude/settings.json` merged with `projectSettings(config)`, `.claude/wheelhouse.json`, `.claude/settings.local.json` merged with `localSettings`, and `CLAUDE.md`'s "Compact instructions" section (design section 10) added once.
-  - **How they reach the default branch.** Setup commits them in one commit, "Set up Wheelhouse", and pushes it to the default branch with the director's own sign-in, **before** step 3's protection is switched on, since the gate can't merge without CI and Wheelhouse running. *Plan's call:* this is the director's own setup, done with their own sign-in, once; every later change to these files is a guardrail pull request.
+  - **How they reach the default branch.** Setup commits them in one commit, "Set up Wheelhouse", and pushes it to the default branch with the director's own sign-in, then switches on the protection step 3 planned, since the gate can't merge without CI and Wheelhouse running. *Plan's call:* this is the director's own setup, done with their own sign-in, once; every later change to these files is a guardrail pull request.
   - **The pins.** By check 37: either the reload after the settings installs Superpowers and Matt Pocock's skills at their commits, or the helper runs the documented install for each at project scope. Then `checkInstalled` must pass; and when board-and-usage check 32 made the mod a second plugin, `wheelhouse-mod` is installed the same way.
   - The setup clicks kept before the state branch existed (Task 6) are copied into state as they are.
   - The last thing setup does: `start.js` for the foreman (whichever shape build-loop check 27 chose), and the front desk's first briefing.
@@ -526,14 +531,14 @@ git commit -m "Write the project's settings, configuration and pins, and start t
 **Interfaces:**
 - Consumes: `enrol`, `readEnrolled`, `computerId`; `ensureProfileClone`; `installUrl`; `makeProjectKey`.
 - Produces:
-  - **A second computer** runs steps 1, 2, 3 (its own sign-in, and for narrow its own app sign-in or project key), 6, 7 and 8 (design section 15); the project and profile come from the host.
+  - **A second computer** runs steps 1, 2, 3 (its own sign-in, and for narrow its own app sign-in or project key), 6, 8 and 9 (design section 15); the project and profile come from the host. The director opens Desktop on an empty folder under `Projects`; after the sign-in, step 3 asks on a card which of their repositories holding a `wheelhouse-state` branch this is, and the helper checks the project out into the folder, the committed `.claude/settings.json` winning over the one the install line wrote. The profile clone keeps the `enrolments/` folder, which the profile's own push rules never write. *Reviewer's call:* nothing said how the project reaches a second computer.
   - **Keys between computers.** Setup publishes this computer's public key as `enrolments/<computer>.json` (`{ computer, publicKey, at }`) on the profile branch, pushed with the director's own sign-in. Each computer's session start lists any enrolment it doesn't yet trust and adds a card: `trustLine(computer, at) -> 'Trust your computer <computer>, added <date>'`, label `Trust it`, a signed `action` `trust`; the prompt record then `enrol`s it on this computer. Until then its records don't count here, so the director is asked again rather than an untrusted record counting. *Plan's call:* the profile repository can be written by the narrow app's key too, so a key found there isn't trusted on sight.
   - **A later project:** with narrow on GitHub, the app's settings page opened for one tick, then `installationCovers` read back; on GitLab, a new project key, or the pasted token where GitLab refuses.
 
 - [ ] **Step 1: Write the failing tests.**
 
 ```js
-test('a second computer runs steps 1, 2, 3, 6, 7 and 8 and finds the project and profile', ...)
+test('a second computer runs steps 1, 2, 3, 6, 8 and 9, and checks the chosen project out into its empty folder', ...)
 test('an enrolment found in the profile is not trusted until the director clicks Trust it', ...)  // Review Focus 5
 test('Trust it on a card naming another computer or another date trusts nothing', ...)
 test('a later project on GitHub opens the app\'s page and reads the tick back', ...)
@@ -595,7 +600,7 @@ git commit -m "Uninstall: put back everything setup changed, and keep the direct
 - Consumes: `cli.js` (Task 6), `composeCard`, checks 35 and 37.
 - Produces:
   - `skills/setup/SKILL.md`, written with `superpowers:writing-skills`: for each step, `cli.js plan`, ask its card exactly as composed, then `cli.js apply` once clicked; ask the next card while a long step runs; report progress in one line; never run an installer, a host command or a settings write itself; on any failure, say what happened and what the director can do, and offer to carry on later.
-  - `README.md`'s install section: for a new product, make an empty folder under `Projects` from Desktop's folder picker and open the session on it; then the line that check 37 found to work, and, when check 35 says Node.js must come first, the line before it. Then the plugin browser's clicks, for when the line doesn't work.
+  - `README.md`'s install section: for a new product, make an empty folder under `Projects` from Desktop's folder picker and open the session on it; then the line that checks for Node.js (Task 7); then the line that check 37 found to work. Then the plugin browser's clicks, for when the line doesn't work.
   - `docs/data.md`: design section 12.8 in plain words (conversations, transcripts and their 30 days, Remote Control, telemetry's counts, state on the host, optional channels), with what uninstall removes and what it keeps.
 
 - [ ] **Step 1: Write the skill** with `superpowers:writing-skills`, its baseline being Task 17's flow run without it.
@@ -642,7 +647,7 @@ git commit -m "Try setup, a second computer and uninstall end to end"
 
 - [ ] **Step 1: Card to the director:** a throwaway user account on the Mac (their password to make it and to remove it), a test repository on their host account made by setup and deleted afterwards, about 25 minutes, of which the timed part is setup itself. Approved by their click.
 - [ ] **Step 2: Mac (the director, timed).** The agent makes the account and leaves a note on its desktop with the README's line. The director logs in, opens Claude Desktop, signs in to Claude (not counted), and follows setup from the pasted line to the green board, with no help. The agent reads `stepTimes` from the journal afterwards: the director's minutes per step, and the waits.
-- [ ] **Step 3: Windows.** A full timed run needs a Windows account where the director has administrator rights and may use the host; until one is available, the agent times steps 2, 4, 6 and 8 in the director's own account, with a stand-in host, and the note says which steps are measured. *Plan's call*, following the director's rule for that computer.
+- [ ] **Step 3: Windows.** A full timed run needs a Windows account where the director has administrator rights and may use the host; until one is available, the agent times steps 2, 4, 6 and 9 in the director's own account, with a stand-in host, and the note says which steps are measured. *Plan's call*, following the director's rule for that computer.
 - [ ] **Step 4: Undo:** the test repository deleted (`gh api` answering 404 is checked), the account removed (the password), the GitHub app's installation removed by the director on its page.
 - [ ] **Step 5: Write the note.** **Answer:** Yes if the Mac run is within about `TARGET_MINUTES` of the director's time; otherwise Partly, with the slowest steps and what would shorten each. Update the row, run `npm test`, commit.
 
@@ -679,6 +684,17 @@ Settled here without the director, each listed for the design in Task 19:
 8. **Confirm all** is one card with one set line naming the list's hash, confirming each ruling by its own confirmation.
 9. **Uninstall's project change is a pull request the director merges** on the host's page, since the gate goes with it; the state branch and the profile repository are kept unless the director asks on their own card.
 10. **The Windows timed run** measures only the steps that need neither administrator rights nor the host, until a Windows account that allows both is available.
+
+## Builder check
+
+Read on 19 October 2026 as the builder would, against design section 15 and the plans it calls. Nothing new needed the director beyond Card 1. These were settled in place, each marked *Reviewer's call*, and go into the design with the plan's calls in Task 19:
+
+1. **Step order.** The setup commit has to go up before protection is switched on, and the project's settings before Locked (whose hook would otherwise refuse the playbook's own commands). The steps are numbered 1 to 10 inside setup: the project's files, pins and protection become step 7, between the changes to this computer and Locked; cards keep the design's titles.
+2. **Node.js before the plugin, always.** The helper and the hooks are Node.js, so they can't install it. The README's first line has Claude start the official Node.js installer where it is missing; step 2 installs git and fetches `gh` or `glab`.
+3. **Hooks in a folder being set up.** The hooks act only in a registered project, so the session start starts the helper and the prompt record takes setup clicks (and nothing else) in a folder being set up; the guards act there from the first session.
+4. **Past transcripts** are matched to the folder by their entries' `cwd`, not by Claude Code's folder names.
+5. **A second computer** opens an empty folder, chooses the project on a card, and the helper checks it out there.
+6. **The composer's `setup` kind** is added in the front-desk plan's `compose.js` by Task 6.
 
 ## Order
 
