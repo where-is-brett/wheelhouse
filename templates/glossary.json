@@ -1,0 +1,78 @@
+{
+  "pull request": {
+    "plain": "a proposed change to the product, set aside for checking before it joins the real thing",
+    "example": "Like a draft of a page you hand to an editor: nothing is printed until the editor agrees."
+  },
+  "CI": {
+    "plain": "the automatic checks that run on every change",
+    "example": "Like the safety inspection a car goes through before it leaves the factory."
+  },
+  "merge": {
+    "plain": "to join a checked change into the real product",
+    "example": "Like adding the edited page into the finished book."
+  },
+  "branch": {
+    "plain": "a separate copy of the work where a change is made without touching the real product",
+    "example": "Like photocopying a recipe so you can try a new spice without spoiling the original."
+  },
+  "commit": {
+    "plain": "one saved step of the work, with a short note on what changed",
+    "example": "Like a numbered save point in a game: you can always go back to it."
+  },
+  "review": {
+    "plain": "a second agent reading a change closely to find mistakes before it goes in",
+    "example": "Like a proofreader going through an article before it is published."
+  },
+  "slice": {
+    "plain": "one small, finished piece of a bigger feature, built and checked on its own",
+    "example": "Like building a house room by room rather than all at once."
+  },
+  "lane": {
+    "plain": "how much care a piece of work gets: quick, small, feature or bug, each with its own amount of checking",
+    "example": "Like the express and the full-service checkouts at a shop."
+  },
+  "feature flag": {
+    "plain": "a switch that keeps new work hidden from users until you turn it on",
+    "example": "Like a curtain over a new shop window until opening day."
+  },
+  "preview": {
+    "plain": "a private copy of the product with the change in it, so you can look before it goes live",
+    "example": "Like a rehearsal performance before opening night."
+  },
+  "worktree": {
+    "plain": "a separate working folder where one agent builds one piece of work without getting in the way of the others",
+    "example": "Like giving each builder their own workbench."
+  },
+  "STOP": {
+    "plain": "the big red button: every agent stops working until you lift it",
+    "example": "Like pulling the emergency cord on a train."
+  },
+  "Standard": {
+    "plain": "the normal amount of checking and sign-off for your project's work",
+    "example": "Like the usual security at an office, short of what a bank vault needs."
+  },
+  "Locked": {
+    "plain": "the strictest setting: the change cannot go ahead without your own sign-off",
+    "example": "Like a safe that opens only with your own key."
+  },
+  "the helper": {
+    "plain": "the small program on your computer that holds your sign-in and does the things agents are not allowed to do themselves",
+    "example": "Like a bank teller who handles the money so the clerks never touch the vault."
+  },
+  "the foreman": {
+    "plain": "the agent that runs the building: it hands out pieces of work and keeps them moving",
+    "example": "Like the site manager on a building job, who is not laying bricks but knows who is."
+  },
+  "the gate": {
+    "plain": "the final set of checks a change must pass before it can join the product",
+    "example": "Like passport control: nobody walks through without being checked."
+  },
+  "appetite": {
+    "plain": "how much time and effort you are willing to spend on something",
+    "example": "Like deciding a weekend job is worth a weekend, and no more."
+  },
+  "the done contract": {
+    "plain": "the list, agreed before building starts, of what must be true for the work to count as finished",
+    "example": "Like the checklist a builder and owner sign before the handover walk-through."
+  }
+}
