@@ -210,6 +210,27 @@ test('a session is recorded once', () => withHome(() => {
   assert.throws(() => recordSession({ session: 's2', project: 'o__p', role: 'boss', at: NOW }), /role/i);
 }));
 
+test('a session file the mod wrote is replaced once by the session start; the session start\'s stays', () => withHome(() => {
+  const file = (id) => path.join(usageDir(), 'sessions', `${id}.json`);
+  const read = (id) => JSON.parse(fs.readFileSync(file(id), 'utf8'));
+  // The mod's bridge got there first and couldn't tell the foreman.
+  recordSession({ session: 's1', project: 'o__p', role: 'front-desk', at: '2026-10-18T09:00:00.000Z', by: 'mod' });
+  assert.deepEqual(read('s1'), { session: 's1', project: 'o__p', role: 'front-desk', at: '2026-10-18T09:00:00.000Z', by: 'mod' });
+  // Another reading from the mod changes nothing.
+  recordSession({ session: 's1', project: 'o__p', role: 'feature', work: 'w', at: '2026-10-18T09:01:00.000Z', by: 'mod' });
+  assert.equal(read('s1').role, 'front-desk');
+  // The session start replaces it, once.
+  recordSession({ session: 's1', project: 'o__p', role: 'foreman', at: '2026-10-18T09:02:00.000Z' });
+  assert.deepEqual(read('s1'), { session: 's1', project: 'o__p', role: 'foreman', at: '2026-10-18T09:02:00.000Z' });
+  recordSession({ session: 's1', project: 'o__p', role: 'front-desk', at: '2026-10-18T09:03:00.000Z' });
+  recordSession({ session: 's1', project: 'o__p', role: 'front-desk', at: '2026-10-18T09:04:00.000Z', by: 'mod' });
+  assert.equal(read('s1').role, 'foreman');
+  // The session start first: the mod never replaces it.
+  recordSession({ session: 's2', project: 'o__p', role: 'foreman', at: '2026-10-18T09:00:00.000Z' });
+  recordSession({ session: 's2', project: 'o__p', role: 'front-desk', at: '2026-10-18T09:01:00.000Z', by: 'mod' });
+  assert.deepEqual(read('s2'), { session: 's2', project: 'o__p', role: 'foreman', at: '2026-10-18T09:00:00.000Z' });
+}));
+
 test('summariseDay writes the day and readDay reads it back', () => withHome(() => {
   assert.equal(readDay('2026-10-18'), null);
   addPoints([

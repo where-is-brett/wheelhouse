@@ -154,6 +154,7 @@ test('an option the card did not offer records nothing', async () => {
 
 test('a reply earns exactly the record the click would have', async () => {
   await withHome(async () => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const ruling = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
     keepEvent(ruling);
     const cases = [
@@ -215,6 +216,24 @@ test('a reply to an approval card checks the pull request\'s head as a click doe
   });
 });
 
+test('a Lift STOP reply while STOP is off records nothing and leaves its code to be used', async () => {
+  await withHome(async () => {
+    await show(cardOf(LIFT_STOP));
+    let lifted = 0;
+    const off = fake();
+    const out = await replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client: off, now: () => LATER, liftStop: () => { lifted += 1; } });
+    assert.equal(out.made, false);
+    assert.equal(off.calls.record.length + off.calls.write.length, 0);
+    assert.equal(lifted, 0);
+    // The card was let go, so once STOP is on its code works.
+    fs.writeFileSync(stopFile(), '{}');
+    const on = fake();
+    assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client: on, now: () => LATER, liftStop: () => { lifted += 1; } }), { made: true, says: 'Recorded: Lift STOP' });
+    assert.equal(on.calls.record.length, 1);
+    assert.equal(lifted, 1);
+  });
+});
+
 test('two replies in a row, or a click then a reply, record once while the views on disk are old', async () => {
   await withHome(async (home) => {
     const replied = path.join(home, 'projects', P, 'replied');
@@ -266,6 +285,7 @@ test('two replies in a row, or a click then a reply, record once while the views
 
 test('a line that repeats gets a working code on each new card, and two waiting cards sharing it are refused', async () => {
   await withHome(async () => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const reply = (client, now = LATER) => replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client, now: () => now, liftStop: () => {} });
     // The first lift-STOP card is used.
     await show(cardOf(LIFT_STOP, 'STOP went on at noon.'));

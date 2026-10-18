@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url';
 import { runAndExit, projectOf } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
-import { liftStop as defaultLift } from '../lib/stop.js';
+import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir } from '../lib/paths.js';
 import { makeEvent, listEvents, confirmationFor, CONFIRMABLE_KINDS } from '../state/events.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine } from '../state/card-lines.js';
@@ -73,8 +73,9 @@ function only(pattern, text) {
 export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it'];
 
 // Works out the signed record a click earns, if any. May ask the helper for a
-// pull request's head. Returns { made, profile?, lift? }, or null.
-export async function earned({ project, question, label, client, now, left }) {
+// pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
+// while STOP is off, so an old card's click or reply code can't stand for a later STOP.
+export async function earned({ project, question, label, client, now, left, stopState = defaultStopState }) {
   if (label === 'Approve') {
     const m = only(APPROVE, question);
     if (!m || !question.includes(approvalLine(m[1], m[2]))) return null;
@@ -98,7 +99,7 @@ export async function earned({ project, question, label, client, now, left }) {
   }
   const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
   if (label === 'Lift STOP') {
-    return question.includes(LIFT_STOP) ? { ...action({ action: 'lift-stop' }), lift: true } : null;
+    return question.includes(LIFT_STOP) && stopState().on ? { ...action({ action: 'lift-stop' }), lift: true } : null;
   }
   if (label === 'Do it') {
     const found = runbookOf(question);
@@ -187,7 +188,7 @@ function shownFor(project, input, at) {
   return out;
 }
 
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS, liftStop = defaultLift } = {}) {
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS, liftStop = defaultLift, stopState } = {}) {
   if (input.tool_name !== 'AskUserQuestion') return undefined;
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
@@ -220,7 +221,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const click of out) {
     if (!click.signable) continue;
     try {
-      const got = await earned({ project, ...click, client: api, now: clock, left });
+      const got = await earned({ project, ...click, client: api, now: clock, left, stopState });
       if (got) queued.push(keepEarned(project, got, { now: clock, liftStop }));
     } catch {
       // One question failing does not stop the rest; a lift that did not happen leaves no record.

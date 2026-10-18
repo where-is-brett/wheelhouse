@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { handle, runBridge, MAX_REQUEST_BYTES } from '../../../scripts/mod/bridge.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
@@ -13,6 +13,7 @@ import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
 import { keysDir, usageDir } from '../../../scripts/lib/paths.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
 
 const BRIDGE = fileURLToPath(new URL('../../../scripts/mod/bridge.js', import.meta.url));
 const P = 'owner__name';
@@ -76,16 +77,17 @@ test('usage readings are recorded with the session\'s part', () => withHome(asyn
   assert.deepEqual(answer, { ok: true });
   assert.deepEqual(readLines(path.join(usageDir(), 'mod', '2026-10-19.jsonl')), [{ at: NOW.toISOString(), session: 'sess-1', usd: 1.25 }]);
   assert.deepEqual(readJson(path.join(usageDir(), 'allowance.json')).windows, [{ kind: 'five_hour', percentUsed: 20 }]);
-  assert.deepEqual(readJson(path.join(usageDir(), 'sessions', 'sess-1.json')), { session: 'sess-1', project: P, role: 'feature', work: 'login', at: NOW.toISOString() });
+  assert.deepEqual(readJson(path.join(usageDir(), 'sessions', 'sess-1.json')), { session: 'sess-1', project: P, role: 'feature', work: 'login', at: NOW.toISOString(), by: 'mod' });
 
   // Written once: a later reading from another folder changes nothing.
   await handle({ cmd: 'usage', session: 'sess-1', cwd: folderOn('main'), usd: 2 }, deps());
   assert.equal(readJson(path.join(usageDir(), 'sessions', 'sess-1.json')).role, 'feature');
   assert.equal(readLines(path.join(usageDir(), 'mod', '2026-10-19.jsonl')).length, 2);
 
-  // Not on a feature branch: the front desk. The foreman is the session start's to record.
+  // Not on a feature branch: the front desk. The foreman is the session start's to record: it
+  // replaces a file the bridge wrote once (tests/scripts/usage/store.test.js).
   await handle({ cmd: 'usage', session: 'sess-2', cwd: folderOn('main') }, deps());
-  assert.deepEqual(readJson(path.join(usageDir(), 'sessions', 'sess-2.json')), { session: 'sess-2', project: P, role: 'front-desk', at: NOW.toISOString() });
+  assert.deepEqual(readJson(path.join(usageDir(), 'sessions', 'sess-2.json')), { session: 'sess-2', project: P, role: 'front-desk', at: NOW.toISOString(), by: 'mod' });
 
   // Outside a project the reading is still kept, with no part recorded.
   assert.deepEqual(await handle({ cmd: 'usage', session: 'sess-3', cwd: feature, usd: 0.5 }, deps({ projectOf: () => null })), { ok: true });
@@ -248,6 +250,8 @@ test('a request it cannot read answers ok false and exits 0', () => withHome(asy
 }));
 
 test('run where the signing key cannot be read, it signs nothing and says so', () => withHome(async () => {
+  // Inside the real sandbox the bridge fails earlier, at "not a project" (the project records
+  // can't be read either); this covers the key alone. Both sign nothing.
   const check = async () => {
     setStop({ by: 'prompt', now: () => NOW });
     const client = fakeClient();
@@ -272,4 +276,50 @@ test('run where the signing key cannot be read, it signs nothing and says so', (
       fs.chmodSync(key, 0o600);
     }
   }
+}));
+
+// A FIFO where git keeps a small file, in a folder an agent controls, must not hang the bridge.
+test('a FIFO in the session\'s folder doesn\'t hold the bridge past its limit', { skip: !unix }, () => withHome(async (home) => {
+  const dir = tempFolder('wh-bridge-fifo-');
+  // A worktree's .git file pointing at a git folder whose commondir is a FIFO.
+  const gitdir = path.join(dir, 'gitdir');
+  fs.mkdirSync(gitdir);
+  execFileSync('mkfifo', [path.join(gitdir, 'commondir')]);
+  execFileSync('mkfifo', [path.join(gitdir, 'HEAD')]);
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(work);
+  fs.writeFileSync(path.join(work, '.git'), `gitdir: ${gitdir}\n`);
+  // A main folder whose HEAD is a FIFO.
+  const main = path.join(dir, 'main');
+  fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+  execFileSync('mkfifo', [path.join(main, '.git', 'HEAD')]);
+  // Registered, so the bridge reads its branch for the session's part.
+  writeProject(P, { folder: fs.realpathSync.native(main), remoteUrl: 'https://example.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {} });
+
+  const run = (request) => spawnSync(process.execPath, [BRIDGE], {
+    input: JSON.stringify(request), encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home }, timeout: 15000,
+  });
+  for (const cwd of [work, main]) {
+    for (const request of [
+      { cmd: 'usage', session: 'sess-f', cwd, usd: 1 },
+      { cmd: 'reply', origin: 'composer', text: 'K7QD Approve', cwd },
+      { cmd: 'go', origin: 'composer', cwd },
+    ]) {
+      if (request.cmd === 'go') setStop({ by: 'prompt', now: () => NOW });
+      const started = Date.now();
+      const result = run(request);
+      assert.equal(result.status, 0, `${request.cmd} in ${path.basename(cwd)}`);
+      assert.ok(Date.now() - started < 10000);
+      const lines = result.stdout.split('\n').filter(Boolean);
+      assert.equal(lines.length, 1);
+      assert.notEqual(JSON.parse(lines[0]).says, 'Wheelhouse couldn\'t do that in time');
+    }
+  }
+
+  // The branch reader, in a process of its own so a hang shows as a timeout, reads no branch.
+  const script = `import { featureSlug } from ${JSON.stringify(new URL('../../../scripts/hooks/session-start.js', import.meta.url).href)};
+for (const dir of ${JSON.stringify([work, main])}) console.log(String(featureSlug(dir)));`;
+  const slug = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home }, timeout: 15000 });
+  assert.equal(slug.status, 0);
+  assert.deepEqual(slug.stdout.trim().split('\n'), ['null', 'null']);
 }));

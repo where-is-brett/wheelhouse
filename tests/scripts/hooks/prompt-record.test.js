@@ -165,8 +165,25 @@ test('Explain more and Not now record only the answer', async () => {
   });
 });
 
+test('Lift STOP while STOP is off records only the answer', async () => {
+  await withHome(async () => {
+    const c = fake();
+    let lifted = 0;
+    await decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(c), liftStop: () => { lifted += 1; } });
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 1);
+    assert.equal(lifted, 0);
+    // The STOP state is read through the injected reader when one is given.
+    const on = fake();
+    await decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(on), liftStop: () => { lifted += 1; }, stopState: () => ({ on: true }) });
+    assert.deepEqual(on.calls.record.map((r) => r.event.data.action), ['lift-stop']);
+    assert.equal(lifted, 1);
+  });
+});
+
 test('one failing question does not stop the rest', async () => {
   await withHome(async () => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     c.prState = async () => { throw new Error('x'); };
     await decide(input({ [approvalLine(7, FULL)]: 'Approve', [`${LIFT_STOP}`]: 'Lift STOP' }), deps(c));
@@ -177,6 +194,7 @@ test('one failing question does not stop the rest', async () => {
 
 test('a record the helper cannot take is kept and sent later, oldest first', async () => {
   await withHome(async (home) => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const refusing = fake({ refuse: true });
     await decide(input({ [LIFT_STOP]: 'Lift STOP' }), deps(refusing));
     const folder = path.join(home, 'projects', P, 'pending');
@@ -318,6 +336,7 @@ test('a pending file that will not parse is moved to bad/', async () => {
 
 test('a lift that throws leaves no record behind', async () => {
   await withHome(async (home) => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     await decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(c), liftStop: () => { throw new Error('x'); } });
     assert.equal(one(c), 0);
@@ -329,6 +348,7 @@ test('a lift that throws leaves no record behind', async () => {
 
 test('a signed record is written down before it is sent and stays when the helper never answers', async () => {
   await withHome(async (home) => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     c.state.record = () => new Promise(() => {});
     c.state.write = () => new Promise(() => {});
@@ -344,6 +364,7 @@ test('a signed record is written down before it is sent and stays when the helpe
 
 test('signed records go before the plain answers', async () => {
   await withHome(async () => {
+    fs.writeFileSync(stopFile(), '{}'); // a Lift STOP earns its record only while STOP is on
     const c = fake();
     const order = [];
     c.state.record = async () => { order.push('record'); return { ok: true }; };

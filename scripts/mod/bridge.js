@@ -86,7 +86,8 @@ function clientOf(d) {
 
 // The mod's reading. The store checks the session ID and drops windows it can't read; a cost
 // that isn't a number of dollars is left out. What the session is for is written the first time
-// only, and only inside a project; the foreman is the session start's to record.
+// only, and only inside a project, marked as the mod's: the session start, which can tell a
+// foreman, replaces it once.
 async function usage(req, d) {
   const usd = typeof req.usd === 'number' && Number.isFinite(req.usd) && req.usd >= 0 ? req.usd : undefined;
   const windows = Array.isArray(req.windows) ? req.windows.filter(isRecord) : undefined;
@@ -100,7 +101,7 @@ async function usage(req, d) {
   if (project) {
     try {
       const work = d.featureSlug(req.cwd);
-      recordSession({ session: req.session, project, role: work ? 'feature' : 'front-desk', ...(work ? { work } : {}), at });
+      recordSession({ session: req.session, project, role: work ? 'feature' : 'front-desk', ...(work ? { work } : {}), at, by: 'mod' });
     } catch {
       // The reading is kept even when what the session is for can't be.
     }
@@ -112,7 +113,7 @@ async function reply(req, d) {
   if (!fromDirector(req.origin)) return no(SAYS.notDirector);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says } = await d.replyRecord({ project, text: req.text, client: clientOf(d), now: d.now, liftStop: d.liftStop, budget: HELPER_MS });
+  const { made, says } = await d.replyRecord({ project, text: req.text, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: HELPER_MS });
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 

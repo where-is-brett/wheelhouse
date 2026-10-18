@@ -105,11 +105,11 @@ function claim(project, id) {
   }
 }
 
-// replyRecord({ project, text, client, now, liftStop, budget }) -> { made, says }
+// replyRecord({ project, text, client, now, liftStop, stopState, budget }) -> { made, says }
 // Finds the code in the shown view built from the state clone, refuses it when it is unknown,
 // used, out of date, held by two cards or answered with an option its card didn't offer, claims
 // the card, then signs, keeps and sends what a click on that option would have earned.
-export async function replyRecord({ project, text, client, now = () => new Date(), liftStop = defaultLift, budget = BUDGET_MS } = {}) {
+export async function replyRecord({ project, text, client, now = () => new Date(), liftStop = defaultLift, stopState, budget = BUDGET_MS } = {}) {
   const reply = parseReply(text);
   if (!reply) return no('That isn\'t a reply code and an option, so nothing was recorded');
   try {
@@ -153,7 +153,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   try {
     marker = claim(project, card.id);
     if (!marker) return no('That code has been used');
-    const got = await earned({ project, question: card.question, label, client: api, now, left });
+    const got = await earned({ project, question: card.question, label, client: api, now, left, stopState });
     if (!got) {
       // Nothing was recorded, so the card is let go and can be answered again.
       fs.rmSync(marker, { force: true });

@@ -259,16 +259,19 @@ export function recordAllowance({ windows, at }) {
   writeAllowance(windows, timeOf(at));
 }
 
-// What a session is for, written once; a second call changes nothing.
-export function recordSession({ session, project, role, work, at }) {
+// What a session is for, written once; a second call changes nothing. The mod's bridge can't
+// tell a foreman from the front desk, so a file it wrote (`by: 'mod'`) is replaced once by the
+// session start's record, which knows; a file the session start wrote stays as it is.
+export function recordSession({ session, project, role, work, at, by }) {
   checkSession(session);
   if (typeof project !== 'string' || !PROJECT.test(project)) throw new Error('A usage project name may use only letters, digits, dots, hyphens and underscores');
   if (!ROLES.includes(role)) throw new Error(`A session's role is one of ${ROLES.join(', ')}`);
   const file = usagePath('sessions', `${session}.json`);
-  if (fs.existsSync(file)) return;
+  if (fs.existsSync(file) && (by === 'mod' || readJson(file)?.by !== 'mod')) return;
   const record = { session, project, role };
   if (typeof work === 'string' && PROJECT.test(work)) record.work = work;
   record.at = timeOf(at);
+  if (by === 'mod') record.by = 'mod';
   writeJson(file, record);
 }
 

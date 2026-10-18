@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries } from './kit.js';
+import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText } from './kit.js';
 import { sendPending, withinBudget } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
@@ -87,13 +87,8 @@ const show = (value) => (typeof value === 'string' ? value : (JSON.stringify(val
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function readText(file) {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
-}
+// Small regular files only, opened without waiting: a FIFO HEAD can't hang the hook.
+const readText = (file) => readSmallText(file);
 
 // The branch a folder is on, read from the HEAD file with fs only (never git).
 export function branchOf(cwd) {
