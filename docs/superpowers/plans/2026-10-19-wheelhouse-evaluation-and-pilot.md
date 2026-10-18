@@ -18,7 +18,7 @@ Steps 4 and 5 of design section 17.2, in the order the director set on 19 Octobe
 
 It builds:
 
-- **The check the measures rest on:** check 39 (Task 1), and the script that keeps the first version's records for the baseline (Task 2).
+- **What the measures rest on:** check 39 (Task 1), and the baseline from the private note's figures (Task 2).
 - **The evaluation as a whole:** a runner across every suite, scenarios 4, 6, 13, 15 and 18, and one run of every scenario on the finished build.
 - **The measures:** reading the transcripts, labelling the director's messages, the weekly reading and the two-week verdict.
 - **The first project:** installing Wheelhouse there for all its work, what real use settles that earlier checks left to it, and the weeks until the measures are met.
@@ -40,13 +40,13 @@ It does not build the rest of the mod (its own plan, before this one) or the fir
 Asked once each, on a card, with the plan:
 
 - **Card 1, what the two weeks cover.** The first draft proposed a pilot on one small feature, then two weeks of measures. Answered by the director on 19 October 2026: "build out the plugin as much as we can - then test. No need to do targeted testing. I also want this tool as designed in full, not a handicapped version." So there is no small-feature pilot. The evaluation runs once every build step is done, the rest of the mod included, which now comes before it; then Wheelhouse is installed into the first project and used for all its work, and the two weeks of measures are read from that real use.
-- **Card 2, keeping the first version's records.** The cost target compares Wheelhouse with the first version's cost per merged pull request, counted from the first version's conversation records on the Mac, which Claude Code deletes after 30 days. Answered by the director on 19 October 2026: keep a copy, never in the repository; the copy goes to the private Wheelhouse folder on the Mac, which agents can't read. The director arranges the first copy themselves; this plan's script refreshes it at the install (Task 10).
+- **Card 2, keeping the first version's records.** The cost target compares Wheelhouse with the first version's cost per merged pull request, which could be counted from the first version's conversation records on the Mac, which Claude Code deletes after 30 days. Answered by the director on 19 October 2026: keep a copy, never in the repository, in the private Wheelhouse folder on the Mac. The director chose to keep a copy, but on 19 October 2026 the records were already gone, so the baseline uses the private note's figures. The note counted cost its own way, not as this plan's readings do, so every reading that compares with it says so (Task 9).
 
 ## Global Constraints
 
 Everything in the earlier plans' Global Constraints holds: Node.js 22 or later, no npm dependencies, ESM `.js`, `node:test` in `tests/**/*.test.js`, macOS and Windows, the path comment on every file, British or Australian English, dates as "19 October 2026", no model identifiers anywhere (tests use made-up names such as `model-a`) and no `Co-Authored-By` line in commits, secrets only in a child's environment and never in output, everything under `wheelhouseHome()`, times in UTC ISO 8601 with a `now` argument, child processes through `run`, hooks never running `git` in a folder an agent controls. In addition:
 
-- **Nothing about the first project goes into this repository.** Not its name, its features, its rules, its figures in dollars, the director's words, or the first version's records. The repository gets each measure as met or not and, for cost, the ratio to the baseline (`docs/evals/first-project.md`, Task 13). Everything else stays in `<wheelhouseHome()>/measures/` and the project's own state branch. *Reviewer's call:* the repository is public.
+- **Nothing about the first project goes into this repository.** Not its name, its features, its rules, its figures in dollars, the director's words, or the private note's figures. The repository gets each measure as met or not and, for cost, the ratio to the baseline (`docs/evals/first-project.md`, Task 13). Everything else stays in `<wheelhouseHome()>/measures/` and the project's own state branch. *Reviewer's call:* the repository is public.
 - **The director's messages are never stored.** The measures keep each message's session, time and label, never its text; the weekly reading counts them.
 - **Evaluation runs never touch a real repository** (design section 18): a throwaway copy under `os.tmpdir()`, the stand-in host, and `WHEELHOUSE_HOME` pointing at a scratch folder.
 - **The numbers are constants,** in `scripts/lib/measure-numbers.js`: `WEEK_MS = 7 * 24 * 60 * 60 * 1000`, `WEEKS_MET = 2`, `TARGETS = { statusPulls: 0, ruleRestatements: 0, frontDeskMedianContext: 80000, costRatio: 2 / 3, setupMinutes: 18, foremanIdleShare: 0.1, conflictsPerMerge: 0.25 }`, `TRIALS_AGAIN = 3`, `ASK_AFTER_WEEKS = 6`.
@@ -70,11 +70,10 @@ scripts/eval/summary.js            one report for a whole run
 tests/eval/main/04-review-round-four.js, 06-merge-under-pressure.js,
   13-hidden-instruction.js, 15-secrets-any-route.js, 18-host-by-full-path.js
 docs/evals/README.md               the whole run's report
-scripts/measures/keep.js           the first version's records, copied into the private folder
 scripts/measures/transcripts.js    the director's messages and the front desk's context, from transcripts
 scripts/measures/label.js          status pulls and restated rules, by one read-only call a week
 scripts/measures/prices.js         list prices, fetched into the private folder, never committed
-scripts/measures/baseline.js       the first version's cost per merged pull request
+scripts/measures/baseline.js       the first version's cost per merged pull request, from the private note
 scripts/measures/weekly.js         the weekly reading and the two-week verdict
 scripts/measures/ready.js          is this build and this project ready for the install
 scripts/measures/cli.js            the front desk's and the agents' one command for the measures
@@ -96,7 +95,7 @@ As the checks plan set it, checked by `tests/docs/checks-format.test.js`. Check 
 
 ---
 
-## Part 1: the check, and the baseline's records
+## Part 1: the check, and the baseline
 
 ### Task 1: Check 39, what the transcripts show
 
@@ -107,7 +106,7 @@ As the checks plan set it, checked by `tests/docs/checks-format.test.js`. Check 
 The question: *From Claude Code's transcript files (`~/.claude/projects/*/*.jsonl` and their subagent files), whether a reader can tell a message the director typed or sent from the phone from one relayed by another session, a hook's added context, a task notification or a card answer; whether each assistant entry gives the context size of its turn (input, cache read and cache creation tokens) and the model; and whether entries carry `cwd` and the session id, so a session can be matched to a project and to its part (front desk, foreman, feature).*
 
 **Interfaces:**
-- Produces, for Tasks 2 and 7: the field or prefix that marks each kind of message; the fields that give a turn's context; how subagent transcripts link to their parent session; whether Desktop's transcripts and `claude -p`'s look the same.
+- Produces, for Task 7: the field or prefix that marks each kind of message; the fields that give a turn's context; how subagent transcripts link to their parent session; whether Desktop's transcripts and `claude -p`'s look the same.
 
 - [ ] **Step 1: Read** the documentation on transcripts and session files, and record the links and date.
 - [ ] **Step 2: Run `probes/39-transcripts/run.js` (agent, Mac).** In a scratch project, start one session with `claude -p`, send it a message from a second session (the route build-loop check 27 found), let a hook add context, and answer one `AskUserQuestion` with a reply code; then list each entry's `type`, the fields present, and any marker of where it came from. Then read, without copying, the field names (never the text) of the last week of the director's own Desktop transcripts on this Mac, to confirm the same markers appear there.
@@ -120,35 +119,39 @@ git commit -m "Record check 39: what the transcripts show about a message and a 
 
 **If the answers differ:** if typed messages can't be told from relayed ones in a transcript, Task 7 counts only messages whose session is the front desk's and whose text carries none of the known machine prefixes (`Wheelhouse:`, `<task-notification>`, `<side-sessions-event>`, a hook's added context), and the note says the count may include a few that aren't the director's; Review Focus 1's tests pin that list. If a turn's context isn't in the transcript, the front desk's context comes from the context gauge's own record (safety plan, Task 11), which Task 7 then reads instead.
 
-### Task 2: Keeping the first version's records
+### Task 2: The baseline, from the private note
 
 **Files:**
-- Create: `scripts/measures/keep.js`
-- Test: `tests/scripts/measures/keep.test.js`
+- Create: `scripts/measures/baseline.js`, `scripts/measures/cli.js` (its `baseline` form; Task 9 adds the rest)
+- Modify: `scripts/host/helper.js` (the `/measures/baseline` route)
+- Test: `tests/scripts/measures/baseline.test.js`
+
+The first version's records are gone (Card 2), so there is nothing to copy; the baseline is the private note's figures, as the director gives them.
 
 **Interfaces:**
-- Consumes: check 39.
-- Produces: `keepRecords({ folder, from, to, dest, now }) -> { sessions: number, files: number, bytes: number }`: copies every transcript file (and its subagent files) whose entries' `cwd` is inside `folder` and whose times fall between `from` and `to`, into `dest` (default `<wheelhouseHome()>/measures/first-version/`), keeping each file whole and its modified time, with a `kept.json` listing what was copied and when. It never copies a file whose `cwd` is elsewhere, never copies a file already there, never writes inside `~/.claude/`, and refuses a `dest` inside any git working copy, so the records can't reach a repository (Card 2).
+- Consumes: `composeCard` (front-desk plan, Task 2); the helper's signed-click check, as its other routes use it.
+- Produces:
+  - `Baseline = { usdPerMerge: number, merges: number, from: string, to: string, method: 'note', counted: string, recordedAt: string }`. `counted` is the note's own account of how it counted, in the director's or the note's words (which sessions, which prices, which pull requests), kept only in `<wheelhouseHome()>/measures/baseline.json`.
+  - `noteBaseline({ usd, merges, from, to, counted, now }) -> Baseline`: `usdPerMerge` is `usd / merges`; refuses a missing figure, a zero or negative count, or `from` after `to`.
+  - `readBaseline() -> Baseline | null`.
+  - `cli.js baseline --usd <n> --merges <n> --from <date> --to <date> --counted <text>`: the front desk records the figures the director gives it. The helper writes them only after a card reading them back in plain words (**Record these**, **Not now**) is clicked; until then `readBaseline` is `null`. The figures never enter a state event or the repository.
 
 - [ ] **Step 1: Write the failing tests.**
 
 ```js
-test('only transcripts whose cwd is inside the folder are copied, with their subagent files', ...)
-test('a transcript for a folder with a similar name is not copied', ...)
-test('the copy keeps each file whole and lists it in kept.json', ...)
-test('a second run copies nothing twice', ...)
-test('a destination inside a git working copy is refused', ...)
+test('the note\'s cost and count give the cost per merge, with how the note counted', ...)
+test('a missing figure, a zero count or dates the wrong way round are refused', ...)
+test('the baseline is written only after the director\'s click on the card that reads it back', ...)
+test('the figures reach no state event', ...)
 ```
 
 - [ ] **Step 2: Run, expect FAIL; implement; run `npm test`, expect PASS.**
 - [ ] **Step 3: Commit.**
 
 ```bash
-git add scripts/measures tests
-git commit -m "Keep a private copy of the first version's records for the baseline"
+git add scripts tests
+git commit -m "Take the baseline from the private note's figures, with how the note counted them"
 ```
-
-The first copy is the director's to arrange (Card 2), into the private Wheelhouse folder on the Mac. When it is in another folder there, `dest` and Task 9's `baseline` are pointed at it. Task 10 runs `keepRecords` again at the install, so the baseline covers the old way of working right up to it.
 
 ---
 
@@ -263,7 +266,7 @@ git commit -m "Run the whole evaluation, with and without Wheelhouse, and record
 **Interfaces:**
 - Consumes: check 39; `usage/sessions/<session>.json` (board-and-usage plan, Task 5: each session's part); `projectForFolder`.
 - Produces:
-  - `sessionsFor({ project, from, to, dirs }) -> Array<{ session, part: 'front-desk' | 'foreman' | 'feature' | 'other', files: string[] }>`: transcript files whose entries' `cwd` is inside the project's folders (the main folder and its worktrees), with the part from the session's record, else `other`. Nothing outside those folders is ever returned, so evaluation copies, setup's scratch copy and the labelling call never count (Review Focus 3). `dirs` defaults to `~/.claude/projects/`; the baseline passes the kept copy (Task 2).
+  - `sessionsFor({ project, from, to, dirs }) -> Array<{ session, part: 'front-desk' | 'foreman' | 'feature' | 'other', files: string[] }>`: transcript files whose entries' `cwd` is inside the project's folders (the main folder and its worktrees), with the part from the session's record, else `other`. Nothing outside those folders is ever returned, so evaluation copies, setup's scratch copy and the labelling call never count (Review Focus 3). `dirs` defaults to `~/.claude/projects/`.
   - `directorMessages(entries) -> Array<{ session, at, id, kind: 'message' | 'card-answer', text }>`: by check 39's markers; never a relayed message, a hook's context, a task notification, a side-session event, a tool result or a meta entry (Review Focus 1). A reply-code answer, or a prompt a mod button submitted, is a `card-answer`. `text` is held in memory only, for the labeller.
   - `turnContexts(entries) -> Array<{ session, at, context: number, model: string }>`: each assistant turn's input, cache read and cache creation tokens added together; subagent turns left out (they are not the front desk's context).
   - `tokensByModel(entries) -> Record<model, { input, cacheRead, cacheWrite, output }>`, subagent files included.
@@ -322,23 +325,23 @@ git commit -m "Label the director's messages as status pulls or restated rules, 
 ### Task 9: The weekly reading and the two-week verdict
 
 **Files:**
-- Create: `scripts/measures/prices.js`, `scripts/measures/baseline.js`, `scripts/measures/weekly.js`, `scripts/measures/cli.js`
+- Create: `scripts/measures/prices.js`, `scripts/measures/weekly.js`
+- Modify (also): `scripts/measures/cli.js` (Task 2's file)
 - Modify: `scripts/jobs/weekly.js`, `scripts/briefing/briefing.js`, `scripts/host/helper.js` (the `/measures` routes), `scripts/host/adapter.js`, `scripts/host/github.js`, `scripts/host/gitlab.js` (`mergedBetween`), `scripts/foreman/wake.js` (`measures` for a week)
-- Test: `tests/scripts/measures/prices.test.js`, `tests/scripts/measures/baseline.test.js`, `tests/scripts/measures/weekly.test.js`, `tests/scripts/briefing/briefing.test.js`, `tests/scripts/host/adapter.test.js`, `tests/scripts/foreman/wake.test.js`
+- Test: `tests/scripts/measures/prices.test.js`, `tests/scripts/measures/weekly.test.js`, `tests/scripts/briefing/briefing.test.js`, `tests/scripts/host/adapter.test.js`, `tests/scripts/foreman/wake.test.js`
 
 **Interfaces:**
-- Consumes: Tasks 7 and 8; `measures(project) -> { idleShare, conflictsPerMerge }` (build-loop plan, Task 19); `readJournal` and `stepTimes` (setup plan, Task 5); `makeEvent` (kind `note`) and the helper's state route; `runWeekly`, `briefingModel`; `composeCard` (front-desk plan, Task 2); `makeAdapter`.
+- Consumes: Tasks 2, 7 and 8 (`readBaseline`); `measures(project) -> { idleShare, conflictsPerMerge }` (build-loop plan, Task 19); `readJournal` and `stepTimes` (setup plan, Task 5); `makeEvent` (kind `note`) and the helper's state route; `runWeekly`, `briefingModel`; `composeCard` (front-desk plan, Task 2); `makeAdapter`.
 - Produces:
   - `fetchPrices({ fetch, now }) -> Promise<Record<model, { input, cacheRead, cacheWrite, output }>>`: dollars per million tokens, read from the official pricing page into `<wheelhouseHome()>/measures/prices.json` with the date. Never committed, so no model name enters the repository. A page that can't be read keeps last week's file and says so.
   - `costOf(tokensByModel, prices) -> number | null`: `null` when any model is missing from the prices.
-  - `adapter.mergedBetween({ from, to }) -> Promise<number>`: pull requests merged into the default branch between two times, read-only (`gh pr list --state merged --search "merged:<from>..<to>" --json number --limit 1000`; on GitLab, `glab mr list --merged` filtered by `merged_at`), run by the helper. *Reviewer's call:* both sides count merges from the host, not from Wheelhouse's `merge` events, so a merge made by hand counts the same in the baseline and in real use.
+  - `adapter.mergedBetween({ from, to }) -> Promise<number>`: pull requests merged into the default branch between two times, read-only (`gh pr list --state merged --search "merged:<from>..<to>" --json number --limit 1000`; on GitLab, `glab mr list --merged` filtered by `merged_at`), run by the helper. *Reviewer's call:* merges are counted from the host, not from Wheelhouse's `merge` events, so a merge made by hand counts too, as it would have in the first version.
   - `measures(project, { from, to })`: the build-loop plan's function gains an optional window, counting only `measures.jsonl` lines inside it. *Reviewer's call.*
-  - `baseline({ kept, prices, mergedBetween }) -> { usdPerMerge: number, merges: number, from, to }`: the kept records' tokens (Task 2), priced by `prices`, divided by `mergedBetween` over the span of the kept records. Kept in `<wheelhouseHome()>/measures/baseline.json`.
-  - `WeekReading = { week: { from, to }, statusPulls: number | null, ruleRestatements: number | null, unsure: number, frontDeskMedianContext: number | null, costPerMerge: number | null, costRatio: number | null, merges: number, foremanIdleShare: number | null, conflictsPerMerge: number | null, setupMinutes: number | null, met: Record<keyof TARGETS, boolean | null>, notMeasured: string[], excluded: { labelUsd: number | null } }`.
-  - `weekReading({ project, from, to, now }) -> Promise<WeekReading>`: cost is every session's tokens over the week from `sessionsFor` (every part, as the baseline counts every session in the project's folders), priced by `prices`, divided by `mergedBetween` for the week; the labelling call's own cost is reported in `excluded.labelUsd` (Review Focus 3). The front desk's context is the median of its turns' contexts. `setupMinutes` is the director's minutes from the project's setup run, once, in the first reading. A measure with no data is `null`, listed in `notMeasured`, and its `met` is `null` (Review Focus 2).
+  - `WeekReading = { week: { from, to }, statusPulls: number | null, ruleRestatements: number | null, unsure: number, frontDeskMedianContext: number | null, costPerMerge: number | null, costRatio: number | null, baselineCounted: 'differently' | null, merges: number, foremanIdleShare: number | null, conflictsPerMerge: number | null, setupMinutes: number | null, met: Record<keyof TARGETS, boolean | null>, notMeasured: string[], excluded: { labelUsd: number | null } }`.
+  - `weekReading({ project, from, to, now }) -> Promise<WeekReading>`: cost is every session's tokens over the week from `sessionsFor` (every part, as the baseline counts every session in the project's folders), priced by `prices`, divided by `mergedBetween` for the week; `costRatio` is that over `readBaseline().usdPerMerge`, `null` with no baseline, and `baselineCounted` is `'differently'` whenever a ratio is given, since the note counted its own way (Card 2); the labelling call's own cost is reported in `excluded.labelUsd` (Review Focus 3). The front desk's context is the median of its turns' contexts. `setupMinutes` is the director's minutes from the project's setup run, once, in the first reading. A measure with no data is `null`, listed in `notMeasured`, and its `met` is `null` (Review Focus 2).
   - `metForTwoWeeks(readings) -> { met: boolean, weeks: number, since: string | null, missing: string[] }`: true when the last `WEEKS_MET` consecutive readings each have every `met` true (setup time from the first reading); a reading with any `null` or any `unsure` label breaks the run. *Plan's call:* a week that can't be measured doesn't count, so the two weeks start again.
   - The weekly job: while `<wheelhouseHome()>/projects/<p>/measuring.json` exists (`{ started, project }`, written by Task 10), `runWeekly` adds a reading for every whole week since `started` (weeks counted in `WEEK_MS` steps from it) that has none yet, so a Mac that slept catches up; writes each as a `note` event `{ measures: WeekReading }` through the helper's state route, as the weekly backup is written (figures only: no text, no names); and one failure never stops the other jobs. A week in which STOP was on for more than a day is read, but its `met` values are all `null` with `notMeasured: ['STOP']`, so it breaks the run of met weeks.
-  - The briefing gains one line after usage while measuring is on: `Measures, week <n>: <k> of 7 met.` (with "not measured: <names>" when any are). When `metForTwoWeeks` turns true, the waiting list gains one card: the readings in plain words, and **Remove the old way** (the first version's files taken out of the project, by a pull request), **Keep it switched off**, recommended **Remove the old way**. The same visit's briefing says the first public release can now be proposed (design section 17.2, step 7), which is a separate card.
+  - The briefing gains one line after usage while measuring is on: `Measures, week <n>: <k> of 7 met.` (with "not measured: <names>" when any are), and, when the cost is given, `Cost per merged change: <r> of the first version's, from its notes, which were counted differently.` Every card or report that shows the ratio carries the same words. When `metForTwoWeeks` turns true, the waiting list gains one card: the readings in plain words, and **Remove the old way** (the first version's files taken out of the project, by a pull request), **Keep it switched off**, recommended **Remove the old way**. The same visit's briefing says the first public release can now be proposed (design section 17.2, step 7), which is a separate card.
   - After `ASK_AFTER_WEEKS` weeks without the verdict, the waiting list gains one card: the measures that keep failing and why, with **Keep going**, **Change a target** (each target is the director's to move, design section 18), recommended **Keep going** unless one measure has failed every week, then **Change a target**. *Plan's call:* six weeks is three tries at two weeks.
   - `cli.js <reading | readings | verdict | record>`: reading forms, talking to the helper's `/measures` route, for the front desk and for the agent watching real use; `record` gives the week's refusals, incidents, cards asked with how long each waited, and questions from feature sessions, as counts and ids from state, never text. `cli.js log <line>` appends one line to `<wheelhouseHome()>/measures/log.md` through the same route. All are let through under STOP.
 
@@ -352,7 +355,7 @@ test('evaluation and labelling sessions are left out of the cost and shown apart
 test('the front desk\'s context is the median of its own turns, not its subagents\'', ...)
 test('two consecutive met weeks give the verdict; an unmeasured week starts it again', ...) // Review Focus 2
 test('an unsure label breaks the run of met weeks', ...)                                    // Review Focus 5
-test('the baseline from the kept records', ...)
+test('the cost ratio is over the note\'s figure, says it was counted differently, and is not measured without a baseline', ...)
 test('the weekly note event holds figures only', ...)
 test('the briefing shows the measures line only while measuring is on', ...)
 test('a Mac that slept gets a reading for each whole week it missed, once', ...)            // Review Focus 2
@@ -381,16 +384,15 @@ git commit -m "Read the measures every week, and say when two weeks are met"
 - Test: `tests/scripts/measures/ready.test.js`
 
 **Interfaces:**
-- Consumes: `docs/evals/README.md`'s version and verdict; `checkInstalled` (build-loop plan, Task 23); `healthCheck` (setup plan, Task 12); `readProject`; `keepRecords` and `baseline`; build-loop check 24's way of switching a skill's copy off; the setup journal (setup plan, Task 5).
+- Consumes: `docs/evals/README.md`'s version and verdict; `checkInstalled` (build-loop plan, Task 23); `healthCheck` (setup plan, Task 12); `readProject`; `readBaseline`; build-loop check 24's way of switching a skill's copy off; the setup journal (setup plan, Task 5).
 - Produces:
-  - `ready({ project, now }) -> { ready: boolean, lines: string[] }`, each line one condition, met or not: the evaluation passed on the Wheelhouse version installed in the project (the report records the version it ran on, and the lineage manifest gives the installed one; a different version needs `npm run eval -- --all` again; *reviewer's call*); the lineage check passes; setup's health check is green on this project; the kept records exist.
-  - `startMeasuring({ project, now }) -> void`, after the director's click on the start card: refreshes the kept records (`keepRecords` up to now) and takes the baseline over all of them; writes `measuring.json`; records the start as a `note` event; and switches off the first version's skills, hooks and scheduled jobs in that project, the way build-loop check 24 found, in the project's local settings only, each listed in the setup journal so one card can put them back. Nothing of the first version is deleted until the verdict card's **Remove the old way**. *Reviewer's call:* two front desks in one folder would answer the director twice, and keeping the old files until the measures are met leaves a way back.
+  - `ready({ project, now }) -> { ready: boolean, lines: string[] }`, each line one condition, met or not: the evaluation passed on the Wheelhouse version installed in the project (the report records the version it ran on, and the lineage manifest gives the installed one; a different version needs `npm run eval -- --all` again; *reviewer's call*); the lineage check passes; setup's health check is green on this project; the baseline is recorded (Task 2).
+  - `startMeasuring({ project, now }) -> void`, after the director's click on the start card: writes `measuring.json`; records the start as a `note` event; and switches off the first version's skills, hooks and scheduled jobs in that project, the way build-loop check 24 found, in the project's local settings only, each listed in the setup journal so one card can put them back. Nothing of the first version is deleted until the verdict card's **Remove the old way**. *Reviewer's call:* two front desks in one folder would answer the director twice, and keeping the old files until the measures are met leaves a way back.
 
 - [ ] **Step 1: Write the failing tests.**
 
 ```js
 test('ready lists each condition, and an evaluation run on another version is not ready', ...)
-test('start refreshes the kept records and takes the baseline before anything else', ...)
 test('start switches the first version off in local settings only, and the journal can put it back', ...)
 test('measuring does not start without the director\'s click', ...)
 ```
@@ -438,7 +440,7 @@ git commit -m "Record what real use settled, and add its problems as scenarios"
 - Create: `docs/evals/first-project.md`
 - Modify: `docs/specs/2026-10-17-wheelhouse-design.md`, `docs/specs/2026-10-18-build-loop-design.md`, `docs/checks/README.md`, `HANDOVER.md`
 
-- [ ] **Step 1: Write `docs/evals/first-project.md`:** when measuring ran, each measure per week as met, not met or not measured; cost as a ratio to the baseline only; the scenarios real use added; the checks it settled. No product, feature, rule, quote or dollar figure.
+- [ ] **Step 1: Write `docs/evals/first-project.md`:** when measuring ran, each measure per week as met, not met or not measured; cost as a ratio to the baseline only, said to be against the first version's notes, counted differently; the scenarios real use added; the checks it settled. No product, feature, rule, quote or dollar figure.
 - [ ] **Step 2: Bring the design up to date:**
   - section 17.2: the build order as the director set it on 19 October 2026, with the rest of the mod before the evaluation, and step 4 as the evaluation then the install into the first project for all its work, with no small-feature pilot; step 7's two weeks read from that use;
   - section 18: scenarios 1 to 19 each with where it is tested; scenarios 36 onwards from real use; the trials rule; the targets as read here; the two weeks as consecutive measured weeks; "a pilot runs on one small feature" replaced by the install for all work;
@@ -446,7 +448,7 @@ git commit -m "Record what real use settled, and add its problems as scenarios"
   - section 20: check 39 and real use's answers to checks 1, 9, 22 and 23;
   - section 16, 21 and 22's lines that say "once the pilot meets its measures": "once the measures are met for two weeks";
   - the build-loop design's section 15: its measures' readings.
-  This plan's calls go into section 21, each marked *Designer's call*, and the director's answers to Cards 1 and 2 into section 22.
+  This plan's calls go into section 21, each marked *Designer's call*, and the director's answers to Cards 1 and 2 into section 22, Card 2 with what was found: the records were already gone, so the baseline uses the private note's figures.
 - [ ] **Step 3: Update `HANDOVER.md`:** what the evaluation and real use found, and the next step in design section 17.2 (proposing the first public release).
 - [ ] **Step 4: Run `npm test`.** Expected: PASS.
 - [ ] **Step 5: Commit.**
@@ -464,7 +466,7 @@ Settled here without the director, each listed for the design in Task 13:
 2. **Scenarios already covered are run, not rewritten:** the front desk's, the build loop's, the safety plan's and any the rest of the mod adds, by the table in Scope.
 3. **The trials rule:** a behaviour scenario passes on two of three trials, a safety scenario only on all three.
 4. **A run that did nothing is a failed run,** and a safety scenario without the sandbox switched on is a failed run, never a pass.
-5. **Cost is priced at list prices,** fetched into the private folder and never committed, so the baseline and real use are counted the same way and no model name enters the repository.
+5. **Cost is priced at list prices,** fetched into the private folder and never committed, so every week of real use is counted the same way and no model name enters the repository. The baseline, from the private note, was counted another way, and every reading that compares with it says so.
 6. **One cheap, tool-less model call a week labels the director's messages,** keeping labels and no text; doubt is its own label and never counts as met.
 7. **The targets as numbers:** "a third lower" is two thirds of the baseline; "about 15 minutes" is up to 18; "well below 66 across 134" is a quarter of a conflict message per merge or fewer.
 8. **Two weeks means two consecutive measured weeks,** each meeting every target; a week that can't be measured starts the count again.
@@ -476,24 +478,25 @@ Settled here without the director, each listed for the design in Task 13:
 
 Read on 19 October 2026 as the builder would, against design section 18 and the plans it runs or reads, and read again the same day after the director's answers to Cards 1 and 2. Nothing new needs the director. These were settled in place, each marked *Reviewer's call*, and go into the design with the plan's calls in Task 13:
 
-1. **Nothing about the first project in this repository.** The repository is public, so the report gives each measure as met or not and cost only as a ratio; the rest stays on the Mac and in the project's own state. `keepRecords` refuses a destination inside a git working copy, so the first version's records can't reach a repository (Card 2).
+1. **Nothing about the first project in this repository.** The repository is public, so the report gives each measure as met or not and cost only as a ratio; the rest stays on the Mac and in the project's own state. The note's figures stay in the private folder and never reach a state event (Card 2).
 2. **Evaluation sessions are kept out by folder, not by a role.** Evaluation copies, setup's scratch copy and the labelling call all run outside the project's folders, and the measures count only sessions inside them, so no part of the usage store needs changing.
-3. **Cost counts every session in the project's folders, on both sides,** and merges come from the host on both sides (`mergedBetween`, added to the adapter), so a session or a merge made outside Wheelhouse counts the same in the baseline and in real use.
+3. **Cost counts every session in the project's folders,** and merges come from the host (`mergedBetween`, added to the adapter), so a session or a merge made outside Wheelhouse still counts, as it would have in the first version.
 4. **The foreman's measures for one week.** The build-loop plan's `measures` read the whole file; they gain a window.
 5. **Scenario 15 never reads a real credential.** Its canaries are in the scratch project and the scratch Wheelhouse folder; for the real logged-in tools, it checks only that every read of a denied path failed.
 6. **The sandbox check before a safety scenario** lives in the runner, so no scenario can skip it.
 7. **The evaluation is matched to the installed version,** not a commit, since the project has a release installed, not this repository.
 8. **Watching real use** happens from this repository's own session, at each merge in the first two weeks and at each weekly reading, through the measures command's reading routes and its log; an agent in the first project can't read the private folder.
 9. **STOP is the pause.** A safety problem sets it, the runbook applies, and a week under STOP isn't counted.
-10. **The first version's records are copied again at the install,** so the baseline covers the old way of working right up to it; the first copy is the director's to arrange.
+10. **The baseline is the private note's figures** (Card 2, the records being gone by 19 October 2026). The director gives them at the front desk, a card reads them back before they are kept, and they stay in the private folder. The note counted its own way, so every reading, card and report that shows the cost ratio says it is against the first version's notes, counted differently; the target stays two thirds.
 11. **No small-feature pilot** (Card 1): the readiness check, the start card, the watching and the weekly fixes now apply to all the first project's work. The pilot's own pieces are gone: the feature-lane rule for one feature, the pause after it, the "pilot feature only" path, and the "Stop the pilot" option, which is now the journal's way of switching the first version back on.
 12. **The old way is removed only on the verdict card.** Step 5 of the design said "retire it" at the install; it is switched off there and removed once the measures are met, so a bad week has a way back.
 13. **A mod button press is a card answer.** With the rest of the mod built before this plan, a card can be answered by its button as well as by a click or a reply code; none of them is a director message to label.
 14. **Scenario numbers from real use** start at 36 but skip any number another suite, such as the rest of the mod's, has taken first.
+15. **The baseline task comes first in the measures,** since its card uses the front desk's composer and the install can't start without it; the measures' command starts there and Task 9 adds its reading forms.
 
 ## Order
 
-Part 1 first: Task 1 by the agent; Task 2 can be built at any time after it. Task 3 can be built at any time after the build-loop plan's Task 3. Tasks 4 and 5 need the build-loop and safety plans merged; Task 6 needs every build step merged, the rest of the mod included. Tasks 7 and 8 need Task 1; Task 9 needs Tasks 7 and 8 and the board-and-usage plan. Task 10 needs Tasks 6 and 9 and the setup plan. Tasks 11 and 12 follow in order; Task 13 is last.
+Part 1 first: Task 1 by the agent. Task 2 needs the front-desk plan (its composer), and the director's figures are needed before Task 10. Task 3 can be built at any time after the build-loop plan's Task 3. Tasks 4 and 5 need the build-loop and safety plans merged; Task 6 needs every build step merged, the rest of the mod included. Tasks 7 and 8 need Task 1; Task 9 needs Tasks 7 and 8 and the board-and-usage plan. Task 10 needs Tasks 6 and 9 and the setup plan. Tasks 11 and 12 follow in order; Task 13 is last.
 
 ## The director's sittings
 
