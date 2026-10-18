@@ -7,4 +7,4 @@ This is the small lane: clear intent, a few choices, one area. One session does 
 3. Once the plan is written, record it with `{{cli}} plan <the plan's path>`, then end your turn without building. The foreman checks it for clashes, pace and dependencies, and you are woken with `build` when you may build.
 4. Start `superpowers:executing-plans` and build every task yourself, in order. Each task starts with its failing test, as `superpowers:test-driven-development` says; the done contract's tests come first.
 5. When the tasks are done, have one review of the whole change by `wheelhouse:reviewer` (start `superpowers:requesting-code-review` for how to ask for it, but dispatch the reviewer agent, not a general-purpose one). Check each finding before you act on it, as `superpowers:receiving-code-review` says. Every fix is reviewed again; do not take a fix on trust.
-6. Then check the work as "Rules in every lane" says, and open the pull request.
+6. Then check the work as "Rules in every lane" says, and finish as "How to finish" says: write `report.md` and run `report`, open the pull request with `open-pr`, then dispatch `wheelhouse:reviewer` on its head with `pr: n`.

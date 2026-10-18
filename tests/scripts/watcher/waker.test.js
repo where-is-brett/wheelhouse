@@ -12,6 +12,7 @@ import {
 } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
+import { PLUGIN_ROOT, foremanCommands } from '../../../scripts/foreman/tools.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -91,7 +92,10 @@ const featureBundle = (work, id = 'x') => ({ to: 'feature', work, events: [{ typ
 
 // The record a prompt's copy was made from: same name, in the watcher's own folder.
 const recordOf = (copy) => path.join(wakesDir(P), path.basename(copy));
-const fileIn = (prompt, lead) => prompt.slice(lead.length);
+// The file a foreman prompt names: after its lead, before its first command.
+const fileIn = (prompt, lead) => prompt.slice(lead.length).replace(/\. First run: [\s\S]*$/, '');
+// The foreman's prompt for `copy`, as the waker gives it with this plugin's own wake command.
+const foremanPrompt = (copy) => PROMPTS.foreman(copy, foremanCommands(PLUGIN_ROOT).wake);
 const foremanCopies = () => path.join(checkout(), '.wheelhouse', 'foreman', 'wakes');
 
 function waker(fake, over = {}) {
@@ -126,7 +130,10 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   const [call] = fake.calls;
   const copy = path.join(main, '.wheelhouse', 'foreman', 'wakes', path.basename(record));
   assert.equal(call.file, 'claude');
-  assert.deepEqual(call.args, ['-p', `Wheelhouse foreman: follow wheelhouse:foreman to handle ${copy}`, '--permission-mode', 'plan', '--model', 'model-a']);
+  assert.deepEqual(call.args, ['-p', foremanPrompt(copy), '--permission-mode', 'plan', '--model', 'model-a']);
+  // The prompt gives the first command whole, so the first step needs no skill and no ${CLAUDE_PLUGIN_ROOT}.
+  assert.ok(call.args[1].startsWith(`Wheelhouse foreman: follow wheelhouse:foreman to handle ${copy}. First run: node '`), call.args[1]);
+  assert.ok(call.args[1].includes(`${foremanCommands(PLUGIN_ROOT).wake} read `), call.args[1]);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'), 'the copy is the record');
   assert.match(fs.readFileSync(path.join(main, '.git', 'info', 'exclude'), 'utf8'), /^\.wheelhouse\/$/m, 'git-ignored through info/exclude');
   assert.equal(call.cwd, main);
@@ -591,7 +598,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   // Shape 2 names the same copy the Shape 1 prompt names.
   const lines = [];
   await waker(fakeRun(), { shape: 2, print: (line) => lines.push(line) }).wakeForeman(record);
-  assert.equal(lines[0].slice('WAKE foreman '.length), fake.calls[0].args[1].slice(PROMPTS.foreman('').length));
+  assert.equal(lines[0].slice('WAKE foreman '.length), fileIn(fake.calls[0].args[1], PROMPTS.foreman('')));
 }));
 
 test('under STOP nothing is started or woken; what waits goes once STOP lifts', () => withHome(async () => {
@@ -652,6 +659,27 @@ test('an outbox that is there but can\'t be read is never overwritten', () => wi
   assert.equal(fake.calls.length, 0);
 }));
 
+test('the foreman\'s prompt names its playbook and gives its first command whole (M9)', () => {
+  const wake = "node '/opt/wheel house/scripts/foreman/wake.js'";
+  assert.equal(PROMPTS.foreman('/p/.wheelhouse/foreman/wakes/w.json', wake),
+    `Wheelhouse foreman: follow wheelhouse:foreman to handle /p/.wheelhouse/foreman/wakes/w.json. First run: ${wake} read /p/.wheelhouse/foreman/wakes/w.json`);
+  // A path with a space or a backslash is one word in single quotes; one with a quote gets no command.
+  assert.ok(PROMPTS.foreman('/my p/w.json', wake).endsWith(`First run: ${wake} read '/my p/w.json'`));
+  assert.ok(PROMPTS.foreman('C:\\p\\w.json', wake).endsWith(`First run: ${wake} read 'C:\\p\\w.json'`));
+  assert.equal(PROMPTS.foreman("/it's/w.json", wake), "Wheelhouse foreman: follow wheelhouse:foreman to handle /it's/w.json");
+  // With no wake command (a plugin folder that can't be given as one), the playbook alone.
+  assert.equal(PROMPTS.foreman('/p/w.json'), 'Wheelhouse foreman: follow wheelhouse:foreman to handle /p/w.json');
+  for (const prompt of [PROMPTS.foreman('/p/w.json', wake), PROMPTS.foreman('/p/w.json')]) assert.ok(prompt.startsWith('Wheelhouse foreman: '));
+});
+
+test('a waker whose plugin folder can\'t be a command still wakes the foreman, with its playbook named', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const record = writeWake(P, bundle('e1'));
+  await waker(fake, { pluginRoot: "/opt/it's" }).wakeForeman(record);
+  assert.equal(fake.calls[0].args[1], PROMPTS.foreman(path.join(foremanCopies(), path.basename(record))));
+}));
+
 test('through claude.cmd on Windows, the prompt goes in on stdin', () => withHome(async () => {
   checkout();
   const fake = fakeRun();
@@ -660,7 +688,7 @@ test('through claude.cmd on Windows, the prompt goes in on stdin', () => withHom
   await w.wakeForeman(record);
   const [call] = fake.calls;
   assert.equal(call.file, 'cmd.exe');
-  assert.equal(call.input, `Wheelhouse foreman: follow wheelhouse:foreman to handle ${path.join(foremanCopies(), path.basename(record))}`);
+  assert.equal(call.input, foremanPrompt(path.join(foremanCopies(), path.basename(record))));
   assert.equal(call.windowsVerbatimArguments, true);
   assert.ok(call.args.at(-1).includes('--permission-mode acceptEdits --model model-a'));
 }));

@@ -325,6 +325,26 @@ test('stuck counts awake time only, and never while waiting', () => {
   assert.equal(settle(observation(), idle(Number.NaN)).features['login-page'].still, 0);
 });
 
+test('a report written before the feature is done does not hide it going still (R72)', () => {
+  // The report is there from the first open-pr on, so only the phase says the feature has ended.
+  let cursor = { seen: [], prev: observation() };
+  const run = (obs) => {
+    const r = step(cursor, obs, { handled: new Set() });
+    cursor = r.cursor;
+    return r.events.filter((e) => e.type === 'stuck');
+  };
+  const building = feature({ status: status({ phase: 'building', task: { n: 3, m: 4 }, updatedAt: iso(6) }), report: true });
+  assert.deepEqual(run(observation({ awake: 10 * MIN, features: { 'login-page': building } })), []);
+  assert.deepEqual(run(observation({ awake: 10 * MIN, features: { 'login-page': building } })), []);
+  assert.equal(run(observation({ awake: 10 * MIN, features: { 'login-page': building } })).length, 1);
+  // A red pull request with the report written is the session's to fix: it is not waiting either.
+  cursor = { seen: [], prev: observation() };
+  const red = feature({ status: status({ phase: 'pr-open', pr: 7, updatedAt: iso(7) }), report: true });
+  const prs = { 7: prState({ ci: 'failure' }) };
+  for (let i = 0; i < 2; i += 1) assert.deepEqual(run(observation({ awake: 10 * MIN, features: { 'login-page': red }, prs })), []);
+  assert.equal(run(observation({ awake: 10 * MIN, features: { 'login-page': red }, prs })).length, 1);
+});
+
 test('after a restart from the cursor, nothing is lost and nothing wakes twice', () => withHome(() => {
   // A question, CI going red, the director's answer and a feature gone still.
   const asked = { 'login-page': feature({ questions: ['q-login-page-1'] }) };

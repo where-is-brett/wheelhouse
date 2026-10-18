@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runWatcher, healthFile, lockFile, projectConfig, cliOptions } from '../../../scripts/watcher/main.js';
 import { recordHandled } from '../../../scripts/watcher/handled.js';
-import { foremanTools } from '../../../scripts/foreman/tools.js';
+import { PLUGIN_ROOT, foremanCommands, foremanTools } from '../../../scripts/foreman/tools.js';
 import {
   makeWaker, readWake, wakesDir, outboxFile, spawnDetached, PROMPTS,
 } from '../../../scripts/watcher/waker.js';
@@ -99,6 +99,8 @@ function starter({ alive = () => true } = {}) {
 
 const quiet = () => {};
 const copyOf = (record) => path.join(checkout(), '.wheelhouse', 'foreman', 'wakes', path.basename(record));
+// The file a foreman prompt names: after its lead, before its first command.
+const fileIn = (prompt) => prompt.slice(PROMPTS.foreman('').length).replace(/\. First run: [\s\S]*$/, '');
 
 test('a second watcher for the same project does not start', () => withHome(async () => {
   let open;
@@ -211,7 +213,7 @@ test('a crash after the outbox is saved but before the cursor is written repeats
   live.clear();
   await runWatcher({ project: P, config: config(), observe: looker([]).observe, wakerOptions, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
   assert.equal(calls.length, 2);
-  const merged = path.join(wakesDir(P), path.basename(calls[1].args[1].slice(PROMPTS.foreman('').length)));
+  const merged = path.join(wakesDir(P), path.basename(fileIn(calls[1].args[1])));
   assert.equal(readWake(merged).merged.length, 2);
   assert.deepEqual(readWake(merged).events.map((e) => e.id), ['ev-1']);
 }));
@@ -306,7 +308,7 @@ test('under STOP the loop observes and records, but starts and wakes nothing unt
   liftStop();
   await runWatcher({ project: P, config: config(), observe: looker([]).observe, wakerOptions, loops: 1, now: c.now, sleep: c.sleep, log: quiet });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args.slice(0, 2), ['-p', `Wheelhouse foreman: follow wheelhouse:foreman to handle ${copyOf(waiting[0].file)}`]);
+  assert.deepEqual(calls[0].args.slice(0, 2), ['-p', PROMPTS.foreman(copyOf(waiting[0].file), foremanCommands(PLUGIN_ROOT).wake)]);
   assert.equal(calls[0].env.WHEELHOUSE_ROLE, 'foreman');
 }));
 

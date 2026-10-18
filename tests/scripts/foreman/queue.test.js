@@ -195,12 +195,29 @@ test('fileMapOf leaves out identifiers in a parenthetical note', () => {
 });
 
 test('work whose report says merged or closed is not queued again; a blocked one is', () => {
-  const report = (id, outcome) => ({ [id]: { key: id, id: `r-${id}`, at: T(1), data: { work: id, outcome, summary: 's', rulings: [] } } });
+  const report = (id, outcome) => ({ [id]: { key: id, id: `r-${id}`, at: T(8), data: { work: id, outcome, summary: 's', rulings: [] } } });
   const work = worksOf(mkWork('a', 'small', 1), mkWork('b', 'small', 2), mkWork('c', 'small', 3), mkWork('d', 'small', 4));
   const reports = { ...report('a', 'merged'), ...report('b', 'closed'), ...report('c', 'blocked') };
   const found = next({ work, reports });
   assert.deepEqual(found.start, ['c', 'd']);
   assert.deepEqual(found.hold, []);
+});
+
+test('a work event recorded after the work ended queues it again (R102)', () => {
+  const report = (id, outcome, n) => ({ [id]: { key: id, id: `r-${id}`, at: T(n), data: { work: id, outcome, summary: 's', rulings: [] } } });
+  // a ended partial (closed) and its feature closed; then the front desk recorded it again, in the small lane.
+  // b ended at the same time and was not recorded again; c's report is at the same moment as its work event.
+  const work = worksOf(mkWork('a', 'small', 9), mkWork('b', 'small', 2), mkWork('c', 'small', 5));
+  const reports = { ...report('a', 'closed', 7), ...report('b', 'closed', 7), ...report('c', 'merged', 5) };
+  const features = featuresOf(mkFeature('a', 'closed', 7), mkFeature('b', 'closed', 7));
+  const found = next({ work, reports, features });
+  assert.deepEqual(found.start, ['a']);
+  assert.deepEqual(found.hold, []);
+  // A blocked feature closed after its work event stays out until the work is recorded again.
+  const blocked = next({ work: worksOf(mkWork('d', 'small', 3)), reports: report('d', 'blocked', 6), features: featuresOf(mkFeature('d', 'closed', 6)) });
+  assert.deepEqual(blocked.start, []);
+  const again = next({ work: worksOf(mkWork('d', 'bug', 8)), reports: report('d', 'blocked', 6), features: featuresOf(mkFeature('d', 'closed', 6)) });
+  assert.deepEqual(again.start, ['d']);
 });
 
 test('work is ordered by when it was first recorded, not by its latest event', () => {

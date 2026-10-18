@@ -71,8 +71,9 @@ function attempt(step) {
   }
 }
 
-// Every field but updatedAt.
-function sameStatus(a, b) {
+// Every field but updatedAt. The foreman's merge (scripts/foreman/act.js) writes
+// the status the same way, only on a change.
+export function sameStatus(a, b) {
   if (a === null || b === null) return false;
   const { updatedAt: _a, ...restA } = a;
   const { updatedAt: _b, ...restB } = b;

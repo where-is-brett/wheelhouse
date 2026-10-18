@@ -6,7 +6,8 @@
 //   Shape 1, the `print` route. The watcher starts each session itself, as a
 //   detached process with no window:
 //     - the foreman: a fresh `claude -p "Wheelhouse foreman: follow
-//       wheelhouse:foreman to handle <file>"`
+//       wheelhouse:foreman to handle <file>. First run: <wake command> read
+//       <file>"` (see PROMPTS)
 //       in the project's main checkout, with the foreman's model from
 //       `config.routing.foreman`, `--permission-mode` from `config.sessionMode`,
 //       `--allowedTools` from `foremanTools` when there are any, and
@@ -83,14 +84,30 @@ import { readProject } from '../lib/projects.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
+import { PLUGIN_ROOT, foremanCommands } from '../foreman/tools.js';
 import { featureAllowRules } from '../protection/settings.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 
+// A path as one shell word the foreman can type as it is: bare when it holds
+// only plain characters, otherwise in single quotes, which bash reads
+// literally; null when it holds a single quote or a line break.
+function shellWord(p) {
+  if (/^[A-Za-z0-9._/:@=+-]+$/.test(p)) return p;
+  return /['\r\n]/.test(p) ? null : `'${p}'`;
+}
+
 export const PROMPTS = Object.freeze({
-  // It names the foreman's playbook, which the foreman may load (ruling R98).
-  foreman: (file) => `Wheelhouse foreman: follow wheelhouse:foreman to handle ${file}`,
+  // It begins "Wheelhouse foreman:" (ruling R26) and names the foreman's
+  // playbook, which the foreman may load (ruling R98). With `wake`, the wake
+  // command exactly as the foreman's allow rule matches it (foremanCommands),
+  // it ends with the first command whole, so the first step needs neither the
+  // skill nor the substitution of ${CLAUDE_PLUGIN_ROOT}.
+  foreman: (file, wake = null) => {
+    const word = typeof wake === 'string' && wake !== '' ? shellWord(file) : null;
+    return `Wheelhouse foreman: follow wheelhouse:foreman to handle ${file}${word === null ? '' : `. First run: ${wake} read ${word}`}`;
+  },
   feature: (file) => `Wheelhouse: read ${file}`,
   start: 'Read .wheelhouse/feature/brief.md and follow it.',
 });
@@ -526,10 +543,16 @@ export function makeWaker({
   claude = null,
   baseEnv = process.env,
   platform = process.platform,
+  pluginRoot = PLUGIN_ROOT,
   onError = () => {},
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
+  // The foreman's wake command, for its prompt; none when the plugin's folder can't be given as one.
+  let wakeCommand = null;
+  try {
+    wakeCommand = foremanCommands(pluginRoot, { platform }).wake;
+  } catch { /* the prompt names the playbook alone */ }
   sessionModeOf(config);
   if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
     throw new Error("The foreman's tools are a list of tool rules");
@@ -841,7 +864,7 @@ export function makeWaker({
       try {
         const pid = work === undefined
           ? await launch({
-            target, cwd, prompt: PROMPTS.foreman(copy), args: foremanArgs(), env: { ...sessionEnv(baseEnv), [ROLE_VARIABLE]: 'foreman' }, file: gathered.entry.file, entries: [gathered.entry.id],
+            target, cwd, prompt: PROMPTS.foreman(copy, wakeCommand), args: foremanArgs(), env: { ...sessionEnv(baseEnv), [ROLE_VARIABLE]: 'foreman' }, file: gathered.entry.file, entries: [gathered.entry.id],
           })
           : await launch({
             target, cwd, prompt: PROMPTS.feature(copy), args: ['--resume', session, ...featureArgs()], env: sessionEnv(baseEnv), file: gathered.entry.file, entries: [gathered.entry.id],

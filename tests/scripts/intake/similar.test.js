@@ -106,6 +106,9 @@ test('only open work is checked: work whose report says merged or closed is left
     },
   };
   assert.deepEqual(similar('invoice export', ended).map((f) => f.id), ['export-c', 'export-d']);
+  // Work recorded again after its report ended it is open once more (R102).
+  ended.work['export-b'] = workItem('export-b', 'Invoice export', 8);
+  assert.deepEqual(similar('invoice export', ended).map((f) => f.id), ['export-b', 'export-c', 'export-d']);
 });
 
 test('missing views and empty text give no lines', () => {

@@ -16,11 +16,17 @@
 //     under the starts, for `--ruling`. Every open pull request ready to merge,
 //     as the watcher's cursor last saw it, is listed with `act merge`, so a
 //     merge held earlier is offered again. While STOP or an incident holds,
-//     starts and builds wait, and so does a merge: under STOP every one, during
-//     an incident all but its recorded fix.
-//     For each `plan-ready` the plan's files are read and
-//     checked for clashes against the running features' recorded files and
-//     the configuration's hot files.
+//     starts and builds wait, but for bug work during an incident (ruling
+//     R101), and so does a merge: under STOP every one, during an incident
+//     all but its recorded fix.
+//     For each `plan-ready` the plan's files are read, through the brief the
+//     foreman recorded only, and checked for clashes against the running
+//     features' recorded files and the configuration's hot files; quick and
+//     bug work have no plan, so theirs needs nothing. Each `amended` line names
+//     its amendment's hash, so several are each applied. A `stuck` feature
+//     held on purpose (planned, or paused) says why it waits and needs
+//     nothing; any other goes to the director. Work queued again after its
+//     feature closed (ruling R102) is offered to start afresh.
 //   node wake.js done <file> --acted | --idle
 //     Appends `{ at, wake, outcome, events, conflicts, merges }` to
 //     projects/<p>/watcher/measures.jsonl, once per wake (the wake's id is its
@@ -58,24 +64,34 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { clashCheck, fileMapOf, nextWork } from './queue.js';
+import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
-import { briefHash } from '../feature/files.js';
+import { briefHash, featurePaths } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
 import { helperClient } from '../host/helper-client.js';
-import { PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
-import { wheelhouseHome } from '../lib/paths.js';
+import { HASH, PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
+import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { stopState } from '../lib/stop.js';
+import { listEvents } from '../state/events.js';
 import { projectConfig } from '../watcher/main.js';
-import { inWorktreesFolder, plainWorktreePath } from '../watcher/sources.js';
+import { inWorktreesFolder, plainWorktreePath, recordedBriefs } from '../watcher/sources.js';
 import { readCursor } from '../watcher/core.js';
 import { readWake, watcherDir, watcherFolder } from '../watcher/waker.js';
 
 // A refusal, said to the foreman as one plain line.
 export class ForemanError extends Error {}
+
+// A feature's brief that isn't the one the foreman recorded: `found` and `recorded` are their hashes.
+export class TamperedBrief extends ForemanError {
+  constructor(found, recorded) {
+    super(`its brief reads ${shortHash(found)}, not the ${shortHash(recorded)} recorded`);
+    this.found = found;
+    this.recorded = recorded;
+  }
+}
 
 // Until the usage plan supplies it.
 export const FIVE_HOUR_TIGHT = false;
@@ -176,6 +192,29 @@ export async function loadConfig(project, client) {
 export const laneOf = (views, work) => views.work?.[work]?.work?.data?.lane ?? null;
 export const featureOf = (views, work) => (isPlain(views.features?.[work]?.data) ? views.features[work].data : null);
 
+// Whether `work`'s feature has closed and a `work` event recorded since queued the work
+// again (ruling R102): its feature is over, and the work starts afresh.
+export function queuedAgain(views, work) {
+  return featureOf(views, work)?.step === 'closed' && !since(views.features[work], views.work?.[work]?.work);
+}
+
+// The feature as the queue counts it: none when the work was queued again after it closed.
+export const currentFeatureOf = (views, work) => (queuedAgain(views, work) ? null : featureOf(views, work));
+
+// The state clone's events, leaving out every copy of an id carried twice, as the views do.
+export function stateEvents(project) {
+  const events = listEvents(stateDir(project), { report: () => {} });
+  const counts = new Map();
+  for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
+  return events.filter((e) => counts.get(e.id) === 1);
+}
+
+// The brief hash the foreman last recorded for `work`, from the state clone (as the watcher
+// judges a brief), or null when none is recorded.
+export function recordedBriefOf(project, work, events = stateEvents(project)) {
+  return recordedBriefs(events).get(work)?.recorded ?? null;
+}
+
 // The document the work names (its brief, design or report), for the foreman
 // to read its goal, done lines and appetite from (ruling R84): `{ path,
 // problem }`, the path full (a path in the record is taken from the project's
@@ -203,7 +242,8 @@ export function documentOf(project, views, work) {
 }
 
 // What holds back every start and go-ahead (ruling R95): STOP, or an open
-// incident. Null when neither holds.
+// incident. Null when neither holds. `stop` says which; during an incident
+// bug work still starts, plans and builds (ruling R101): see haltFor.
 export function haltOf(views, { stopped = () => stopState().on } = {}) {
   if (stopped()) return { why: 'STOP is on', fixes: [], stop: true };
   const open = Array.isArray(views?.incidents?.open) ? views.incidents.open.filter(isPlain) : [];
@@ -214,6 +254,18 @@ export function haltOf(views, { stopped = () => stopState().on } = {}) {
     fixes: open.flatMap((i) => (Array.isArray(i.fixes) ? i.fixes.filter(Number.isInteger) : [])),
     stop: false,
   };
+}
+
+// The lane whose work goes on during an open incident (ruling R101): the
+// incident's own fix is recorded as a bug, so it must be able to start.
+export const DURING_INCIDENT = 'bug';
+
+// What holds back a start or a go-ahead for work in `lane`: `halt`, except that
+// during an open incident (not under STOP) bug work may start, plan and build
+// (ruling R101). Merges are never let through here: see mergeWait.
+export function haltFor(halt, lane) {
+  if (halt === null || halt === undefined) return null;
+  return !halt.stop && lane === DURING_INCIDENT ? null : halt;
 }
 
 // Why pull request `pr` may not merge while `halt` holds, or null when it may:
@@ -254,14 +306,23 @@ export function worktreeOf(project, views, work) {
 }
 
 // The plan the feature's brief names (as the status hook's loadFeature finds
-// it) and the files its tasks touch.
-export function planOf(worktree) {
+// it) and the files its tasks touch. The brief is read only when it is the one
+// the foreman recorded (`recorded`, its hash; with none recorded, nothing is
+// tampered, as the watcher judges it): a brief the session changed throws
+// TamperedBrief, so no plan is ever taken from it.
+export function planOf(worktree, { recorded = null } = {}) {
+  const brief = readCapped(featurePaths(worktree).brief, DOCUMENT_BYTES);
+  if (brief === null) refuse("the feature's brief can't be read");
+  const found = briefHash(brief);
+  if (recorded !== null && found !== recorded) throw new TamperedBrief(found, recorded);
   let feature;
   try {
     feature = loadFeature(worktree, { ledger: null });
   } catch {
     refuse("the feature's brief can't be read");
   }
+  // Read twice: the brief must not have changed between the check and the reading.
+  if (briefHash(readCapped(featurePaths(worktree).brief, DOCUMENT_BYTES) ?? '') !== found) refuse("the feature's brief changed while it was read");
   if (feature.plan === null) refuse('no plan is named in its brief or recorded with `plan`');
   const text = readPlan(worktree, feature.plan);
   if (text === null) refuse(`the plan ${feature.plan} can't be read in its worktree`);
@@ -289,12 +350,13 @@ export function clashFor(views, config, work, files) {
 
 // Small or feature work whose session is planning: it can't take a slot yet.
 function planning(views, id) {
-  return !NO_PLAN.includes(laneOf(views, id)) && featureOf(views, id)?.step === 'started';
+  return !NO_PLAN.includes(laneOf(views, id)) && currentFeatureOf(views, id)?.step === 'started';
 }
 
-// Small or feature work not started: its session would plan before it builds.
+// Small or feature work not started (or queued again after its feature closed):
+// its session would plan before it builds.
 function unstartedWithPlan(views, id) {
-  return !NO_PLAN.includes(laneOf(views, id)) && featureOf(views, id) === null;
+  return !NO_PLAN.includes(laneOf(views, id)) && currentFeatureOf(views, id) === null;
 }
 
 function queueWithout(views, leaveOut, now) {
@@ -343,8 +405,38 @@ export function waitText(clash, slot) {
 
 // --- Reading a wake ---
 
-const short = (h) => (typeof h === 'string' && h !== '' ? h.slice(0, 12) : 'unknown');
+function shortHash(h) {
+  return typeof h === 'string' && h !== '' ? h.slice(0, 12) : 'unknown';
+}
+const short = shortHash;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// What a stuck feature's recorded step says of it: held work (planned, or
+// paused) waits on purpose, so there is nothing to ask. Null when its step
+// is not one that holds it.
+function heldLine(work, ctx) {
+  if (ctx.views === null) return null;
+  const f = featureOf(ctx.views, work);
+  if (f?.step === 'paused') {
+    return pausedBy(f) === 'director'
+      ? 'it waits: the director paused it, and only their amendment beginning "Resume" lifts it. Nothing to do'
+      : 'it waits: paused for the five-hour window; the queue below says when it may resume. Nothing to do';
+  }
+  if (f?.step !== 'planned') return null;
+  let own = null;
+  try {
+    own = openPrWait(worktreeOf(ctx.project, ctx.views, work));
+  } catch (error) {
+    if (!(error instanceof ForemanError)) throw error;
+  }
+  const halt = haltFor(ctx.halt, laneOf(ctx.views, work));
+  const wait = own ?? halt?.why ?? (ctx.config === null
+    ? null
+    : waitText(clashFor(ctx.views, ctx.config, work, Array.isArray(f.files) ? f.files : []), slotFor(ctx.views, work, { now: ctx.now })));
+  return wait === null
+    ? 'it is planned work held until it may build; the queue below says whether it may build now. Nothing to do'
+    : `it waits: ${wait}. Nothing to do`;
+}
 
 // What each event says, and its next step where that is certain.
 function eventLine(e, ctx) {
@@ -354,7 +446,10 @@ function eventLine(e, ctx) {
   const work = e.work;
   switch (e.type) {
     case 'work-ready': return said(`lane ${d.lane ?? 'unknown'}, ready to start; see the queue below`);
-    case 'amended': return said(`the director changed it (${short(d.hash)})`, `Next: act amend ${work}`);
+    // Each amendment by its own hash, so several in one wake are each applied, in order.
+    case 'amended': return typeof d.hash === 'string' && HASH.test(d.hash)
+      ? said(`the director changed it (${short(d.hash)})`, `Next: act amend ${work} ${d.hash}`)
+      : said('the director changed it, but the change\'s hash can\'t be read', 'Ask the director: act ask');
     case 'question': return said(e.id, `Next: act question ${work} ${e.id}`);
     case 'extra-plan': return said(e.id, `Next: act extra-plan ${work} ${e.id}`);
     case 'answer': {
@@ -374,12 +469,19 @@ function eventLine(e, ctx) {
     case 'lift-incident': return said(`incident ${d.incident} is over`, 'Pull requests ready to merge are listed in the queue below');
     case 'incident-fix': return said(`pull request #${d.pr} is the fix for incident ${d.incident}`, 'When it is ready to merge, the queue below lists it');
     case 'report': return said('it has ended, and its report is written', `Next: act close ${work}`);
-    case 'stuck': return said(`no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`, 'Ask the director: act ask');
+    case 'stuck': {
+      const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;
+      const held = heldLine(work, ctx);
+      return held !== null ? `${head}: ${oneLine(still)}; ${held}.` : said(still, 'Ask the director: act ask');
+    }
     case 'over-appetite': return said(`${d.tokens} tokens used against an appetite of ${d.appetite}`, 'Ask the director: act ask');
     case 'brief-tampered': return said(`its brief reads ${short(d.found)}, not the ${short(d.recorded)} recorded`, 'Ask the director: act ask');
     case 'clash': return said(`${d.a} and ${d.b} no longer merge cleanly together`);
-    case 'stop': return `${head}: STOP is on. Start no more work.`;
-    case 'incident': return said(`${d.incident}: ${d.what}`, 'Start no more work; merges are frozen but for its fix.');
+    // The event says STOP was turned on; a wake held while it was on may be read after the lift.
+    case 'stop': return ctx.halt?.stop === true
+      ? `${head}: STOP was turned on, and it is on now. Start no more work.`
+      : `${head}: STOP was turned on, but it is off now: read where things stand below.`;
+    case 'incident': return said(`${d.incident}: ${d.what}`, 'Start no more work but bug work, which may start and build; merges are frozen but for its fix.');
     case 'long-gap': return said(`the watcher was off since ${d.since}: read where things stand below`);
     case 'plan-ready': return planReadyLine(head, work, ctx);
     default: return said(JSON.stringify(d) ?? '');
@@ -388,15 +490,19 @@ function eventLine(e, ctx) {
 
 function planReadyLine(head, work, ctx) {
   if (ctx.views === null || ctx.config === null) return `${head}: its plan is ready, but whether it may build is unknown until ${ctx.unknown}. Nothing can be run for it now`;
+  // Quick and bug work have no plan: one its session recorded anyway changes nothing.
+  const lane = laneOf(ctx.views, work);
+  if (NO_PLAN.includes(lane)) return `${head}: it is ${lane} work, which has no plan and builds as it goes. Nothing to do`;
   let found;
   try {
-    found = planOf(worktreeOf(ctx.project, ctx.views, work));
+    found = planOf(worktreeOf(ctx.project, ctx.views, work), { recorded: recordedBriefOf(ctx.project, work) });
   } catch (error) {
+    if (error instanceof TamperedBrief) return `${head}: ${error.message}. Ask the director: act ask`;
     if (!(error instanceof ForemanError)) throw error;
     return `${head}: its plan can't be read: ${oneLine(error.message)}. Ask the director: act ask`;
   }
   const clash = clashFor(ctx.views, ctx.config, work, found.files);
-  const wait = openPrWait(worktreeOf(ctx.project, ctx.views, work)) ?? ctx.halt?.why ?? waitText(clash, slotFor(ctx.views, work, { now: ctx.now }));
+  const wait = openPrWait(worktreeOf(ctx.project, ctx.views, work)) ?? haltFor(ctx.halt, lane)?.why ?? waitText(clash, slotFor(ctx.views, work, { now: ctx.now }));
   const plan = `plan ${oneLine(found.plan, 120)}, ${plural(found.files.length, 'file')}`;
   return `${head}: ${plan}. ${wait === null ? 'It clears the clash check and a slot is free' : `It waits: ${wait}`}. Next: act plan-ready ${work}`;
 }
@@ -416,19 +522,22 @@ function digestLine(digest, dropped) {
 function queueLines(ctx) {
   const { views, config, now } = ctx;
   const lines = [];
-  const recorded = (id) => featureOf(views, id) !== null;
+  // Work queued again after its feature closed counts as not started (R102).
+  const recorded = (id) => currentFeatureOf(views, id) !== null;
   const flags = '--done … --appetite-sessions … --appetite-tokens …';
   // What to do about work that may open a session: start it from its approved
   // document (R84, R97), or for an extra plan from the part of its parent's
-  // document its title names (R99); or wait while STOP or an incident holds (R95).
+  // document its title names (R99); or wait while STOP or an incident holds
+  // (R95), though bug work starts during an incident (R101).
   const startLine = (id) => {
-    if (ctx.halt !== null) return `It waits: ${ctx.halt.why}.`;
+    const halt = haltFor(ctx.halt, laneOf(views, id));
+    if (halt !== null) return `It waits: ${halt.why}.`;
     const data = views.work[id].work.data;
     const doc = documentOf(ctx.project, views, id);
     if (doc === null) return 'It names no document to read its goal from. Ask the director: act ask';
     if (doc.problem !== null) return `Its document ${doc.path} ${doc.problem}. Ask the director: act ask`;
     if (typeof data.parent === 'string') {
-      return `It is an extra plan of ${data.parent}, titled "${oneLine(data.title, 120)}". Next: act start ${id} --goal "<its title>" ${flags} `
+      return `It is an extra plan of ${data.parent}, titled "${oneLine(data.title, 120)}". Next: act start ${id} --goal '<its title>' ${flags} `
         + `(from the part of ${data.parent}'s approved document, ${doc.path}, that its title names)`;
     }
     return `Next: act start ${id} --goal … ${flags} (from its approved document, ${doc.path})`;
@@ -469,7 +578,7 @@ function queueLines(ctx) {
     } catch (error) {
       if (!(error instanceof ForemanError)) throw error;
     }
-    const wait = own ?? ctx.halt?.why ?? waitText(clash, slot);
+    const wait = own ?? haltFor(ctx.halt, laneOf(views, id))?.why ?? waitText(clash, slot);
     lines.push(wait === null
       ? `- ${verb} ${id}: its plan clears the clash check and a slot is free. Next: act ${verb} ${id}`
       : `- ${verb} ${id}: waits: ${wait}.`);
@@ -540,10 +649,12 @@ export async function readWakeLines({
     lines.push(`The commands can't be given: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}.`);
   }
   if (commands !== null) lines.push(`Run wake as: ${commands.wake}`, `Run act as: ${commands.act}`);
-  // While STOP or an incident holds, nothing starts or builds (ruling R95).
+  // While STOP or an incident holds, nothing starts or builds (ruling R95),
+  // but for bug work during an incident (ruling R101).
   if (halt !== null) {
     const fixes = halt.fixes.length > 0 ? ` but for ${halt.fixes.map((n) => `#${n}`).join(', ')}, its fix` : '';
-    lines.push(`Hold: ${halt.why}. Start nothing and give no go-ahead: act start, plan-ready, build and resume wait or refuse, and no pull request merges${fixes}.`);
+    const bugs = halt.stop ? '' : ' Bug work still starts and builds, since the incident\'s own fix is recorded as a bug.';
+    lines.push(`Hold: ${halt.why}. Start nothing and give no go-ahead: act start, plan-ready, build and resume wait or refuse, and no pull request merges${fixes}.${bugs}`);
   }
   if (typeof wake.note === 'string' && wake.note !== '') lines.push(oneLine(wake.note, 600));
   if (read !== null && !read.fresh) lines.push(`The helper gave no views (${oneLine(read.why, 120)}), so these are the last ones it wrote.`);

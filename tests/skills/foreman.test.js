@@ -156,6 +156,23 @@ test('the lines the skill acts on are ones the scripts print', () => {
   assert.match(body, /`START feature W <worktree>`/);
 });
 
+test('the skill reads again after a close, runs every amendment, and quotes document text so nothing in it runs (I3, I4, M6)', () => {
+  // act close's last line, which no wake follows, sends the foreman back to wake read.
+  assert.ok(ACT_JS.includes("'A slot or a dependency may be free: run wake read again.'"));
+  assert.match(body, /When `act close` says a slot or a dependency may be free, run `wake read <file>` again/);
+  // Each amended line names its amendment's hash, and every one is run.
+  assert.ok(WAKE_JS.includes('Next: act amend ${work} ${d.hash}'));
+  assert.match(body, /Several `act amend` lines each name their own amendment: run every one\./);
+  // Every example puts its text in single quotes, and says why.
+  assert.doesNotMatch(body, /--(goal|done|what|why|option) "/);
+  assert.match(body, /`act start W --goal '<one line>' --done '<line>'`/);
+  assert.match(body, /`act ask W --what '…' --why '…' --option '<label>=<says>'`/);
+  assert.match(body, /single quotes, never double:[^\n]*nothing such as `\$\(…\)` or a backtick runs/);
+  // During an incident bug work goes on (R101), as the wake says.
+  assert.ok(WAKE_JS.includes('Bug work still starts and builds'));
+  assert.match(body, /`Hold:` line[^\n]*During an incident bug work still starts and builds/);
+});
+
 test('the skill names no model and starts no other skill', () => {
   assert.doesNotMatch(raw, /\b(opus|sonnet|haiku|fable|claude-[a-z0-9-]+|gpt-[0-9a-z.-]+)\b/i);
   assert.equal(front.model, undefined);

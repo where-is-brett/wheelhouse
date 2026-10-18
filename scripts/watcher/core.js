@@ -138,10 +138,11 @@ function knownMerges(prev, next) {
 // Whether the feature is waiting on someone else, so its stillness is no sign of being stuck:
 // it waits on something by its own word, it is done, or its pull request waits on CI,
 // a review or a merge (red CI, findings or a conflict are the session's to fix). A PR
-// the watcher has never seen is unknown, and unknown is not waiting.
+// the watcher has never seen is unknown, and unknown is not waiting. The report is
+// written from the first open-pr on (ruling R72), so only the phase `done` says the
+// feature has ended: a report alone is no sign of waiting.
 function isWaiting(f, prs) {
   const s = f.status;
-  if (f.report === true) return true;
   if (!isPlain(s)) return false;
   if (s.waitingOn !== null && s.waitingOn !== undefined) return true;
   if (s.phase === 'done') return true;

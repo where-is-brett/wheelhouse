@@ -15,12 +15,17 @@
 //       the waker (under Shape 2 the waker's START line is passed on).
 //       `--plan` is only for a plan the foreman knows is in the repository
 //       already; a session records its own with `cli.js plan` (ruling R87).
+//       Work whose feature closed and that a `work` event queued again since
+//       (ruling R102) starts afresh in the worktree and branch its closed
+//       feature recorded, with the ended run's status files set aside.
 //   plan-ready <work>   records the feature's plan (the brief's, or the one
 //       the session recorded) and its files (`planned`), then the go-ahead
 //       (`building`) when it clears. When the slice in hand has merged and
 //       this is the next slice's plan, the slice moves on by one (R88).
 //       While the feature's own pull request (pr.json) is not merged, it
-//       waits and records nothing: the merge raises plan-ready again.
+//       waits and records nothing: the merge raises plan-ready again. The
+//       plan is read only through the brief the foreman recorded: a brief the
+//       session changed is refused.
 //   build <work>    the go-ahead for a recorded plan whose wait has cleared;
 //       it waits, too, while the feature's own pull request is open.
 //   `start --plan` is refused with `--slices` above 1: the brief's plan would
@@ -33,15 +38,23 @@
 //   extra-plan <work> <questionId>    the extra plan, queued as work.
 //   ask <work> --what … --why … --option "<label>=<says>"… --recommend <label> --level <n>
 //       The foreman's own question for the director.
-//   amend <work>    applies the director's latest approved amendment.
-//   merge <work>    brings the pull request up to date, then merges it.
-//   close <work>    records the report and closes the feature.
+//   amend <work> <hash>   applies the director's approved amendment with that
+//       hash; each wake names its own, so several are applied in turn. Work
+//       not started yet needs nothing: the start reads the amended document.
+//   merge <work>    brings the pull request up to date, merges it, marks the
+//       merge in pr.json and writes the feature's status again, as its status
+//       hook would, so the watcher sees it move to the next slice or to done.
+//   close <work>    records the report and closes the feature. Work that ended
+//       partial or blocked is put to the director (ruling R102), and it ends
+//       by saying to read the wake again: a slot or a dependency may be free.
 //
 // STOP and incidents (ruling R95). While STOP is on or an incident is open,
 // `start`, `build` and `resume` refuse, and `plan-ready` records the plan as
 // planned and waits, so the queue offers `build` once it is over; nothing is
-// given the go-ahead, an amendment's resume included. `merge` refuses but for
-// an open incident's recorded fix, and under STOP refuses that too.
+// given the go-ahead, an amendment's resume included. During an incident (not
+// under STOP) bug work is the exception: it starts and builds (ruling R101).
+// `merge` refuses but for an open incident's recorded fix, and under STOP
+// refuses that too.
 //
 // Every command checks the work id, prints a few short lines, and refuses
 // with one plain line and exit code 1. Each may be run again with nothing
@@ -86,21 +99,23 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PLUGIN_ROOT } from './tools.js';
 import {
-  ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, checkoutOf, clashFor, featureOf, haltOf, laneOf, loadConfig, loadViews, oneLine, openPrWait, pausedBy, planOf, projectHere,
-  queueToStart, slotFor, waitText, whyText, worktreeOf,
+  ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
+  openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { report as reportCheck } from '../feature/cli.js';
 import {
-  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, readQuestions,
+  briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, readQuestions, readStatus, writeStatus,
 } from '../feature/files.js';
-import { readCapped, readPrRecord, safeFeatureFolder, writeWhole } from '../feature/status.js';
+import {
+  buildStatus, loadFeature, readCapped, readPrRecord, safeFeatureFolder, validSlice, writeWhole,
+} from '../feature/status.js';
+import { sameStatus } from '../hooks/feature-status.js';
+import { branchOf } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
-import { FOREMAN_QUESTIONS, SLUG, questionIdOf } from '../lib/build-loop.js';
+import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { stateDir } from '../lib/paths.js';
 import { run as runProgram, withoutGitVars } from '../lib/run.js';
-import { listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
@@ -206,11 +221,12 @@ function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out 
       return config;
     },
     waker: (cfg) => wakerFor(cfg, (line) => out(`${line}\n`)),
-    // STOP, or an open incident: what holds back every start and go-ahead (R95).
-    halt: (v) => haltOf(v),
-    // Refuses a start or a go-ahead while either holds.
-    refuseHalted(v, what) {
-      const halt = haltOf(v);
+    // STOP, or an open incident: what holds back every start and go-ahead (R95),
+    // though during an incident bug work goes on (R101). `lane` is the work's.
+    halt: (v, lane) => (lane === undefined ? haltOf(v) : haltFor(haltOf(v), lane)),
+    // Refuses a start or a go-ahead for work in `lane` while either holds.
+    refuseHalted(v, what, lane) {
+      const halt = haltFor(haltOf(v), lane);
       if (halt !== null) refuse(`${what} while ${halt.why}: start nothing and give no go-ahead. Nothing to do until it is over`);
     },
     // Records the id as handled, then writes the event through the helper, and
@@ -253,7 +269,7 @@ const GO = (work) => `${work} may build: recorded building, so its session is wo
 // and has a slot; otherwise says why it waits. `f` is the feature as it stands.
 async function goAhead(ctx, work, f, { lead = '' } = {}) {
   const views = await ctx.views();
-  const halt = ctx.halt(views);
+  const halt = ctx.halt(views, laneOf(views, work));
   if (halt !== null) {
     ctx.say(`${lead}${work} waits: ${halt.why}.`);
     return false;
@@ -337,6 +353,34 @@ async function makeWorktree(ctx, work, checkout, worktree, branch) {
   if (made.code !== 0) refuse(`git couldn't make the worktree: ${oneLine(made.stderr || made.stdout || 'no reason given', 200)}`);
 }
 
+// The files of an ended run that the status reads, set aside when the work starts again.
+const ENDED_FILES = Object.freeze(['report.md', 'pr.json', 'plan.json', 'status.json', 'checked.json']);
+
+// Work queued again after its feature closed (ruling R102) starts in the
+// worktree and on the branch its closed feature recorded, so its session
+// carries on from what the ended run left (a bug's reproduction test, say).
+// Both must be the ones a start makes, and still there as they were left;
+// otherwise it is refused. What the ended run kept for the status (its report,
+// pull request, plan, status and the hook's stamp) is moved to
+// ended/<n>/ in the feature folder, so the status starts again from nothing;
+// questions and rulings stay, so question ids keep counting up and no ruling
+// is lost. Returns the folder they went to, or null when there was nothing.
+function reuseWorktree(work, existing, worktree, branch) {
+  if (existing.worktree !== worktree || existing.branch !== branch) {
+    refuse(`${work}'s closed feature recorded another worktree or branch, so it can't start again there: ask the director`);
+  }
+  if (!lstatOf(worktree)?.isDirectory() || !safeFeatureFolder(worktree)) refuse(`${work}'s worktree ${worktree} isn't there as its feature left it: ask the director`);
+  if (branchOf(worktree) !== branch) refuse(`${work}'s worktree isn't on ${branch}: ask the director`);
+  const dir = featurePaths(worktree).dir;
+  const files = ENDED_FILES.filter((name) => lstatOf(path.join(dir, name)) !== null);
+  if (files.length === 0) return null;
+  let n = 1;
+  while (lstatOf(path.join(dir, 'ended', String(n))) !== null) n += 1;
+  const into = realFolders(dir, ['ended', String(n)]);
+  for (const name of files) fs.renameSync(path.join(dir, name), path.join(into, name));
+  return into;
+}
+
 async function startSession(ctx, work, worktree, config) {
   let started;
   try {
@@ -352,11 +396,14 @@ async function start(ctx, work, rest) {
   const views = await ctx.views();
   const entry = views.work[work];
   if (!isPlain(entry?.work?.data)) refuse(`There is no work named ${work} in state`);
-  ctx.refuseHalted(views, `${work} can't start`);
+  const lane = entry.work.data.lane;
+  ctx.refuseHalted(views, `${work} can't start`, lane);
   const config = await ctx.config();
 
   const existing = featureOf(views, work);
-  if (existing !== null) {
+  // A feature that closed before the work was recorded again starts afresh (R102).
+  const again = existing !== null && queuedAgain(views, work);
+  if (existing !== null && !again) {
     // Recorded, but stopped before its session began (STOP, say): start the session only.
     if (existing.step === 'started' && config.watcherShape !== 2 && lstatOf(sessionFile(ctx.project, work)) === null) {
       const worktree = worktreeOf(ctx.project, views, work);
@@ -385,7 +432,6 @@ async function start(ctx, work, rest) {
   // The brief's plan comes before the one the session records, so a brief that
   // named one could never move on to slice 2 (R87, R88).
   if (plan && slices > 1) refuse('--plan names one plan, so it can\'t be given for work in several slices: each slice\'s plan is recorded by its session');
-  const lane = entry.work.data.lane;
   const routing = Object.fromEntries(Object.entries(config.routing ?? {}).filter(([, m]) => typeof m === 'string' && m !== ''));
   const fields = {
     v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing, shownFirst: entry.approval?.shownFirst === true,
@@ -410,8 +456,13 @@ async function start(ctx, work, rest) {
   const checkout = checkoutOf(ctx.project);
   const worktree = path.join(checkout, '.claude', 'worktrees', work);
   const branch = `feature/${work}`;
-  await makeWorktree(ctx, work, checkout, worktree, branch);
-  ctx.say(`Made the worktree ${worktree} on ${branch}.`);
+  if (again) {
+    const set = reuseWorktree(work, existing, worktree, branch);
+    ctx.say(`${work} closed and was queued again: it starts afresh in its worktree ${worktree} on ${branch}${set === null ? '' : `, with what the run before left for its status set aside in ${set}`}.`);
+  } else {
+    await makeWorktree(ctx, work, checkout, worktree, branch);
+    ctx.say(`Made the worktree ${worktree} on ${branch}.`);
+  }
   try {
     ensureIgnored(worktree, { mainCheckout: checkout });
   } catch (error) {
@@ -450,15 +501,17 @@ async function planReady(ctx, work, rest) {
   const worktree = worktreeOf(ctx.project, views, work);
   let read;
   try {
-    read = planOf(worktree);
+    // Only from the brief the foreman recorded: a plan is never taken from one the session changed.
+    read = planOf(worktree, { recorded: recordedBriefOf(ctx.project, work) });
   } catch (error) {
+    if (error instanceof TamperedBrief) refuse(`${work}: ${error.message}, so its plan was not read: ask the director`);
     if (error instanceof ForemanError) refuse(`${work}'s plan can't be read: ${error.message}`);
     throw error;
   }
   const slice = nextSlice(worktree, f, read.plan);
   const unchanged = f.plan === read.plan && same(f.files, read.files) && slice === undefined;
   if (f.step === 'building' && unchanged) {
-    ctx.say(`${work} is building this plan already.`);
+    ctx.say(`${work} is building this plan already. Nothing to do.`);
     return;
   }
   // The slice in hand's pull request is still open: the next plan waits, unrecorded,
@@ -498,7 +551,7 @@ async function build(ctx, work, rest) {
     refuse(NO_PLAN.includes(lane) ? `${work} is ${lane} work: it builds as soon as it starts` : `${work} has no plan recorded yet: act plan-ready ${work} records it`);
   }
   refuseDirectorsPause(work, f);
-  ctx.refuseHalted(views, `${work} can't build`);
+  ctx.refuseHalted(views, `${work} can't build`, lane);
   const ownPr = openPrWait(worktreeOf(ctx.project, views, work));
   if (ownPr !== null) {
     ctx.say(`${work} waits: ${ownPr}.`);
@@ -561,7 +614,7 @@ async function resume(ctx, work, rest, { lead = '', lifted = false } = {}) {
   }
   if (!lifted) {
     refuseDirectorsPause(work, f);
-    ctx.refuseHalted(views, `${work} can't resume`);
+    ctx.refuseHalted(views, `${work} can't resume`, laneOf(views, work));
   }
   await resumeOrBuild(ctx, work, f, laneOf(views, work), { lead, lifted });
 }
@@ -661,24 +714,17 @@ async function ask(ctx, work, rest) {
 
 // --- amend ---
 
-// The latest amendment of `work` the director approved with a signed click:
-// `{ change, at }`, or null. Read from the state clone, as the views read it.
-function latestAmendment(unique, work) {
+// The amendment of `work` whose hash is `hash`, as the director approved it
+// with a signed click: `{ change, at }`, or null. Read from the state clone,
+// as the views read it. Each wake names its amendment by hash, so one landing
+// while another waits is never lost: each is applied in turn.
+function approvedAmendment(unique, work, hash) {
   const enrolled = readEnrolled();
-  const changes = unique.filter((e) => e.kind === 'amendment' && e.data?.work === work && typeof e.data.change === 'string' && typeof e.data.hash === 'string');
-  const clicks = unique.filter((e) => e.kind === 'action' && e.data?.action === 'amend' && e.data.work === work
-    && changes.some((m) => m.data.hash === e.data.hash) && verify(e, enrolled));
-  const click = clicks.at(-1);
+  const changes = unique.filter((e) => e.kind === 'amendment' && e.data?.work === work && typeof e.data.change === 'string' && e.data.hash === hash);
+  if (changes.length === 0) return null;
+  const click = unique.filter((e) => e.kind === 'action' && e.data?.action === 'amend' && e.data.work === work && e.data.hash === hash && verify(e, enrolled)).at(-1);
   if (!click) return null;
-  return { change: changes.filter((m) => m.data.hash === click.data.hash).at(-1).data.change, at: click.at };
-}
-
-// The state clone's events, leaving out every copy of an id carried twice, as the views do.
-function stateEvents(project) {
-  const events = listEvents(stateDir(project), { report: () => {} });
-  const counts = new Map();
-  for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
-  return events.filter((e) => counts.get(e.id) === 1);
+  return { change: changes.at(-1).data.change, at: click.at };
 }
 
 // An entry of "What changed" without its version: the same change on the same day.
@@ -689,12 +735,18 @@ const changeEntries = (text) => {
 };
 
 async function amend(ctx, work, rest) {
-  flagsOf(rest, [], 'amend');
+  const [wanted, ...more] = rest;
+  if (typeof wanted !== 'string' || !HASH.test(wanted) || more.length > 0) refuse('Give the amendment\'s hash the wake names: amend <work> <hash>');
   const views = await ctx.views();
-  const f = liveFeature(views, work);
   const events = stateEvents(ctx.project);
-  const amendment = latestAmendment(events, work);
-  if (amendment === null) refuse(`There is no amendment of ${work} the director has approved`);
+  const amendment = approvedAmendment(events, work, wanted);
+  if (amendment === null) refuse(`There is no amendment ${short(wanted)} of ${work} the director has approved`);
+  // Not started yet: the approval carries over to the amended document, which the start reads.
+  if ((featureOf(views, work) === null || queuedAgain(views, work)) && isPlain(views.work[work])) {
+    ctx.say(`${work} has not started. Nothing to do: the start reads the amended document.`);
+    return;
+  }
+  const f = liveFeature(views, work);
   const word = amendment.change.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
   if (word === 'pause') {
     await pause(ctx, work, [], { lead: 'The amendment says to pause: ', why: 'director' });
@@ -738,6 +790,24 @@ async function amend(ctx, work, rest) {
 
 // --- merge and close ---
 
+// The feature's status rebuilt from its files, and written when it changed,
+// as the status hook does (scripts/hooks/feature-status.js), with the slice
+// and the answered questions from the views this command read. The hook runs
+// only in the feature's own session, which sleeps once its pull request is
+// open, so after a merge only this moves the status on: to the next slice's
+// plan (plan-ready) or to done (report), which the watcher reads.
+function writeFeatureStatus(ctx, views, work, worktree) {
+  if (!safeFeatureFolder(worktree)) throw new Error("the worktree's feature folder isn't a real folder inside it");
+  const answered = new Set(Object.entries(views.questions).filter(([, q]) => isPlain(q?.answer)).map(([id]) => id));
+  const slice = validSlice(featureOf(views, work)?.slice);
+  const next = buildStatus({
+    worktree, now: ctx.now, feature: loadFeature(worktree), answered: () => answered, slice: () => slice,
+  });
+  const file = featurePaths(worktree).status;
+  if (!sameStatus(readStatus(file), next)) writeStatus(file, next);
+  return next;
+}
+
 async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
@@ -746,16 +816,25 @@ async function merge(ctx, work, rest) {
   const kept = readPrRecord(worktree);
   if (kept === null) refuse(`${work} has no pull request kept in its pr.json`);
   const pr = kept.pr;
-  // pr.json marks the merge (ruling R88), so the status moves on to the next slice or to done.
+  // pr.json marks the merge (ruling R88), and the status is rebuilt from it, so
+  // the watcher sees the feature move on to the next slice or to done.
   const markMerged = () => {
     if (!safeFeatureFolder(worktree)) refuse("The worktree's feature folder isn't a real folder inside it");
-    writeWhole(featurePaths(worktree).pr, `${JSON.stringify({ pr, ...(kept.plan ? { plan: kept.plan } : {}), merged: true })}\n`);
+    if (!kept.merged) writeWhole(featurePaths(worktree).pr, `${JSON.stringify({ pr, ...(kept.plan ? { plan: kept.plan } : {}), merged: true })}\n`);
+    let status;
+    try {
+      status = writeFeatureStatus(ctx, views, work, worktree);
+    } catch (error) {
+      refuse(`Pull request #${pr} for ${work} merged, but its status wasn't written: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}. Ask the director`);
+    }
+    return status.phase;
   };
   const number = { project: ctx.project, number: pr };
   const state = await ctx.client.prState(number);
   if (state?.ok === true && state.result?.state === 'merged') {
-    if (!kept.merged) markMerged();
-    ctx.say(`Pull request #${pr} for ${work} is merged already.`);
+    // Marked and its status written again: a stop between the merge and either is put right.
+    const phase = markMerged();
+    ctx.say(`Pull request #${pr} for ${work} is merged already; its status reads ${phase}.`);
     return;
   }
   // While STOP or an incident holds, only an incident's recorded fix merges.
@@ -765,8 +844,8 @@ async function merge(ctx, work, rest) {
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
   const merged = await ctx.client.merge(number);
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
-  markMerged();
-  ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}.`);
+  const phase = markMerged();
+  ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.`);
 }
 
 async function close(ctx, work, rest) {
@@ -792,10 +871,14 @@ async function close(ctx, work, rest) {
   if (summary === '') refuse(`${work}'s report has no text after its fields`);
   // The pull request is the one open-pr kept, never one the report names. It
   // counts as merged only when the foreman's merge marked it in pr.json and the
-  // host says so too.
+  // host says so too. The work is `merged` only when the report says it is
+  // done and that pull request was opened for the feature's current plan: an
+  // earlier slice's merge never makes a feature that ended blocked or partial
+  // read as merged.
   const kept = readPrRecord(worktree);
   const pr = kept?.pr ?? null;
-  let outcome = parsed.fields.status === 'blocked' ? 'blocked' : 'closed';
+  const status = parsed.fields.status;
+  let outcome = status === 'blocked' ? 'blocked' : 'closed';
   if (pr !== null) {
     const state = await ctx.client.prState({ project: ctx.project, number: pr });
     if (state?.ok !== true) refuse(`Whether pull request #${pr} merged can't be told: ${refusal(state)}`);
@@ -805,13 +888,35 @@ async function close(ctx, work, rest) {
         ? `Pull request #${pr} for ${work} merged, but not through act merge: ask the director`
         : `${work}'s pr.json says pull request #${pr} merged, but the host says it hasn't: ask the director`);
     }
-    if (merged) outcome = 'merged';
+    // Quick and bug work have no plan to match.
+    const current = NO_PLAN.includes(laneOf(views, work)) || kept.plan === (typeof f.plan === 'string' ? f.plan : null);
+    if (merged && status === 'done' && current) outcome = 'merged';
   }
   const data = { work, outcome, summary, rulings: parsed.fields.rulings, ...(pr !== null ? { pr } : {}) };
   if (!same(views.reports[work]?.data, data)) await ctx.write('report', data);
   await ctx.write('feature', { ...carried(f), step: 'closed' });
   fs.rmSync(sessionFile(ctx.project, work), { force: true });
   ctx.say(`Recorded ${work}'s report (${outcome}, ${plural(data.rulings.length, 'ruling')}) and closed it.`);
+  // Unfinished work: the director decides whether it is queued again, and in which lane (R102).
+  if (status === 'partial' || status === 'blocked') ctx.say(queueAgainLine(work, status, laneOf(views, work)));
+  // Its slot, and any work that depended on it, may be free now; this close's own records wake no one (R64).
+  ctx.say('A slot or a dependency may be free: run wake read again.');
+}
+
+// The lanes, smallest first: work queued again only ever goes up (design section 4).
+const LANES_UP = Object.freeze(['quick', 'bug', 'small', 'feature']);
+
+// The question to put to the director when work ends partial or blocked (ruling
+// R102): queue it again, in the small lane or a bigger one (never a smaller
+// lane than its own), or drop it. Each option says `waiting`: the front desk
+// records the work again from the director's answer, and the foreman has
+// nothing to run for it. Nothing the session wrote goes into the command.
+function queueAgainLine(work, status, lane) {
+  const lanes = LANES_UP.slice(Math.max(LANES_UP.indexOf(lane), LANES_UP.indexOf('small')));
+  const options = [...lanes.map((l) => `--option '${l}=waiting'`), "--option 'drop=waiting'"].join(' ');
+  const why = status === 'partial' ? 'Its report says part is done, or it proved bigger than its lane' : 'Its report says it could not go on';
+  return `It ended ${status}: ask the director whether to queue it again, and in which lane, or to drop it. `
+    + `Next: act ask ${work} --what '${work} ended ${status}: queue it again, or drop it?' --why '${why}' ${options} --recommend ${lanes[0]} --level 2`;
 }
 
 // --- The command line ---

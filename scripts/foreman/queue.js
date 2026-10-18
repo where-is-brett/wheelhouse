@@ -76,17 +76,28 @@ const STARTS_UNAPPROVED = ['quick', 'bug'];
 // The lanes with no plan, whose work builds as soon as it starts.
 const NO_PLAN = ['quick', 'bug'];
 // A report with one of these outcomes ends the work; a blocked one leaves it in the queue.
-const ENDED = ['merged', 'closed'];
+export const ENDED = Object.freeze(['merged', 'closed']);
+
+// Whether a record (a report, or a feature event) is as new as the work's latest `work` event or
+// newer: only then does it end the work. A `work` event recorded after it queues the work again
+// (ruling R102). Times are UTC ISO 8601, so they compare as text.
+export const since = (record, workEntry) => typeof record?.at === 'string' && !(typeof workEntry?.at === 'string' && workEntry.at > record.at);
+
+// Whether `id`'s latest report ended it, and no `work` event has queued it again since.
+export const endedBy = (reports, id, workEntry) => ENDED.includes(reports?.[id]?.data?.outcome) && since(reports[id], workEntry);
 
 // Which work may take a building slot now. `work`, `features` and `reports` are the state views.
 // A slot is held by a feature that is building, or by quick or bug work that has started (it has
 // no plan, so it builds at once). Work needs the director's approval to start unless it is quick or bug
-// work that is not shown to them first. `now` is accepted for the interface; the order never
-// reads the clock. With `fiveHourTight` nothing starts, and the newest slot-holding feature pauses.
+// work that is not shown to them first. Work whose feature has closed, or whose report ended it, is
+// out of the queue until a `work` event recorded after that queues it again (ruling R102). `now` is
+// accepted for the interface; the order never reads the clock. With `fiveHourTight` nothing starts,
+// and the newest slot-holding feature pauses.
 export function nextWork({ work, features, reports, now, fiveHourTight }) {
   const laneOf = (id) => work?.[id]?.work?.data?.lane;
   const stepOf = (id) => features?.[id]?.data?.step;
   const holdsSlot = (id) => stepOf(id) === 'building' || (stepOf(id) === 'started' && NO_PLAN.includes(laneOf(id)));
+  const closed = (w) => stepOf(w.key) === 'closed' && since(features[w.key], w);
 
   const slots = Object.keys(features ?? {}).filter(holdsSlot);
   let building = slots.length;
@@ -94,7 +105,7 @@ export function nextWork({ work, features, reports, now, fiveHourTight }) {
 
   const candidates = Object.values(work ?? {})
     .map((w) => w.work)
-    .filter((w) => !holdsSlot(w.key) && stepOf(w.key) !== 'closed' && !ENDED.includes(reports?.[w.key]?.data?.outcome))
+    .filter((w) => !holdsSlot(w.key) && !closed(w) && !endedBy(reports, w.key, w))
     .map((w) => ({ ...w, since: work[w.key].since ?? w.at }))
     .sort((a, b) => {
       const pa = a.data.place;

@@ -9,6 +9,6 @@ This is the bug lane: a short session of its own. The goal above is the bug.
 
 {{implementLines}}
 
-Where the loop says `/tdd`, start `mattpocock-skills:tdd` by name. Where it says `/code-review`, start `mattpocock-skills:code-review` by name, after the tdd work is done. Matt's code-review runs as it is written, but dispatch its reviewers as `wheelhouse:reviewer`, with the model named for the `reviewer` role (`reviewerCritical` for work in a critical area), never as general-purpose subagents. Then open the pull request as the finishing section says.
+Where the loop says `/tdd`, start `mattpocock-skills:tdd` by name. Where it says `/code-review`, start `mattpocock-skills:code-review` by name, after the tdd work is done. Matt's code-review runs as it is written, but dispatch its reviewers as `wheelhouse:reviewer`, with the model named for the `reviewer` role (`reviewerCritical` for work in a critical area), never as general-purpose subagents. Then finish as "How to finish" says: write `report.md` and run `report`, open the pull request with `open-pr`, then dispatch `wheelhouse:reviewer` on its head with `pr: n`.
 
 5. **The cause is bigger than one step.** Make no fix. Write the reproduction test and your findings into the report, with status `partial`; the work joins the queue as a small change.

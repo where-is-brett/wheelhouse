@@ -181,6 +181,39 @@ test('every brief tells the session how to dispatch a reviewer: the diff file, t
   }
 });
 
+test('every brief has the signed review of the pull request\'s head dispatched once open-pr gives its number, and after each pushed fix (I6)', () => {
+  for (const lane of LANES) {
+    const text = afterOverride(render(lane));
+    const finish = text.slice(text.indexOf('# How to finish'), text.indexOf('# Models by role'));
+    const flat = finish.replace(/\s+/g, ' ');
+    assert.match(flat, /Once `open-pr` prints the pull request's number \(#n\), dispatch `wheelhouse:reviewer` on its head commit with `pr: n`/, lane);
+    assert.match(flat, /fix them, push, and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`/, lane);
+    assert.match(flat, /signed review/, lane);
+    // Each lane's own finish names the same steps, in order: the report, open-pr, then the reviewer on the head.
+    const laneText = text.slice(text.indexOf('# Your lane'), text.indexOf('# Rules in every lane')).replace(/\s+/g, ' ');
+    const finishing = laneText.slice(laneText.lastIndexOf('How to finish'));
+    const at = (needle) => finishing.indexOf(needle);
+    assert.ok(at('How to finish') >= 0, `${lane}: its last step points to How to finish`);
+    for (const [a, b] of [['`report`', '`open-pr`'], ['`open-pr`', '`wheelhouse:reviewer`']]) {
+      assert.ok(at(a) >= 0 && at(b) > at(a), `${lane}: ${a} before ${b}: ${finishing}`);
+    }
+    assert.match(finishing, /`pr: n`/, lane);
+  }
+});
+
+test('the report is brought up to date before each open-pr, never at a close no wake reaches (M3)', () => {
+  for (const lane of LANES) {
+    const text = afterOverride(render(lane));
+    assert.doesNotMatch(text, /At the feature's close/, lane);
+    assert.match(text.replace(/\s+/g, ' '), /Before each `open-pr`, bring `report\.md` up to date/, lane);
+  }
+  // The override's own finish names the report and the signed review too, its rule and quotes unchanged.
+  const rule4 = overrideText().split(/^(?=\*\*\d\. )/m).find((s) => s.startsWith('**4. '));
+  assert.match(rule4.replace(/\s+/g, ' '), /To finish, write the report and run `report`, open the pull request through the host helper \(`open-pr`\), have Wheelhouse's reviewer review its head, then own it until it merges\./);
+  assert.match(rule4, /^> Overrides `writing-plans`: "link it for your human partner"$/m);
+  assert.match(rule4, /^> Overrides `finishing-a-development-branch`: "1\. Merge back to <base-branch> locally"$/m);
+});
+
 test('the commands carry the real plugin root', () => {
   const text = render('small');
   assert.ok(text.includes(`node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}" ask`));

@@ -357,13 +357,17 @@ export function answeredInViews(worktree) {
   return answered;
 }
 
-// The slice the latest `feature` event for `work` names, from the features
-// view; null when it is absent or not n of m.
-export function sliceInViews(worktree, work) {
-  const slice = readView(worktree, 'features')?.[work]?.data?.slice;
+// `slice` as `{ n, m }` when it is n of m and nothing more; otherwise null.
+export function validSlice(slice) {
   const ok = isPlain(slice) && Object.keys(slice).length === 2
     && Number.isInteger(slice.n) && Number.isInteger(slice.m) && slice.n >= 1 && slice.n <= slice.m;
   return ok ? { n: slice.n, m: slice.m } : null;
+}
+
+// The slice the latest `feature` event for `work` names, from the features
+// view; null when it is absent or not n of m.
+export function sliceInViews(worktree, work) {
+  return validSlice(readView(worktree, 'features')?.[work]?.data?.slice);
 }
 
 // --- The status ---

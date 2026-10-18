@@ -1,6 +1,7 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
-// only reading, reporting and the runbook through. On SessionEnd it clears the
+// only reading, reporting, the runbook, and the foreman's reading and closing
+// of a wake through. On SessionEnd it clears the
 // session's bypass marker and says nothing.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -52,6 +53,18 @@ function isFeatureRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/feature/cli.js');
   if (args === null) return false;
   return (args.length === 1 && args[0] === 'report') || (args.length === 2 && args[0] === 'answer' && QUESTION_ID.test(args[1]));
+}
+
+// A wake file as the foreman is told it: one word naming a .json file, never a flag.
+const WAKE_FILE = /^[^-].*\.json$/;
+
+// The foreman's two commands that read a wake and record it done: `read <file>`
+// and `done <file> --acted|--idle`, so a wake under way when STOP lands can
+// still be read and closed. `measures` and every `act.js` command stay refused.
+function isWakeRead(command, pluginRoots, platform) {
+  const args = scriptArguments(command, pluginRoots, platform, 'scripts/foreman/wake.js');
+  if (args === null || !WAKE_FILE.test(args[1] ?? '')) return false;
+  return (args.length === 2 && args[0] === 'read') || (args.length === 3 && args[0] === 'done' && ['--acted', '--idle'].includes(args[2]));
 }
 
 // sandbox.enabled as the worktree's settings leave it: the local file wins when it
@@ -107,7 +120,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   if (input.tool_name === 'Bash') {
     const roots = runbookRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;
-    if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform)) return undefined;
+    if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform) || isWakeRead(command, roots, platform)) return undefined;
   }
   return answer.deny(DENIED);
 }

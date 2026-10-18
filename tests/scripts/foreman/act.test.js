@@ -11,6 +11,7 @@ import path from 'node:path';
 import { main, FOREMAN_QUESTIONS, extraPlanId } from '../../../scripts/foreman/act.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
 import { branchOf } from '../../../scripts/hooks/session-start.js';
+import { words } from '../../../scripts/hooks/shell-words.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
@@ -24,6 +25,9 @@ import {
 } from '../../helpers/foreman.js';
 import { buildStatus } from '../../../scripts/feature/status.js';
 import { amendBrief } from '../../../scripts/feature/brief.js';
+import { readStatus, writeStatus } from '../../../scripts/feature/files.js';
+import { step } from '../../../scripts/watcher/core.js';
+import { observe } from '../../../scripts/watcher/sources.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const now = () => new Date(T0);
@@ -327,7 +331,7 @@ test('plan-ready records the plan and, when it clears, the go-ahead to build', (
   // Again: it is building that plan already.
   const again = await act(['plan-ready', 'mine'], { client: fake.client });
   assert.equal(again.code, 0, again.err);
-  assert.equal(again.out, 'mine is building this plan already.\n');
+  assert.equal(again.out, 'mine is building this plan already. Nothing to do.\n');
   assert.equal(fake.writes.length, 2);
 }));
 
@@ -385,7 +389,7 @@ test('while an incident is open or STOP is on, start, build and resume refuse, p
   refusedInOneLine(frozen);
   assert.match(frozen.err, /^Pull request #6 for m can't merge while incident site-down is open: only an incident's fix merges\. Nothing to do until it is over$/m);
   assert.deepEqual(fake.calls.map(([name]) => name), ['prState']);
-  assert.equal((await act(['merge', 'x'], { client: fake.client })).out, 'Merged pull request #7 for x at cccccccccccc.\n');
+  assert.match((await act(['merge', 'x'], { client: fake.client })).out, /^Merged pull request #7 for x at cccccccccccc; its status reads \w[\w-]*\.\n$/);
 
   // STOP holds everything, the fix too.
   setStop({ by: 'prompt' });
@@ -513,7 +517,7 @@ test('a slice\'s next plan waits while its pull request is open, then the slice 
     { work: 'mine', step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 2, m: 2 }, plan: 'docs/plans/slice-2.md', files: ['src/slice-2.js'] },
   ]);
   // Again: it is building slice 2's plan; the slice doesn't move again.
-  assert.equal((await act(['plan-ready', 'mine'], { client: fake.client })).out, 'mine is building this plan already.\n');
+  assert.equal((await act(['plan-ready', 'mine'], { client: fake.client })).out, 'mine is building this plan already. Nothing to do.\n');
   refusedInOneLine(await act(['plan-ready', 'mine', '--slice', '2'], { client: fake.client }));
 
   // Slice 2's pull request opens with the report written, and merges: the feature is done.
@@ -522,6 +526,105 @@ test('a slice\'s next plan waits while its pull request is open, then the slice 
   assert.equal(phase(), 'pr-open');
   assert.equal((await act(['merge', 'mine'], { client: fake.client })).code, 0);
   assert.equal(phase(), 'done');
+}));
+
+test('a merge moves the status on, so the watcher raises plan-ready for the next slice and report after the last (C1)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature' });
+  const wt = worktree(checkout, 'mine', { brief: { lane: 'feature', slices: 2 } });
+  const p = featurePaths(wt);
+  fs.mkdirSync(path.join(wt, 'docs', 'plans'), { recursive: true });
+  for (const n of [1, 2]) fs.writeFileSync(path.join(wt, 'docs', 'plans', `slice-${n}.md`), planText([`src/slice-${n}.js`]));
+  const slice1 = { work: 'mine', step: 'building', worktree: wt, branch: 'feature/mine', slice: { n: 1, m: 2 }, plan: 'docs/plans/slice-1.md', files: ['src/slice-1.js'] };
+  views.features.mine = featureView('mine', slice1);
+  // The watcher reads the running features from the state clone.
+  recordInState('feature', slice1, T0 - 60000);
+  const fake = fakeClient({ views, answers: { updateBranch: { ok: true } } });
+  // The feature session's status hook, as it writes the status while the session runs.
+  const hook = () => writeStatus(p.status, buildStatus({ worktree: wt, now, answered: () => new Set(), slice: () => fake.views.features.mine.data.slice }));
+  const host = {
+    state: { sync: async () => ({ ok: true }) },
+    prState: async () => ({ ok: false, refused: 'not asked here' }),
+    ci: async () => ({ ok: false }),
+    testMerge: async () => ({ ok: false }),
+  };
+  let cursor = { seen: [], prev: null };
+  const watch = async () => {
+    const r = step(cursor, await observe({ project: P, client: host, prev: cursor.prev }));
+    cursor = r.cursor;
+    return r.events.filter((e) => e.work === 'mine' && ['plan-ready', 'report'].includes(e.type)).map((e) => e.type);
+  };
+
+  // Slice 1's pull request is open, and the session has recorded slice 2's plan and gone to sleep.
+  fs.writeFileSync(p.pr, JSON.stringify({ pr: 5, plan: 'docs/plans/slice-1.md' }));
+  fs.writeFileSync(p.plan, JSON.stringify({ plan: 'docs/plans/slice-2.md' }));
+  hook();
+  await watch();
+  assert.deepEqual(await watch(), []);
+  assert.equal(readStatus(p.status).phase, 'pr-open');
+
+  // The merge alone moves the status on: no hook runs.
+  const merged = await act(['merge', 'mine'], { client: fake.client });
+  assert.equal(merged.out, 'Merged pull request #5 for mine at cccccccccccc; its status reads ready-to-build.\n');
+  assert.deepEqual(await watch(), ['plan-ready']);
+
+  // Slice 2 is recorded and built; its pull request opens with the report written.
+  assert.equal((await act(['plan-ready', 'mine'], { client: fake.client })).code, 0);
+  assert.deepEqual(fake.views.features.mine.data.slice, { n: 2, m: 2 });
+  fs.writeFileSync(p.pr, JSON.stringify({ pr: 6, plan: 'docs/plans/slice-2.md' }));
+  fs.writeFileSync(p.report, reportText('mine'));
+  hook();
+  assert.deepEqual(await watch(), []);
+  const last = await act(['merge', 'mine'], { client: fake.client });
+  assert.equal(last.out, 'Merged pull request #6 for mine at cccccccccccc; its status reads done.\n');
+  assert.deepEqual(await watch(), ['report']);
+  // Again, as a wake may repeat: the status is written once, and nothing more is raised.
+  const statusText = fs.readFileSync(p.status, 'utf8');
+  const repeat = fakeClient({ views: fake.views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
+  assert.equal((await act(['merge', 'mine'], { client: repeat.client })).out, 'Pull request #6 for mine is merged already; its status reads done.\n');
+  assert.equal(fs.readFileSync(p.status, 'utf8'), statusText);
+  assert.deepEqual(await watch(), []);
+}));
+
+test('plan-ready reads no plan from a brief the session changed (M2)', () => withHome(async () => {
+  const { views, wt } = await planScene();
+  const recorded = fs.readFileSync(featurePaths(wt).brief, 'utf8');
+  recordInState('feature', { work: 'mine', step: 'started', worktree: wt, brief: briefHash(recorded) }, T0 - 60000);
+  const changed = recorded.replace('"plan": "docs/plans/mine.md"', '"plan": "docs/plans/other.md"');
+  fs.writeFileSync(featurePaths(wt).brief, changed);
+  const fake = fakeClient({ views });
+  const r = await act(['plan-ready', 'mine'], { client: fake.client });
+  refusedInOneLine(r);
+  assert.equal(r.err, `mine: its brief reads ${briefHash(changed).slice(0, 12)}, not the ${briefHash(recorded).slice(0, 12)} recorded, so its plan was not read: ask the director\n`);
+  assert.equal(fake.writes.length, 0);
+  // The brief as recorded is read as before.
+  fs.writeFileSync(featurePaths(wt).brief, recorded);
+  assert.equal((await act(['plan-ready', 'mine'], { client: fake.client })).code, 0);
+}));
+
+test('during an incident bug work starts and builds while all else waits; under STOP nothing does (R101)', () => withHome(async () => {
+  await project({ git: true });
+  const views = startViews();
+  views.work['a-bug'] = workView('a-bug', { lane: 'bug', approved: false });
+  views.incidents = { open: [{ id: 'site-down', what: 'The site is down', at: '2026-10-19T08:00:00.000Z', fixes: [] }] };
+  const fake = fakeClient({ views });
+  const waker = fakeWaker();
+  const BUG = ['start', 'a-bug', '--goal', 'The checkout fails', '--done', 'Checkout works', '--appetite-sessions', '1', '--appetite-tokens', '100000'];
+  const small = await act(START, { client: fake.client, wakerFor: waker.wakerFor });
+  refusedInOneLine(small);
+  assert.match(small.err, /^add-export can't start while incident site-down is open/);
+  const bug = await act(BUG, { client: fake.client, wakerFor: waker.wakerFor });
+  assert.equal(bug.code, 0, bug.err);
+  assert.deepEqual(waker.starts.map((s) => s.work), ['a-bug']);
+  assert.deepEqual(fake.writes.map((w) => [w.data.work, w.data.step]), [['a-bug', 'started']]);
+
+  // Under STOP even bug work waits.
+  setStop({ by: 'prompt' });
+  fake.views.work['b-bug'] = workView('b-bug', { lane: 'bug', approved: false });
+  const stopped = await act(['start', 'b-bug', ...BUG.slice(2)], { client: fake.client, wakerFor: waker.wakerFor });
+  refusedInOneLine(stopped);
+  assert.match(stopped.err, /^b-bug can't start while STOP is on/);
 }));
 
 test('build waits while the feature\'s own pull request is open', () => withHome(async () => {
@@ -539,6 +642,7 @@ test('build waits while the feature\'s own pull request is open', () => withHome
 const QUESTION = {
   id: 'q-mine-1', kind: 'question', what: 'Which date format?', why: 'Users read it', options: [{ label: 'UK', says: '19 October 2026' }, { label: 'ISO', says: '2026-10-19' }], recommendation: 'UK', level: 3,
 };
+const QUESTION_OF = (work) => ({ ...QUESTION, id: `q-${work}-1` });
 const EXTRA = {
   id: 'q-mine-2', kind: 'extra-plan', what: 'Export as PDF too', why: 'It is separate work', options: [{ label: 'queue', says: 'Queue it' }, { label: 'drop', says: 'Leave it out' }], recommendation: 'queue', level: 2, plan: 'docs/plans/pdf.md',
 };
@@ -667,7 +771,7 @@ test('amend records the amended brief\'s hash before it writes the brief, at the
     fileAtWrite.push(fs.readFileSync(featurePaths(wt).brief, 'utf8'));
     return write(body);
   };
-  const r = await act(['amend', 'mine'], { client: fake.client });
+  const r = await act(['amend', 'mine', 'b'.repeat(64)], { client: fake.client });
   assert.equal(r.code, 0, r.err);
   const after = fs.readFileSync(featurePaths(wt).brief, 'utf8');
   assert.equal(parseBrief(after).fields.version, 2);
@@ -679,14 +783,14 @@ test('amend records the amended brief\'s hash before it writes the brief, at the
   everyWriteHandledFirst(fake.writes);
   assert.equal(r.out, `Amended mine's brief to version 2 (${briefHash(after).slice(0, 12)}); its session is woken with brief-changed.\n`);
 
-  const again = await act(['amend', 'mine'], { client: fake.client });
+  const again = await act(['amend', 'mine', 'b'.repeat(64)], { client: fake.client });
   assert.equal(again.out, 'mine\'s brief has this amendment already.\n');
   assert.equal(fake.writes.length, 1);
   assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), after);
 
   // Stopped after the hash was recorded and before the file was written: the repeat writes the file only.
   fs.writeFileSync(featurePaths(wt).brief, before);
-  const midway = await act(['amend', 'mine'], { client: fake.client });
+  const midway = await act(['amend', 'mine', 'b'.repeat(64)], { client: fake.client });
   assert.equal(midway.code, 0, midway.err);
   assert.equal(fake.writes.length, 1);
   assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), after);
@@ -706,12 +810,48 @@ test('amend refuses a brief the session changed, records nothing and leaves the 
   for (const text of [changed, amendBrief(changed, { change: 'Make the export CSV, not Excel', now: new Date(T0 - 60000) })]) {
     fs.writeFileSync(featurePaths(wt).brief, text);
     const fake = fakeClient({ views: structuredClone(views) });
-    const r = await act(['amend', 'mine'], { client: fake.client });
+    const r = await act(['amend', 'mine', 'b'.repeat(64)], { client: fake.client });
     refusedInOneLine(r);
     assert.match(r.err, /mine's brief isn't the one recorded, so it was not amended: ask the director/);
     assert.equal(fake.writes.length, 0);
     assert.equal(fs.readFileSync(featurePaths(wt).brief, 'utf8'), text);
   }
+}));
+
+test('two amendments that land together are each applied, by hash, in order (I4)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine');
+  const before = fs.readFileSync(featurePaths(wt).brief, 'utf8');
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt, branch: 'feature/mine' });
+  recordInState('feature', { work: 'mine', step: 'started', worktree: wt, brief: briefHash(before) }, T0 - 120000);
+  recordAmend('mine', 'Make the export CSV, not Excel', 'b'.repeat(64), T0 - 60000);
+  recordAmend('mine', 'Add a header row', 'c'.repeat(64), T0 - 50000);
+  const fake = fakeClient({ views });
+  // The wake lists both; each is run as it names it.
+  assert.equal((await act(['amend', 'mine', 'b'.repeat(64)], { client: fake.client })).code, 0);
+  const second = await act(['amend', 'mine', 'c'.repeat(64)], { client: fake.client });
+  assert.equal(second.code, 0, second.err);
+  const after = fs.readFileSync(featurePaths(wt).brief, 'utf8');
+  assert.equal(parseBrief(after).fields.version, 3);
+  assert.match(after, /^- 19 October 2026 \(version 3\): Add a header row\n- 19 October 2026 \(version 2\): Make the export CSV, not Excel$/m);
+  assert.deepEqual(fake.writes.map((w) => w.data.brief), [briefHash(amendBrief(before, { change: 'Make the export CSV, not Excel', now: new Date(T0 - 60000) })), briefHash(after)]);
+  // Run again, in either order, each says it is there already.
+  for (const h of ['b', 'c']) assert.equal((await act(['amend', 'mine', h.repeat(64)], { client: fake.client })).out, 'mine\'s brief has this amendment already.\n');
+  assert.equal(fake.writes.length, 2);
+}));
+
+test('an amendment of work not yet started needs nothing: the start reads the amended document (M5)', () => withHome(async () => {
+  await project();
+  const views = emptyViews();
+  views.work.later = workView('later');
+  recordAmend('later', 'Make the export CSV, not Excel', 'b'.repeat(64), T0 - 60000);
+  const fake = fakeClient({ views });
+  const r = await act(['amend', 'later', 'b'.repeat(64)], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, 'later has not started. Nothing to do: the start reads the amended document.\n');
+  assert.equal(fake.writes.length, 0);
 }));
 
 test('an amendment that says to pause pauses the feature, and one that says to resume resumes it; none refuses', () => withHome(async () => {
@@ -722,10 +862,13 @@ test('an amendment that says to pause pauses the feature, and one that says to r
   views.features.mine = featureView('mine', { step: 'building', worktree: wt, plan: 'p.md', files: [] });
   const fake = fakeClient({ views });
   refusedInOneLine(await act(['amend', 'mine'], { client: fake.client }));
+  const none = await act(['amend', 'mine', 'c'.repeat(64)], { client: fake.client });
+  refusedInOneLine(none);
+  assert.match(none.err, /There is no amendment cccccccccccc of mine the director has approved/);
 
   recordAmend('mine', 'Pause it until the pricing is settled', 'c'.repeat(64), T0 - 60000);
   const brief = fs.readFileSync(featurePaths(wt).brief, 'utf8');
-  const r = await act(['amend', 'mine'], { client: fake.client });
+  const r = await act(['amend', 'mine', 'c'.repeat(64)], { client: fake.client });
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out, 'The amendment says to pause: paused mine.\n');
   assert.deepEqual(fake.writes.map((w) => w.data.step), ['paused']);
@@ -734,7 +877,7 @@ test('an amendment that says to pause pauses the feature, and one that says to r
   refusedInOneLine(await act(['resume', 'mine'], { client: fake.client }));
 
   recordAmend('mine', 'Resume it', 'd'.repeat(64), T0 - 30000);
-  const resumed = await act(['amend', 'mine'], { client: fake.client });
+  const resumed = await act(['amend', 'mine', 'd'.repeat(64)], { client: fake.client });
   assert.equal(resumed.out, 'The amendment says to resume: mine may build: recorded building, so its session is woken with build.\n');
   assert.deepEqual(fake.writes.map((w) => w.data.step), ['paused', 'building']);
 }));
@@ -765,7 +908,7 @@ test('merge brings the pull request up to date, then merges it; a refusal is one
   const ok = fakeClient({ views, answers: { updateBranch: { ok: true } } });
   const merged = await act(['merge', 'mine'], { client: ok.client });
   assert.equal(merged.code, 0, merged.err);
-  assert.equal(merged.out, 'Merged pull request #12 for mine at cccccccccccc.\n');
+  assert.equal(merged.out, 'Merged pull request #12 for mine at cccccccccccc; its status reads planning.\n');
   assert.deepEqual(ok.calls.map(([name, body]) => [name, body]), [['prState', { project: P, number: 12 }], ['updateBranch', { project: P, number: 12 }], ['merge', { project: P, number: 12 }]]);
   // pr.json marks the merge, so the status moves on (R88).
   assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md', merged: true });
@@ -773,7 +916,7 @@ test('merge brings the pull request up to date, then merges it; a refusal is one
   // Merged already (a stop after the merge, before pr.json was marked): it is marked now.
   fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 12, plan: 'docs/plans/a.md' }));
   const done = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
-  assert.equal((await act(['merge', 'mine'], { client: done.client })).out, 'Pull request #12 for mine is merged already.\n');
+  assert.equal((await act(['merge', 'mine'], { client: done.client })).out, 'Pull request #12 for mine is merged already; its status reads planning.\n');
   assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md', merged: true });
 
   views.features.nopr = featureView('nopr', { step: 'building', worktree: worktree(checkout, 'nopr') });
@@ -801,7 +944,8 @@ test('close records the report with every ruling, then closes the feature and fo
   everyWriteHandledFirst(fake.writes);
   assert.equal(fs.existsSync(sessionFile(P, 'mine')), false);
   assert.ok(fs.existsSync(featurePaths(wt).pr), 'pr.json is left as it is');
-  assert.equal(r.out, 'Recorded mine\'s report (merged, 2 rulings) and closed it.\n');
+  // A closed feature's slot, and what depended on it, may be free: its records wake no one, so the foreman reads again (I3).
+  assert.equal(r.out, 'Recorded mine\'s report (merged, 2 rulings) and closed it.\nA slot or a dependency may be free: run wake read again.\n');
   assert.equal((await act(['close', 'mine'], { client: fake.client })).out, 'mine is closed already.\n');
   assert.equal(fake.writes.length, 2);
 }));
@@ -851,6 +995,78 @@ test('close works out the outcome, and refuses a report that is missing or incom
   refusedInOneLine(unruled);
   assert.match(unruled.err, /A ruling is missing from the report's rulings: Ruling: kept/);
   assert.equal(fake.writes.length, n);
+}));
+
+test('a feature that ends blocked or partial never closes as merged, even after an earlier slice merged (I7)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  const add = (work, report, pr) => {
+    views.work[work] = workView(work, { lane: 'feature' });
+    views.features[work] = featureView(work, {
+      step: 'building', worktree: worktree(checkout, work, { brief: { lane: 'feature', slices: 2 }, pr, report }), slice: { n: 2, m: 2 }, plan: 'docs/plans/slice-2.md',
+    });
+  };
+  const slice1 = { pr: 5, plan: 'docs/plans/slice-1.md', merged: true };
+  add('partial', reportText('partial', { status: 'partial' }), slice1);
+  add('blocked', reportText('blocked', { status: 'blocked' }), slice1);
+  // Done by its own word, but the pull request merged is an earlier slice's.
+  add('early', reportText('early'), slice1);
+  add('whole', reportText('whole'), { pr: 6, plan: 'docs/plans/slice-2.md', merged: true });
+  const fake = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
+  const outcome = async (work) => {
+    const r = await act(['close', work], { client: fake.client });
+    assert.equal(r.code, 0, r.err);
+    return fake.writes.filter((w) => w.kind === 'report' && w.data.work === work).at(-1).data.outcome;
+  };
+  assert.equal(await outcome('partial'), 'closed');
+  assert.equal(await outcome('blocked'), 'blocked');
+  assert.equal(await outcome('early'), 'closed');
+  assert.equal(await outcome('whole'), 'merged');
+}));
+
+test('work that ends partial or blocked is put to the director, and once queued again it starts afresh in its worktree (R102)', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const fake = fakeClient({ views: startViews() });
+  const waker = fakeWaker();
+  assert.equal((await act(START, { client: fake.client, wakerFor: waker.wakerFor })).code, 0);
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  const p = featurePaths(wt);
+  // The session asked a question, recorded a plan and ended partial.
+  fs.writeFileSync(p.questions, `${JSON.stringify(QUESTION_OF('add-export'))}\n`);
+  fs.writeFileSync(p.plan, JSON.stringify({ plan: 'docs/plans/x.md' }));
+  fs.writeFileSync(p.status, '{}');
+  fs.writeFileSync(p.report, reportText('add-export', { status: 'partial' }, 'Found the cause; it is bigger than one step.'));
+  const closed = await act(['close', 'add-export'], { client: fake.client });
+  assert.equal(closed.code, 0, closed.err);
+  const [, askLine] = /Next: (act ask .*)$/m.exec(closed.out) ?? [];
+  assert.ok(askLine, closed.out);
+  assert.match(closed.out, /^It ended partial: ask the director whether to queue it again, and in which lane, or to drop it\. Next: act ask add-export /m);
+  assert.match(askLine, /--option 'small=waiting' --option 'feature=waiting' --option 'drop=waiting' --recommend small --level 2$/);
+  // The line runs as printed.
+  const asked = await act(words(askLine, false).slice(1), { client: fake.client });
+  assert.equal(asked.code, 0, asked.err);
+  assert.equal(fake.writes.at(-1).data.what, 'add-export ended partial: queue it again, or drop it?');
+
+  // Closed, and not recorded again: start does nothing.
+  assert.equal((await act(START, { client: fake.client, wakerFor: waker.wakerFor })).out, 'add-export was started already (it is at closed).\n');
+
+  // The front desk records the work again after the close: it starts afresh, in the same worktree and branch.
+  fake.views.work['add-export'].work.at = new Date(T0 + 3600 * 1000).toISOString();
+  const n = fake.writes.length;
+  const again = await act(START, { client: fake.client, wakerFor: waker.wakerFor });
+  assert.equal(again.code, 0, again.err);
+  const ended = path.join(p.dir, 'ended', '1');
+  assert.match(again.out, new RegExp(`^add-export closed and was queued again: it starts afresh in its worktree .*add-export on feature/add-export, with what the run before left for its status set aside in .*${path.join('ended', '1').replace(/[\\/]/g, '.')}\\.$`, 'm'));
+  assert.deepEqual(fs.readdirSync(ended).sort(), ['plan.json', 'report.md', 'status.json']);
+  for (const kept of [p.questions, p.brief]) assert.ok(fs.existsSync(kept), kept);
+  assert.equal(branchOf(wt), 'feature/add-export');
+  const brief = fs.readFileSync(p.brief, 'utf8');
+  assert.deepEqual(fake.writes.slice(n).map((w) => w.data), [{
+    work: 'add-export', step: 'started', worktree: wt, branch: 'feature/add-export', brief: briefHash(brief),
+  }]);
+  assert.deepEqual(waker.starts.map((s) => s.work), ['add-export', 'add-export']);
+  // Again: it is started.
+  assert.equal((await act(START, { client: fake.client, wakerFor: waker.wakerFor })).out, 'add-export was started already (it is at started).\n');
 }));
 
 test('every command checks the work id, and an unknown command is refused', () => withHome(async () => {
