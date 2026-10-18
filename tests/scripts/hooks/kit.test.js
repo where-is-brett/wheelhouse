@@ -285,6 +285,7 @@ const cmd = (name) => ({ type: 'command', command: `node "\${CLAUDE_PLUGIN_ROOT}
 test('hooks.json names a script that exists for every hook', () => {
   const file = JSON.parse(fs.readFileSync(path.join(ROOT, 'hooks', 'hooks.json'), 'utf8'));
   assert.deepEqual(file, {
+    modules: ['./register.ts'],
     hooks: {
       SessionStart: [{ matcher: 'startup|resume|compact|clear|fork', hooks: [cmd('session-start')] }],
       UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge'), cmd('board-context')] }],
