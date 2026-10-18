@@ -40,6 +40,78 @@ export function latestFor(viewsMap, pr) {
   return all.length > 0 ? all[all.length - 1] : null;
 }
 
+// The build loop's views: work and its approvals, features, questions and incidents.
+// Every approval, answer, amendment and lift here is read from a verified action,
+// so a plain event of any kind stands in for none of them.
+function buildLoopViews(sorted, enrolled) {
+  const actions = (name) => sorted.filter((e) => e.kind === 'action' && e.data?.action === name && verify(e, enrolled));
+  const mark = (e) => ({ id: e.id, at: e.at, data: e.data });
+
+  const latestWork = {};
+  for (const e of sorted) if (e.kind === 'work' && isPlainKey(e.data?.id)) latestWork[e.data.id] = e;
+  const amendments = sorted.filter((e) => e.kind === 'amendment');
+  const approvals = actions('approve-work');
+  // An amend counts when it names a change that was proposed for that work.
+  const amends = actions('amend').filter((a) => amendments.some((m) => m.data?.work === a.data?.work && m.data?.hash === a.data?.hash));
+  const work = {};
+  for (const [id, w] of Object.entries(latestWork)) {
+    const doc = w.data.doc?.hash;
+    // A change approved before the work was last written is read as part of that writing.
+    const mine = amends.filter((a) => a.data.work === id && byOrder(w, a) < 0);
+    const required = mine.length > 0 ? mine.at(-1).data.hash : doc;
+    const ofWork = approvals.filter((a) => a.data.work === id);
+    const detail = (a, hash) => ({ hash, shownFirst: a.data.shownFirst, lane: a.data.lane });
+    let approval = null;
+    if (typeof required === 'string' && required !== '') {
+      const direct = ofWork.filter((a) => a.data.hash === required).at(-1);
+      if (direct) {
+        approval = detail(direct, required);
+      } else if (mine.length > 0) {
+        // The director's click on a change approves the changed work as it approved the work before it.
+        let current = doc;
+        let carried = null;
+        for (const e of [...ofWork, ...mine].sort(byOrder)) {
+          if (e.data.action === 'amend') {
+            current = e.data.hash;
+            if (carried) carried = { ...carried, hash: current };
+          } else if (e.data.hash === current) {
+            carried = detail(e, current);
+          }
+        }
+        if (carried && carried.hash === required) approval = carried;
+      }
+    }
+    work[id] = { work: { key: id, ...mark(w) }, approved: approval !== null, ...(approval ? { approval } : {}) };
+  }
+
+  const features = latestPerKey(sorted.filter((e) => e.kind === 'feature'), (e) => e.data?.work);
+
+  const questions = {};
+  for (const e of sorted) {
+    if (e.kind === 'question' && isPlainKey(e.data?.id)) questions[e.data.id] = { question: { key: e.data.id, ...mark(e) }, answer: null };
+  }
+  for (const a of actions('answer')) {
+    const q = questions[a.data.questionId];
+    if (q && typeof a.data.label === 'string') q.answer = { label: a.data.label, at: a.at };
+  }
+
+  // An incident is open from its declaration until a verified lift after it.
+  const fixes = actions('incident-fix');
+  const lifts = actions('lift-incident');
+  const open = new Map();
+  for (const e of [...sorted.filter((x) => x.kind === 'incident'), ...fixes, ...lifts].sort(byOrder)) {
+    if (e.kind === 'incident') {
+      if (isPlainKey(e.data?.id) && !open.has(e.data.id)) open.set(e.data.id, { id: e.data.id, what: e.data.what, at: e.at, fixes: [] });
+    } else if (e.data.action === 'lift-incident') {
+      open.delete(e.data.incident);
+    } else {
+      const found = open.get(e.data.incident);
+      if (found && Number.isInteger(e.data.pr) && !found.fixes.includes(e.data.pr)) found.fixes.push(e.data.pr);
+    }
+  }
+  return { work, features, questions, incidents: { open: [...open.values()] } };
+}
+
 export function buildViews(events, enrolled, { damaged = [], now = () => new Date() } = {}) {
   // An id carried by more than one event is damage: every copy is left out and listed.
   const counts = new Map();
@@ -134,6 +206,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     waiting,
     approvals,
     reviews,
+    ...buildLoopViews(sorted, enrolled),
     unconfirmed,
     damaged: [...damaged, ...repeated],
     status: {

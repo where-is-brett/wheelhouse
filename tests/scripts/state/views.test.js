@@ -14,7 +14,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'work', 'features', 'questions', 'incidents'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -361,5 +361,148 @@ test('a card-answer with no card id closes the card whose question it quotes', a
     const v = build([...base(), asked, titled, other, ...answers]);
     assert.deepEqual(v.waiting.map((c) => c.id), [other.id]);
     assert.equal(v.status.waitingCount, 1);
+  });
+});
+
+// --- the build loop's records ---
+
+const H1 = '1'.repeat(64);
+const H2 = '2'.repeat(64);
+const H3 = '3'.repeat(64);
+const workEv = (n, data = {}) => ev('work', n, { id: 'export-csv', title: 'Export', lane: 'feature', doc: { path: 'd.md', hash: H1 }, visible: true, dependsOn: [], ...data });
+const click = (n, data) => ev('action', n, { question: 'the card as shown', label: 'Approve', ...data });
+const approve = (n, hash, extra = {}) => click(n, { action: 'approve-work', work: 'export-csv', lane: 'feature', hash, shownFirst: false, ...extra });
+const unsigned = (e) => { const { sig, ...rest } = e; return rest; };
+
+test('an approval of another hash leaves the work unapproved', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    assert.deepEqual(build([w]).work['export-csv'].approved, false);
+    assert.equal(build([w]).work['export-csv'].approval, undefined);
+    assert.equal(build([w]).work['export-csv'].work.data.title, 'Export');
+    // another hash; another work; an unsigned click; a forged one
+    const wrong = [approve(2, H2), approve(3, H1, { work: 'other' }), unsigned(approve(4, H1)), { ...approve(5, H1), data: { ...approve(5, H1).data, lane: 'small' } }];
+    assert.equal(build([w, ...wrong]).work['export-csv'].approved, false);
+    const v = build([w, ...wrong, approve(6, H1, { shownFirst: true })]).work['export-csv'];
+    assert.equal(v.approved, true);
+    assert.deepEqual(v.approval, { hash: H1, shownFirst: true, lane: 'feature' });
+    // A work with no document has nothing to approve.
+    const bare = workEv(1, { doc: undefined });
+    delete bare.data.doc;
+    assert.equal(build([bare, approve(2, H1)]).work['export-csv'].approved, false);
+    // A click that no enrolled key signed counts for nothing.
+    assert.equal(build([w, approve(2, H1)], {}).work['export-csv'].approved, true);
+    assert.equal(buildViews([w, approve(2, H1)], [], { now }).work['export-csv'].approved, false);
+  });
+});
+
+test('a revised work document asks for a new approval', async () => {
+  await withHome(() => {
+    const v = build([workEv(1), approve(2, H1), workEv(3, { doc: { path: 'd.md', hash: H2 } })]);
+    assert.equal(v.work['export-csv'].approved, false);
+    assert.equal(build([workEv(1), approve(2, H1), workEv(3, { doc: { path: 'd.md', hash: H2 } }), approve(4, H2)]).work['export-csv'].approved, true);
+  });
+});
+
+test('an approved amendment moves the hash an approval must name', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    const amendment = ev('amendment', 3, { work: 'export-csv', change: 'CSV, not Excel', hash: H2 });
+    const amend = (n, hash) => click(n, { action: 'amend', work: 'export-csv', hash, label: 'Change it' });
+    const base1 = [w, approve(2, H1, { shownFirst: true }), amendment];
+    // The amendment is only proposed: the approval still stands.
+    assert.equal(build(base1).work['export-csv'].approved, true);
+    // Approved by a verified click: the approval carries to the changed document.
+    const moved = build([...base1, amend(4, H2)]).work['export-csv'];
+    assert.equal(moved.approved, true);
+    assert.deepEqual(moved.approval, { hash: H2, shownFirst: true, lane: 'feature' });
+    // An approval that names the old document no longer counts.
+    const stale = build([w, amendment, amend(4, H2), approve(5, H1)]).work['export-csv'];
+    assert.equal(stale.approved, false);
+    assert.equal(build([w, amendment, amend(4, H2), approve(5, H2)]).work['export-csv'].approved, true);
+    // An approval of the changed document made before the click counts too.
+    assert.equal(build([w, amendment, approve(2, H2), amend(4, H2)]).work['export-csv'].approved, true);
+    // An unsigned click, a click naming no proposed amendment, or another work's, changes nothing.
+    for (const nothing of [unsigned(amend(4, H2)), amend(4, H3), click(4, { action: 'amend', work: 'other', hash: H2, label: 'Change it' })]) {
+      const v = build([...base1, nothing]).work['export-csv'];
+      assert.deepEqual([v.approved, v.approval.hash], [true, H1]);
+      assert.equal(build([w, amendment, nothing, approve(5, H2)]).work['export-csv'].approved, false);
+    }
+    // The latest approved amendment is the one that counts.
+    const second = ev('amendment', 5, { work: 'export-csv', change: 'and tabs', hash: H3 });
+    const chain = build([...base1, amend(4, H2), second, amend(6, H3)]).work['export-csv'];
+    assert.deepEqual([chain.approved, chain.approval.hash], [true, H3]);
+    // An amendment of work nobody had approved does not approve it.
+    assert.equal(build([w, amendment, amend(4, H2)]).work['export-csv'].approved, false);
+    // A revised document after the amendment starts again.
+    const revised = workEv(7, { doc: { path: 'd.md', hash: H3 } });
+    assert.equal(build([...base1, amend(4, H2), revised]).work['export-csv'].approved, false);
+  });
+});
+
+test('features hold the latest feature event for each work', async () => {
+  await withHome(() => {
+    const a = ev('feature', 1, { work: 'export-csv', step: 'started' });
+    const b = ev('feature', 2, { work: 'export-csv', step: 'building', branch: 'feature/export-csv' });
+    const c = ev('feature', 3, { work: 'login', step: 'planned' });
+    const v = build([c, a, b]);
+    assert.deepEqual(Object.keys(v.features).sort(), ['export-csv', 'login']);
+    assert.equal(v.features['export-csv'].id, b.id);
+    assert.equal(v.features['export-csv'].data.step, 'building');
+    assert.equal(v.features['export-csv'].at, T(2));
+  });
+});
+
+const question = (n, data = {}) => ev('question', n, {
+  id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file',
+  options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2, ...data,
+});
+const answer = (n, label, extra = {}) => click(n, { action: 'answer', questionId: 'q-export-csv-1', label, ...extra });
+
+test('a question is answered only by a verified answer action', async () => {
+  await withHome(() => {
+    const q = question(1);
+    const open = build([q]).questions['q-export-csv-1'];
+    assert.equal(open.answer, null);
+    assert.equal(open.question.data.what, 'Which separator?');
+    // A plain card-answer, an unsigned click, a click for another question, and one from an unenrolled key answer nothing.
+    const plain = ev('card-answer', 2, { question: 'Answer question q-export-csv-1', label: 'Comma' });
+    const noise = [plain, unsigned(answer(3, 'Comma')), answer(4, 'Comma', { questionId: 'q-export-csv-2' })];
+    assert.equal(build([q, ...noise]).questions['q-export-csv-1'].answer, null);
+    assert.equal(buildViews([q, answer(5, 'Comma')], [], { now }).questions['q-export-csv-1'].answer, null);
+    const done = build([q, ...noise, answer(6, 'Tab')]).questions['q-export-csv-1'];
+    assert.deepEqual(done.answer, { label: 'Tab', at: T(6) });
+    // An answer to a question nobody asked is not a question.
+    assert.deepEqual(Object.keys(build([answer(6, 'Tab')]).questions), []);
+    // A question the foreman records again is still one question.
+    assert.deepEqual(Object.keys(build([q, question(2)]).questions), ['q-export-csv-1']);
+  });
+});
+
+test('an incident stays open until a verified lift names it; an unsigned lift changes nothing', async () => {
+  await withHome(() => {
+    const inc = ev('incident', 1, { id: 'bad-total', what: 'Totals are wrong' });
+    const other = ev('incident', 2, { id: 'slow-page', what: 'The page hangs' });
+    const lift = (n, incident, extra = {}) => click(n, { action: 'lift-incident', incident, label: 'End it', ...extra });
+    const fix = (n, incident, pr) => click(n, { action: 'incident-fix', incident, pr, label: 'Merge the fix' });
+    assert.deepEqual(build([]).incidents, { open: [] });
+    assert.deepEqual(build([inc, other]).incidents.open, [
+      { id: 'bad-total', what: 'Totals are wrong', at: T(1), fixes: [] },
+      { id: 'slow-page', what: 'The page hangs', at: T(2), fixes: [] },
+    ]);
+    // An unsigned lift, a forged one and a plain note do nothing.
+    const forged = { ...lift(4, 'bad-total'), data: { ...lift(4, 'bad-total').data, incident: 'slow-page' } };
+    const v = build([inc, other, unsigned(lift(3, 'bad-total')), forged, ev('note', 5, { incident: 'bad-total', lifted: true })]);
+    assert.deepEqual(v.incidents.open.map((i) => i.id), ['bad-total', 'slow-page']);
+    assert.deepEqual(buildViews([inc, lift(3, 'bad-total')], [], { now }).incidents.open.map((i) => i.id), ['bad-total']);
+    // Fixes come from verified clicks only, in order, and a repeat is listed once.
+    const withFixes = build([inc, other, fix(3, 'bad-total', 31), unsigned(fix(4, 'bad-total', 99)), fix(5, 'bad-total', 31), fix(6, 'bad-total', 32), fix(7, 'slow-page', 40)]);
+    assert.deepEqual(withFixes.incidents.open.map((i) => [i.id, i.fixes]), [['bad-total', [31, 32]], ['slow-page', [40]]]);
+    // A verified lift ends it.
+    const lifted = build([inc, other, fix(3, 'bad-total', 31), lift(4, 'bad-total')]);
+    assert.deepEqual(lifted.incidents.open.map((i) => i.id), ['slow-page']);
+    // A lift before the incident was declared does not end it; a second declaration of an open incident is one incident.
+    assert.deepEqual(build([lift(0, 'bad-total'), inc]).incidents.open.map((i) => i.id), ['bad-total']);
+    assert.equal(build([inc, ev('incident', 2, { id: 'bad-total', what: 'again' })]).incidents.open.length, 1);
   });
 });
