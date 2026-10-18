@@ -170,6 +170,29 @@ test('/state/write refuses a protected kind, an unknown kind and a missing kind'
   } finally { await c.close(); await repo.cleanup(); }
 });
 
+test('the helper refuses a setting event the catalogue refuses', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      for (const [data, pattern] of [
+        [{ key: 'nonsense', value: 1 }, /no setting called nonsense/],
+        [{ key: 'autonomy', value: 'reckless' }, /autonomy can't be reckless/],
+        [{ key: 'budget', value: 'weekly-share' }, /budget can't be weekly-share/],
+        [{ key: 'autonomy', value: 'cautious', until: '2026-10-18T18:00:00.000Z' }, /end time/],
+        [undefined, /object|setting/],
+      ]) {
+        const answer = await c.client.state.write({ project: PROJECT, kind: 'setting', data });
+        assert.equal(answer.ok, false, JSON.stringify(data));
+        assert.match(answer.refused, pattern);
+      }
+      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), [], 'nothing reached the host');
+      const ok = await c.client.state.write({ project: PROJECT, kind: 'setting', data: { key: 'presence', value: 'away', until: '2026-10-18T18:00:00.000Z' } });
+      assert.equal(ok.ok, true);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
 test('/state/write makes the event itself: its id and time are the helper\'s', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);

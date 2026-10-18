@@ -37,6 +37,7 @@ import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
+import { checkSetting } from '../settings/catalogue.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -841,6 +842,9 @@ export async function startHelper({
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
+    if (kind === 'setting') {
+      try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
+    }
     const event = makeEvent({ kind, data, now });
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     return written({ event, result });
