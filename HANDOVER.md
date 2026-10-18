@@ -82,7 +82,7 @@ The director is a product owner, not a developer. They want their product built 
      - **Open risk:** a sandboxed agent may not be able to reach the helper's socket inside the Wheelhouse folder in the home folder. If so, the fallback is a ruling that moves the socket to a folder outside the denied one (`~/.wheelhouse-run/helper.sock`), with the local settings following it.
      - Locked on Windows stays untried until a computer with admin rights is available.
    - **A known gap closed:** Ruling 15 of the state-and-host plan (the caller supplying `approvalRequired` and `touchesGuardrails`) is closed; the helper now works them out.
-   - **The next plan: the board, briefing and usage** (design section 17.2).
+   - **The next plan, the board, briefing and usage,** is item 5 below, now built.
 4. **The build-loop plan is written:** `docs/superpowers/plans/2026-10-18-wheelhouse-build-loop.md`, on branch `claude/build-loop-plan-832a69` (cut from `build-loop-design`), not yet reviewed by the director or pushed. It starts once the safety work has merged.
    - **Part 1 is checks 24 to 30.** Checks 24 (its shell part), 25, 29 (on the Mac) and 30 need nobody and run first. The rest make one Mac sitting of about 20 minutes and one Windows sitting of about 25 (the plan's "The director's sittings"), after one card covering every change to the computer.
    - **Check 27 picks the watcher's shape.** Only Tasks 13 and 19 wait for it, and each says what it builds for either answer; check 26 runs only for the fallback.

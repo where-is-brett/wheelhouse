@@ -419,7 +419,7 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
     The front desk reads only what changed, if anything did. Pages are compared by their lines, as sets; eight copies of each are kept; new links on the models and deprecations pages are listed, since that is where a new model's card and migration guide turn up. What changed reaches the front desk marked as text from outside, not instructions. The check runs in the weekly jobs (section 9). *Designer's call.*
   - **A new model is tested before it is trusted.** When the check finds one, the evaluation suite (section 18) runs on it. If it does at least as well, the pin moves to it and the director is told in the briefing (level 2, because the director asked the system to keep up with the model family). If it does worse, the pin stays and the director gets one card. Any other change to the routing table, such as a smaller model for a job, is a guardrail change at level 4 (section 12.4). A model due to retire is raised a month ahead. *Designer's call.*
   - **Changes to skills or settings** prompted by new guidance come to the director as one card.
-- **Budget allocation is not designed yet.** The director wants an option to give each feature or area a share of the weekly allowance, which Claude Code can read (above). It gets its own design round after this one (section 22).
+- **Budget allocation is not designed yet.** The director wants an option to give each feature or area a share of the weekly allowance, which Claude Code can read (above). It is in the backlog, by the director's decision of 18 October 2026, and isn't designed unless it is taken up (section 22).
 - **Usage pressure never lowers a level or relaxes a review** (section 12.3).
 
 ## 10. Context and compaction
@@ -750,6 +750,8 @@ Settings let the director change how the system behaves without briefing it agai
 - **Everyday, in the profile:** `presence`, `briefing`, `briefingGapHours` (2 hours by default), `explanations`, `notifications`, `boardTab` (which tab of the board shows first), `hours` (working hours, none by default), and one `known:<concept>` for each concept the director already knows, so the glossary's plain words can be dropped for it.
 - **Advanced, in the project:** `roundCap`, `compactPrepare`, `delegationReviewDays`, `unusualFactor` and `sources`.
 
+The catalogue holds a setting before everything that obeys it is built: `pace`, `roundCap` and `delegationReviewDays` are read by the build loop and front desk plans once they land, as section 10 says for `compactPrepare`.
+
 ### 14.1 Everyday settings
 
 | Setting | Levels (default in bold) | What it changes |
@@ -759,7 +761,7 @@ Settings let the director change how the system behaves without briefing it agai
 | **Presence** | **Here** · Away until… · Do not disturb | Away: features run to the end, and only breakages and questions that block all work notify. Do not disturb: only STOP-worthy problems and live harm notify. A briefing waits on return either way |
 | **Feature milestones** | Midpoint demos · Run to the end · **Ask per feature** | Section 7.4, step 5 |
 | **Token efficiency** | Lean · **Balanced** · Thorough | Lean: the mid-sized model for all well-defined work and routine front-desk turns, one builder at a time, screenshots only on request. Thorough: the most capable model more widely, a second reviewer on critical-area work, more evaluation trials. Required reviews, tests and the merge gate never change |
-| **Budget** | **Report only** · Weekly share · Per feature | Report only is the director's ruling (section 9.1). The other two come with the budget design round |
+| **Budget** | **Report only** · Weekly share · Per feature | Report only is the director's ruling (section 9.1). Budget allocation is in the backlog, by the director's decision of 18 October 2026; the other two levels come only if it is taken up |
 | **Pace** | 1 · 2 · **3** builders at once | How fast features move, and how much usage they draw at once. The default is the build-loop design's limit of three, which wins over this design's earlier two. *Designer's call* |
 | **Briefing** | Short (about 80 words) · **Standard (about 150)** · Detailed (about 300) | Section 5.2. The gap before a briefing, two hours by default, is set here too |
 | **Explanations** | **Plain** · Some technical terms | How question cards and briefings are written |
@@ -1219,4 +1221,4 @@ Answered on 17 October 2026:
 
 - when the first release happens (section 17.2), proposed once the pilot meets its measures.
 
-**Next design round:** budget allocation (section 9.1).
+**In the backlog:** budget allocation (section 9.1), by the director's decision of 18 October 2026.
