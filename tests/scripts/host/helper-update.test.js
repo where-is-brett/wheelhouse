@@ -221,29 +221,38 @@ test('a review does not carry over when the feature\'s own changes moved', async
   } finally { pr.remote.cleanup(); }
 });
 
+// A file of three identical blocks. The feature adds a line after the first; moved after the
+// second, the line has the same context, so only its line numbers differ, which patch-id ignores.
+const BLOCK = 'one\ntwo\nthree\nfour\n';
+const BLOCKS = { 'blocks.txt': BLOCK.repeat(3) };
+const ADDED = { 'blocks.txt': `${BLOCK}added\n${BLOCK}${BLOCK}` };
+const MOVED = { 'blocks.txt': `${BLOCK}${BLOCK}added\n${BLOCK}` };
+const gitIn = (dir) => (args, options = {}) => run('git', args, { cwd: dir, ...options });
+
 test('a review does not carry over when the update merge changed code itself', async () => {
-  // Review Focus 4. The update merge's resolution changes the feature's code (here only in
-  // indentation, which patch-id ignores), so the feature's patch-id is unchanged, but the
-  // merge's tree is not the automatic merge's.
-  const pr = await remoteWithPr({ base: { 'app.py': 'x = 1\n' }, change: { 'run.py': 'if ready:\n    start()\n' } });
+  // Review Focus 4. The update merge's resolution moves the feature's line, so the feature's
+  // patch-id is unchanged, but the merge's tree is not the automatic merge's.
+  const pr = await remoteWithPr({ base: BLOCKS, change: ADDED });
   try {
     const home = await project(pr.remote);
     await as(home, () => reviewed(pr.head));
     await mainMoves(pr.work, { 'later.txt': 'later\n' });
     await g(pr.work, 'merge', '-q', '--no-ff', '--no-edit', 'main');
-    write(pr.work, { 'run.py': 'if ready:\nstart()\n' });
+    write(pr.work, MOVED);
     await g(pr.work, 'commit', '-q', '-a', '--amend', '--no-edit');
     await g(pr.work, 'push', '-q', 'origin', 'feature');
     const head = await g(pr.work, 'rev-parse', 'HEAD');
 
     // The control: the patch-ids match, and the merge is not a clean update.
-    const git = (args, options = {}) => run('git', args, { cwd: pr.work, ...options });
+    const git = gitIn(pr.work);
     assert.equal(await patchIdOf({ git, base: 'main', head }), await patchIdOf({ git, base: 'main', head: pr.head }));
     assert.notEqual(await patchIdOf({ git, base: 'main', head }), '');
     assert.equal(await cleanUpdate({ git, commit: head }), false);
     await g(pr.work, 'checkout', '-q', '-b', 'auto', pr.head);
     await g(pr.work, 'merge', '-q', '--no-ff', '--no-edit', 'main');
-    assert.equal(await cleanUpdate({ git, commit: await g(pr.work, 'rev-parse', 'HEAD') }), true);
+    const auto = await g(pr.work, 'rev-parse', 'HEAD');
+    assert.equal(await cleanUpdate({ git, commit: auto }), true);
+    assert.equal(await cleanUpdate({ git, commit: auto, first: pr.head, base: 'main' }), true);
     assert.equal(await cleanUpdate({ git, commit: pr.head }), false, 'a commit with one parent is no update');
 
     const adapter = fakeAdapter(pr.remote);
@@ -253,6 +262,79 @@ test('a review does not carry over when the update merge changed code itself', a
       assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true });
       assert.deepEqual(adapter.merges, []);
     });
+  } finally { pr.remote.cleanup(); }
+
+  // The same change of the feature's own, made on a side branch and merged in: the merge is
+  // clean, and the patch-id unchanged, but its second parent is not from the default branch.
+  const side = await remoteWithPr({ base: BLOCKS, change: ADDED });
+  try {
+    const home = await project(side.remote);
+    await as(home, () => reviewed(side.head));
+    await g(side.work, 'checkout', '-q', '-b', 'side');
+    await commit(side.work, MOVED, 'Move the line');
+    await g(side.work, 'checkout', '-q', 'feature');
+    await g(side.work, 'merge', '-q', '--no-ff', '--no-edit', 'side');
+    await g(side.work, 'push', '-q', 'origin', 'feature');
+    const merged = await g(side.work, 'rev-parse', 'HEAD');
+    await mainMoves(side.work, { 'later.txt': 'later\n' });
+
+    const git = gitIn(side.work);
+    assert.equal(await patchIdOf({ git, base: 'main', head: merged }), await patchIdOf({ git, base: 'main', head: side.head }));
+    assert.equal(await cleanUpdate({ git, commit: merged }), true, 'clean as a merge');
+    assert.equal(await cleanUpdate({ git, commit: merged, first: side.head }), true);
+    assert.equal(await cleanUpdate({ git, commit: merged, first: side.head, base: 'main' }), false, 'but not an update from the default branch');
+
+    const adapter = fakeAdapter(side.remote);
+    await withHelper(home, adapter, async (client) => {
+      const updated = await update(client);
+      assert.equal(updated.updated, true, JSON.stringify(updated));
+      const answer = await merge(client);
+      assert.deepEqual([answer.ok, answer.reasons], [false, [`no CLEAN review of ${short(updated.head)}`]]);
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: true });
+      assert.deepEqual(adapter.merges, []);
+    });
+  } finally { side.remote.cleanup(); }
+});
+
+test('a review does not carry over when the feature\'s only change since is whitespace', async () => {
+  // Ruling R111: patch-ids are taken verbatim, since indentation can be code.
+  const pr = await remoteWithPr({ base: { 'app.py': 'x = 1\n' }, change: { 'run.py': 'if ready:\n    start()\n' } });
+  try {
+    const home = await project(pr.remote);
+    await as(home, () => reviewed(pr.head));
+    const head = await commit(pr.work, { 'run.py': 'if ready:\nstart()\n' }, 'Indentation only');
+    const git = gitIn(pr.work);
+    assert.notEqual(await patchIdOf({ git, base: 'main', head }), await patchIdOf({ git, base: 'main', head: pr.head }));
+
+    const adapter = fakeAdapter(pr.remote);
+    await withHelper(home, adapter, async (client) => {
+      const answer = await merge(client);
+      assert.deepEqual([answer.ok, answer.reasons], [false, [`no CLEAN review of ${short(head)}`]]);
+      assert.deepEqual(adapter.merges, []);
+    });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', async () => {
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    const fetches = [];
+    const counting = (file, args, options) => {
+      if (args.includes('fetch')) fetches.push(args);
+      return run(file, args, options);
+    };
+    const adapter = fakeAdapter(pr.remote);
+    await withHelper(home, adapter, async (client) => {
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false });
+      await as(home, () => reviewed(pr.head, 'FINDINGS'));
+      assert.deepEqual(await carried(client), { ok: true, review: 'none', upToDate: false });
+      assert.deepEqual(fetches, []);
+      // A CLEAN review to weigh: the mirror is read.
+      await as(home, () => reviewed(pr.head));
+      assert.deepEqual(await carried(client), { ok: true, review: 'clean', upToDate: true });
+      assert.ok(fetches.length > 0);
+    }, { run: counting });
   } finally { pr.remote.cleanup(); }
 });
 

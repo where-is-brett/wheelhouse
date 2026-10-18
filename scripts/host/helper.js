@@ -193,28 +193,38 @@ const MERGE_ONLY = [
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 // The patch-id of what `head` changes from its merge base with `base` (design section 12):
-// `git diff` of the two, binary files included, through `git patch-id --stable`, which
-// ignores line numbers and whitespace. `git(args, options)` runs git in the mirror. Empty
-// when nothing changes; throws when git fails.
+// `git diff` of the two, binary files included, through `git patch-id --verbatim` (which is
+// --stable keeping whitespace; git refuses the two flags together): it ignores line numbers
+// but not whitespace, since indentation can be code (ruling R111).
+// `git(args, options)` runs git in the mirror. Empty when nothing changes; throws when git fails.
 export async function patchIdOf({ git, base, head }) {
-  const common = await git([...NO_HOOKS, 'merge-base', base, head], { input: '' });
+  const common = await git([...NO_HOOKS, 'merge-base', '--end-of-options', base, head], { input: '' });
   if (common.code !== 0) throw new Error('finding the merge base failed');
-  const diff = await git([...MERGE_ONLY, 'diff', '--no-ext-diff', '--no-textconv', '--binary', common.stdout.trim(), head, '--'], { input: '' });
+  const diff = await git([...MERGE_ONLY, 'diff', '--no-ext-diff', '--no-textconv', '--binary', '--end-of-options', common.stdout.trim(), head, '--'], { input: '' });
   if (diff.code !== 0) throw new Error('reading the change failed');
-  const id = await git(['patch-id', '--stable'], { input: diff.stdout });
+  const id = await git(['patch-id', '--verbatim'], { input: diff.stdout });
   if (id.code !== 0) throw new Error('reading the patch-id failed');
   return id.stdout.trim().split(/\s+/)[0] ?? '';
 }
 
 // Whether `commit` is a clean update merge: two parents, and its tree is the tree `git
-// merge-tree --write-tree` makes of them, so the merge itself changed nothing by hand.
-export async function cleanUpdate({ git, commit }) {
+// merge-tree --write-tree` makes of them, so the merge itself changed nothing by hand. With
+// `first`, its first parent must be that commit (the pull request's earlier commit); with
+// `base`, its second parent must be an ancestor of `base` (the default branch's head), so the
+// merge brings in only the default branch, never a side branch of the feature's own.
+export async function cleanUpdate({ git, commit, first, base }) {
   if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return false;
+  // `commit` is a full ID, so nothing here reads as an option (rev-parse without --verify echoes --end-of-options).
   const listed = await git([...NO_HOOKS, 'rev-parse', `${commit}^{commit}`, `${commit}^@`], { input: '' });
   if (listed.code !== 0) return false;
   const [, ...parents] = listed.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
-  if (parents.length !== 2) return false;
-  const merged = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--no-messages', ...parents], { input: '' });
+  if (parents.length !== 2 || !parents.every((p) => FULL_SHA.test(p))) return false;
+  if (first !== undefined && parents[0] !== first) return false;
+  if (base !== undefined) {
+    const fromBase = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', '--end-of-options', parents[1], base], { input: '' });
+    if (fromBase.code !== 0) return false;
+  }
+  const merged = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--no-messages', '--end-of-options', ...parents], { input: '' });
   if (merged.code !== 0) return false;
   const own = await git([...NO_HOOKS, 'rev-parse', '--verify', '-q', `${commit}^{tree}`], { input: '' });
   return own.code === 0 && own.stdout.trim() === merged.stdout.split('\n')[0].trim();
@@ -1081,13 +1091,15 @@ export async function startHelper({
         let headPatch = null;
         const holds = async (commit) => {
           if (typeof commit !== 'string' || !FULL_SHA.test(commit) || commit === headSha) return false;
-          // The commits after `commit` on the head's first-parent line, newest first; the oldest must sit on it.
-          const after = await git([...NO_HOOKS, 'rev-list', '--first-parent', headSha, `^${commit}`, '--']);
+          // The commits after `commit` on the head's first-parent line, newest first. Each must be a
+          // clean update merge whose first parent is the one before it (the oldest's is `commit`)
+          // and whose second parent is from the default branch.
+          const after = await git([...NO_HOOKS, 'rev-list', '--first-parent', '--end-of-options', headSha, `^${commit}`, '--']);
           const line = after.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
           if (after.code !== 0 || line.length === 0) return false;
-          const first = await git([...NO_HOOKS, 'rev-parse', '--verify', '-q', `${line.at(-1)}^1`]);
-          if (first.code !== 0 || first.stdout.trim() !== commit) return false;
-          for (const c of line) if (!(await cleanUpdate({ git, commit: c }))) return false;
+          for (const [i, c] of line.entries()) {
+            if (!(await cleanUpdate({ git, commit: c, first: line[i + 1] ?? commit, base: BASE_REF }))) return false;
+          }
           headPatch ??= await patchIdOf({ git, base: BASE_REF, head: headSha });
           return headPatch !== '' && (await patchIdOf({ git, base: BASE_REF, head: commit })) === headPatch;
         };
@@ -1135,7 +1147,11 @@ export async function startHelper({
     const adapter = await ctx.adapter();
     const pr = await adapter.prState(number);
     if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
-    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { now });
+    const skipped = [];
+    const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), readEnrolled(), { damaged: skipped, now });
+    // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
+    // read, so the watcher's poll costs no fetch, and upToDate is not known (false).
+    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false };
     const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false }, ctx);
     const own = found.review?.data?.commit === pr.headSha && found.review?.data?.verdict === 'CLEAN';
     return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate };
