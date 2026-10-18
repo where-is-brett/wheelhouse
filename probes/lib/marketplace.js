@@ -1,7 +1,8 @@
 // probes/lib/marketplace.js
 // A throwaway plugin marketplace for probes: a git repository under the
-// system's temporary folder, listing each plugin as a GitHub source pinned by
-// ref and commit.
+// system's temporary folder, listing each plugin as a source pinned by ref and
+// commit: a GitHub source from { name, repo, ref, sha }, or any other source
+// object (such as a url source with a file:// address) from { name, source }.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,12 @@ function git(dir, args) {
   execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
 }
 
-function entryFor({ name, repo, ref, sha }) {
+function entryFor({ name, repo, ref, sha, source }) {
+  if (name && source) {
+    if (!source.ref) throw new Error(`Plugin ${name} needs a ref`);
+    if (!SHA.test(source.sha ?? '')) throw new Error(`Plugin ${name} needs a sha of 40 lowercase hex characters`);
+    return { name, source };
+  }
   if (!name || !repo) throw new Error('A marketplace plugin needs a name and a repo');
   if (!ref) throw new Error(`Plugin ${name} needs a ref`);
   if (!SHA.test(sha ?? '')) throw new Error(`Plugin ${name} needs a sha of 40 lowercase hex characters`);

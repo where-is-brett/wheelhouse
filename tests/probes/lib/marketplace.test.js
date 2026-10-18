@@ -61,6 +61,19 @@ test('makeScratchMarketplace refuses a plugin with no ref', async () => {
   );
 });
 
+test('makeScratchMarketplace lists a plugin given as a source object, checking its ref and sha', async () => {
+  const source = { source: 'url', url: 'file:///tmp/example', ref: 'v1', sha: SHA_A };
+  const marketplace = await makeScratchMarketplace({ name: 'objects', plugins: [{ name: 'one', source }] });
+  try {
+    const file = path.join(marketplace.dir, '.claude-plugin', 'marketplace.json');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).plugins, [{ name: 'one', source }]);
+  } finally {
+    await marketplace.cleanup();
+  }
+  await assert.rejects(makeScratchMarketplace({ name: 'bad', plugins: [{ name: 'x', source: { ...source, sha: 'ABC' } }] }), /sha/);
+  await assert.rejects(makeScratchMarketplace({ name: 'bad', plugins: [{ name: 'x', source: { ...source, ref: undefined } }] }), /ref/);
+});
+
 test('cleanup refuses a folder outside the temp folder', async () => {
   const marketplace = await makeScratchMarketplace({ name: 'guard', plugins: [] });
   const real = marketplace.dir;
