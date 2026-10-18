@@ -18,7 +18,7 @@ const BRIDGE_MS = 5000
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
 // kept in step by tests/scripts/mod/validate.test.js. The bridge refuses every other option.
-const LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it']
+const LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix']
 // The code alphabet of scripts/state/card-lines.js, kept in step by the same test.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789'
 // A reply is four characters from the code alphabet and one of those labels, in any case, with

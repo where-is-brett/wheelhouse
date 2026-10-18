@@ -40,6 +40,12 @@ export function runbookLine(step, sha) {
   return sha === undefined || sha === null ? base : `${base}, to commit ${sha12(sha)}`;
 }
 
+// How the build loop's lines spell a work or incident id, a lane and a question id.
+// The prompt record builds its own patterns from these, so the two agree.
+export const ID = '[a-z0-9-]{1,40}';
+export const LANES = 'quick|small|feature|bug';
+export const QUESTION_ID = 'q-[a-z0-9-]+-[0-9]+';
+
 // The line that asks the director to approve a piece of work as written. With
 // `shownFirst`, the director is to see it before it merges.
 export function approveWorkLine(work, lane, hash, { shownFirst = false } = {}) {
@@ -85,13 +91,19 @@ export const replyCodeLine = (code) => `Reply code: ${code}`;
 const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // The lines a card's choice is set by, each matching a whole line of the question: the
-// approval, confirmation, lift-STOP, CI-push and runbook lines.
+// approval, confirmation, lift-STOP, CI-push and runbook lines, and the build loop's five:
+// approve work, answer a question, change approved work, end an incident and merge its fix.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
   new RegExp(`^${literal(LIFT_STOP)}$`, 'm'),
   /^Push the CI change on \S+ at commit [0-9a-f]{12} with your own sign-in$/m,
   new RegExp(`^Runbook step (?:${Object.entries(RUNBOOK_TITLES).map(([step, title]) => `${step}: ${literal(title)}`).join('|')})(?:, to commit [0-9a-f]{12})?$`, 'm'),
+  new RegExp(`^Approve ${ID} \\((?:${LANES}) lane\\) as written, [0-9a-f]{12}(?:, and show it to me before it merges)?$`, 'm'),
+  new RegExp(`^Answer question ${QUESTION_ID}$`, 'm'),
+  new RegExp(`^Change the approved ${ID} to this, [0-9a-f]{12}$`, 'm'),
+  new RegExp(`^End incident ${ID} and let merges carry on$`, 'm'),
+  new RegExp(`^Merge pull request #[1-9][0-9]* as the fix for incident ${ID}$`, 'm'),
 ];
 
 // The one set line a question carries, or null when it carries none, or two or more.

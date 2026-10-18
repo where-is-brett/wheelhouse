@@ -23,6 +23,7 @@ import { buildViews } from '../state/views.js';
 import { readEnrolled } from '../state/signing.js';
 import { CODE_ALPHABET, RUNBOOK_TITLES, setLineOf, replyCode } from '../state/card-lines.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
+import { PUT_OFF } from '../lib/front-desk.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 // Longer than any option a card offers; a longer message is not a reply.
@@ -55,6 +56,11 @@ function recordedAs(made, question) {
   if (data.action === 'lift-stop') return 'Lift STOP';
   if (data.action === 'runbook') return `Runbook step ${data.step}: ${RUNBOOK_TITLES[data.step]}`;
   if (data.action === 'ci-push') return `Push the CI change on ${data.branch}`;
+  if (data.action === 'approve-work') return `Approve ${data.work}`;
+  if (data.action === 'answer') return `Answer: ${data.label}`;
+  if (data.action === 'amend') return `Change ${data.work}`;
+  if (data.action === 'lift-incident') return `End incident ${data.incident}`;
+  if (data.action === 'incident-fix') return `Merge pull request #${data.pr} as the fix`;
   return data.label ?? made.kind;
 }
 
@@ -143,7 +149,9 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   const offered = card.options.filter((o) => typeof o === 'string' && fold(o) === fold(reply.label));
   if (offered.length !== 1) return no(`That card doesn't offer ${reply.label}`);
   const [label] = offered;
-  if (!SIGNED_LABELS.includes(label)) return no('That option doesn\'t need a reply code');
+  // On an answer card the question's own options answer it; earned checks the label is one of them.
+  const answers = line.startsWith('Answer question ') && !PUT_OFF.includes(label);
+  if (!SIGNED_LABELS.includes(label) && !answers) return no('That option doesn\'t need a reply code');
   if (typeof card.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(card.id)) return no('No card has that code');
 
   const api = client ?? helperClient({ timeout: budget });
