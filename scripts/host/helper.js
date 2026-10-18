@@ -855,6 +855,13 @@ export async function startHelper({
     ok: true, id: made.event.id, pushed: made.result.pushed, ...(made.result.refused ? { refused: made.result.refused } : {}),
   });
 
+  // After each event taken the views are written again, so the board and the briefing never
+  // read views older than the last write. A failure here leaves the write as it was; the
+  // next write, or /state/views, writes them.
+  async function freshViews(write) {
+    try { await write(); } catch { /* the views stay as they were */ }
+  }
+
   async function doWrite({ project, kind, data }, ctx) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
@@ -864,6 +871,7 @@ export async function startHelper({
     }
     const event = makeEvent({ kind, data, now });
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
 
@@ -876,6 +884,7 @@ export async function startHelper({
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
     if (listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === event.id)) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
 
@@ -1018,6 +1027,7 @@ export async function startHelper({
     await commitBackups();
     const event = makeEvent({ kind, data, now });
     const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    await freshViews(() => writeProfileViews({ now }));
     return profileWritten({ event, result });
   }
 
@@ -1045,6 +1055,7 @@ export async function startHelper({
     }
     await commitBackups();
     const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    await freshViews(() => writeProfileViews({ now }));
     return profileWritten({ event, result });
   }
 
@@ -1059,12 +1070,14 @@ export async function startHelper({
       return pushed;
     };
     const synced = await syncState({ push, env: ctx.gitEnv, ...inProfile() });
+    await freshViews(() => writeProfileViews({ now }));
     return refused === undefined ? { ok: true, ...synced } : { ok: false, ...synced, refused };
   }
 
   // This week's bundle of the project's state branch, into the profile's backups/. The
   // profile is brought up to date first, so a bundle another computer made today is found
-  // and not made again. Without the profile's repository the bundle is still made here.
+  // and not made again. When the profile's repository can't be reached the bundle is still
+  // made here.
   async function doBackup({ project }) {
     const profileCtx = await profileContext();
     await ensureProfileClone({ remote: profileRemote(), env: profileCtx.gitEnv });

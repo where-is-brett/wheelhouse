@@ -268,6 +268,23 @@ test('/state/record refuses an id the state already holds', async () => {
   } finally { await c.close(); await repo.cleanup(); }
 });
 
+test('each /state/write and /state/record it takes rewrites the project\'s views', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const viewsOf = (name) => JSON.parse(fs.readFileSync(path.join(stateDir(PROJECT), '..', 'views', `${name}.json`), 'utf8'));
+      const card = await c.client.state.write({ project: PROJECT, kind: 'card', data: { title: 'Pick a colour' } });
+      assert.equal(card.ok, true);
+      assert.deepEqual(viewsOf('waiting').map((w) => w.id), [card.id]);
+      const review = makeEvent({ kind: 'review', data: { pr: 7, commit: 'abc1234', verdict: 'CLEAN' }, now: at(5000) });
+      assert.equal((await c.client.state.record({ project: PROJECT, event: review })).ok, true);
+      assert.equal(viewsOf('reviews')['7'].abc1234.id, review.id);
+      assert.equal(viewsOf('status').lastEventAt, review.at);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
 test('/push refuses wheelhouse-state and wheelhouse-lock from a caller, whatever folder it names', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);

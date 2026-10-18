@@ -9,7 +9,7 @@ import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { profileDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { profileDir, profileViewsDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { PROFILE_BRANCH, readProfileViews } from '../../../scripts/profile/store.js';
 import { listEvents, makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
@@ -118,6 +118,32 @@ test('a profile setting is written, confirmed by a click, and shows in the profi
     assert.ok(events.some((n) => n.includes('_setting_')), 'the setting reached the profile repository');
     assert.ok(events.some((n) => n.includes('_confirmation_')), 'the confirmation reached the profile repository');
     assert.ok(!(await remoteFiles(c.profileRemote.url)).some((n) => n.startsWith('keys/')));
+  } finally { await c.close(); }
+});
+
+test('each profile write, record and sync rewrites the profile views without asking for them', async () => {
+  const c = await computer();
+  try {
+    await c.as(async () => {
+      const wrote = await c.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep the briefing short' } });
+      assert.equal(wrote.ok, true, JSON.stringify(wrote));
+      assert.deepEqual(readProfileViews().unconfirmed.map((u) => u.id), [wrote.id]);
+
+      const setting = listEvents(profileDir(), { report: () => {} }).find((e) => e.id === wrote.id);
+      const question = `${confirmLine(setting)}?`;
+      await decide({
+        cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question, options: [{ label: 'Confirm' }, { label: 'Not now' }] }], answers: { [question]: 'Confirm' } },
+        tool_response: { answers: { [question]: 'Confirm' } },
+      }, { client: c.client, now: c.now, projectOf: () => ({ project: PROJECT }) });
+      assert.equal(readProfileViews().settings.briefing.value, 'short');
+      assert.deepEqual(readProfileViews().unconfirmed, []);
+
+      // A sync writes them again, from whatever it brought in.
+      fs.rmSync(profileViewsDir(), { recursive: true, force: true });
+      assert.equal((await c.client.profile.sync({})).ok, true);
+      assert.equal(readProfileViews().settings.briefing.value, 'short');
+    });
   } finally { await c.close(); }
 });
 
