@@ -1,0 +1,396 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "host.arch",
+            "value": {
+              "stringValue": "arm64"
+            }
+          },
+          {
+            "key": "os.type",
+            "value": {
+              "stringValue": "darwin"
+            }
+          },
+          {
+            "key": "os.version",
+            "value": {
+              "stringValue": "0.0"
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "claude-code"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "0.0.0"
+            }
+          }
+        ],
+        "droppedAttributesCount": 0
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "com.anthropic.claude_code",
+            "version": "2.1.278"
+          },
+          "metrics": [
+            {
+              "name": "claude_code.session.count",
+              "description": "Count of CLI sessions started",
+              "unit": "",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "user.id",
+                        "value": {
+                          "stringValue": "user-placeholder"
+                        }
+                      },
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "session-1"
+                        }
+                      },
+                      {
+                        "key": "organization.id",
+                        "value": {
+                          "stringValue": "org-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "director@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "user.account_uuid",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.account_id",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "terminal.type",
+                        "value": {
+                          "stringValue": "non-interactive"
+                        }
+                      },
+                      {
+                        "key": "start_type",
+                        "value": {
+                          "stringValue": "fresh"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1792230036978000000",
+                    "timeUnixNano": "1792230037978000000",
+                    "asDouble": 1
+                  }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.token.usage",
+              "description": "Number of tokens used",
+              "unit": "tokens",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "user.id",
+                        "value": {
+                          "stringValue": "user-placeholder"
+                        }
+                      },
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "session-1"
+                        }
+                      },
+                      {
+                        "key": "organization.id",
+                        "value": {
+                          "stringValue": "org-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "director@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "user.account_uuid",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.account_id",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "terminal.type",
+                        "value": {
+                          "stringValue": "non-interactive"
+                        }
+                      },
+                      {
+                        "key": "start_type",
+                        "value": {
+                          "stringValue": "fresh"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "model-a"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "input"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1792230036978000000",
+                    "timeUnixNano": "1792230037978000000",
+                    "asDouble": 12
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "user.id",
+                        "value": {
+                          "stringValue": "user-placeholder"
+                        }
+                      },
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "session-1"
+                        }
+                      },
+                      {
+                        "key": "organization.id",
+                        "value": {
+                          "stringValue": "org-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "director@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "user.account_uuid",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.account_id",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "terminal.type",
+                        "value": {
+                          "stringValue": "non-interactive"
+                        }
+                      },
+                      {
+                        "key": "start_type",
+                        "value": {
+                          "stringValue": "fresh"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "model-a"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "output"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1792230036978000000",
+                    "timeUnixNano": "1792230037978000000",
+                    "asDouble": 3
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "user.id",
+                        "value": {
+                          "stringValue": "user-placeholder"
+                        }
+                      },
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "session-1"
+                        }
+                      },
+                      {
+                        "key": "organization.id",
+                        "value": {
+                          "stringValue": "org-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "director@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "user.account_uuid",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.account_id",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "terminal.type",
+                        "value": {
+                          "stringValue": "non-interactive"
+                        }
+                      },
+                      {
+                        "key": "start_type",
+                        "value": {
+                          "stringValue": "fresh"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "model-a"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "cacheRead"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1792230036978000000",
+                    "timeUnixNano": "1792230037978000000",
+                    "asDouble": 4800
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "user.id",
+                        "value": {
+                          "stringValue": "user-placeholder"
+                        }
+                      },
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "session-1"
+                        }
+                      },
+                      {
+                        "key": "organization.id",
+                        "value": {
+                          "stringValue": "org-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "director@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "user.account_uuid",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "user.account_id",
+                        "value": {
+                          "stringValue": "account-placeholder"
+                        }
+                      },
+                      {
+                        "key": "terminal.type",
+                        "value": {
+                          "stringValue": "non-interactive"
+                        }
+                      },
+                      {
+                        "key": "start_type",
+                        "value": {
+                          "stringValue": "fresh"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "model-a"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "cacheCreation"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1792230036978000000",
+                    "timeUnixNano": "1792230037978000000",
+                    "asDouble": 250
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

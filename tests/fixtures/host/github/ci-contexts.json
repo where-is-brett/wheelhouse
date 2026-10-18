@@ -1,0 +1,1 @@
+{"data":{"repository":{"ref":{"target":{"statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"test"},{"__typename":"StatusContext","context":"ci/legacy"}]}}}}}}}

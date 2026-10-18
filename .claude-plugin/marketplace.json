@@ -1,0 +1,13 @@
+{
+  "name": "wheelhouse",
+  "owner": {
+    "name": "Wheelhouse"
+  },
+  "plugins": [
+    {
+      "name": "wheelhouse",
+      "source": "./",
+      "description": "Lets a director who is not a developer run AI agents that build their product."
+    }
+  ]
+}

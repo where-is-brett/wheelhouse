@@ -1,0 +1,48 @@
+# .github/workflows/ci.yml
+# Runs the tests on Linux and Windows, and on macOS once a pull request is out of
+# draft or on main, and validates the plugin.
+name: CI
+
+on:
+  pull_request:
+    # ready_for_review starts the macOS run when a draft is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels its older run; runs on main always finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # A macOS minute costs about ten Linux minutes, and the tests run on the Mac
+        # before every push, so a draft pull request leaves macOS out.
+        os: ${{ fromJSON(github.event.pull_request.draft && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    # The tests take a few minutes; a hung run stops here, not at GitHub's six hours.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm test
+
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm install --global @anthropic-ai/claude-code@2.1.278
+      - run: claude plugin validate .

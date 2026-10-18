@@ -1,0 +1,8 @@
+{
+  "id": 2002,
+  "name": "product",
+  "path_with_namespace": "a-director/product",
+  "default_branch": "main",
+  "web_url": "https://gitlab.com/a-director/product",
+  "visibility": "private"
+}

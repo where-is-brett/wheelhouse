@@ -1,0 +1,258 @@
+// tests/scripts/state/events.test.js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { makeEvent, eventPath, writeEvent, syncState, listEvents } from '../../../scripts/state/events.js';
+import { cloneState } from '../../../scripts/state/clone.js';
+import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
+import { stateDir, computerId } from '../../../scripts/lib/paths.js';
+import { run } from '../../../scripts/lib/run.js';
+import { makeBareRemote, push } from '../../helpers/git-fixture.js';
+
+// Each "computer" is a home folder (with a space and an accent, to prove paths cope).
+async function withHome(fn) {
+  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ev-')), 'Zoë home');
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    return await fn(home);
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
+    else process.env.WHEELHOUSE_HOME = before;
+  }
+}
+
+const at = (ms) => () => new Date(Date.UTC(2026, 9, 18, 1, 2, 3, ms));
+const git = (dir, args) => run('git', args, { cwd: dir });
+
+test('makeEvent signs protected kinds and leaves the others unsigned', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const note = makeEvent({ kind: 'note', data: { text: 'hi' }, now: at(5) });
+    assert.equal(note.sig, undefined);
+    assert.equal(note.v, 1);
+    assert.equal(note.at, '2026-10-18T01:02:03.005Z');
+    assert.equal(note.computer, computerId());
+    const approval = makeEvent({ kind: 'approval', data: { card: 1 }, now: at(5) });
+    assert.equal(verify(approval, readEnrolled()), true);
+    assert.throws(() => makeEvent({ kind: 'bogus', data: {} }), /kind/);
+  });
+});
+
+test('eventPath holds the time, computer and kind, and two events in one millisecond differ', async () => {
+  await withHome(() => {
+    const a = makeEvent({ kind: 'note', data: {}, now: at(7) });
+    const b = makeEvent({ kind: 'note', data: {}, now: at(7) });
+    const p = eventPath(a);
+    assert.match(p.split(path.sep).join('/'), new RegExp(`^events/2026/10/2026-10-18T01-02-03\\.007Z_${a.computer}_note_[0-9a-f]{4}\\.json$`));
+    assert.notEqual(eventPath(a), eventPath(b));
+  });
+});
+
+test('writeEvent commits one new file and pushes it', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      assert.equal(dir, stateDir('o__p'));
+      const event = makeEvent({ kind: 'note', data: { text: 'one' } });
+      const r = await writeEvent({ project: 'o__p', event, push });
+      assert.equal(r.pushed, true);
+      assert.ok(fs.existsSync(r.path));
+      const log = await git(dir, ['log', '--format=%s|%an|%ae', '-1']);
+      assert.equal(log.stdout.trim(), `note ${event.id}|Wheelhouse|wheelhouse@invalid`);
+      const files = await git(dir, ['show', '--name-only', '--format=', 'HEAD']);
+      assert.equal(files.stdout.trim().split('\n').length, 1);
+      const upstream = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-state', '-1']);
+      assert.equal(upstream.stdout.trim(), `note ${event.id}`);
+      assert.deepEqual(listEvents(dir).map((e) => e.id), [event.id]);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('writeEvent refuses to overwrite an existing event file', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const event = makeEvent({ kind: 'note', data: { text: 'one' } });
+      await writeEvent({ project: 'o__p', event, push });
+      await assert.rejects(writeEvent({ project: 'o__p', event: { ...event, data: { text: 'two' } }, push }), /exists/);
+      const kept = JSON.parse(fs.readFileSync(path.join(stateDir('o__p'), eventPath(event)), 'utf8'));
+      assert.equal(kept.data.text, 'one');
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('writeEvent refuses an unsigned protected event', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const event = { v: 1, id: 'x', at: '2026-10-18T01:02:03.000Z', computer: computerId(), kind: 'review', data: {} };
+      await assert.rejects(writeEvent({ project: 'o__p', event, push }), /signed/);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('writeEvent refuses an event holding a secret, naming the pattern only', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const secret = ['gh', 'p_', 'a1B2'.repeat(10)].join('');
+      const event = makeEvent({ kind: 'note', data: { text: secret } });
+      await assert.rejects(writeEvent({ project: 'o__p', event, push }), (e) => {
+        assert.match(e.message, /github-token/);
+        assert.ok(!e.message.includes(secret));
+        return true;
+      });
+      assert.equal(fs.existsSync(path.join(dir, eventPath(event))), false);
+      assert.equal((await git(dir, ['status', '--porcelain'])).stdout.trim(), '');
+      assert.equal((await git(dir, ['log', '--format=%s'])).stdout.includes('note'), false);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('writeEvent refuses a key that follows a newline, a tab or an underscore in an event', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const github = ['gh', 'p_', 'a1B2'.repeat(10)].join('');
+      const aws = ['AK', 'IA', 'Q7'.repeat(8)].join('');
+      for (const [text, pattern] of [
+        [`my token:\n${github}`, /github-token/],
+        [`key\t${aws}`, /aws-access-key/],
+        [`x\n${aws}`, /aws-access-key/],
+        [`MY_${github}`, /github-token/],
+      ]) {
+        const event = makeEvent({ kind: 'note', data: { text } });
+        await assert.rejects(writeEvent({ project: 'o__p', event, push }), (e) => {
+          assert.match(e.message, pattern);
+          assert.ok(!e.message.includes(github) && !e.message.includes(aws));
+          return true;
+        });
+        assert.equal(fs.existsSync(path.join(dir, eventPath(event))), false);
+      }
+      assert.equal((await git(dir, ['status', '--porcelain'])).stdout.trim(), '');
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('two clones writing at the same moment both land, and neither is lost', async () => {
+  const remote = await makeBareRemote();
+  try {
+    const fixed = at(9);
+    let idA; let idB; let homeB; let dirA; let dirB;
+    await withHome(async () => {
+      dirA = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    });
+    await withHome(async (home) => {
+      homeB = home;
+      dirB = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    });
+    const inHome = async (home, fn) => {
+      const before = process.env.WHEELHOUSE_HOME;
+      process.env.WHEELHOUSE_HOME = home;
+      try { return await fn(); } finally { process.env.WHEELHOUSE_HOME = before; }
+    };
+    const homeA = path.dirname(path.dirname(path.dirname(dirA))); // .../home/projects/o__p/state -> home
+    await inHome(homeA, async () => {
+      const e = makeEvent({ kind: 'note', data: { text: 'A' }, now: fixed });
+      idA = e.id;
+      assert.equal((await writeEvent({ project: 'o__p', event: e, push })).pushed, true);
+    });
+    await inHome(homeB, async () => {
+      const e = makeEvent({ kind: 'note', data: { text: 'B' }, now: fixed });
+      idB = e.id;
+      let pushes = 0;
+      const counting = (d, b) => { pushes += 1; return push(d, b); };
+      assert.equal((await writeEvent({ project: 'o__p', event: e, push: counting })).pushed, true);
+      assert.equal(pushes, 2); // rejected once, pulled, pushed
+    });
+    await inHome(homeA, () => syncState({ project: 'o__p', push }));
+    await inHome(homeB, () => syncState({ project: 'o__p', push }));
+    for (const d of [dirA, dirB]) {
+      assert.deepEqual(listEvents(d).map((e) => e.id).sort(), [idA, idB].sort());
+    }
+  } finally { remote.cleanup(); }
+});
+
+test('an event committed while the push failed is pushed by the next sync', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const event = makeEvent({ kind: 'note', data: { text: 'late' } });
+      const refusing = async () => ({ ok: false, refused: 'protected branch' });
+      const r = await writeEvent({ project: 'o__p', event, push: refusing });
+      assert.equal(r.pushed, false);
+      assert.equal(r.refused, 'protected branch');
+      const before = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-state']);
+      assert.ok(!before.stdout.includes(event.id));
+      await syncState({ project: 'o__p', push });
+      const after = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-state']);
+      assert.ok(after.stdout.includes(event.id));
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('listEvents skips a damaged file and reports it once', async () => {
+  await withHome(async (home) => {
+    const dir = path.join(home, 'plain');
+    const folder = path.join(dir, 'events', '2026', '10');
+    fs.mkdirSync(folder, { recursive: true });
+    const ok = { v: 1, id: 'b', at: '2026-10-18T01:00:00.000Z', computer: 'aaaaaaaa', kind: 'note', data: {} };
+    fs.writeFileSync(path.join(folder, 'good.json'), JSON.stringify(ok));
+    fs.writeFileSync(path.join(folder, 'bad.json'), '{ not json SECRETTEXT');
+    const reports = [];
+    assert.deepEqual(listEvents(dir, { report: (m) => reports.push(m) }).map((e) => e.id), ['b']);
+    listEvents(dir, { report: (m) => reports.push(m) });
+    assert.equal(reports.length, 1);
+    assert.match(reports[0], /bad\.json/);
+    assert.ok(!reports[0].includes('SECRETTEXT'));
+  });
+});
+
+test('writeEvent gives up after three retries and leaves the commit unpushed', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      let pushes = 0;
+      const never = async () => { pushes += 1; return { ok: false, rejected: 'non-fast-forward' }; };
+      const r = await writeEvent({ project: 'o__p', event: makeEvent({ kind: 'note', data: {} }), push: never });
+      assert.equal(r.pushed, false);
+      assert.equal(pushes, 4);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('an unreadable event file is refused, naming the file and leaving nothing committed', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const event = makeEvent({ kind: 'note', data: { text: 'plain' } });
+      const name = path.basename(eventPath(event));
+      const real = fs.readFileSync;
+      fs.readFileSync = (f, ...rest) => {
+        if (String(f).endsWith(name)) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+        return real(f, ...rest);
+      };
+      try {
+        await assert.rejects(writeEvent({ project: 'o__p', event, push }), (e) => {
+          assert.ok(e.message.includes(name));
+          assert.match(e.message, /unreadable/);
+          return true;
+        });
+      } finally { fs.readFileSync = real; }
+      assert.equal(fs.existsSync(path.join(dir, eventPath(event))), false);
+      assert.equal((await git(dir, ['status', '--porcelain'])).stdout.trim(), '');
+    });
+  } finally { remote.cleanup(); }
+});

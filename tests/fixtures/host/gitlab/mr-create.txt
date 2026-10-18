@@ -1,0 +1,6 @@
+
+Creating merge request for wheelhouse/welcome-page into main in a-director/product
+
+!4 Add the welcome page (wheelhouse/welcome-page)
+ https://gitlab.com/a-director/product/-/merge_requests/4
+

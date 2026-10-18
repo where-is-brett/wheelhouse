@@ -1,0 +1,34 @@
+
+  Defaults to the currently checked-out branch. When a pipeline is running,                                             
+  auto-merge is enabled by default. Pass `--auto-merge=false` to                                                        
+  merge immediately. Use `--squash` or `--rebase` to control                                                            
+  the merge strategy, or `--remove-source-branch` to delete the                                                         
+  source branch after merging.                                                                                          
+                                                                                                                        
+         
+  USAGE  
+         
+    glab mr merge [<id | branch>] [--flags]         
+            
+  EXAMPLES  
+            
+    # Merge a merge request                         
+    glab mr merge 235                               
+    glab mr accept 235                              
+                                                    
+    # Finds open merge request from current branch  
+    glab mr merge                                   
+         
+  FLAGS  
+         
+    --auto-merge               Set auto-merge. (true)
+    -h --help                  Show help for this command.
+    -m --message               Custom merge commit message.
+    -r --rebase                Rebase the commits onto the base branch.
+    -d --remove-source-branch  Remove source branch on merge.
+    -R --repo                  Select another repository. You can use either OWNER/REPO or GROUP/NAMESPACE/REPO. The full URL or Git URL is also accepted.
+    --sha                      Merge only if the HEAD of the source branch matches this SHA. Use to ensure that only reviewed commits are merged.
+    -s --squash                Squash commits on merge.
+    --squash-message           Custom squash commit message.
+    -y --yes                   Skip submission confirmation prompt.
+
