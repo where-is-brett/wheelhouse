@@ -549,6 +549,22 @@ test('a branch that deletes a CI file is refused', async () => {
   } finally { s.cleanup(); }
 });
 
+test('/pr/open with no base opens against the default branch, and any other base is still refused', async () => {
+  const s = await scenario({ change: { 'a.txt': 'a\n' } });
+  try {
+    await viaHelper(s, async (client) => {
+      const opened = await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: 'b', session: 'sess-1' });
+      assert.equal(opened.ok, true, JSON.stringify(opened));
+      assert.equal(opened.result.args.base, 'main');
+      assert.equal(opened.result.args.head, 'feature');
+      assert.equal(opened.result.args.body, 'b');
+      assert.deepEqual(await client.openPr({ project: 'o__p', head: 'feature', base: null, title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.prBase });
+      assert.deepEqual(await client.openPr({ project: 'o__p', head: 'feature', base: 'release', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.prBase });
+      assert.deepEqual(await client.openPr({ project: 'o__p', head: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.defaultBranch });
+    });
+  } finally { s.cleanup(); }
+});
+
 test('/pr/open sends the plain branch name, and refuses the state and lock branches', async () => {
   const s = await scenario({ change: { 'a.txt': 'a\n' } });
   try {

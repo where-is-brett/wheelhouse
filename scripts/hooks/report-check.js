@@ -2,7 +2,8 @@
 // Checks the report an agent ends its work with. A builder's or reviewer's report
 // that lacks a field is sent back twice, then let through with a note. A complete
 // report from Wheelhouse's own reviewer, naming the open pull request's current
-// head, is recorded as a signed review. Only this hook signs.
+// head, is recorded as a signed review. Only this hook signs. A report that says
+// `pr: none` (work before the feature has a pull request) is complete but never signs.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -35,7 +36,8 @@ export function parseReport(text, role) {
   const bad = [];
   const need = (name, ok) => { if (!ok(fields[name])) bad.push(name); };
   need('role', (v) => (role === undefined ? v === 'builder' || v === 'reviewer' : v === role));
-  need('pr', (v) => /^[1-9][0-9]*$/.test(v ?? '') && Number.isSafeInteger(Number(v)));
+  // `none` is for work done before the feature has a pull request; only a number can sign.
+  need('pr', (v) => v === 'none' || (/^[1-9][0-9]*$/.test(v ?? '') && Number.isSafeInteger(Number(v))));
   need('commit', (v) => /^[0-9a-f]{40}$/.test(v ?? ''));
   const kind = fields.role ?? role;
   if (kind === 'builder') {
@@ -118,6 +120,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   }
   fs.rmSync(file, { force: true });
   if (input.agent_type !== 'wheelhouse:reviewer') return undefined;
+  if (fields.pr === 'none') return undefined;
 
   const pr = Number(fields.pr);
   const note = async (why) => {

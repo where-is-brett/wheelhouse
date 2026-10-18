@@ -334,9 +334,14 @@ test('each new plain kind is accepted with its shape and refused without it', as
       { ...w, doc: { path: 'x' } }, { ...w, doc: { path: 'x', hash: 'zz' } }, { ...w, place: 'first' }, { ...w, parent: 'No' }, { ...w, title: '' },
     ]) assert.throws(() => makeEvent({ kind: 'work', data: bad }), /work event/);
     const f = SHAPES.feature;
-    for (const bad of [{ ...f, step: 'done' }, { ...f, files: 'a' }, { ...f, slice: { n: 3, m: 2 } }, { ...f, slice: { n: 1 } }, { ...f, brief: 4 }]) {
+    for (const bad of [
+      { ...f, step: 'done' }, { ...f, files: 'a' }, { ...f, slice: { n: 3, m: 2 } }, { ...f, slice: { n: 1 } }, { ...f, brief: 4 },
+      { ...f, step: 'paused', pausedFor: 'lunch' }, { ...f, step: 'building', pausedFor: 'director' },
+    ]) {
       assert.throws(() => makeEvent({ kind: 'feature', data: bad }), /feature event/);
     }
+    // Why a feature is paused, on its paused event only.
+    for (const pausedFor of ['director', 'five-hour']) assert.ok(makeEvent({ kind: 'feature', data: { ...f, step: 'paused', pausedFor } }));
     const q = SHAPES.question;
     for (const bad of [
       { ...q, id: 'q-other-1' }, { ...q, id: 'q-export-csv-x' }, { ...q, level: 5 }, { ...q, level: '2' }, { ...q, options: [] },

@@ -42,7 +42,10 @@ test('a critical area\'s check file is a guardrail; a file in the area only name
 
 // What readConfig fills in for each build-loop key a configuration leaves out.
 const ROUTING_NONE = { foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null };
-const DEFAULTS = { routing: ROUTING_NONE, sessionMode: 'acceptEdits', buildCommands: ['npm test', 'npm run', 'node'], watcherShape: 1 };
+const DEFAULTS = {
+  routing: ROUTING_NONE, sessionMode: 'acceptEdits', buildCommands: ['npm test', 'npm run', 'node'], watcherShape: 1,
+  hotFiles: ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '**/migrations/**'], flagFiles: [],
+};
 
 test('readConfig: no file is the empty config; a malformed one throws', () => {
   assert.deepEqual(empty, { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], ...DEFAULTS });
@@ -80,6 +83,8 @@ test('readConfig: the build loop\'s keys are kept as given, and the missing ones
   };
   assert.deepEqual(readConfig(JSON.stringify(given)), {
     ...given,
+    hotFiles: DEFAULTS.hotFiles,
+    flagFiles: [],
     routing: { ...ROUTING_NONE, foreman: 'model-a', reviewer: 'model-b', custom: 'model-c' },
   });
   assert.deepEqual(readConfig(JSON.stringify({ ...base, routing: {} })).routing, ROUTING_NONE, 'no model named: the command line\'s own default');
@@ -123,4 +128,21 @@ test('readConfig: a glob with an empty segment is refused', () => {
     assert.throws(() => readConfig(JSON.stringify({ ...base, criticalAreas: [{ name: 'x', paths: [glob], checks: [] }] })), { message }, glob);
     assert.throws(() => readConfig(JSON.stringify({ ...base, criticalAreas: [{ name: 'x', paths: [], checks: [glob] }] })), { message }, glob);
   }
+});
+
+test('readConfig: hotFiles and flagFiles are globs, with the defaults filled in', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  const defaults = readConfig(JSON.stringify(base));
+  assert.deepEqual(defaults.hotFiles, ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '**/migrations/**']);
+  assert.deepEqual(defaults.flagFiles, []);
+  assert.deepEqual(empty.hotFiles, defaults.hotFiles);
+  const given = readConfig(JSON.stringify({ ...base, hotFiles: ['src/routes.js'], flagFiles: ['src/flags/**'] }));
+  assert.deepEqual(given.hotFiles, ['src/routes.js']);
+  assert.deepEqual(given.flagFiles, ['src/flags/**']);
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, hotFiles: [] })).hotFiles, [], 'an empty list names no hot files');
+  const message = "The project's Wheelhouse configuration can't be read";
+  for (const extra of [
+    { hotFiles: 'package.json' }, { hotFiles: [1] }, { hotFiles: ['/a'] }, { hotFiles: ['a//b'] }, { hotFiles: [''] }, { hotFiles: null },
+    { flagFiles: 'x' }, { flagFiles: [null] }, { flagFiles: ['a/'] }, { flagFiles: [''] }, { flagFiles: null },
+  ]) assert.throws(() => readConfig(JSON.stringify({ ...base, ...extra })), { message }, JSON.stringify(extra));
 });

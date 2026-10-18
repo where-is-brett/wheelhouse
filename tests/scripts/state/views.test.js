@@ -14,7 +14,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'work', 'features', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'work', 'features', 'reports', 'questions', 'incidents'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -453,6 +453,21 @@ test('features hold the latest feature event for each work', async () => {
   });
 });
 
+test('reports hold the latest report event for each work', async () => {
+  await withHome(() => {
+    assert.deepEqual(build([]).reports, {});
+    const a = ev('report', 1, { work: 'export-csv', outcome: 'blocked', summary: 'Stuck', rulings: [] });
+    const b = ev('report', 2, { work: 'export-csv', outcome: 'merged', summary: 'Done', rulings: [], pr: 7 });
+    const c = ev('report', 3, { work: 'login', outcome: 'closed', summary: 'Dropped', rulings: [] });
+    const v = build([c, a, b]);
+    assert.deepEqual(Object.keys(v.reports).sort(), ['export-csv', 'login']);
+    assert.equal(v.reports['export-csv'].id, b.id);
+    assert.equal(v.reports['export-csv'].data.outcome, 'merged');
+    assert.equal(v.reports['export-csv'].at, T(2));
+    assert.equal(v.reports.login.key, 'login');
+  });
+});
+
 const question = (n, data = {}) => ev('question', n, {
   id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file',
   options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2, ...data,
@@ -561,5 +576,14 @@ test('a work event naming the document an approved change already moved to leave
     assert.equal(build([...base1, workEv(5, { doc: { path: 'd.md', hash: H3 } })]).work['export-csv'].approved, false);
     // One naming the original document is approved only because the director approved that document itself.
     assert.equal(build([...base1, workEv(5)]).work['export-csv'].approval.hash, H1);
+  });
+});
+
+test('work remembers when it was first recorded', async () => {
+  await withHome(() => {
+    const v = build([workEv(5, { title: 'Export again' }), workEv(2), ev('work', 3, { id: 'login', title: 'Login', lane: 'small', visible: false, dependsOn: [] })]);
+    assert.equal(v.work['export-csv'].since, T(2));
+    assert.equal(v.work['export-csv'].work.at, T(5), 'the latest event is still the work');
+    assert.equal(v.work.login.since, T(3));
   });
 });

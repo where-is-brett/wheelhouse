@@ -1,12 +1,13 @@
 // scripts/hooks/session-start.js
 // At the start of every session in a Wheelhouse project: starts the host helper
-// when it is not answering, sends any records a hook kept, syncs the state and
-// adds a short reload as context. The reload names things; it never pastes
-// whole files (design section 19.1, point 5).
+// when it is not answering, sends any records a hook kept, syncs the state,
+// starts the watcher when the project's shape is 1 and it isn't running
+// (ruling R62), and adds a short reload as context. The reload names things;
+// it never pastes whole files (design section 19.1, point 5).
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
 // five of them waiting for the helper to start, the rest for the records, the
-// sync and the views. Context added by a hook is capped at 10,000 characters
+// sync, the views and the watcher, which is last and gets what is left. Context added by a hook is capped at 10,000 characters
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
 import fs from 'node:fs';
@@ -15,10 +16,12 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries } from './kit.js';
 import { sendPending, withinBudget } from './pending.js';
+import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { projectConfig } from '../watcher/main.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -207,6 +210,18 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
   return null;
 }
 
+// In a Shape 1 project, starts the watcher when it isn't running, as the
+// foreman's start script does (ruling R62). A watcher found running needs no
+// configuration asked for. It informs, so anything that goes wrong is passed over.
+async function ensureWatcher(project, client, { spawn, pluginRoot }) {
+  try {
+    if (watcherRunning(project) || typeof client.config !== 'function') return;
+    const read = await projectConfig(project, client);
+    // As the start script reads the shape: anything but 2 is Shape 1.
+    if (read.config !== null && read.config.watcherShape !== 2) startWatcher(project, { spawn, pluginRoot });
+  } catch { /* the session carries on without it */ }
+}
+
 export function reload({ views, stop, notes, feature, stateRoot, windows }) {
   const lines = [];
   if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
@@ -262,6 +277,7 @@ export async function decide(input, deps = {}) {
     if (synced?.ok !== true) notes.push(NOT_SYNCED);
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
+    await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= localViews(project);
 

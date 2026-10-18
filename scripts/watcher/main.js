@@ -42,8 +42,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { makeBundler, readCursor, route, step, writeCursor } from './core.js';
+import { readHandled } from './handled.js';
 import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
 import { makeWaker, watcherDir, watcherFolder, writeJsonFile, writeWake } from './waker.js';
+import { foremanTools } from '../foreman/tools.js';
 import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -103,7 +105,8 @@ const pause = (ms, signal) => new Promise((resolve) => {
 // watcher already runs for the project. `config`, `observe`, `waker` (or
 // `wakerOptions` for makeWaker), `now`, `sleep` and `handled` are for tests
 // and the start script; `handled(observation)` gives the ids the foreman
-// wrote while handling a wake, which go to the digest (Task 19 fills it).
+// wrote while handling a wake, which go to the digest (cliOptions reads them
+// from handled.js).
 export async function runWatcher({
   project,
   client = helperClient(),
@@ -247,11 +250,22 @@ export async function runWatcher({
   }
 }
 
+// What the command line runs the watcher with: the ids the foreman has handled,
+// read afresh at each loop (rulings R48, R64), and the foreman's allowed tools,
+// Read and its two scripts in this plugin (rulings R45, R63).
+export function cliOptions(project) {
+  return {
+    project,
+    handled: () => readHandled(project),
+    wakerOptions: { foremanTools: foremanTools() },
+  };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const project = process.argv[2];
   const stop = new AbortController();
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => stop.abort());
-  (async () => runWatcher({ project, signal: stop.signal }))().then((result) => {
+  (async () => runWatcher({ ...cliOptions(project), signal: stop.signal }))().then((result) => {
     if (!result.started) process.stderr.write('A watcher is already running for this project.\n');
     process.exit(0);
   }, (error) => {
