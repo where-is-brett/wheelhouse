@@ -618,6 +618,25 @@ test('on PostToolUse the status is built at most once every five seconds; ruling
   assert.deepEqual(readStatus(p.status).task, { n: 3, m: 5 });
 });
 
+test('a stop captures a missing ruling even when the stamp matches the ledger', async () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  ledger(tree, 'this', ['Ruling: One — first — nothing', 'Ruling: Two — second — nothing']);
+  await runHook(hookInput(tree, 'PostToolUse'), { now: () => NOW });
+  assert.equal(fs.readFileSync(p.rulings, 'utf8').split('\n').filter(Boolean).length, 2);
+  // As if an older run's rewrite landed after this ledger's stamp: the stamp
+  // matches, but the second ruling is missing.
+  fs.writeFileSync(p.rulings, `${JSON.stringify('Ruling: One — first — nothing')}\n`);
+  await runHook(hookInput(tree, 'PostToolUse'), { now: at(10000) });
+  assert.equal(fs.readFileSync(p.rulings, 'utf8').split('\n').filter(Boolean).length, 1);
+  for (const event of ['Stop', 'SubagentStop']) {
+    fs.writeFileSync(p.rulings, `${JSON.stringify('Ruling: One — first — nothing')}\n`);
+    await runHook(hookInput(tree, event), { now: at(20000) });
+    const kept = fs.readFileSync(p.rulings, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    assert.deepEqual(kept, ['Ruling: One — first — nothing', 'Ruling: Two — second — nothing'], event);
+  }
+});
+
 test('the status is written only when it changed', async () => {
   const tree = feature();
   const p = featurePaths(tree);

@@ -6,7 +6,8 @@
 // Anywhere else it does nothing and writes nothing.
 //
 // In a feature worktree it keeps the session id for open-pr; keeps the
-// ledger's rulings whenever the ledger's size or time has moved; and builds the
+// ledger's rulings at every SubagentStop and Stop, and on PostToolUse whenever
+// the ledger's size or time has moved; and builds the
 // status, writing it when it changed. On PostToolUse the status is built at
 // most once every five seconds. The time of the last build and the ledger's
 // stamp are kept in .wheelhouse/feature/checked.json: status.json is rewritten
@@ -89,14 +90,18 @@ export async function decide(input, { now = () => new Date(), answered, slice } 
   const ledger = attempt(() => findLedger(root, brief.plan)) ?? null;
   const stamp = ledger ? { file: path.relative(root, ledger.file), size: ledger.size, mtimeMs: ledger.mtimeMs } : null;
   const moved = JSON.stringify(before.ledger ?? null) !== JSON.stringify(stamp);
+  // Two runs at once may leave the stamp of a ledger whose rulings the other
+  // run's older rewrite lost. Rewriting is idempotent, so every stop captures
+  // anyway, and a ruling is never missing for longer than a turn.
+  const capture = moved || input.hook_event_name !== 'PostToolUse';
   const due = input.hook_event_name !== 'PostToolUse' || !recent(before.at, nowMs);
-  if (!moved && !due) return undefined;
+  if (!capture && !due) return undefined;
 
   // The brief and the ledger, read once for both steps.
   const feature = attempt(() => loadFeature(root, { brief, ledger }));
   if (!feature) return undefined;
   const after = { ...before };
-  if (moved && attempt(() => (captureRulings({ worktree: root, feature }), true))) after.ledger = stamp;
+  if (capture && attempt(() => (captureRulings({ worktree: root, feature }), true))) after.ledger = stamp;
   if (due) {
     attempt(() => {
       const next = buildStatus({ worktree: root, now, feature, ...(answered ? { answered } : {}), ...(slice ? { slice } : {}) });
