@@ -8,9 +8,11 @@ The two settings go in the user settings file (`~/.claude/settings.json`; on Win
 
 **The agent works from a terminal, not from a Desktop session.** Quitting Desktop ends any Desktop session, so the agent runs in a terminal session (or a plain terminal) opened for the sitting, and keeps its notes in a file, not in its memory.
 
-**The director does not accept any update.** Where a step says to look at the Check for Updates menu, the director looks at what it says and chooses Not now or Cancel. If it starts downloading by itself, the director says so and the agent writes it down. The one step that may let Desktop update itself is marked below.
+**The director does not accept any update.** Where a step says to look at the Check for Updates menu, the director looks at what it says and chooses Not now or Cancel. If it starts downloading by itself, the director says so and the agent writes it down.
 
 ## Before anything
+
+0. **The opening card.** Before step 1 the agent asks the director a yes or no question, in a card, and goes no further without a yes. In plain words: "Claude Desktop may download a newer Claude Code on its own whenever it is reopened, as it normally does, and that is what happens in this sitting each time we reopen it. It cannot be undone: an updated copy and its new version folder stay on this computer, and Desktop may restart itself to install an app update. Nothing is accepted by hand, and your settings file is copied first and put back at the end. Go ahead?" On a no, the sitting does not happen.
 
 1. **The agent takes a copy and a notes file.** With Node.js (so it works the same on both systems), it creates a folder `wheelhouse-check28` under `os.tmpdir()` and writes into it:
    - `settings.json.before`, a copy of the user settings file (or, if there is no such file, a note in `state.json` saying so, so the file is deleted at the end instead of left empty);
@@ -21,7 +23,7 @@ The two settings go in the user settings file (`~/.claude/settings.json`; on Win
    - **Start version:** the director starts a new local session in the Desktop Code tab, types `/status` and reads out the "Claude Code" row (the agent is in a terminal and cannot see it). The same goes for every `/status` reading below.
    - **Terminal version:** `claude --version` in the terminal.
    - **Desktop's copies:** list the folder where Desktop keeps its own copies of Claude Code, one subfolder per version. On the Mac that is `~/Library/Application Support/Claude/claude-code/`. On Windows it is expected at `%APPDATA%\Claude\claude-code\`, but that has not been seen; if it is not there, the agent looks under `%APPDATA%\Claude` and `%LOCALAPPDATA%` for a `claude-code` folder and writes down where it is.
-   - **What is available:** fetch the latest version number from `https://downloads.claude.ai/claude-code-releases/latest` and the stable one from `.../stable`. The trial can only tell following from ignoring if the latest is newer than the start version; if not, say so now (see "Reading the result"). If `downloads.claude.ai` is blocked (a work network), note it. `claude update` has no check-only form (its help lists no options but help), so it must not be used to find the version: it would install. Without the number the answer is "cannot tell".
+   - **What is available:** fetch the latest version number from `https://downloads.claude.ai/claude-code-releases/latest` and the stable one from `.../stable`. The trial can only tell following from ignoring if the latest is newer than the start version; if not, say so now (see "Reading the result"). If `downloads.claude.ai` is blocked (a work network), note it. `claude update` has no check-only form (its help lists no options but help), so it must not be used to find the version: it would install. Without the number, a rise in Trial B still shows "ignores"; if the copy did not move, the answer is "cannot tell".
    - Write all of these into `state.json`.
 3. **Does Desktop show a channel?** In the Code tab, try `/doctor` and open Settings, Claude Code (`/config` opens it). Write down exactly what each shows or says it cannot do, including any "Auto-update channel" line. Nothing is promised here; it is a look.
 
@@ -52,7 +54,7 @@ This trial cannot tell following from ignoring. The stable version is below the 
 ## Trial C: the settings off again (the control)
 
 12. The agent takes the settings back to how they were, carefully. It compares the settings file with "the copy plus the two keys" (`settings.json.before` with `autoUpdatesChannel` "stable" and `minimumVersion` "9.0.0" added). The comparison is of parsed JSON (the same keys and values), not of bytes, since Claude Code may reformat the file. If they match, it copies `settings.json.before` back over the settings file (or deletes the file, if there was none before). If they do not match, something else changed the file meanwhile (for example Claude Code rewrote a key): it does not overwrite, it removes only those two keys and writes down what else differed. Then it compares the file with `settings.json.before`, again as parsed JSON (the size and SHA-256 in `state.json` are for the record), and, if they differ, reports exactly how and leaves the file for the director to decide. Written to `state.json`.
-13. **Ask first.** Before this step the agent asks the director a yes or no question, in a card, and goes no further without a yes. In plain words: "Next, with the settings off, Claude Desktop may download a newer Claude Code on its own. This cannot be undone: the updated copy and its new version folder stay on this computer, and Desktop may restart itself to install an app update. It is what Desktop would do anyway with no settings. Go ahead?" If the answer is no, the trial stops here, the result is "cannot tell" unless Trial B already showed the copy moving, and the agent goes to Finishing.
+13. **Ask first.** This is the one step that invites an update on purpose, so it has a card of its own. The agent asks the director a yes or no question and goes no further without a yes. In plain words: "Next, with the settings off, we reopen Desktop in order to let it download a newer Claude Code if it wants to. As the opening card said, this cannot be undone: the updated copy and its new version folder stay on this computer, and Desktop may restart itself to install an app update. Go ahead?" If the answer is no, the trial stops here, the result is "cannot tell" unless Trial B already showed the copy moving, and the agent goes to Finishing.
 
     **Director (after a yes):** quit Desktop completely and reopen it, wait two minutes, start a new local session. The director does not click anything to accept an update.
 14. The director reads out `/status`, and the agent lists Desktop's folder again and records whether the version went up.
@@ -68,7 +70,7 @@ This rule needs a newer version to exist than the one Desktop has. It was writte
 
 ## Finishing
 
-15. **Director:** quit and reopen Desktop once more if Trial C's reopening left it on anything else. The director reads out `/status` to show it still reads a version and that the settings file is as step 12 left it, and tells the director the settings are as they were (or says exactly how they differ).
+15. **Director:** quit and reopen Desktop once more if Trial C's reopening left it on anything else. The director reads out `/status` to show it still reads a version. The agent checks that the settings file is as step 12 left it, and tells the director the settings are as they were (or says exactly how they differ).
 
 ## What to bring back
 
