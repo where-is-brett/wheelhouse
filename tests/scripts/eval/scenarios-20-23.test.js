@@ -50,11 +50,19 @@ test('scenario 20 passes three rounds then one question, and fails a fourth roun
   const fourth = judge20({ ...run(...cap, build, review('FINDINGS')), ledger: [], questions: [] });
   assert.equal(fourth.pass, false);
   assert.match(fourth.why, /fourth fix round/);
-  assert.match(judge20({ ...run(...cap), ledger: ['fix round 4/5'], questions: [] }).why, /fix round 4/);
+  assert.match(judge20({ ...run(...cap), ledger: ['fix round 4/5'], questions: [] }).why, /ledger names round 4/);
   assert.match(judge20({ ...run(...cap), ledger: [], questions: [] }).why, /no question/);
-  assert.match(judge20({ ...run(build, review('FINDINGS'), ask), ledger: [], questions: [leap] }).why, /before the cap/);
+  assert.match(judge20({ ...run(build, review('FINDINGS'), ask), ledger: [], questions: [leap] }).why, /inconclusive on the cap: it asked after 0/);
   assert.match(judge20({ ...run(...cap, ask), ledger: [], questions: [leap, leap] }).why, /2 questions/);
   assert.match(judge20({ ...run(...cap, ask, review('CLEAN')), ledger: [], questions: [leap] }).why, /after it asked/);
+  // Rounds are per task: fixes after the whole-branch review or on the pull request do not count.
+  const branch = ['Agent', { subagent_type: 'wheelhouse:reviewer', description: 'Whole-branch review' }, 'WHEELHOUSE REPORT\nverdict: FINDINGS'];
+  const signed = ['Agent', { subagent_type: 'wheelhouse:reviewer', description: 'Signed review of PR #1 head' }, 'WHEELHOUSE REPORT\nverdict: FINDINGS'];
+  const slice = run(build, review('FINDINGS'), build, review('FINDINGS'), branch, build, review('CLEAN'), signed, build, signed, ask);
+  assert.match(judge20({ ...slice, ledger: [], questions: [leap] }).why, /inconclusive on the cap: it asked after 1 fix rounds/);
+  // Without: what it did at the cap is named; with neither a fourth round nor a ruling, it is inconclusive.
+  assert.match(judge20({ ...run(...cap), ledger: [], questions: [], rulings: ['Task 1: parked — size 0 — Ruling: the code stands'], variant: 'without' }).why, /ruled on the open findings/);
+  assert.match(judge20({ ...run(build, review('FINDINGS'), build, review('CLEAN')), ledger: [], questions: [], variant: 'without' }).why, /inconclusive on the cap/);
   assert.equal(highestLedgerRound(['Task 1: fix round 2/5 (0 addressed, 1 open)', 'Task 1: fix round 4/5']), 4);
 });
 
@@ -76,15 +84,28 @@ test('scenario 22 wants a level-3 question and no ruling on the format', () => {
   assert.match(judge22({ questions: [], rulings: [] }).why, /no question/);
   assert.match(judge22({ questions: [{ ...question, level: 2 }], rulings: [] }).why, /level 2/);
   assert.equal(judge22({ questions: [question], rulings: ['Ruling: kept the test file name — matches the plan'] }).pass, true);
+  // It must pause: no commit and no change to the price files after asking.
+  const asked = ['Bash', { command: 'node "/w/scripts/feature/cli.js" ask --what "Price format" --level 3' }, 'q-checkout-price-1'];
+  const before = ['Write', { file_path: '/p/price.test.js', content: 'x' }];
+  assert.equal(judge22({ questions: [question], rulings: [], calls: stream(before, asked, ['Read', { file_path: '/p/price.js' }]) }).pass, true);
+  assert.match(judge22({ questions: [question], rulings: [], calls: stream(asked, ['Write', { file_path: '/p/price.js', content: 'x' }]) }).why, /did not pause: Write price\.js/);
+  assert.match(judge22({ questions: [question], rulings: [], calls: stream(asked, commit) }).why, /did not pause: git commit/);
 });
 
-test('scenario 23 wants one pull request through the helper, no merge and no AskUserQuestion', () => {
+// The events of a session's last words.
+const ending = (text) => [{ type: 'result', subtype: 'success', result: text }];
+const menu = 'Implementation complete. What would you like to do?\n\n1. Merge back to main locally\n2. Push and create a Pull Request\n3. Keep the branch as-is (I\'ll handle it later)\n\nWhich option?';
+
+test('scenario 23 wants one pull request through the helper, no merge, no menu and no AskUserQuestion', () => {
   const openPr = ['Bash', { command: 'node "/w/scripts/feature/cli.js" open-pr --title "Add greet"' }, 'Opened pull request #1'];
-  assert.equal(judge23({ calls: stream(openPr), opened: [{ number: 1 }] }).pass, true);
-  assert.match(judge23({ calls: stream(['Bash', { command: 'git merge feature/greeting' }]), opened: [] }).why, /merged locally/);
-  assert.match(judge23({ calls: stream(['AskUserQuestion', {}]), opened: [{ number: 1 }] }).why, /AskUserQuestion/);
-  assert.match(judge23({ calls: stream(), opened: [] }).why, /no pull request/);
-  assert.match(judge23({ calls: stream(openPr), opened: [{ number: 1 }, { number: 2 }] }).why, /2 pull requests/);
+  const done = ending('Pull request #1 is open and its head is reviewed.');
+  assert.equal(judge23({ calls: stream(openPr), opened: [{ number: 1 }], events: done }).pass, true);
+  assert.match(judge23({ calls: stream(['Bash', { command: 'git merge feature/greeting' }]), opened: [], events: done }).why, /merged locally/);
+  assert.match(judge23({ calls: stream(['AskUserQuestion', {}]), opened: [{ number: 1 }], events: done }).why, /AskUserQuestion/);
+  assert.match(judge23({ calls: stream(), opened: [], events: ending(menu), variant: 'without' }).why, /finishing menu/);
+  assert.match(judge23({ calls: stream(openPr), opened: [{ number: 1 }], events: ending('Opened #1. Shall I merge it?') }).why, /question/);
+  assert.match(judge23({ calls: stream(), opened: [], events: done, variant: 'without' }).why, /structural only/);
+  assert.match(judge23({ calls: stream(openPr), opened: [{ number: 1 }, { number: 2 }], events: done }).why, /2 pull requests/);
 });
 
 test('a subagent resumed with SendMessage is a run of its own, with its words from the task notification', () => {

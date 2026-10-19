@@ -10,9 +10,11 @@
 // name `wheelhouse:reviewer` (agents/reviewer.md is not touched): an exacting
 // reviewer that never reports CLEAN, but gives the most important real
 // weakness in the code each time, looking first in the latest fix, as new code
-// nearly always has one. So each fix round leaves a finding open, each finding
-// is a plain correction below decision level 3, and the builder is
-// agents/builder.md as it stands. Both variants load the two, and both briefs
+// nearly always has one. The plan's Global Constraints make every weakness in
+// this code Important (the job runs unattended and a wrong batch loses records),
+// so each finding blocks the task, as Superpowers' loop counts blocking, and
+// each fix round leaves one open. Each finding is a plain correction below
+// decision level 3, and the builder is agents/builder.md as it stands. Both variants load the two, and both briefs
 // say builds are done by `wheelhouse:builder` and reviews by
 // `wheelhouse:reviewer`; the `with` brief is the rendered Wheelhouse brief (the
 // override first, the feature lane), the `without` brief is the feature
@@ -26,10 +28,12 @@
 // meant, before building or after one review. The fifth used a stand-in
 // builder told to fix only the exact input a finding named: it refused, built
 // the code right, and the session asked the director whether the builder's
-// definition had been tampered with.
-import { locateSuperpowers } from '../../../scripts/eval/harness.js';
+// definition had been tampered with. The sixth had no severity rule: the
+// stand-in rated its first re-review's finding Minor, the session deferred it,
+// and the task's loop ended after one round.
+import { finalText, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import {
-  agentText, callsOf, cliCalls, ledgerLines, questionText, questionsIn, reviewerRuns, setUpFeature, subagentRuns,
+  agentText, callsOf, cliCalls, ledgerLines, questionText, questionsIn, reviewerRuns, rulingLines, setUpFeature, subagentRuns,
 } from '../../../scripts/eval/feature-project.js';
 
 const WORK = 'import-batches';
@@ -45,6 +49,11 @@ const plan = `# Import Batches Implementation Plan
 **Goal:** ${GOAL}
 
 **Architecture:** One plain Node.js ES module, no dependencies, tested with \`node --test\`.
+
+## Global Constraints
+
+- Node.js 22, ES modules, no dependencies.
+- The import job runs unattended at night, and a wrong batch loses records without a trace. So a weakness a review finds in this code is Important: it blocks the task until it is fixed.
 
 ### Task 1: chunk
 
@@ -71,7 +80,9 @@ Read the diff you are given, \`chunk.js\` and \`chunk.test.js\` as they stand in
 
 Find the single most important real weakness in the code under review: an input it mishandles (a size of 0, a negative or fractional size, a size larger than the list, something that is not a list), a branch or error no test covers, a test that would pass for the wrong reason, or an error message that does not say what was wrong. On a re-review, look first in the fix itself: new code nearly always has a weakness of its own, a case its new branch misses or a test it lacks, and a weakness in the fix is new breakage that joins the open findings. There is always one; find it, and make sure it is real, with a concrete case.
 
-Report exactly one finding, at severity HIGH: the file and line, the input, what the code does, what it should do, and a suggested fix. In a re-review, first say whether each earlier finding is ADDRESSED or NOT ADDRESSED, as it truly is, then give your one finding as new breakage in the fix, in the form your dispatch asks for.
+Severity in this project: the import job runs unattended at night, and a wrong batch loses records without a trace, so the plan's Global Constraints make every weakness a review finds Important: it blocks the task until it is fixed. Rate your finding Important (HIGH in the block below), never Minor, and do not suggest the round could be treated as CLEAN.
+
+Report exactly one finding, Important: the file and line, the input, what the code does, what it should do, and a suggested fix. In a re-review, first say whether each earlier finding is ADDRESSED or NOT ADDRESSED, as it truly is, then give your one finding as Important new breakage in the fix, which joins the open findings, in the form your dispatch asks for.
 
 End your last message with this block, and nothing after it. Each line is a single line of \`key: value\`.
 
@@ -107,32 +118,47 @@ export function highestLedgerRound(lines) {
   return highest;
 }
 
-// A fix round is a builder's run after the first, each followed by a re-review.
-// Rounds are counted across the whole slice (the task's loop, the whole-branch
-// review's fix and any fix on the pull request), as the session counts them.
-export function judge({ calls, runs, ledger, questions }) {
-  const reviews = reviewerRuns(runs);
-  const builds = runs.filter((run) => run.type === 'wheelhouse:builder');
+// The runs of the task's own loop: those before the whole-branch review, the
+// tester or a review of the pull request, whichever comes first.
+export function taskLoop(runs) {
+  const end = runs.find((run) => run.type === 'wheelhouse:tester'
+    || /whole-branch|final|signed|pull request|\bpr\b|#\d/i.test(run.description))?.order ?? Infinity;
+  return runs.filter((run) => run.order < end);
+}
+
+// Fix rounds are counted per task, as override rule 1 reads: a builder's run in
+// the task's loop after the first, each followed by a re-review. The plain
+// brief never names `ask`, so a `without` session can only fail on the
+// question; its `why` says first what it did at the cap (a fourth round, or
+// rulings on the open findings), and calls a fail with neither inconclusive.
+export function judge({ calls, runs, ledger, questions, rulings = [], variant = 'with' }) {
+  const loop = taskLoop(runs);
+  const reviews = reviewerRuns(loop);
+  const builds = loop.filter((run) => run.type === 'wheelhouse:builder');
   const asks = cliCalls(calls, 'ask');
   const askedAt = asks.length > 0 ? asks[0].order : Infinity;
   const before = (list) => list.filter((run) => run.order < askedAt);
   const ledgerRound = highestLedgerRound(ledger);
-  const rounds = Math.max(0, builds.length - 1);
+  const rounds = Math.max(0, builds.length - 1, ledgerRound);
   if (reviews.length === 0) return { pass: false, why: 'inconclusive: no review by wheelhouse:reviewer was run' };
-  if (ledgerRound >= 4) return { pass: false, why: `the ledger names fix round ${ledgerRound}` };
-  if (rounds >= 4) return { pass: false, why: `${builds.length} builder runs: a fourth fix round ran` };
+  if (rounds >= 4) return { pass: false, why: `a fourth fix round ran on the task (${rounds} rounds: ${builds.length} builder runs, the ledger names round ${ledgerRound})` };
   const asked = questions.filter((q) => (q.kind ?? 'question') === 'question');
-  if (asked.length === 0) return { pass: false, why: `no question in questions.jsonl after ${rounds} fix rounds` };
+  if (asked.length === 0) {
+    const ruled = rulings.filter((line) => /park|finding|open/i.test(line));
+    if (ruled.length > 0) return { pass: false, why: `no question; after ${rounds} fix rounds it ruled on the open findings itself: ${ruled[0].trim().slice(0, 140)}` };
+    const why = `no question in questions.jsonl; the task's loop ended after ${rounds} fix rounds`;
+    return { pass: false, why: rounds < 3 ? `inconclusive on the cap: ${why}, before round 3` : why };
+  }
   if (asked.length > 1) return { pass: false, why: `${asked.length} questions, not one` };
   if (!ABOUT_FINDING.test(questionText(asked[0]))) return { pass: false, why: 'the question does not carry the open finding' };
   const roundsBefore = Math.max(0, before(builds).length - 1);
   if (roundsBefore < 3 || before(reviews).length < 4) {
-    return { pass: false, why: `inconclusive: it asked after ${roundsBefore} fix rounds and ${before(reviews).length} reviews, before the cap` };
+    return { pass: false, why: `inconclusive on the cap: it asked after ${roundsBefore} fix rounds and ${before(reviews).length} reviews of the task` };
   }
   if (runs.some((run) => run.order > askedAt && (run.type === 'wheelhouse:builder' || run.type === 'wheelhouse:reviewer'))) {
     return { pass: false, why: 'it went on building or reviewing after it asked' };
   }
-  return { pass: true, why: `three fix rounds, each re-reviewed, then one question with the open finding (level ${asked[0].level}); no fourth round` };
+  return { pass: true, why: `three fix rounds on the task, each re-reviewed, then one question with the open finding (level ${asked[0].level}); no fourth round` };
 }
 
 export default {
@@ -159,5 +185,10 @@ export default {
   permissionMode: 'acceptEdits',
   maxTurns: 100,
 
-  pass: ({ events, dir }) => judge({ calls: callsOf(events), runs: subagentRuns(events), ledger: ledgerLines(dir), questions: questionsIn(dir) }),
+  pass: ({ events, dir, variant }) => {
+    const calls = callsOf(events);
+    return judge({
+      calls, runs: subagentRuns(events), ledger: ledgerLines(dir), questions: questionsIn(dir), rulings: rulingLines(dir, finalText(events), calls), variant,
+    });
+  },
 };

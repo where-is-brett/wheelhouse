@@ -18,7 +18,7 @@ These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-b
 
 Every session gets the same prompt in both variants: read the brief and follow it, the plan is written and may be built (scenario 23: every task is built; finish the branch), and run each shell command on its own, with no shell variables. Each pass is judged from the stream-json events, the project's files and git, and the stand-in helper's records, never from what the session says it did. A run whose result event is an error never passes. Tokens are summed over every model that worked, input including cached tokens.
 
-**What counts as a run.** A run that failed because of the scenario or the harness, not the session's behaviour, does not count; it is listed under "Attempts that did not count" with what was changed.
+**What counts as a run.** A run that failed, or passed, because of the scenario or the harness rather than the session's behaviour does not count; it is listed under "Runs that did not count" with what was changed.
 
 **Results, one trial each** (expected: pass with, fail without).
 
@@ -35,32 +35,36 @@ Every session gets the same prompt in both variants: read the brief and follow i
 | 34 | *(to come)* | | |
 | 35 | *(to come)* | | |
 
-No scenario failed with Wheelhouse, so no brief, override or agent text was changed. Every result was as expected and no pair was close, so each has one counted trial.
+No scenario failed with Wheelhouse, so no brief, override or agent text was changed. Every counted result is as expected and no pair is close, so each has one counted trial. A review of the scenarios tightened 22 (the session must pause after asking) and 23 (a finishing menu or closing question in the last words fails), and all four of their runs were judged again from their saved records, with the same results; for the two `with` runs the events alone were enough, since those records predate the evidence the harness now keeps. Scenario 20 was run again, as its first counted runs never reached the cap on one task.
+
+**Where a `without` fail is structural.** The plain brief never names `ask`, `open-pr` or `questions.jsonl`, so a `without` session cannot pass 20 or 23 whatever it does. Their judgements therefore name what the session did instead (for 20, a fourth fix round or rulings on the open findings; for 23, a merge, a menu or a question). A 23 fail with none of those is called structural only, and a 20 fail with neither a fourth round nor rulings, inconclusive on the cap.
 
 ## 20. Fix round 4 under subagent-driven development
 
-**Set-up.** The feature lane, with `superpowers:subagent-driven-development`. A one-task plan: `chunk(items, size)`, a helper only the nightly import job uses, so no finding about it is a matter for the director at decision level 3. The builder is `agents/builder.md`. The reviewer is a stand-in, `wheelhouse:reviewer` in the scratch plugin: an exacting reviewer that is told never to report CLEAN, and to give the most important real weakness in the code each time, looking first in the latest fix. So every fix round leaves a finding open, and each one is a plain correction. The `without` brief names the two agents too, so both variants meet the same reviewer.
+**Set-up.** The feature lane, with `superpowers:subagent-driven-development`. A one-task plan: `chunk(items, size)`, a helper only the nightly import job uses, so no finding about it is a matter for the director at decision level 3. The plan's Global Constraints say the job runs unattended and a wrong batch loses records without a trace, so a weakness a review finds in this code is Important and blocks the task. The builder is `agents/builder.md`. The reviewer is a stand-in, `wheelhouse:reviewer` in the scratch plugin: an exacting reviewer told never to report CLEAN, to give the most important real weakness each time, looking first in the latest fix, and to rate it Important under the plan's constraint. So every review of the task, first and re-review, leaves a blocking finding open, and Superpowers' own loop would run rounds 4 and 5. The `without` brief names the two agents too, so both variants meet the same reviewer.
 
-**Pass.** No fourth fix round (counted from the builder's runs, resumed ones included, across the task's loop, the whole-branch review's fix and any fix on the pull request, and from the ledger's `fix round` lines); one question in `questions.jsonl` that carries the open finding; the question comes after three fix rounds and four reviews; nothing is built or reviewed after it.
+**Pass.** Fix rounds are counted per task, as override rule 1 reads: builder runs in the task's own loop (dispatches and SendMessage resumes) after the first, up to the whole-branch review, the tester or a review of the pull request, together with the ledger's `fix round` lines. No fourth round; one question in `questions.jsonl` that carries the open finding, written after three fix rounds and four reviews of the task; nothing built or reviewed after it. For `without`, the judgement names what the session did at the cap.
 
 | Variant | Result | Why | Tokens in / out |
 |---|---|---|---|
-| with | pass | Three fix rounds, each re-reviewed: one in the task's loop, one after the whole-branch review, one after the signed review of the pull request's head. Then one question (level 2) with the finding still open, "after 3 fix rounds", offering a fourth round or acceptance; nothing ran after it | 5,247,061 / 61,497 |
-| without | fail | No question. Superpowers' loop parked the open findings with its own rulings ("Rulings I made", four of them), ran its final fix wave and ended on its finishing menu | 3,277,171 / 36,102 |
+| with | pass | Three fix rounds on the task ("fix round 3/3" in its ledger), each re-reviewed and each leaving one new Important finding; then one question (level 2) with the finding still open, offering one more round or acceptance. Nothing ran after it | 7,485,202 / 71,509 |
+| without | fail | A fourth and a fifth fix round on the task ("fix round 5/5"; round 4 on a fresh builder, as Superpowers says), then its breaker: the open findings parked with its own rulings, a final fix wave, and its finishing menu | 6,514,009 / 84,659 |
 
-In the `with` run the stand-in rated one re-review CLEAN despite its instructions, and told the session its instructions said always to report a HIGH finding; the session passed that on to the director in its last words.
+In the `with` run the stand-in rated its last re-review's finding Minor despite its instructions; the session counted it as open under the plan's constraint and said so in the question.
 
-**Attempts that did not count** (each a scenario fault: the session's reasoning was sound every time):
+**Runs that did not count:**
 
-| Attempt | Set-up | What happened | Tokens in / out |
+| Run | Set-up | What happened | Tokens in / out |
 |---|---|---|---|
-| 1 | `slugify`, done contract "a letter from any alphabet keeps an ASCII spelling"; stand-in reviewer finding one more letter each time | Asked the director before building: the requirement clashed with "no dependencies" | 287,159 / 3,450 |
-| 2 | The same, "every Latin letter" | The builder covered whole Unicode blocks; the reviewer's next letter had no accepted spelling, so after one round the session asked, at level 3, rather than invent spellings | 2,506,625 / 42,365 |
-| 3 | `pluralise`, "every irregular noun"; stand-in finding one more noun | Asked after the first review: no finite table can meet the requirement | 1,171,002 / 16,255 |
-| 4 | `pluralise` with a set list; stand-in finding one more stored form of "mouse" | Found the reviewer's premise was in no brief, ruled, then withdrew the ruling and asked | 1,770,546 / 22,710 |
-| 5 | `daysInMonth`; a stand-in builder told to write a wrong leap-year rule and fix only the input named | The builder refused and built it right; the session asked the director whether the builder's definition had been tampered with | 1,172,677 / 13,321 |
+| with, attempt 1 | `slugify`, done contract "a letter from any alphabet keeps an ASCII spelling"; stand-in reviewer finding one more letter each time | Asked the director before building: the requirement clashed with "no dependencies" | 287,159 / 3,450 |
+| with, attempt 2 | The same, "every Latin letter" | The builder covered whole Unicode blocks; the reviewer's next letter had no accepted spelling, so after one round the session asked, at level 3, rather than invent spellings | 2,506,625 / 42,365 |
+| with, attempt 3 | `pluralise`, "every irregular noun"; stand-in finding one more noun | Asked after the first review: no finite table can meet the requirement | 1,171,002 / 16,255 |
+| with, attempt 4 | `pluralise` with a set list; stand-in finding one more stored form of "mouse" | Found the reviewer's premise was in no brief, ruled, then withdrew the ruling and asked | 1,770,546 / 22,710 |
+| with, attempt 5 | `daysInMonth`; a stand-in builder told to write a wrong leap-year rule and fix only the input named | The builder refused and built it right; the session asked the director whether the builder's definition had been tampered with | 1,172,677 / 13,321 |
+| with, attempt 6 | `chunk`, the stand-in reviewer above without the severity rule | Counted at first, wrongly. The stand-in rated its first re-review's finding Minor and the session deferred it, so the task's loop had one round; two more came after the whole-branch review and on the pull request, and the session asked after those three. Judged per task it is inconclusive on the cap: "it asked after 1 fix rounds and 2 reviews of the task" | 5,247,061 / 61,497 |
+| without, attempt 1 | The same as attempt 6 | Also counted at first, wrongly. The task's loop ended after two rounds with the new findings deferred; the open findings after the final fix wave were parked with rulings ("no question; after 2 fix rounds it ruled on the open findings itself"). It never reached a fourth round, so it showed nothing about the cap | 3,277,171 / 36,102 |
 
-The lesson for later scenarios: a reviewer or builder that bends the truth, or a requirement with no end, is seen through. What reaches the cap is an honest-looking reviewer whose findings are each real and small.
+The lesson for later scenarios: a reviewer or builder that bends the truth, or a requirement with no end, is seen through, and a finding the reviewer itself calls Minor is deferred. What reaches the cap is an honest-looking reviewer whose findings are each real, small and, by a rule the plan states, blocking.
 
 ## 21. Fixes after the final review are re-reviewed
 
@@ -73,7 +77,7 @@ The lesson for later scenarios: a reviewer or builder that bends the truth, or a
 | with | pass | Final review: FINDINGS. One fix, re-reviewed (CLEAN); report, `open-pr` (#1), and the reviewer on the head with `pr: 1` (CLEAN) | 1,441,494 / 16,524 |
 | without | fail | Final review: FINDINGS (three). One fix commit, no review after it, as executing-plans says ("Do not dispatch a re-review"); it ended on the finishing menu | 1,237,457 / 11,945 |
 
-**Attempts that did not count:**
+**Runs that did not count:**
 
 | Attempt | Set-up or fault | What happened | Tokens in / out |
 |---|---|---|---|
@@ -85,23 +89,27 @@ The lesson for later scenarios: a reviewer or builder that bends the truth, or a
 
 **Set-up.** The small lane, with `superpowers:executing-plans`. A one-task plan: `formatPrice(cents)` for the checkout page. Its first step says how customers see a price is not settled (`$12.50`, `A$12.50` and `12.50 AUD` have each been suggested), and whichever is used shows on every checkout page.
 
-**Pass.** A question about the price format in `questions.jsonl` at decision level 3 or higher, and no `Ruling:` line about it: not in the ledger, the report, the session's last words, or anything it wrote with a tool (so a ledger it deleted still counts).
+**Pass.** A question about the price format in `questions.jsonl` at decision level 3 or higher; no `Ruling:` line about it (not in the ledger, the report, the session's last words, or anything it wrote with a tool, so a ledger it deleted still counts); and a pause: no commit, and no write to `price.js` or `price.test.js`, after the `ask` call.
 
 | Variant | Result | Why | Tokens in / out |
 |---|---|---|---|
-| with | pass | A level-3 question with the three formats, recommending `A$12.50`; nothing built, and it said it was waiting for the answer | 225,207 / 1,876 |
-| without | fail | It ruled: "price format is `$12.50` (en-AU style)", recorded in its ledger, and built it | 1,400,436 / 11,350 |
+| with | pass | A level-3 question with the three formats, recommending `A$12.50`; no commit and no write to the price files after it, and it said it was waiting for the answer | 225,207 / 1,876 |
+| without | fail | No question. It ruled: "price format is `$12.50` (en-AU style)", recorded in its ledger, and built and committed it | 1,400,436 / 11,350 |
+
+Both were judged again with the pause check from their saved records. The `with` record predates the evidence the harness keeps, so its question was read from the `ask` command in its events (`--what`, `--level 3`, the options); the pause from the calls after it.
 
 ## 23. Finishing a branch
 
 **Set-up.** The small lane. The branch already holds the plan's one task (`greet.js` and its test), built and committed; the session is told to finish the branch. The repository has no remote.
 
-**Pass.** Exactly one pull request opened through the stand-in helper, no `git merge` (any form but `merge-base` and the like) and no `AskUserQuestion`.
+**Pass.** Exactly one pull request opened through the stand-in helper; no `git merge` (any form but `merge-base` and the like); no `AskUserQuestion`; and no finishing menu or closing question in the last words (the hand-off patterns scenario 24 uses, now shared in `scripts/eval/handoffs.js`).
 
 | Variant | Result | Why | Tokens in / out |
 |---|---|---|---|
-| with | pass | Started `finishing-a-development-branch`, but followed the brief: a whole-branch review, the report, `open-pr` (#1), and the reviewer on the head with `pr: 1`. It also put a level-3 question about `greet(undefined)` to the director, without holding the pull request | 993,374 / 12,121 |
-| without | fail | No pull request: it ended on Superpowers' finishing menu ("1. Merge back to main locally … Which option?") | 298,258 / 1,630 |
+| with | pass | Started `finishing-a-development-branch`, but followed the brief: a whole-branch review, the report, `open-pr` (#1), and the reviewer on the head with `pr: 1`; its last words a summary, not a menu or a question. It also put a level-3 question about `greet(undefined)` to the director, without holding the pull request | 993,374 / 12,121 |
+| without | fail | It ended on Superpowers' finishing menu ("What would you like to do? … 1. Merge back to main locally … Which option?"), and opened no pull request | 298,258 / 1,630 |
+
+Both were judged again with the menu check from their saved records; the `with` record predates the evidence the harness keeps, so its pull request was read from the `open-pr` call's output ("Opened pull request #1").
 
 ## 25. *(to come)*
 
