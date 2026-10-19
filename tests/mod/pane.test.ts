@@ -34,7 +34,7 @@ const model = (glance: string) => ({
   glance,
   stop: { on: true, since: '2026-10-19T02:00:00.000Z' },
   cards: [
-    { id: 'card-1', n: 1, header: 'Approve', kind: 'approve', text: FIRST, hash: 'aaaaaaaaaaaa', buttons: ['Approve'], note: null, blocking: false, asked: false },
+    { id: 'card-1', n: 1, header: 'Approve', kind: 'approve', text: FIRST, hash: 'aaaaaaaaaaaa', buttons: [{ label: 'Approve', does: 'record' }], note: null, blocking: false, asked: false },
     { id: 'card-2', n: 2, header: 'Question', kind: 'question', text: SECOND, hash: 'bbbbbbbbbbbb', buttons: [], note: null, blocking: false, asked: true },
   ],
   building: ['Building the banner, slice 1 of 3'],

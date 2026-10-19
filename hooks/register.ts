@@ -1,7 +1,8 @@
 // hooks/register.ts
 // Wheelhouse's mod. It signs nothing and runs no shell: every call it makes goes to the
 // plugin's bridge, `node <plugin root>/scripts/mod/bridge.js`, through ask (hooks/mod/ask.ts),
-// with one JSON request, and the bridge answers one JSON line.
+// with one JSON request, and the bridge answers one JSON line. The prompts the bridge's answers
+// hold, and the settings view's Ask the front desk, are handed to the front desk as prompts.
 //
 // This file only wires the hooks, each passing on with next(e) and never changing the message:
 //   session.start    registers /go and /wheelhouse, sends the session's usage figures and
@@ -11,9 +12,11 @@
 //   turn.start       marks the session busy, for the tick
 //   turn.complete    marks it idle again
 //   command.run      /go sends go and answers with the bridge's words; /wheelhouse opens the pane
-//   ui.render        draws the pane
+//   ui.render        draws the pane, with each card's buttons, STOP or Lift STOP and the settings
+//                    view (hooks/mod/cards.tsx, hooks/mod/settings.tsx)
 // A message counts as the director's only when it came from the prompt (`composer`) or the
-// phone (`bridge`); every other origin never reaches the bridge.
+// phone (`bridge`); every other origin never reaches the bridge. A press counts as the
+// director's under the origin `pane`, which only a button's press handler sends.
 import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, SessionCost } from 'claude-code'
 import { ask, send, FAILED, type Answer } from './mod/ask'
 import { drawPane, openPane, startPane, turnEnded, turnStarted } from './mod/pane'

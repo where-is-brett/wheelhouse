@@ -27,10 +27,12 @@ export const HOOKS = [
   'command.run{command=wheelhouse}', `ui.render{component=Pane, requestId=${PANE_ID}}`,
 ];
 // $.clock.now reads the time a tick's answer was read and the time the pane is drawn, for the
-// line saying what is shown is old.
+// line saying what is shown is old. $.prompt.submit hands the front desk the prompts a press's
+// answer holds, and the settings view's Ask the front desk.
 export const CALLS = [
-  '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.session.id', '$.session.root', '$.session.usage',
-  '$.state.get', '$.state.set', '$.ui.close', '$.ui.open', '$.ui.panes', '$.ui.resolve', '$.ui.status', '$.ui.toast',
+  '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.prompt.submit', '$.session.id', '$.session.root',
+  '$.session.usage', '$.state.get', '$.state.set', '$.ui.close', '$.ui.open', '$.ui.panes', '$.ui.resolve', '$.ui.status',
+  '$.ui.toast',
 ];
 // Hooks that must always carry a matcher: one with none would draw every component the engine draws.
 const MATCHED_HOOKS = ['ui.render', 'ui.resolve'];
