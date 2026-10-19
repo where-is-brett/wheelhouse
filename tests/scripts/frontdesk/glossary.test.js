@@ -91,7 +91,13 @@ test('only the first mention is replaced; later ones keep the term, and a senten
     plainWords('- the helper is up\n- the helper is slow', g, PLAIN).text,
     `- the key-holding program on your computer is up\n- the helper is slow\n\nTerms: the helper means ${g['the helper'].plain}.`,
   );
-  assert.equal(plainWords('Two PRs and a PR', g, PLAIN).text, `Two proposed changes and a PR\n\nTerms: pull request means ${g['pull request'].plain}.`);
+  assert.equal(plainWords('Two PRs and a PR', g, PLAIN).text, `Two proposed changes and a PR\n\nTerms: pull request (PR) means ${g['pull request'].plain}.`);
+});
+
+test('a term that stays where the text spelt it by an alias is listed with that spelling; one spelt as the term is not', () => {
+  const g = glossaryOf({});
+  assert.equal(plainWords('A PR, then PRs', g, PLAIN).text, `A proposed change, then PRs\n\nTerms: pull request (PR) means ${g['pull request'].plain}.`);
+  assert.equal(plainWords('A PR, then a pull request', g, PLAIN).text, `A proposed change, then a pull request\n\nTerms: pull request means ${g['pull request'].plain}.`);
 });
 
 test('a known term is kept as it is, named by its term or its concept', () => {
@@ -100,7 +106,7 @@ test('a known term is kept as it is, named by its term or its concept', () => {
   assert.equal(plainWords(text, g, { explanations: 'plain', known: ['pull-request'] }).text, "The PR's automatic check run is red on piece 2");
   assert.equal(plainWords(text, g, { explanations: 'plain', known: new Set(['pull request', 'CI', 'slice']) }).text, text);
   const some = plainWords(text, g, { explanations: 'some-terms', known: ['ci', 'slice'] });
-  assert.match(some.text, /^The PR's CI is red on slice 2\n\nTerms: pull request means a proposed change/);
+  assert.match(some.text, /^The PR's CI is red on slice 2\n\nTerms: pull request \(PR\) means a proposed change/);
   assert.doesNotMatch(some.text, /CI means|slice means/);
 });
 
@@ -109,7 +115,7 @@ test('with some technical terms, terms are kept with their meanings at the end',
   const out = plainWords("The PR's CI is red", g, SOME);
   assert.equal(
     out.text,
-    `The PR's CI is red\n\nTerms: pull request means ${g['pull request'].plain}; CI means ${g.CI.plain}.`,
+    `The PR's CI is red\n\nTerms: pull request (PR) means ${g['pull request'].plain}; CI means ${g.CI.plain}.`,
   );
   assert.deepEqual(out.terms, ['pull request', 'CI']);
   assert.equal(plainWords("The PR's CI is red", g, { known: ['pull-request', 'ci'], explanations: 'some-terms' }).text, "The PR's CI is red");
@@ -252,5 +258,5 @@ test('a term followed by a name, or by another term, is kept and listed', () => 
   // A verb form after a term is no compound.
   assert.equal(plainWords('1 pull request merged', g, PLAIN).text, '1 proposed change added to the product');
   const compound = plainWords('The PR review is clean', g, PLAIN);
-  assert.equal(compound.text, `The PR review is clean\n\nTerms: pull request means ${g['pull request'].plain}; review means ${g.review.plain}.`);
+  assert.equal(compound.text, `The PR review is clean\n\nTerms: pull request (PR) means ${g['pull request'].plain}; review means ${g.review.plain}.`);
 });

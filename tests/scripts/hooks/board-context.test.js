@@ -226,7 +226,7 @@ test('the briefing in plain words keeps to its words, its Terms line counted', a
       assert.ok(wordsIn(text) <= limit, `${length}: ${wordsIn(text)} words\n${text}`);
       if (length !== 'short') {
         assert.ok(wordsIn(text) > limit - 12, `${length}: ${wordsIn(text)} words, cut further than it needed\n${text}`);
-        assert.match(text, /\n\nTerms: pull request means [^]*; CI means [^]*; slice means [^]*\.$/);
+        assert.match(text, /\n\nTerms: pull request \(PR\) means [^]*; CI means [^]*; slice means [^]*\.$/);
       }
       assert.match(text, /and \d+ more/);
       shown[length] = text.split('\n').filter((line) => line.startsWith('- ')).length;
@@ -402,7 +402,7 @@ test('some-terms keeps the terms with their meanings, and a known term is left a
     setProfile({ explanations: 'some-terms', 'known:ci': true });
     const text = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.match(text, /The PR's CI is red on slice 2/);
-    assert.match(text, /\n\nTerms: pull request means a proposed change[^]*; slice means one finished piece[^]*\.$/);
+    assert.match(text, /\n\nTerms: pull request \(PR\) means a proposed change[^]*; slice means one finished piece[^]*\.$/);
     assert.doesNotMatch(text, /CI means/);
 
     setProfile({ explanations: 'plain', 'known:pull-request': true });
@@ -422,7 +422,7 @@ test('the project\'s glossary is used, and the Terms line survives a long board'
     const long = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.ok(long.length <= CONTEXT_CHARS, long.length);
     assert.match(long, /and \d+ more/);
-    assert.match(long, /\n\nTerms: pull request means [^]*CI means our robot inspector[^]*\.$/);
+    assert.match(long, /\n\nTerms: pull request \(PR\) means [^]*CI means our robot inspector[^]*\.$/);
   });
 });
 
