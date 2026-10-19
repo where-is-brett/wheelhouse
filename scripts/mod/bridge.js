@@ -19,7 +19,8 @@
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
 //   { cmd: 'setting', origin, cwd, key, choice }    a choice in the settings pane: sets it and confirms it
-//   { cmd: 'go', origin, cwd }                      /go or the pane: lifts STOP with a signed record
+//   { cmd: 'go', origin, cwd, since? }              /go or the pane: lifts STOP with a signed record;
+//                                                   the pane's carries the start of the STOP it drew
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
 //   { cmd: 'digest', origin, cwd }                  /digest: the briefing since the last, as text (any origin)
 //
@@ -70,6 +71,8 @@ export const SAYS = {
   notProject: 'This isn\'t a Wheelhouse project',
   goNotDirector: 'Only the director can lift STOP',
   goNotProject: 'This isn\'t a Wheelhouse project, so STOP stays on',
+  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it',
+  goOtherStop: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again',
   stopOff: 'STOP isn\'t on.',
   cantSign: 'Wheelhouse couldn\'t sign that here, so STOP stays on',
   cantLift: 'STOP couldn\'t be lifted, so it stays on',
@@ -216,12 +219,19 @@ async function setting(req, d) {
 
 // /go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
 // record's own path, and STOP is lifted only once it is. A record that can't be signed or kept
-// leaves STOP on.
+// leaves STOP on. The pane's press carries `since`, the start of the STOP the pane drew, and
+// lifts only that STOP, as a Lift STOP card does only for a STOP begun before it was shown, so a
+// pane drawn before STOP was set again can't lift a STOP the director never saw. /go typed or
+// phoned lifts the STOP in force.
 async function go(req, d) {
   if (!fromDirector(req.origin) && req.origin !== PANE) return no(SAYS.goNotDirector);
-  if (!(await d.stopState()).on) return { ok: true, says: SAYS.stopOff };
+  const fromPane = req.origin === PANE;
+  if (fromPane && (typeof req.since !== 'string' || req.since === '')) return no(SAYS.goUndated);
+  const stop = await d.stopState();
+  if (!stop.on) return { ok: true, says: SAYS.stopOff };
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.goNotProject);
+  if (fromPane && stop.at !== req.since) return no(SAYS.goOtherStop);
   const got = { made: { kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: '/go' } }, lift: true };
   let lifting = false;
   let kept;
@@ -322,7 +332,8 @@ async function courier(found, pane, req, d) {
       now: d.now,
       timeZone: d.timeZone,
     });
-    return typeof submit === 'string' ? submit : null;
+    // One shape for every submit: a list of prompts.
+    return typeof submit === 'string' ? [submit] : null;
   } catch {
     pane.missing = [...pane.missing, SAYS.noCourier];
     return null;
@@ -402,7 +413,8 @@ const strings = (value) => Array.isArray(value) && value.every((item) => typeof 
 
 // The answer's one line: { ok } and `says` when there is one, then only the fields the mod reads
 // (role, every, pane, glance, status, submit, rows, text), each when it is present and of its
-// type. Nothing else a command put in its answer reaches the mod.
+// type; `submit` is always a list of prompts. Nothing else a command put in its answer reaches
+// the mod.
 export function lineOf(answer) {
   const out = { ok: answer?.ok === true };
   if (typeof answer?.says === 'string') out.says = answer.says;
@@ -411,7 +423,7 @@ export function lineOf(answer) {
   if (isRecord(answer?.pane)) out.pane = answer.pane;
   if (typeof answer?.glance === 'string') out.glance = answer.glance;
   if (typeof answer?.status === 'string') out.status = answer.status;
-  if (typeof answer?.submit === 'string' || strings(answer?.submit)) out.submit = answer.submit;
+  if (strings(answer?.submit)) out.submit = answer.submit;
   if (Array.isArray(answer?.rows) && answer.rows.every(isRecord)) out.rows = answer.rows;
   if (typeof answer?.text === 'string') out.text = answer.text;
   return JSON.stringify(out);

@@ -16,7 +16,7 @@ import { COURIER_GAP_MS, FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../..
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
-import { keysDir, usageDir, stateDir } from '../../../scripts/lib/paths.js';
+import { keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -256,12 +256,56 @@ test('press is refused for any origin but pane; stop and go accept pane', () => 
   // The pane sets STOP, and lifts it with a signed record, answering what is in progress.
   assert.deepEqual(await handle({ cmd: 'stop', origin: 'pane', cwd: '/work' }, deps()), { ok: true, says: 'STOP is on.' });
   assert.deepEqual(stopState(), { on: true, by: 'mod', at: NOW.toISOString() });
-  const go = await handle({ cmd: 'go', origin: 'pane', cwd: '/work' }, deps({ client, loadInputs: building(1) }));
+  const go = await handle({ cmd: 'go', origin: 'pane', cwd: '/work', since: NOW.toISOString() }, deps({ client, loadInputs: building(1) }));
   assert.deepEqual(go, { ok: true, says: 'STOP is off. In progress: 1 feature building.' });
   assert.equal(stopState().on, false);
   assert.equal(client.calls.record.length, 1);
   assert.equal(client.calls.record[0].event.data.action, 'lift-stop');
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
+}));
+
+test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /go typed or phoned needs no date', () => withHome(async () => {
+  enrolKey();
+  const SHOWN = '2026-10-19T04:00:00.000Z';
+  setStop({ by: 'prompt', now: () => new Date(SHOWN) });
+  const client = fakeClient();
+  let lifted = 0;
+  const lift = () => { lifted += 1; liftStop(); };
+  const goFromPane = (since) => handle({ cmd: 'go', origin: 'pane', cwd: '/work', ...(since === undefined ? {} : { since }) }, deps({ client, liftStop: lift, loadInputs: building(1) }));
+  // No date, or one that isn't this STOP's start: nothing is recorded, and STOP stays on.
+  for (const since of [undefined, null, 5, '', '2026-10-19T03:00:00.000Z', NOW.toISOString()]) {
+    const answer = await goFromPane(since);
+    assert.equal(answer.ok, false, String(since));
+    assert.match(answer.says, /STOP stays on/, String(since));
+    assert.doesNotMatch(answer.says, /\n/);
+  }
+  assert.deepEqual(await goFromPane(undefined), { ok: false, says: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it' });
+  assert.deepEqual(await goFromPane('2026-10-19T03:00:00.000Z'), { ok: false, says: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again' });
+  assert.equal(lifted, 0);
+  assert.equal(stopState().on, true);
+  assert.equal(client.calls.record.length, 0);
+  assert.deepEqual(pendingFiles(), []);
+
+  // A STOP whose start can't be read can't be named by the pane, so it stays on there.
+  liftStop();
+  fs.mkdirSync(path.dirname(stopFile()), { recursive: true });
+  fs.writeFileSync(stopFile(), 'not json');
+  assert.equal((await goFromPane(SHOWN)).ok, false);
+  assert.equal(stopState().on, true);
+  assert.equal(client.calls.record.length, 0);
+
+  // The STOP the pane drew is lifted.
+  setStop({ by: 'prompt', now: () => new Date(SHOWN) });
+  assert.deepEqual(await goFromPane(SHOWN), { ok: true, says: 'STOP is off. In progress: 1 feature building.' });
+  assert.equal(stopState().on, false);
+  assert.equal(client.calls.record.length, 1);
+
+  // /go typed or phoned lifts whatever STOP is on, with no date and whatever date it carries.
+  for (const [origin, since] of [['composer', undefined], ['bridge', '2026-10-19T03:00:00.000Z']]) {
+    setStop({ by: 'prompt', now: () => new Date(SHOWN) });
+    const answer = await handle({ cmd: 'go', origin, cwd: '/work', ...(since === undefined ? {} : { since }) }, deps({ client, loadInputs: building(1) }));
+    assert.deepEqual(answer, { ok: true, says: 'STOP is off. In progress: 1 feature building.' }, origin);
+  }
 }));
 
 test('run where the signing key cannot be read, a press signs nothing and says so', () => withHome(async () => {
@@ -453,9 +497,9 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   // A turn is running: the new card waits.
   assert.equal('submit' in await handle(tickOf(repo, { idle: false }), live({ now: later(1) })), false);
   const woken = await handle(tickOf(repo, { idle: true }), live({ now: later(2) }));
-  assert.equal(woken.submit, 'Wheelhouse courier: 1 new card (2). Ask any new cards now, once, then send Claude\'s notification in one line.');
-  assert.equal(JSON.parse(lineOf(woken)).submit, woken.submit);
-  assert.ok(!woken.submit.includes('words'));
+  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Ask any new cards now, once, then send Claude\'s notification in one line.']);
+  assert.deepEqual(JSON.parse(lineOf(woken)).submit, woken.submit);
+  assert.ok(!woken.submit[0].includes('words'));
   // Once handed back, it isn't handed back again.
   assert.equal('submit' in await handle(tickOf(repo, { idle: true }), live({ now: later(3) })), false);
 
@@ -476,14 +520,14 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   assert.equal('submit' in late, false);
   assert.ok(!late.pane.missing.includes('The courier couldn\'t run this time'));
   const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
-  assert.equal(woken3.submit, 'Wheelhouse courier: 1 new card (3). Ask any new cards now, once, then send Claude\'s notification in one line.');
+  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3). Ask any new cards now, once, then send Claude\'s notification in one line.']);
 
   // A second front desk opening now marks nothing and wakes for nothing.
   waiting('c-old', 'c-new', 'c-third', 'c-fourth');
   const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
   assert.equal('submit' in second, false);
   const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));
-  assert.equal(first.submit, 'Wheelhouse courier: 1 new card (4). Ask any new cards now, once, then send Claude\'s notification in one line.');
+  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Ask any new cards now, once, then send Claude\'s notification in one line.']);
 }));
 
 test('the model is written to status.json before the tick answers', () => withHome(async (home) => {
@@ -624,7 +668,8 @@ test('the answer line carries only its own fields', () => {
     ok: true, says: 'x', role: 'front-desk', every: 15000, pane: { v: 1 }, glance: 'g', status: 's', submit: ['one', 'two'], rows: [{ key: 'k' }], text: 'digest',
   };
   assert.deepEqual(JSON.parse(lineOf({ ...full, secret: 'no', cards: [], watcher: 'running', nested: { x: 1 } })), full);
-  assert.deepEqual(JSON.parse(lineOf({ ...full, submit: 'one prompt' })).submit, 'one prompt');
+  // `submit` is always a list of prompts: a lone string isn't one.
+  assert.equal('submit' in JSON.parse(lineOf({ ...full, submit: 'one prompt' })), false);
   // Each only when it is of its type.
   assert.deepEqual(JSON.parse(lineOf({
     ok: true, says: 5, role: 7, every: '15000', pane: [], glance: 1, status: {}, submit: [1], rows: ['x'], text: null,
