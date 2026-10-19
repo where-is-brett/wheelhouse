@@ -20,6 +20,10 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
+import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const HEAD = `abc1234${'0'.repeat(33)}`;
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -32,7 +36,7 @@ const LOCK_REASON = 'this computer no longer holds the lock';
 const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
 // The mirror can't read the pull request in these tests, so whether it is up to date is not known.
 const UNCHECKED = 'whether the branch is up to date could not be checked';
-const openAt = (head) => async () => ({ headSha: head, mergeable: 'mergeable', state: 'open' });
+const openAt = (head) => async () => ({ headSha: head, mergeable: 'mergeable', state: 'open', body: BODY });
 const NONE_FOUND = { guardrailPaths: [], criticalAreas: [] };
 const unix = process.platform !== 'win32';
 const unixOnly = unix ? false : 'socket files exist only on macOS and Linux';
@@ -42,7 +46,7 @@ function fakeAdapter(overrides = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }),
+    prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     branchHead: async () => HEAD,
     hasCi: async () => true,
@@ -134,7 +138,7 @@ test('the helper answers on a socket, and on a named pipe on Windows', async () 
     await as(home, () => withHelper(fakeAdapter(), async (client, helper) => {
       assert.equal((await client.health()).ok, true);
       const state = await client.prState({ project: 'o__p', number: 7 });
-      assert.deepEqual(state, { ok: true, result: { headSha: HEAD, mergeable: 'mergeable', state: 'open' } });
+      assert.deepEqual(state, { ok: true, result: { headSha: HEAD, mergeable: 'mergeable', state: 'open', body: BODY } });
       if (unix) assert.equal(fs.statSync(helper.address).mode & 0o077, 0);
       else assert.match(helper.address, /^\\\\\.\\pipe\\wheelhouse-test-[0-9a-f]{8}-helper$/);
     }));
@@ -711,7 +715,8 @@ test('only keys are hidden: a GitLab address in an answer is kept', async () => 
   assert.deepEqual(new Set(secretsOf(env)), new Set([FAKE_KEY, header, header.split(' ').pop(), `oauth2:${FAKE_KEY}`]));
   try {
     await as(home, () => withHelper(fakeAdapter({ openPr: async () => ({ number: 3, url: 'https://gitlab.example.com/o/p/-/merge_requests/3' }) }), async (client) => {
-      const opened = await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '' });
+      writeSessionProvenance('o__p', 'sess-1');
+      const opened = await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '', session: 'sess-1' });
       assert.deepEqual(opened, { ok: true, result: { number: 3, url: 'https://gitlab.example.com/o/p/-/merge_requests/3' } });
     }, { envFor: async () => env }));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }

@@ -47,8 +47,8 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
     push: post('/push'), //          { project, dir, refspec }
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
-    openPr: post('/pr/open'), //     { project, head, base?, title, body, session? }: no base means the default branch
-    updatePr: post('/pr/update'), // { project, number, title?, body? }
+    openPr: post('/pr/open'), //     { project, head, base?, title, body, session }: no base means the default branch; the helper stamps the body with what built it, from the session's provenance on this computer, and refuses a session with none
+    updatePr: post('/pr/update'), // { project, number, title?, body?, session }: a new body is stamped as openPr's is; a session with no provenance on this computer is refused
     updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts?, ciPush?: { branch, sha } }: merges the default branch in; refused under STOP; ciPush names the merge commit the director's CI card must approve
     carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate, earlier }: the gate's carry-over rule, read-only, answered under STOP; with no CLEAN review to weigh, 'none' and upToDate false, unread; earlier: a CLEAN review of an earlier commit is on record
     prState: post('/pr/state'), //   { project, number }

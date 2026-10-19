@@ -3,7 +3,7 @@
 //   ask      writes a question for the director and prints its id
 //   answer   prints the director's answer to a question, once it is signed
 //   plan     records the plan just written, in plan.json, for the status and the foreman
-//   report   checks report.md and that it holds every ruling kept
+//   report   checks report.md and that it holds every ruling kept, then stamps it with what built it
 //   open-pr  opens the feature's pull request and keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
 // the worktree, so tests use a fake helper. Files are read and written only in the
@@ -21,6 +21,8 @@ import { branchOf } from '../hooks/session-start.js';
 import { projectOf } from '../hooks/kit.js';
 import { helperClient } from '../host/helper-client.js';
 import { REPORT_WORDS } from '../lib/build-loop.js';
+import { stopState } from '../lib/stop.js';
+import { sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -209,6 +211,21 @@ export function report({ worktree }) {
   return { missing: inspect(worktree).missing };
 }
 
+// Stamps report.md with the block that says what built it (the same block the helper stamps in
+// the pull request), in place of any it had. Returns whether report.md was written.
+export function stampReport({ worktree, provenance }) {
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const file = featurePaths(worktree).report;
+  const text = readCapped(file, REPORT_BYTES);
+  if (text === null) throw new CliError("report.md can't be read");
+  const stamped = stampProvenance(text, provenance);
+  if (stamped === text) return false;
+  writeWhole(file, stamped);
+  return true;
+}
+
+const NO_PROVENANCE = "This session's provenance is not on this computer, so the report can't say what built it, and open-pr will be refused: run them from a session that started on this computer.";
+
 // --- plan ---
 
 // Records the plan just written (ruling R87): a path inside the worktree, to a
@@ -273,6 +290,7 @@ const COMMANDS = ['ask', 'answer', 'plan', 'report', 'open-pr'];
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
   cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), find = featureWorktree, projectOf: findProject = projectOf,
+  provenanceOf = sessionProvenance, stopped = () => stopState().on,
 } = {}) {
   try {
     const [command, ...rest] = argv;
@@ -303,6 +321,15 @@ export async function main(argv, {
         return 1;
       }
       out('The report is whole.\n');
+      // The session's own provenance, from this computer: the session id the hooks kept, in the project's folder.
+      const sessionId = keptSession(featurePaths(worktree).session);
+      let provenance = null;
+      try {
+        provenance = sessionId === null ? null : provenanceOf({ project: findProject(worktree)?.project, sessionId });
+      } catch { /* said below */ }
+      if (provenance === null) out(`${NO_PROVENANCE}\n`);
+      else if (stopped()) out('STOP is on, so the report was not stamped with what built it.\n');
+      else if (stampReport({ worktree, provenance })) out('It now says what built it.\n');
     } else {
       const { number, already } = await openPr({ client: helper(), project: project(), worktree, argv: rest });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);

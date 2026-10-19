@@ -19,6 +19,10 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { matchingBody } from '../../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const T0 = new Date('2026-10-19T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
@@ -78,7 +82,7 @@ function fakeAdapter(remote, over = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: await hostHead(remote), headRef: BRANCH, baseRef: 'main', mergeable: 'yes', state: 'open', ...over }),
+    prState: async () => ({ headSha: await hostHead(remote), headRef: BRANCH, baseRef: 'main', mergeable: 'yes', state: 'open', body: BODY, ...over }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
   };
@@ -385,7 +389,7 @@ test('update-branch brings up to date only a feature branch of this repository, 
     const forkHead = await g(pr.work, 'rev-parse', 'HEAD');
     await g(pr.work, 'push', '-q', 'origin', `${forkHead}:refs/pull/7/head`);
     await g(pr.work, 'checkout', '-q', BRANCH);
-    const fork = { ...fakeAdapter(pr.remote), prState: async () => ({ headSha: forkHead, headRef: BRANCH, baseRef: 'main', mergeable: 'yes', state: 'open' }) };
+    const fork = { ...fakeAdapter(pr.remote), prState: async () => ({ headSha: forkHead, headRef: BRANCH, baseRef: 'main', mergeable: 'yes', state: 'open', body: BODY }) };
     await refusedWith(fork, 'the pull request\'s head is not this repository\'s branch of that name, so it is not brought up to date: it may come from a fork');
   } finally { pr.remote.cleanup(); }
 });

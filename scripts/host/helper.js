@@ -45,6 +45,8 @@ import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writePr
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { SLUG } from '../lib/build-loop.js';
+import { ROOT as OWN_ROOT } from '../lineage/check.js';
+import { bodyProvenance, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -99,6 +101,7 @@ const MOST_KEPT = 64 * 1024;
 const AUTH_FAILURE = /authentication|could not read username|permission denied|\b40[13]\b|not logged in|auth login|sign in/i;
 const NOT_AMONG = 'that commit is not among the last ten merges, so the product is not put back to it';
 const LOCK_REASON = 'this computer no longer holds the lock';
+const NO_PROVENANCE = 'this session\'s provenance is not on this computer, so the pull request could not say what built it: send it from a session that started on this computer';
 
 // The plugin's version, from .claude-plugin/plugin.json beside these scripts, so session-start
 // can tell a helper left running from an older copy. Null when it cannot be read.
@@ -655,6 +658,8 @@ export async function startHelper({
   screenshotsMatch = async () => false,
   // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
   profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
+  // The installed Wheelhouse, whose lineage/manifest.json the gate checks a pull request's provenance against.
+  pluginRoot = OWN_ROOT,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1620,8 +1625,9 @@ export async function startHelper({
       enrolled,
       upToDate,
       incident: incidentFor(views, number),
-      // Interim value until Task 27.
-      provenance: { ok: true }, // Task 27 reads the PR's provenance block
+      // The block /pr/open stamped, against this Wheelhouse's own manifest. A verified restore
+      // has none: it puts back a release that merged before (Ruling 105).
+      provenance: restore ? { ok: true } : bodyProvenance(pr.body, pluginRoot),
     });
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
@@ -2140,10 +2146,21 @@ export async function startHelper({
       const spelled = checkRefspec(body.head, defaultBranch);
       if (!spelled.allowed) return { ok: false, refused: spelled.refused };
       if (spelled.branch === STATE_BRANCH || spelled.branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+      const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
+      if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
       if (stopped()) return STOP_REFUSAL;
-      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: body.body }) };
+      const text = typeof body.body === 'string' ? stampProvenance(body.body, provenance) : body.body;
+      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: text }) };
     },
-    '/pr/update': writing((a, { number, title, body }) => a.updatePr({ number, title, body })),
+    // A new body is stamped from the session's provenance, as /pr/open's is; a title alone leaves the body as it is.
+    '/pr/update': (request, ctx) => {
+      if (stopped()) return STOP_REFUSAL;
+      const provenance = sessionProvenance({ project: request.project, sessionId: request.session });
+      if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
+      return writing((a, { number, title, body }) => a.updatePr({
+        number, title, body: typeof body === 'string' ? stampProvenance(body, provenance) : body,
+      }))(request, ctx);
+    },
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),
     '/ci': pass((a, { sha }) => a.ciState(sha)),
     // Read-only, so STOP lets it through.

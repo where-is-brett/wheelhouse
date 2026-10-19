@@ -7,7 +7,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import {
-  MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, writeManifest,
+  MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, verifyManifest, writeManifest,
 } from '../../../scripts/lineage/manifest.js';
 import { fingerprintFile, fingerprintTree } from '../../../scripts/lineage/fingerprint.js';
 import { g } from '../../helpers/git-fixture.js';
@@ -233,4 +233,66 @@ test('write fetches each upstream into a new empty folder, fingerprints it and r
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, MANIFEST_PATH), 'utf8')), manifest);
   assert.equal(manifest.wheelhouse.version, '9.9.9');
   assert.equal(manifest.upstreams[0].sha, UPSTREAMS[0].sha);
+});
+
+// A made-up Wheelhouse root whose manifest, register and marketplace all name TINY as `dir` holds it.
+function verifiable() {
+  const { dir, manifest } = tiny();
+  const root = tempFolder('wh-verify-');
+  write(root, {
+    'lineage/manifest.json': JSON.stringify(manifest),
+    'lineage/register.json': JSON.stringify({
+      v: 1, version: '0.1.0',
+      overrides: [{ id: 'one', upstream: 'kit', skill: 'one', anchors: [{ file: 'skills/one/SKILL.md', text: 'one' }], rule: 'r', why: 'w', scenario: 1 }],
+      carried: [{ id: 'two', upstream: 'kit', file: 'skills/two/SKILL.md', hash: fingerprintFile(path.join(dir, 'skills', 'two', 'SKILL.md')).hash, text: 'two' }],
+      assumptions: [],
+    }),
+    '.claude-plugin/marketplace.json': JSON.stringify({ name: 'wheelhouse', plugins: [{ name: 'kit', source: { source: 'url', url: TINY.repo, ref: TINY.ref, sha: TINY.sha } }] }),
+  });
+  return { dir, root };
+}
+
+test('verify fetches each upstream afresh and finds the manifest, the register and the pins as they are', async () => {
+  const { dir, root } = verifiable();
+  const fetched = [];
+  const copy = (files = {}) => async (upstream, into) => {
+    assert.deepEqual(fs.readdirSync(into), [], 'a new, empty folder');
+    fetched.push(into);
+    fs.cpSync(dir, into, { recursive: true });
+    write(into, files);
+  };
+  const lines = [];
+  const found = await verifyManifest({ root, fetchTo: copy(), upstreams: [TINY], log: (line) => lines.push(line) });
+  assert.deepEqual(found, { ok: true, broken: [] });
+  assert.deepEqual(lines, [
+    `kit v1.0.0 (${TINY.sha}): 2 folders and 1 file, all as the manifest has them`,
+    'register 0.1.0: 1 of 1 anchor found, 1 of 1 carried text unchanged',
+    `.claude-plugin/marketplace.json pins kit at v1.0.0 (${TINY.sha})`,
+    'lineage ok',
+  ]);
+
+  // A changed upstream breaks the fingerprint, the anchor and the carried text, and each is named.
+  const changed = await verifyManifest({ root, fetchTo: copy({ 'skills/one/SKILL.md': 'changed\n', 'skills/two/SKILL.md': 'changed\n' }), upstreams: [TINY] });
+  assert.equal(changed.ok, false);
+  assert.equal(changed.broken.length, 4);
+  assert.match(changed.broken[0], /^kit skills\/one: fingerprint/);
+  assert.match(changed.broken[1], /^kit skills\/two: fingerprint/);
+  assert.equal(changed.broken[2], 'anchor gone: one: skills/one/SKILL.md: one');
+  assert.equal(changed.broken[3], 'carried text\'s source changed: two');
+  const gone = await verifyManifest({ root, fetchTo: async (u, into) => { fs.cpSync(dir, into, { recursive: true }); fs.rmSync(path.join(into, 'LICENSE')); }, upstreams: [TINY] });
+  assert.deepEqual(gone.broken, ['kit LICENSE: not there']);
+
+  // A fetch that fails, a pin that moved, and pins in the script that are not the manifest's.
+  const failed = await verifyManifest({ root, fetchTo: async () => { throw new Error('no such commit'); }, upstreams: [TINY] });
+  assert.deepEqual(failed.broken, [
+    `kit could not be fetched at ${TINY.sha}: no such commit`,
+    'the register\'s kit entries could not be checked: no copy of kit was fetched',
+  ]);
+  write(root, { '.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'kit', source: { source: 'url', url: TINY.repo, ref: TINY.ref, sha: 'b'.repeat(40) } }] }) });
+  const moved = await verifyManifest({ root, fetchTo: copy(), upstreams: [{ ...TINY, sha: 'c'.repeat(40) }] });
+  assert.deepEqual(moved.broken, [
+    `.claude-plugin/marketplace.json does not pin kit at the manifest's ${TINY.repo} v1.0.0 (${TINY.sha})`,
+    'the pins in scripts/lineage/manifest.js are not the manifest\'s: write the manifest again',
+  ]);
+  for (const into of fetched) assert.equal(fs.existsSync(into), false, 'removed afterwards');
 });

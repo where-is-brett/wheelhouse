@@ -22,6 +22,10 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
+import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const HEAD = `abc1234${'0'.repeat(33)}`;
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -33,7 +37,7 @@ function fakeAdapter(overrides = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }),
+    prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: 7 }),
@@ -84,7 +88,7 @@ function reviewAndApproval(commit = HEAD) {
 async function mergeablePr(p, overrides = {}) {
   const head = await prOnHost(p.remote.url);
   reviewAndApproval(head);
-  return fakeAdapter({ prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open' }), ...overrides });
+  return fakeAdapter({ prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open', body: BODY }), ...overrides });
 }
 
 function post(address, p, body) {
@@ -243,8 +247,9 @@ test('STOP set while a pull request update waits for the adapter is seen before 
       const adapter = fakeAdapter({ updatePr: async () => { updates += 1; return { number: 7 }; } });
       let reached; const atAdapter = new Promise((r) => { reached = r; });
       let release; const held = new Promise((r) => { release = r; });
+      writeSessionProvenance('o__p', 'sess-1');
       await withHelper(adapter, async (client) => {
-        const updating = client.updatePr({ project: 'o__p', number: 7, title: 't' });
+        const updating = client.updatePr({ project: 'o__p', number: 7, title: 't', session: 'sess-1' });
         await reach(atAdapter, updating);
         setStop({ by: 'mod', now: at(5) });
         release();

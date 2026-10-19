@@ -2,8 +2,11 @@
 // The manifest: what Wheelhouse pins of the upstream skill kits it runs on, with a
 // fingerprint of each folder and file it uses (lineage/manifest.json). `write`
 // is for Wheelhouse's release work: it fetches each upstream at its pinned commit
-// into a new temporary folder and fingerprints the copy.
+// into a new temporary folder and fingerprints the copy. `verify` is CI's lineage
+// job: it fetches each upstream the same way and checks the manifest, the register's
+// anchors and carried text, and the marketplace's pins against what it fetched.
 //   node scripts/lineage/manifest.js write
+//   node scripts/lineage/manifest.js verify
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { run, withoutGitVars } from '../lib/run.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
+import { checkAnchors, checkCarried, readRegister } from './register.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
 export const MODELS = 'the routing table in .claude/wheelhouse.json';
@@ -196,6 +200,81 @@ export async function writeManifest({ root = repoRoot(), fetchTo = fetchUpstream
   }
 }
 
+// --- Verifying ---
+
+export const MARKETPLACE_PATH = '.claude-plugin/marketplace.json';
+const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// Fetches every upstream the manifest under `root` names, at its commit, into its own new
+// temporary folder (removed after), and checks: each listed folder's and file's fingerprint
+// is the manifest's; the register's anchors and carried text are found there; the
+// marketplace pins each upstream at the manifest's commit; and the pins in this script
+// (`upstreams`) are the manifest's. `log` takes a line for each thing found. Resolves with
+// { ok, broken }.
+export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstream, upstreams = UPSTREAMS, log = () => {} } = {}) {
+  const broken = [];
+  const say = (line) => log(line);
+  const breaks = (line) => { broken.push(line); say(`broken: ${line}`); };
+  const manifest = readManifest(root);
+  const register = readRegister(root);
+  let marketplace = null;
+  try {
+    marketplace = JSON.parse(fs.readFileSync(path.join(root, ...MARKETPLACE_PATH.split('/')), 'utf8'));
+  } catch {
+    breaks(`${MARKETPLACE_PATH} can't be read`);
+  }
+  const made = [];
+  try {
+    const roots = {};
+    for (const upstream of manifest.upstreams) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wh-lineage-${upstream.name}-`));
+      made.push(dir);
+      try {
+        await fetchTo(upstream, dir);
+      } catch (error) {
+        breaks(`${upstream.name} could not be fetched at ${upstream.sha}: ${error instanceof Error ? error.message : 'unknown error'}`);
+        continue;
+      }
+      roots[upstream.name] = dir;
+      let differ = 0;
+      for (const [list, hasher] of [[upstream.folders, fingerprintTree], [upstream.files, fingerprintFile]]) {
+        for (const { path: relative, hash } of list) {
+          const got = hashAt(dir, relative, hasher);
+          if (got === hash) continue;
+          differ += 1;
+          breaks(`${upstream.name} ${relative}: ${got === null ? 'not there' : `fingerprint ${got}, the manifest has ${hash}`}`);
+        }
+      }
+      const listed = upstream.folders.length + upstream.files.length;
+      if (differ === 0) say(`${upstream.name} ${upstream.ref} (${upstream.sha}): ${count(upstream.folders.length, 'folder')} and ${count(upstream.files.length, 'file')}, all as the manifest has them`);
+      else say(`${upstream.name} ${upstream.ref} (${upstream.sha}): ${differ} of ${listed} differ from the manifest`);
+    }
+    const anchors = checkAnchors({ register, roots });
+    for (const a of anchors) breaks(`anchor gone: ${a.id}: ${a.file}: ${a.text}`);
+    const carried = checkCarried({ register, roots });
+    for (const id of carried) breaks(`carried text's source changed: ${id}`);
+    const unchecked = [...new Set([...register.overrides, ...register.carried].map((item) => item.upstream))].filter((name) => !roots[name]);
+    for (const name of unchecked) breaks(`the register's ${name} entries could not be checked: no copy of ${name} was fetched`);
+    const anchorCount = register.overrides.reduce((n, o) => n + (roots[o.upstream] ? o.anchors.length : 0), 0);
+    say(`register ${register.version}: ${anchorCount - anchors.length} of ${count(anchorCount, 'anchor')} found, ${register.carried.length - carried.length} of ${count(register.carried.length, 'carried text')} unchanged`);
+  } finally {
+    for (const dir of made) fs.rmSync(dir, { recursive: true, force: true });
+  }
+  if (marketplace !== null) {
+    const plugins = Array.isArray(marketplace.plugins) ? marketplace.plugins : [];
+    for (const upstream of manifest.upstreams) {
+      const source = plugins.find((p) => p?.name === upstream.plugin)?.source;
+      const pinned = isObject(source) && source.source === 'url' && source.url === upstream.repo && source.ref === upstream.ref && source.sha === upstream.sha;
+      if (pinned) say(`${MARKETPLACE_PATH} pins ${upstream.plugin} at ${upstream.ref} (${upstream.sha})`);
+      else breaks(`${MARKETPLACE_PATH} does not pin ${upstream.plugin} at the manifest's ${upstream.repo} ${upstream.ref} (${upstream.sha})`);
+    }
+  }
+  const named = (list) => JSON.stringify(list.map(({ name, plugin, repo, ref, sha }) => [name, plugin, repo, ref, sha]));
+  if (named(upstreams) !== named(manifest.upstreams)) breaks(`the pins in scripts/lineage/manifest.js are not the manifest's: write the manifest again`);
+  say(broken.length === 0 ? 'lineage ok' : `lineage broken: ${broken.length}`);
+  return { ok: broken.length === 0, broken };
+}
+
 function startedAsScript() {
   try {
     return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
@@ -205,14 +284,19 @@ function startedAsScript() {
 }
 
 if (Boolean(process.argv[1]) && startedAsScript()) {
-  const [command] = process.argv.slice(2);
-  if (command !== 'write') {
-    process.stderr.write('usage: node scripts/lineage/manifest.js write\n');
+  const [command, ...rest] = process.argv.slice(2);
+  if (!['write', 'verify'].includes(command) || rest.length > 0) {
+    process.stderr.write('usage: node scripts/lineage/manifest.js write | verify\n');
     process.exit(2);
   }
+  const log = (line) => process.stdout.write(`${line}\n`);
   try {
-    await writeManifest({ log: (line) => process.stdout.write(`${line}\n`) });
-    process.stdout.write(`wrote ${MANIFEST_PATH}\n`);
+    if (command === 'verify') {
+      process.exitCode = (await verifyManifest({ log })).ok ? 0 : 1;
+    } else {
+      await writeManifest({ log });
+      process.stdout.write(`wrote ${MANIFEST_PATH}\n`);
+    }
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exit(1);

@@ -20,6 +20,10 @@ import { setStop } from '../../../scripts/lib/stop.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
+import { matchingBody } from '../../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const T0 = new Date('2026-10-19T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
@@ -85,7 +89,7 @@ function fakeAdapter(prs) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async (number) => ({ ...prs[number], baseRef: 'main', mergeable: 'mergeable', state: 'open' }),
+    prState: async (number) => ({ ...prs[number], baseRef: 'main', mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
   };
