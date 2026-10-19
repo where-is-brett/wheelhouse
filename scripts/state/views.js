@@ -78,6 +78,48 @@ function gateAsksOf(sorted, { enrolled, approvals, handedOut }) {
   return out;
 }
 
+// Work whose feature has ended: its pull request waits for nothing more.
+const FINISHED = ['merged', 'closed'];
+
+// Whether pull request `pr` has finished, by its work's latest report (`reports` is the views'): it
+// says merged or closed, and it names that pull request or is no older than `at`, the record that
+// asked about it. A report of an earlier life of the work, older and naming another pull request,
+// doesn't end a later one's. With no work known, a report naming the pull request.
+export function prFinished(reports, { work, pr, at }) {
+  const all = reports !== null && typeof reports === 'object' ? reports : {};
+  const named = isPlainKey(work) ? [all[work]] : Object.values(all).filter((r) => r?.data?.pr === pr);
+  return named.some((r) => FINISHED.includes(r?.data?.outcome) && (r.data.pr === pr || (typeof r.at === 'string' && typeof at === 'string' && r.at >= at)));
+}
+
+const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit [0-9a-f]{12}$/;
+// The line a gate-asks record's card carries, or null.
+const gateLineOf = (d) => (d.ask === 'approval' ? approvalLine(d.pr, d.sha) : d.ask === 'ci-push' && isPlainKey(d.branch) ? ciPushLine(d.branch, d.sha) : null);
+
+// Whether an approval or CI push card no longer waits, because the decision it asks for is gone
+// (ruling F107): its pull request has finished (prFinished), or the gate has since asked about
+// another commit for that pull request and click (the latest gate-asks for them carries another
+// line, and came after the card). An approval card names its pull request; a CI push card's comes
+// from the gate-asks that carries its line. An approval may carry across a clean update, so a CI
+// push asked later leaves an approval card waiting. Any other card is never outdated here.
+function outdatedBy(sorted, reports) {
+  const asks = sorted.filter((e) => e.kind === 'gate-asks' && Number.isInteger(e.data?.pr) && typeof e.data.sha === 'string')
+    .map((e) => ({ e, line: gateLineOf(e.data) })).filter((a) => a.line !== null);
+  return (card) => {
+    const line = card.data?.line;
+    if (typeof line !== 'string') return false;
+    const approval = APPROVAL_LINE.exec(line);
+    const ask = approval ? 'approval' : asks.some((a) => a.line === line && a.e.data.ask === 'ci-push') ? 'ci-push' : null;
+    if (ask === null) return false;
+    const pr = approval ? Number(approval[1]) : asks.filter((a) => a.line === line).at(-1).e.data.pr;
+    const mine = asks.filter((a) => a.e.data.pr === pr && a.e.data.ask === ask);
+    const own = mine.filter((a) => a.line === line).at(-1);
+    const latest = mine.at(-1);
+    if (latest !== undefined && latest.line !== line && byOrder(card, latest.e) < 0) return true;
+    const work = (own ?? asks.filter((a) => a.e.data.pr === pr).at(-1))?.e.data.work;
+    return prFinished(reports, { work, pr, at: (own?.e ?? card).at });
+  };
+}
+
 // The lineage holds the session start recorded (ruling R146), in order, each with the card made for
 // it (its id, or null): a card names the hold it was made from by its `event` (ruling F71).
 function lineageHoldsOf(sorted) {
@@ -356,14 +398,17 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const ideas = latestPerKey(sorted.filter((e) => e.kind === 'idea'), keyOrId);
   const rejections = latestPerKey(sorted.filter((e) => e.kind === 'rejection'), keyOrId);
 
-  // A card waits until it is decided (outcomesOf). The latest of its answers is what `asked` marks,
+  // A card waits until it is decided (outcomesOf), or, for an approval or CI push card, until the
+  // decision it asks for is gone (outdatedBy). The latest of its answers is what `asked` marks,
   // unless an `asked` record naming the card came after it: a visit handed the card out, and it may
   // have been dismissed with no answer at all, so `asked` is then that record's time with no label.
+  const loop = buildLoopViews(sorted, enrolled);
+  const outdated = outdatedBy(sorted, loop.reports);
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   const waiting = [];
   for (const { card, answers: mine, decided } of outcomes) {
-    if (decided !== null) continue;
+    if (decided !== null || outdated(card)) continue;
     const last = mine.at(-1);
     const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
     const asked = shown && (!last || byOrder(last, shown) < 0) ? { at: shown.at, label: null }
@@ -429,7 +474,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     waiting,
     approvals,
     reviews,
-    ...buildLoopViews(sorted, enrolled),
+    ...loop,
     unconfirmed,
     blockers,
     risks,

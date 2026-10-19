@@ -5,11 +5,10 @@
 // R146 and F71). Also the composer's input for each.
 import { CLICK_MS } from '../lib/core-numbers.js';
 import { namedPaths } from '../lineage/check.js';
+import { prFinished } from '../state/views.js';
 
 const isRecord = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const msOf = (now) => (now instanceof Date ? now.getTime() : typeof now === 'function' ? msOf(now()) : Date.parse(now));
-// Work whose feature has ended: its pull request waits for nothing more.
-const FINISHED = ['merged', 'closed'];
 
 // Whether the click a gate-asks entry asks for is on record: an approval of that commit however
 // old, since the gate keeps it; a CI push only within CLICK_MS, the window the helper checks a CI
@@ -33,15 +32,16 @@ function lapsedPush(entry) {
 
 // What each click the merge gate waits for needs on this visit, from the views' `gateAsks`:
 // { entry, make: true } when no card carries its line yet, or { entry, again: <card id> } when its
-// card is asked again (lapsedPush). None for work that has finished or a click on record. The pull
-// request itself isn't read here: whether it still waits is the host's to say (`cli.js cards` asks it).
+// card is asked again (lapsedPush). None for a pull request that has finished (prFinished, as the
+// waiting view reads it) or a click on record. The pull request itself isn't read here: whether it
+// still waits is the host's to say (`cli.js cards` asks it).
 export function gateAsksDue(views, now) {
   const nowMs = msOf(now);
   const reports = isRecord(views?.reports) ? views.reports : {};
   const entries = Object.values(isRecord(views?.gateAsks) ? views.gateAsks : {})
     .filter((e) => isRecord(e) && isRecord(e.data) && typeof e.line === 'string' && typeof e.at === 'string');
   return entries.flatMap((entry) => {
-    if (FINISHED.includes(reports[entry.data.work]?.data?.outcome) || clicked(entry, nowMs)) return [];
+    if (prFinished(reports, { work: entry.data.work, pr: entry.data.pr, at: entry.at }) || clicked(entry, nowMs)) return [];
     if (typeof entry.card !== 'string') return [{ entry, make: true }];
     return lapsedPush(entry) ? [{ entry, again: entry.card }] : [];
   });

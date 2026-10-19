@@ -571,9 +571,17 @@ test('the count takes in the cards the build loop\'s records call for: the gate\
     put(viewFile('gateAsks'), { 9: push({ askedAt: '2026-10-19T11:03:00.000Z' }) });
     assert.equal(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z'), undefined);
     put(viewFile('gateAsks'), { 9: push({}) });
-    // Finished work asks nothing more.
-    put(viewFile('reports'), { 'export-csv': { data: { work: 'export-csv', outcome: 'merged' } } });
-    assert.equal(await run(repo, 'And then?', '2026-10-19T12:02:00.000Z'), undefined);
+    // A report from an earlier life of the work, older than the gate's record and naming another
+    // pull request, leaves the count as it was.
+    const report = (at, outcome, pr) => ({ 'export-csv': { at, data: { work: 'export-csv', outcome, summary: 'Done.', rulings: [], pr } } });
+    put(viewFile('reports'), report('2026-10-19T10:00:00.000Z', 'closed', 3));
+    assert.equal(contextOf(await run(repo, 'And now?', '2026-10-19T12:01:30.000Z')), cardsLine(1));
+    // Once the pull request's work reports merged or closed, its gate-asks counts for nothing more:
+    // a used CI push click no longer brings `cards` back on every prompt (ruling F107).
+    for (const outcome of ['merged', 'closed']) {
+      put(viewFile('reports'), report('2026-10-19T12:01:40.000Z', outcome, 9));
+      assert.equal(await run(repo, 'And then?', '2026-10-19T12:02:00.000Z'), undefined, outcome);
+    }
   });
 });
 

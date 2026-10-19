@@ -31,8 +31,16 @@ test('a gate card is made once; only a CI push card whose click lapsed is asked 
   // Without the head the update was made from, never (ruling F78).
   const { from, ...unnamed } = push;
   assert.deepEqual(due(entry(unnamed, { clickedAt: ago(CLICK_MS + 1000) })), []);
-  // Finished work asks nothing.
-  assert.deepEqual(gateAsksDue({ gateAsks: { 7: entry(approval, { card: null }) }, reports: { x: { data: { outcome: 'merged' } } } }, NOW), []);
+  // Finished work asks nothing: a report naming the pull request, or no older than the gate's record.
+  const report = (outcome, over = {}) => ({ x: { at: ago(CLICK_MS), data: { work: 'x', outcome, pr: 7, ...over } } });
+  const made = (reports) => gateAsksDue({ gateAsks: { 7: entry(approval, { card: null }) }, reports }, NOW).length;
+  for (const outcome of ['merged', 'closed']) {
+    assert.equal(made(report(outcome)), 0, outcome);
+    assert.equal(made(report(outcome, { pr: 3 })), 0, `${outcome}, after the record`);
+  }
+  assert.equal(made(report('blocked')), 1);
+  // A report of an earlier life of the work, older than the record and naming another pull request, doesn't end it.
+  assert.equal(made({ x: { at: ago(3 * CLICK_MS), data: { work: 'x', outcome: 'closed', pr: 3 } } }), 1);
 });
 
 test('whether the pull request still waits for the click, as the host gives it', () => {

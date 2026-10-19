@@ -955,6 +955,76 @@ test('the click the merge gate waits for: the latest gate-asks of each pull requ
   });
 });
 
+// --- a gate card leaves the waiting list once its decision is gone (ruling F107) ---
+
+const A = 'a'.repeat(40);
+const B = 'b'.repeat(40);
+const gateAsk = (n, data) => ev('gate-asks', n, { work: 'export-csv', pr: 7, ask: 'approval', sha: A, ...data });
+const gateCard = (n, line) => ev('card', n, cardData(`What this is: a click the gate waits for.\n${line}`, { line }));
+const reportEv = (n, outcome, extra = {}) => ev('report', n, { work: 'export-csv', outcome, summary: 'Done.', rulings: [], pr: 7, ...extra });
+const waitingIds = (events) => build(events).waiting.map((c) => c.id);
+
+test('an approval or CI push card leaves the waiting list once the gate asks about another commit for its pull request and click', async () => {
+  await withHome(() => {
+    const cardA = gateCard(2, approvalLine(7, A));
+    assert.deepEqual(waitingIds([gateAsk(1), cardA]), [cardA.id]);
+    // The branch moved on and the gate asks about B: card A no longer waits; card B does once made.
+    const cardB = gateCard(4, approvalLine(7, B));
+    assert.deepEqual(waitingIds([gateAsk(1), cardA, gateAsk(3, { sha: B })]), []);
+    assert.deepEqual(waitingIds([gateAsk(1), cardA, gateAsk(3, { sha: B }), cardB]), [cardB.id]);
+    const v = build([gateAsk(1), cardA, gateAsk(3, { sha: B })]);
+    assert.equal(v.status.waitingCount, 0);
+    // A superseded CI push card leaves the same way.
+    const push = (n, sha) => gateAsk(n, { pr: 8, ask: 'ci-push', sha, branch: 'wh/x' });
+    const pushCard = gateCard(2, ciPushLine('wh/x', A));
+    assert.deepEqual(waitingIds([push(1, A), pushCard]), [pushCard.id]);
+    assert.deepEqual(waitingIds([push(1, A), pushCard, push(3, B)]), []);
+    // Still current: a later CI push for the same pull request (an approval may carry across a clean
+    // update), the gate asking again about the same commit, or another pull request's gate-asks.
+    assert.deepEqual(waitingIds([gateAsk(1), cardA, gateAsk(3, { ask: 'ci-push', sha: B, branch: 'wh/x' })]), [cardA.id]);
+    assert.deepEqual(waitingIds([gateAsk(1), cardA, gateAsk(3, { pr: 9, sha: B })]), [cardA.id]);
+    // An approval card the front desk composed itself (`cli.js card`, for work shown first) leaves
+    // once a later gate-asks for that pull request names another commit, and not for one older than it.
+    const own = gateCard(5, approvalLine(7, A));
+    assert.deepEqual(waitingIds([own]), [own.id]);
+    assert.deepEqual(waitingIds([own, gateAsk(6)]), [own.id]);
+    assert.deepEqual(waitingIds([gateAsk(3, { sha: B }), own]), [own.id]);
+    assert.deepEqual(waitingIds([own, gateAsk(6, { sha: B })]), []);
+  });
+});
+
+test('an approval or CI push card leaves the waiting list once its work reports merged or closed', async () => {
+  await withHome(() => {
+    const cardA = gateCard(2, approvalLine(7, A));
+    const pushCard = gateCard(3, ciPushLine('wh/x', B));
+    const asks = [gateAsk(1), gateAsk(1, { pr: 8, ask: 'ci-push', sha: B, branch: 'wh/x' })];
+    const other = ev('card', 4, cardData('Pick a shape', { kind: 'question', options: ['Round', 'Square'] }));
+    assert.deepEqual(waitingIds([...asks, cardA, pushCard, other]), [cardA.id, pushCard.id, other.id]);
+    for (const outcome of ['merged', 'closed']) {
+      const v = build([...asks, cardA, pushCard, other, reportEv(5, outcome)]);
+      assert.deepEqual(v.waiting.map((c) => c.id), [other.id], outcome);
+      assert.equal(v.status.waitingCount, 1, outcome);
+    }
+    // A blocked report leaves them waiting, and so does a report from an earlier life of the work:
+    // older than the gate's record and naming another pull request.
+    assert.deepEqual(waitingIds([...asks, cardA, reportEv(5, 'blocked')]), [cardA.id]);
+    assert.deepEqual(waitingIds([reportEv(0, 'closed', { pr: 3 }), ...asks, cardA]), [cardA.id]);
+    // An approval card the front desk composed, with no gate-asks: a report naming its pull request.
+    const own = gateCard(2, approvalLine(9, A));
+    assert.deepEqual(waitingIds([own, reportEv(5, 'merged')]), [own.id]);
+    assert.deepEqual(waitingIds([own, reportEv(5, 'merged', { pr: 9 })]), []);
+  });
+});
+
+test('a gate card put off with Not now, still current, stays waiting and marked asked', async () => {
+  await withHome(() => {
+    const cardA = gateCard(2, approvalLine(7, A));
+    const notNow = ev('card-answer', 3, { card: cardA.id, label: 'Not now' });
+    const v = build([gateAsk(1), cardA, notNow, gateAsk(4, { ask: 'ci-push', sha: B, branch: 'wh/x' })]);
+    assert.deepEqual(v.waiting.map((c) => [c.id, c.asked]), [[cardA.id, { at: T(3), label: 'Not now' }]]);
+  });
+});
+
 test('each lineage hold, with the card made for it', async () => {
   await withHome(() => {
     const hold = (n) => ev('lineage-hold', n, { at: T(n), mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] });

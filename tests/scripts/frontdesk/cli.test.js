@@ -418,6 +418,38 @@ test('R121: a CI push card whose click lapsed before the push comes back once; o
   });
 });
 
+test('a gate card for a commit the gate no longer asks about leaves the board; again numbers the cards as the board does', async () => {
+  await inHome(async () => {
+    const one = cardEvent(PRODUCT(1), 1);
+    const outdated = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 3);
+    const two = cardEvent(PRODUCT(2), 6);
+    const events = [EXPORT, one, gateAsks(APPROVE_ASK, () => T(2)), outdated, gateAsks({ ask: 'approval', sha: LATER }, () => T(4)), two];
+    const helper = fakeHelper({ events, head: LATER });
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [one.id, two.id]);
+    // The board and `views waiting` number the two cards still waiting, and `again` follows them.
+    const model = boardModel({ views: helper.views(), events, now: NOW });
+    assert.deepEqual(model.director.waiting.map((w) => w.since), [one.at, two.at]);
+    const listedOut = await run(helper, ['views', 'waiting']);
+    assert.equal(listedOut.code, 0, listedOut.err);
+    assert.equal(listedOut.out.trim().split('\n').length, 2, listedOut.out);
+    assert.match(listedOut.out, /^2\. /m);
+    const asked = await run(helper, ['again', '2']);
+    assert.equal(asked.code, 0, asked.err);
+    assert.deepEqual(asked.json.questions.map((q) => q.question), [two.data.question]);
+    // The visit makes the card for the commit the gate asks about now, and never hands out the outdated one.
+    const visit = await run(helper, ['cards']);
+    assert.equal(visit.code, 0, visit.err);
+    const [made, ...more] = cardWrites(helper);
+    assert.deepEqual([made.line, more.length], [approvalLine(7, LATER), 0]);
+    assert.deepEqual(visit.json.questions.map((q) => q.question), [made.question, one.data.question]);
+    // Put off with Not now while still current: it stays on the board and off the next visit's cards.
+    const madeId = helper.held.find((e) => e.kind === 'card' && e.data.line === made.line).id;
+    await helper.client.state.write({ cwd: CWD, kind: 'card-answer', data: { card: madeId, label: 'Not now' } });
+    assert.deepEqual((await run(helper, ['cards'])).json, { questions: [], left: 0 });
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [one.id, two.id, madeId]);
+  });
+});
+
 test('a lineage hold becomes one question card naming the kits and the first paths, made once', async () => {
   await inHome(async () => {
     const paths = ['skills/a/SKILL.md', 'skills/b/SKILL.md', 'skills/c/SKILL.md', 'skills/d/SKILL.md', 'skills/e/SKILL.md', 'skills/f/SKILL.md', 'skills/g/SKILL.md'];
