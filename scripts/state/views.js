@@ -1,7 +1,7 @@
 // scripts/state/views.js
 import fs from 'node:fs';
 import path from 'node:path';
-import { wheelhouseHome, stateDir } from '../lib/paths.js';
+import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -85,16 +85,26 @@ const confirmedAfter = (confirmations, record, named) => (named === null ? undef
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
+// The time each ruling, level or setting came into force by a verified confirmation of its own
+// hash: id -> the time of the first such confirmation.
+export function confirmationTimes(events, enrolled) {
+  const { confirmations } = confirmationsOf(uniqueSorted(events).sorted, enrolled);
+  const out = new Map();
+  for (const { target, event } of confirmations) if (!out.has(target.id)) out.set(target.id, event.at);
+  return out;
+}
+
 // How each card was decided (ruling F33), one entry per card in order: { card, answers, decided, explained }.
 // An answer names its card by id (data.card) or, as the prompt record writes it, quotes the
 // question shown (data.question): that matches a card's question, or its title when it has none.
 // Two cards asking the same question both close on one answer. A card is decided by an answer
-// whose label is one of its options other than Not now, Explain more and Show me, or by a verified
-// signed record after it that carries its question or confirms the event its confirm line names,
-// which is what a reply code earns. `decided` is the first of these, { at, label } (label null for
-// a signed record), or null while the card waits. A card written before cards carried options has
-// none to check, so any label but those three decides it. `answers` are all its answers, in order;
-// `explained` the times of its Explain more answers.
+// whose label is one of its options other than Not now, Explain more and Show me (Keep as is
+// decides, signing nothing), or by a verified signed record after it that carries its question or
+// confirms the event its confirm line names, which is what a reply code earns. `decided` is the
+// first of these, { at, label }: a signed record's label is the one it carries (an answer's), or
+// null when it carries none (an approval, a confirmation). It is null while the card waits. A card
+// written before cards carried options has none to check, so any label but those three decides it.
+// `answers` are all its answers, in order; `explained` the times of its Explain more answers.
 function outcomesOf(sorted, { confirmations, answeredBy }) {
   const answers = sorted.filter((e) => e.kind === 'card-answer');
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
@@ -112,7 +122,8 @@ function outcomesOf(sorted, { confirmations, answeredBy }) {
     const answered = mine.find((a) => decides(card, a.data?.label));
     const signed = signedFor(card);
     const first = [answered, signed].filter(Boolean).sort(byOrder)[0];
-    const decided = first === undefined ? null : { at: first.at, label: first === answered ? answered.data?.label ?? null : null };
+    const label = typeof first?.data?.label === 'string' ? first.data.label : null;
+    const decided = first === undefined ? null : { at: first.at, label };
     return { card, answers: mine, decided, explained: mine.filter((a) => a.data?.label === 'Explain more').map((a) => a.at) };
   });
 }
@@ -215,9 +226,14 @@ function buildLoopViews(sorted, enrolled) {
   return { work, features, reports, questions, incidents: { open: [...open.values()] } };
 }
 
-export function buildViews(events, enrolled, { damaged = [], now = () => new Date() } = {}) {
+// `profile` is the profile's events, when these are a project's: a confirm card in the project for a
+// profile setting closes on the profile's verified confirmation, whichever project's card was
+// clicked (ruling F47). The project's levels, settings and unconfirmed stay its own.
+export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [] } = {}) {
   const { sorted, repeated } = uniqueSorted(events);
   const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
+  const fromProfile = confirmationsOf(uniqueSorted(profile).sorted, enrolled).confirmations;
+  const closing = [...confirmations, ...fromProfile].sort((a, b) => byOrder(a.event, b.event));
   const answeredBy = answeredByOf(sorted, enrolled);
 
   // Rulebook
@@ -276,7 +292,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // have been dismissed with no answer at all, so `asked` is then that record's time with no label.
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const waiting = [];
-  for (const { card, answers: mine, decided } of outcomesOf(sorted, { confirmations, answeredBy })) {
+  for (const { card, answers: mine, decided } of outcomesOf(sorted, { confirmations: closing, answeredBy })) {
     if (decided !== null) continue;
     const last = mine.at(-1);
     const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
@@ -354,14 +370,26 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   };
 }
 
+// The profile's events, or none when there is no profile or it can't be read.
+function profileEvents() {
+  try {
+    return listEvents(profileDir(), { report: () => {} });
+  } catch {
+    return [];
+  }
+}
+
 // Reads the clone and writes views/*.json beside it, outside the clone. `dir` and `out`
-// name another clone of events and its views folder, such as the profile's.
+// name another clone of events and its views folder, such as the profile's. A project's views
+// count the profile's confirmations when closing its confirm cards (buildViews); the profile's
+// own (no project) are built from the profile alone.
 export async function writeViews(project, {
   now = () => new Date(), dir = stateDir(project), out = path.join(wheelhouseHome(), 'projects', project, 'views'),
+  profile = project === undefined ? [] : profileEvents(),
 } = {}) {
   const damaged = [];
   const events = listEvents(dir, { report: () => {}, skipped: damaged });
-  const views = buildViews(events, readEnrolled(), { damaged, now });
+  const views = buildViews(events, readEnrolled(), { damaged, now, profile });
   // Built whole in a new folder, which then takes the old one's place. The old folder is
   // renamed aside first because Windows will not rename over a folder that has files in it.
   // Between the two renames there is no `views` folder, only `views.old` (a reader that

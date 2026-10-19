@@ -368,6 +368,8 @@ export async function writeSetting({ client, cwd, data, words, makeId = () => cr
 export async function record({ client, cwd, kind, input, now, makeId = () => crypto.randomUUID() }) {
   if (!RECORD_KINDS.includes(kind)) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
   if (!isPlain(input)) throw new CliError(`Give the ${kind} as a JSON object on standard input`);
+  // The delegation review's note is written by `review` alone, so a review is never recorded as done that wasn't.
+  if (kind === 'note' && Object.hasOwn(input, 'review')) throw new CliError('A note with a review field is written by `review` alone; leave the field out');
   const answered = (got) => ({ id: got.id, pushed: got.pushed === true });
   if (kind === 'setting') {
     try {
@@ -405,8 +407,9 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
 // --- review ---
 
 // The confirm card for a level the delegation review proposes, which names the level by its id and
-// its words, and gives the review's reason (ruling F42).
-function levelCard(event, words) {
+// its words, and gives the review's reason (ruling F42). Confirm puts the topic into the rulebook
+// at that level (ruling F46); a proposal's card offers Keep as is too (compose.js).
+export function levelCard(event, words) {
   const lower = event.data.value < 3;
   return composePlain({
     kind: 'confirm',
@@ -415,7 +418,9 @@ function levelCard(event, words) {
     why: 'Only you change what I can decide without you, so it comes to you.',
     options: [{
       label: 'Confirm',
-      says: lower ? 'I decide these myself from now on, and tell you in the briefing.' : 'I bring these to you as cards again, and wait for your answer.',
+      says: lower
+        ? `It goes into the rulebook at level ${event.data.value}: its questions are decided without a card, and told in the briefing.`
+        : `It goes into the rulebook at level ${event.data.value}: its questions come to you as cards, and wait for your answer.`,
     }],
     recommend: 'Confirm',
     because: event.data.because,
@@ -429,7 +434,9 @@ function levelCard(event, words) {
 // as a `level` event with its words and reason, under the id its confirm card was composed with,
 // then the card. One call's worth of cards is handed out and marked asked; the rest wait on the
 // board, counted in `left`. The review is recorded as done last, even with nothing to propose, so
-// it isn't due again until the next period. Under STOP nothing is written, so it is refused.
+// it isn't due again until the next period, but only when every proposal and its card were
+// recorded: otherwise it stays due, and a level whose card wasn't written gets it from the
+// board-context hook on the next visit. Under STOP nothing is written, so it is refused.
 export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
   const got = await client.state.views({ cwd, review: true });
   if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
@@ -466,12 +473,17 @@ export async function review({ client, cwd, now, makeId = () => crypto.randomUUI
       problems.push(`The proposal for ${topic} was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
     }
   }
+  const complete = problems.length === 0;
   const asked = made.slice(0, CARD.questions);
   problems.push(...await markAsked(client, cwd, asked.map((c) => c.id), false));
-  try {
-    await write(client, cwd, 'note', { review: 'delegation', at: new Date(typeof now === 'function' ? now() : now).toISOString() });
-  } catch (error) {
-    problems.push(`The review wasn't recorded as done, so it will be due again: ${error.message}`);
+  if (!complete) {
+    problems.push('The review wasn\'t recorded as done, since not every proposal was, so it stays due');
+  } else {
+    try {
+      await write(client, cwd, 'note', { review: 'delegation', at: new Date(typeof now === 'function' ? now() : now).toISOString() });
+    } catch (error) {
+      problems.push(`The review wasn't recorded as done, so it stays due: ${error.message}`);
+    }
   }
   return { questions: asked.map((c) => c.question), left: made.length - asked.length, ...withProblems(problems) };
 }

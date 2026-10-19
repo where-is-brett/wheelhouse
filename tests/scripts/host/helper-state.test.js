@@ -416,12 +416,12 @@ test('with review, the views carry the delegation review worked out from the pro
         assert.equal(got.ok, true, got.refused);
         return got.id;
       };
-      // Five pull requests on one topic, each approved with the card's deciding label.
-      for (const pr of [1, 2, 3, 4, 5]) {
+      // Five product questions on one topic, each decided by the option its card recommended.
+      for (const n of [1, 2, 3, 4, 5]) {
         const card = await write('card', {
-          question: `Approve pull request #${pr}?`, header: 'Approval', options: ['Approve', 'Not now', 'Explain more', 'Show me'], kind: 'approval', level: 3, topic: 'copy-changes',
+          question: `Which name suits page ${n}?`, header: 'Question', options: ['Plain', 'Playful', 'Explain more'], kind: 'question', level: 3, topic: 'copy-changes', recommend: 'Plain',
         });
-        await write('card-answer', { card, label: 'Approve' });
+        await write('card-answer', { card, label: 'Plain' });
       }
       await write('reversal', { topic: 'colours', what: 'The director undid the colour change' });
       const first = await c.client.state.views({ project: PROJECT, review: true });

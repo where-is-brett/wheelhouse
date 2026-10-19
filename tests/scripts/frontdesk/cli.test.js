@@ -442,10 +442,10 @@ test('record setting records its confirm card and marks it asked, except a conce
   });
 });
 
-// A pull request's approval on the topic copy-changes, asked at T(n) and approved a second later.
+// A product question on the topic copy-changes, asked at T(n) and decided as recommended a second later.
 const approvedOn = (pr, n, topic = 'copy-changes') => {
-  const card = cardEvent({ ...APPROVAL, what: `Pull request #${pr} changes the wording on the sign-in page.`, topic, target: { pr, sha: FULL } }, n);
-  return [card, makeEvent({ kind: 'card-answer', data: { card: card.id, label: 'Approve' }, now: () => T(n + 1) })];
+  const card = cardEvent({ ...PRODUCT(pr), level: 3, topic }, n);
+  return [card, makeEvent({ kind: 'card-answer', data: { card: card.id, label: 'Plain' }, now: () => T(n + 1) })];
 };
 const reversalOf = (topic, n) => makeEvent({ kind: 'reversal', data: { topic, what: 'The director undid a change made alone' }, now: () => T(n) });
 
@@ -471,10 +471,17 @@ test('review asks each proposal as a confirm card for a level, and records the r
     assert.deepEqual({ ...up.data, because: undefined }, { key: 'colours', value: 3, words: levelWords('colours', 3), because: undefined });
     assert.match(up.data.because, /^you undid a decision/);
     assert.deepEqual({ ...down.data, because: undefined }, { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: undefined });
-    assert.match(down.data.because, /^you approved it as proposed 5 times/);
+    assert.match(down.data.because, /^you chose what I recommended 5 times/);
     assert.equal(upCard.data.line, confirmLine({ kind: 'level', id: 'level-1', data: up.data }));
     assert.equal(downCard.data.line, confirmLine({ kind: 'level', id: 'level-2', data: down.data }));
     assert.equal(downCard.data.kind, 'confirm');
+    // Each card offers Keep as is, and says what a confirmed level does.
+    assert.deepEqual(downCard.data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
+    assert.deepEqual(upCard.data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
+    assert.match(downCard.data.descriptions[0], /rulebook at level 2/);
+    assert.match(downCard.data.descriptions[0], /without a card/);
+    assert.match(downCard.data.descriptions[0], /briefing/);
+    assert.doesNotMatch(downCard.data.question, /I decide these myself/);
     // The cards are asked as composed, marked asked, and the review is recorded after them.
     assert.deepEqual(first.questions.map((q) => q.question), [upCard.data.question, downCard.data.question]);
     assert.ok(first.questions[1].question.includes(down.data.because));
@@ -508,6 +515,45 @@ test('review gives one call\'s worth of cards and leaves the rest waiting on the
     assert.equal(helper.views().waiting.length, 5);
     assert.equal(helper.writes().find((w) => w.kind === 'asked').data.cards.length, CARD.questions);
     assert.equal(helper.writes().at(-1).kind, 'note');
+  });
+});
+
+test('review records itself as done only when every proposal and its card were recorded', async () => {
+  await inHome(async () => {
+    const events = [reversalOf('alpha', 1), reversalOf('bravo', 2)];
+    // The second level's card is refused: the review stays due, and the problem says so.
+    const helper = fakeHelper({ events });
+    const write = helper.client.state.write;
+    let cards = 0;
+    helper.client.state.write = async (body) => (body.kind === 'card' && (cards += 1) === 2 ? { ok: false, refused: 'the disk is full' } : write(body));
+    const out = await run(helper, ['review']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.questions.length, 1);
+    assert.ok(out.json.problems.some((p) => /bravo.*confirm card wasn't.*the disk is full/.test(p)), out.json.problems);
+    assert.ok(out.json.problems.some((p) => /stays due/.test(p)), out.json.problems);
+    // Both levels and the first card are held, and the card handed out is marked asked; no note.
+    assert.deepEqual(helper.held.map((e) => e.kind), ['reversal', 'reversal', 'level', 'card', 'level', 'asked']);
+    // A level whose write is refused does the same.
+    const refusing = fakeHelper({ events });
+    const writeLevel = refusing.client.state.write;
+    refusing.client.state.write = async (body) => (body.kind === 'level' ? { ok: false, refused: 'no' } : writeLevel(body));
+    const none = await run(refusing, ['review']);
+    assert.equal(none.code, 0, none.err);
+    assert.deepEqual(none.json.questions, []);
+    assert.equal(refusing.held.some((e) => e.kind === 'note'), false);
+  });
+});
+
+test('record refuses a note that says it is the delegation review', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const out = await run(helper, ['record', 'note'], JSON.stringify({ review: 'delegation', at: NOW.toISOString() }));
+    assert.equal(out.code, 1);
+    assert.match(out.err, /review/);
+    assert.deepEqual(helper.writes(), []);
+    const other = await run(helper, ['record', 'note'], JSON.stringify({ review: 'anything' }));
+    assert.equal(other.code, 1);
+    assert.deepEqual(helper.writes(), []);
   });
 });
 

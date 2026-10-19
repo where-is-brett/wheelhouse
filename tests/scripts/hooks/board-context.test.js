@@ -599,6 +599,28 @@ test('a setting waiting for its confirmation whose card was not written gets its
   });
 });
 
+test('a level waiting for its confirmation whose card was not written gets its card on the next visit', async () => {
+  await withProject(async ({ repo }) => {
+    const data = { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose what I recommended 5 times so far' };
+    put(viewFile('unconfirmed'), [
+      { kind: 'level', id: 'l-old', at: '2026-10-18T09:00:00.000Z', key: 'copy-changes', data },
+      // One with no words, which no card can name, and a ruling, whose card `record ruling` writes.
+      { kind: 'level', id: 'l-bare', at: '2026-10-18T09:00:00.000Z', key: 'colours', data: { key: 'colours', value: 3 } },
+      { kind: 'ruling', id: 'r-1', at: '2026-10-18T09:00:00.000Z', data: { words: 'Totals to the cent' } },
+    ]);
+    const { learnt, stateWrites } = learningClient();
+    await run(repo, 'Hello', NOW, { client: learnt });
+    assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'level', id: 'l-old', data })]);
+    assert.equal(stateWrites[0].cwd, repo);
+    assert.deepEqual(stateWrites[0].data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
+    assert.ok(stateWrites[0].data.question.includes(data.because));
+    // Once a card in this project carries its line, none is written again.
+    store(stateDir(P), stateWrites.map((w) => makeEvent({ kind: 'card', data: w.data, now: () => new Date(NOW) })));
+    await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });
+    assert.equal(stateWrites.length, 1);
+  });
+});
+
 test('the briefing says when the delegation review is due, worked out from the state on disk', async () => {
   await withProject(async ({ repo }) => {
     const given = [];

@@ -156,3 +156,19 @@ test('the playbook says what to do under STOP, with a card already asked, and wi
   assert.match(playbook, /`views glossary`/);
   assert.match(intake, /`cli\.js again <n>`/);
 });
+
+test('the playbook decides a level 2 question itself, and puts the review before the visit\'s other cards', () => {
+  // A question card on a topic at level 2 is decided by its recommendation and told in the briefing,
+  // never for a kind a signed click decides, and never when a raising trigger applies.
+  const rule = playbook.split('\n').find((line) => line.includes('level 2') && line.includes('`views levels`')) ?? '';
+  assert.match(rule, /`question` card/);
+  assert.match(rule, /`record decision`/);
+  assert.match(rule, /recommend/);
+  assert.match(rule, /signed click/);
+  for (const trigger of ['ambiguous', 'undone', 'money', 'first of its kind', 'rule', 'rejection']) assert.ok(rule.includes(trigger), trigger);
+  // One call per visit: when the review is due it is this visit's call, before `cards`.
+  const review = playbook.split('\n').find((line) => line.includes('`review`') && line.includes('before `cards`')) ?? '';
+  assert.match(review, /this visit's call/);
+  assert.match(review, /next visit/);
+  assert.match(playbook, /One call per visit/);
+});

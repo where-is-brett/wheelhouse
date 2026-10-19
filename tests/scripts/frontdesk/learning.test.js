@@ -7,8 +7,8 @@ import path from 'node:path';
 import {
   conceptProposals, settingProposals, conceptSetting, dayOf, delegationProposals, delegationReview, lastReview, reviewDue,
 } from '../../../scripts/frontdesk/learning.js';
-import { composeCard } from '../../../scripts/cards/compose.js';
-import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
+import { composeCard, answerInput } from '../../../scripts/cards/compose.js';
+import { makeEvent, confirmationFor, dataHash } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { effectiveSettings } from '../../../scripts/settings/effective.js';
@@ -98,7 +98,7 @@ test('Explain more on a known concept makes explanations longer at once, with no
     const made = setting('known:pull-request', true, day(5));
     const card = cardAt(day(10));
     const events = [card, answer(card, 'Explain more', day(10, 5))];
-    const profile = profileOf({ events: [made], settings: { 'known:pull-request': true } });
+    const profile = profileOf({ events: [made, makeEvent({ ...confirmationFor(made), now: when(day(5, 1)) })], settings: { 'known:pull-request': true } });
     assert.deepEqual(conceptProposals(events, profile, { now: when(day(11)) }), [{ concept: 'pull-request', known: false, confirm: false }]);
     assert.deepEqual(conceptSetting({ concept: 'pull-request', known: false, confirm: false }).value, false);
     // An Explain more from before the concept was known is not counted against it.
@@ -109,7 +109,31 @@ test('Explain more on a known concept makes explanations longer at once, with no
     assert.deepEqual(conceptProposals([other, answer(other, 'Explain more', day(10))], profile, { now: when(day(11)) }), []);
     // Once false is the latest value in the profile, it is not proposed again.
     const unlearnt = setting('known:pull-request', false, day(10, 30));
-    assert.deepEqual(conceptProposals(events, { ...profile, events: [made, unlearnt] }, { now: when(day(11)) }), []);
+    assert.deepEqual(conceptProposals(events, { ...profile, events: [...profile.events, unlearnt] }, { now: when(day(11)) }), []);
+  });
+});
+
+test('an Explain more between a proposal and its Confirm does not make the concept unknown again', async () => {
+  await inHome(async () => {
+    // Proposed on the 5th, Explain more on a card that uses it on the 6th, confirmed on the 7th.
+    const made = setting('known:pull-request', true, day(5));
+    const card = cardAt(day(6));
+    const events = [card, answer(card, 'Explain more', day(6, 5))];
+    const profile = profileOf({ events: [made, makeEvent({ ...confirmationFor(made), now: when(day(7)) })], settings: { 'known:pull-request': true } });
+    assert.deepEqual(conceptProposals(events, profile, { now: when(day(8)) }), []);
+    // An Explain more after the Confirm does.
+    const later = cardAt(day(8));
+    assert.deepEqual(conceptProposals([...events, later, answer(later, 'Explain more', day(8, 5))], profile, { now: when(day(9)) }), [
+      { concept: 'pull-request', known: false, confirm: false },
+    ]);
+    // A false counts from its own time: an Explain more before it, after a later true was confirmed, says nothing new.
+    const forgot = setting('known:pull-request', false, day(9));
+    const relearnt = setting('known:pull-request', true, day(10));
+    const after = profileOf({
+      events: [made, forgot, relearnt, makeEvent({ ...confirmationFor(relearnt), now: when(day(12)) })], settings: { 'known:pull-request': true },
+    });
+    const between = cardAt(day(11));
+    assert.deepEqual(conceptProposals([between, answer(between, 'Explain more', day(11, 5))], after, { now: when(day(13)) }), []);
   });
 });
 
@@ -220,12 +244,30 @@ test('a proposal turned down is not made again for 30 days', async () => {
     assert.deepEqual(settingProposals(declined, before, { now: when(day(13)), boardAsks: asks }), []);
     const NOV_9 = new Date(Date.UTC(2026, 10, 9, 12)).toISOString();
     assert.equal(settingProposals(declined, profileFrom([tab, chosen, confirmed], NOV_9), { now: when(NOV_9), boardAsks: asks }).length, 1);
+
+    // Kept as is: the proposal's card is decided, so though the setting is still unconfirmed in the
+    // profile it no longer waits, and it is held back for 30 days from that answer.
+    assert.ok(tabCard.data.options.includes('Keep as is'));
+    assert.equal(settingProposals([tabCard], profileFrom([tab], NOV_9), { now: when(NOV_9), boardAsks: asks }).length, 0);
+    const kept = [tabCard, answer(tabCard, 'Keep as is', day(9))];
+    assert.deepEqual(profileFrom([tab], day(13)).unconfirmed.map((u) => u.id), [tab.id]);
+    assert.deepEqual(settingProposals(kept, profileFrom([tab], day(13)), { now: when(day(13)), boardAsks: asks }), []);
+    const again = settingProposals(kept, profileFrom([tab], NOV_9), { now: when(NOV_9), boardAsks: asks });
+    assert.deepEqual(again.map(({ key, value }) => ({ key, value })), [{ key: 'boardTab', value: 'build' }]);
+    // And a concept the same way.
+    const keptConcept = [card, answer(card, 'Keep as is', day(2)), ...decided(day(3)), ...decided(day(4)), ...decided(day(5))];
+    assert.deepEqual(conceptProposals(keptConcept, profileFrom([made], day(6)), { now: when(day(6)) }), []);
+    assert.deepEqual(conceptProposals(keptConcept, profileFrom([made], LATE), { now: when(LATE) }), [{ concept: 'pull-request', known: true, confirm: true }]);
   });
 });
 
 // --- The delegation review ---
 
 const DOC = 'fedcba9876543210'.repeat(4);
+// A product question on a decision topic, recommending Plain.
+const CHOICE = (n, { topic = 'copy-changes', level = 3 } = {}) => ({
+  ...QUESTION(n), level, topic, ...(level === 4 ? { checks: 'It changes nothing in the checks.' } : {}),
+});
 const APPROVAL = (n, { topic = 'copy-changes', level = 3 } = {}) => ({
   kind: 'approval', level, topic, what: `Pull request #${n} changes the wording on the sign-in page.`, why: 'It changes what users see.',
   options: [{ label: 'Approve', says: 'It merges.' }], recommend: 'Approve', because: 'the checks passed', meanwhile: 'Nothing is released.',
@@ -236,20 +278,15 @@ const WORK = (work, topic = 'copy-changes') => ({
   options: [{ label: 'Approve', says: 'It is built.' }], recommend: 'Approve', because: 'it is small', meanwhile: 'Nothing is built.',
   target: { work, lane: 'small', hash: DOC },
 });
-const AMEND = (work, topic = 'copy-changes') => ({
-  kind: 'amend', level: 3, topic, what: `A change to the approved ${work}: shorter wording.`, why: 'It changes approved work.',
-  options: [{ label: 'Change it', says: 'The work changes.' }], recommend: 'Change it', because: 'it is clearer', meanwhile: 'The work waits.',
-  target: { work, hash: DOC },
-});
 const cardOf = (input, at) => makeEvent({ kind: 'card', data: composeCard(input).card, now: when(at) });
-// A card asked on day d and answered a minute later, with its deciding label unless another is given.
-const approved = (input, d, label = 'Approve') => {
+// A card asked on day d and answered a minute later, with the option it recommends unless another is given.
+const chosen = (input, d, label = input.recommend) => {
   const card = cardOf(input, day(d));
   return [card, answer(card, label, day(d, 1))];
 };
-// Five pull requests approved unchanged on five days from d.
-const five = (d, make = (n) => APPROVAL(n)) => [0, 1, 2, 3, 4].flatMap((i) => approved(make(d + i), d + i));
-const levelEvent = (key, value, at) => makeEvent({ kind: 'level', data: { key, value, words: `"${key}": level ${value}` }, now: when(at) });
+// Five product questions on a topic decided as recommended, on five days from d.
+const five = (d, make = (n) => CHOICE(n)) => [0, 1, 2, 3, 4].flatMap((i) => chosen(make(d + i), d + i));
+const levelEvent = (key, value, at, extra = {}) => makeEvent({ kind: 'level', data: { key, value, words: `"${key}": level ${value}`, ...extra }, now: when(at) });
 const confirmed = (event, at) => makeEvent({ ...confirmationFor(event), now: when(at) });
 const reversal = (topic, at) => makeEvent({ kind: 'reversal', data: { topic, what: 'The director undid a change made alone' }, now: when(at) });
 const reviewNote = (at) => makeEvent({ kind: 'note', data: { review: 'delegation', at }, now: when(at) });
@@ -259,30 +296,45 @@ test('a level-3 topic approved unchanged five times is proposed for level 2', as
   await inHome(async () => {
     assert.equal(DELEGATE_AFTER, 5);
     const now = when(day(20));
+    // Approved unchanged: a product question on the topic decided by the option the card recommended.
     const events = five(10);
     const proposed = delegationProposals(events, { now });
     assert.deepEqual(withoutBecause(proposed), [{ topic: 'copy-changes', from: 3, to: 2 }]);
-    assert.match(proposed[0].because, /^you approved it as proposed 5 times/);
+    assert.match(proposed[0].because, /^you chose what I recommended 5 times/);
     // Four are not enough.
     assert.deepEqual(delegationProposals(events.slice(2), { now }), []);
-    // Only approvals since the last review count.
+    // Only decisions since the last review count.
     assert.deepEqual(delegationProposals(events, { now, since: day(11, 30) }), []);
     assert.deepEqual(withoutBecause(delegationProposals([...events, ...five(21)], { now: when(day(27)), since: day(20) })), [{ topic: 'copy-changes', from: 3, to: 2 }]);
 
-    // A reply code's signed record counts as the click it stands for; one no enrolled computer signed doesn't.
-    const cards = [10, 11, 12, 13, 14].map((n) => cardOf(APPROVAL(n), day(n)));
-    const signed = cards.map((card, i) => makeEvent({ kind: 'approval', data: { pr: 10 + i, commit: FULL, question: card.data.question }, now: when(day(10 + i, 5)) }));
-    assert.equal(delegationProposals([...cards, ...signed], { now, enrolled: readEnrolled() }).length, 1);
-    assert.deepEqual(delegationProposals([...cards, ...signed], { now, enrolled: [] }), []);
-
-    // A card put off is no approval; a level 2 card, an answer or a product question's choice, and a card with no topic don't count.
-    assert.deepEqual(delegationProposals([10, 11, 12, 13, 14].flatMap((n) => approved(APPROVAL(n), n, 'Not now')), { now }), []);
-    assert.deepEqual(delegationProposals(five(10, (n) => APPROVAL(n, { level: 2 })), { now }), []);
-    assert.deepEqual(delegationProposals([10, 11, 12, 13, 14].flatMap((n) => approved({ ...QUESTION(n), level: 3, topic: 'copy-changes' }, n, 'Plain')), { now }), []);
-    assert.deepEqual(delegationProposals(five(10, (n) => ({ ...APPROVAL(n), topic: undefined })), { now }), []);
+    // Another option than the recommended one, or a card that doesn't say what it recommended, doesn't count.
+    assert.deepEqual(delegationProposals([10, 11, 12, 13, 14].flatMap((n) => chosen(CHOICE(n), n, 'Playful')), { now }), []);
+    const unsaid = events.map((e) => (e.kind === 'card' ? { ...e, data: { ...e.data, recommend: undefined } } : e));
+    assert.deepEqual(delegationProposals(unsaid, { now }), []);
+    // Explain more is no decision; a level 2 card and a card with no topic don't count.
+    assert.deepEqual(delegationProposals([10, 11, 12, 13, 14].flatMap((n) => chosen(CHOICE(n), n, 'Explain more')), { now }), []);
+    assert.deepEqual(delegationProposals(five(10, (n) => CHOICE(n, { level: 2 })), { now }), []);
+    assert.deepEqual(delegationProposals(five(10, (n) => ({ ...CHOICE(n), topic: undefined })), { now }), []);
     // Topics are counted by their exact slug.
-    const split = five(10, (n) => APPROVAL(n, { topic: n % 2 === 0 ? 'copy-changes' : 'copy-change' }));
+    const split = five(10, (n) => CHOICE(n, { topic: n % 2 === 0 ? 'copy-changes' : 'copy-change' }));
     assert.deepEqual(delegationProposals(split, { now }), []);
+
+    // An answer card that carries a topic counts as a product question does, and so does the
+    // answer a reply code signs, which carries the label it stands for.
+    const asked = (n) => ({ id: `q-page-${n}-1`, work: `page-${n}`, what: `The page ${n} needs a separator.`, why: 'It changes the file.',
+      options: [{ label: 'Comma', says: 'Commas.' }, { label: 'Tab', says: 'Tabs.' }], recommendation: 'Tab', level: 3 });
+    const answerCards = [10, 11, 12, 13, 14].map((n) => cardOf({ ...answerInput(asked(n), `page-${n}`), topic: 'separators' }, day(n)));
+    const signed = answerCards.map((card, i) => makeEvent({
+      kind: 'action', now: when(day(10 + i, 5)),
+      data: { action: 'answer', questionId: asked(10 + i).id, questionHash: dataHash(asked(10 + i)), question: card.data.question, label: 'Tab' },
+    }));
+    assert.deepEqual(withoutBecause(delegationProposals([...answerCards, ...signed], { now, enrolled: readEnrolled() })), [{ topic: 'separators', from: 3, to: 2 }]);
+    assert.deepEqual(delegationProposals([...answerCards, ...signed], { now, enrolled: [] }), []);
+    const clicked = answerCards.flatMap((card, i) => [card, answer(card, 'Tab', day(10 + i, 5))]);
+    assert.equal(delegationProposals(clicked, { now }).length, 1);
+    // An answer card with no topic, as the build's questions become, doesn't count.
+    const plain = [10, 11, 12, 13, 14].flatMap((n) => chosen(answerInput(asked(n), `page-${n}`), n, 'Tab'));
+    assert.deepEqual(delegationProposals(plain, { now }), []);
 
     // Already level 2 in force, or a proposal for level 2 waiting: nothing to propose.
     const lower = levelEvent('copy-changes', 2, day(16));
@@ -291,29 +343,51 @@ test('a level-3 topic approved unchanged five times is proposed for level 2', as
     // Level 3 in force is where the topic is proposed from.
     const three = levelEvent('copy-changes', 3, day(1));
     assert.equal(delegationProposals([three, confirmed(three, day(1, 1)), ...events], { now }).length, 1);
+    // A choice the director later reversed doesn't count.
+    const sixth = [...events, ...chosen(CHOICE(16), 16)];
+    assert.equal(delegationProposals(sixth, { now }).length, 1);
+    assert.deepEqual(withoutBecause(delegationProposals([...sixth, reversal('copy-changes', day(11, 30))], { now, since: day(11) })), [{ topic: 'copy-changes', from: 2, to: 3 }]);
   });
 });
 
-test('an approval followed by an amendment does not count as unchanged', async () => {
+test('a decision a signed click makes never counts, and its topic is never proposed for level 2', async () => {
   await inHome(async () => {
     const now = when(day(20));
-    const amendment = (work, at) => makeEvent({ kind: 'amendment', data: { work, change: 'Shorter wording', hash: DOC }, now: when(at) });
+    // Five approvals, by click or by the record a reply code earns, and five approvals of work: none count.
+    assert.deepEqual(delegationProposals(five(10, (n) => APPROVAL(n)), { now }), []);
+    const cards = [10, 11, 12, 13, 14].map((n) => cardOf(APPROVAL(n), day(n)));
+    const signed = cards.map((card, i) => makeEvent({ kind: 'approval', data: { pr: 10 + i, commit: FULL, question: card.data.question }, now: when(day(10 + i, 5)) }));
+    assert.deepEqual(delegationProposals([...cards, ...signed], { now, enrolled: readEnrolled() }), []);
     const works = ['page-a', 'page-b', 'page-c', 'page-d', 'page-e'];
-    const events = works.flatMap((work, i) => approved(WORK(work), 10 + i));
-    assert.equal(delegationProposals(events, { now }).length, 1);
-    // page-c, approved on the 12th, changed after: four left.
-    assert.deepEqual(delegationProposals([...events, amendment('page-c', day(18))], { now }), []);
-    // A change to other work, or one before the approval, leaves the approval unchanged.
-    assert.equal(delegationProposals([...events, amendment('page-z', day(18))], { now }).length, 1);
-    assert.equal(delegationProposals([amendment('page-c', day(9)), ...events], { now }).length, 1);
-    // A change approved with Change it counts too, until the work is changed again.
-    const withAmend = [...events.slice(0, 8), ...approved(AMEND('page-e'), 15, 'Change it')];
-    assert.equal(delegationProposals(withAmend, { now }).length, 1);
-    assert.deepEqual(delegationProposals([...withAmend, amendment('page-e', day(16))], { now }), []);
-    // An approval the director later reversed doesn't count either.
-    const sixth = [...events, ...approved(WORK('page-f'), 16)];
-    assert.equal(delegationProposals(sixth, { now }).length, 1);
-    assert.deepEqual(withoutBecause(delegationProposals([...sixth, reversal('copy-changes', day(11, 30))], { now, since: day(11) })), [{ topic: 'copy-changes', from: 2, to: 3 }]);
+    assert.deepEqual(delegationProposals(works.flatMap((work, i) => chosen(WORK(work), 10 + i)), { now }), []);
+    // Five product questions on a topic an approval card also carries, decided or not: never proposed for level 2.
+    assert.equal(delegationProposals(five(10), { now }).length, 1);
+    assert.deepEqual(delegationProposals([cardOf(APPROVAL(9), day(1)), ...five(10)], { now }), []);
+    assert.deepEqual(delegationProposals([...five(10), cardOf(WORK('page-z'), day(18))], { now }), []);
+    // A reversal still moves such a topic from 2 to 3.
+    assert.deepEqual(withoutBecause(delegationProposals([...five(10, (n) => APPROVAL(n)), reversal('copy-changes', day(16))], { now })), [{ topic: 'copy-changes', from: 2, to: 3 }]);
+  });
+});
+
+test('a level proposal kept as is is not waiting, and is not proposed again for 30 days', async () => {
+  await inHome(async () => {
+    const LATE = new Date(Date.UTC(2026, 10, 20, 12)).toISOString();
+    const events = five(10);
+    const proposal = levelEvent('copy-changes', 2, day(15, 30), { because: 'you chose what I recommended 5 times so far' });
+    const card = cardOf({
+      kind: 'confirm', level: 3, what: `A change to what I can decide alone: ${proposal.data.words}`, why: 'Only you change it.',
+      options: [{ label: 'Confirm', says: 'It goes into the rulebook.' }], recommend: 'Confirm', because: 'it fits', meanwhile: 'Nothing changes.',
+      target: { event: proposal },
+    }, day(15, 31));
+    assert.ok(card.data.options.includes('Keep as is'));
+    // Waiting for the director, or put off with Not now: not proposed again, however long it waits.
+    assert.deepEqual(delegationProposals([...events, proposal, card], { now: when(LATE) }), []);
+    assert.deepEqual(delegationProposals([...events, proposal, card, answer(card, 'Not now', day(16))], { now: when(LATE) }), []);
+    // Kept as is: the card is decided, the proposal no longer waits, and it is held back for 30 days from that answer.
+    const kept = [...events, proposal, card, answer(card, 'Keep as is', day(17))];
+    assert.deepEqual(buildViews(kept, readEnrolled(), { now: when(day(18)) }).waiting.filter((c) => c.id === card.id), []);
+    assert.deepEqual(delegationProposals(kept, { now: when(day(20)) }), []);
+    assert.deepEqual(withoutBecause(delegationProposals(kept, { now: when(LATE) })), [{ topic: 'copy-changes', from: 3, to: 2 }]);
   });
 });
 
@@ -347,15 +421,15 @@ test('money, secrets and the guardrails are never proposed for a lower level', a
   await inHome(async () => {
     const now = when(day(20));
     for (const topic of ['money', 'secrets', 'guardrails']) {
-      // One card at level 4 for the topic, then five approvals at level 3.
-      const events = [cardOf(APPROVAL(9, { topic, level: 4 }), day(1)), ...five(10, (n) => APPROVAL(n, { topic }))];
+      // One card at level 4 for the topic, then five product questions at level 3 decided as recommended.
+      const events = [cardOf(CHOICE(9, { topic, level: 4 }), day(1)), ...five(10, (n) => CHOICE(n, { topic }))];
       assert.deepEqual(delegationProposals(events, { now }), [], topic);
       // Nor does a reversal move it to level 3, which would be a lower level than its own.
       assert.deepEqual(delegationProposals([...events, reversal(topic, day(16))], { now }), [], topic);
     }
     // Level 4 in force holds a topic the same way.
     const four = levelEvent('payments', 4, day(1));
-    const events = [four, confirmed(four, day(1, 1)), ...five(10, (n) => APPROVAL(n, { topic: 'payments' }))];
+    const events = [four, confirmed(four, day(1, 1)), ...five(10, (n) => CHOICE(n, { topic: 'payments' }))];
     assert.deepEqual(delegationProposals(events, { now }), []);
     assert.deepEqual(delegationProposals([...events, reversal('payments', day(16))], { now }), []);
   });

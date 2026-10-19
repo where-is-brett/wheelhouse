@@ -22,18 +22,19 @@
 //             day when not given); and for settingProposals, seen.json's `boardAsks`, the last
 //             board commands as { at, tab, visit }
 // A card's click is judged as the waiting view judges it (cardOutcomes): a reply code's signed
-// record counts as the click it stands for. A proposal already waiting for its confirmation in the
-// profile, or put off with Not now on its card in the last TURNED_DOWN_DAYS, is not made again.
-import { buildViews, cardOutcomes } from '../state/views.js';
+// record counts as the click it stands for. A proposal already waiting for its confirmation, or put
+// off with Not now or kept as is (Keep as is, ruling F48) on its card in the last TURNED_DOWN_DAYS,
+// is not made again. One kept as is no longer waits, though it stays unconfirmed.
+import { buildViews, cardOutcomes, confirmationTimes, countsAtOnce } from '../state/views.js';
 import { readEnrolled } from '../state/signing.js';
-import { ID, LANES } from '../state/card-lines.js';
-import { DECIDING } from '../cards/compose.js';
+import { ID } from '../state/card-lines.js';
+import { DECIDING, KEEP_AS_IS } from '../cards/compose.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { SETTINGS } from '../settings/catalogue.js';
 import { conceptOf } from './glossary.js';
-import { DELEGATE_AFTER, KNOWN_AFTER } from '../lib/front-desk.js';
+import { CARD_KINDS, DELEGATE_AFTER, KNOWN_AFTER } from '../lib/front-desk.js';
 
-// How long a Not now on a proposal's card holds the proposal back.
+// How long a Not now or a Keep as is on a proposal's card holds the proposal back.
 export const TURNED_DOWN_DAYS = 30;
 // Explain more on this many different cards within this many days proposes plain explanations.
 export const EXPLAINED_CARDS = 3;
@@ -72,19 +73,39 @@ function latestSetting(profile, key) {
   return list(profile?.events).filter((e) => e?.kind === 'setting' && e.data?.key === key).sort(byOrder).at(-1);
 }
 
-// Whether a proposal of `key` set to `value` is held back: waiting for its confirmation in the
-// profile, or put off with Not now on a card whose confirm line names a setting of that key and
-// value, within TURNED_DOWN_DAYS of now.
-function heldBack({ events, profile, outcomes, nowMs }, key, value) {
-  if (list(profile?.unconfirmed).some((u) => u?.kind === 'setting' && u.data?.key === key && same(u.data?.value, value))) return true;
-  const settings = new Map([...list(events), ...list(profile?.events)].filter((e) => e?.kind === 'setting').map((e) => [e.id, e]));
-  return outcomes.some(({ card, answers }) => {
-    const named = /^Confirm setting (\S+): "/.exec(typeof card.data?.line === 'string' ? card.data.line : '');
-    const target = named && settings.get(named[1]);
-    if (!target || target.data?.key !== key || !same(target.data?.value, value)) return false;
-    return answers.some((a) => a.data?.label === 'Not now' && nowMs - ms(a.at) < TURNED_DOWN_DAYS * DAY_MS);
-  });
+// When the latest setting for `key` in the profile came into force: a `known:*` false at its own
+// time, any other at its first verified confirmation. Undefined when none has.
+function inForceSince(profile, key, enrolled) {
+  const events = list(profile?.events).filter(isRecord);
+  const confirmed = confirmationTimes(events, enrolled);
+  return events.filter((e) => e.kind === 'setting' && e.data?.key === key)
+    .map((e) => (countsAtOnce(e) ? e.at : confirmed.get(e.id))).filter((at) => typeof at === 'string').sort().at(-1);
 }
+
+// Whether a proposal of `kind` (setting or level) setting `key` to `value` is held back: waiting
+// for its confirmation, or turned down within TURNED_DOWN_DAYS of now, by Not now or Keep as is on
+// a card whose confirm line names an event of that kind, key and value. One whose card was decided
+// by Keep as is no longer waits, though `unconfirmed` still lists it. `events` are where the
+// proposals and their cards are; `unconfirmed` the views' proposals waiting.
+function heldBack({ events, unconfirmed, outcomes, nowMs }, kind, key, value) {
+  const proposals = new Map(list(events).filter((e) => e?.kind === kind).map((e) => [e.id, e]));
+  const kept = new Set();
+  let turnedDown = false;
+  for (const { card, answers, decided } of outcomes) {
+    const named = /^Confirm ([a-z-]+) (\S+): "/.exec(typeof card.data?.line === 'string' ? card.data.line : '');
+    const target = named && named[1] === kind ? proposals.get(named[2]) : undefined;
+    if (!target || target.data?.key !== key || !same(target.data?.value, value)) continue;
+    if (decided?.label === KEEP_AS_IS) kept.add(target.id);
+    if (answers.some((a) => (a.data?.label === 'Not now' || a.data?.label === KEEP_AS_IS) && nowMs - ms(a.at) < TURNED_DOWN_DAYS * DAY_MS)) turnedDown = true;
+  }
+  return turnedDown || list(unconfirmed).some((u) => u?.kind === kind && !kept.has(u.id) && u.data?.key === key && same(u.data?.value, value));
+}
+
+// What heldBack needs for the director's profile settings: the project's and the profile's
+// events, and the profile views' proposals waiting.
+const profileContext = ({ events, profile, outcomes, nowMs }) => ({
+  events: [...list(events), ...list(profile?.events)], unconfirmed: profile?.unconfirmed, outcomes, nowMs,
+});
 
 // The concepts a card holds, as `known:<concept>` names them.
 function conceptsOf(card) {
@@ -95,12 +116,14 @@ function conceptsOf(card) {
 // A concept is proposed as known (confirm: true, a card for the `known:<concept>` setting) once
 // cards holding it were decided with no Explain more on KNOWN_AFTER different days, counting only
 // cards decided after the latest Explain more on any card holding it and after its latest setting
-// in the profile. Explain more on a card holding a concept known in force, after that setting,
-// proposes it as not known (confirm: false: written at once, no card), unless false is already the
-// latest value in the profile.
+// in the profile. Explain more on a card holding a concept known in force, after the latest
+// `known:<concept>` setting came into force (its confirmation; a false at its own time), proposes
+// it as not known (confirm: false: written at once, no card), unless false is already the latest
+// value in the profile. So an Explain more between a proposal and its Confirm counts for nothing.
 export function conceptProposals(events, profile, { now, enrolled, outcomes: given, dayOf: day = dayOf } = {}) {
-  const outcomes = given ?? clickOutcomes(events, profile, { enrolled: enrolled ?? readEnrolled() });
-  const context = { events, profile, outcomes, nowMs: instant(now) };
+  const keys = enrolled ?? readEnrolled();
+  const outcomes = given ?? clickOutcomes(events, profile, { enrolled: keys });
+  const context = profileContext({ events, profile, outcomes, nowMs: instant(now) });
   const concepts = [...new Set(outcomes.flatMap(({ card }) => conceptsOf(card)))].sort();
   const out = [];
   for (const concept of concepts) {
@@ -108,14 +131,15 @@ export function conceptProposals(events, profile, { now, enrolled, outcomes: giv
     const holding = outcomes.filter(({ card }) => conceptsOf(card).includes(concept));
     const since = latestSetting(profile, key)?.at;
     if (profile?.settings?.[key]?.value === true) {
-      const explained = holding.some((o) => o.explained.some((at) => after(at, since)));
+      const known = inForceSince(profile, key, keys) ?? since;
+      const explained = holding.some((o) => o.explained.some((at) => after(at, known)));
       if (explained && latestSetting(profile, key)?.data?.value !== false) out.push({ concept, known: false, confirm: false });
       continue;
     }
     const lastExplained = holding.flatMap((o) => o.explained).sort().at(-1);
     const counted = holding.filter((o) => o.decided !== null && o.explained.length === 0 && after(o.decided.at, lastExplained) && after(o.decided.at, since));
     const days = new Set(counted.map((o) => day(o.decided.at)));
-    if (days.size >= KNOWN_AFTER && !heldBack(context, key, true)) out.push({ concept, known: true, confirm: true });
+    if (days.size >= KNOWN_AFTER && !heldBack(context, 'setting', key, true)) out.push({ concept, known: true, confirm: true });
   }
   return out;
 }
@@ -139,9 +163,9 @@ export function conceptSetting({ concept, known }) {
 export function settingProposals(events, profile, { now, enrolled, outcomes: given, boardAsks = [] } = {}) {
   const nowMs = instant(now);
   const outcomes = given ?? clickOutcomes(events, profile, { enrolled: enrolled ?? readEnrolled() });
-  const context = { events, profile, outcomes, nowMs };
+  const context = profileContext({ events, profile, outcomes, nowMs });
   const out = [];
-  const propose = (key, value, because) => { if (!heldBack(context, key, value)) out.push({ key, value, because }); };
+  const propose = (key, value, because) => { if (!heldBack(context, 'setting', key, value)) out.push({ key, value, because }); };
 
   if (profile?.settings?.boardTab?.value !== 'build') {
     const since = latestSetting(profile, 'boardTab')?.at;
@@ -167,19 +191,11 @@ export function settingProposals(events, profile, { now, enrolled, outcomes: giv
 
 // A decision topic, as a card and a reversal name it: a slug, counted exactly (ruling F40).
 const TOPIC = new RegExp(`^${ID}$`);
-// The work an approve-work or amend card's set line names.
-const WORK_LINES = [new RegExp(`^Approve (${ID}) \\((?:${LANES}) lane\\) as written, `), new RegExp(`^Change the approved (${ID}) to this, `)];
+// The card kinds decided without a signature: a product question, and a question from the build.
+// Every other kind is decided by a signed click the gate or the prompt record checks (DECIDING).
+const UNSIGNED = CARD_KINDS.filter((kind) => !Object.hasOwn(DECIDING, kind));
 
 const topicOf = (data) => (typeof data?.topic === 'string' && TOPIC.test(data.topic) ? data.topic : null);
-
-function workOf(card) {
-  const line = typeof card.data?.line === 'string' ? card.data.line : '';
-  for (const pattern of WORK_LINES) {
-    const found = pattern.exec(line);
-    if (found) return found[1];
-  }
-  return null;
-}
 
 // The time of the latest delegation review (a `note` with `review: 'delegation'`), or null.
 export function lastReview(events) {
@@ -200,13 +216,15 @@ export function reviewDue({ events, now, days }) {
 // `events` are the project's; `views` its views (built here when not given), for the levels in
 // force and the level proposals waiting. Counted since `since`, the last review (none: all time).
 // A topic is proposed for level 2 (from 3) once DELEGATE_AFTER of its level 3 cards were approved
-// unchanged (ruling F38): decided by the kind's deciding label, or by the signed record a reply
-// code earns, with no reversal of the topic after it and, for an approve-work or amend card, no
-// amendment after it to the work its set line names. Answer and question cards don't count: their
-// options are choices, not approvals. A topic reversed since the last review is proposed from 2 to
-// 3 instead, and not for level 2. Never proposed (ruling F39): a topic with any card at level 4 or
-// level 4 in force (the guardrails, secrets and money), a level the topic already has in force or
-// waiting for its confirmation, and a move from any level in force other than the one it is from.
+// unchanged (ruling F46): a card decided without a signature (a product question, or a question
+// from the build carrying a topic), by the option the card recommended (its `recommend`; a card
+// without one doesn't count), with no reversal of the topic after it. A card a signed click
+// decides (DECIDING) never counts, since a level changes nothing for it, and a topic any such card
+// carries is never proposed for level 2. A topic reversed since the last review is proposed from 2
+// to 3 instead, and not for level 2. Never proposed (ruling F39): a topic with any card at level 4
+// or level 4 in force (the guardrails, secrets and money), a level the topic already has in force
+// or waiting for its confirmation, and a move from any level in force other than the one it is
+// from. A level proposal kept as is no longer waits, and is held back for TURNED_DOWN_DAYS (F48).
 export function delegationProposals(events, { now, since, enrolled, outcomes: given, views: built } = {}) {
   const nowMs = instant(now);
   const all = list(events).filter(isRecord);
@@ -217,23 +235,21 @@ export function delegationProposals(events, { now, since, enrolled, outcomes: gi
   const later = (e, at) => ms(e.at) > ms(at);
 
   const reversals = all.filter((e) => e.kind === 'reversal' && topicOf(e.data) !== null);
-  const amendments = all.filter((e) => e.kind === 'amendment' && typeof e.data?.work === 'string');
   const inForce = (topic) => (isRecord(views.levels?.[topic]) ? views.levels[topic].value : undefined);
-  const waiting = (topic, value) => list(views.unconfirmed).some((u) => u?.kind === 'level' && u.data?.key === topic && u.data?.value === value);
+  const context = { events: all, unconfirmed: views.unconfirmed, outcomes, nowMs };
+  const waiting = (topic, value) => heldBack(context, 'level', topic, value);
   const highest = new Set([
     ...outcomes.filter(({ card }) => card.data?.level === 4).map(({ card }) => topicOf(card.data)).filter((t) => t !== null),
     ...Object.keys(isRecord(views.levels) ? views.levels : {}).filter((t) => inForce(t) === 4),
   ]);
+  const signed = new Set(outcomes.filter(({ card }) => Object.hasOwn(DECIDING, card.data?.kind)).map(({ card }) => topicOf(card.data)).filter((t) => t !== null));
 
   const unchanged = ({ card, decided }) => {
     const topic = topicOf(card.data);
-    const deciding = DECIDING[card.data?.kind];
-    if (topic === null || card.data.level !== 3 || deciding === undefined || decided === null) return false;
-    if ((decided.label !== null && decided.label !== deciding) || !inPeriod(decided.at)) return false;
-    if (reversals.some((r) => r.data.topic === topic && later(r, decided.at))) return false;
-    if (card.data.kind !== 'approve-work' && card.data.kind !== 'amend') return true;
-    const work = workOf(card);
-    return work !== null && !amendments.some((m) => m.data.work === work && later(m, decided.at));
+    const { recommend } = card.data;
+    if (topic === null || card.data.level !== 3 || !UNSIGNED.includes(card.data.kind) || typeof recommend !== 'string' || recommend === '') return false;
+    if (decided === null || decided.label !== recommend || !inPeriod(decided.at)) return false;
+    return !reversals.some((r) => r.data.topic === topic && later(r, decided.at));
   };
   const approvals = new Map();
   for (const outcome of outcomes.filter(unchanged)) approvals.set(outcome.card.data.topic, (approvals.get(outcome.card.data.topic) ?? 0) + 1);
@@ -254,8 +270,8 @@ export function delegationProposals(events, { now, since, enrolled, outcomes: gi
       continue;
     }
     const n = approvals.get(topic);
-    if (n >= DELEGATE_AFTER && (level === undefined || level === 3) && !waiting(topic, 2)) {
-      out.push({ topic, from: 3, to: 2, because: `you approved it as proposed ${n} times ${period}, with nothing changed or undone after` });
+    if (n >= DELEGATE_AFTER && !signed.has(topic) && (level === undefined || level === 3) && !waiting(topic, 2)) {
+      out.push({ topic, from: 3, to: 2, because: `you chose what I recommended ${n} times ${period}, with nothing undone after` });
     }
   }
   return out;
