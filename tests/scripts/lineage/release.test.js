@@ -8,7 +8,7 @@ import path from 'node:path';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import {
-  RELEASE_BRANCH, SETTINGS_FILE, canInstall, pinsOnlyChange, releaseBranch, releaseChange, settingsText, undo,
+  RELEASE_BRANCH, SETTINGS_FILE, canInstall, pinsOnlyChange, releaseBranch, releaseChange, settingsText, undo, undoBranch,
 } from '../../../scripts/lineage/release.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -41,6 +41,11 @@ test('the release change touches only the marketplace\'s ref and sha', () => {
   assert.equal(after.extraKnownMarketplaces.wheelhouse.source.sha, undefined);
   assert.equal(releaseBranch(sha), `wheelhouse-release-${sha}`);
   assert.equal(RELEASE_BRANCH.exec(releaseBranch(sha))[1], sha);
+  // An undo has its own branch, which the gate reads as a release too (R149).
+  assert.equal(undoBranch(sha), `wheelhouse-undo-${sha}`);
+  assert.equal(RELEASE_BRANCH.exec(undoBranch(sha))[1], sha);
+  for (const other of [`wheelhouse-redo-${sha}`, `wheelhouse-undo-${sha.slice(1)}`, `feature/wheelhouse-undo-${sha}`]) assert.equal(RELEASE_BRANCH.exec(other), null, other);
+  assert.throws(() => undoBranch('abc'), /in full/);
   // From settings with no release named yet, only the ref is added.
   const none = projectSettings(readConfig(null));
   assert.deepEqual(releaseChange(none, { ref: 'v1.1.0', sha }), after);
@@ -182,7 +187,7 @@ test('the undo reinstalls the previous release, including after the clean-up', a
   assert.deepEqual(pending, { ok: false, pending: true, pr: 12, line: 'The undo\'s pull request #12 is open. Once it merges and this folder has it, the undo reinstalls v1.0.0.' });
   assert.equal(pc.calls.length, before, 'nothing ran');
   assert.equal(opened.length, 1);
-  assert.equal(opened[0].branch, `wheelhouse-release-${previous.sha}`);
+  assert.equal(opened[0].branch, `wheelhouse-undo-${previous.sha}`);
   assert.equal(opened[0].file, SETTINGS_FILE);
   assert.equal(opened[0].text, settingsText(settingsAt('v1.0.0')));
   assert.equal(opened[0].title, 'Put Wheelhouse back to v1.0.0');

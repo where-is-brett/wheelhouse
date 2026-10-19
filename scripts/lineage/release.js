@@ -3,11 +3,12 @@
 // pins the release it runs in its committed .claude/settings.json: the `ref` of the Wheelhouse
 // marketplace's source, a tag of Wheelhouse's repository. A release moves that `ref` by a pull
 // request, only between features. The release's commit travels in the pull request's branch
-// name, `wheelhouse-release-<commit>`, which the gate reads back: a pull request whose only
-// change is that `ref`, to a tag whose release file says it only moves the pins and passed the
-// lineage job, needs the review but not the director's approval (checkRelease). The undo moves
-// the `ref` back the same way, then reinstalls the earlier release by check 30's route, which
-// works even after Claude Code's clean-up has removed that release's folder.
+// name, `wheelhouse-release-<commit>` (`wheelhouse-undo-<commit>` for an undo), which the gate
+// reads back: a pull request whose only change is that `ref`, to a tag whose release file says
+// it only moves the pins and passed the lineage job, needs the review but not the director's
+// approval (checkRelease). The undo moves the `ref` back the same way, then reinstalls the
+// earlier release by check 30's route, which works even after Claude Code's clean-up has
+// removed that release's folder.
 //   node scripts/lineage/release.js reinstall <project-folder> <tag> <commit>
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,12 +23,15 @@ import { MARKETPLACE, MARKETPLACE_PATH, WHEELHOUSE_REPO, WHEELHOUSE_URL, claudeH
 // The file a release changes in a project, and the one a Wheelhouse release carries to say what it is.
 export const SETTINGS_FILE = '.claude/settings.json';
 export const RELEASE_FILE = 'lineage/release.json';
-// The branch of a release's pull request, naming the release's commit in full.
-export const RELEASE_BRANCH = /^wheelhouse-release-([0-9a-f]{40})$/;
-export const releaseBranch = (sha) => {
+// The branch of a release's pull request, naming the release's commit in full, and of an undo's,
+// naming the earlier release's (ruling R149): the gate weighs both as a release.
+export const RELEASE_BRANCH = /^wheelhouse-(?:release|undo)-([0-9a-f]{40})$/;
+const branchFor = (kind) => (sha) => {
   if (!FULL_SHA.test(sha ?? '')) throw new Error('The release\'s commit must be written in full');
-  return `wheelhouse-release-${sha}`;
+  return `wheelhouse-${kind}-${sha}`;
 };
+export const releaseBranch = branchFor('release');
+export const undoBranch = branchFor('undo');
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 // A tag name the gate can fetch: plain, never an option, a path or a ref expression.
@@ -108,7 +112,7 @@ export function pinsOnlyChange(paths, sides) {
 
 // --- Is the release pins-only (ruling R132) ---
 
-// Why a release is not taken as pins-only, always one of these fixed phrases.
+// Why a release is not taken as pins-only, always one of these set phrases.
 export const RELEASE_WHY = Object.freeze({
   shape: 'the release could not be named',
   fetch: 'Wheelhouse\'s repository could not be read at that tag',
@@ -302,7 +306,7 @@ export async function undo({
   if (source.ref !== ref) {
     if (typeof open !== 'function') throw new Error('The undo needs a way to open its pull request');
     const opened = await open({
-      branch: releaseBranch(sha),
+      branch: undoBranch(sha),
       file: SETTINGS_FILE,
       text: settingsText(releaseChange(settings, { ref, sha }, { declared })),
       title: `Put Wheelhouse back to ${ref}`,

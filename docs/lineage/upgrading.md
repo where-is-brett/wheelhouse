@@ -71,7 +71,13 @@ Run it from a clean copy of Wheelhouse's repository. It refuses a stopped plan. 
 - the pins named in `scripts/lineage/manifest.js`, which `node scripts/lineage/manifest.js verify` checks against the manifest;
 - the register's version, with its patch number raised by one.
 
-It does not push. Push the branch yourself and open a pull request. Both the manifest and the register are guardrails, so this is a level 4 pull request: it needs the independent review and the director's approval through the gate. Run `node scripts/lineage/manifest.js verify` on the Mac before asking, because Actions do not run on this account. Then cut a Wheelhouse release.
+It does not push. Push the branch yourself and open a pull request. Both the manifest and the register are guardrails, so this is a level 4 pull request: it needs the independent review and the director's approval through the gate. Run `node scripts/lineage/manifest.js verify` on the Mac before asking, because Actions do not run on this account.
+
+Then cut a Wheelhouse release, once the upgrade has merged:
+
+1. Raise `version` in `.claude-plugin/plugin.json`. Every release has its own version: each session stamps its pull requests with the Wheelhouse version it runs, and the gate refuses one whose version is not the installed manifest's.
+2. Write the manifest again with `node scripts/lineage/manifest.js write`. It takes `wheelhouse.version` in `lineage/manifest.json` from `plugin.json` and fingerprints each upstream afresh at its pins, so only that version should change in it; if anything else changes, stop and find out why.
+3. Run `node scripts/lineage/manifest.js verify` again, open the pull request (`plugin.json` and the manifest are guardrails, so it goes through the gate as above), and tag the merged commit as the release.
 
 A release that only moves the pins, with every check green, carries `lineage/release.json` saying `{ "kind": "pins-only", "lineage": "passed" }`, committed once `manifest.js verify` has passed on the release's commit. Any other release leaves it out or says another kind. In each project, the gate reads that file from Wheelhouse's repository at the release's tag: a pull request that only moves the project to a pins-only release, on Wheelhouse's default branch, needs the review but not the director's approval, and the briefing gets a line. Without the file, the director approves it as any other guardrail change.
 
@@ -83,7 +89,7 @@ If a release turns out bad, a script reinstalls the previous Wheelhouse release 
 
 The undo is `undo` in `scripts/lineage/release.js`. It works in two halves:
 
-1. While the project's settings still name the bad release, it opens a pull request on the branch `wheelhouse-release-<commit>` that moves the Wheelhouse marketplace's `ref` back to the earlier tag, and nothing else. The gate weighs it as any release: it needs the director's approval unless the earlier release is itself pins-only.
+1. While the project's settings still name the bad release, it opens a pull request on the branch `wheelhouse-undo-<commit>`, naming the earlier release's commit, that moves the Wheelhouse marketplace's `ref` back to the earlier tag, and nothing else. The gate reads that branch as it reads `wheelhouse-release-<commit>` and weighs it as any release: it needs the director's approval unless the earlier release is itself pins-only.
 2. Once that pull request has merged and the project's folder has it, the reinstall runs from a terminal outside any agent's sandbox, since it writes Claude Code's own folder:
 
    ```
