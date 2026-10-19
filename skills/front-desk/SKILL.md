@@ -46,13 +46,13 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 
 1. **A briefing a hook added** opens your reply, as written, before anything else.
 2. **Every message** goes first through `wheelhouse:intake`.
-3. **The look at what I can decide alone is due** (the briefing says so), or the director asks for it: run `review` before `cards`, and ask the `questions` it prints in one `AskUserQuestion` call, after the briefing, as this visit's call; the visit's other cards wait for the next visit. Each proposes moving a topic between levels 3 and 2; only their Confirm moves it.
+3. **The look at what I can decide alone is due** (the briefing says so), or the director asks for it: run `review` before `cards`. When `review` gave questions, ask them in one `AskUserQuestion` call, after the briefing, as this visit's call; the visit's other cards wait for the next visit. When it gave none, run `cards` as usual. Each proposes moving a topic between levels 3 and 2; only their Confirm moves it.
 4. **"Cards to ask this visit: n"**: run `cards` and ask what it gives in one `AskUserQuestion` call, after the briefing. One call per visit.
 
 ## Cards
 
 - **Every card** comes from `card`, `cards`, `again`, `review`, `record ruling` or `record setting` (ask the confirm card each `record` prints). Never write a card's words, options or set line yourself, even when a ready-made one seems quicker.
-- **Level 2 topics:** before composing a `question` card, look up its topic in `views levels`. At level 2 in force, don't ask: decide it by the option you would recommend, and `record decision` with `what` (one line, for the briefing), `level` 2 and the `topic`. Never for a card kind decided by a signed click, and never when it is ambiguous, can't be undone, costs money, is the first of its kind, or conflicts with a rule or a past rejection: then it is a card.
+- **Level 2 topics:** before composing a `question` card, look up its topic in `views levels`. At level 2 in force, don't ask: decide it by the option you would recommend, and `record decision` with `what` (one line, for the briefing), `level` 2 and the `topic`. Never for a card kind decided by a signed click, and never when it is ambiguous, can't be undone, costs money, is the first of its kind, conflicts with a rule or a past rejection, or meets any other trigger in design section 6: then it is a card.
 - **Asked once.** Never paste a card again into a later reply; it stays on the board. Only when the director asks for one again: `again <n>`.
 - **Explain more:** `explain <term>` gives the plain words; add an everyday example, then ask the card again.
 - **Show me:** the preview, its screenshots, or a short visual page; then ask again.

@@ -5,10 +5,11 @@ import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
-import { PUT_OFF } from '../lib/front-desk.js';
+import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
+const uniqueIds = (ids) => [...new Set(ids.filter(isPlainKey))];
 
 // The latest event per key, in the sorted order the caller supplies.
 function latestPerKey(events, keyOf) {
@@ -291,8 +292,9 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // unless an `asked` record naming the card came after it: a visit handed the card out, and it may
   // have been dismissed with no answer at all, so `asked` is then that record's time with no label.
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
+  const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   const waiting = [];
-  for (const { card, answers: mine, decided } of outcomesOf(sorted, { confirmations: closing, answeredBy })) {
+  for (const { card, answers: mine, decided } of outcomes) {
     if (decided !== null) continue;
     const last = mine.at(-1);
     const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
@@ -300,6 +302,12 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
       : last ? { at: last.at, label: last.data?.label ?? null } : null;
     waiting.push({ id: card.id, at: card.at, data: card.data, asked });
   }
+
+  // The proposals whose confirm card here was decided by Keep as is, by the id its confirm line
+  // names, a profile setting's among them (ruling F49). They stay unconfirmed, but the lists of
+  // what waits for the director's confirmation (the board's first part, the session start) leave them out.
+  const keptAsIs = uniqueIds(outcomes.filter(({ decided }) => decided?.label === KEEP_AS_IS)
+    .map(({ card }) => confirmNamed(typeof card.data?.line === 'string' ? card.data.line : card.data?.question ?? '')?.[2]));
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
@@ -357,6 +365,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     risks,
     decisions,
     shown,
+    keptAsIs,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,

@@ -123,11 +123,12 @@ export const dollarWords = (value) => `$${value < 1 ? value.toFixed(2) : Math.ro
 // Section 9: what was written for the director to confirm and isn't confirmed yet. The views keep
 // these without effect, so nothing has been applied without confirmation; they are listed instead.
 // `profile` is the profile views' unconfirmed list: a setting there is the director's own, for
-// every project.
+// every project. A proposal kept as is on its card in this project (`keptAsIs`) is left out (ruling F49).
 function firstLines(views, profile) {
   const kinds = { ruling: 'A ruling', level: 'A level', setting: 'A setting' };
-  const project = list(views?.unconfirmed).filter((u) => Object.hasOwn(kinds, u.kind)).map((u) => ({ u, label: kinds[u.kind] }));
-  const own = list(profile).filter((u) => u.kind === 'setting').map((u) => ({ u, label: 'Your setting' }));
+  const kept = new Set(Array.isArray(views?.keptAsIs) ? views.keptAsIs.filter((id) => typeof id === 'string') : []);
+  const project = list(views?.unconfirmed).filter((u) => Object.hasOwn(kinds, u.kind) && !kept.has(u.id)).map((u) => ({ u, label: kinds[u.kind] }));
+  const own = list(profile).filter((u) => u.kind === 'setting' && !kept.has(u.id)).map((u) => ({ u, label: 'Your setting' }));
   return [...project, ...own].sort((a, b) => oldestFirst(a.u, b.u)).map(({ u, label }) => {
     const data = isRecord(u.data) ? u.data : {};
     const what = u.kind === 'ruling' ? oneLine(data.words) : `${oneLine(u.key ?? data.key)} ${valueWords(data.value)}`.trim();

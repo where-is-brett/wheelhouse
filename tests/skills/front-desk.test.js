@@ -165,10 +165,11 @@ test('the playbook decides a level 2 question itself, and puts the review before
   assert.match(rule, /`record decision`/);
   assert.match(rule, /recommend/);
   assert.match(rule, /signed click/);
-  for (const trigger of ['ambiguous', 'undone', 'money', 'first of its kind', 'rule', 'rejection']) assert.ok(rule.includes(trigger), trigger);
+  for (const trigger of ['ambiguous', 'undone', 'money', 'first of its kind', 'rule', 'rejection', 'any other trigger in design section 6']) assert.ok(rule.includes(trigger), trigger);
   // One call per visit: when the review is due it is this visit's call, before `cards`.
   const review = playbook.split('\n').find((line) => line.includes('`review`') && line.includes('before `cards`')) ?? '';
   assert.match(review, /this visit's call/);
-  assert.match(review, /next visit/);
+  assert.match(review, /When `review` gave questions/);
+  assert.match(review, /gave none, run `cards` as usual/);
   assert.match(playbook, /One call per visit/);
 });

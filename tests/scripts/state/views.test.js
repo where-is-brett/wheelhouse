@@ -15,7 +15,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -833,11 +833,19 @@ test('Keep as is closes a proposal\'s confirm card, and its proposal stays uncon
     const level = ev('level', 1, { key: 'copy-changes', value: 2, words: '"copy-changes": level 2', because: 'you chose it' });
     const line = confirmLine(level);
     const card = ev('card', 2, cardData(`What this is: a level.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line }));
-    assert.deepEqual(build([level, card, ev('card-answer', 3, { card: card.id, label: 'Not now' })]).waiting.map((c) => c.id), [card.id]);
+    const putOff = build([level, card, ev('card-answer', 3, { card: card.id, label: 'Not now' })]);
+    assert.deepEqual(putOff.waiting.map((c) => c.id), [card.id]);
+    assert.deepEqual(putOff.keptAsIs, []);
     const kept = build([level, card, ev('card-answer', 3, { card: card.id, label: 'Keep as is' })]);
     assert.deepEqual(kept.waiting, []);
     assert.deepEqual(kept.unconfirmed.map((u) => u.id), [level.id]);
     assert.deepEqual(kept.levels, {});
+    // keptAsIs names it (ruling F49), so the lists of what waits for the director's confirmation leave it out.
+    assert.deepEqual(kept.keptAsIs, [level.id]);
+    // A profile setting's card kept as is here names the profile's event, which this project's state doesn't hold.
+    const setting = { ...ev('setting', 4, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }), id: 'profile-setting' };
+    const own = ev('card', 5, cardData(`What this is: a setting.\n${confirmLine(setting)}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line: confirmLine(setting) }));
+    assert.deepEqual(build([level, card, own, ev('card-answer', 6, { card: own.id, label: 'Keep as is' })]).keptAsIs, ['profile-setting']);
   });
 });
 

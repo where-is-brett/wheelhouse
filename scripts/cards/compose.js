@@ -7,7 +7,7 @@ import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
   liftIncidentLine, incidentFixLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
+import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 
@@ -51,9 +51,9 @@ export const MEANWHILE = 'that feature waits; the others carry on';
 // A card with four options of its own has no Explain more button, so the line also says it can be typed.
 export const CHECKS_UNSAID = 'The build didn\'t say. Choose or type Explain more and I\'ll find out before you answer.';
 
-// The option a confirm card for a proposal offers in place of Show me (ruling F48): it decides
-// the card, signs nothing, and holds the proposal back for a while (learning.js, TURNED_DOWN_DAYS).
-export const KEEP_AS_IS = 'Keep as is';
+// A confirm card for a proposal offers Keep as is in place of Show me (ruling F48); learning.js
+// holds the proposal back for TURNED_DOWN_DAYS after it.
+export { KEEP_AS_IS };
 
 // What the buttons that put a card off do, and what Keep as is does.
 const PUT_OFF_SAYS = Object.freeze({
