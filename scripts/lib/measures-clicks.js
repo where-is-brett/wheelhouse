@@ -107,6 +107,19 @@ export function looksLikeBaseline(text, header, { now = () => new Date() } = {})
   return recorded.length >= COUNTED_MARK_CHARS && plainText(text).replace(/,/g, '').includes(recorded);
 }
 
+// The words the state refuses an event carrying the baseline with (events.js). A hook that sees
+// them drops its record rather than keep it to send again: once the figures lapse, a later try
+// would be taken.
+export const CARRIES_BASELINE = 'An event carrying the baseline card is kept on this computer only, never in the state';
+
+// Everything a card shows the director, as one text: its question, header, and each option's label
+// and description, then any `more` text (such as the label the director chose or typed).
+export function cardText(card, ...more) {
+  const options = Array.isArray(card?.options) ? card.options : [];
+  const words = options.flatMap((o) => (typeof o === 'string' ? [o] : [o?.label, o?.description]));
+  return [card?.question, card?.header, ...words, ...more].filter((t) => typeof t === 'string').join('\n');
+}
+
 // Whether a card or a record carries the private note's figures in any way the net catches: it
 // reads as the baseline card, or it holds the figures waiting for the click.
 export function carriesFigures(text, header, { now = () => new Date() } = {}) {
@@ -193,7 +206,11 @@ export function dropPending(hash) {
 
 // Removes the figures waiting and the shown record once they are older than BASELINE_WAIT_MS, or
 // can't be read as one.
+// The baseline routes sweep at each request, and the card check and the prompt record at each
+// card; a sweep that fails is let be, and every reader ignores what is out of date anyway.
 export function sweepStale(now = () => new Date()) {
-  if (readPending({ now }) === null) fs.rmSync(pendingFile(), { force: true });
-  if (readShown({ now }) === null) fs.rmSync(shownFile(), { force: true });
+  try {
+    if (readPending({ now }) === null) fs.rmSync(pendingFile(), { force: true });
+    if (readShown({ now }) === null) fs.rmSync(shownFile(), { force: true });
+  } catch { /* left for the next sweep */ }
 }

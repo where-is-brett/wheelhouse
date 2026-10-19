@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
+import { CARRIES_BASELINE } from '../lib/measures-clicks.js';
 
 // The hook has ten seconds; the helper gets seven of them.
 export const BUDGET_MS = 7000;
@@ -43,7 +44,11 @@ export function keep(project, route, body, now) {
   return file;
 }
 
-export const taken = (result) => result?.ok === true || (typeof result?.refused === 'string' && HELD.test(result.refused));
+// Whether the helper is done with a record: it took it, it already holds it, or the state refused
+// it for carrying the private note's figures. That last is dropped, never kept to send again,
+// since once the figures lapse a later try would be taken.
+export const taken = (result) => result?.ok === true
+  || (typeof result?.refused === 'string' && (HELD.test(result.refused) || result.refused.includes(CARRIES_BASELINE)));
 
 // Sends the kept records, oldest first, removing each the helper takes. A file
 // that will not parse is moved to pending/bad/. Once `until` (milliseconds since

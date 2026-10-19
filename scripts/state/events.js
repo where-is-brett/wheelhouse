@@ -9,7 +9,7 @@ import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, BASELINE_LABEL, baselineLine } from './card-lines.js';
-import { carriesFigures } from '../lib/measures-clicks.js';
+import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 
@@ -379,7 +379,7 @@ export function carriesBaseline(event, { now = () => new Date() } = {}) {
 // the project's state clone and its state branch. An event carrying the baseline card is refused.
 export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH, now = () => new Date() }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
-  if (carriesBaseline(event, { now })) throw new Error('An event carrying the baseline card is kept on this computer only, never in the state');
+  if (carriesBaseline(event, { now })) throw new Error(CARRIES_BASELINE);
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }

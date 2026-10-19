@@ -13,7 +13,7 @@
 // refused too, saying to leave them out. A card merely headed Baseline is not refused.
 import { pathToFileURL } from 'node:url';
 import { runAndExit, answer, projectOf } from './kit.js';
-import { looksLikeBaseline, holdsFigures, cardHash, readShown } from '../lib/measures-clicks.js';
+import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { PART_LABELS, whatProblem } from '../cards/compose.js';
 import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES,
@@ -87,14 +87,16 @@ const BASELINE_REFUSAL = 'reads as the baseline card but is not the card the hel
 const FIGURES_REFUSAL = 'holds the figures from the director\'s private note, which only the card `cli.js baseline` gives may show: leave them out';
 
 // What is wrong with the questions as to the baseline: each that reads as the baseline card, or
-// holds the figures waiting for the click, and isn't the card the helper recorded as shown, still
-// in date at `now`.
+// holds the figures waiting for the click anywhere it shows them (its question, header, options'
+// labels and descriptions), and isn't the card the helper recorded as shown, still in date at `now`.
 function baselineFaults(questions, now) {
+  sweepStale(now);
   const shown = readShown({ now });
   return questions.flatMap((q, i) => {
     if (typeof q?.question !== 'string') return [];
-    const card = looksLikeBaseline(q.question, q.header, { now });
-    if (!card && !holdsFigures(q.question, { now })) return [];
+    const text = cardText(q);
+    const card = looksLikeBaseline(text, q.header, { now });
+    if (!card && !holdsFigures(text, { now })) return [];
     if (shown !== null && cardHash(q) === shown.card) return [];
     return [`Question ${i + 1} ${card ? BASELINE_REFUSAL : FIGURES_REFUSAL}.`];
   });

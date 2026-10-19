@@ -16,7 +16,8 @@ import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { decide as cardCheck } from '../../../scripts/hooks/card-check.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { BASELINE_WAIT_MS } from '../../../scripts/lib/setup-numbers.js';
-import { readPending, holdsFigures } from '../../../scripts/lib/measures-clicks.js';
+import { readPending, holdsFigures, CARRIES_BASELINE } from '../../../scripts/lib/measures-clicks.js';
+import { sendPending, pendingDir } from '../../../scripts/hooks/pending.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent, listEvents, carriesBaseline } from '../../../scripts/state/events.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -404,8 +405,10 @@ test('the net catches the figures only while they wait, and only as the figures'
     assert.match(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.'), header: 'Baseline' }), /reads as the baseline card/);
     assert.equal(await reason({ ...ordinary, question: five('Which run is the baseline?'), header: 'Baseline' }), undefined);
     assert.equal(await reason({ ...ordinary, question: five('The plan costs $30 a month.') }), undefined);
-    assert.equal(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.') }, later), undefined);
     assert.equal(await cardCheck(asking([card], folder), { now: waiting }), undefined, 'the composed card itself passes');
+    // Out of date, the figures count for nothing, and the card check sweeps them away.
+    assert.equal(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.') }, later), undefined);
+    assert.equal(fs.existsSync(path.join(process.env.WHEELHOUSE_HOME, 'measures', 'pending.json')), false);
   });
 });
 
@@ -415,5 +418,76 @@ test('a figure that isn\'t whole is caught bare too, but not inside a longer num
     const now = () => T0;
     for (const text of ['the total 4127.35 then', 'about 4,127.35', 'each 111.55']) assert.equal(holdsFigures(text, { now }), true, text);
     for (const text of ['14127.35', '4127.356', '4127.3', '1111.55', '111.555']) assert.equal(holdsFigures(text, { now }), false, text);
+  });
+});
+
+const fiveParts = (what) => `What this is: ${what}\nWhy it's coming to you: It is yours.\nOptions: One: one; Two: two\nMy recommendation: One, because it fits.\nWhile you decide: Nothing changes.`;
+
+test('a card showing the figures only in an option is refused, and its answer goes nowhere', async () => {
+  await withHelper(async ({ client }) => {
+    const { P, folder } = registered();
+    assert.equal((await run(ARGS, client)).code, 0);
+    const now = () => T0;
+    const inLabel = { question: fiveParts('Which hosting plan?'), header: 'Question', options: [{ label: '$4,127.35 a year' }, { label: 'Cheaper' }], multiSelect: false };
+    const inDescription = { ...inLabel, options: [{ label: 'One', description: 'It costs US$4127.35.' }, { label: 'Two' }] };
+    for (const card of [inLabel, inDescription]) {
+      const got = await cardCheck(asking([card], folder), { now });
+      assert.match(got?.hookSpecificOutput?.permissionDecisionReason ?? '', /leave them out/);
+    }
+    // Asked all the same, neither answer, nor a typed one holding a figure, reaches the helper.
+    const plain = { ...inLabel, question: fiveParts('Which colour?'), options: [{ label: 'Blue' }, { label: 'Green' }] };
+    const helper = spy();
+    await decide(answered([[inLabel, '$4,127.35 a year'], [inDescription, 'One'], [plain, 'About 4127.35, I think']], folder), { client: helper, now });
+    assert.deepEqual(helper.calls, []);
+    assert.equal(fs.existsSync(pendingDir(P)), false);
+    // Nor does a card with a set line get a shown record, whose options would carry the figures.
+    const { question: approval } = composeCard({
+      kind: 'approval', level: 3, what: 'Pull request #7 changes the sign-in page.', why: 'It is yours to decide.', recommend: 'Approve',
+      because: 'the checks passed', meanwhile: 'Nothing is released.', options: [{ label: 'Approve', says: 'It goes ahead.' }], target: { pr: 7, sha: 'a'.repeat(40) },
+    });
+    const withFigure = { ...approval, options: approval.options.map((o, i) => (i === 1 ? { ...o, description: 'Wait: hosting is $4,127.35.' } : o)) };
+    const shownSpy = spy();
+    await decide(answered([[withFigure, 'Not now']], folder), { client: shownSpy, now });
+    assert.deepEqual(shownSpy.calls, []);
+    const control = spy();
+    await decide(answered([[approval, 'Not now']], folder), { client: control, now });
+    assert.ok(control.calls.some(([name, body]) => name === 'state.record' && body.event.kind === 'shown'), 'the same card without the figure gets its shown record');
+  });
+});
+
+test('a write the state refuses for carrying the baseline is dropped, never kept to send again', async () => {
+  await withHelper(async () => {
+    const { P, folder } = registered();
+    const refusing = spy();
+    refusing.state.write = async (body) => { refusing.calls.push(['state.write', body]); return { ok: false, refused: CARRIES_BASELINE }; };
+    const plain = { question: fiveParts('Which colour?'), header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }], multiSelect: false };
+    await decide(answered([[plain, 'Blue']], folder), { client: refusing, now: () => T0 });
+    assert.equal(refusing.calls.length, 1, 'it was sent once');
+    const left = fs.existsSync(pendingDir(P)) ? fs.readdirSync(pendingDir(P)).filter((n) => n.endsWith('.json')) : [];
+    assert.deepEqual(left, [], 'and not kept');
+    // A record already kept is dropped the same way, so a later send, once the figures lapse, has nothing to send.
+    fs.mkdirSync(pendingDir(P), { recursive: true });
+    fs.writeFileSync(path.join(pendingDir(P), 'x.json'), JSON.stringify({ route: 'write', body: { project: P, kind: 'card-answer', data: { question: 'q', label: 'l' } } }));
+    assert.deepEqual(await sendPending(P, refusing), { sent: 1, kept: 0 });
+    const later = spy();
+    assert.deepEqual(await sendPending(P, later), { sent: 0, kept: 0 });
+    assert.deepEqual(later.calls, []);
+    // An ordinary refusal is still kept for the next try.
+    const busy = spy();
+    busy.state.write = async () => ({ ok: false, refused: 'the state is busy' });
+    await decide(answered([[plain, 'Green']], folder), { client: busy, now: () => T0 });
+    assert.equal(fs.readdirSync(pendingDir(P)).filter((n) => n.endsWith('.json')).length, 1);
+  });
+});
+
+test('a Not now on the baseline card does not let another card on the same call carry the figures out', async () => {
+  await withHelper(async ({ home, client }) => {
+    const { folder } = registered();
+    const { card } = JSON.parse((await run(ARGS, client)).out);
+    const other = { question: fiveParts('Hosting costs US$4127.35 a year; which plan?'), header: 'Question', options: [{ label: 'One' }, { label: 'Two' }], multiSelect: false };
+    const helper = spy();
+    await decide(answered([[card, 'Not now'], [other, 'One']], folder), { client: helper, now: () => T0 });
+    assert.equal(fs.existsSync(path.join(home, 'measures', 'pending.json')), false, 'Not now cleared the figures');
+    assert.deepEqual(helper.calls, [], 'and neither answer went to the project');
   });
 });
