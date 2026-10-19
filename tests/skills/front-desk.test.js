@@ -222,3 +222,22 @@ test('the intake reads running work back before anything else, in the read-back\
   assert.match(rule, /A before and after list, or the route in other words, is not the read-back/);
   assert.match(intake, /\n\| "[^"\n]*read-back[^"\n]*" \| Read it back first: "Doing: X\. Not doing: Y\. Done when: Z\." \|\n/);
 });
+
+test('the front desk quotes a ruling in force where it applies it, gives a card as printed when it can\'t ask it, and the intake puts a visible change with a choice in the small lane (scenarios 1, 7 and 10)', () => {
+  // Scenario 1: a ruling goes into the rulebook verbatim and is never paraphrased (design 5.4).
+  assert.match(playbook, /\*\*A ruling in force\*\*[^\n]*quote it, in its own words, where you apply it/);
+  // Scenario 10: a card is never in the session's own words (design 5.3).
+  assert.match(playbook, /When no `AskUserQuestion` is offered, put each card in your reply as it was printed, word for word with its set line; never in your own words\./);
+  // Scenario 7: a visible change with a choice in it has choices to make (design 7.2) and is shown first (7.3).
+  assert.match(intake, /A change users would see that leaves a choice to make \(a colour, a wording, a place on the page\) is the small lane at least, never quick\./);
+});
+
+test('a musing ends on the one line as it stands, a change says its lane before brainstorming asks, and a small removal is not shown first (scenarios 2, 7 and 8)', () => {
+  // Scenario 2: the musing's offer is the design's one line (design 5.4).
+  assert.match(playbook, /then the one line "Want me to go ahead\?", as it stands\. Nothing is built, paused or recorded/);
+  assert.match(intake, /then the one line "Want me to go ahead\?", as it stands\./);
+  // Scenario 7: a one-line request gets its lane and the choices made unless told otherwise (design 7.1).
+  assert.match(intake, /For a change \(route 9\), add the lane you expect and the choices you will make unless told otherwise, before brainstorming's first question\./);
+  // Scenario 8: small removals and obvious fixes are reported after, not shown first (design 7.3).
+  assert.match(intake, /A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after\./);
+});

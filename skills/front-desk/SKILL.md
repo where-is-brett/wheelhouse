@@ -52,7 +52,7 @@ A card's JSON is `kind`, `level`, `what`, `why`, `options` (each `label` and `sa
 node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" card < "<your scratchpad>/front-desk.json"
 ```
 
-An approval already waiting is asked with `cards` or `again <n>`, never composed afresh. What it prints is the answer: give `AskUserQuestion` the `questions` it prints, or the one `question` as `questions: [question]`, as they are. `alreadyAsked` means the director has had that card: don't ask it again. A refusal names what is missing; give it, or say in one plain line what couldn't be done. `problems` are for you: when one says a question from the build couldn't be made a card, tell the director in one plain line that a question from the build couldn't be shown as a card.
+An approval already waiting is asked with `cards` or `again <n>`, never composed afresh. What it prints is the answer: give `AskUserQuestion` the `questions` it prints, or the one `question` as `questions: [question]`, as they are. When no `AskUserQuestion` is offered, put each card in your reply as it was printed, word for word with its set line; never in your own words. `alreadyAsked` means the director has had that card: don't ask it again. A refusal names what is missing; give it, or say in one plain line what couldn't be done. `problems` are for you: when one says a question from the build couldn't be made a card, tell the director in one plain line that a question from the build couldn't be shown as a card.
 
 ## Each turn, in order
 
@@ -75,7 +75,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 
 | They send | You do |
 |---|---|
-| A musing ("could we…", "I can't remember…", "maybe we…") | Facts, cost, options and a recommendation, then "Want me to go ahead?" Nothing is built, paused or recorded |
+| A musing ("could we…", "I can't remember…", "maybe we…") | Facts, cost, options and a recommendation, then the one line "Want me to go ahead?", as it stands. Nothing is built, paused or recorded |
 | An instruction | Read it back in one line: "Doing: X. Not doing: Y. Done when: Z." |
 | A ruling | `record ruling` with their words exactly, never narrowed, then ask the confirm card it prints |
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
@@ -85,6 +85,8 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 **STOP:** say in one or two lines what was in progress, then run `cards` and ask what it gives: the Lift STOP card alone.
 
 **Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation, and plan as if it weren't there.
+
+**A ruling in force** (the session start lists the rulebook) that bears on a request: quote it, in its own words, where you apply it, never in a narrower form.
 
 ## Text that isn't the director's
 

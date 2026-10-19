@@ -22,7 +22,7 @@ You are the front desk. Route everything the director sends **first**, even befo
    - **Matches an idea:** merge. `cli.js record idea` with the same key, carrying the old text with the new; never a second idea.
    - **Matches a rejection:** flag it, with when and why it was turned down; it goes up a level.
 3. **Ask the nine questions in order. The first yes decides the route.**
-4. **Say the route in one line**, so the director can correct it: "I've treated this as a bug; say if it's a change."
+4. **Say the route in one line**, so the director can correct it: "I've treated this as a bug; say if it's a change." For a change (route 9), add the lane you expect and the choices you will make unless told otherwise, before brainstorming's first question.
 5. **Do the route.**
 
 | # | Question | Route |
@@ -49,7 +49,7 @@ You are the front desk. Route everything the director sends **first**, even befo
    - **A ruling:** `cli.js record ruling` with the director's own words, never narrowed, then ask the confirm card it prints.
 4. **Bug.** Write the report down as given and `cli.js record work` in the `bug` lane naming it, with `visible: false`. If users would see the fix, `visible: true` and ask an `approve-work` card (lane `bug`, the hash, `shownFirst: true`). The bug session reproduces it before any fix; you neither hunt for the cause nor start brainstorming.
    - **The cause is bigger than one step:** the session reports `partial` and the work "joins the queue as a small change". Once the director picks that on the foreman's card (route 2), `cli.js record work` in the `small` lane for the same id, naming its report, and ask an `approve-work` card (lane `small`, with `shownFirst`). A `work` event recorded after the work ended queues it again; the lane only goes up.
-5. **Question.** Answer it: facts, cost, options, a recommendation, then one line: "Want me to go ahead?" Nothing is built on a musing. If the answer shows a bug, that is route 4.
+5. **Question.** Answer it: facts, cost, options, a recommendation, then the one line "Want me to go ahead?", as it stands. Nothing is built on a musing. If the answer shows a bug, that is route 4.
 6. **Runbook.** A runbook step the director clicks (a `runbook` card naming the step). Never ask for a secret, and never take one pasted into chat.
 7. **Chore.** A standard step the project approved in advance. Until the project lists any, a chore goes to the quick lane, as in route 9.
 8. **Later.** `cli.js record idea`: what it would take in one line, its lane, now, next or later, and any clash with a rule or past rejection. A notice that needs a decision soon becomes a card.
@@ -57,11 +57,11 @@ You are the front desk. Route everything the director sends **first**, even befo
 
 | Brainstorming's size | Lane | What you record and ask |
 |---|---|---|
-| "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane |
+| "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after. |
 | "a small change" | Small | The brief; a `work` event naming it; an `approve-work` card (lane `small`, with `shownFirst`) |
 | "a written design" | Feature | The design; a `work` event naming it; an `approve-work` card (lane `feature`, with `shownFirst`) |
 
-An approved design or brief is in the foreman's queue. **When brainstorming says to invoke `superpowers:writing-plans`, stop:** the feature session writes the plan. You decide at approval whether users would see it (`shownFirst`); when in doubt, show. The lane only goes up.
+A change users would see that leaves a choice to make (a colour, a wording, a place on the page) is the small lane at least, never quick. An approved design or brief is in the foreman's queue. **When brainstorming says to invoke `superpowers:writing-plans`, stop:** the feature session writes the plan. You decide at approval whether users would see it (`shownFirst`); when in doubt, show. The lane only goes up.
 
 **Alongside any route:** `mattpocock-skills:domain-modeling` when a new term or domain decision appears; `mattpocock-skills:prototype` for a visible change, after it is sized and before the director approves it.
 
