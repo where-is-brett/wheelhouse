@@ -33,7 +33,7 @@ const approvalCard = (pr = 13) => composeCard({ ...common, kind: 'approval', rec
 const liftStopCard = () => composeCard({ ...common, kind: 'lift-stop', recommend: 'Lift STOP', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift STOP')], target: {} }).card;
 const OWN = [{ label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }];
 const answerCard = () => composeCard({ ...common, kind: 'answer', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN, target: { questionId: 'q-export-csv-1' } }).card;
-const questionCard = () => composeCard({ ...common, kind: 'question', recommend: 'Comma', what: 'Which separator should the export use?', options: OWN }).card;
+const questionCard = (what = 'Which separator should the export use?') => composeCard({ ...common, kind: 'question', recommend: 'Comma', what, options: OWN }).card;
 const QUESTION = { id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file', options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2 };
 
 function keepEvent(event) {
@@ -49,7 +49,7 @@ const withKey = (fn) => withHome(async (home) => {
   return fn(home);
 });
 
-// Puts a card in the state clone, as the front desk's card write does, at `hour` minutes past NOW.
+// Puts a card in the state clone, as the front desk's card write does, `minute` minutes past NOW.
 function putCard(data, minute = 0) {
   const event = makeEvent({ kind: 'card', data, now: () => new Date(NOW.getTime() + minute * 60 * 1000) });
   keepEvent(event);
@@ -166,7 +166,7 @@ test('Explain more and Show me write the card answer and give one prompt naming 
   for (const label of ['Explain more', 'Show me']) {
     const client = fake();
     assert.deepEqual(await press(second, client, label), {
-      made: true, says: `Recorded: ${label} on card 2`, submit: [`Wheelhouse pane: the director pressed ${label} on card 2.`],
+      made: true, says: `Recorded: ${label} on card 2`, submit: [`Wheelhouse pane: the director pressed ${label} on card 2 (${second.id}).`],
     });
     assert.deepEqual(client.calls.order, ['write']);
     assert.deepEqual(client.calls.write[0].data, { question: second.data.question, label });
@@ -177,7 +177,7 @@ test('Explain more and Show me write the card answer and give one prompt naming 
   const asking = putCard(questionCard(), 2);
   const client = fake();
   assert.deepEqual(await press(asking, client, 'Comma'), {
-    made: true, says: 'Recorded: Comma on card 3', submit: ['Wheelhouse pane: the director chose "Comma" on card 3.'],
+    made: true, says: 'Recorded: Comma on card 3', submit: [`Wheelhouse pane: the director chose "Comma" on card 3 (${asking.id}).`],
   });
   assert.deepEqual(client.calls.write[0].data, { question: asking.data.question, label: 'Comma' });
 }));
@@ -310,7 +310,7 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   const asked = await press(other, explain, 'Explain more');
   assert.equal(asked.made, false);
   assert.equal(asked.says, 'STOP is on, so that wasn\'t noted; the front desk has Explain more on card 1');
-  assert.deepEqual(asked.submit, ['Wheelhouse pane: the director pressed Explain more on card 1.']);
+  assert.deepEqual(asked.submit, [`Wheelhouse pane: the director pressed Explain more on card 1 (${other.id}).`]);
   assert.equal(untouched(explain), 0);
   assert.equal(stopState().on, true);
 
@@ -320,4 +320,63 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   assert.deepEqual(await press(lift, lifting, 'Lift STOP', { liftStop }), { made: true, says: 'Recorded: Lift STOP on card 2' });
   assert.equal(stopState().on, false);
   assert.deepEqual(lifting.calls.order, ['record', 'write']);
+}));
+
+test('a choice on a question card is claimed, so two presses at once record it once', () => withKey(async (home) => {
+  const replied = path.join(home, 'projects', P, 'replied');
+  const answered = { made: false, says: 'That card has already been answered' };
+
+  // Neither taken nor kept: nothing was noted, so the card is let go and no prompt is given.
+  const lost = putCard(questionCard());
+  fs.mkdirSync(path.dirname(pendingDir(P)), { recursive: true });
+  fs.writeFileSync(pendingDir(P), 'not a folder');
+  const down = fake({ refuse: true });
+  assert.deepEqual(await press(lost, down, 'Comma'), { made: false, says: 'That wasn\'t noted this time, so the card stays as it was' });
+  assert.equal(fs.existsSync(path.join(replied, lost.id)), false);
+  fs.rmSync(pendingDir(P), { force: true });
+
+  // Two presses at once, with a helper that takes its time: one answer, one prompt.
+  const client = fake({ takes: false });
+  const results = await Promise.all([press(lost, client, 'Comma'), press(lost, client, 'Tab')]);
+  assert.deepEqual(results.map((r) => r.made).sort(), [false, true]);
+  assert.equal(client.calls.write.length, 1);
+  assert.equal(results.flatMap((r) => r.submit ?? []).length, 1);
+  assert.equal(results.find((r) => !r.made).says, answered.says);
+
+  // A choice kept in pending/, the helper being down, closes the card to a second choice.
+  const kept = putCard(questionCard('Which separator should the import use?'), 1);
+  const refused = fake({ refuse: true });
+  assert.deepEqual(await press(kept, refused, 'Tab'), {
+    made: true, says: 'Recorded: Tab on card 2 (kept until the helper takes it)', submit: [`Wheelhouse pane: the director chose "Tab" on card 2 (${kept.id}).`],
+  });
+  fs.rmSync(replied, { recursive: true, force: true });
+  const second = fake();
+  assert.deepEqual(await press(kept, second, 'Comma'), answered);
+  assert.equal(untouched(second), 0);
+
+  // Explain more and Not now kept in pending/ don't close it, and claim nothing.
+  const open = putCard(questionCard('Which separator should the report use?'), 2);
+  assert.equal((await press(open, fake({ refuse: true }), 'Explain more')).made, true);
+  assert.equal(fs.existsSync(path.join(replied, open.id)), false);
+  assert.equal((await press(open, fake(), 'Comma')).made, true);
+}));
+
+test('a Lift STOP card drawn before this STOP began records nothing', () => withKey(async () => {
+  const old = putCard(liftStopCard());
+  // STOP went on half an hour after the card was drawn.
+  setStop({ by: 'prompt', now: () => new Date(NOW.getTime() + 30 * 60 * 1000) });
+  let lifted = 0;
+  const client = fake();
+  assert.deepEqual(await press(old, client, 'Lift STOP', { liftStop: () => { lifted += 1; } }), {
+    made: false, says: 'That couldn\'t be recorded: the card no longer matches what it decides',
+  });
+  assert.equal(untouched(client), 0);
+  assert.equal(lifted, 0);
+  assert.equal(stopState().on, true);
+  assert.deepEqual(pendingFiles(), []);
+
+  // A card drawn after it began lifts it.
+  const fresh = putCard(liftStopCard(), 31);
+  assert.equal((await press(fresh, fake(), 'Lift STOP', { liftStop })).made, true);
+  assert.equal(stopState().on, false);
 }));
