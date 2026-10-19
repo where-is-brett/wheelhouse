@@ -21,7 +21,7 @@ import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
 import { wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
-import { buildsShown } from '../protection/windows-builds.js';
+import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
@@ -245,16 +245,26 @@ async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   } catch { /* the session carries on without it */ }
 }
 
+// A setting for build commands on Windows is confirmed only through its own card, so a proposal
+// of one is never listed as changed without the director's confirmation (as on the board).
+const BUILDS_KEY = settingKey('');
+const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && key.startsWith(BUILDS_KEY));
+
 // `windows` adds the Windows line; `builds`, the level build commands run at on this computer,
-// adds the Unattended line after it while that is on.
+// adds the Unattended line after it while that is on. Both come straight after STOP, before the
+// lists, so the cut at MAX_CHARS never takes them.
 export function reload({ views, stop, notes, feature, stateRoot, windows, builds }) {
   const lines = [];
   if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
+  if (windows) {
+    lines.push(WINDOWS_LINE);
+    if (builds === 'unattended') lines.push(UNATTENDED_LINE);
+  }
   const damaged = Array.isArray(views?.damaged) ? views.damaged.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))) : [];
   lines.push(...section('Damaged state:', damaged));
   lines.push(...notes);
   const title = (d) => show(d?.title ?? d?.question ?? d?.words ?? d?.value ?? '');
-  const unconfirmed = (views?.unconfirmed ?? []).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
+  const unconfirmed = (views?.unconfirmed ?? []).filter((u) => !isBuildsProposal(u)).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
   const quoted = (unconfirmed.length > 0 || (views?.waiting ?? []).length > 0 || (views?.rulebook ?? []).some((r) => r.status === 'accepted'));
   if (quoted) lines.push('Titles are quoted as agents wrote them.');
   lines.push(...section('Changed without the director\'s confirmation:', unconfirmed));
@@ -265,10 +275,6 @@ export function reload({ views, stop, notes, feature, stateRoot, windows, builds
   const levels = Object.values(views?.levels ?? {}).map((l) => `${l.key}: ${show(l.value)}`);
   lines.push(...section('Levels:', levels));
   if (feature) lines.push(`Your feature's ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}`);
-  if (windows) {
-    lines.push(WINDOWS_LINE);
-    if (builds === 'unattended') lines.push(UNATTENDED_LINE);
-  }
   let text = lines.join('\n');
   if (text.length > MAX_CHARS) text = `${text.slice(0, MAX_CHARS - 1)}…`;
   return text;
@@ -315,8 +321,14 @@ export async function decide(input, deps = {}) {
 
   const stateRoot = stateDir(project);
   const windows = platform === 'win32' && firstForSession(project, input.session_id, now);
-  // Guarded waits for its self-test, so in Part 1 only Unattended is shown.
-  const builds = windows ? buildsShown({ views, computer: computerId(), locked, guardedReady: false }).level : 'ask';
+  // Guarded waits for its self-test, so in Part 1 only Unattended is shown. Anything that fails
+  // here, the computer's id included, shows Ask and leaves the rest of the reload as it is.
+  let builds = 'ask';
+  if (windows) {
+    try {
+      builds = buildsShown({ views, computer: computerId(), locked, guardedReady: false }).level;
+    } catch { /* shown as Ask */ }
+  }
   const text = reload({
     views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot, windows, builds,
   });

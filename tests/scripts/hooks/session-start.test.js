@@ -175,7 +175,7 @@ test('the Windows line appears once per session', async () => {
 
 // The settings view as buildViews makes it, holding Unattended on `computer` from a click on its own card.
 const unattendedOn = (computer, value = 'unattended') => ({
-  [settingKey(computer)]: { key: settingKey(computer), id: 'e-1', at: '2026-10-19T01:00:00.000Z', value, computer, line: unattendedBuildsLine('e-1', computer) },
+  [settingKey(computer)]: { key: settingKey(computer), id: 'e-1', at: '2026-10-19T01:00:00.000Z', value, computer, confirmedOn: computer, line: unattendedBuildsLine('e-1', computer) },
 });
 
 test('while Unattended is on, the Windows line is followed by the Unattended line', async () => {
@@ -190,7 +190,6 @@ test('while Unattended is on, the Windows line is followed by the Unattended lin
     const session = () => ({ session_id: `u${(n += 1)}` });
     const lines = text(await run(up({ settings: unattendedOn(me) }), { platform: 'win32' }, session())).split('\n');
     assert.equal(lines[lines.indexOf(WINDOWS_LINE) + 1], UNATTENDED_LINE);
-    assert.equal(lines.at(-1), UNATTENDED_LINE);
     // At Ask, for another computer, in a Locked project, or off Windows, nothing new.
     assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me, 'ask') }), { platform: 'win32' }, session())), /unattended/);
     assert.doesNotMatch(text(await run(up({ settings: unattendedOn('deadbeef') }), { platform: 'win32' }, session())), /unattended/);
@@ -245,6 +244,48 @@ test('the whole reload is cut at 9,000 characters', async () => {
     const mk = (c) => Array.from({ length: 20 }, (_, i) => ({ id: `${c}${i}`, kind: 'ruling', status: 'accepted', words: longTitle(c, i), data: { title: longTitle(c, i), words: longTitle(c, i) } }));
     const f = fake({ views: { ...VIEWS, damaged: mk('d').map((x) => x.words), waiting: mk('w'), unconfirmed: mk('u'), rulebook: mk('r') } });
     assert.equal(text(await run(f)).length, 9000);
+  });
+});
+
+test('the Windows and Unattended lines come before the lists, so a cut reload keeps them', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const mk = (c) => Array.from({ length: 20 }, (_, i) => ({ id: `${c}${i}`, kind: 'ruling', status: 'accepted', words: longTitle(c, i), data: { title: longTitle(c, i), words: longTitle(c, i) } }));
+    const f = fake({ views: { ...VIEWS, damaged: mk('d').map((x) => x.words), waiting: mk('w'), unconfirmed: mk('u'), rulebook: mk('r'), settings: unattendedOn(me) } });
+    f.client.health = async () => ({ ok: true });
+    const t = text(await run(f, { platform: 'win32', stopState: () => ({ on: true, by: 'the director', at: '2026-10-19T01:00:00.000Z' }) }));
+    assert.equal(t.length, 9000, 'cut');
+    const lines = t.split('\n');
+    assert.match(lines[0], /^STOP is on/);
+    assert.deepEqual(lines.slice(1, 3), [WINDOWS_LINE, UNATTENDED_LINE]);
+  });
+});
+
+test('a computer id that can\'t be read leaves the rest of the reload, and shows Ask', async () => {
+  await withHome(async (home) => {
+    // computer.json as a folder: computerId throws.
+    fs.mkdirSync(path.join(home, 'computer.json'), { recursive: true });
+    assert.throws(() => computerId());
+    const f = fake({ views: { ...VIEWS, waiting: [{ id: 'c1', data: { title: 'T' } }] } });
+    f.client.health = async () => ({ ok: true });
+    const t = text(await run(f, { platform: 'win32', stopState: () => ({ on: true, by: 'the director', at: '2026-10-19T01:00:00.000Z' }) }));
+    assert.match(t, /^STOP is on/);
+    assert.ok(t.includes(WINDOWS_LINE));
+    assert.ok(!t.includes(UNATTENDED_LINE));
+    assert.match(t, /c1: T/);
+  });
+});
+
+test('a proposal for build commands on Windows is not listed as changed without the director\'s confirmation', async () => {
+  await withHome(async () => {
+    const f = fake({ views: { ...VIEWS, unconfirmed: [
+      { kind: 'setting', id: 'e-b', at: '2026-10-19T01:00:00.000Z', key: settingKey('0a1b2c3d'), data: { key: settingKey('0a1b2c3d'), value: 'unattended' } },
+      { kind: 'setting', id: 'e-s', at: '2026-10-19T01:00:01.000Z', key: 'reviewRounds', data: { key: 'reviewRounds', value: 3 } },
+    ] } });
+    f.client.health = async () => ({ ok: true });
+    const t = text(await run(f));
+    assert.match(t, /e-s \(setting reviewRounds\)/);
+    assert.doesNotMatch(t, /e-b|windowsBuildCommands/);
   });
 });
 
