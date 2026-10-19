@@ -34,7 +34,39 @@ The prompt of a front desk session is the director's message alone. Every featur
 
 **What counts as a run.** A run that failed, or passed, because of the scenario or the harness rather than the session's behaviour does not count; it is listed under "Runs that did not count" with what was changed.
 
-**Results, one trial each unless the cell says** (expected: pass with, fail without).
+**The reruns under the full isolation, 20 October 2026 (ruling F101): the counted results for 25, 26, 35 and 27's route leg.** Claude Code 2.1.302, Superpowers 7.0.0, Matt Pocock's skills 1.2.3, on macOS, under F90's isolation, the sandbox (F94) and F102's denials (`docs/evals/front-desk.md`, "the session's isolation"). One trial each variant; 26's `with` failed, so it ran three times. Records `~/.wheelhouse-evals/2026-10-20/<id>-<variant>-<trial>.json`, numbered after the day's earlier ones, which are kept as history (the cells of the table below and the sections after it). 20 to 23, 27's bug session's leg, 33 and 34 were not run again: they are feature sessions, whose results this document keeps from 19 October, before the isolation.
+
+| # | With | Without |
+|---|---|---|
+| 25 | **pass** | fail: built at the front desk |
+| 26 | **fail, 0 of 3**: the amendment recorded and its card asked, but no route 3 said and no "Doing: … Not doing: … Done when: …" read-back | fail: no amendment |
+| 27, route leg | **pass** | fail: changed the code itself |
+| 35 | **pass** | fail: started writing-plans |
+
+26's read-back is the finding ruling F92 left as a finding, not tuned: every counted trial began the intake and recorded the amendment without saying the route or reading it back.
+
+| Scenario | Variant | Trial | Result | Why | Tokens in / out | Record |
+|---|---|---|---|---|---|---|
+| 25 | with | 3 | pass | three routes said, and the spreadsheet download joined to orders-export (it started the intake; recorded: work day-total-cancelled (bug), card (approve-work), idea gift-cards) | 568,891 / 6,173 | 2026-10-20/25-with-3.json |
+| 25 | without | 2 | fail | it built at the front desk: it wrote orders.test.js, orders.test.js, orders.js, orders-export.test.js, orders-export.js, staff-page.js (recorded nothing) | 236,844 / 5,966 | 2026-10-20/25-without-2.json |
+| 26 | with | 8 | fail | an amendment was recorded, but no route 3 was said and no read-back given (it started the intake) | 448,102 / 6,032 | 2026-10-20/26-with-8.json |
+| 26 | with | 9 | fail | an amendment was recorded, but no route 3 was said and no read-back given (it started the intake) | 504,977 / 5,666 | 2026-10-20/26-with-9.json |
+| 26 | with | 10 | fail | an amendment was recorded, but no route 3 was said and no read-back given (it started the intake) | 478,967 / 5,934 | 2026-10-20/26-with-10.json |
+| 26 | without | 2 | fail | no amendment recorded for orders-export (no route 3 said) | 125,359 / 2,465 | 2026-10-20/26-without-2.json |
+| 27-route | with | 2 | pass | route 4 said, a work event in the bug lane names the written-down report, and no code read or changed (it started the intake; work video-length names docs/bugs/video-length-seconds-padding.md; visible true) | 515,692 / 4,873 | 2026-10-20/27-route-with-2.json |
+| 27-route | without | 2 | fail | it changed code: duration.test.js, duration.js; it read code: duration.js, duration.test.js | 94,555 / 1,507 | 2026-10-20/27-route-without-2.json |
+| 35 | with | 3 | pass | a work event names the design, and no writing-plans started (it started the intake; work christmas-pre-orders in the feature lane, its approval card recorded and asked (in its reply)) | 504,051 / 6,191 | 2026-10-20/35-with-3.json |
+| 35 | without | 2 | fail | it started writing-plans | 172,106 / 8,803 | 2026-10-20/35-without-2.json |
+
+Did not count (the stand-in helper gave no card answers, so the front desk's `views work` failed; the stand-in now gives them, and each was run again: `docs/evals/front-desk.md`, "Runs of the reruns that did not count"):
+
+| Scenario | Variant | Trial | Result | Why | Tokens in / out | Record |
+|---|---|---|---|---|---|---|
+| 25 | with | 2 | pass | three routes said, and the spreadsheet download joined to orders-export (it started the intake; recorded: work day-total-cancelled (bug), card (approve-work), idea gift-cards) | 668,950 / 6,491 | 2026-10-20/25-with-2.json |
+| 26 | with | 7 | fail | an amendment was recorded, but no route 3 was said and no read-back given (it started the intake) | 599,390 / 6,657 | 2026-10-20/26-with-7.json |
+| 35 | with | 2 | pass | a work event names the design, and no writing-plans started (it started the intake; work christmas-pre-orders in the feature lane, its approval card recorded and asked (in its reply)) | 501,559 / 5,667 | 2026-10-20/35-with-2.json |
+
+**Results before the reruns (history), one trial each unless the cell says** (expected: pass with, fail without). 25, 26, 35 and 27's route leg ran before the full isolation; the rest on 19 October.
 
 | # | Scenario | With | Without |
 |---|---|---|---|
