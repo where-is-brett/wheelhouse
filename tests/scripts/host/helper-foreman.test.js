@@ -10,11 +10,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pull as cliPull } from '../../../scripts/feature/cli.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
-import { startHelper } from '../../../scripts/host/helper.js';
+import { envForConnection, startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { FOREMAN_RUNNER, SIGN_IN_NAMES, foremanEnv, foremanRequestRefusal } from '../../../scripts/host/foreman-run.js';
 import { sessionEnv } from '../../../scripts/watcher/waker.js';
-import { writeProject } from '../../../scripts/lib/projects.js';
+import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
@@ -104,6 +104,49 @@ test('the foreman\'s command runs only from the project\'s main checkout, and on
         assert.equal(answer.refused, foremanRequestRefusal({ script, argv }));
       }
     });
+  } finally { p.remote.cleanup(); }
+});
+
+test('the foreman\'s commands for one project wait their turn: a retry sent while the first runs starts once it ends (I2)', async () => {
+  const p = await project();
+  const spans = [];
+  let running = 0;
+  const run = async (file, args, options = {}) => {
+    if (file !== process.execPath) return realRun(file, args, options);
+    running += 1;
+    const span = { argv: args.slice(2), overlapped: running > 1 };
+    spans.push(span);
+    await new Promise((resolve) => { setTimeout(resolve, 150); });
+    running -= 1;
+    return { code: 0, stdout: `${args.slice(3).join(' ')}\n`, stderr: '' };
+  };
+  try {
+    await withHelper(p.home, async (client) => {
+      const ask = (argv) => client.foreman.run({ folder: p.checkout, script: 'act', argv });
+      const answers = await Promise.all([ask(['start', 'export']), ask(['start', 'export']), ask(['merge', 'export'])]);
+      assert.deepEqual(answers.map((a) => a.stdout), ['start export\n', 'start export\n', 'merge export\n']);
+      assert.equal(spans.length, 3);
+      assert.deepEqual(spans.map((sp) => sp.overlapped), [false, false, false], 'no command ran while another did');
+      assert.deepEqual(spans.map((sp) => sp.argv), [['act', 'start', 'export'], ['act', 'start', 'export'], ['act', 'merge', 'export']], 'in the order they came');
+    }, { run });
+  } finally { p.remote.cleanup(); }
+});
+
+test('the foreman\'s commands still run once the narrow key is gone: the route uses no connection (m2)', async () => {
+  const p = await project();
+  try {
+    await as(p.home, () => {
+      writeProject(P, { ...readProject(P), connection: { host: 'github', mode: 'narrow', project: 'o/p' } });
+    });
+    const noFetch = async () => { throw new Error('no host in tests'); };
+    const envFor = envForConnection((project) => readProject(project).connection, { fetch: noFetch });
+    await withHelper(p.home, async (client) => {
+      // No key file: the connection's environment can't be made.
+      assert.equal((await client.push({ cwd: p.checkout, dir: p.checkout, refspec: 'feature/x' })).ok, false);
+      const answer = await client.foreman.run({ folder: p.checkout, script: 'wake', argv: ['measures'] });
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+      assert.equal(answer.code, 0, answer.stderr);
+    }, { envFor });
   } finally { p.remote.cleanup(); }
 });
 

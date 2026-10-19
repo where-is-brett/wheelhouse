@@ -651,8 +651,9 @@ function placed(body) {
 
 // Beside the runbook's own routes, these carry on with the director's sign-in once step 2 has
 // removed the narrow key: reading a pull request, and recording a signed click, so the
-// director's approval of the restore pull request can still be read and kept.
-const FALL_BACK_ROUTES = ['/pr/state', '/state/record'];
+// director's approval of the restore pull request can still be read and kept; and the foreman's
+// commands, whose route uses no connection itself (each call its child makes gets its own).
+const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 
 // The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
@@ -2461,7 +2462,12 @@ export async function startHelper({
     // and the state through this helper, like any other caller. Answered under STOP: the scripts
     // say their own STOP holds. The answer is the child's exit code and output, scrubbed of the
     // connection's secrets as every answer is.
-    '/foreman/run': async ({ project, script, argv }) => {
+    // One foreman command at a time per project (final review, I2): act's handled list, its
+    // worktrees and the sessions it starts are shared, and a retry sent while the first is still
+    // running (the forwarder waits as long as the child runs; the foreman's Bash tool may give up
+    // sooner) waits its turn, then finds what the first did. The key is the foreman's own, so it
+    // never waits on the state:, merge:, mirror: or push: queues the child's own calls take.
+    '/foreman/run': ({ project, script, argv }) => oneAtATime(`foreman:${project}`, async () => {
       const why = foremanRequestRefusal({ script, argv });
       if (why !== null) refuse(why);
       let result;
@@ -2474,7 +2480,7 @@ export async function startHelper({
       }
       const stopped = result.timedOut ? `The foreman's ${script} command did not finish in fifteen minutes and was stopped.\n` : '';
       return { ok: true, code: result.timedOut ? 1 : result.code, stdout: result.stdout, stderr: `${result.stderr}${stopped}` };
-    },
+    }),
     '/host/facts': hostFacts,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),

@@ -79,8 +79,9 @@
 // Writing state. Every event goes through the helper's /state/write with an
 // id made here, and that id is recorded in the watcher's handled list
 // (scripts/watcher/handled.js) before the write, so the foreman's own
-// records never wake it (R64). The list has no lock: the foreman runs these
-// commands one at a time. A `feature` event replaces the last one in the
+// records never wake it (R64). The list has no lock of its own: the helper's
+// /foreman/run runs a project's foreman commands one at a time, so a retry
+// waits for the first to end. A `feature` event replaces the last one in the
 // features view, so each carries the feature's worktree, branch, plan, files
 // and slice forward. Only `start` and `amend` carry `brief`: a `building`
 // event without it is the session's go-ahead (`build`, ruling R85), and one
