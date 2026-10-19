@@ -13,8 +13,13 @@ import path from 'node:path';
 import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
-  PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED,
+  PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed,
 } from '../../../scripts/setup/host.js';
+import { questionsStep } from '../../../scripts/setup/questions.js';
+import { rulesStep } from '../../../scripts/setup/rules.js';
+import { stepsFor, joinedRepo, onRunList, JOINING_STEPS, SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
+import { eventPath } from '../../../scripts/state/events.js';
+import { cloneState } from '../../../scripts/state/clone.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { startRun, addChanges, findRun, readJournal } from '../../../scripts/setup/journal.js';
 import { readKey, writeKey } from '../../../scripts/host/keys.js';
@@ -109,6 +114,7 @@ function standIn(state = {}) {
   w.api = {
     keys: [],
     async get(p) {
+      if (p.startsWith('/groups?')) return { status: 200, body: (w.groups ?? []).map((full_path) => ({ full_path })) };
       const key = decodeURIComponent(p.replace(/^\/projects\//, ''));
       const [repo, found] = Object.entries(w.repos).find(([r, v]) => r === key || String(v.id) === key) ?? [];
       return found ? { status: 200, body: { id: found.id, path_with_namespace: repo, default_branch: 'main' } } : { status: 404, body: null };
@@ -1176,5 +1182,312 @@ test('one app\'s keys per computer: a project on another app waits, and apply ne
     await assert.rejects(applyStep(step, shop, list, { now: time.now }), /keeps one GitHub App's keys, and they serve your other projects through the Wheelhouse app/);
     assert.equal(readKey('github-app').clientId, CLIENT_ID, 'the keys serving the earlier project are as they were');
     assert.equal(gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length, 0);
+  });
+});
+
+// ---- A second computer joining a project (ruling R77) ----
+
+const INSTALLED = '{"enabledPlugins":{"wheelhouse@wheelhouse":true}}\n';
+const COMMITTED = `${JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true, 'superpowers@wheelhouse': true }, sandbox: { enabled: true } }, null, 2)}\n`;
+
+// A project the first computer set up, on the stand-in host: its main branch with the project's
+// files, and its state branch, holding a `phase` setting when one is given.
+async function seedProject(w, repo, { phase = null } = {}) {
+  w.nextId += 1;
+  w.repos[repo] = { id: w.nextId };
+  const dir = w.hostUrl({ repo });
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  await realRun('git', ['init', '--bare', '-q', '-b', 'main', dir]);
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-seed-'));
+  try {
+    await g(work, 'init', '-q', '-b', 'main');
+    fs.mkdirSync(path.join(work, '.claude'));
+    fs.writeFileSync(path.join(work, 'README.md'), '# Cafe menu\n');
+    fs.writeFileSync(path.join(work, 'CLAUDE.md'), '# Cafe menu\n');
+    fs.writeFileSync(path.join(work, '.claude', 'settings.json'), COMMITTED);
+    fs.writeFileSync(path.join(work, '.claude', 'wheelhouse.json'), '{"v":1}\n');
+    await g(work, 'add', '-A');
+    await g(work, 'commit', '-q', '-m', 'Set up Wheelhouse');
+    await g(work, 'push', '-q', dir, 'main');
+    await g(work, 'checkout', '-q', '--orphan', 'wheelhouse-state');
+    await g(work, 'rm', '-rqf', '.');
+    fs.writeFileSync(path.join(work, 'README.md'), '# Wheelhouse state\n');
+    if (phase !== null) {
+      const event = { v: 1, id: '0f1e2d3c-0000-4000-8000-000000000001', at: '2026-10-19T00:00:00.000Z', computer: 'c-first', kind: 'setting', data: { key: 'phase', value: phase } };
+      fs.mkdirSync(path.dirname(path.join(work, eventPath(event))), { recursive: true });
+      fs.writeFileSync(path.join(work, eventPath(event)), JSON.stringify(event));
+    }
+    await g(work, 'add', '-A');
+    await g(work, 'commit', '-q', '-m', 'Start the state branch');
+    await g(work, 'push', '-q', dir, 'wheelhouse-state');
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+
+// A product's folder as step 1 leaves it on a fresh computer: nothing but its .claude/, with the
+// install's settings and step 2's local settings.
+const emptyFolder = (name = 'Cafe Menu') => {
+  const folder = path.join(fs.realpathSync.native(tempFolder('wh-proj ')), name);
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), INSTALLED);
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.local.json'), '{"permissions":{"allow":["Bash(setup:*)"]}}\n');
+  return folder;
+};
+
+const joining = ({ join = fromOtherComputer('Cafe-Menu'), typed = null, way = WAYS.quick, host = HOST_LABELS.github } = {}) => (id) => {
+  if (id === 'join' || id.startsWith('join-')) return typed ?? join;
+  if (id === 'host') return host;
+  if (id.startsWith('connection-')) return way;
+  throw new Error(`asked ${id}`);
+};
+
+// answerAll, with a typed answer given as text.
+async function answerJoin(step, ctx, pick) {
+  const answers = { ...(ctx.answers ?? {}) };
+  const asked = [];
+  for (let i = 0; i < 8; i += 1) {
+    const got = await step.plan({ ...ctx, answers });
+    if (!got.ask) return { ...got, answers, asked };
+    asked.push(got.ask);
+    const value = pick(got.ask.id, got.ask.card);
+    const typed = got.ask.typed && !got.ask.card.options.some((o) => o.label === value);
+    answers[`3.${got.ask.id}`] = typed ? { label: null, text: value, at: NOW.toISOString() } : said(value);
+  }
+  throw new Error('the step kept asking');
+}
+
+// Applies the list in the given run, as the engine does.
+async function applyIn(step, folder, runId, changes, extra = {}) {
+  const lines = [];
+  await step.apply(ctxFor(folder, {
+    runId,
+    say: (line) => { lines.push(line); },
+    record: (made) => addChanges(runId, (Array.isArray(made) ? made : [made]).map((c) => ({ ...c, step: 3 }))),
+    ...extra,
+  }), changes);
+  return lines;
+}
+
+const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl, env: {} });
+
+const joinedOf = (folder) => findRun(folder).changes.filter((c) => c.kind === 'answer' && c.after && Object.hasOwn(c.after, 'joined')).map((c) => c.after);
+
+test('step 3 asks whether this computer is joining only in a folder holding nothing but step 1\'s install, recommending by profile.json', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const first = (await step.plan(ctxFor(folder))).ask;
+    assert.equal(first.id, 'join');
+    assert.equal(first.typed, true, 'an owner/name may be typed');
+    assert.deepEqual(first.card.options.map((o) => o.label), [NEW_PRODUCT, 'Cafe-Menu, from my other computer']);
+    assert.equal(first.card.recommend, fromOtherComputer('Cafe-Menu'), 'no profile.json: the other computer');
+    assert.match(first.card.what, /owner\/name/);
+    composeCard({ ...first.card, kind: 'question' });
+    // With profile.json on this computer, it is still asked, recommending a new product.
+    const profileJson = path.join(wheelhouseHome(), 'profile.json');
+    fs.mkdirSync(wheelhouseHome(), { recursive: true });
+    fs.writeFileSync(profileJson, '{}\n');
+    assert.equal((await step.plan(ctxFor(folder))).ask.card.recommend, NEW_PRODUCT);
+    fs.rmSync(profileJson);
+    // A new product: the usual questions follow, and a repository is made.
+    const fresh = await answerJoin(step, ctxFor(folder), (id) => (id === 'join' ? NEW_PRODUCT : choose()(id)));
+    assert.deepEqual(fresh.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'host', 'connection']);
+    assert.ok(fresh.changes.some((c) => c.action === 'repository'));
+    assert.ok(!fresh.changes.some((c) => c.action === 'join'));
+    // A folder with any other file in it, or with an origin, is an existing product: not asked.
+    fs.writeFileSync(path.join(folder, 'notes.txt'), 'mine\n');
+    assert.equal((await step.plan(ctxFor(folder))).ask.id, 'real-users');
+    const connected = emptyFolder('Cafe Menu');
+    await withOrigin(connected, `https://github.com/${USER}/Cafe-Menu.git`);
+    assert.equal((await step.plan(ctxFor(connected))).ask.id, 'real-users');
+    // The system's own files don't count.
+    const tidy = emptyFolder('Cafe Menu');
+    fs.writeFileSync(path.join(tidy, '.DS_Store'), '');
+    assert.equal((await step.plan(ctxFor(tidy))).ask.id, 'join');
+    assert.equal(repoNamed(' cafe-co/Cafe-Menu.git '), 'cafe-co/Cafe-Menu');
+    assert.equal(repoNamed('Cafe-Menu'), 'Cafe-Menu');
+    for (const bad of ['', 'a b', '../x', 'o/..', 'https://github.com/o/x']) assert.equal(repoNamed(bad), null, bad);
+  });
+});
+
+test('a second computer joins from an empty folder: the project found on an organisation, checked out in place with its committed settings, the profile and state joined, and its run a joining one', async () => {
+  await withHome(async () => {
+    const w = standIn({ memberships: [{ state: 'active', role: 'member', organization: { login: 'cafe-co' } }] });
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false }); // the first computer made it
+    await w.add(`${USER}/Cafe-Menu`); // the same name on their own account, without Wheelhouse's records
+    await seedProject(w, 'cafe-co/Cafe-Menu');
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const planned = await answerJoin(step, ctxFor(folder), joining());
+    // Neither the real-users nor the Locked question (a Mac here): the first computer's.
+    assert.deepEqual(planned.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'host', 'connection']);
+    assert.deepEqual(planned.changes.slice(0, 2), [
+      { kind: 'host', target: 'github', action: 'join', name: 'Cafe-Menu' },
+      { kind: 'folder', target: folder, action: 'checkout' },
+    ]);
+    assert.ok(!planned.changes.some((c) => c.action === 'repository'), 'nothing is made for the product');
+    assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'quick', locked: false });
+    const text = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /Cafe-Menu found on your GitHub account or organisations, the one holding Wheelhouse's records, and checked out into this folder/);
+    assert.doesNotMatch(text, /protection/, 'the first computer\'s step 7 switched it on');
+
+    const run = startRun({ folder, now: () => NOW });
+    const lines = await applyIn(step, folder, run.id, planned.changes, { answers: planned.answers });
+    // Checked out in place: the project's main, the committed settings in place of the install's,
+    // this computer's own local settings kept.
+    const remote = w.hostUrl({ repo: 'cafe-co/Cafe-Menu' });
+    assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(remote, 'rev-parse', 'main'));
+    assert.equal(await g(folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), remote);
+    assert.equal(await g(folder, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+    assert.equal(fs.readFileSync(path.join(folder, '.claude', 'settings.json'), 'utf8'), COMMITTED);
+    assert.equal(fs.readFileSync(path.join(folder, '.claude', 'settings.local.json'), 'utf8'), '{"permissions":{"allow":["Bash(setup:*)"]}}\n');
+    assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), '# Cafe menu\n');
+    // Recorded as made: joining first, then the repository found, the folder's .git, the install's
+    // settings with its text as the value before, the profile, the state clone and the record.
+    const changes = findRun(folder).changes;
+    assert.deepEqual(joinedOf(folder), [{ joined: 'Cafe-Menu' }, { joined: 'cafe-co/Cafe-Menu', found: true }]);
+    const settingsChange = changes.find((c) => c.kind === 'file' && c.target === path.join(folder, '.claude', 'settings.json'));
+    assert.deepEqual([settingsChange.before, settingsChange.after], [INSTALLED, COMMITTED]);
+    const order = changes.map((c) => `${c.kind} ${c.target.replace(wheelhouseHome(), '~').replace(folder, '<folder>')}`);
+    assert.deepEqual(order.filter((o) => !o.startsWith('answer')), [
+      `folder ${path.join('<folder>', '.git')}`, `file ${path.join('<folder>', '.claude', 'settings.json')}`,
+      `file ${path.join('~', 'profile.json')}`, `folder ${path.join('~', 'profile')}`,
+      `folder ${path.join('~', 'projects', 'cafe-co__Cafe-Menu', 'state')}`, `file ${path.join('~', 'projects', 'cafe-co__Cafe-Menu', 'project.json')}`,
+    ]);
+    assert.ok(order.indexOf('answer step 3') === 0, 'joining is recorded before anything is done');
+    // The profile found, not made; nothing made on the host at all.
+    assert.equal(profileRemote().repo, `${USER}/${PROFILE_REPO}`);
+    assert.deepEqual(w.calls.filter((c) => c.args?.[0] === 'repo'), []);
+    // The project's record and its state.
+    const slug = slugFor('cafe-co/Cafe-Menu');
+    assert.deepEqual(readProject(slug), { folder, remoteUrl: remote, host: 'github', repo: 'cafe-co/Cafe-Menu', connection: { host: 'github', mode: 'quick', project: 'cafe-co/Cafe-Menu' } });
+    assert.ok(fs.existsSync(path.join(stateDir(slug), '.git')));
+    assert.match(lines.at(-1), /Connected: cafe-co\/Cafe-Menu on GitHub, Quick/);
+    // The run is a joining computer's: steps 1, 2, 3, 6, 7, 8 and 9.
+    const after = findRun(folder);
+    assert.equal(joinedRepo(after), 'cafe-co/Cafe-Menu');
+    assert.equal(stepsFor(after), JOINING_STEPS);
+    assert.deepEqual(stepsFor(after).map((s) => s.n), [1, 2, 3, 6, 7, 8, 9]);
+    // Applied again, nothing is checked out or recorded twice.
+    const count = findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length;
+    await applyIn(step, folder, run.id, planned.changes, { answers: planned.answers });
+    assert.equal(findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length, count);
+  });
+});
+
+test('none or several found are refused saying to type owner/name, the question asks again, and a typed owner/name is used', async () => {
+  await withHome(async () => {
+    const w = standIn({ memberships: [{ state: 'active', role: 'admin', organization: { login: 'cafe-co' } }] });
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    await seedProject(w, `${USER}/Cafe-Menu`);
+    await seedProject(w, 'cafe-co/Cafe-Menu');
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const planned = await answerJoin(step, ctx, joining());
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }),
+      /^Error: More than one repository named Cafe-Menu holds Wheelhouse's records \(a-director\/Cafe-Menu, cafe-co\/Cafe-Menu\), so nothing was checked out: type the one you mean as owner\/name on step 3's question, which asks again$/);
+    assert.deepEqual(joinedOf(folder).at(-1), { joined: 'Cafe-Menu', missed: [`${USER}/Cafe-Menu`, 'cafe-co/Cafe-Menu'] });
+    assert.equal(fs.existsSync(path.join(folder, '.git')), false, 'nothing checked out');
+    assert.equal(stepsFor(findRun(folder)), JOINING_STEPS, 'the run stays joining, and step 3 can run again');
+    // Asked again, under an id naming what was missed, saying so; the typed owner/name is used.
+    const again = await step.plan({ ...ctx, answers: planned.answers });
+    assert.match(again.ask.id, /^join-[0-9a-f]{10}$/);
+    assert.match(again.ask.card.what, /^More than one Cafe-Menu holds Wheelhouse's records: a-director\/Cafe-Menu, cafe-co\/Cafe-Menu\./);
+    const typed = await answerJoin(step, { ...ctx, answers: planned.answers }, joining({ typed: 'cafe-co/Cafe-Menu' }));
+    assert.deepEqual(typed.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
+    assert.match(typed.card.what, /cafe-co\/Cafe-Menu found on your GitHub/);
+    await applyIn(step, folder, run.id, typed.changes, { answers: typed.answers });
+    assert.equal(joinedRepo(findRun(folder)), 'cafe-co/Cafe-Menu');
+    assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }));
+  });
+  await withHome(async () => {
+    // None: a repository of the name without Wheelhouse's records doesn't count.
+    const w = standIn();
+    await w.add(`${USER}/Cafe-Menu`);
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const planned = await answerJoin(step, ctx, joining());
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }),
+      /^Error: Setup found no repository Cafe-Menu holding Wheelhouse's records on your GitHub account or your organisations, so nothing was checked out: type the project's owner\/name on step 3's question, which asks again$/);
+    assert.deepEqual(joinedOf(folder).at(-1), { joined: 'Cafe-Menu', missed: 'none' });
+    // Typed text that names no repository asks again at once, saying so.
+    const first = (await step.plan({ ...ctx, answers: planned.answers })).ask;
+    const answers = { ...planned.answers, [`3.${first.id}`]: { label: null, text: 'the cafe one', at: NOW.toISOString() } };
+    const next = (await step.plan({ ...ctx, answers })).ask;
+    assert.notEqual(next.id, first.id);
+    assert.match(next.card.what, /^"the cafe one" is not a repository's name\./);
+    // A new product, chosen now: the run is not a joining one any more once its apply starts.
+    const fresh = await answerJoin(step, { ...ctx, answers }, (id) => (id.startsWith('join') ? NEW_PRODUCT : choose()(id)));
+    assert.ok(fresh.changes.some((c) => c.action === 'repository'));
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    fs.rmSync(w.hostUrl({ repo: `${USER}/Cafe-Menu` }), { recursive: true });
+    delete w.repos[`${USER}/Cafe-Menu`];
+    await applyIn(step, folder, run.id, fresh.changes, { answers: fresh.answers });
+    assert.deepEqual(joinedOf(folder).at(-1), { joined: null });
+    assert.equal(stepsFor(findRun(folder)), SETUP_STEPS);
+  });
+});
+
+test('a launched project refuses Quick at apply, before anything is connected or registered, and its card is asked again without Quick', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    await seedProject(w, `${USER}/Cafe-Menu`, { phase: 'launched' });
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const planned = await answerJoin(step, ctx, joining());
+    assert.ok(planned.asked.at(-1).card.options.some((o) => o.label === WAYS.quick), 'the phase is not known before the state is here');
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), { message: quickLaunched(`${USER}/Cafe-Menu`) });
+    const slug = slugFor(`${USER}/Cafe-Menu`);
+    assert.equal(readProject(slug), null, 'nothing registered');
+    assert.ok(fs.existsSync(path.join(stateDir(slug), '.git')), 'the state cloned, which said so');
+    // Planned again: the connection question again, with no Quick, saying why.
+    const again = await step.plan({ ...ctx, answers: planned.answers });
+    assert.match(again.ask.id, /^connection-/);
+    assert.notEqual(again.ask.id, planned.asked.at(-1).id);
+    assert.deepEqual(again.ask.card.options.map((o) => o.label), [WAYS.own]);
+    assert.match(again.ask.card.what, /It is launched, and a launched product needs a narrow connection, so Quick is not offered/);
+  });
+  // On GitLab a launched project is not asked at all: Narrow is all there is.
+  await withHome(async () => {
+    const w = standIn();
+    await seedProject(w, `${USER}/Cafe-Menu`, { phase: 'launched' });
+    const slug = slugFor(`${USER}/Cafe-Menu`);
+    await cloneStateFor(slug, w.hostUrl({ repo: `${USER}/Cafe-Menu` }));
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const planned = await answerJoin(step, ctxFor(folder), joining({ typed: `${USER}/Cafe-Menu`, host: HOST_LABELS.gitlab }));
+    assert.deepEqual(planned.asked.map((a) => a.id), ['join', 'host']);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').mode, 'narrow');
+  });
+});
+
+test('no card of step 4 or 5 comes on a computer whose answer is joining: they wait for the project, and its apply records joining first', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: false }, loginWorks: false });
+    await seedProject(w, `${USER}/Cafe-Menu`);
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const planned = await answerJoin(step, ctxFor(folder, { runId: run.id }), joining());
+    // Between the answer and step 3's apply, steps 4 and 5 have no project to ask about: they wait.
+    for (const other of [questionsStep(), rulesStep({ env: {} })]) {
+      const got = await other.plan({ folder, step: other.n, runId: run.id, now: () => NOW, userHome: folder, platform: 'darwin', answers: planned.answers });
+      assert.ok(got.wait > 0 && !got.ask && !got.changes, `step ${other.n}`);
+    }
+    assert.equal(stepsFor(findRun(folder)), SETUP_STEPS, 'not yet recorded');
+    // Step 3's apply records joining before anything else, here before a sign-in that fails.
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /could not sign in to GitHub/);
+    assert.deepEqual(joinedOf(folder), [{ joined: 'Cafe-Menu' }]);
+    for (const n of [4, 5, 10]) assert.equal(onRunList(findRun(folder), n), false, `step ${n}`);
   });
 });

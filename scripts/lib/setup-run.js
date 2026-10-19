@@ -79,12 +79,14 @@ export function healthGreen(run) {
 export const JOIN_STEP = 3;
 export const JOINING_STEPS = Object.freeze(SETUP_STEPS.filter((s) => [1, 2, 3, 6, 7, 8, 9].includes(s.n)));
 
-// The project's repository a run joins, '<owner/name>', as step 3 recorded it (its `answer` change
-// { joined }); null for a run setting up a project of its own.
+// The project's repository a run joins, '<owner/name>', as step 3 last recorded it (its `answer`
+// change { joined }: the name asked for as its apply starts, then the repository found); null for
+// a run setting up a project of its own, including one whose latest record says { joined: null },
+// a new product chosen after a joining attempt (ruling R77).
 export function joinedRepo(run) {
   const joined = (Array.isArray(run?.changes) ? run.changes : [])
-    .filter((c) => c?.step === JOIN_STEP && c.kind === 'answer' && typeof c.after?.joined === 'string' && c.after.joined !== '').at(-1);
-  return joined ? joined.after.joined : null;
+    .filter((c) => c?.step === JOIN_STEP && c.kind === 'answer' && c.after && typeof c.after === 'object' && Object.hasOwn(c.after, 'joined')).at(-1);
+  return typeof joined?.after.joined === 'string' && joined.after.joined !== '' ? joined.after.joined : null;
 }
 
 // The steps a run has (ruling R74): every step, or for a computer joining a project, JOINING_STEPS.

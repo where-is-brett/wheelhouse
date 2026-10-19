@@ -54,6 +54,26 @@
 //
 // Protection is planned here and named on the card; it is switched on at the end of step 7, once
 // the setup commit is up, with the director's own sign-in (switchOnAsDirector, Task 13).
+//
+// A second computer joins a project from an empty folder (design section 15, ruling R77). In a
+// folder holding nothing but step 1's .claude/ and with no `origin`, the plan first asks `join`:
+// A new product, or `<folder name>, from my other computer`, or a typed owner/name; recommended A
+// new product when this computer has profile.json, else the other computer. Joining asks neither
+// the real-users nor the Locked question (the first computer's; a joining Mac's step 8 asks Locked
+// when the project is launched), but the host and the connection as usual, since each computer
+// signs in for itself. Its Go-ahead list is: the sign-in; the repository named by the answer found
+// on the director's account or one of their organisations (GitLab: groups), the one holding a
+// `wheelhouse-state` branch; this folder checked out to it in place (git init, the remote, the
+// default branch fetched, checkout -f), the committed .claude/settings.json in place of the
+// install's, which is recorded first; the profile, found, and its clone; the state clone, whose
+// `phase` setting refuses Quick on a launched project before anything is connected or registered;
+// the narrow connection; and the project's record. No protection: the first computer's step 7
+// switched it on. Apply records step 3's `answer` change { joined: <name> } before it does anything
+// else, so the run reads as joining (scripts/lib/setup-run.js, stepsFor) before step 4's or step
+// 5's questions could come (both wait for the project's records, which come later); it records
+// { joined, missed } and refuses, saying to type owner/name, when none or several are found, and
+// the plan then asks `join` again under an id naming what was missed; once connected it records
+// { joined: '<owner/name>' }. A new product chosen after a joining attempt records { joined: null }.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -75,6 +95,8 @@ import { askSecret as realAskSecret } from '../secrets/secret-box.js';
 import { writeProject } from '../lib/projects.js';
 import { cloneState, STATE_BRANCH } from '../state/clone.js';
 import { sameRemote } from '../state/git.js';
+import { listEvents } from '../state/events.js';
+import { joinedRepo, JOIN_STEP } from '../lib/setup-run.js';
 import { profileRemote, ensureProfileClone, readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl } from './tools.js';
 import {
@@ -124,6 +146,13 @@ export const STOPPED = 'STOP came on, so setup stopped here; once STOP is lifted
 // How often the browser sign-in looks at STOP while it waits.
 export const STOP_LOOK_MS = 1000;
 export const HISTORY_LINE = 'This folder has its own git history but no GitHub or GitLab address, so setup has left it as it is: connect it to its repository (git remote add origin <address>), then ask again';
+// The join question's first option; the second names the folder (ruling R77).
+export const NEW_PRODUCT = 'A new product';
+export const fromOtherComputer = (name) => `${name}, from my other computer`;
+// What a folder may hold beside step 1's .claude/ and still be empty: the system's own files.
+const SYSTEM_FILES = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
+// Said when Quick is chosen for a launched project a computer joins (design section 11).
+export const quickLaunched = (repo) => `${repo} is launched (it has real users), and a launched product is reached only through a narrow connection, so Quick is refused: ask for step 3's card again and choose a narrow way`;
 
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -254,6 +283,33 @@ export function productOf(folder) {
   return { isNew: true, host: null, repo: null, name: repoName(folder) };
 }
 
+// Whether a folder holds nothing but step 1's .claude/ (and the system's own files), with no git of
+// its own: where step 3 asks whether this computer is joining a product (ruling R77).
+export function onlyInstall(folder) {
+  let names;
+  try {
+    names = fs.readdirSync(folder);
+  } catch {
+    return false;
+  }
+  return names.every((n) => n === '.claude' || SYSTEM_FILES.includes(n)) && originUrl(folder) === null;
+}
+
+// Whether the project's state, as cloned on this computer, says the product is launched (its
+// `phase` setting, ruling R38). A computer joining a project does not yet trust the other
+// computers' keys (Task 14's trust card), so it can't tell a confirmed setting from a proposal, or
+// a later one written to weaken it: any `phase` setting saying launched counts. It only ever takes
+// Quick away, or asks Locked.
+export function launchedIn(project) {
+  let events;
+  try {
+    events = listEvents(stateDir(project), { report: () => {} });
+  } catch {
+    return false;
+  }
+  return events.some((e) => e.kind === 'setting' && e.data?.key === 'phase' && e.data.value === 'launched');
+}
+
 // The https address of a repository, which the record and the clones use.
 export const httpsRemote = ({ host, repo }) => `https://${ADDRESS[host]}/${repo}.git`;
 
@@ -288,7 +344,8 @@ function realUsersAsk(name) {
   };
 }
 
-function lockedAsk(name) {
+// The Locked question: step 3's, and on a computer joining a launched project, step 8's.
+export function lockedAsk(name) {
   return {
     id: 'locked',
     card: {
@@ -324,14 +381,89 @@ function hostAsk(name) {
   };
 }
 
+// The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
+// is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
+// when there were several, or 'not-a-name' for typed text that names no repository.
+function joinAsk(id, name, { profile, missed }) {
+  const other = fromOtherComputer(name);
+  let found = '';
+  if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
+  else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} holds Wheelhouse's records: ${missed.missed.slice(0, 5).join(', ')}. `;
+  else if (missed) found = `Setup found no ${missed.name} holding Wheelhouse's records on your account or organisations. `;
+  return {
+    id,
+    typed: true,
+    card: {
+      level: 2,
+      what: `${found}Is ${name} a new product, or one you set up with Wheelhouse on your other computer? If it is kept under another name, or to say which one, type its owner/name.`,
+      why: 'A product set up on another computer is checked out into this folder with its records, never made again.',
+      options: [
+        { label: NEW_PRODUCT, says: 'Setup makes a private repository for it and connects this folder to it.' },
+        { label: other, says: `Setup finds ${name} on your account or organisations, with Wheelhouse's records, and checks it out into this folder.` },
+      ],
+      recommend: profile ? NEW_PRODUCT : other,
+      because: profile
+        ? 'this computer is already set up with Wheelhouse, so an empty folder is most likely a new product'
+        : 'this computer is new to Wheelhouse, so an empty folder is most likely a product from your other one',
+      meanwhile: MEANWHILE,
+    },
+  };
+}
+
+// A typed answer to the join question as a repository's name: owner/name (groups too) or a bare
+// name, without .git; null for anything else.
+export function repoNamed(text) {
+  const named = String(text ?? '').trim().replace(/\.git$/i, '');
+  if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$/.test(named)) return null;
+  return named.split('/').some((part) => /^\.+$/.test(part)) ? null : named;
+}
+
+// Step 3's records of a run's joining (ruling R77), in order: its `answer` changes with `joined`.
+const joinRecords = (run) => (Array.isArray(run?.changes) ? run.changes : [])
+  .filter((c) => c?.step === JOIN_STEP && c.kind === 'answer' && c.after && typeof c.after === 'object' && Object.hasOwn(c.after, 'joined'));
+
+// Whether this computer is joining a product, from the join question's answer (ruling R77): { ask }
+// while the question is open; { join, known } for a product from another computer, `join` the name
+// asked for (a bare name or owner/name) and `known` the owner/name an attempt found, or null; or
+// null for a new product, and in a folder where the question isn't asked (one holding more than
+// step 1's install, unless the run is already joining). Each name an attempt missed, and each
+// typed text that names no repository, asks the question again under an id naming them (ruling
+// R51), so no answer is used again for a name that wasn't found.
+function joinChoice(ctx) {
+  const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
+  const joined = joinedRepo(run);
+  if (joined === null && !onlyInstall(ctx.folder)) return null;
+  const name = repoName(ctx.folder);
+  const records = joinRecords(run);
+  const tried = records.filter((c) => c.after.missed !== undefined).map((c) => ({ name: c.after.joined, missed: c.after.missed }));
+  // The repository an attempt since the last miss found.
+  const known = records.slice(records.findLastIndex((c) => c.after.missed !== undefined) + 1).filter((c) => c.after.found === true).at(-1)?.after.joined ?? null;
+  for (;;) {
+    const id = tried.length === 0 ? 'join' : `join-${digest(tried)}`;
+    const got = ctx.answers?.[`3.${id}`] ?? null;
+    if (got === null) return { ask: joinAsk(id, name, { profile: fs.existsSync(profileFile()), missed: tried.at(-1) }) };
+    if (got.label === NEW_PRODUCT) return null;
+    if (typeof got.text === 'string') {
+      const wanted = repoNamed(got.text);
+      if (wanted === null) {
+        tried.push({ name: got.text.trim().slice(0, 100), missed: 'not-a-name' });
+        continue;
+      }
+      return { join: wanted, known };
+    }
+    return { join: name, known };
+  }
+}
+
 const QUICK_SAYS = `${QUICK_LINE} Fine for personal projects; an agent could read it directly.`;
 
 // The connection's question (Card 1's answer, design section 11), the composer's input without its
 // kind. On GitHub: the Wheelhouse app (only while it is registered), their own app (always), and
 // Quick; on GitLab, Narrow or Quick. A Locked project is never offered Quick, and on GitHub still
 // gets the card, since their own app means making a GitHub App, which the person agrees to here.
-// `where` names the repository as `owner/name on GitHub`.
-export function connectionCard({ host, locked = false, realUsers = false, where, appFile } = {}) {
+// `where` names the repository as `owner/name on GitHub`. A launched project a computer joins is
+// never offered Quick either (`launched`, design section 11), once its state says so.
+export function connectionCard({ host, locked = false, realUsers = false, launched = false, where, appFile } = {}) {
   if (!narrowOffered(host)) throw new Error('The connection is to GitHub or GitLab');
   const place = where ?? `the project on ${NAME[host]}`;
   const options = [];
@@ -340,16 +472,19 @@ export function connectionCard({ host, locked = false, realUsers = false, where,
     const app = wheelhouseAppOffered({ appFile });
     if (app) options.push({ label: WAYS.wheelhouse, says: 'Narrow: you type a code on GitHub and tick this project and your profile on the app\'s Install page; agents reach only those.' });
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
-    recommend = app ? WAYS.wheelhouse : (locked || realUsers ? WAYS.own : WAYS.quick);
+    recommend = app ? WAYS.wheelhouse : (locked || realUsers || launched ? WAYS.own : WAYS.quick);
   } else {
     options.push({ label: WAYS.narrow, says: 'A GitLab project key for this project and your profile, made with your sign-in; where GitLab refuses, a token typed into your computer\'s own box.' });
     // Narrow asks nothing more of the director where GitLab makes the key, so it is recommended.
     recommend = WAYS.narrow;
   }
-  if (!locked) options.push({ label: WAYS.quick, says: QUICK_SAYS });
+  if (!locked && !launched) options.push({ label: WAYS.quick, says: QUICK_SAYS });
+  let noQuick = '';
+  if (locked) noQuick = ' Locked needs a narrow connection, so Quick is not offered.';
+  else if (launched) noQuick = ' It is launched, and a launched product needs a narrow connection, so Quick is not offered.';
   return {
     level: 3,
-    what: `How should Wheelhouse's agents reach ${place}?${locked ? ' Locked needs a narrow connection, so Quick is not offered.' : ''}`,
+    what: `How should Wheelhouse's agents reach ${place}?${noQuick}`,
     why: 'Agents push and open pull requests only through Wheelhouse\'s helper; this chooses whose key it holds.',
     options,
     recommend,
@@ -502,7 +637,7 @@ async function createRepo({ host, owner, name, readme, run, api }) {
 }
 
 // Whether setup made this repository itself, in any run: a retry then carries on with it.
-const madeBySetup = (target) => readJournal().runs.flatMap((r) => r?.changes ?? [])
+export const madeBySetup = (target) => readJournal().runs.flatMap((r) => r?.changes ?? [])
   .some((c) => c?.kind === 'host' && c.target === target && c.after?.made === true);
 
 // Connects the product's folder to its new repository in place (ruling R34): git init -b main when
@@ -561,6 +696,88 @@ async function productBranchOn({ host, repo, remoteUrl, gitPath, env, run }) {
   if (own.length === 0) {
     throw new Error(`${repo} on ${NAME[host]} has no branch of the product's yet, so Wheelhouse's state branch would become its default: push the product's main branch to it first, then ask again`);
   }
+}
+
+// ---- Joining a product set up on another computer (ruling R77) ----
+
+// The director's organisations on GitHub, or groups on GitLab, as their sign-in sees them.
+async function accountsOf({ host, run, api }) {
+  if (host === 'github') {
+    const got = await ask(run, host, ['api', 'user/memberships/orgs?state=active&per_page=100']);
+    const list = got.code === 0 ? json(got.stdout) : null;
+    return (Array.isArray(list) ? list : []).filter((m) => m?.state === 'active').map((m) => m?.organization?.login)
+      .filter((login) => typeof login === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(login));
+  }
+  const got = await api.get('/groups?min_access_level=10&per_page=100');
+  if (got.status !== 200 || !Array.isArray(got.body)) throw new Error(`GitLab could not list your groups with your sign-in (HTTP ${got.status})`);
+  return got.body.map((g) => g?.full_path).filter((p) => typeof p === 'string' && repoNamed(p) === p);
+}
+
+// Whether a repository holds Wheelhouse's state branch, read with the director's own sign-in.
+async function holdsState({ remoteUrl, gitPath, env, run }) {
+  const listed = await run(gitPath, ['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`], { env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  if (listed.code !== 0) return false;
+  return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
+}
+
+// The repositories a joining computer's answer names that hold Wheelhouse's state branch: the
+// typed owner/name, or a bare name on the director's own account and each of their organisations
+// (GitLab: groups). Each as repoInfo gives it.
+async function findJoined({ host, wanted, user, run, api, gitPath, env, hostUrl }) {
+  const accounts = wanted.includes('/') ? [] : [user, ...(await accountsOf({ host, run, api }))];
+  const candidates = wanted.includes('/') ? [wanted] : accounts.map((a) => `${a}/${wanted}`);
+  const seen = new Set();
+  const found = [];
+  for (const repo of candidates) {
+    if (seen.has(repo.toLowerCase())) continue;
+    seen.add(repo.toLowerCase());
+    const info = await repoInfo({ host, repo, run, api });
+    if (info === null || found.some((f) => f.repo.toLowerCase() === info.repo.toLowerCase())) continue;
+    if (await holdsState({ remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, run })) found.push(info);
+  }
+  return found;
+}
+
+// Why a joining computer's answer found no repository, or several: said with what to type.
+export function joinMissLine({ host, wanted, found }) {
+  const where = host === 'gitlab' ? 'your GitLab account or your groups' : 'your GitHub account or your organisations';
+  if (found.length === 0) return `Setup found no repository ${wanted} holding Wheelhouse's records on ${where}, so nothing was checked out: type the project's owner/name on step 3's question, which asks again`;
+  return `More than one repository named ${wanted} holds Wheelhouse's records (${found.map((f) => f.repo).join(', ')}), so nothing was checked out: type the one you mean as owner/name on step 3's question, which asks again`;
+}
+
+// Checks the project out into this folder in place (ruling R77, as R34 connects a new product's):
+// git init on its default branch, the remote added, that branch fetched, then checked out over the
+// folder (checkout -f), so the committed .claude/settings.json replaces the one step 1's install
+// wrote; that one is recorded first, its text as the value before. Files the project doesn't hold
+// (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
+// left as it is.
+async function checkOutJoined({ folder, remoteUrl, branch, gitPath, env, run, record }) {
+  const git = (args) => run(gitPath, args, { cwd: folder, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  const must = async (args, why) => {
+    const done = await git(args);
+    if (done.code !== 0) throw new Error(why);
+    return done;
+  };
+  const origin = originUrl(folder);
+  if (origin !== null && !sameRemote(origin, remoteUrl)) throw new Error('This folder is connected to another repository, so setup has left it as it is');
+  if (origin === null) {
+    const hadGit = fs.existsSync(path.join(folder, '.git'));
+    record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: hadGit ? { origin: null } : null, after: { origin: remoteUrl, branch } });
+    if (!hadGit) await must(['init', '-q', '-b', branch], 'git could not start in this folder');
+    await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the project\'s repository in this folder');
+  }
+  await must(['fetch', '-q', 'origin', branch], 'git could not fetch the project');
+  const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
+  if (head.code !== 0) {
+    const settings = path.join(folder, '.claude', 'settings.json');
+    const installed = readText(settings);
+    const committed = await git(['show', `refs/remotes/origin/${branch}:.claude/settings.json`]);
+    if (installed !== null && committed.code === 0 && committed.stdout !== installed) {
+      record({ id: newId('chg'), kind: 'file', target: settings, before: installed, after: committed.stdout });
+    }
+    await must(['checkout', '-q', '-f', '-B', branch, `refs/remotes/origin/${branch}`], 'git could not check the project out into this folder');
+  }
+  await must(['branch', '-q', `--set-upstream-to=origin/${branch}`], 'git could not link the folder\'s branch to the project\'s');
 }
 
 function readText(file) {
@@ -885,6 +1102,9 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
     parts.push(`a private repository ${where} with a README, this folder connected to it, its files kept`);
+  } else if (product.joining) {
+    const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
+    parts.push(`${product.repo ?? product.name} found on your ${name} ${accounts}, the one holding Wheelhouse's records, and checked out into this folder, its committed .claude/settings.json in place of the install's`);
   } else parts.push(`${product.repo} on ${name}, kept as it is`);
   if (changes.some((c) => c.action === 'profile-repository')) parts.push(`your private profile repository ${user ? `${user}/` : ''}${PROFILE_REPO} if there is none`);
   if (way === WAYS.quick) parts.push('Quick: your own sign-in, which reaches your whole account');
@@ -896,7 +1116,8 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   else if (appKeys === 'signed-in') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick the project and profile on its Install page, not All repositories`);
   else parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}: a code on GitHub, then tick the project and profile on its Install page, not All repositories`);
   parts.push('the project\'s record and state branch');
-  parts.push(protectionPlanLine(host));
+  // A joining computer's project already has its protection, from the first computer's step 7.
+  if (!product.joining) parts.push(protectionPlanLine(host));
   return {
     kind: 'setup',
     level: 3,
@@ -947,21 +1168,35 @@ export function hostStep({
       const platform = ctx.platform ?? process.platform;
       const answers = ctx.answers ?? {};
       const answer = (id) => answers[`3.${id}`] ?? null;
-      const product = productOf(ctx.folder);
-      if (answer('real-users') === null) return { ask: realUsersAsk(product.name) };
-      const realUsers = answer('real-users').label === REAL_USERS.yes;
-      const lockable = realUsers && platform === 'darwin';
-      if (lockable && answer('locked') === null) return { ask: lockedAsk(product.name) };
-      const locked = lockable && answer('locked').label === LEVELS.locked;
+      // A computer joining a product set up on another (ruling R77): asked first, in a folder
+      // holding only step 1's install.
+      const join = joinChoice(ctx);
+      if (join?.ask) return { ask: join.ask };
+      const product = join === null ? productOf(ctx.folder)
+        : { isNew: false, joining: true, host: null, repo: join.join.includes('/') ? join.join : join.known, name: join.join.split('/').at(-1) };
+      // Real users and Locked are the first computer's questions; a joining computer reads the
+      // phase from the project's state, and its step 8 asks Locked.
+      let realUsers = false;
+      let locked = false;
+      if (!product.joining) {
+        if (answer('real-users') === null) return { ask: realUsersAsk(product.name) };
+        realUsers = answer('real-users').label === REAL_USERS.yes;
+        const lockable = realUsers && platform === 'darwin';
+        if (lockable && answer('locked') === null) return { ask: lockedAsk(product.name) };
+        locked = lockable && answer('locked').label === LEVELS.locked;
+      }
+      // A launched project a computer joins is never offered Quick, once its state here says so
+      // (an earlier attempt cloned it); before then, apply refuses Quick once it has.
+      const launched = product.joining && product.repo !== null && launchedIn(slugFor(product.repo));
       let host = product.host;
       if (host === null) {
         if (answer('host') === null) return { ask: hostAsk(product.name) };
         host = answer('host').label === HOST_LABELS.gitlab ? 'gitlab' : 'github';
       }
-      const where = product.isNew ? `the new private repository ${product.name} on ${NAME[host]}` : `${product.repo} on ${NAME[host]}`;
+      const where = product.isNew ? `the new private repository ${product.name} on ${NAME[host]}` : `${product.repo ?? product.name} on ${NAME[host]}`;
       let way = WAYS.narrow;
-      if (!(host === 'gitlab' && locked)) {
-        const card = connectionCard({ host, locked, realUsers, where, appFile });
+      if (!(host === 'gitlab' && (locked || launched))) {
+        const card = connectionCard({ host, locked, realUsers: realUsers || launched, launched, where, appFile });
         const id = `connection-${digest(card)}`;
         const got = answer(id);
         if (got === null || !card.options.some((o) => o.label === got.label)) return { ask: { id, card } };
@@ -969,7 +1204,7 @@ export function hostStep({
       }
       const mode = way === WAYS.quick ? 'quick' : 'narrow';
       const { signedIn, user } = await signInStatus({ host, run });
-      const owner = product.isNew ? user : product.repo.split('/').slice(0, -1).join('/');
+      const owner = product.isNew ? user : (product.repo === null ? null : product.repo.split('/').slice(0, -1).join('/'));
       const repo = product.isNew ? (user ? `${user}/${product.name}` : null) : product.repo;
       let app = null;
       if (mode === 'narrow' && host === 'github') {
@@ -1013,6 +1248,10 @@ export function hostStep({
         changes.push({ kind: 'host', target: host, action: 'repository', name: product.name, repo, private: true });
         changes.push({ kind: 'folder', target: ctx.folder, action: 'connect', branch: 'main' });
       }
+      if (product.joining) {
+        changes.push({ kind: 'host', target: host, action: 'join', name: join.join });
+        changes.push({ kind: 'folder', target: ctx.folder, action: 'checkout' });
+      }
       if (profileRemote() === null) {
         changes.push({ kind: 'host', target: host, action: 'profile-repository', repo: user ? `${user}/${PROFILE_REPO}` : null });
         changes.push({ kind: 'file', target: profileFile(), action: 'profile' });
@@ -1055,7 +1294,15 @@ export function hostStep({
       // The product as the list names it, never read again from the folder, which this step changes.
       const made = changes.find((c) => c.action === 'repository') ?? null;
       const recorded = changes.find((c) => c.action === 'project');
-      if (made === null && typeof recorded?.repo !== 'string') throw new Error('Step 3\'s list names no repository');
+      const join = changes.find((c) => c.action === 'join') ?? null;
+      if (join !== null && (typeof join.name !== 'string' || repoNamed(join.name) !== join.name)) throw new Error('Step 3\'s list names no repository to join');
+      if (made === null && join === null && typeof recorded?.repo !== 'string') throw new Error('Step 3\'s list names no repository');
+      // Whether this computer is joining a product, recorded before anything else is done (ruling
+      // R77), so the run's steps are a joining computer's from here on, before step 4's or 5's
+      // questions could come; a new product chosen after a joining attempt records that it is not.
+      const answerRecord = (after) => record({ id: newId('chg'), kind: 'answer', target: `step ${JOIN_STEP}`, before: null, after });
+      if (join !== null) answerRecord({ joined: join.name });
+      else if (joinedRepo(readJournal().runs.find((r) => r?.id === ctx.runId) ?? null) !== null) answerRecord({ joined: null });
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform });
@@ -1066,7 +1313,20 @@ export function hostStep({
       }
       halt();
       const api = host === 'gitlab' ? await gitlab({ run, fetch }) : null;
-      const projectRepo = made === null ? recorded.repo : `${user}/${made.name}`;
+      // The product a joining computer's answer names: exactly one repository holding Wheelhouse's
+      // records, or a refusal saying to type owner/name, recorded so the question asks again.
+      let joined = null;
+      if (join !== null) {
+        const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, hostUrl });
+        if (found.length !== 1) {
+          answerRecord({ joined: join.name, missed: found.length === 0 ? 'none' : found.map((f) => f.repo) });
+          throw new Error(joinMissLine({ host, wanted: join.name, found }));
+        }
+        [joined] = found;
+        answerRecord({ joined: joined.repo, found: true });
+        halt();
+      }
+      const projectRepo = joined !== null ? joined.repo : made === null ? recorded.repo : `${user}/${made.name}`;
       const projectOwner = made === null ? projectRepo.split('/').slice(0, -1).join('/') : user;
       // Their own app, as recorded, belongs to the project's account; one to make is made on the
       // account the card named.
@@ -1081,7 +1341,16 @@ export function hostStep({
       const appReachesProfile = !narrowApp?.own || sameLogin(narrowApp.owner ?? projectOwner, user);
       // An existing product's repository must hold a branch of its own before the state branch goes
       // up, or the state branch would become its default (ruling R34).
-      if (made === null) await productBranchOn({ host, repo: projectRepo, remoteUrl: hostUrl({ host, repo: projectRepo }), gitPath: git.path, env: gitEnv, run });
+      if (made === null && joined === null) await productBranchOn({ host, repo: projectRepo, remoteUrl: hostUrl({ host, repo: projectRepo }), gitPath: git.path, env: gitEnv, run });
+      // A joining computer's folder, checked out to the project in place, on its default branch.
+      if (joined !== null) {
+        const branch = joined.defaultBranch;
+        if (typeof branch !== 'string' || branch === '' || WHEELHOUSE_BRANCHES.includes(branch)) {
+          throw new Error(`${joined.repo}'s default branch on ${NAME[host]} is ${branch || 'not set'}, not a branch of the product's, so setup has not checked it out: make the product's own branch the default in the repository's settings, then ask again`);
+        }
+        await checkOutJoined({ folder: ctx.folder, remoteUrl: hostUrl({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, run, record });
+        halt();
+      }
       // The product under its owner; the profile always on the director's own account.
       await makeRepos({
         host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: made !== null,
@@ -1092,6 +1361,19 @@ export function hostStep({
       const profile = profileRemote();
       if (profile === null) throw new Error('The profile could not be read back after it was written');
       halt();
+      const slug = slugFor(project.repo);
+      const remoteUrl = hostUrl({ host, repo: project.repo });
+      const cloneRecords = async () => {
+        record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { clone: remoteUrl, branch: STATE_BRANCH } });
+        await cloneState({ project: slug, remoteUrl, env: gitEnv });
+      };
+      // A joining computer clones the project's state before anything is connected or registered,
+      // and its `phase` refuses Quick on a launched project (design section 11).
+      if (joined !== null) {
+        await cloneRecords();
+        if (connection.mode === 'quick' && launchedIn(slug)) throw new Error(quickLaunched(project.repo));
+        halt();
+      }
       if (connection.mode === 'narrow') {
         // The profile's own repository joins when its connection is narrow on this host too.
         const withProfile = profile.connection?.mode === 'narrow' && profile.host === host && profile.repo !== project.repo;
@@ -1135,14 +1417,11 @@ export function hostStep({
         }
       }
       halt();
-      const slug = slugFor(project.repo);
-      const remoteUrl = hostUrl({ host, repo: project.repo });
       const kept = { folder: ctx.folder, remoteUrl, host, repo: project.repo, connection: connectionFor({ host, mode: connection.mode, repo: project.repo, id: project.id, locked: connection.locked === true }) };
       const file = projectFile(slug);
       record({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: `${JSON.stringify(kept, null, 2)}\n` });
       writeProject(slug, kept);
-      record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { clone: remoteUrl, branch: STATE_BRANCH } });
-      await cloneState({ project: slug, remoteUrl, env: gitEnv });
+      if (joined === null) await cloneRecords();
       say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : 'narrow'}`);
       return [];
     },

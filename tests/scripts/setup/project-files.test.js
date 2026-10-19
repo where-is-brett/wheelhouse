@@ -13,11 +13,13 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   projectFilesStep, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
+  EXCLUDE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
 } from '../../../scripts/setup/project-files.js';
-import { STEPS } from '../../../scripts/setup/steps.js';
+import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply } from '../../../scripts/setup/engine.js';
 import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/clicks.js';
-import { startRun, findRun } from '../../../scripts/setup/journal.js';
+import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { stepDone } from '../../../scripts/lib/setup-run.js';
 import { LIVE_DATA } from '../../../scripts/setup/questions.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
@@ -376,10 +378,11 @@ test('a default branch that is Wheelhouse\'s own, or not the folder\'s, is refus
     await assert.rejects(ahead.plan(), /commits of your own/);
   });
   await withHome(async () => {
-    // Their own changes to CLAUDE.md, not committed, would go up in setup's commit: refused.
+    // Their own changes to CLAUDE.md, not committed, would go up in setup's commit: asked about
+    // first (ruling R95; the question's own test is below).
     const edited = await world();
     fs.appendFileSync(path.join(edited.folder, 'CLAUDE.md'), '- Draft rule.\n');
-    await assert.rejects(edited.plan(), /CLAUDE\.md has changes of yours/);
+    assert.match((await edited.plan()).ask?.card.what ?? '', /CLAUDE\.md has changes of yours/);
   });
   await withHome(async () => {
     // A push that failed leaves setup's commit in the folder: the next plan pushes it, and commits nothing new.
@@ -401,7 +404,7 @@ test('a default branch that is Wheelhouse\'s own, or not the folder\'s, is refus
   });
 });
 
-test('step 1\'s install left in the folder, not committed, goes up in setup\'s commit; the director\'s own change is still refused', async () => {
+test('step 1\'s install left in the folder, not committed, goes up in setup\'s commit; the director\'s own change is still asked about', async () => {
   for (const stepOne of ['untracked', 'modified']) {
     await withHome(async () => {
       const w = await world({ stepOne });
@@ -419,7 +422,7 @@ test('step 1\'s install left in the folder, not committed, goes up in setup\'s c
     const w = await world({ stepOne: 'modified' });
     const file = path.join(w.folder, '.claude', 'settings.json');
     fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), theme: 'light' }));
-    await assert.rejects(w.plan(), /\.claude\/settings\.json has changes of yours/);
+    assert.match((await w.plan()).ask?.card.what ?? '', /\.claude\/settings\.json has changes of yours/);
   });
 });
 
@@ -655,4 +658,152 @@ test('step 7 is setup\'s own step 7, after the host and the questions, run in it
   assert.equal(step.long, true);
   assert.deepEqual(step.after, [3, 4]);
   assert.deepEqual(SETUP_FILES, ['.claude/settings.json', '.claude/wheelhouse.json', 'CLAUDE.md']);
+});
+
+// ---- The director's own changes (ruling R95) ----
+
+const said = (label) => ({ label, text: null, at: T0.toISOString() });
+const composedQuestion = (asked) => composeCard({ ...asked.card, kind: 'question' }).question;
+
+test('the director\'s own changes to a shared file are asked about: Leave them waits, and a file changed since asks again', async () => {
+  await withHome(async () => {
+    // An existing product (no repository step 3 made): Leave them is recommended.
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- Draft rule.\n');
+    const asked = (await w.plan()).ask;
+    assert.match(asked.id, /^yours-[0-9a-f]{12}$/);
+    assert.deepEqual(asked.card.options.map((o) => o.label), ['Put your changes to CLAUDE.md in setup\'s commit', 'Leave them; I\'ll come back']);
+    assert.equal(asked.card.recommend, LEAVE_YOURS);
+    assert.match(asked.card.what, /CLAUDE\.md has changes of yours not yet committed/);
+    assert.deepEqual(composedQuestion(asked).options.slice(0, 2).map((o) => o.label), [putYoursIn('CLAUDE.md'), LEAVE_YOURS]);
+    // Asked again with nothing changed, the same question.
+    assert.equal((await w.plan()).ask.id, asked.id);
+    // Leave them: the step waits, saying why, and nothing is listed.
+    w.answers[`7.${asked.id}`] = said(LEAVE_YOURS);
+    const waiting = await w.plan();
+    assert.ok(waiting.wait > 0);
+    assert.equal(waiting.why, leftYoursLine('CLAUDE.md'));
+    // The file changed since: asked again, under another id.
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- Another rule.\n');
+    const again = (await w.plan()).ask;
+    assert.ok(again && again.id !== asked.id, 'a file changed since asks again');
+    // Committed by the director meanwhile: no question at all.
+    await g(w.folder, 'commit', '-q', '-am', 'My rules');
+    await fixturePush(w.folder, 'main');
+    assert.ok(Array.isArray((await w.plan()).changes));
+  });
+});
+
+test('a new product\'s uncommitted CLAUDE.md is put in setup\'s commit on Put them in, named on the card and covered by the list\'s hash', async () => {
+  await withHome(async () => {
+    const w = await world();
+    // Step 3 made this product's repository, so it is a new product.
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'host', target: `github:${REPO}`, before: null, after: { repository: REPO, private: true, made: true } }]);
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- Draft rule.\n');
+    const asked = (await w.plan()).ask;
+    assert.equal(asked.card.recommend, putYoursIn('CLAUDE.md'));
+    w.answers[`7.${asked.id}`] = said(putYoursIn('CLAUDE.md'));
+    const planned = await w.plan();
+    const commit = planned.changes.find((c) => c.action === 'commit');
+    assert.deepEqual(commit.yours.map((y) => y.file), ['CLAUDE.md']);
+    assert.match(commit.yours[0].sha256, /^[0-9a-f]{64}$/);
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /in one commit, "Set up Wheelhouse", with your own changes to CLAUDE\.md/);
+    // The hash covers them: the same list without them is another list.
+    assert.notEqual(planHash(planned.changes), planHash(planned.changes.map(({ yours, ...c }) => c)));
+    // An edit after the answer asks again, so the Go ahead on this list would be refused as changed.
+    const file = path.join(w.folder, 'CLAUDE.md');
+    const kept = fs.readFileSync(file, 'utf8');
+    fs.writeFileSync(file, `${kept}- Late edit.\n`);
+    assert.ok((await w.plan()).ask, 'a changed file asks again');
+    fs.writeFileSync(file, kept);
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    const up = await g(w.bare, 'show', 'main:CLAUDE.md');
+    assert.match(up, /- Draft rule\./);
+    assert.match(up, /## Compact instructions/);
+    assert.equal(await g(w.bare, 'log', '-1', '--format=%s', 'main'), COMMIT_MESSAGE);
+  });
+});
+
+// ---- A joining computer's step 7 (ruling R78) ----
+
+// A second computer, as step 3 leaves it: the project checked out into its own folder, registered,
+// its state not needed here, with no pins and no settings of its own, its run joining, and no
+// answers from step 4. Gives the run.
+async function secondComputer(w) {
+  const folder = path.join(w.user, 'Projects', 'Shop on the laptop');
+  const cloned = await realRun('git', ['clone', '-q', w.bare, folder]);
+  if (cloned.code !== 0) throw new Error(cloned.stderr);
+  w.folder = fs.realpathSync.native(folder);
+  writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'narrow', project: REPO } });
+  w.claudeHome = path.join(tempFolder('wh-laptop zoë '), 'claude config');
+  fs.mkdirSync(w.claudeHome, { recursive: true });
+  fs.writeFileSync(path.join(w.claudeHome, 'settings.json'), JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref: REF } } } }));
+  w.answers = {};
+  w.calls = [];
+  w.protection = [];
+  const run = startRun({ folder: w.folder, now: () => T0 });
+  addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: REPO, found: true } }]);
+  return run;
+}
+
+test('a joining computer\'s step 7 lists only this computer\'s files and pins, with no commit and no protection, and leaves a differing shared file alone', async () => {
+  await withHome(async () => {
+    const w = await world();
+    // The first computer's step 7 put the project's files up.
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    const tip = await lsRemote(w.bare, 'main');
+    const run = await secondComputer(w);
+    // Step 4 is not this run's, so step 7 waits for step 3 alone.
+    assert.deepEqual(STEPS.find((s) => s.n === 7).after, [3, 4]);
+    assert.equal(stepDone(findRun(w.folder), 4), true);
+    // A note of the director's in CLAUDE.md on this computer, not committed.
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- A note on the laptop.\n');
+    const before = Object.fromEntries(SETUP_FILES.map((rel) => [rel, fs.readFileSync(path.join(w.folder, rel), 'utf8')]));
+
+    const planned = await w.step.plan(w.ctx({ runId: run.id }));
+    assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
+    const local = path.join(w.folder, '.claude', 'settings.local.json');
+    assert.deepEqual(planned.changes.map((c) => (c.kind === 'process' ? c.target : c.line ?? `${c.kind} ${path.relative(w.folder, c.target)}`)), [
+      `file ${path.join('.claude', 'settings.local.json')}`, EXCLUDE_LINE, `superpowers@${MARKETPLACE}`, `mattpocock-skills@${MARKETPLACE}`,
+    ]);
+    assert.ok(!planned.changes.some((c) => c.kind === 'host'), 'no commit, no push, no protection');
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /for this computer/);
+    assert.match(text, /nothing is committed and protection stays as it is/);
+    assert.match(text, /CLAUDE\.md differs from what is committed, and setup leaves it as it is/);
+    assert.doesNotMatch(text, /protection goes on|Set up Wheelhouse/);
+    assert.deepEqual(w.calls.filter((c) => c.tool === 'gh'), [], 'nothing asked of the host');
+
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    // This computer's settings by key, kept out of git; the pins installed; nothing shared changed.
+    const mine = JSON.parse(fs.readFileSync(local, 'utf8'));
+    assert.deepEqual(mine.sandbox.network.allowUnixSockets, [ADDRESS]);
+    assert.ok(mine.permissions.allow.includes(`Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`));
+    assert.ok(fs.readFileSync(path.join(w.folder, '.git', 'info', 'exclude'), 'utf8').split('\n').includes(EXCLUDE_LINE));
+    assert.equal(checkInstalled({ manifest: w.manifest, projectDir: w.folder, claudeHome: w.claudeHome }).ok, true);
+    for (const rel of SETUP_FILES) {
+      const now = fs.readFileSync(path.join(w.folder, rel), 'utf8');
+      if (rel.endsWith('.json')) assert.deepEqual(JSON.parse(now), JSON.parse(before[rel]), rel);
+      else assert.equal(now, before[rel], rel);
+    }
+    assert.equal(await lsRemote(w.bare, 'main'), tip, 'nothing went up');
+    assert.deepEqual(w.protection, [], 'protection left as the first computer set it');
+    const made = done.run.changes.filter((c) => c.step === 7);
+    assert.ok(made.every((c) => !SETUP_FILES.some((rel) => c.target === path.join(w.folder, rel))), 'no shared file recorded as changed');
+    assert.ok(!made.some((c) => c.kind === 'host'));
+  });
+});
+
+test('a joining computer\'s step 7 reads the committed configuration, never step 4\'s answers, and refuses plainly without one', async () => {
+  await withHome(async () => {
+    // The first computer never finished its step 7: no configuration in the project's commit.
+    const w = await world();
+    const run = await secondComputer(w);
+    await assert.rejects(w.step.plan(w.ctx({ runId: run.id })), /\.claude\/wheelhouse\.json is not in this folder's last commit/);
+  });
 });

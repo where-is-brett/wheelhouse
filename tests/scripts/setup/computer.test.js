@@ -14,16 +14,17 @@ import path from 'node:path';
 import { computerStep, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
-import { findRun, markStep, reverseChange, startRun } from '../../../scripts/setup/journal.js';
+import { findRun, markStep, reverseChange, startRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
 import { RETENTION_DAYS } from '../../../scripts/lib/setup-numbers.js';
 import { telemetryEnv } from '../../../scripts/telemetry/env.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setupLine } from '../../../scripts/state/card-lines.js';
-import { makeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { ownKey } from '../../../scripts/state/signing.js';
-import { writeProject } from '../../../scripts/lib/projects.js';
+import { writeProject, readProject } from '../../../scripts/lib/projects.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
 import { NEEDS_NARROW, HAS_MDM, NOT_OURS } from '../../../scripts/protection/locked.js';
 import { LEVELS, REAL_USERS } from '../../../scripts/setup/host.js';
 import { withProject, SLUG, REPO, T0 } from '../../helpers/setup-answers.js';
@@ -450,4 +451,57 @@ test('steps 6 and 8 are the filled ones in the steps list', () => {
   assert.deepEqual(eight.after, [3, 7]);
   assert.equal(eight.long, true);
   assert.equal(six.long, undefined);
+});
+
+// ---- A computer joining a project (ruling R77) ----
+
+test('on a joining Mac, step 8 asks Locked itself when the project is launched, and marks the record once Locked is on', async () => {
+  await withProject(async ({ folder, user, home }) => {
+    const dir = tempFolder('wh-managed-');
+    const fake = fakeRun((file) => {
+      if (file === 'osascript') {
+        fs.mkdirSync(path.join(dir, 'wheelhouse'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'managed-settings.json'), '{}');
+        fs.writeFileSync(path.join(dir, 'wheelhouse', 'installed.json'), '{}');
+      }
+      return {};
+    });
+    const step = lockedStep({ run: fake.run, dir, mdmPlist: NO_PLIST, nodePath: '/usr/local/bin/node', address: path.join(home, 'helper.sock') });
+    const run = startRun({ folder, now: () => T0 });
+    addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: REPO, found: true } }]);
+    const ctxOf = (platform, answers = {}) => ({ folder, step: 8, runId: run.id, now: () => T0, userHome: user, platform, answers });
+    // Step 3 asked no Locked question and connected it narrow, not marked Locked.
+    narrow(folder, 'narrow', false);
+    // Before launch: nothing to ask, settled as not Locked.
+    assert.deepEqual(await step.plan(ctxOf('darwin')), { settled: { record: { locked: false } } });
+    // Launched, as the project's state says: Locked is asked here, in step 3's words.
+    const event = { v: 1, id: '0f1e2d3c-0000-4000-8000-000000000002', at: '2026-10-19T00:00:00.000Z', computer: 'c-first', kind: 'setting', data: { key: 'phase', value: 'launched' } };
+    const file = path.join(stateDir(SLUG), eventPath(event));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(event));
+    const asked = await step.plan(ctxOf('darwin'));
+    assert.equal(asked.ask.id, 'locked');
+    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [LEVELS.locked, LEVELS.standard]);
+    assert.match(asked.ask.card.what, /Cafe-Menu has real users/);
+    // Never on Windows; Standard settles; step 3's answers are not read.
+    assert.deepEqual(await step.plan(ctxOf('win32')), { settled: { record: { locked: false } } });
+    assert.deepEqual(await step.plan(ctxOf('darwin', { '8.locked': { label: LEVELS.standard, text: null } })), { settled: { record: { locked: false } } });
+    assert.equal((await step.plan(ctxOf('darwin', { '3.locked': { label: LEVELS.locked, text: null } }))).ask.id, 'locked');
+    // Locked on the Quick connection is refused, as on any computer.
+    narrow(folder, 'quick', false);
+    const locked = { '8.locked': { label: LEVELS.locked, text: null } };
+    await assert.rejects(step.plan(ctxOf('darwin', locked)), new RegExp(`${NEEDS_NARROW}, and this project has the Quick connection`));
+    // Locked, narrow: Locked's list, which marks the record too; applied, the record says Locked.
+    narrow(folder, 'narrow', false);
+    const planned = await step.plan(ctxOf('darwin', locked));
+    assert.deepEqual(planned.changes, [{ kind: 'locked', target: path.join(dir, 'managed-settings.json'), project: SLUG, folder, mark: true }]);
+    const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxOf('darwin', locked), copy: async () => {} });
+    assert.deepEqual(done, { ok: true });
+    assert.equal(readProject(SLUG).connection.locked, true);
+    const made = findRun(folder).changes.filter((c) => c.step === 8);
+    assert.deepEqual(made.map((c) => c.kind), ['locked', 'file'], 'the record marked once Locked is on, recorded first');
+    assert.equal(JSON.parse(made[1].before).connection.locked, undefined);
+    // Asked again, the record already says Locked: nothing more to mark.
+    assert.equal((await step.plan(ctxOf('darwin', locked))).changes[0].mark, undefined);
+  });
 });

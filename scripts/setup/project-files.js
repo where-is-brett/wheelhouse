@@ -45,20 +45,36 @@
 // on; a folder on another branch than the default is refused, saying how to bring the two
 // together, so setup's commit never lands on a branch the folder isn't on. It refuses too when the
 // folder holds commits of the director's not yet on the host (they would go up with setup's), when
-// the host holds commits the folder hasn't got, and when one of the three files holds the
-// director's own changes not yet committed (they would go up in setup's commit); what step 1's
-// project-scope install left in the project's settings (the plugin switched on, check 37) is not
-// the director's, and goes up in setup's commit. A setup commit
+// the host holds commits the folder hasn't got. When one of the three files holds the director's
+// own changes not yet committed, it asks (ruling R95): "Put your changes to <file> in setup's
+// commit" or "Leave them; I'll come back", under an id carrying a hash of the file's text, so a
+// file changed since asks again (R51); recommended Put them in for a new product (step 3 made its
+// repository), Leave them for an existing one. Put them in lists them on the commit, so the card
+// says so and the list's hash covers them; Leave them makes the step wait, saying why. What step
+// 1's project-scope install left in the project's settings (the plugin switched on, check 37) is
+// not the director's, and goes up in setup's commit with no question. A setup commit
 // made but not pushed (a push that failed) is pushed by the next Go ahead, and nothing is
 // committed twice.
 //
+// On a computer joining a project set up on another (ruling R78), the step runs in its "this
+// computer" form: this computer's .claude/settings.local.json key by key, the .git/info/exclude
+// line and the pins, with no commit and no protection, which the first computer made. The
+// configuration is the project's as committed (.claude/wheelhouse.json), so step 4's answers,
+// which a joining run never has, are not read; its `after` of step 4 counts as done there
+// (scripts/lib/setup-run.js, stepDone). A shared file that differs from what is committed is left
+// as it is and named on the card, never committed. Claude Code's rewrite of the project's settings
+// while the pins install is put back to what the file held before, key by key.
+//
 // The step is long (it installs and pushes), so it runs in its own process. It waits for step 3,
 // which registers the project and clones its state, and step 4, whose live-data answer the
-// configuration holds (`after: [3, 4]`). The foreman's start and the first briefing are not here:
-// they are the last thing setup does, at the end of step 10 (ruling R44).
+// configuration holds (`after: [3, 4]`; on a joining run, step 3 only). The foreman's start and
+// the first briefing are not here: they are the last thing setup does, at the end of step 10
+// (ruling R44).
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
+import { joinedRepo } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
 import { helperAddress, wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
@@ -75,10 +91,10 @@ import { projectSettings, localSettings, mergeSettings, directorStatusLine } fro
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
-import { switchOnAsDirector, directorGitEnv, directorGitlabApi, STOPPED } from './host.js';
+import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA } from './questions.js';
-import { newId } from './journal.js';
+import { newId, readJournal } from './journal.js';
 
 export const COMMIT_MESSAGE = 'Set up Wheelhouse';
 // The setup commit's files, and only these (ruling R42). This computer's local settings never go in.
@@ -257,17 +273,58 @@ export function projectFilesChange({ folder, config, release = null, local }) {
   const targets = targetsFor({ folder, config, release });
   const settingsText = readText(at(SETTINGS));
   const configText = readText(at(CONFIG));
-  const localText = readText(at(LOCAL));
-  const ownStatusLine = local.claudeHome ? directorStatusLine({ claudeHome: local.claudeHome, projectDir: folder }) : null;
-  const localOurs = localSettings({ address: local.address, node: local.node, pluginRoot: local.pluginRoot, platform: local.platform, ownStatusLine });
   const changes = [
     ...jsonChanges(at(SETTINGS), objectIn(SETTINGS, settingsText), targets[SETTINGS](settingsText)),
     ...jsonChanges(at(CONFIG), objectIn(CONFIG, configText), targets[CONFIG](configText)),
-    ...jsonChanges(at(LOCAL), objectIn(LOCAL, localText), mergeSettings(objectIn(LOCAL, localText) ?? {}, localOurs)),
+    ...localFilesChange({ folder, local }),
   ];
   if (!hasSection(readText(at(CLAUDE)))) changes.push({ kind: 'file', target: at(CLAUDE), section: 'Compact instructions' });
   return changes;
 }
+
+// The changes to this computer's own .claude/settings.local.json in `folder`, merged with
+// localSettings key by key (`local` as projectFilesChange's): all a joining computer's step 7
+// writes of the project's files (ruling R78).
+export function localFilesChange({ folder, local }) {
+  const file = path.join(folder, ...LOCAL.split('/'));
+  const text = readText(file);
+  const ownStatusLine = local.claudeHome ? directorStatusLine({ claudeHome: local.claudeHome, projectDir: folder }) : null;
+  const ours = localSettings({ address: local.address, node: local.node, pluginRoot: local.pluginRoot, platform: local.platform, ownStatusLine });
+  return jsonChanges(file, objectIn(LOCAL, text), mergeSettings(objectIn(LOCAL, text) ?? {}, ours));
+}
+
+// ---- The director's own changes (ruling R95) ----
+
+// The answer that puts the director's changes to a file in setup's commit, and the one that leaves them.
+export const putYoursIn = (rel) => `Put your changes to ${rel} in setup's commit`;
+export const LEAVE_YOURS = 'Leave them; I\'ll come back';
+// The hash of a file's text as the director left it, whatever its line endings.
+const textHash = (rel, text) => crypto.createHash('sha256').update(`${rel}\n${lines(text ?? '')}`).digest('hex');
+
+// The question asked when one of the three shared files holds the director's own changes not yet
+// committed: its id carries a hash of the file's text (R51), so a file changed since asks again.
+// `isNew`: the product is new (step 3 made its repository), so putting them in is recommended.
+export function yoursAsk({ rel, text, isNew }) {
+  const put = putYoursIn(rel);
+  return {
+    id: `yours-${textHash(rel, text).slice(0, 12)}`,
+    card: {
+      level: 3,
+      what: `Setup step 7: ${rel} has changes of yours not yet committed. Setup's commit, "${COMMIT_MESSAGE}", would take them up with its own.`,
+      why: 'What goes up in setup\'s commit is shared with every computer and agent working on the project.',
+      options: [
+        { label: put, says: 'They go up with setup\'s own changes in its one commit, on your Go ahead.' },
+        { label: LEAVE_YOURS, says: 'Setup waits at this step until you have committed them or put them aside.' },
+      ],
+      recommend: isNew ? put : LEAVE_YOURS,
+      because: isNew ? 'every file of a new product is new, so its first commit is the natural home for them' : 'they may be work in progress, which is yours to commit when it is ready',
+      meanwhile: 'Setup waits at this step; nothing changes.',
+    },
+  };
+}
+
+// Why step 7 waits once the director chose to leave their changes out.
+export const leftYoursLine = (rel) => `${rel} holds changes of yours not yet committed, which you chose to leave out of setup's commit: once they are committed or put aside, setup goes on`;
 
 // ---- The host and git ----
 
@@ -417,8 +474,10 @@ const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0
 
 // Step 7's card: each part of the list in plain words, the branch the commit and protection land on,
 // and the release. When that would pass the composer's limit (a long branch name or release), a
-// shorter card says the same in fewer words.
-export function projectFilesCard({ changes, host, branch, release }) {
+// shorter card says the same in fewer words. On a joining computer (`joining`, ruling R78) it says
+// that nothing is committed and protection stays as it is, and names each shared file in
+// `differ`, which differs from what is committed and is left as it is.
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [] }) {
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined);
   const shared = files.filter((c) => !c.target.endsWith('settings.local.json'));
   const excluded = changes.some((c) => c.line === EXCLUDE_LINE);
@@ -432,10 +491,14 @@ export function projectFilesCard({ changes, host, branch, release }) {
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
   if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at Wheelhouse's tested versions`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
-  if (up?.action === 'commit') parts.push(`the three shared files go up to ${branch} on ${NAME[host]} in one commit, "${COMMIT_MESSAGE}"`);
+  // The director's own changes setup's commit takes up, as they chose (ruling R95).
+  const yours = up?.action === 'commit' && Array.isArray(up.yours) && up.yours.length > 0 ? `, with your own changes to ${listed(up.yours.map((y) => y.file))}` : '';
+  if (up?.action === 'commit') parts.push(`the three shared files go up to ${branch} on ${NAME[host]} in one commit, "${COMMIT_MESSAGE}"${yours}`);
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes up to ${branch} on ${NAME[host]}`);
   const where = host === 'gitlab' ? ' ("pipelines must succeed" once there is a pipeline)' : ', where your plan allows';
-  parts.push(`${up ? 'then ' : ''}${branch}'s protection goes on${where}`);
+  if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
+  else parts.push(`${up ? 'then ' : ''}${branch}'s protection goes on${where}`);
+  if (differ.length > 0) parts.push(`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`);
   const pinned = release?.ref ? `Wheelhouse stays at ${release.ref} and never updates itself.` : 'Wheelhouse never updates itself.';
   const card = (what) => ({
     kind: 'setup',
@@ -450,21 +513,34 @@ export function projectFilesCard({ changes, host, branch, release }) {
     because: 'agents need these before they start',
     meanwhile: 'Setup waits here; nothing changes.',
   });
-  const full = card(`Setup step 7, ${SETUP_TITLES[7]}: ${parts.join('; ')}. All with your ${NAME[host]} sign-in. ${pinned}`);
+  const full = card(joining
+    ? `Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${parts.join('; ')}. ${pinned}`
+    : `Setup step 7, ${SETUP_TITLES[7]}: ${parts.join('; ')}. All with your ${NAME[host]} sign-in. ${pinned}`);
   const fits = (c) => composeCard({ ...c, target: { step: 7, hash: '0'.repeat(64) } }).question.question.length <= CARD.chars;
   try {
     if (fits(full)) return full;
   } catch { /* too long: the shorter card below */ }
   const cut = (text) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
+  if (joining) {
+    const mine = [
+      ...(files.length > 0 || excluded ? ['this computer\'s settings'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
+      'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
+    ];
+    return card(`Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${mine.join(', ')}. Wheelhouse never updates itself.`);
+  }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded ? ['this computer\'s settings'] : []),
-    ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit up to ${cut(branch)} on ${NAME[host]}`] : []),
+    ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit up to ${cut(branch)} on ${NAME[host]}${yours === '' ? '' : ', with your changes'}`] : []),
     `${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`,
   ];
   return card(`Setup step 7, ${SETUP_TITLES[7]}: ${short.join(', ')}, all with your sign-in. Wheelhouse never updates itself.`);
 }
 
 // ---- Step 7 ----
+
+// Whether the step's run is a computer's joining a project set up on another (ruling R78): step
+// 3's record of it in the run's journal.
+const joiningRun = (ctx) => typeof ctx.runId === 'string' && joinedRepo(readJournal().runs.find((r) => r?.id === ctx.runId) ?? null) !== null;
 
 // `run` runs git, the host's tool and `claude`; `findGit` gives the git step 2 found; `gitlab`
 // GitLab's API with the director's sign-in; `claude` finds Claude Code's command line (lib/claude.js:
@@ -484,6 +560,52 @@ export function projectFilesStep({
     return gitIn({ run, gitPath: located.path, host, platform, folder });
   };
   const lineage = (folder) => checkInstalled({ manifest: manifest(), projectDir: folder, claudeHome: claudeHome(), locate });
+  // This computer's part of the list, for either form: the line that keeps its settings out of git
+  // (unless the product already ignores them), then each pin not installed as the manifest has it.
+  const computerParts = async (git, folder) => {
+    const parts = [];
+    if (!(await git.ok(['check-ignore', '-q', '--', LOCAL]))) {
+      const exclude = await git.out(['rev-parse', '--git-path', 'info/exclude']);
+      if (exclude === null) throw new Error('git could not say where this folder keeps its own ignore list');
+      parts.push({ kind: 'file', target: path.resolve(folder, exclude), line: EXCLUDE_LINE });
+    }
+    const kits = manifest();
+    const wrong = new Set(lineage(folder).mismatches.map((m) => m.upstream));
+    for (const u of kits.upstreams.filter((x) => wrong.has(x.name))) parts.push({ kind: 'process', target: `${u.plugin}@${MARKETPLACE}`, action: 'install', scope: 'project' });
+    return parts;
+  };
+
+  // The "this computer" form, on a computer joining a project set up on another (ruling R78): the
+  // configuration read from the project's last commit in this folder, and only this computer's
+  // own files and pins listed. A run with nothing left to do settles, as R75 does.
+  const thisComputer = async (ctx, found, platform) => {
+    const { host, repo } = found.record;
+    const folder = ctx.folder;
+    const at = (rel) => path.join(folder, ...rel.split('/'));
+    const git = await gitFor({ host, platform, folder });
+    const committed = await headText(git, CONFIG);
+    if (committed === null) {
+      throw new Error(`${CONFIG} is not in this folder's last commit of ${repo}, so setup can't read the project's configuration: finish setup on your other computer, bring its commit in here (git pull), then ask again`);
+    }
+    try {
+      readConfig(JSON.stringify(objectIn(CONFIG, committed)));
+    } catch {
+      throw new Error(`${CONFIG} as committed is not a configuration Wheelhouse can read, so setup has left this project's files as they are: correct it on your other computer, then ask again`);
+    }
+    const differ = [];
+    for (const rel of SETUP_FILES) if (!sameContent(rel, readText(at(rel)), await headText(git, rel))) differ.push(rel);
+    const home = claudeHome();
+    const release = wheelhouseRelease({ folder, claudeHome: home });
+    const changes = [
+      ...localFilesChange({ folder, local: { address: address(), node, pluginRoot, platform, claudeHome: home } }),
+      ...(await computerParts(git, folder)),
+    ];
+    if (changes.length === 0) {
+      if (differ.length > 0) ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: this computer's files are in place; ${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}.`);
+      return { settled: { record: { nothing: true, ...(differ.length > 0 ? { differ } : {}) } } };
+    }
+    return { changes, card: projectFilesCard({ changes, host, branch: null, release, joining: true, differ }), director: 'One click' };
+  };
 
   return {
     n: 7,
@@ -494,6 +616,7 @@ export function projectFilesStep({
       const platform = ctx.platform ?? process.platform;
       const found = projectForFolder(ctx.folder);
       if (found === null) return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; its files come once it has` };
+      if (joiningRun(ctx)) return thisComputer(ctx, found, platform);
       if (!ctx.answers?.['4.live-data']) return { wait: PROJECT_WAIT_MS, why: 'step 4 has not been told whether the product holds live data yet; the configuration says so' };
       const { record } = found;
       const { host, repo } = record;
@@ -530,8 +653,10 @@ export function projectFilesStep({
       // Each shared file holds what it held at the last commit, or that with only what setup or
       // step 1's install wrote (the plugin switched on in the project's settings, check 37): setup
       // gives the same file from it as from the commit. Any other change is the director's own, not
-      // yet committed, and setup's commit would take it up.
+      // yet committed, and setup's commit would take it up: the director is asked first (R95).
       let commit = false;
+      const yours = [];
+      const isNew = madeBySetup(`${host}:${repo}`);
       for (const rel of SETUP_FILES) {
         const work = readText(at(rel));
         const before = await headText(git, rel);
@@ -542,25 +667,23 @@ export function projectFilesStep({
         const installed = rel === SETTINGS ? [jsonText(mergeSettings(objectIn(SETTINGS, before) ?? {}, STEP_ONE_SETTINGS))] : [];
         const ours = sameContent(rel, work, before) || [before, ...installed].some((from) => sameContent(rel, made(work), made(from)));
         if (!ours) {
-          throw new Error(`${rel} has changes of yours not yet committed, and setup's commit would take them up with its own: commit them, or put them aside, then ask again`);
+          const asked = yoursAsk({ rel, text: work, isNew });
+          const got = ctx.answers?.[`7.${asked.id}`] ?? null;
+          if (got === null) return { ask: asked };
+          if (got.label !== putYoursIn(rel)) return { wait: PROJECT_WAIT_MS, why: leftYoursLine(rel) };
+          yours.push({ file: rel, sha256: textHash(rel, work) });
         }
         if (!sameContent(rel, made(work), before)) commit = true;
       }
 
       const changes = projectFilesChange({ folder, config, release, local: { address: address(), node, pluginRoot, platform, claudeHome: home } });
       // This computer's settings are kept out of git by a line of the folder's own, unless the
-      // product already ignores them.
-      if (!(await git.ok(['check-ignore', '-q', '--', LOCAL]))) {
-        const exclude = await git.out(['rev-parse', '--git-path', 'info/exclude']);
-        if (exclude === null) throw new Error('git could not say where this folder keeps its own ignore list');
-        changes.push({ kind: 'file', target: path.resolve(folder, exclude), line: EXCLUDE_LINE });
-      }
-      const kits = manifest();
-      const wrong = new Set(lineage(folder).mismatches.map((m) => m.upstream));
-      for (const u of kits.upstreams.filter((x) => wrong.has(x.name))) changes.push({ kind: 'process', target: `${u.plugin}@${MARKETPLACE}`, action: 'install', scope: 'project' });
+      // product already ignores them; then the pins.
+      changes.push(...(await computerParts(git, folder)));
       const target = `${repo} ${branch}`;
-      // The commit goes on the tip the plan read, and the push sends that exact commit (I1).
-      if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: [...SETUP_FILES] });
+      // The commit goes on the tip the plan read, and the push sends that exact commit (I1). The
+      // director's own changes it takes up, as they chose, are named by their text's hash (R95).
+      if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: [...SETUP_FILES], ...(yours.length > 0 ? { yours } : {}) });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head });
       changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
       return { changes, card: projectFilesCard({ changes, host, branch, release }), director: 'One click' };
@@ -610,6 +733,10 @@ export function projectFilesStep({
       // every other key stays as it is.
       const pins = changes.filter((c) => c.kind === 'process' && c.action === 'install');
       if (pins.length > 0) {
+        const settingsFile = at(SETTINGS);
+        const joining = joiningRun(ctx);
+        // A joining computer puts the project's settings back to what they held before the installs.
+        const held = joining ? objectIn(SETTINGS, readText(settingsFile)) : null;
         for (const c of pins) {
           const upstream = { plugin: c.target.split('@')[0] };
           const before = locate(upstream, { projectDir: folder, claudeHome: claudeHome() });
@@ -617,10 +744,10 @@ export function projectFilesStep({
           await installPin({ id: c.target, folder, run, claude });
           halt();
         }
-        const settingsFile = at(SETTINGS);
-        const targets = targetsFor({ folder, config: starterConfig({ answers: ctx.answers }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }) });
         const now = objectIn(SETTINGS, readText(settingsFile)) ?? {};
-        for (const { key, value } of keyEdits(now, targets[SETTINGS](readText(settingsFile)))) ctx.applyJsonKey({ file: settingsFile, key, value, project });
+        const wanted = joining ? held ?? {}
+          : targetsFor({ folder, config: starterConfig({ answers: ctx.answers }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }) })[SETTINGS](readText(settingsFile));
+        for (const { key, value } of keyEdits(now, wanted)) ctx.applyJsonKey({ file: settingsFile, key, value, project });
         say(`${listed(pins.map((c) => pinName(c.target)))} ${pins.length === 1 ? 'is' : 'are'} installed for this project`);
       }
       const checked = lineage(folder);
