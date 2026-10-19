@@ -23,9 +23,11 @@ export function withoutGitVars(env = process.env) {
 // takes its children too (`platform` and `killer` are for tests). A variable in `env`
 // whose value is undefined or null is removed from the environment. With `limit` (bytes), only about the newest `limit`
 // bytes of each stream are kept while it runs. With `windowsVerbatimArguments` (Windows only), the
-// arguments are passed to the program as they are, without Node's quoting, for `cmd.exe /c`. Resolves with the exit code and the collected
+// arguments are passed to the program as they are, without Node's quoting, for `cmd.exe /c`. With
+// `onOutput(text)`, each piece of output, from either stream, is also given as it comes, for a
+// program that shows something to read before it finishes (a sign-in code). Resolves with the exit code and the collected
 // output; rejects only if the program cannot be started.
-export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false } = {}) {
+export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, onOutput } = {}) {
   return new Promise((resolve, reject) => {
     const merged = { ...baseEnv, ...env };
     for (const name of Object.keys(merged)) if (merged[name] === undefined || merged[name] === null) delete merged[name];
@@ -57,6 +59,9 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
     const keep = (chunks) => {
       let size = 0;
       return (d) => {
+        if (typeof onOutput === 'function') {
+          try { onOutput(d.toString('utf8')); } catch { /* the caller's reading never stops the program */ }
+        }
         chunks.push(d);
         size += d.length;
         // Drop whole old chunks while the rest still holds `limit` bytes.

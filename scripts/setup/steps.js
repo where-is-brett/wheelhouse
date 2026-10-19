@@ -18,6 +18,8 @@
 //         applyJsonKey({ file, key, value, project? }), the journal's key edit, which records the
 //           change in the journal before it writes the file, and gives the change back;
 //         record(change or changes), to put a change of any other kind in the journal;
+//         say(line), one line for the director while the step runs, such as a sign-in code
+//           (ruling R40), kept on the step's journal entry and shown, cleaned, by /setup/status;
 //         stopped(), whether STOP has come on meanwhile.
 //
 // `plan` changes nothing. Its list is what the card shows and what its hash names, so it must be
@@ -47,11 +49,13 @@
 //
 // Until each step's task (Tasks 7 to 13) fills it in, the step lists no changes (ruling R14).
 // Step 1, the install, is the director's own (the README's line, Task 16), so it lists none.
-// Step 2, the tools, is scripts/setup/tools.js.
+// Step 2, the tools, is scripts/setup/tools.js; step 3, the host and the connection, is
+// scripts/setup/host.js.
 import crypto from 'node:crypto';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { toolsStep } from './tools.js';
+import { hostStep } from './host.js';
 
 // The first step of a run not yet done is in scripts/lib/setup-run.js, which the hooks read
 // without reaching this file; it numbers the steps as STEPS does.
@@ -92,6 +96,6 @@ function placeholder(n) {
   };
 }
 
-const FILLED = { 2: toolsStep };
+const FILLED = { 2: toolsStep, 3: hostStep };
 
 export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => (FILLED[n] ? FILLED[n]() : placeholder(n))));

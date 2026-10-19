@@ -40,8 +40,9 @@ test('the ten steps are numbered 1 to 10 in the design\'s order, with its titles
 });
 
 test('until its task fills it, each step lists no changes and its card composes with the setup line', async () => {
-  // Step 2, the tools, is filled (tests/scripts/setup/tools.test.js).
-  for (const step of STEPS.filter((s) => s.n !== 2)) {
+  // Step 2, the tools, is filled (tests/scripts/setup/tools.test.js), and step 3, the host
+  // (tests/scripts/setup/host.test.js).
+  for (const step of STEPS.filter((s) => s.n !== 2 && s.n !== 3)) {
     const ctx = { folder: '/tmp/x', step: step.n, now: () => NOW };
     const planned = await step.plan(ctx);
     assert.deepEqual(planned.changes, []);
@@ -389,6 +390,47 @@ test('a step records each change as it makes it, so one that fails part-way leav
       assert.deepEqual(await runApply({ step, runId: run.id, changes: [], ctx: { now: () => NOW } }), { ok: true });
     }
     assert.deepEqual(findRun(folder).changes.slice(2).map((c) => [c.step, c.kind]), [[7, 'json-key'], [8, 'json-key'], [9, 'folder']]);
+  });
+});
+
+test('a running step\'s line for the director is kept on its entry, shown cleaned by status, and dropped by a new click', async () => {
+  await withHome(async () => {
+    const user = fs.realpathSync.native(tempFolder('wh-say '));
+    const folder = path.join(user, 'Projects', 'shop');
+    fs.mkdirSync(folder, { recursive: true });
+    const run = startRun({ folder, now: () => NOW });
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let saying;
+    const said = new Promise((resolve) => { saying = resolve; });
+    const step = { n: 3, title: SETUP_TITLES[3], plan: async () => ({ changes: [] }), apply: async (ctx) => {
+      ctx.say('Type WXYZ-1234 at https://github.com/login/device, then click Authorise');
+      ctx.say('Then open https://someone:secret@example.com/page');
+      assert.throws(() => ctx.say('two\nlines'), /one line/);
+      saying();
+      await held;
+      return [];
+    } };
+    markStep(run.id, 3, 'clickedAt', { now: () => NOW });
+    const current = (entry) => entry?.clickedAt === NOW.toISOString() && !entry.doneAt;
+    const applying = runApply({ step, runId: run.id, changes: [], ctx: { now: () => NOW }, current });
+    await said;
+    assert.deepEqual(findRun(folder).steps[3].say, { line: 'Then open https://someone:secret@example.com/page', at: NOW.toISOString() });
+    const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: user });
+    const { lines } = await routes['/setup/status']({ folder });
+    const at = lines.findIndex((l) => l.startsWith('Step 3,'));
+    assert.match(lines[at], /running since/);
+    assert.equal(lines[at + 1], '  Then open https://[hidden]@example.com/page');
+    release();
+    assert.deepEqual(await applying, { ok: true });
+    assert.ok(!(await routes['/setup/status']({ folder })).lines.some((l) => l.includes('Then open')), 'a finished step says nothing more');
+    // A new attempt says its own lines, never the last attempt's.
+    markStep(run.id, 3, 'clickedAt', { now: () => NOW });
+    assert.equal(findRun(folder).steps[3].say, undefined);
+    // An older attempt's process says nothing on a newer attempt's entry.
+    const old = { ...step, apply: async (ctx) => { ctx.say('an old code'); return []; } };
+    await runApply({ step: old, runId: run.id, changes: [], ctx: { now: () => NOW }, current: () => false });
+    assert.equal(findRun(folder).steps[3].say, undefined);
   });
 });
 

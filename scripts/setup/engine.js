@@ -8,7 +8,8 @@
 //                                            { ok, wait, why } (nothing to ask yet), or
 //                                            { ok, done: true } (the step settled on its answers)
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
-//   /setup/status { folder }              -> { ok, lines, next, ask }
+//   /setup/status { folder }              -> { ok, lines, next, ask }; a running step's latest
+//                                            line for the director (ctx.say, ruling R40) among them
 //
 // A step may name steps it waits for (`after`, rulings R47 and R54): while they are unfinished, its
 // plan still asks its questions, but gives `{ wait, why }` in place of its Go-ahead card, and its
@@ -185,7 +186,8 @@ function runningSince(entry, now) {
 // uninstall to put back, and a retry never takes setup's own value for the director's. Changes
 // apply returns are recorded too, each once: one already recorded through ctx is not doubled.
 // `current`, a test of the step's journal entry, keeps the mark to this attempt: a newer attempt's
-// entry is never marked by an older one. Each change made is recorded whatever, since it was made.
+// entry is never marked by an older one. The ctx carries `say(line)` too, a line for the director
+// while the step runs (ruling R40), kept on the step's entry and shown by status. Each change made is recorded whatever, since it was made.
 // Used by the helper for a short step and by scripts/setup/run-step.js for a long one.
 export async function runApply({ step, runId, changes, ctx, current }) {
   const recorded = new Set();
@@ -197,8 +199,11 @@ export async function runApply({ step, runId, changes, ctx, current }) {
     for (const c of list) recorded.add(c.id);
   };
   const applyJsonKey = (args) => journalKey({ ...args, step: step.n, record });
+  // A line for the director while the step runs, such as a sign-in code (ruling R40): kept on the
+  // step's journal entry for this attempt only, and shown, cleaned, by /setup/status.
+  const say = (line) => { markStep(runId, step.n, 'say', { now: ctx.now, line, when: current }); };
   try {
-    record(await step.apply({ ...ctx, runId, record, applyJsonKey }, changes));
+    record(await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes));
     markStep(runId, step.n, 'doneAt', { now: ctx.now, when: current });
     return { ok: true };
   } catch (error) {
@@ -230,6 +235,8 @@ function statusLines(run, steps, running) {
       lines.push(running(n)
         ? `${name}: running since ${entry.clickedAt}`
         : `${name}: stuck: running since ${entry.clickedAt}, more than ${STEP_TIMEOUT_MS / 60000} minutes`);
+      // What the running step asks of the director now, such as a sign-in code (ruling R40).
+      if (running(n) && typeof entry.say?.line === 'string') lines.push(`  ${hide(entry.say.line, [])}`);
     } else if (entry.shownAt) lines.push(`${name}: card shown at ${entry.shownAt}, not clicked yet`);
     else lines.push(`${name}: not started`);
     for (const c of (run.changes ?? []).filter((x) => x.step === n)) {

@@ -308,18 +308,24 @@ async function findTool(tool, { platform, run, env }) {
   return onPath(tool, { platform, run });
 }
 
-// The host tools this project needs: the one for the host its `origin` names, or both while it
-// names none (a new product's host is chosen at step 3). Read from the folder's own git settings,
-// since git itself may not be here yet.
-export function hostToolsFor(folder) {
+// The address the folder's `origin` names, read from its own git settings, since git itself may
+// not be here yet; null when it names none.
+export function originUrl(folder) {
   let text = '';
   try {
     text = fs.readFileSync(path.join(folder, '.git', 'config'), 'utf8');
   } catch {
-    return [...HOST_TOOLS];
+    return null;
   }
   const section = /^\s*\[remote\s+"origin"\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(text)?.[1] ?? '';
-  const url = /^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1];
+  return /^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1] ?? null;
+}
+
+// The host tools this project needs: the one for the host its `origin` names, or both while it
+// names none (a new product's host is chosen at step 3).
+export function hostToolsFor(folder) {
+  const url = originUrl(folder);
+  if (url === null) return [...HOST_TOOLS];
   try {
     return [detectHost(url) === 'github' ? 'gh' : 'glab'];
   } catch {
