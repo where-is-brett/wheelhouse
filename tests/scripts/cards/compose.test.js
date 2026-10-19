@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -47,6 +47,7 @@ const INPUTS = {
   amend: { ...common, recommend: 'Change it', kind: 'amend', what: 'A change to the plan you approved for export-csv.', options: [says('Change it')], target: { work: 'export-csv', hash: DOC } },
   'lift-incident': { ...common, recommend: 'End it', kind: 'lift-incident', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, recommend: 'Merge the fix', kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
+  setup: { ...common, recommend: 'Go ahead', kind: 'setup', what: 'Setup step 6, Changes to this computer: transcripts are kept 30 days.', options: [says('Go ahead')], target: { step: 6, hash: DOC } },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
 };
 const LINES = {
@@ -60,6 +61,7 @@ const LINES = {
   amend: amendLine('export-csv', DOC),
   'lift-incident': liftIncidentLine('bad-total'),
   'incident-fix': incidentFixLine('bad-total', 31),
+  setup: setupLine(6, DOC),
   question: null,
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
@@ -160,7 +162,7 @@ test('a level-4 card without what it does to the checks is refused', () => {
 test('decision cards offer the deciding label, Not now, Explain more and Show me', () => {
   const expected = {
     approval: 'Approve', confirm: 'Confirm', 'lift-stop': 'Lift STOP', 'ci-push': 'Push it', runbook: 'Do it',
-    'approve-work': 'Approve', amend: 'Change it', 'lift-incident': 'End it', 'incident-fix': 'Merge the fix',
+    'approve-work': 'Approve', amend: 'Change it', 'lift-incident': 'End it', 'incident-fix': 'Merge the fix', setup: 'Go ahead',
   };
   for (const [kind, label] of Object.entries(expected)) {
     assert.equal(DECIDING[kind], label);

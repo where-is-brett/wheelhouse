@@ -16,11 +16,18 @@
 // the copy of Node.js it needs is whole; the copy itself is made in the background, never here. Context added by a hook is capped at 10,000 characters
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
+//
+// In a folder being set up (no project record yet, or one setup registered and is still finishing:
+// kit.js's beingSetUp) it makes this computer's signing key when there is none, and enrols it when
+// this computer's list is empty (the plan's call: the first key is trusted on first use), starts
+// the helper, and says where setup stands. In a project setup is still finishing (step 3 has
+// registered it and step 7 made its first commit), the project's reload says where setup stands in
+// place of the front desk's line, so the session carries on with setup.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText } from './kit.js';
+import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
@@ -29,7 +36,6 @@ import { wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents } from '../state/events.js';
-import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole } from '../lib/role.js';
@@ -42,6 +48,8 @@ import {
 } from '../windows/low.js';
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
+import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
+import { SETUP_STEPS, firstUnfinished } from '../lib/setup-run.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -57,6 +65,11 @@ export const NOT_SYNCED = 'State was not synced with the host this time';
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
 // In the project's main folder, for any session that isn't the foreman's: the front desk's playbook.
 export const FRONT_DESK_LINE = 'This is the front desk. Follow wheelhouse:front-desk.';
+
+// In a folder being set up: where setup stands.
+export const NOT_SET_UP = 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.';
+export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. Follow wheelhouse:setup.`;
+export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call. Claude Code reads that field from CLAUDE_CODE_FLOOR; an older one lets the call through.
@@ -330,6 +343,52 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   return text;
 }
 
+// This computer's signing key, made when there is none (or kept when one was made before), and
+// enrolled in this computer's own list when the list is empty, so the director's first click can
+// be signed and checked. A computer that already has a list adds nothing to it here; a damaged
+// list is never written over (enrol refuses it). It informs, so a failure is passed over.
+function firstKey(now) {
+  try {
+    let own = ownKey();
+    if (own === null) {
+      try {
+        own = makeSigningKey();
+      } catch {
+        own = ownKey();
+      }
+    }
+    if (own !== null && readEnrolled().length === 0) enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: now().toISOString() });
+  } catch { /* no first click can be signed until a key is enrolled; setup's playbook says so */ }
+}
+
+// Where setup stands in a folder being set up, as one line; null when every step is done.
+function setupNote(setup) {
+  if (setup.journal === false) return JOURNAL_UNREADABLE;
+  if (setup.run === null) return NOT_SET_UP;
+  const next = firstUnfinished(setup.run);
+  return next === null ? null : partWay(next, SETUP_STEPS.find((s) => s.n === next).title);
+}
+
+// The session start in a folder being set up: the first key, the helper as in a project, and a
+// short reload of STOP, what couldn't start, and where setup stands. It gives no Windows lines:
+// they speak of a project's deny rules and its build-command level, and a folder with no project
+// record has neither until setup writes them (a registered folder being set up gets the project's
+// reload, Windows lines included).
+async function setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now }) {
+  firstKey(now);
+  const end = Date.now() + totalMs;
+  const lines = [];
+  const stop = stopOf();
+  if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
+  const version = claudeCodeVersion(input.transcript_path);
+  if (version !== null && olderThan(version, GUARD_FLOOR)) lines.push(OLD_CLAUDE_CODE);
+  const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
+  if (!up) lines.push(NO_HELPER);
+  const note = setupNote(setup);
+  if (note !== null) lines.push(note);
+  return lines.length === 0 ? undefined : answer.context('SessionStart', lines.join('\n'));
+}
+
 export async function decide(input, deps = {}) {
   const {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
@@ -341,7 +400,10 @@ export async function decide(input, deps = {}) {
   // Makes the copy of Node.js the Guarded runner starts from, detached, outside this budget.
   const startLowNodeCopy = deps.startLowNodeCopy ?? (() => startDetached(spawn, path.join(pluginRoot, LOW_NODE_SCRIPT)));
   const found = find(input.cwd, { dir });
-  if (!found) return undefined;
+  if (!found) {
+    const setup = beingSetUp(input.cwd);
+    return setup === null ? undefined : setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now });
+  }
   const { project, locked } = found;
   markManaged(project, input.session_id, { self, dir: dir ?? managedDir(), now });
   const end = Date.now() + totalMs;
@@ -372,6 +434,10 @@ export async function decide(input, deps = {}) {
   }
   views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
+
+  const setup = beingSetUp(input.cwd);
+  const setupLine = setup === null ? null : setupNote(setup);
+  if (setupLine !== null) notes.push(setupLine);
 
   const stateRoot = stateDir(project);
   // The Guarded self-test, on Windows, when the level read as if it passed would be Guarded, or
@@ -405,7 +471,7 @@ export async function decide(input, deps = {}) {
   }
   const text = reload({
     views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds,
-    frontDesk: featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
+    frontDesk: setupLine === null && featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

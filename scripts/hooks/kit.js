@@ -47,11 +47,13 @@
 //
 // Hooks never run git or anything else in a folder an agent controls.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { projectForFolder } from '../lib/projects.js';
+import { projectForFolder, isInsideFolder } from '../lib/projects.js';
 import { lockedProjects, managedDir } from '../protection/managed.js';
 import { wheelhouseHome } from '../lib/paths.js';
+import { readJournal, firstUnfinished } from '../lib/setup-run.js';
 
 export { managedDir, lockedProjects };
 
@@ -162,6 +164,71 @@ export function registeredByPath(cwd) {
   } catch {
     return null;
   }
+}
+
+const WHEELHOUSE_PLUGIN = /^wheelhouse@[^@\s]+$/;
+
+// Whether the folder's own Claude settings switch the Wheelhouse plugin on (installed for this
+// project, or for the director in it): `.claude/settings.local.json`, which wins where it names the
+// plugin, then `.claude/settings.json`. Small files only, read without waiting.
+function pluginOnIn(dir) {
+  const named = (name) => {
+    try {
+      const enabled = JSON.parse(readSmallText(path.join(dir, '.claude', name)) ?? 'null')?.enabledPlugins;
+      if (!enabled || typeof enabled !== 'object') return undefined;
+      const values = Object.entries(enabled).filter(([k]) => WHEELHOUSE_PLUGIN.test(k)).map(([, v]) => v);
+      return values.length === 0 ? undefined : values.includes(true);
+    } catch {
+      return undefined;
+    }
+  };
+  return (named('settings.local.json') ?? named('settings.json')) === true;
+}
+
+// The folder being set up that `cwd` lies in, or null. The hooks act only in a registered project,
+// and the folder setup is working on isn't one yet (the plan's builder check 3), so a folder in no
+// registered project counts as being set up when a setup run's folder holds it, or when its own
+// settings, or a folder's above it short of the home folder, switch the plugin on: setup installs
+// the plugin for the project's folder. `run` is the latest run there (the nearest folder's), or null.
+// A journal that can't be read leaves the folder counted as being set up, so the guards act, with
+// `journal: false`.
+// Setup's step 3 registers the folder, and step 7 makes its first commit, so for steps 4 to 10 the
+// folder is a registered one, with no .git until step 7. A registered folder still counts as being
+// set up while a run that holds it is unfinished, and only then: once every step is done it is a
+// project like any other, and a registered folder whose journal can't be read is left to the
+// project's own hooks. Never throws: a folder that can't be placed is null, and callers that guard
+// treat that as they already do. The guards ask projectOf and registeredByPath first, and act in
+// a registered folder by those.
+export function beingSetUp(cwd, { home = os.homedir() } = {}) {
+  if (typeof cwd !== 'string' || cwd === '' || !path.isAbsolute(cwd)) return null;
+  let real;
+  let registered;
+  try {
+    real = fs.realpathSync.native(cwd);
+    registered = projectForFolder(real) !== null;
+  } catch {
+    return null;
+  }
+  let runs;
+  try {
+    runs = readJournal().runs;
+  } catch {
+    return registered ? null : { folder: real, run: null, journal: false };
+  }
+  const holding = runs.filter((r) => typeof r?.folder === 'string' && isInsideFolder(r.folder, real));
+  if (holding.length > 0) {
+    const nearest = Math.max(...holding.map((r) => r.folder.length));
+    const run = holding.filter((r) => r.folder.length === nearest).at(-1);
+    if (registered && firstUnfinished(run) === null) return null;
+    return { folder: run.folder, run, journal: true };
+  }
+  if (registered) return null;
+  const stop = path.resolve(home);
+  for (let dir = real; dir !== stop && !sameFolder(dir, stop); dir = path.dirname(dir)) {
+    if (pluginOnIn(dir)) return { folder: dir, run: null, journal: true };
+    if (path.dirname(dir) === dir) break;
+  }
+  return null;
 }
 
 // Exists, whatever it is: a folder or a symlink (even a dangling one) counts.

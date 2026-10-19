@@ -257,8 +257,9 @@ test('the report carries the same block', async () => {
       const adapter = fakeAdapter();
       await withHelper(adapter, async (client) => {
         const said = { out: '', err: '' };
+        // The tree is not a repository the helper could push from: its push is stood in for.
         const deps = {
-          cwd: tree, client, find: () => ({ root: tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; },
+          cwd: tree, client: { ...client, push: async () => ({ ok: true }) }, find: () => ({ root: tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; },
         };
         assert.equal(await featureCli(['report'], deps), 0, said.err);
         assert.match(said.out, /It now says what built it/);
@@ -342,8 +343,12 @@ test('a feature session\'s commands work through the helper where the Wheelhouse
           sandboxed = false;
           try { return await fn(args); } finally { sandboxed = true; }
         };
+        // The tree is not a repository the helper could push from: its push is stood in for.
         const asked = {
-          openPr: outside(client.openPr), state: { answer: outside(client.state.answer) }, lineage: { provenance: outside(client.lineage.provenance) },
+          push: outside(async () => ({ ok: true })),
+          openPr: outside(client.openPr),
+          state: { answer: outside(client.state.answer) },
+          lineage: { provenance: outside(client.lineage.provenance) },
         };
         const said = { out: '', err: '' };
         const run = (...argv) => featureCli(argv, {
@@ -362,7 +367,8 @@ test('a feature session\'s commands work through the helper where the Wheelhouse
           'q-login-page-1', 'There is no answer yet.', 'The report is whole.', 'It now says what built it.', 'Opened pull request #7', '',
         ].join('\n'));
         // Each request carried the worktree's folder and no project: the helper placed it.
-        assert.equal(sent.length, 3);
+        assert.equal(sent.length, 4);
+        assert.deepEqual(sent.find((args) => 'refspec' in args), { cwd: tree, dir: tree, refspec: 'feature/login-page' });
         for (const args of sent) {
           assert.equal(args.cwd, tree);
           assert.equal('project' in args, false);

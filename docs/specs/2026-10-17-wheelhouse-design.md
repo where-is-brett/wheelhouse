@@ -663,7 +663,7 @@ Where the host's plan doesn't offer this, the board says so once, and the helper
 - `CLAUDE.md`;
 - CI workflows.
 
-The card says in plain words what the change does to the checks. The one exception is moving a model pin after the evaluation passes (section 9.1).
+The card says in plain words what the change does to the checks. There are two exceptions: moving a model pin after the evaluation passes (section 9.1); and, in a project, moving Wheelhouse's release pin to a release that only moves upstream pins, with its lineage checks green, which needs the review but not the director's approval, carrying their decision on green upgrades (`docs/specs/2026-10-18-build-loop-design.md`, section 14.4). *Designer's call.*
 
 **The configuration and the patterns.** *Designer's call.* The project's configuration is one file, `.claude/wheelhouse.json`, which the helper reads from the default branch's commit, never from a pull request or a working folder. It holds the critical areas (their paths and their checks), the CI file patterns, the allowed connectors, the allowed web domains and, optionally, the containment step (section 12.7). A pull request touches the guardrails if it changes anything under `.claude/`, any `CLAUDE.md`, `.mcp.json`, a CI file (`.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml`, `.gitlab/` and the project's own patterns) or a critical area's check files. Case is ignored in the match, because macOS and Windows treat `.Claude` as the same folder, and a false match only costs an extra approval.
 
@@ -671,7 +671,7 @@ The card says in plain words what the change does to the checks. The one excepti
 
 **Dependencies are pinned:**
 
-- **Wheelhouse itself** is installed for one project at a release tag, with auto-update off. Its marketplace entry also carries the release's commit, so a moved tag changes nothing (check 15, `docs/checks/15-install-and-pinning.md`). It never updates on its own: a new release comes to the director as a card in the briefing, saying what changes, and installs only after the evaluation passes. A release that only moves its upstream pins, with every lineage check green, installs with a line in the briefing instead (`docs/specs/2026-10-18-build-loop-design.md`, section 14.4).
+- **Wheelhouse itself** is installed for one project at a release tag, with auto-update off. The project follows the release by its tag alone: its settings name Wheelhouse's marketplace as a `github` source with the tag as `ref`, because a marketplace source takes no commit. The commit is checked when the release is moved instead: the release pull request names the tag's commit in its branch name, and the helper checks that the tag's commit is that one before it lets the release merge without the director's approval; on a mismatch, the director's approval is needed (`docs/specs/2026-10-18-build-loop-design.md`, section 14.4). That check is made at the release pull request, not at each later fetch; provenance records the Wheelhouse release each session ran (`docs/specs/2026-10-18-build-loop-design.md`, section 14.6). It never updates on its own: a new release comes to the director as a card in the briefing, saying what changes, and installs only after the evaluation passes. A release that only moves its upstream pins, with every lineage check green, installs with a line in the briefing instead (`docs/specs/2026-10-18-build-loop-design.md`, section 14.4).
 - **Third-party plugins** it relies on (Superpowers' loop skills and Matt Pocock's skills) are pinned by commit through Wheelhouse's own marketplace, with auto-update off and the other installed copies switched off; a manifest fingerprints the files used, a register records what Wheelhouse lays on top, and every upgrade comes in by one tested path (`docs/specs/2026-10-18-build-loop-design.md`, section 14). On 18 October 2026 this was not yet true on the director's Mac (section 14.1 there).
 - **Models** are pinned by full ID (section 8).
 
@@ -1023,7 +1023,7 @@ Everything is built in one programme, in this order. Each step is usable before 
 - **How many.** One trial of each first. Three trials only where the with and without results differ or are close.
 - **Usage.** The runs are reported like any other work. *Designer's call.*
 
-**The build loop's scenarios,** 20 to 32, are in `docs/specs/2026-10-18-build-loop-design.md`, section 15.
+**The build loop's scenarios,** 20 to 35, are in `docs/specs/2026-10-18-build-loop-design.md`, section 15.
 
 **Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **A pilot** runs on one small feature of the first project before wider use.
 

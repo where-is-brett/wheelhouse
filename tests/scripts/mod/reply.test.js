@@ -9,7 +9,7 @@ import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { writeViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { BUILD_QUESTION_OPTIONS, settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 
@@ -569,5 +569,17 @@ test('a reply-code Confirm on a profile setting\'s card closes the card in the p
     assert.deepEqual(c.calls.profileRecord.map((r) => r.event.data.confirms), [setting.id]);
     assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label: 'Confirm' } }]);
     assert.deepEqual((await writeViews(P, { now: () => LATER })).waiting, []);
+  });
+});
+
+test('no reply lets a setup step go ahead: only the director\'s click on the card setup showed does', async () => {
+  await withHome(async () => {
+    const line = setupLine(1, 'fedcba9876543210'.repeat(4));
+    await show(cardOf(line, 'Setup step 1, checking this computer, changes nothing on it.'), { options: ['Go ahead', 'Not now', 'Explain more'] });
+    for (const label of ['Go ahead', 'Not now']) {
+      const c = fake();
+      assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER }), { made: false, says: 'That option doesn\'t need a reply code' }, label);
+      assert.equal(c.calls.record.length + c.calls.profileRecord.length + c.calls.write.length, 0, label);
+    }
   });
 });

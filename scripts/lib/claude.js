@@ -49,6 +49,28 @@ export function hostVariableNames(env) {
   return Object.keys(env).filter((name) => /^(claude|anthropic_base_url)/i.test(name) && name.toUpperCase() !== 'CLAUDE_CONFIG_DIR');
 }
 
+// The variables Claude Code signs in with, to Anthropic or through Amazon Bedrock (and its Mantle
+// endpoint) or Google Cloud's Vertex AI (Claude Code's documentation, read 19 October 2026: the
+// Bedrock and Vertex pages): the switches, the keys and cloud credentials, and the profile,
+// region, project, credential-file and endpoint variables, spelt exactly. Some name a secret, and
+// the switches start "CLAUDE": a list that drops secrets or the host session's variables keeps
+// these by name. Beside them, every VERTEX_REGION_CLAUDE_* variable (CLAUDE_SIGN_IN_PREFIXES).
+export const CLAUDE_SIGN_IN_NAMES = Object.freeze([
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_SKIP_BEDROCK_AUTH', 'CLAUDE_CODE_SKIP_MANTLE_AUTH',
+  'AWS_BEARER_TOKEN_BEDROCK', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE',
+  'AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE',
+  'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_BEDROCK_MANTLE_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION',
+  'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_SKIP_VERTEX_AUTH', 'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_VERTEX_PROJECT_ID',
+  'CLOUD_ML_REGION', 'ANTHROPIC_VERTEX_BASE_URL', 'GOOGLE_CLOUD_PROJECT', 'GCLOUD_PROJECT',
+]);
+export const CLAUDE_SIGN_IN_PREFIXES = Object.freeze(['VERTEX_REGION_CLAUDE_']);
+
+// Whether `name`, spelt exactly, is one Claude Code signs in with.
+export function isClaudeSignIn(name) {
+  return CLAUDE_SIGN_IN_NAMES.includes(name) || CLAUDE_SIGN_IN_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 // `env` without the host session's variables.
 export function withoutHostVariables(env) {
   const drop = new Set(hostVariableNames(env));
