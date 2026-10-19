@@ -12,22 +12,31 @@
 //   status               where setup stands in this folder, as plain lines
 //   resume               where setup stands, and the plan of the first step neither done nor
 //                        running: { lines, next, plan }, with plan null when there is none
+//   health [<line> ...]  step 10's board (ruling R41): the lines the safety trials printed in this
+//                        session's sandbox (scripts/health/trials.js), each one argument, as it is,
+//                        joined by the helper with step 10's own checks and the board's health:
+//                        { green, lines, board, trials }, and once green { started, briefing } too.
+//                        With no lines it names the pull request and project the trials take
+//                        (`trials: { pr, project }`): run `node "<root>/scripts/health/trials.js"
+//                        --pr <pr> --project <project>`, then `health` with every line it printed
+//                        (not its notes), then show `board`, and `briefing` when there is one
 // The playbook (wheelhouse:setup) runs in the sandbox and only talks: every change is the
 // helper's, so every form is a request to its /setup/* routes, naming this folder, and nothing here
 // reads or writes a file. A request carries only the folder, the step and the hash; the helper
-// works out the list itself. `plan`, `status` and `resume` only read (resume asks for the status,
-// then one plan), and the STOP guard lets them through; `apply` is refused under STOP.
+// works out the list itself. `plan`, `status`, `resume` and `health` only read (resume asks for the
+// status, then one plan), and the STOP guard lets them through; `apply` is refused under STOP.
 // Errors are one line on standard error.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { helperClient } from '../host/helper-client.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
+import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, health [<trial line> ...]';
 const STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 const HASH = /^[0-9a-f]{64}$/;
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
@@ -82,6 +91,12 @@ export async function main(argv, {
       const got = await ask(helper.setup.status, { folder });
       const next = Number.isInteger(got.next) ? got.next : null;
       json({ lines: Array.isArray(got.lines) ? got.lines : [], next, plan: Number.isInteger(got.ask) ? await plan(helper, folder, got.ask) : null });
+    } else if (form === 'health') {
+      if (rest.length > MOST_TRIAL_LINES || !rest.every((l) => parseTrialLine(l) !== null)) {
+        throw new CliError('Give the lines trials.js printed, each as one argument, as they are');
+      }
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.health, { folder, lines: rest }); // eslint-disable-line no-unused-vars
+      json(answer);
     } else {
       throw new CliError(USAGE);
     }

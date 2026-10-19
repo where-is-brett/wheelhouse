@@ -1,8 +1,12 @@
 // tests/scripts/health/trials.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
-import { runTrials } from '../../../scripts/health/trials.js';
+import { runTrials, ghPaths, trialClients, MERGE_WAIT_MS, TRIAL_MARKER } from '../../../scripts/health/trials.js';
+import { fetchedPath } from '../../../scripts/lib/host-tools.js';
+import { TRIAL_LINE, parseTrialLine } from '../../../scripts/lib/trial-lines.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 // The fakes' project folder, spelled as path.join spells it on this system.
 const SCRATCH = path.join('/scratch');
@@ -63,9 +67,17 @@ test('every trial prints one line in the exact format', async () => {
     'helper health: reached / reached',
     'forged approval recorded: refused / refused',
     'merge with forged approval: refused / refused',
-    'stop: write refused, read allowed / needs the director',
   ]);
   for (const l of lines) assert.match(l, LINE);
+  for (const l of lines) assert.match(l, TRIAL_LINE);
+});
+
+test('parseTrialLine reads a trial line into its three parts, and nothing else', () => {
+  assert.deepEqual(parseTrialLine('read .env.local: refused / refused'), { name: 'read .env.local', expected: 'refused', result: 'refused' });
+  assert.deepEqual(parseTrialLine('merge with forged approval: refused / MERGED (unexpected)'), { name: 'merge with forged approval', expected: 'refused', result: 'MERGED (unexpected)' });
+  for (const bad of ['', 'read .env.local refused / refused', 'x: y / z; rm -rf /', 'x: y / $(z)', 7, null, `${'a'.repeat(200)}: refused / refused`]) {
+    assert.equal(parseTrialLine(bad), null, String(bad));
+  }
 });
 
 test('no line or note contains a value', async () => {
@@ -76,9 +88,14 @@ test('no line or note contains a value', async () => {
   }
 });
 
-test('the stop note tells the director what to do', async () => {
-  const lines = await runTrials(fakes());
-  assert.ok(lines.notes.some((n) => /type `?stop`?/i.test(n) && /Write/.test(n) && /Read/.test(n)));
+// STOP is tried by setup's step 10 in the helper, with the real stop guard (ruling R41), and the
+// director does nothing at step 10 (design section 15): no trial asks for them.
+test('no line or note asks for the director, and STOP is left to step 10', async () => {
+  for (const over of [{}, { pr: undefined }, { project: '' }, { expectNetwork: 'maybe' }]) {
+    const lines = await runTrials(fakes(over));
+    for (const l of [...lines, ...lines.notes]) assert.doesNotMatch(l, /needs the director|ask the director/i, l);
+    assert.ok(!lines.some((l) => l.startsWith('stop')), JSON.stringify(over));
+  }
 });
 
 test('allowed results are reported as allowed, without values', async () => {
@@ -143,7 +160,7 @@ test('network override accepts only the two words', async () => {
   const ok = await runTrials(fakes({ expectNetwork: 'reached' }));
   assert.equal(ok[2], 'reach github.com: reached / not reached');
   const bad = await runTrials(fakes({ expectNetwork: 'maybe' }));
-  assert.equal(bad[2], 'reach github.com: not reached / needs the director');
+  assert.equal(bad[2], 'reach github.com: not reached / could not run');
 });
 
 test('gh runs auth status and maps results', async () => {
@@ -174,7 +191,7 @@ test('an unreachable helper gives could not run for health and the forged trials
 test('a throwing client gives could not run and the rest carry on', async () => {
   const boom = async () => { throw new Error(SECRET); };
   const lines = await runTrials(fakes({ client: { health: boom, merge: boom, state: { record: boom } } }));
-  assert.equal(lines.length, 8);
+  assert.equal(lines.length, 7);
   assert.equal(lines[4], 'helper health: reached / could not run');
   assert.equal(lines[5], 'forged approval recorded: refused / could not run');
   assert.equal(lines[6], 'merge with forged approval: refused / could not run');
@@ -192,12 +209,27 @@ test('the forgery is sent to the helper and the merge asks for approval', async 
   assert.equal(f.calls.merge[0].number, 7);
 });
 
-test('a merge refused for another reason is not a pass', async () => {
-  for (const refused of ['the pull request is not open', 'CI has not passed', 'no review yet', 'the lock is held']) {
+// Check 31's first change: at Locked the director's real approval was on record, so the gate
+// refused on the lock, CI and review instead, and the pull request stayed open. Any refusal that
+// leaves the pull request unmerged counts.
+test('the merge trial passes on any refusal that leaves the pull request unmerged', async () => {
+  for (const refused of ['pull request 7 is not open', 'CI has not passed', 'no review yet', 'the lock is held', 'STOP is on', '']) {
     const f = fakes();
-    f.client.merge = async () => ({ ok: false, refused });
+    f.client.merge = async () => ({ ok: false, refused, reasons: [refused] });
     const lines = await runTrials(f);
-    assert.equal(lines[6], 'merge with forged approval: refused / could not run', refused);
+    assert.equal(lines[6], 'merge with forged approval: refused / refused', refused);
+  }
+  // A refusal that says it merged after all is no pass.
+  const f = fakes();
+  f.client.merge = async () => ({ ok: false, merged: true, refused: 'odd' });
+  assert.equal((await runTrials(f))[6], 'merge with forged approval: refused / MERGED (unexpected)');
+});
+
+test('a merge answer that is no refusal at all is not a pass', async () => {
+  for (const answer of [undefined, null, {}, { ok: true, merged: false }, { ok: 'false' }]) {
+    const f = fakes();
+    f.client.merge = async () => answer;
+    assert.equal((await runTrials(f))[6], 'merge with forged approval: refused / could not run', JSON.stringify(answer));
   }
 });
 
@@ -219,13 +251,14 @@ test('a forged approval that is recorded is flagged allowed', async () => {
   assert.equal((await runTrials(f))[5], 'forged approval recorded: refused / allowed');
 });
 
-test('bad --pr or --project gives needs the director', async () => {
+test('bad --pr or --project gives could not run, with a note', async () => {
   for (const over of [{ pr: undefined }, { pr: '0' }, { pr: '-3' }, { pr: 'abc' }, { pr: '7.5' }, { project: '' }, { project: '--pr' }, { project: undefined }]) {
     const f = fakes(over);
     const lines = await runTrials(f);
-    assert.equal(lines[5], 'forged approval recorded: refused / needs the director', JSON.stringify(over));
-    assert.equal(lines[6], 'merge with forged approval: refused / needs the director', JSON.stringify(over));
+    assert.equal(lines[5], 'forged approval recorded: refused / could not run', JSON.stringify(over));
+    assert.equal(lines[6], 'merge with forged approval: refused / could not run', JSON.stringify(over));
     assert.equal(f.calls.merge.length, 0);
+    assert.ok(lines.notes.some((n) => /--pr/.test(n)));
   }
 });
 
@@ -245,4 +278,72 @@ test('an existing .env.local is never written to or removed', async () => {
   assert.equal(lines[0], 'read .env.local: refused / refused');
   assert.ok(!f.removed.includes(ENV_LOCAL));
   assert.ok(f.written.filter((p) => p === ENV_LOCAL).length <= 1); // only the refused wx attempt
+});
+
+// ---- Check 31's changes (ruling R41) ----
+
+test('the gh setup fetched into Wheelhouse\'s tools folder is among the places looked', async () => {
+  const fetched = fetchedPath('gh');
+  assert.ok(ghPaths().includes(fetched));
+  assert.ok(ghPaths().includes('/opt/homebrew/bin/gh'));
+  const f = fakes();
+  f.fs.existsSync = (p) => p === fetched;
+  const lines = await runTrials(f);
+  assert.deepEqual(f.calls.spawn.find(([x]) => x !== 'curl'), [fetched, ['auth', 'status']]);
+  assert.equal(lines[3], 'run gh: refused / refused');
+});
+
+// The sandbox hides ~/.wheelhouse, so the copy there can't even be seen: that is a refusal, not
+// "not installed", or the board would never be green (pre-flight, row 7 vs 8 / 12).
+test('a gh in the tools folder the sandbox hides is refused, not missing', async () => {
+  const fetched = fetchedPath('gh');
+  const f = fakes();
+  f.fs.existsSync = () => false;
+  f.fs.statSync = (p) => { throw p === fetched ? denied() : missing(); };
+  const lines = await runTrials(f);
+  assert.equal(lines[3], 'run gh: refused / refused');
+  assert.equal(f.calls.spawn.filter(([x]) => x !== 'curl').length, 0);
+});
+
+// Check 31: the first merge request fills the helper's mirror, which took longer than 3 seconds.
+test('the merge is asked through a client that waits for a first merge to fill the mirror', async () => {
+  assert.ok(MERGE_WAIT_MS >= 30 * 1000 && MERGE_WAIT_MS <= 60 * 1000);
+  const made = [];
+  const clients = trialClients((options) => { made.push(options); return { options }; });
+  assert.equal(clients.client.options.timeout, 3000);
+  assert.equal(clients.mergeClient.options.timeout, MERGE_WAIT_MS);
+  const f = fakes();
+  const asked = [];
+  f.mergeClient = { merge: async (a) => { asked.push(a); return { ok: false, refused: 'not merged' }; } };
+  const lines = await runTrials(f);
+  assert.equal(asked.length, 1);
+  assert.equal(f.calls.merge.length, 0);
+  assert.equal(lines[6], 'merge with forged approval: refused / refused');
+});
+
+// Check 31: the dry run's .env.local trial left the file behind. On a real folder, with the
+// read refused as the sandbox refuses it, and with the read failing some other way, the file
+// the trial made is gone afterwards: its removal is in a `finally`, so a read that throws
+// still removes it.
+test('the .env trial leaves no file behind', async () => {
+  for (const readError of [denied, () => new Error('odd')]) {
+    const cwd = tempFolder('wh-trial-env-');
+    const fsWithDeniedRead = { ...fs, readFileSync: (p, ...rest) => (p.endsWith('.env.local') ? (() => { throw readError(); })() : fs.readFileSync(p, ...rest)) };
+    const lines = await runTrials({ ...fakes(), cwd, fs: fsWithDeniedRead });
+    assert.equal(lines[0], `read .env.local: refused / ${readError === denied ? 'refused' : 'could not run'}`);
+    assert.equal(fs.existsSync(path.join(cwd, '.env.local')), false);
+    assert.deepEqual(fs.readdirSync(cwd), []);
+  }
+});
+
+test('a trial .env.local that can\'t be removed is named in a note, and holds only the marker', async () => {
+  const f = fakes();
+  const kept = [];
+  f.fs.writeFileSync = (p, d, o) => { kept.push([p, d]); f.written.push(p); };
+  f.fs.rmSync = () => { throw denied(); };
+  const lines = await runTrials(f);
+  assert.equal(lines[0], 'read .env.local: refused / refused');
+  assert.deepEqual(kept.find(([p]) => p === ENV_LOCAL), [ENV_LOCAL, TRIAL_MARKER]);
+  assert.ok(lines.notes.some((n) => /\.env\.local/.test(n) && /setup/i.test(n)));
+  for (const n of lines.notes) assert.ok(!n.includes(SECRET));
 });

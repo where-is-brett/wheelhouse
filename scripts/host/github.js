@@ -53,6 +53,12 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       return { number };
     },
 
+    // Closes the pull request, unmerged; its branch is left (setup's step 10 deletes its own).
+    async closePr(number) {
+      await call(['pr', 'close', String(number), ...R]);
+      return { number };
+    },
+
     async prState(number) {
       const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'number,url,headRefOid,headRefName,baseRefName,mergeable,state,body']);
       return { headSha: pr.headRefOid, ...(typeof pr.headRefName === 'string' ? { headRef: pr.headRefName } : {}), ...(typeof pr.baseRefName === 'string' ? { baseRef: pr.baseRefName } : {}), mergeable: MERGEABLE[pr.mergeable] ?? 'unknown', state: STATE[pr.state] ?? 'unknown', ...(typeof pr.body === 'string' ? { body: pr.body } : {}) };

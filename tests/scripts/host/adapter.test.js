@@ -595,3 +595,18 @@ test('GitLab hasCi throws when any lookup fails, while ciState keeps reading it 
   await assert.rejects(server.hasCi(GL_SHA, 'main'), /CI configuration/);
   await assert.rejects(adapter('gitlab').a.hasCi('nope', 'main'), /commit/);
 });
+
+// --- Closing a pull request (setup's step 10 closes its trial pull request) ---
+
+test('closePr closes the pull request on GitHub and the merge request on GitLab, and nothing else', async () => {
+  const hub = adapter('github', { stdout: '' });
+  assert.deepEqual(await hub.a.closePr(4), { number: 4 });
+  assert.deepEqual(hub.calls[0].args, ['pr', 'close', '4', '--repo', REPO]);
+  assert.equal(hub.calls[0].env, ENV);
+  const lab = adapter('gitlab', { stdout: '' });
+  assert.deepEqual(await lab.a.closePr(4), { number: 4 });
+  assert.deepEqual(lab.calls[0].args, ['mr', 'close', '4', '-R', REPO]);
+  await assert.rejects(hub.a.closePr(0), /whole number/);
+  const refused = adapter('github', { code: 1, stderr: 'boom ghs_FAKEKEY0123456789abcdef' });
+  await assert.rejects(refused.a.closePr(4), (error) => /gh pr close failed/.test(error.message) && !error.message.includes('ghs_FAKEKEY'));
+});

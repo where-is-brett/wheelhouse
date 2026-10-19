@@ -10,6 +10,9 @@
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask }; a running step's latest
 //                                            line for the director (ctx.say, ruling R40) among them
+//   /setup/health { folder, lines? }      -> { ok, green, lines, board, trials }, and once green
+//                                            { started, briefing } too: step 10's checks joined
+//                                            with the session's trial lines (scripts/setup/health.js)
 //
 // A step may name steps it waits for (`after`, rulings R47 and R54): while they are unfinished, its
 // plan still asks its questions, but gives `{ wait, why }` in place of its Go-ahead card, and its
@@ -68,6 +71,8 @@ import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor } from './clicks.js';
+import { healthCheck, finishSetup, removeTrialLeftover } from './health.js';
+import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
 export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
@@ -78,6 +83,7 @@ export const CHANGED = 'the list has changed since the card: ask for the plan ag
 export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
 const APPLY_FIELDS = ['folder', 'step', 'hash'];
+const HEALTH_FIELDS = ['folder', 'lines'];
 // How long the playbook waits before asking again for a step whose Go ahead waits on another (R54).
 export const AFTER_WAIT_MS = 30 * 1000;
 const FULL_HASH = /^[0-9a-f]{64}$/;
@@ -260,10 +266,13 @@ function statusLines(run, steps, running) {
 
 // The routes' handlers, each taking the request's body and giving its answer. A refusal throws
 // SetupRefusal, which the helper sends as { ok: false, refused }. `mark` records a step's time in
-// the journal (journal.js's markStep; a test can make it fail).
+// the journal (journal.js's markStep; a test can make it fail). `health` joins step 10's checks with
+// the session's trial lines, and `finish` is the last thing setup does once the board is green
+// (scripts/setup/health.js's healthCheck and finishSetup; tests give their own).
 export function setupRoutes({
   now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
+  health = healthCheck, finish = (args) => finishSetup({ ...args, now }),
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -480,5 +489,27 @@ export function setupRoutes({
     return { ok: true, ...statusLines(run, all, running) };
   }
 
-  return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status };
+  // Step 10's board (rulings R41, R44): the helper's checks, recorded by step 10's apply, joined
+  // with the trial lines the session ran in its sandbox and hands in, and the board's health lines.
+  // It reads, so it answers under STOP, as status does; what it does besides, only when STOP is
+  // off: it removes a .env.local the session's trial left behind (holding only the trial's
+  // marker), and once the board is green it does the last thing setup does, starting the foreman
+  // and giving the first briefing (`finish`).
+  async function healthRoute(body) {
+    if (Object.keys(body).some((k) => !HEALTH_FIELDS.includes(k))) refuse('the health check takes the folder and the trial lines the session printed, nothing else');
+    const folder = admitFolder(body.folder, { userHome });
+    const lines = body.lines ?? [];
+    if (!Array.isArray(lines) || lines.length > MOST_TRIAL_LINES || !lines.every((l) => parseTrialLine(l) !== null)) {
+      refuse(`the lines must be the trial lines trials.js printed, as they are, at most ${MOST_TRIAL_LINES}`);
+    }
+    const run = runFor(folder, userHome);
+    if (run === null) refuse('setup has not started in this folder');
+    if (!stopped()) removeTrialLeftover(run.folder);
+    const got = await health({ folder: run.folder, run, reported: lines, now });
+    const answer = { ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials };
+    if (!got.green || stopped() || got.project === null) return answer;
+    return { ...answer, ...(await finish({ project: got.project })) };
+  }
+
+  return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute };
 }

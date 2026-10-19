@@ -166,6 +166,8 @@ export function makeAdapter({ host, repo, run, env }) {
     updatePr: async ({ number, title, body } = {}) => c.updatePr({
       number: wholeNumber(number), title: text(title, 'title', { optional: true }), body: text(body, 'body', { optional: true, empty: true }),
     }),
+    // Closes a pull request without merging it: setup's step 10 closes its trial pull request.
+    closePr: async (number) => c.closePr(wholeNumber(number)),
     prState: async (number) => c.prState(wholeNumber(number)),
     ciState: async (sha) => c.ciState(commit(sha)),
     // The commit a branch points at, in full: the health read asks the default branch's CI with it.

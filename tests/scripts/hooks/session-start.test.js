@@ -639,6 +639,32 @@ test('in a Shape 1 project the session start starts the watcher when it isn\'t r
   });
 });
 
+// The foreman's start is the last thing setup does, once step 10's board is green (ruling R44):
+// a session start in a project setup is still finishing starts no watcher.
+test('the session start starts no watcher in a project setup is still finishing', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-finishing zoë '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const T = Date.parse('2026-10-19T03:00:00.000Z');
+    const setupRun = startRun({ folder, now: () => new Date(T) });
+    for (let n = 1; n <= 9; n += 1) markStep(setupRun.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    const start = (f) => decide({ cwd: folder, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true,
+    });
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.config = async () => shapeConfig(1);
+    await start(f);
+    assert.equal(watcherStarts(f).length, 0, 'not while step 10 is unfinished');
+    markStep(setupRun.id, 10, 'doneAt', { now: () => new Date(T + 10 * 60000) });
+    await start(f);
+    assert.equal(watcherStarts(f).length, 1, 'a project setup has finished is started as any other');
+  });
+});
+
 test('the session start leaves the watcher alone in Shape 2, and fails open when the configuration can\'t be had', async () => {
   await withHome(async () => {
     const answers = [
@@ -974,8 +1000,13 @@ test('the guards act in a folder being set up', async () => {
     for (const folder of [withRun, switchedOn]) {
       assert.ok(denied(await stop({ ...call(folder, 'Write'), tool_input: { file_path: path.join(folder, 'a.txt') } })), folder);
       assert.ok(denied(await stop(bash(folder, 'npm install'))), folder);
-      for (const reading of ['status', 'plan 3', 'plan 10', 'resume']) assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
-      for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x']) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
+      // `health` with the trial lines the session printed is a reading form too (ruling R41).
+      const trialLine = '"read .env.local: refused / refused"';
+      for (const reading of ['status', 'plan 3', 'plan 10', 'resume', 'health', `health ${trialLine}`, `health ${trialLine} "merge with forged approval: refused / MERGED (unexpected)"`]) {
+        assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
+      }
+      for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x', 'health "not a line"', 'health status',
+        `health ${Array.from({ length: 13 }, () => trialLine).join(' ')}`]) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
       assert.equal(await stop(call(folder, 'Read')), undefined);
     }
     assert.equal(await stop({ ...call(stranger, 'Write'), tool_input: { file_path: path.join(stranger, 'a.txt') } }), undefined);

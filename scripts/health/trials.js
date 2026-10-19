@@ -5,21 +5,60 @@
 //
 //   node trials.js --pr <number> --project <owner__name> [--network reached|not reached]
 //
-// STOP cannot be tried from inside this script: the sandbox hides the STOP file
-// and the stop guard refuses this script while STOP is on. The last line says
-// so, and a note says how the director's session tries it with its own tools.
+// Setup's step 10 runs it in the setup session's sandboxed Bash, since the sandbox's denials are
+// seen only from inside it, and hands the lines to `cli.js health` (ruling R41). STOP is not tried
+// here: the sandbox hides the STOP file and the stop guard refuses this script while STOP is on, so
+// step 10's own part, in the helper, runs the real stop guard under a scratch Wheelhouse home
+// (scripts/setup/health.js). Nothing here asks anything of the director: a trial that can't run
+// says so, with a note on why.
+//
+// Check 31's three changes: the merge trial counts any refusal that leaves the pull request
+// unmerged, since with the director's real approval on record the gate refuses on the lock, CI or
+// review instead; the merge is asked through a client that waits MERGE_WAIT_MS, as a first merge
+// fills the helper's mirror; and the .env.local trial removes its file in a `finally`, so a read
+// the sandbox refuses, or one that fails some other way, still leaves nothing behind.
 import nodeFs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { fetchedPath } from '../lib/host-tools.js';
 
 const GH_PATHS = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh', 'C:\\Program Files\\GitHub CLI\\gh.exe'];
 const DENIED = new Set(['EPERM', 'EACCES']);
-const UNREACHED = /could not be reached|did not answer|could not read|cut off/;
+// What the helper client says when the helper didn't answer: no refusal of anything.
+export const UNREACHED = /could not be reached|did not answer|could not read|cut off/;
 const GH_CLOSED = /not logged in|not logged into|operation not permitted|permission denied|could not read|cannot read|failed to read/;
 
-export const STOP_NOTE = 'To try STOP: ask the director to type `stop` in this session, then try a Write (create a file in the project) and a Read (README.md or package.json) as two separate tool calls. Expect the Write refused and the Read allowed, and record both results.';
+// How long the trials wait for the helper, and for the merge: a first merge request fills the
+// helper's mirror of the project, which took longer than the 3 seconds the others wait (check 31).
+export const HELPER_WAIT_MS = 3000;
+export const MERGE_WAIT_MS = 30 * 1000;
+// What the .env.local trial writes: setup's health check removes a file holding exactly this, should
+// one be left (scripts/setup/health.js, removeTrialLeftover).
+export const TRIAL_MARKER = 'WHEELHOUSE_TRIAL=1\n';
+
+// Where `gh` is looked for: the usual places, and the copy setup's step 2 fetched into Wheelhouse's
+// tools folder (scripts/lib/host-tools.js).
+export function ghPaths({ platform = process.platform } = {}) {
+  return [...GH_PATHS, fetchedPath('gh', { platform })];
+}
+
+// The trials' clients, from `make` (the helper client's maker): one that waits HELPER_WAIT_MS, and
+// one for the merge that waits MERGE_WAIT_MS.
+export function trialClients(make) {
+  return { client: make({ timeout: HELPER_WAIT_MS }), mergeClient: make({ timeout: MERGE_WAIT_MS }) };
+}
+
+// Whether looking at a path is refused, as the sandbox refuses the Wheelhouse home's.
+function hidden(fs, p) {
+  try {
+    fs.statSync(p);
+    return false;
+  } catch (error) {
+    return DENIED.has(error?.code);
+  }
+}
 
 function readResult(read) {
   try {
@@ -40,6 +79,7 @@ export async function runTrials(deps = {}) {
   const fs = deps.fs ?? nodeFs;
   const spawn = deps.spawn ?? ((file, args) => spawnSync(file, args, { encoding: 'utf8', timeout: 15000 }));
   const client = deps.client;
+  const mergeClient = deps.mergeClient ?? client;
   const lines = [];
   const notes = [];
 
@@ -57,7 +97,7 @@ export async function runTrials(deps = {}) {
     const file = path.join(cwd, '.env.local');
     let made = false;
     try {
-      fs.writeFileSync(file, 'TRIAL=1\n', { flag: 'wx' });
+      fs.writeFileSync(file, TRIAL_MARKER, { flag: 'wx' });
       made = true;
     } catch (error) {
       if (error?.code !== 'EEXIST') return 'could not run';
@@ -65,8 +105,13 @@ export async function runTrials(deps = {}) {
     try {
       return readResult(() => fs.readFileSync(file, 'utf8'));
     } finally {
+      // In a `finally`, so a read refused or failing still leaves nothing behind (check 31).
       if (made) {
-        try { fs.rmSync(file, { force: true }); } catch { /* left for the director */ }
+        try {
+          fs.rmSync(file, { force: true });
+        } catch {
+          notes.push('The .env.local this trial made could not be removed; setup\'s health check removes it, as it holds only the trial\'s marker.');
+        }
       }
     }
   });
@@ -77,7 +122,10 @@ export async function runTrials(deps = {}) {
 
   const wantNetwork = deps.expectNetwork === undefined ? 'not reached' : deps.expectNetwork;
   await trial('reach github.com', ['reached', 'not reached'].includes(wantNetwork) ? wantNetwork : 'not reached', () => {
-    if (!['reached', 'not reached'].includes(wantNetwork)) return 'needs the director';
+    if (!['reached', 'not reached'].includes(wantNetwork)) {
+      notes.push('--network takes reached or not reached.');
+      return 'could not run';
+    }
     const out = spawn('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '8', 'https://github.com/']);
     if (out?.error?.code === 'ENOENT') throw new Error('curl is not installed');
     const code = Number.parseInt(String(out?.stdout ?? '').trim(), 10);
@@ -85,8 +133,10 @@ export async function runTrials(deps = {}) {
   });
 
   await trial('run gh', 'refused', () => {
-    const gh = GH_PATHS.find((p) => fs.existsSync(p));
-    if (!gh) return 'not installed';
+    const paths = ghPaths();
+    const gh = paths.find((p) => fs.existsSync(p));
+    // A copy the sandbox won't even let the agent see is one it can't run.
+    if (!gh) return paths.some((p) => hidden(fs, p)) ? 'refused' : 'not installed';
     const out = spawn(gh, ['auth', 'status']);
     if (DENIED.has(out?.error?.code)) return 'refused';
     if (out && out.status === 0 && !out.error) return 'allowed';
@@ -108,7 +158,7 @@ export async function runTrials(deps = {}) {
   const folder = path.join(cwd, '.wheelhouse-trial');
 
   await trial('forged approval recorded', 'refused', async () => {
-    if (!ready) return 'needs the director';
+    if (!ready) return 'could not run';
     const answer = await client.state.record({
       project: deps.project,
       event: { kind: 'approval', pr: Number(pr), head: 'f'.repeat(40), forged: true, signature: 'forged' },
@@ -117,25 +167,25 @@ export async function runTrials(deps = {}) {
     return UNREACHED.test(textOf(answer)) ? 'could not run' : 'refused';
   });
 
+  // Any refusal that leaves the pull request unmerged counts (check 31): the gate refuses on
+  // whichever condition it finds first, and with the director's real approval on record that is
+  // the lock, CI or review, not the approval. A helper that couldn't be reached refused nothing.
   await trial('merge with forged approval', 'refused', async () => {
-    if (!ready) return 'needs the director';
+    if (!ready) return 'could not run';
     const forged = path.join(folder, 'forged-approval.json');
     try {
       try {
         fs.mkdirSync(folder, { recursive: true });
         fs.writeFileSync(forged, `${JSON.stringify({ kind: 'approval', pr: Number(pr), forged: true })}\n`);
       } catch { /* the folder file is a stand-in; the helper never reads it */ }
-      const answer = await client.merge({ project: deps.project, number: Number(pr), stop: false, bypass: false, approvalRequired: true });
-      if (answer?.ok === true && answer.merged === true) return 'MERGED (unexpected)';
-      if (answer?.ok === false && textOf(answer).includes('approv')) return 'refused';
+      const answer = await mergeClient.merge({ project: deps.project, number: Number(pr), stop: false, bypass: false, approvalRequired: true });
+      if (answer?.merged === true) return 'MERGED (unexpected)';
+      if (answer?.ok === false && !UNREACHED.test(textOf(answer))) return 'refused';
       return 'could not run';
     } finally {
       try { fs.rmSync(folder, { recursive: true, force: true }); } catch { /* nothing to clean */ }
     }
   });
-
-  lines.push('stop: write refused, read allowed / needs the director');
-  notes.push(STOP_NOTE);
 
   Object.defineProperty(lines, 'notes', { value: notes, enumerable: false });
   return lines;
@@ -159,7 +209,7 @@ if (Boolean(process.argv[1]) && startedAsScript()) {
     const { helperClient } = await import('../host/helper-client.js');
     const argv = process.argv.slice(2);
     const lines = await runTrials({
-      client: helperClient({ timeout: 3000 }),
+      ...trialClients((options) => helperClient(options)),
       pr: argOf(argv, '--pr'),
       project: argOf(argv, '--project'),
       expectNetwork: argOf(argv, '--network'),

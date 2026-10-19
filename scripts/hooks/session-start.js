@@ -292,7 +292,7 @@ function lineageCheck(found, input, version, { check, root, claudeHome, now }) {
 }
 
 // In a Shape 1 project, starts the watcher when it isn't running, as the
-// foreman's start script does (ruling R62). A watcher found running needs no
+// foreman's start script does (ruling R62), once setup has finished there (R44). A watcher found running needs no
 // configuration asked for. It informs, so anything that goes wrong is passed over.
 async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   try {
@@ -430,7 +430,9 @@ export async function decide(input, deps = {}) {
     if (synced?.ok !== true) notes.push(NOT_SYNCED);
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
-    await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
+    // Starting the foreman is the last thing setup does, once its health check's board is green
+    // (ruling R44, scripts/setup/health.js): not while setup is finishing in this project.
+    if (beingSetUp(input.cwd) === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
