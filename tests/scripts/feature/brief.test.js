@@ -290,3 +290,49 @@ test('an amended brief says what changed and has a new hash', () => {
   assert.throws(() => amendBrief(original, { change: '', now }), /change/);
   assert.throws(() => amendBrief(original, { change: 'x', now: 'yesterday' }), /time/);
 });
+
+// --- Build commands on Windows (design section 12.2) ---
+
+const CLI = `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
+const ASK_WORDS = `Before your first build command, ask for every one you will need at once with \`${CLI} ask --kind build-command --command "<command>" …\`, then end your turn. A refused command means the grant has ended: ask again.`;
+const RUNNER = 'node "C:\\Users\\me\\.wheelhouse\\runner\\low.js"';
+const GUARDED_WORDS = `Run every build command through \`${RUNNER}\`, for example \`${RUNNER} npm test\`. It refuses commands that fetch new code; ask for those with \`ask --kind build-command\`.`;
+const windows = (windowsBuilds, lane = 'small') => renderBrief({ fields: fields(lane), pluginRoot, windowsBuilds });
+
+test('a Windows brief at ask tells the session to ask for its build commands at once', () => {
+  for (const lane of LANES) {
+    const text = windows({ level: 'ask', guardedCommand: null }, lane);
+    assert.ok(text.includes(ASK_WORDS), lane);
+    // Not now holds the feature: the session ends its turn and waits.
+    assert.match(text, /On \*\*Not now\*\* the feature waits[^\n]*end your turn and wait/);
+    assert.ok(!text.includes('Run every build command through'), lane);
+    assert.doesNotMatch(text, /\{\{|\}\}|<!--/, 'no placeholder or marker is left');
+    assert.equal(text.split(ASK_WORDS).length, 2, 'said once');
+  }
+  // A level that can't be read, or Guarded with no runner to name, is Ask.
+  for (const odd of [{ level: 'bogus' }, {}, 'ask', { level: 'guarded', guardedCommand: null }, { level: 'guarded', guardedCommand: 'a`b' }, { level: 'guarded', guardedCommand: 'a\nb' }]) {
+    const text = windows(odd);
+    assert.ok(text.includes(ASK_WORDS), JSON.stringify(odd));
+    assert.ok(!text.includes('Run every build command through'), JSON.stringify(odd));
+  }
+});
+
+test('a Windows brief at guarded gives the runner\'s exact command', () => {
+  const text = windows({ level: 'guarded', guardedCommand: RUNNER });
+  assert.ok(text.includes(GUARDED_WORDS), text);
+  assert.ok(!text.includes('Before your first build command'));
+  assert.doesNotMatch(text, /\{\{|\}\}|<!--/);
+  // The runner's command is put in as it is, never filled again.
+  const odd = windows({ level: 'guarded', guardedCommand: 'run {{cli}}' });
+  assert.ok(odd.includes('`run {{cli}} npm test`'));
+});
+
+test('the brief says nothing new at unattended or off Windows', () => {
+  const off = render('small');
+  assert.equal(windows(null), off);
+  assert.equal(windows(undefined), off);
+  assert.equal(windows({ level: 'unattended', guardedCommand: null }), off);
+  assert.equal(windows({ level: 'unattended', guardedCommand: RUNNER }), off);
+  assert.ok(!off.includes('build-command') && !off.includes('Build commands on Windows'));
+  assert.doesNotMatch(off, /<!--/);
+});

@@ -56,6 +56,29 @@ function modelLines(routing) {
   }).join('\n');
 }
 
+// The template's words on build commands on Windows (design section 12.2): one block for Ask
+// and one for Guarded, of which the brief keeps the one for its level, or neither.
+const BUILDS_BLOCK = /<!-- builds:ask -->\n([\s\S]*?)\n<!-- builds:guarded -->\n([\s\S]*?)\n<!-- builds:end -->\n/;
+const LEVEL_WORDS = /^(ask|guarded|unattended)$/;
+
+// The level the brief speaks to: null off Windows (`windowsBuilds` null), Unattended as given,
+// Guarded only with a runner command that can sit in the brief, and anything else Ask.
+function buildsLevelOf(windowsBuilds) {
+  if (windowsBuilds === null || windowsBuilds === undefined) return null;
+  const level = typeof windowsBuilds?.level === 'string' && LEVEL_WORDS.test(windowsBuilds.level) ? windowsBuilds.level : 'ask';
+  if (level !== 'guarded') return level;
+  const command = windowsBuilds.guardedCommand;
+  return typeof command === 'string' && command.trim() !== '' && !/[`\r\n\0]/.test(command) ? 'guarded' : 'ask';
+}
+
+// The brief's template with the build-commands block for `level` kept, or none.
+function withBuildsBlock(text, level) {
+  const match = BUILDS_BLOCK.exec(text);
+  if (!match) throw new Error("The brief's template has no words on build commands on Windows");
+  const kept = level === 'ask' ? `${match[1]}\n` : level === 'guarded' ? `${match[2]}\n` : '';
+  return text.replace(BUILDS_BLOCK, () => kept);
+}
+
 const numbered = (items) => (items.length === 0 ? 'Nothing is listed.' : items.map((item, i) => `${i + 1}. ${item}`).join('\n'));
 
 function appetiteLine({ sessions, tokens }) {
@@ -67,8 +90,10 @@ function appetiteLine({ sessions, tokens }) {
 // finish and the models by role. `pluginRoot` is put into the commands the brief
 // names, so the session can run them as written. `implementText`, when given, is
 // the installed /implement skill's text after its front matter; it must hold the
-// same five lines as the quick lane's template, or this throws.
-export function renderBrief({ fields, pluginRoot, implementText } = {}) {
+// same five lines as the quick lane's template, or this throws. `windowsBuilds` is null off
+// Windows, else `{ level, guardedCommand }`: at Ask the brief says to ask for every build command
+// at once, at Guarded to run each through `guardedCommand`, and at Unattended nothing more.
+export function renderBrief({ fields, pluginRoot, implementText, windowsBuilds = null } = {}) {
   if (typeof pluginRoot !== 'string' || pluginRoot === '' || /["\r\n\0]/.test(pluginRoot)) {
     throw new Error("The plugin root can't be put into the brief");
   }
@@ -87,8 +112,10 @@ export function renderBrief({ fields, pluginRoot, implementText } = {}) {
   const laneTemplate = template('lanes', `${f.lane}.md`);
   const laneText = fill(carries ? laneTemplate.replace(IMPLEMENT_BLOCK, `${lines}\n`) : laneTemplate, shared).trim();
 
-  const text = fill(template('brief.md'), {
+  const level = buildsLevelOf(windowsBuilds);
+  const text = fill(withBuildsBlock(template('brief.md'), level), {
     ...shared,
+    ...(level === 'guarded' ? { guardedCommand: windowsBuilds.guardedCommand } : {}),
     override: template('override.md').trim(),
     planLine: f.plan === undefined ? '' : `\nThe plan is at \`${f.plan}\`; use it rather than writing another.\n`,
     slicesLine: f.slices === undefined ? '' : `\nThis feature has ${f.slices} ${f.slices === 1 ? 'slice' : 'slices'}, each its own plan and its own pull request.\n`,

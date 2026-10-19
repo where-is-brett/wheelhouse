@@ -14,6 +14,7 @@ import { FOREMAN_SKILL, foremanCommands, foremanTools } from '../../scripts/fore
 import { main as wakeMain } from '../../scripts/foreman/wake.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
 import { PROMPTS } from '../../scripts/watcher/waker.js';
+import { BUILD_QUESTION_LABELS } from '../../scripts/protection/windows-builds.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FILE = 'skills/foreman/SKILL.md';
@@ -178,4 +179,25 @@ test('the skill names no model and starts no other skill', () => {
   assert.equal(front.model, undefined);
   assert.doesNotMatch(raw, /\b(superpowers|mattpocock-skills|anthropic-skills|wheelhouse|feature-dev):[a-z]/i);
   assert.doesNotMatch(raw, /\bSkill tool\b|\binvoke\b|writing-plans|brainstorming|subagent/i);
+});
+
+test('the foreman offers the Unattended card at most once a day, after the question', () => {
+  const part = sections(body)['Build-command questions'];
+  assert.ok(part, 'the skill has a section on build-command questions');
+  const flat = part.replace(/\s+/g, ' ');
+  // A build-command question is recorded like any other, and becomes a card with its three options.
+  assert.match(flat, /`act question`/);
+  for (const label of Object.values(BUILD_QUESTION_LABELS)) assert.ok(flat.includes(`- **${label}:**`), label);
+  assert.ok(flat.includes('for as long as this lasts, the builder can do whatever your account can'));
+  // The card names the commands from the question's commands, with its what beside them.
+  assert.match(flat, /names the commands from the question's `commands`, with its `what` beside them/);
+  // Not now holds the feature and puts it in the next briefing.
+  assert.match(flat, /\*\*Not now:\*\*[^.]*the feature waits[^.]*next briefing/);
+  // The offer is act question's, after the question, once a day, never in its place; never the foreman's own.
+  assert.match(flat, /third build-command question that day[^.]*`act question` offers the Unattended card/);
+  assert.match(flat, /once that day/);
+  assert.match(flat, /after the question, never in its place/);
+  assert.match(flat, /You never offer the Unattended card yourself/);
+  assert.ok(ACT_JS.includes("'Offered the director the Unattended card for build commands on this computer.'"));
+  assert.ok(flat.includes('"Offered the director the Unattended card"'));
 });

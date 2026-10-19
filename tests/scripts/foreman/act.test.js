@@ -10,10 +10,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { main, FOREMAN_QUESTIONS, extraPlanId } from '../../../scripts/foreman/act.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
-import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
+import { BUILD_QUESTION_OPTIONS, UNATTENDED_CARD, settingKey } from '../../../scripts/protection/windows-builds.js';
+import { earned } from '../../../scripts/hooks/prompt-record.js';
+import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { branchOf } from '../../../scripts/hooks/session-start.js';
 import { words } from '../../../scripts/hooks/shell-words.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
@@ -697,6 +699,171 @@ test('question records a build-command question with the commands it asks for', 
   refusedInOneLine(await act(['extra-plan', 'mine', 'q-mine-1'], { client: fake.client }));
   refusedInOneLine(await act(['question', 'mine', 'q-mine-2'], { client: fake.client }));
   assert.equal(fake.writes.length, 1, 'the hand-written line never reaches state');
+}));
+
+// --- Build commands on Windows (design section 12.2) ---
+
+const DAY = 24 * 60 * 60 * 1000;
+const OFFERED = 'Offered the director the Unattended card for build commands on this computer.';
+const buildLine = (n) => ({
+  id: `q-mine-${n}`, kind: 'build-command', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
+  options: BUILD_QUESTION_OPTIONS, recommendation: 'Allow this time', level: 3, commands: ['npm test'],
+});
+// Unattended accepted on `computer` from a click on its own card, as the views give it.
+function unattendedOn(views, computer) {
+  views.settings = {
+    [settingKey(computer)]: {
+      key: settingKey(computer), id: 'e-on', at: '2026-10-19T08:00:00.000Z', value: 'unattended', before: null, computer, line: unattendedBuildsLine('e-on', computer),
+    },
+  };
+  views.unconfirmed = [];
+  return views;
+}
+
+// A feature `mine` building, with build-command questions 1 to `n` in its questions file and
+// those in `yesterday` recorded a day ago.
+async function buildScene(n, { yesterday = [] } = {}) {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature', visible: true, doc: { path: 'docs/specs/mine.md', hash: HASH } });
+  const lines = Array.from({ length: n }, (_, i) => buildLine(i + 1));
+  const wt = worktree(checkout, 'mine', { questions: lines });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  for (const i of yesterday) {
+    const { kind, ...data } = lines[i - 1];
+    views.questions[data.id] = { question: { key: data.id, id: `e-q${i}`, at: new Date(T0 - DAY).toISOString(), data: { ...data, work: 'mine' } }, answer: null };
+  }
+  return { checkout, views, wt };
+}
+
+const onWindows = { platform: 'win32', isLocked: () => false };
+
+test('start tells a Windows session how to run its build commands at the level this computer reads', async () => {
+  const cases = [
+    ['off Windows', { platform: 'linux', isLocked: () => false }, (v) => v, false],
+    ['at Ask', onWindows, (v) => v, true],
+    ['at Unattended', onWindows, (v, c) => unattendedOn(v, c), false],
+    ['at Unattended in a Locked project', { platform: 'win32', isLocked: () => true }, (v, c) => unattendedOn(v, c), true],
+    ['when Locked can\'t be read', { platform: 'win32', isLocked: () => { throw new Error('no'); } }, (v, c) => unattendedOn(v, c), true],
+  ];
+  for (const [name, deps, setUp, asks] of cases) {
+    await withHome(async () => {
+      const checkout = await project({ git: true });
+      const fake = fakeClient({ views: setUp(startViews(), computerId()) });
+      const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, ...deps });
+      assert.equal(r.code, 0, `${name}: ${r.err}`);
+      const text = fs.readFileSync(featurePaths(path.join(checkout, '.claude', 'worktrees', 'add-export')).brief, 'utf8');
+      assert.equal(text.includes('Before your first build command, ask for every one you will need at once'), asks, name);
+      assert.ok(!text.includes('Run every build command through'), name);
+    });
+  }
+});
+
+test('question offers the Unattended card on a feature\'s third build-command question that day, once, after the question', () => withHome(async () => {
+  const computer = computerId();
+  // Two asked yesterday, and yesterday's offer: neither counts today.
+  const { views } = await buildScene(6, { yesterday: [1, 2] });
+  const old = recordInState('setting', { key: settingKey(computer), value: 'unattended' }, T0 - DAY);
+  recordInState('card', { title: 'Yesterday', question: unattendedBuildsLine(old.id, computer) }, T0 - DAY);
+  const fake = fakeClient({ views });
+  const run = (n) => act(['question', 'mine', `q-mine-${n}`], { client: fake.client, ...onWindows });
+
+  for (const n of [3, 4]) {
+    const r = await run(n);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out, `Recorded question q-mine-${n} for the director.\n`, 'the first and second today offer nothing');
+  }
+  assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question']);
+
+  const third = await run(5);
+  assert.equal(third.code, 0, third.err);
+  assert.equal(third.out, `Recorded question q-mine-5 for the director.\n${OFFERED}\n`);
+  // The question first, then the setting it proposes, then the card that confirms that one event.
+  assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'card']);
+  everyWriteHandledFirst(fake.writes);
+  const [setting, card] = fake.writes.slice(3);
+  assert.deepEqual(setting.data, { key: settingKey(computer), value: 'unattended' });
+  const words = UNATTENDED_CARD({ guardedReady: false });
+  assert.equal(card.data.title, words.what);
+  assert.deepEqual(card.data.options, ['Keep asking', 'Turn on (dangerous)']);
+  assert.deepEqual(Object.keys(card.data).sort(), ['options', 'question', 'title']);
+  const shown = card.data.question;
+  for (const said of [words.what, words.why, words.risk, ...words.options.map((o) => `${o.label}: ${o.says}`), 'My recommendation: Keep asking']) {
+    assert.ok(shown.includes(said), said);
+  }
+  assert.ok(!shown.includes('Use Guarded'));
+  assert.equal(shown.split('\n').at(-1), unattendedBuildsLine(setting.id, computer), 'the line names the setting event written');
+  // A Turn on (dangerous) click on this card confirms that setting event, for this computer alone.
+  const click = await earned({ project: P, question: shown, label: 'Turn on (dangerous)' });
+  assert.equal(click?.made?.kind, 'confirmation');
+  assert.equal(click.made.data.confirms, setting.id);
+  assert.equal(click.made.data.line, unattendedBuildsLine(setting.id, computer));
+
+  // Run again, and a fourth question that day: no second offer.
+  assert.equal((await run(5)).out, 'Question q-mine-5 is recorded already.\n');
+  assert.equal((await run(6)).out, 'Recorded question q-mine-6 for the director.\n');
+  assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'card', 'question']);
+}));
+
+test('question offers no Unattended card off Windows, in a Locked project, at Unattended or for other questions', async () => {
+  const cases = [
+    ['off Windows', { platform: 'darwin', isLocked: () => false }, (v) => v],
+    ['in a Locked project', { platform: 'win32', isLocked: () => true }, (v) => v],
+    ['when Locked can\'t be read', { platform: 'win32', isLocked: () => { throw new Error('no'); } }, (v) => v],
+    ['at Unattended', onWindows, (v, c) => unattendedOn(v, c)],
+  ];
+  for (const [name, deps, setUp] of cases) {
+    await withHome(async () => {
+      const { views } = await buildScene(3);
+      const fake = fakeClient({ views: setUp(views, computerId()) });
+      for (const n of [1, 2, 3]) {
+        const r = await act(['question', 'mine', `q-mine-${n}`], { client: fake.client, ...deps });
+        assert.equal(r.code, 0, `${name}: ${r.err}`);
+        assert.ok(!r.out.includes('Unattended'), name);
+      }
+      assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question'], name);
+    });
+  }
+  // Questions that aren't build-command questions never count.
+  await withHome(async () => {
+    const checkout = await project();
+    const views = emptyViews();
+    views.work.mine = workView('mine', { lane: 'feature' });
+    const wt = worktree(checkout, 'mine', { questions: [1, 2, 3].map((n) => ({ ...QUESTION, id: `q-mine-${n}` })) });
+    views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+    const fake = fakeClient({ views });
+    for (const n of [1, 2, 3]) assert.equal((await act(['question', 'mine', `q-mine-${n}`], { client: fake.client, ...onWindows })).code, 0);
+    assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question']);
+  });
+});
+
+test('an offer whose card wasn\'t written is finished on the next run, with the setting already written', () => withHome(async () => {
+  const computer = computerId();
+  const { views } = await buildScene(3, { yesterday: [] });
+  const fake = fakeClient({ views });
+  const write = fake.client.state.write;
+  let failCard = true;
+  fake.client.state.write = async (body) => {
+    if (body.kind === 'card' && failCard) {
+      failCard = false;
+      return { ok: false, refused: 'the remote could not be reached' };
+    }
+    return write(body);
+  };
+  for (const n of [1, 2]) assert.equal((await act(['question', 'mine', `q-mine-${n}`], { client: fake.client, ...onWindows })).code, 0);
+  const first = await act(['question', 'mine', 'q-mine-3'], { client: fake.client, ...onWindows });
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /^Recorded question q-mine-3 for the director\.\nThe Unattended card wasn't offered: .*the remote could not be reached.*\n$/);
+  assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting']);
+
+  const again = await act(['question', 'mine', 'q-mine-3'], { client: fake.client, ...onWindows });
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.out, `Question q-mine-3 is recorded already.\n${OFFERED}\n`);
+  assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'card']);
+  const [setting, card] = fake.writes.slice(3);
+  assert.equal(card.data.question.split('\n').at(-1), unattendedBuildsLine(setting.id, computer));
+  assert.equal((await act(['question', 'mine', 'q-mine-3'], { client: fake.client, ...onWindows })).out, 'Question q-mine-3 is recorded already.\n');
+  assert.equal(fake.writes.length, 5);
 }));
 
 test('extra-plan queues the plan as work of its own, with the parent\'s lane, visibility and document', () => withHome(async () => {

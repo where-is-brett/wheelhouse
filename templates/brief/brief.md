@@ -36,6 +36,11 @@ Turn each line into a test before any code. When those tests pass, the work is d
 - **Builders and reviewers.** Builders are `wheelhouse:builder` and reviews are done by `wheelhouse:reviewer`, each with the model named under "Models by role". Never dispatch a general-purpose subagent for either.
 - **Dispatching a reviewer.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the reviewer that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.
 - **Fix rounds.** A fix and its re-review is one round. After {{fixRounds}} rounds, put what is still open to the director with `ask`.
+<!-- builds:ask -->
+- **Build commands on Windows.** Before your first build command, ask for every one you will need at once with `{{cli}} ask --kind build-command --command "<command>" …`, then end your turn. A refused command means the grant has ended: ask again. Give `--command` once for each command and `--why` to say what they are for; Wheelhouse writes the rest of the question. On **Not now** the feature waits until the director answers: end your turn and wait to be woken.
+<!-- builds:guarded -->
+- **Build commands on Windows.** Run every build command through `{{guardedCommand}}`, for example `{{guardedCommand}} npm test`. It refuses commands that fetch new code; ask for those with `ask --kind build-command`.
+<!-- builds:end -->
 
 # How to ask the director
 
