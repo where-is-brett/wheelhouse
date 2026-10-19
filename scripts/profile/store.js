@@ -2,8 +2,10 @@
 // The director's profile (design section 5.5): the settings that follow them to every
 // project, as events on the `wheelhouse-profile` branch of a small private repository
 // that setup makes. Each computer keeps a clone of it at ~/.wheelhouse/profile/, which
-// also holds the enrolled keys (keys/, never committed) and the weekly backups of each
-// project's state (backups/). Only the helper changes the clone.
+// also holds the weekly backups of each project's state (backups/). Only the helper changes
+// the clone. The computers trusted here are kept outside it (scripts/state/signing.js), and a
+// branch whose tip holds anything under keys/ is never taken in (ruling R105): Wheelhouse never
+// writes keys/ to the profile, so such a tip is someone else's doing.
 import fs from 'node:fs';
 import path from 'node:path';
 import { profileDir, profileViewsDir, wheelhouseHome } from '../lib/paths.js';
@@ -44,6 +46,17 @@ export function profileRemote() {
   if (typeof host !== 'string' || typeof repo !== 'string' || repo === '') return null;
   if (!connection || typeof connection !== 'object' || Array.isArray(connection)) return null;
   return { remoteUrl, host, repo, connection };
+}
+
+// Said when the profile's branch holds a keys/ folder: nothing is taken from it.
+export const PROFILE_HOLDS_KEYS = 'The profile\'s repository holds a keys/ folder, which Wheelhouse never puts there, so nothing was taken from it: remove keys/ from the wheelhouse-profile branch on the host, then try again';
+
+// Whether a commit's tree holds anything named keys at its top, in any case (a folder Keys/ is
+// keys/ on a computer whose files ignore case). Null when the tree can't be read.
+export async function holdsKeys(dir, ref, env = {}) {
+  const listed = await git(dir, ['ls-tree', '-z', '--name-only', ref], env);
+  if (listed.code !== 0) return null;
+  return listed.stdout.split('\0').some((name) => name.toLowerCase() === 'keys');
 }
 
 const step = async (dir, args, env, why) => {
@@ -166,6 +179,10 @@ async function ensureAlone(dir, remoteUrl, env) {
     if (listed.code !== 0) throw new Error('The profile repository could not be reached');
     if (listed.stdout.trim() !== '') {
       await step(dir, ['fetch', '-q', '--no-tags', 'origin', `+refs/heads/${PROFILE_BRANCH}:${TRACKING}`], env, 'The profile branch could not be fetched');
+      // A tip holding keys/ is never joined (ruling R105): it fails closed, saying so.
+      const keys = await holdsKeys(dir, TRACKING, env);
+      if (keys === null) throw new Error('The profile branch could not be read');
+      if (keys) throw new Error(PROFILE_HOLDS_KEYS);
       await joinBranch(dir, env);
       return { made: true };
     }

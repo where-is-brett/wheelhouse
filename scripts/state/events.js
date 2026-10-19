@@ -51,9 +51,10 @@ const ACTION_OWN = {
   // <wheelhouseHome()>/measures/clicks/ and never written to the state (writeEvent refuses it).
   baseline: ['hash'],
   // The director's Trust it on a trust card (ruling R80): the other computer's id, when its key was
-  // added to the profile, and the key's fingerprint. Its question is the card's set line alone. It
-  // is kept in <wheelhouseHome()>/trust/ and never written to the state (writeEvent refuses it).
-  trust: ['computer', 'at', 'fingerprint'],
+  // added to the profile, the key's fingerprint and its full SHA-256 (ruling R107). Its question is
+  // the card's set line alone. It is kept in <wheelhouseHome()>/trust/ and never written to the
+  // state (writeEvent refuses it).
+  trust: ['computer', 'at', 'fingerprint', 'keyHash'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, or put the card off: a click on one is never an answer.
@@ -131,6 +132,9 @@ function checkAction(data) {
     if (typeof data.computer !== 'string' || !/^[0-9a-f]{8}$/.test(data.computer)) bad('needs the id of the computer it trusts');
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs when that computer\'s key was added');
     if (typeof data.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(data.fingerprint)) bad('needs the fingerprint of the key it trusts');
+    if (typeof data.keyHash !== 'string' || !/^[0-9a-f]{64}$/.test(data.keyHash) || !data.keyHash.startsWith(data.fingerprint)) {
+      bad('needs the full hash of the key it trusts, which its fingerprint starts');
+    }
     if (data.label !== TRUST_LABEL) bad(`needs the ${TRUST_LABEL} label`);
     if (data.question !== trustLine(data.computer, data.at, data.fingerprint)) bad('carries only the trust card\'s set line as its question');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
@@ -462,9 +466,9 @@ export async function writeEvent({ project, event, push, env, dir = stateDir(pro
 
 // Pulls, then pushes anything not yet pushed. Resolves with whether the pull
 // went through and how many commits the remote still lacks. `dir` and `branch`
-// as for writeEvent.
-export async function syncState({ project, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
-  const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
+// as for writeEvent; `pull`, when given, is a clone's own pull ({ code }), as the profile's is.
+export async function syncState({ project, push, pull, env, dir = stateDir(project), branch = STATE_BRANCH }) {
+  const pulled = pull ? await pull() : await git(dir, ['pull', '--rebase', 'origin', branch], env);
   if (pulled.code !== 0) await git(dir, ['rebase', '--abort'], env);
   await pushWithRetry(dir, push, env, branch);
   const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], env);

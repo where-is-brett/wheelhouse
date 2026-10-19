@@ -45,7 +45,7 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
-import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
+import { BUNDLE_PATH, PROFILE_BRANCH, PROFILE_HOLDS_KEYS, holdsKeys, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
@@ -1311,14 +1311,20 @@ export async function startHelper({
   const PROFILE_TRACKING = `refs/remotes/${REMOTE}/${PROFILE_BRANCH}`;
   const inRebase = (dir) => ['rebase-merge', 'rebase-apply'].some((d) => fs.existsSync(path.join(dir, '.git', d)));
 
-  // Brings the profile clone up to date with a rebase. Two computers that back up the same
+  // Brings the profile clone up to date: the branch fetched into its tracking ref, then this
+  // computer's commits rebased onto it. A fetched tip holding anything under keys/ is never taken
+  // in (ruling R105): it fails closed, saying so. Two computers that back up the same
   // project on the same day each add backups/<project>/<date>.bundle: the same state, so
   // where the rebase stops only on bundles, the remote's copy is taken and this computer's
   // commit of it is dropped. A stop on anything else is abandoned and said.
   async function pullProfile(ctx) {
     const dir = profileDir();
     const env = ctx.gitEnv;
-    const pulled = await stateGit(dir, ['pull', '--rebase', REMOTE, PROFILE_BRANCH], env);
+    const fetched = await stateGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], env);
+    if (fetched.code !== 0) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
+    const keys = await holdsKeys(dir, PROFILE_TRACKING);
+    if (keys !== false) return { ok: false, keys: true, why: keys === null ? 'the profile\'s branch could not be read, so nothing was taken from it' : PROFILE_HOLDS_KEYS };
+    const pulled = await stateGit(dir, ['rebase', PROFILE_TRACKING], env);
     if (pulled.code === 0) return { ok: true };
     if (!inRebase(dir)) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
     for (let round = 0; round < 100 && inRebase(dir); round++) {
@@ -1493,14 +1499,18 @@ export async function startHelper({
   // The answer carries the last push's refusal, when the push rules refused it.
   async function doProfileSync(_body, ctx) {
     await commitBackups();
-    await pullProfile(ctx); // what it can't settle, the push below says
+    // What it can't settle, the push below says; a tip holding keys/ stops the sync here.
+    const first = await pullProfile(ctx);
+    if (first.keys) return { ok: false, refused: first.why };
     let refused;
     const push = async () => {
       const pushed = await pushProfile(ctx);
       refused = pushed.refused;
       return pushed;
     };
-    const synced = await syncState({ push, env: ctx.gitEnv, ...inProfile() });
+    // Its pull is the profile's own, fenced as above.
+    const pull = async () => ({ code: (await pullProfile(ctx)).ok ? 0 : 1 });
+    const synced = await syncState({ push, pull, env: ctx.gitEnv, ...inProfile() });
     await freshViews(() => writeProfileViews({ now }));
     return refused === undefined ? { ok: true, ...synced } : { ok: false, ...synced, refused };
   }

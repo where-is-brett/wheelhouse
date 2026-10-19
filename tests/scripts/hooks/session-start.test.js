@@ -12,7 +12,7 @@ import {
   decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
   TRUST_ASK, MAX_TRUST_CARDS, moreTrust,
 } from '../../../scripts/hooks/session-start.js';
-import { differentKeyLine, fingerprint } from '../../../scripts/lib/trust-clicks.js';
+import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
@@ -1273,13 +1273,25 @@ test('the front desk is handed a trust card for each computer the profile holds 
     // Within the hour the helper isn't asked again: the card comes from what the last fetch found.
     assert.equal(trustCards(await run(f, at(59))).length, 1);
     assert.equal(asked, 1);
-    // An hour on it is asked again; an answer that fails keeps what the last fetch found.
-    f.client.profile.enrolments = async () => { asked += 1; return { ok: false, refused: 'the profile could not be reached' }; };
+    // An hour on it is asked again; an ask with no answer (a refusal, or none in time) keeps what
+    // the last fetch found and its time, so the next start asks again (ruling R107).
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: false, refused: 'the host helper did not answer in time' }; };
     assert.equal(trustCards(await run(f, at(60))).length, 1);
     assert.equal(asked, 2);
-    // And not again for an hour after that ask, though it failed.
+    assert.equal(trustCards(await run(f, at(61))).length, 1);
+    assert.equal(asked, 3);
+    // A fetch slower than what is left of the budget: asked again at the next start too.
+    f.client.profile.enrolments = () => { asked += 1; return new Promise(() => {}); };
+    assert.equal(trustCards(await run(f, { ...at(62), totalMs: 300 })).length, 1);
+    assert.equal(asked, 4);
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: true, fetched: false, enrolments }; };
+    assert.equal(trustCards(await run(f, at(63))).length, 1);
+    assert.equal(asked, 5);
+    // Once an answer has arrived (here the helper's fetch failed, and it said so), not again for an hour.
     assert.equal(trustCards(await run(f, at(90))).length, 1);
-    assert.equal(asked, 2);
+    assert.equal(asked, 5);
+    // Each card handed over has its key's full hash kept, which a click must match.
+    assert.deepEqual(readShownTrust(), { [setLineOf(card.question)]: keyHash(other.publicKey) });
 
     // Once trusted, no card.
     enrol({ computer: other.computer, publicKey: other.publicKey, enrolledAt: new Date(AT).toISOString() });

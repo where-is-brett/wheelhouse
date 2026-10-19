@@ -3,10 +3,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalJson } from '../lib/canonical.js';
-import { computerId, keysDir, profileDir } from '../lib/paths.js';
+import { computerId, keysDir } from '../lib/paths.js';
 
 const keyFile = () => path.join(keysDir(), 'signing.pem');
-const enrolledFile = () => path.join(profileDir(), 'keys', 'enrolled.json');
+// The computers whose signatures count here, kept beside this computer's own key, where no git
+// operation reaches (ruling R105): never in the profile's clone, which anyone who can push to the
+// profile repository could change. A list kept in the clone before is not read.
+export const enrolledFile = () => path.join(keysDir(), 'enrolled.json');
 
 // Makes this computer's signing key. Returns the public key as base64 SPKI DER.
 export function makeSigningKey() {

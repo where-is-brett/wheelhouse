@@ -463,8 +463,10 @@ test('step 3 lists this computer\'s key and puts it in the profile, pushed by it
     const w = standIn();
     const folder = productFolder();
     const pushes = [];
+    // A call's own arguments, after the publish's no-hooks settings (ruling R106).
+    const callOf = (args) => (args[0] === '-c' && args[2] === '-c' ? args.slice(4) : args);
     const run = async (file, args, options = {}) => {
-      if (path.basename(file).replace(/\.exe$/, '') === 'git' && args[0] === 'push') pushes.push({ args: [...args], env: options.env });
+      if (path.basename(file).replace(/\.exe$/, '') === 'git' && callOf(args)[0] === 'push') pushes.push({ args: [...args], env: options.env, cwd: options.cwd });
       return w.run(file, args, options);
     };
     const step = stepFor(w, { run });
@@ -472,7 +474,7 @@ test('step 3 lists this computer\'s key and puts it in the profile, pushed by it
     assert.deepEqual(planned.changes.at(-1), { kind: 'host', target: 'github', action: 'enrolment', computer: computerId(), fingerprint: null });
     assert.match(planned.card.what, /the project's record and state branch; this computer's key in your profile; protection/);
     // The profile's push is refused: the step stops, saying so, with the change recorded.
-    w.gitFails = (args) => args[0] === 'push' && String(args.at(-1)).endsWith(':refs/heads/wheelhouse-profile');
+    w.gitFails = (args) => callOf(args)[0] === 'push' && String(args.at(-1)).endsWith(':refs/heads/wheelhouse-profile');
     await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), { message: NOT_PUBLISHED });
     const profileRemoteUrl = w.hostUrl({ repo: `${USER}/${PROFILE_REPO}` });
     const file = `enrolments/${computerId()}.json`;
@@ -485,7 +487,10 @@ test('step 3 lists this computer\'s key and puts it in the profile, pushed by it
     const { run: journal } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
     const tip = await g(profileRemoteUrl, 'rev-parse', 'wheelhouse-profile');
     const pushed = pushes.filter((p) => p.args.at(-1).endsWith(':refs/heads/wheelhouse-profile'));
-    assert.deepEqual(pushed.map((p) => p.args), [['push', '--no-verify', '--porcelain', profileRemoteUrl, `${tip}:refs/heads/wheelhouse-profile`]]);
+    assert.deepEqual(pushed.map((p) => p.args), [[
+      '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', 'push', '--no-verify', '--porcelain', profileRemoteUrl, `${tip}:refs/heads/wheelhouse-profile`,
+    ]]);
+    assert.notEqual(pushed[0].cwd, profileDir(), 'from a scratch repository, never the helper\'s profile clone');
     assert.deepEqual(pushed[0].env, { GIT_NO_REPLACE_OBJECTS: '1', ...directorGitEnv({ host: 'github', gitPath: 'git' }) });
     const own = JSON.parse(await g(profileRemoteUrl, 'show', `wheelhouse-profile:${file}`));
     assert.deepEqual(Object.keys(own), ['computer', 'publicKey', 'at']);

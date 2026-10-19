@@ -39,7 +39,7 @@ import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { readEnrolled, enrol, ownKey } from '../state/signing.js';
-import { trustedBy, keepTrustClick, fingerprint } from '../lib/trust-clicks.js';
+import { trustedBy, keepTrustClick, fingerprint, keyHash } from '../lib/trust-clicks.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
@@ -364,8 +364,9 @@ const carriesTrust = (question) => setLinesOf(question).some((line) => TRUST_LIN
 
 // Acts on each Trust it on a trust card, in whatever folder: the card carries one set line, a trust
 // card's, and the enrolment the last fetch of the profile found names the same computer, day and
-// key fingerprint (trustedBy). The click is signed and kept in trust/, naming those three and the
-// set line alone, then that computer's key is enrolled here. One failing does not stop the rest.
+// key fingerprint, with the full key hash the card was handed over for (trustedBy). The click is
+// signed and kept in trust/, naming those, the key's full hash and the set line alone, then the key
+// whose hash the signed record names is enrolled here. One failing does not stop the rest.
 function keepTrustClicks(out, now) {
   for (const click of out) {
     if (!click.signable || click.label !== TRUST_LABEL) continue;
@@ -374,8 +375,12 @@ function keepTrustClicks(out, now) {
       if (line === null || !TRUST_LINE.test(line)) continue;
       const found = trustedBy(line, { enrolled: readEnrolled(), own: ownKey() });
       if (found === null) continue;
-      const data = { action: 'trust', computer: found.computer, at: found.at, fingerprint: fingerprint(found.publicKey), question: line, label: TRUST_LABEL };
-      keepTrustClick(makeEvent({ kind: 'action', data, now }));
+      const data = {
+        action: 'trust', computer: found.computer, at: found.at, fingerprint: fingerprint(found.publicKey), keyHash: keyHash(found.publicKey), question: line, label: TRUST_LABEL,
+      };
+      const kept = makeEvent({ kind: 'action', data, now });
+      if (kept.data.keyHash !== keyHash(found.publicKey)) continue;
+      keepTrustClick(kept);
       enrol({ computer: found.computer, publicKey: found.publicKey, enrolledAt: now().toISOString() });
     } catch { /* nothing trusted: the card is offered again at a later session start */ }
   }

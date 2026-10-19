@@ -61,7 +61,7 @@ import { claudeCodeOf } from '../lineage/provenance.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
 import { composeCard } from '../cards/compose.js';
-import { differentKeyLine, keepSeen, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
+import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -367,25 +367,29 @@ export const TRUST_ASK = 'Another of the director\'s computers asks to be truste
 export const moreTrust = (n) => `${n} more of the director's computers ask to be trusted here; their cards come at a later session start.`;
 
 // The trust cards and lines for the enrolments the profile holds (rulings R80, R81). The helper is
-// asked at most once an hour, and only when it is up (`up`); the time is kept whether or not it
-// answered, so a profile that can't be reached costs one ask an hour. Between asks, what the last
-// fetch found is read. It informs, so anything that fails gives no lines.
+// asked at most once an hour, and only when it is up (`up`); the time is kept only when its answer
+// arrived (ruling R107), so a fetch slower than the budget is asked again at the next start, while
+// one whose fetch failed in the helper (an answer, `fetched: false`) waits the hour. Between asks,
+// what the last fetch found is read. Each card handed over has its key's full hash kept, which a
+// click must match (keepShownTrust). It informs, so anything that fails gives no lines.
 async function trustNotes({ client, left, up, now }) {
   try {
     if (up && seenDue(now)) {
       const got = typeof client?.profile?.enrolments === 'function' ? await left(client.profile.enrolments({})) : null;
-      const enrolments = got?.ok === true && Array.isArray(got.enrolments) ? got.enrolments : (readSeen()?.enrolments ?? []);
-      keepSeen({ at: now().toISOString(), enrolments });
+      if (got?.ok === true && Array.isArray(got.enrolments)) keepSeen({ at: now().toISOString(), enrolments: got.enrolments });
     }
     const seen = readSeen();
     if (seen === null) return [];
     const { offers, clashes } = trustOffers({ enrolments: seen.enrolments, enrolled: readEnrolled(), own: ownKey() });
     const lines = clashes.map(differentKeyLine);
+    const handed = [];
     for (const enrolment of offers.slice(0, MAX_TRUST_CARDS)) {
       try {
         lines.push(`${TRUST_ASK}${JSON.stringify(composeCard(trustCardInput(enrolment)).question)}`);
+        handed.push(enrolment);
       } catch { /* no card for an enrolment the composer refuses */ }
     }
+    if (handed.length > 0) keepShownTrust(handed);
     if (offers.length > MAX_TRUST_CARDS) lines.push(moreTrust(offers.length - MAX_TRUST_CARDS));
     return lines;
   } catch {

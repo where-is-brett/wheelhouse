@@ -10,10 +10,13 @@
 //   jobs/enrolments.json  { at, enrolments }: when the session start last asked the helper for the
 //                         profile's enrolments (/profile/enrolments, at most once an hour, beside
 //                         weekly.json), and what the last fetch found
+//   trust/shown.json      { <set line>: <key hash> }: for each trust card the session start handed
+//                         over, the full SHA-256 of the key it was made for (ruling R107), so a click
+//                         enrols that exact key and no other with the same twelve-character fingerprint
 //   trust/                the director's Trust it, as the prompt record signed it: an `action` event
-//                         `trust` { computer, at, fingerprint, question, label }, whose question is
-//                         the card's set line alone. Never a card-answer in the state (as ruling R53
-//                         keeps setup's answers), and never sent to the helper
+//                         `trust` { computer, at, fingerprint, keyHash, question, label }, whose
+//                         question is the card's set line alone. Never a card-answer in the state (as
+//                         ruling R53 keeps setup's answers), and never sent to the helper
 //
 // It lives apart from scripts/setup/ so the hooks reach nothing there (ruling R29): the session
 // start offers the cards from here, and the prompt record enrols from here. Only the prompt record
@@ -37,6 +40,9 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export const trustDir = () => path.join(wheelhouseHome(), 'trust');
 export const seenFile = () => path.join(jobsDir(), 'enrolments.json');
+export const shownTrustFile = () => path.join(trustDir(), 'shown.json');
+// The most cards' key hashes kept in shown.json; the oldest go first.
+const MAX_SHOWN = 50;
 // Where a computer's enrolment sits in the profile.
 export const enrolmentPath = (computer) => `enrolments/${computer}.json`;
 export const ENROLMENT_FILE = /^enrolments\/([0-9a-f]{8})\.json$/;
@@ -52,7 +58,35 @@ export function fingerprint(publicKey) {
   return crypto.createHash('sha256').update(Buffer.from(publicKey, 'base64')).digest('hex').slice(0, 12);
 }
 
+// The full SHA-256 of a key (its DER bytes), in hex, or null when it isn't a base64 key.
+export function keyHash(publicKey) {
+  if (typeof publicKey !== 'string' || !BASE64.test(publicKey)) return null;
+  return crypto.createHash('sha256').update(Buffer.from(publicKey, 'base64')).digest('hex');
+}
+
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+// The key hash each trust card handed over was made for, by its set line.
+export function readShownTrust() {
+  try {
+    const r = JSON.parse(fs.readFileSync(shownTrustFile(), 'utf8'));
+    return isPlain(r) ? Object.fromEntries(Object.entries(r).filter(([line, hash]) => TRUST_LINE.test(line) && /^[0-9a-f]{64}$/.test(String(hash)))) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Keeps, for each enrolment a trust card is handed over for, the key hash its card stands for.
+export function keepShownTrust(enrolments) {
+  const shown = readShownTrust();
+  for (const e of enrolments) {
+    const line = trustLine(e.computer, e.at, fingerprint(e.publicKey));
+    delete shown[line];
+    shown[line] = keyHash(e.publicKey);
+  }
+  const kept = Object.entries(shown).slice(-MAX_SHOWN);
+  writeWhole(shownTrustFile(), `${JSON.stringify(Object.fromEntries(kept), null, 2)}\n`);
+}
 
 // An enrolment as the profile holds it, given its parsed JSON or its text: { computer, publicKey,
 // at }, a computer id, an Ed25519 public key (base64 SPKI DER) and a UTC time. With `computer`, it
@@ -145,10 +179,11 @@ export function trustCardInput({ computer, at, publicKey }) {
 }
 
 // The enrolment a click on a card carrying `line` would trust: the one the last fetch found whose
-// computer, day and key fingerprint are all the line's. Null when there is none, when the computer
-// is this one, or when this computer already trusts that id with another key (never replaced on a
-// click: ruling R80).
-export function trustedBy(line, { seen = readSeen(), enrolled = [], own = null } = {}) {
+// computer, day and key fingerprint are all the line's, and whose full key hash is the one the card
+// was handed over for (ruling R107). Null when there is none, when no card was handed over for that
+// key, when the computer is this one, or when this computer already trusts that id with another
+// key (never replaced on a click: ruling R80).
+export function trustedBy(line, { seen = readSeen(), shown = readShownTrust(), enrolled = [], own = null } = {}) {
   const m = TRUST_LINE.exec(typeof line === 'string' ? line : '');
   if (!m || seen === null) return null;
   const [, computer, day, print] = m;
@@ -156,7 +191,7 @@ export function trustedBy(line, { seen = readSeen(), enrolled = [], own = null }
   const known = (Array.isArray(enrolled) ? enrolled : []).find((e) => e?.computer === computer);
   const found = seen.enrolments.filter((e) => e.computer === computer && dayOf(e.at) === day && fingerprint(e.publicKey) === print
     && trustLine(e.computer, e.at, print) === line);
-  if (found.length !== 1) return null;
+  if (found.length !== 1 || !Object.hasOwn(shown, line) || shown[line] !== keyHash(found[0].publicKey)) return null;
   if (known !== undefined && known.publicKey !== found[0].publicKey) return null;
   return found[0];
 }

@@ -7,27 +7,31 @@
 // profile's branch. Every computer publishes, the first too, so a later one can trust it.
 //
 // The commit is made with `git commit-tree` on the profile's tip as just fetched, with the file
-// added to that tree, outside the helper's own `wheelhouse-profile` branch, and pushed by its exact
-// SHA with the director's own sign-in (directorGitEnv, as ruling R42 pushes the setup commit), never
-// a force-push; then the branch is fetched again. The helper's branch never carries a commit its
-// profile push rules refuse (PROFILE_CHANGE in scripts/host/helper.js), so a push here that fails
-// leaves nothing behind that could stop a later profile push. Where the profile's branch moved on
-// meanwhile, the commit is made again on its new tip, a few times at most.
+// added to that tree, in a scratch bare repository of setup's own (ruling R106), never the helper's
+// profile clone, and pushed by its exact SHA with the director's own sign-in (directorGitEnv, as
+// ruling R42 pushes the setup commit), never a force-push. Every git call there runs with hooks and
+// the file-system monitor switched off, so nothing an agent could write runs with that sign-in. The
+// helper's branch never carries a commit its profile push rules refuse (PROFILE_CHANGE in
+// scripts/host/helper.js), so a push here that fails leaves nothing behind that could stop a later
+// profile push. Where the profile's branch moved on meanwhile, the commit is made again on its new
+// tip, a few times at most.
 //
 // Recorded as a `host` change, just before the push: its value before is the file the profile held
-// (its text), or null. An enrolment already holding this computer's key is left as it is, with the
+// (its text, or past MAX_ENROLMENT_BYTES its SHA-256 and size), or null. An enrolment already holding this computer's key is left as it is, with the
 // day it was added, so the other computers' cards keep naming the same day.
 //
 // Nothing here trusts anything: another computer's key counts on this one only after the
 // director's Trust it on the card the session start shows (scripts/lib/trust-clicks.js).
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
-import { computerId, profileDir } from '../lib/paths.js';
+import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { ownKey, makeSigningKey } from '../state/signing.js';
-import { enrolmentOf, enrolmentPath, fingerprint } from '../lib/trust-clicks.js';
+import { enrolmentOf, enrolmentPath, fingerprint, MAX_ENROLMENT_BYTES } from '../lib/trust-clicks.js';
 import { newId } from './journal.js';
 
-const TRACKING = `refs/remotes/origin/${PROFILE_BRANCH}`;
 // The commit's author: setup's own, never the director's name or address.
 const AUTHOR = ['-c', 'user.name=Wheelhouse setup', '-c', 'user.email=setup@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
 const ATTEMPTS = 3;
@@ -60,16 +64,32 @@ export function enrolmentChange({ host }) {
 // twelve hex characters would read as a commit.
 export const ENROLMENT_PART = 'this computer\'s key in your profile';
 
+// git in the scratch repository runs no hooks and asks no file-system monitor (ruling R106).
+const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+const FETCHED = 'refs/fetched/profile';
+// The longest `before` recorded as it is; a longer one is recorded by its hash and size.
+const BEFORE_CHARS = MAX_ENROLMENT_BYTES;
+
+// What a change records of the file the profile held before: its text, or past the cap, its
+// SHA-256 and size, so a large planted file never fills the journal.
+const beforeOf = (text) => (text === null || text.length <= BEFORE_CHARS ? text
+  : { sha256: crypto.createHash('sha256').update(text).digest('hex'), bytes: Buffer.byteLength(text) });
+
 // Publishes this computer's enrolment in the profile (`profile`, as profile.json gives it), with git
-// at `gitPath` run with `env`, the director's own sign-in, in the profile's clone. `listed` is the
-// change step 3's card named. Gives { published, at, commit? }.
+// at `gitPath` run with `env`, the director's own sign-in. Everything runs in a scratch bare
+// repository setup makes under <wheelhouseHome()>/setup/ and removes afterwards (ruling R106): the
+// helper's profile clone, its hooks, its config and its refs are never touched, and every call
+// has hooks and the file-system monitor switched off. `listed` is the change step 3's card named.
+// Gives { published, at, commit? }.
 export async function publishEnrolment({ profile, listed = null, gitPath = 'git', env = {}, run = realRun, record = () => {}, now = () => new Date() }) {
   const own = keyHere();
   if (own === null) throw new Error(NOT_PUBLISHED);
   if (typeof listed?.computer === 'string' && listed.computer !== own.computer) throw new Error(KEY_CHANGED);
   if (typeof listed?.fingerprint === 'string' && listed.fingerprint !== fingerprint(own.publicKey)) throw new Error(KEY_CHANGED);
-  const dir = profileDir();
-  const git = (args, input) => run(gitPath, args, {
+  const parent = path.join(wheelhouseHome(), 'setup');
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(parent, 'publish-'));
+  const git = (args, input) => run(gitPath, [...NO_HOOKS, ...args], {
     cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1', ...env }, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000, ...(input === undefined ? {} : { input }),
   });
   const must = async (args, input) => {
@@ -77,34 +97,35 @@ export async function publishEnrolment({ profile, listed = null, gitPath = 'git'
     if (got.code !== 0) throw new Error(NOT_PUBLISHED);
     return got.stdout.trim();
   };
-  const fetchTip = async () => {
-    await must(['fetch', '-q', '--no-tags', profile.remoteUrl, `+refs/heads/${PROFILE_BRANCH}:${TRACKING}`]);
-    return must(['rev-parse', '--verify', '-q', `${TRACKING}^{commit}`]);
-  };
-  const file = enrolmentPath(own.computer);
-  const at = now().toISOString();
-  const text = `${JSON.stringify({ computer: own.computer, publicKey: own.publicKey, at }, null, 2)}\n`;
-  let recorded = false;
-  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    const tip = await fetchTip();
-    const held = await git(['cat-file', 'blob', `${tip}:${file}`]);
-    const before = held.code === 0 ? held.stdout : null;
-    const kept = before === null ? null : enrolmentOf(before, own.computer);
-    if (kept !== null && kept.publicKey === own.publicKey) return { published: false, at: kept.at };
-    const commit = await commitOn({ tip, computer: own.computer, text, must });
-    if (!recorded) {
-      record({ id: newId('chg'), kind: 'host', target: `${profile.host}:${profile.repo}:${file}`, before, after: text });
-      recorded = true;
+  try {
+    await must(['init', '-q', '--bare']);
+    const file = enrolmentPath(own.computer);
+    const at = now().toISOString();
+    const text = `${JSON.stringify({ computer: own.computer, publicKey: own.publicKey, at }, null, 2)}\n`;
+    let recorded = false;
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      await must(['fetch', '-q', '--no-tags', profile.remoteUrl, `+refs/heads/${PROFILE_BRANCH}:${FETCHED}`]);
+      const tip = await must(['rev-parse', '--verify', '-q', `${FETCHED}^{commit}`]);
+      const held = await git(['cat-file', 'blob', `${tip}:${file}`]);
+      const before = held.code === 0 ? held.stdout : null;
+      const kept = before === null ? null : enrolmentOf(before, own.computer);
+      if (kept !== null && kept.publicKey === own.publicKey) return { published: false, at: kept.at };
+      const commit = await commitOn({ tip, computer: own.computer, text, must });
+      if (!recorded) {
+        record({ id: newId('chg'), kind: 'host', target: `${profile.host}:${profile.repo}:${file}`, before: beforeOf(before), after: text });
+        recorded = true;
+      }
+      const pushed = await git(['push', '--no-verify', '--porcelain', profile.remoteUrl, `${commit}:refs/heads/${PROFILE_BRANCH}`]);
+      if (pushed.code === 0) return { published: true, at, commit };
+      const line = String(pushed.stdout ?? '').split('\n').find((l) => l.startsWith('!'));
+      if (!line || !/\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(line)) break;
     }
-    const pushed = await git(['push', '--no-verify', '--porcelain', profile.remoteUrl, `${commit}:refs/heads/${PROFILE_BRANCH}`]);
-    if (pushed.code === 0) {
-      await git(['fetch', '-q', '--no-tags', profile.remoteUrl, `+refs/heads/${PROFILE_BRANCH}:${TRACKING}`]);
-      return { published: true, at, commit };
-    }
-    const line = String(pushed.stdout ?? '').split('\n').find((l) => l.startsWith('!'));
-    if (!line || !/\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(line)) break;
+    throw new Error(NOT_PUBLISHED);
+  } finally {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch { /* left for the system to clear: it holds only the profile's public files */ }
   }
-  throw new Error(NOT_PUBLISHED);
 }
 
 // A commit on `tip` whose tree is the tip's with enrolments/<computer>.json holding `text`, made

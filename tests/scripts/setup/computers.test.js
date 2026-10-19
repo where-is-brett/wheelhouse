@@ -18,7 +18,7 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import {
   trustOffers, trustCardInput, trustedBy, keepSeen, readSeen, seenDue, fingerprint, enrolmentOf, differentKeyLine, trustDir,
-  ENROLMENTS_EVERY_MS,
+  ENROLMENTS_EVERY_MS, keepShownTrust, readShownTrust, keyHash, shownTrustFile,
 } from '../../../scripts/lib/trust-clicks.js';
 import { trustLine, setLineOf, TRUST_LABEL } from '../../../scripts/state/card-lines.js';
 import { makeSigningKey, enrol, ownKey, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -59,7 +59,11 @@ const ownComputer = () => {
 };
 
 const enrolmentFor = (c, at = ADDED) => ({ computer: c.computer, publicKey: c.publicKey, at });
-const cardFor = (enrolment) => composeCard(trustCardInput(enrolment)).question;
+// The card the session start hands over for an enrolment, with the key's full hash it keeps for it.
+const cardFor = (enrolment) => {
+  keepShownTrust([enrolment]);
+  return composeCard(trustCardInput(enrolment)).question;
+};
 
 // The director's click on a card, as AskUserQuestion reports it.
 const clickOn = (question, label) => ({
@@ -83,7 +87,7 @@ const click = async (question, label, { project = P } = {}) => {
 
 const trustFiles = () => {
   try {
-    return fs.readdirSync(trustDir()).filter((n) => n.endsWith('.json'));
+    return fs.readdirSync(trustDir()).filter((n) => n.includes('_trust_'));
   } catch {
     return [];
   }
@@ -138,7 +142,10 @@ test('an enrolment found in the profile is not trusted until the director clicks
     assert.equal(kept.length, 1);
     const event = JSON.parse(fs.readFileSync(path.join(home, 'trust', kept[0]), 'utf8'));
     assert.equal(event.kind, 'action');
-    assert.deepEqual(event.data, { action: 'trust', computer: other.computer, at: ADDED, fingerprint: fingerprint(other.publicKey), question: line, label: TRUST_LABEL });
+    assert.deepEqual(event.data, {
+      action: 'trust', computer: other.computer, at: ADDED, fingerprint: fingerprint(other.publicKey), keyHash: keyHash(other.publicKey), question: line, label: TRUST_LABEL,
+    });
+    assert.equal(event.data.keyHash, crypto.createHash('sha256').update(Buffer.from(other.publicKey, 'base64')).digest('hex'), 'the full SHA-256 of the key enrolled');
     assert.equal(event.computer, computerId());
     assert.equal(verify(event, readEnrolled()), true, 'signed by this computer\'s hook');
     // Its records count from now on.
@@ -190,6 +197,32 @@ test('Trust it on a card naming another computer, another date or another key tr
     fs.rmSync(path.join(wheelhouseHome(), 'jobs'), { recursive: true, force: true });
     assert.deepEqual(await click(right, TRUST_LABEL), []);
     assert.deepEqual(readEnrolled(), before);
+  });
+});
+
+test('Trust it enrols only the exact key its card was handed over for, by its full hash (ruling R107)', async () => {
+  await withHome(async () => {
+    ownComputer();
+    const other = otherComputer();
+    keepSeen({ at: NOW.toISOString(), enrolments: [enrolmentFor(other)] });
+    const question = composeCard(trustCardInput(enrolmentFor(other))).question;
+    const line = setLineOf(question.question);
+    // No card was handed over for it: nothing is trusted.
+    assert.deepEqual(await click(question, TRUST_LABEL), []);
+    assert.equal(readEnrolled().some((e) => e.computer === other.computer), false);
+    // A card handed over for another key with the same twelve characters (its full hash differs): nothing.
+    fs.mkdirSync(trustDir(), { recursive: true });
+    fs.writeFileSync(shownTrustFile(), JSON.stringify({ [line]: `${fingerprint(other.publicKey)}${'0'.repeat(52)}` }));
+    assert.deepEqual(await click(question, TRUST_LABEL), []);
+    assert.equal(readEnrolled().some((e) => e.computer === other.computer), false);
+    assert.deepEqual(trustFiles(), []);
+    // Handed over for this very key: trusted.
+    keepShownTrust([enrolmentFor(other)]);
+    assert.deepEqual(readShownTrust(), { [line]: keyHash(other.publicKey) });
+    await click(question, TRUST_LABEL);
+    assert.equal(readEnrolled().find((e) => e.computer === other.computer)?.publicKey, other.publicKey);
+    // The state's own check: a trust action whose hash isn't the fingerprint's is refused.
+    assert.throws(() => makeEvent({ kind: 'action', data: { action: 'trust', computer: other.computer, at: ADDED, fingerprint: fingerprint(other.publicKey), keyHash: 'f'.repeat(64), question: line, label: TRUST_LABEL } }), /full hash/);
   });
 });
 
@@ -289,12 +322,17 @@ async function profileHere() {
   return remote;
 }
 
-// git as setup runs it, with every call kept: its arguments and its environment.
+// Every git call setup's publish makes starts with these: no hooks, no file-system monitor (R106).
+const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+// A call's own arguments, after those.
+const callOf = (args) => (args.slice(0, 4).join(' ') === NO_HOOKS.join(' ') ? args.slice(4) : args);
+
+// git as setup runs it, with every call kept: its arguments, its folder and its environment.
 function watched({ before } = {}) {
   const calls = [];
   const run = async (file, args, options = {}) => {
-    calls.push({ args: [...args], env: options.env });
-    await before?.(args);
+    calls.push({ args: [...args], cwd: options.cwd, env: options.env });
+    await before?.(callOf(args));
     return realRun(file, args, options);
   };
   return { calls, run };
@@ -302,10 +340,21 @@ function watched({ before } = {}) {
 
 const remoteText = (url, file) => g(url, 'show', `${PROFILE_BRANCH}:${file}`);
 const clean = async () => ({
-  head: await g(profileDir(), 'rev-parse', `refs/heads/${PROFILE_BRANCH}`),
+  refs: await g(profileDir(), 'for-each-ref', '--format=%(refname) %(objectname)'),
   status: await g(profileDir(), 'status', '--porcelain'),
   files: await g(profileDir(), 'ls-files'),
 });
+
+// Hooks an agent could plant in the profile's clone, each leaving a mark if it ever runs.
+function plantHooks() {
+  const mark = path.join(wheelhouseHome(), 'hook-ran');
+  const hooks = path.join(profileDir(), '.git', 'hooks');
+  fs.mkdirSync(hooks, { recursive: true });
+  for (const name of ['reference-transaction', 'pre-push', 'post-commit', 'post-checkout', 'fsmonitor-watchman']) {
+    fs.writeFileSync(path.join(hooks, name), `#!/bin/sh\necho ${name} >> "${mark}"\n`, { mode: 0o755 });
+  }
+  return mark;
+}
 
 test('step 3\'s publish puts this computer\'s key in the profile by commit-tree, pushed by its exact SHA with the director\'s sign-in, leaving the helper\'s branch alone', async () => {
   await withHome(async () => {
@@ -315,6 +364,7 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       const own = ownKey();
       const listed = enrolmentChange({ host: 'github' });
       assert.deepEqual(listed, { kind: 'host', target: 'github', action: 'enrolment', computer: own.computer, fingerprint: fingerprint(own.publicKey) });
+      const mark = plantHooks();
       const before = await clean();
       const tipBefore = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
       const git = watched();
@@ -331,15 +381,23 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       assert.equal(await g(remote.url, 'rev-parse', `${tip}^`), tipBefore);
       assert.equal(await g(remote.url, 'diff-tree', '--no-commit-id', '--name-status', '-r', tip), `A\t${file}`);
       assert.ok(git.calls.some((c) => c.args.includes('commit-tree')), 'made by commit-tree');
+      // Every call in a scratch repository of setup's own, with no hooks and no file-system monitor,
+      // never in the helper's profile clone; the scratch is gone afterwards.
+      const scratch = path.join(wheelhouseHome(), 'setup');
+      assert.ok(git.calls.every((c) => c.args.slice(0, 4).join(' ') === NO_HOOKS.join(' ')), 'no hooks on any call');
+      assert.ok(git.calls.every((c) => path.dirname(c.cwd) === scratch && path.basename(c.cwd).startsWith('publish-')));
+      assert.equal(new Set(git.calls.map((c) => c.cwd)).size, 1);
+      assert.equal(fs.existsSync(git.calls[0].cwd), false);
+      assert.deepEqual(callOf(git.calls[0].args), ['init', '-q', '--bare']);
       // Pushed by its exact SHA, never forced, with the director's own sign-in in git's environment.
-      const pushes = git.calls.filter((c) => c.args[0] === 'push');
-      assert.deepEqual(pushes.map((c) => c.args), [['push', '--no-verify', '--porcelain', remote.url, `${tip}:refs/heads/${PROFILE_BRANCH}`]]);
+      const pushes = git.calls.filter((c) => callOf(c.args)[0] === 'push');
+      assert.deepEqual(pushes.map((c) => callOf(c.args)), [['push', '--no-verify', '--porcelain', remote.url, `${tip}:refs/heads/${PROFILE_BRANCH}`]]);
       assert.match(pushes[0].env.GIT_CONFIG_VALUE_1, /auth git-credential$/);
       assert.equal(pushes[0].env.GIT_CONFIG_VALUE_0, '');
-      // The helper's own branch, index and working tree are as they were; the fetch knows the new tip.
+      // The helper's clone is as it was, every ref of it included, and no hook planted there ran.
       assert.deepEqual(await clean(), before);
       assert.equal(fs.existsSync(path.join(profileDir(), 'enrolments')), false);
-      assert.equal(await g(profileDir(), 'rev-parse', `refs/remotes/origin/${PROFILE_BRANCH}`), tip);
+      assert.equal(fs.existsSync(mark), false, 'a hook planted in the profile clone never runs');
       // Recorded as a host change, before null.
       assert.equal(recorded.length, 1);
       assert.deepEqual({ ...recorded[0], id: undefined }, { id: undefined, kind: 'host', target: `github:${PROFILE_REPO}:${file}`, before: null, after: text });
@@ -350,7 +408,8 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       const later = await publishEnrolment({ profile: profileRemote(), listed, env, run: again.run, record: (c) => recorded.push(c), now: () => new Date('2026-10-21T00:00:00.000Z') });
       assert.deepEqual(later, { published: false, at: NOW.toISOString() });
       assert.equal(recorded.length, 1);
-      assert.equal(again.calls.some((c) => c.args[0] === 'push'), false);
+      assert.equal(again.calls.some((c) => callOf(c.args)[0] === 'push'), false);
+      assert.equal(fs.existsSync(mark), false);
 
       // A key not the one the card named is not published.
       await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, fingerprint: '000000000000' }, env, run: realRun, now: () => NOW }), { message: KEY_CHANGED });
@@ -393,12 +452,35 @@ test('another key under this computer\'s id in the profile is replaced, recorded
       const recorded = [];
       const got = await publishEnrolment({ profile: profileRemote(), env: {}, run: git.run, record: (c) => recorded.push(c), now: () => NOW });
       assert.equal(got.published, true);
-      assert.equal(git.calls.filter((c) => c.args[0] === 'push').length, 2, 'refused once as the branch moved on, then pushed on its new tip');
+      assert.equal(git.calls.filter((c) => callOf(c.args)[0] === 'push').length, 2, 'refused once as the branch moved on, then pushed on its new tip');
       assert.ok(git.calls.every((c) => !c.args.includes('--force') && !c.args.some((a) => String(a).startsWith('+') && a.includes(':refs/heads/'))));
       assert.equal(JSON.parse(await remoteText(remote.url, file)).publicKey, own.publicKey);
       assert.equal(await remoteText(remote.url, 'events/x.json'), '{}', 'the other computer\'s event is kept');
       assert.equal(recorded.length, 1);
       assert.equal(recorded[0].before, planted);
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+      remote.cleanup();
+    }
+  });
+});
+
+test('a large file under this computer\'s id is recorded by its hash and size, not its text (ruling R107)', async () => {
+  await withHome(async () => {
+    const remote = await profileHere();
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-big-'));
+    try {
+      ownComputer();
+      await g(scratch, 'clone', '-q', '-b', PROFILE_BRANCH, remote.url, '.');
+      const big = 'x'.repeat(10000);
+      fs.mkdirSync(path.join(scratch, 'enrolments'));
+      fs.writeFileSync(path.join(scratch, 'enrolments', `${computerId()}.json`), big);
+      await g(scratch, 'add', '.');
+      await g(scratch, 'commit', '-q', '-m', 'big');
+      await g(scratch, 'push', '-q', 'origin', PROFILE_BRANCH);
+      const recorded = [];
+      assert.equal((await publishEnrolment({ profile: profileRemote(), env: {}, record: (c) => recorded.push(c), now: () => NOW })).published, true);
+      assert.deepEqual(recorded[0].before, { sha256: crypto.createHash('sha256').update(big).digest('hex'), bytes: 10000 });
     } finally {
       fs.rmSync(scratch, { recursive: true, force: true });
       remote.cleanup();
@@ -424,7 +506,7 @@ test('a failed push of the key leaves the helper\'s profile branch as it was, an
       const client = helperClient({ address: helper.address });
       assert.deepEqual(await client.profile.clone({}), { ok: true, made: true });
       const before = await clean();
-      const failing = async (file, args, options) => (args[0] === 'push' ? { code: 1, stdout: '', stderr: 'denied' } : realRun(file, args, options));
+      const failing = async (file, args, options) => (callOf(args)[0] === 'push' ? { code: 1, stdout: '', stderr: 'denied' } : realRun(file, args, options));
       await assert.rejects(publishEnrolment({ profile: profileRemote(), env: {}, run: failing, now: () => NOW }), { message: NOT_PUBLISHED });
       assert.deepEqual(await clean(), before, 'nothing on the helper\'s branch for its push rules to refuse');
       const wrote = await client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep the briefing short' } });
