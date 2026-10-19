@@ -1,4 +1,6 @@
 // tests/helpers/homes.js
+// A test file run by hand (`node --test <file>`) gets a temporary home too, as under `npm test`.
+import './test-home.js';
 import { after } from 'node:test';
 import crypto from 'node:crypto';
 import fs from 'node:fs';

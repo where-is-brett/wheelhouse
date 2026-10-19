@@ -392,6 +392,7 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
 
   await waitingCard(c, 'Which photo goes on the home page?');
   const woke = await tick(c);
+  assert.ok(Array.isArray(woke.submit), 'the tick woke the front desk');
   assert.equal(woke.submit.length, 1);
   const [wake] = woke.submit;
   assert.ok(wake.startsWith(`${LEADS.courier} 1 new card (1). `), wake);
@@ -410,7 +411,11 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
   const presence = await choose(c, 'presence', 'away-evening');
   assert.deepEqual(presence, { ok: true, says: 'Presence is now away until 18:00, for all your projects' });
   const second = await waitingCard(c, 'Which colour goes on the sign-in button?');
+  // When the front desk's session last ticked, by courier.json, which only a courier that ran moves on.
+  const tickedAt = () => JSON.parse(fs.readFileSync(file, 'utf8')).sessions.find((s) => s.id === 'sess-front')?.at;
+  const before = tickedAt();
   const held = await tick(c);
+  assert.ok(Date.parse(tickedAt()) > Date.parse(before), 'the courier ran on this tick');
   assert.equal(drawnCard(held, second).blocking, false);
   assert.equal(held.submit, undefined, 'a card that blocks nothing waits while the director is away');
 

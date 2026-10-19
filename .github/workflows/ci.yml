@@ -48,6 +48,7 @@ jobs:
       # Pins the version of Claude Code the mod's checks run on: the floor, lineage/manifest.json's
       # claudeCode.floor. The mod's bridge call lives in hooks/mod/ask.ts, which releases before
       # 2.1.299 refuse to follow (check 40 has the table of releases).
+      # tests/scripts/lib/claude-code-floor.test.js holds the pin to CLAUDE_CODE_FLOOR.
       - run: npm install --global @anthropic-ai/claude-code@2.1.299
       - run: npm run mod-check
 
