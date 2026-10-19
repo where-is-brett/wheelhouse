@@ -19,6 +19,7 @@
 //   { cmd: 'setting', origin, cwd, key, choice }    a choice in the settings pane: sets it and confirms it
 //   { cmd: 'go', origin, cwd }                      /go or the pane: lifts STOP with a signed record
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
+//   { cmd: 'digest', origin, cwd }                  /digest: the briefing since the last, as text (any origin)
 //
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
@@ -39,6 +40,7 @@ import { sessionRole as defaultSessionRole } from '../lib/role.js';
 import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
+import { digestText as defaultDigest } from './digest.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 
 // The whole run for most requests, from reading the request to the answer.
@@ -89,6 +91,7 @@ const DEFAULTS = {
   setStop: defaultSetStop,
   liftStop: defaultLiftStop,
   sessionRole: defaultSessionRole,
+  digestText: defaultDigest,
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
   env: process.env,
@@ -229,6 +232,12 @@ async function stop(req, d) {
   return { ok: true, says: SAYS.stopOn };
 }
 
+// /digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
+// and marks a briefing given, so whose command it is doesn't matter.
+async function digest(req, d) {
+  return d.digestText({ cwd: req.cwd, now: d.now, load: d.loadInputs, readEffective: d.readEffective });
+}
+
 // Whether the project's local settings name Wheelhouse's own status line (board-and-usage), which
 // the terminal then draws itself. Read from the file alone, and only read: the folder is one an
 // agent controls, so the file is read as a small regular file, which a FIFO planted there is not.
@@ -287,7 +296,7 @@ async function tick(req, d) {
   return answer;
 }
 
-const COMMANDS = { usage, reply, press, settings, setting, go, stop, tick };
+const COMMANDS = { usage, reply, press, settings, setting, go, stop, digest, tick };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {

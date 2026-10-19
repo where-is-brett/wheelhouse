@@ -18,6 +18,12 @@
 // `cli.js cards` gives them (cardsLine). Under STOP the line names the one Lift STOP card, the only
 // card `cli.js cards` gives then.
 //
+// Two kinds of prompt are left alone, recording no time and adding nothing: the mod's own commands
+// (/go, /digest, /wheelhouse), whose answer starts no turn, so a briefing added to one would be
+// lost (a classic hook isn't shown a mod command's typed line, so this is a second line of
+// defence), and the courier's wake (LEADS.courier), which is not the director arriving. A pane
+// press (LEADS.pane) is the director's, as their press made it, and is handled like any prompt.
+//
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
@@ -41,6 +47,7 @@ import { questionProblem } from '../cards/compose.js';
 import { answerLine } from '../state/card-lines.js';
 import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
+import { LEADS } from '../lib/mod-numbers.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 
 export const WAIT_MS = 2000;
@@ -61,6 +68,8 @@ export const FOREMAN_LINE = 'This session is the foreman, not the front desk. Fo
 // The line that tells the front desk to ask the cards waiting, after the briefing.
 export const cardsLine = (n) => `Cards to ask this visit: ${n}. Run \`cli.js cards\` and ask them in one AskUserQuestion call, after the briefing.`;
 const TABS = ['director', 'build'];
+// The mod's own commands, whose answer starts no turn.
+const MOD_COMMAND = /^\/(?:go|digest|wheelhouse)(?:[ \t]+.*)?$/i;
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -78,6 +87,12 @@ export function commandOf(prompt) {
   if (!match) return null;
   const word = (match[2] ?? '').trim().toLowerCase();
   return { name: match[1].toLowerCase(), tab: TABS.includes(word) ? word : undefined };
+}
+
+// Whether the prompt isn't the director arriving: one of the mod's commands, or the courier's wake.
+function isOwnPrompt(prompt) {
+  const text = prompt.replace(/\p{Cf}/gu, '').trim();
+  return MOD_COMMAND.test(text) || text.startsWith(LEADS.courier);
 }
 
 // The clock as a Date; one that can't be read gives an invalid Date.
@@ -193,33 +208,42 @@ async function within(start, ms) {
   }
 }
 
+// The briefing in plain words within `room` characters, and the unusual items it showed (none when
+// it was cut for length, which may have lost what it raised). `settings` are the settings in
+// force. Throws when it can't be built.
+export function briefingIn({ project, model, usage, sources, settings, since, at, briefingModel = realBriefingModel, room }) {
+  const briefing = briefingModel({ model, usage, sources, since, now: at });
+  const length = settings?.briefing?.value;
+  const words = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
+  const parts = briefingParts(briefing, { words });
+  const body = parts.text.split('\n').map(unlinked).join('\n');
+  const raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, parts.shownWatch) : [];
+  const fitted = inPlainWords(() => body, room, wordsOf(project, settings, model));
+  return { text: fitted.text, raise: fitted.cut ? [] : raise };
+}
+
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
 async function build(want, { project, cwd, at, client, load, command, since, briefingModel, reserve }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
   const room = CONTEXT_CHARS - HEADINGS[want].length - 2 - reserve;
+  if (want === 'briefing') {
+    const given = briefingIn({ project, model, usage, sources, settings, since, at, briefingModel, room });
+    return { text: `${HEADINGS.briefing}\n\n${given.text}`, raise: given.raise };
+  }
   let body;
-  let raise = [];
   let make;
   if (want === 'board') {
     make = (limit) => renderBoard(model, { tab: command?.tab ?? settings?.boardTab?.value, limit });
   } else if (want === 'settings') {
     body = isRecord(settings) ? settingsText(settings) : '';
     if (body === '') throw new Error('No settings');
-  } else if (want === 'sources') {
-    body = isRecord(sources) ? (sourcesText(sources) || NONE_CHANGED) : NOT_CHECKED;
   } else {
-    const briefing = briefingModel({ model, usage, sources, since, now: at });
-    const length = settings?.briefing?.value;
-    const words = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
-    const parts = briefingParts(briefing, { words });
-    body = parts.text.split('\n').map(unlinked).join('\n');
-    raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, parts.shownWatch) : [];
+    body = isRecord(sources) ? (sourcesText(sources) || NONE_CHANGED) : NOT_CHECKED;
   }
   const fitted = inPlainWords(make ?? (() => body), room, wordsOf(project, settings, model));
-  // A briefing cut for length here may have lost what it raised, so none of it counts as told.
-  return { text: `${HEADINGS[want]}\n\n${fitted.text}`, raise: fitted.cut ? [] : raise };
+  return { text: `${HEADINGS[want]}\n\n${fitted.text}`, raise: [] };
 }
 
 // decide(input, deps) -> the context to add, or undefined.
@@ -237,6 +261,7 @@ export async function decide(input, deps = {}) {
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
+    if (isOwnPrompt(input.prompt)) return undefined;
     const { project } = found;
     const at = clockOf(now);
     const seen = readSeen(project, { now: at });
