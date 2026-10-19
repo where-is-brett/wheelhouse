@@ -12,8 +12,9 @@
 // director's press on the pane; `sdk`, `peer` and every other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
-//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now, or
-//                                                   a Shape 2 foreman's wakes from one watcher loop
+//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
+//                                                   courier's wake, or a Shape 2 foreman's wakes from
+//                                                   one watcher loop
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
@@ -42,7 +43,8 @@ import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
-import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
+import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus, readPaneStatus as defaultReadPaneStatus } from './status.js';
+import { needsYou, sessionOpening, courierWake as defaultCourierWake } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
 
 // The whole run for most requests, from reading the request to the answer.
@@ -68,6 +70,7 @@ export const SAYS = {
   cantSign: 'Wheelhouse couldn\'t sign that here, so STOP stays on',
   cantLift: 'STOP couldn\'t be lifted, so it stays on',
   nothingBuilding: 'No build work is in progress.',
+  noCourier: 'The courier couldn\'t run this time',
   stopNotPhone: 'Only a message from your phone or a press in the pane sets STOP here',
   notPane: 'Only a press in the pane counts as one',
   stopOn: 'STOP is on.',
@@ -96,6 +99,8 @@ const DEFAULTS = {
   digestText: defaultDigest,
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
+  readPaneStatus: defaultReadPaneStatus,
+  courierWake: defaultCourierWake,
   watchTick: defaultWatchTick,
   env: process.env,
 };
@@ -296,23 +301,60 @@ async function foremanTick(found, d) {
   return { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: strings(watched?.submit) ? watched.submit : [] };
 }
 
+// The courier's wake for this tick, or null (courier.js). `before` is the pane's model as last
+// kept, read before this tick's replaces it; presence and the quiet hours are the settings in
+// force. A courier that fails wakes for nothing this tick and says so in the pane; what it found
+// waits for the next tick.
+async function courier(found, before, pane, req, d) {
+  try {
+    const effective = d.readEffective({ project: found.project, now: d.now });
+    const { submit } = await d.courierWake({
+      project: found.project,
+      items: needsYou({ before, after: pane }),
+      presence: effective?.presence,
+      quiet: effective?.notifications?.value?.quiet,
+      idle: req.idle === true,
+      now: d.now,
+      timeZone: d.timeZone,
+      opening: sessionOpening(before, d.now),
+    });
+    return typeof submit === 'string' ? submit : null;
+  } catch {
+    pane.missing = [...pane.missing, SAYS.noCourier];
+    return null;
+  }
+}
+
+// The pane's model as last kept, or null.
+function lastPane(project, d) {
+  try {
+    return d.readPaneStatus(project);
+  } catch {
+    return null;
+  }
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
 // has a pane: its model is kept as status.json before the answer goes, with whether the
-// watcher runs (a Shape 1 watcher that has stopped is started again here). A Shape 2 foreman's
-// tick runs the watcher's loop. A feature session, a Shape 1 foreman and a folder outside a
-// project get an `every` of 0, which tells the mod to stop ticking. In the terminal, when
-// Wheelhouse's own status line is set, `status` is left out so the glance isn't shown twice.
+// watcher runs (a Shape 1 watcher that has stopped is started again here), and the courier's
+// wake, when it has one, is the answer's `submit`. A Shape 2 foreman's tick runs the watcher's
+// loop. A feature session, a Shape 1 foreman and a folder outside a project get an `every` of 0,
+// which tells the mod to stop ticking. In the terminal, when Wheelhouse's own status line is set,
+// `status` is left out so the glance isn't shown twice.
 async function tick(req, d) {
   const role = roleOf(req, d);
   const found = siteOf(req.cwd, d);
   if (found !== null && role === 'foreman') return foremanTick(found, d);
   if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
+  // The model as last kept, which the courier compares with, read before this tick replaces it.
+  const before = lastPane(found.project, d);
   // The watch runs beside the pane, so the two share the time the tick has.
   const watched = watching(found, role, clientOf(d), d);
   // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
   const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d) });
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
+  const submit = await courier(found, before, pane, req, d);
   try {
     d.writePaneStatus(found.project, pane);
   } catch {
@@ -320,6 +362,7 @@ async function tick(req, d) {
   }
   const answer = { ok: true, role, every: TICK_MS, pane, glance: pane.glance };
   if (!(req.surface === 'terminal' && ownStatusLine(found.record))) answer.status = pane.glance;
+  if (submit !== null) answer.submit = submit;
   return answer;
 }
 

@@ -86,7 +86,7 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
   assert.equal(first.note, null);
   assert.deepEqual(third.buttons.map((b) => [b.label, b.does]), [['Comma', 'record'], ['Tab', 'record'], ['Explain more', 'turn']]);
   // A question from the build that no card asks yet is one line and no buttons.
-  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null });
+  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the front desk will ask it');
 }));
 
@@ -102,6 +102,33 @@ test('the board\'s waiting items carry ids, and the pane numbers them as the boa
   assert.equal(cardNumbered(views, 3).id, 'card-answer');
   assert.equal(model.cards[2].id, 'card-answer');
   assert.equal(cardNumbered(views, 2), null);
+}));
+
+test('each card says whether it blocks, by the front desk\'s order, and the open incidents are listed', () => withHome(async (home) => {
+  const repo = register(home);
+  const plain = { kind: 'question', header: 'Question', options: ['Yes'], question: 'Plain?', level: 3 };
+  view('waiting', [
+    { id: 'c-plain', at: at(9), data: plain, asked: null },
+    { id: 'c-four', at: at(10), data: { ...plain, question: 'Level four?', level: 4 }, asked: null },
+    { id: 'c-incident', at: at(11), data: { ...plain, kind: 'lift-incident', question: 'End it?' }, asked: null },
+  ]);
+  view('work', {});
+  view('features', {});
+  view('questions', { 'q-export-csv-2': question('q-export-csv-2', at(12), 'Which encoding?') });
+  view('incidents', { open: [{ id: 'site-down', what: 'The site is down', at: at(8), fixes: [] }, { id: 'payments', what: 'x', at: at(9), fixes: [] }] });
+  const model = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(model.cards.map((c) => [c.id, c.blocking]), [['c-plain', false], ['c-four', true], ['c-incident', true], ['q:q-export-csv-2', false]]);
+  assert.deepEqual(model.incidents, ['site-down', 'payments']);
+
+  // No incidents view: none open. One that can't be read: none, and a line saying so.
+  fs.rmSync(path.join(viewsDir(), 'incidents.json'));
+  const none = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(none.incidents, []);
+  assert.ok(!none.missing.some((l) => l.includes('incidents')));
+  view('incidents', { open: 'not a list' });
+  const damaged = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(damaged.incidents, []);
+  assert.ok(damaged.missing.includes('The pane\'s list of open incidents couldn\'t be built'));
 }));
 
 test('a build-loop question no card asks yet is one line with no buttons', () => withHome(async (home) => {

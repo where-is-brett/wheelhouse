@@ -436,6 +436,37 @@ test('the front desk\'s tick gives the pane, the glance and the status line, and
   assert.equal('submit' in answer, false);
 }));
 
+test('the front desk\'s tick carries the courier\'s wake as submit, after the session\'s first tick marks what waits', () => withHome(async (home) => {
+  const repo = registered(home);
+  const waiting = (...ids) => {
+    const dir = path.join(home, 'projects', P, 'views');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'waiting.json'), JSON.stringify(ids.map((id, i) => ({
+      id, at: new Date(Date.UTC(2026, 9, 18, 9 + i)).toISOString(), data: { kind: 'question', header: 'Question', options: ['Yes'], question: `The words of ${id}?`, level: 3 }, asked: null,
+    }))));
+  };
+  const later = (ticks) => () => new Date(NOW.getTime() + ticks * TICK_MS);
+  waiting('c-old');
+  // The session's first tick finds card 1 already waiting: the visit asks it, so nothing wakes.
+  assert.equal('submit' in await handle(tickOf(repo, { idle: true }), live()), false);
+  waiting('c-old', 'c-new');
+  // A turn is running: the new card waits.
+  assert.equal('submit' in await handle(tickOf(repo, { idle: false }), live({ now: later(1) })), false);
+  const woken = await handle(tickOf(repo, { idle: true }), live({ now: later(2) }));
+  assert.equal(woken.submit, 'Wheelhouse courier: 1 new card (2). Ask any new cards now, once, then send Claude\'s notification in one line.');
+  assert.equal(JSON.parse(lineOf(woken)).submit, woken.submit);
+  assert.ok(!woken.submit.includes('words'));
+  // Once handed back, it isn't handed back again.
+  assert.equal('submit' in await handle(tickOf(repo, { idle: true }), live({ now: later(3) })), false);
+
+  // A courier that fails costs the wake, never the tick, and the pane says so.
+  waiting('c-old', 'c-new', 'c-third');
+  const failing = await handle(tickOf(repo, { idle: true }), live({ now: later(4), courierWake: async () => { throw new Error('x'); } }));
+  assert.equal(failing.ok, true);
+  assert.equal('submit' in failing, false);
+  assert.ok(failing.pane.missing.includes('The courier couldn\'t run this time'));
+}));
+
 test('the model is written to status.json before the tick answers', () => withHome(async (home) => {
   const repo = registered(home);
   assert.equal(readPaneStatus(P), null);

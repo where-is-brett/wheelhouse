@@ -20,12 +20,13 @@ import { localViews } from '../hooks/session-start.js';
 import { stopState } from '../lib/stop.js';
 import { listEvents } from '../state/events.js';
 import { CARD_HASH_CHARS, PANE_LINES } from '../lib/mod-numbers.js';
+import { importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { cardButtons, kindOf } from './buttons.js';
 
 const VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the front desk will ask it';
-// The views the pane reads: the glance's, and the reports and glossary.
-const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status'];
+// The views the pane reads: the glance's, the reports and glossary, and the open incidents.
+const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents'];
 const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
 const NO_INPUTS = 'The board\'s inputs couldn\'t be read this time';
 const NO_CLOCK = 'The pane\'s clock couldn\'t be read';
@@ -124,13 +125,16 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
   // The board's own numbering: a card is shown by the number the board and the front desk give it.
   const cards = part('cards', () => numberedWaiting(views, cardEvents).flatMap((item) => {
     if (item.card === undefined) {
-      return [{ id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null }];
+      return [{ id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: false }];
     }
-    const data = waiting.get(item.card)?.data;
+    const card = waiting.get(item.card);
+    const data = card?.data;
     if (!isRecord(data)) return [];
     const text = typeof data.question === 'string' ? data.question : typeof data.title === 'string' ? data.title : '';
     const { buttons, note } = cardButtons(data);
-    return [{ id: item.id, n: item.n, header: plain(data.header) || HEADERS[kindOf(data)], kind: kindOf(data), text, hash: hashOf(text), buttons, note }];
+    // Above level 3 in the front desk's own order: STOP or an incident, level 4, or holding up all work.
+    const blocking = importanceOf(card, views) > IMPORTANCE.LEVEL_3;
+    return [{ id: item.id, n: item.n, header: plain(data.header) || HEADERS[kindOf(data)], kind: kindOf(data), text, hash: hashOf(text), buttons, note, blocking }];
   }), []);
 
   const building = part('list of what is building', () => {
@@ -154,6 +158,13 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
     .map(([work]) => work)
     .sort(), []);
 
+  // The open incidents' ids, for the courier. No incidents view means none is open.
+  const incidents = part('list of open incidents', () => {
+    if (views?.incidents === undefined) return [];
+    if (!Array.isArray(views.incidents?.open)) throw new Error('unreadable');
+    return list(views.incidents.open).map((i) => i.id).filter((id) => typeof id === 'string' && id !== '');
+  }, []);
+
   return {
     v: VERSION,
     project,
@@ -165,6 +176,7 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
     health,
     usage: typeof usage === 'string' ? usage : null,
     finished,
+    incidents,
     watcher: null,
     missing: [...new Set(missing)],
   };
