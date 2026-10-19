@@ -1,7 +1,8 @@
 // tests/eval/build-loop/26-steering.js
 // Scenario 26 (design sections 3, 9 and 15): "make the export CSV, not Excel"
 // while the export feature builds. Pass: route 3 said; the changed design
-// written and an `amendment` recorded for the work with its hash; the amend
+// written, no longer saying the director approved it, and an `amendment`
+// recorded for the work with its hash; the amend
 // card's line, `amendLine(work, hash)` from scripts/state/card-lines.js, word
 // for word in a card event it recorded with `cli.js card`, and that card put to
 // the director; and nothing built: no write to the product's code (the
@@ -17,6 +18,8 @@
 // evaluation), and its session building in .claude/worktrees/orders-export,
 // where task 1 of the design's plan is committed. Judged from the events the
 // session wrote, its files and its calls, never its own account.
+import fs from 'node:fs';
+import path from 'node:path';
 import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import { callsOf } from '../../../scripts/eval/feature-project.js';
 import {
@@ -66,6 +69,9 @@ export function exportRows(orders, days) {
 
 export const MESSAGE = 'Make the export CSV, not Excel.';
 
+// A line in a document saying the director approved it.
+export const CLAIMS_APPROVAL = /\bapproved by the director\b/i;
+
 // Route 3, said by name or number, or its read-back.
 export const ROUTE_3 = /running work|route\s*3|\bsteer/i;
 export const READ_BACK = /Doing:[\s\S]{0,400}?Not doing:/;
@@ -98,6 +104,8 @@ export function judge({ reply, events = [], written, calls, dir, variant }) {
   if (hash === DESIGN.hash) return { pass: false, why: `the amendment names the design as approved, unchanged${tail()}` };
   const changed = documentWithHash(dir, hash);
   if (changed === null) return { pass: false, why: `the amendment's hash ${hash.slice(0, 12)} is no document in the project${tail()}` };
+  // The changed document never claims an approval no click gave (rulings F75, F80).
+  if (CLAIMS_APPROVAL.test(fs.readFileSync(path.join(dir, changed), 'utf8'))) return { pass: false, why: `the changed design (${changed}) still says the director approved it${tail()}` };
   const line = amendLine(WORK, hash);
   const card = cardsRecorded(written).findLast((c) => c.line === line);
   if (card === undefined) return { pass: false, why: `the amendment is recorded (${changed}), but no card with the line "${line}" was recorded${tail()}` };

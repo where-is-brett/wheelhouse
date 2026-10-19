@@ -30,6 +30,7 @@ import { locateSuperpowers } from './harness.js';
 import { plainEvent, standInViews, startStandInHelper } from './stand-in-helper.js';
 import { REPO_ROOT, callsOf, filesWritten } from './feature-project.js';
 import { assertUnderTmp } from '../../probes/lib/scratch.js';
+import { segments } from '../hooks/shell-words.js';
 
 export { briefHash };
 
@@ -80,25 +81,32 @@ export function seedEvent(kind, data, at) {
 export const PLAIN_PROMPT = 'You help the director, this project\'s product owner, with the project.';
 
 // The repository's files `entries` import, each import followed, relative to the repository:
-// what a copy of them needs to run.
+// what a copy of them needs to run. An import of a file the repository doesn't hold throws, so a
+// copy is never made without it.
 export function importClosure(entries, root = REPO_ROOT) {
   const found = new Set();
-  const todo = [...entries];
+  const todo = entries.map((file) => [file, null]);
   while (todo.length > 0) {
-    const file = todo.pop();
-    if (found.has(file) || !fs.existsSync(path.join(root, file))) continue;
+    const [file, from] = todo.pop();
+    if (found.has(file)) continue;
+    if (!fs.statSync(path.join(root, file), { throwIfNoEntry: false })?.isFile()) {
+      throw new Error(from === null ? `There is no ${file} to copy` : `${from} imports ${file}, which isn't in the repository`);
+    }
     found.add(file);
     const text = fs.readFileSync(path.join(root, file), 'utf8');
     for (const m of text.matchAll(/\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)) {
-      todo.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1] ?? m[2])));
+      todo.push([path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1] ?? m[2])), file]);
     }
   }
   return [...found].sort();
 }
 
-// What the scratch plugin holds of the repository's: the skills, the front desk's command with
-// what it imports, and the files read beside them (the glossary's starter).
+// What the scratch plugin holds of the repository's: the package file that makes its scripts
+// modules, as the real plugin's root does (without it a package file above the temporary folder
+// decides), the skills, the front desk's command with what it imports, and the files read beside
+// them (the glossary's starter).
 export const PLUGIN_FILES = [
+  'package.json',
   'skills/intake/SKILL.md',
   'skills/front-desk/SKILL.md',
   ...importClosure(['scripts/frontdesk/cli.js']),
@@ -219,18 +227,25 @@ const ASK = 'AskUserQuestion';
 
 // How a recorded card was put to the director, or null when it never was: an AskUserQuestion call
 // of the main session's holding its question as composed; else, since `claude -p` offers no
-// AskUserQuestion (Claude Code 2.1.302), the card in its reply (its set line, its first part, or
-// every one of its options by label), or a search for that tool.
+// AskUserQuestion (Claude Code 2.1.302), the card in its reply, in the card's own words: its set
+// line, its first part, or every one of its options by label together with its first part or what
+// the option it recommends says (ruling F83). A search for the tool alone is not asking.
 export function howAsked(events, card) {
   const calls = callsOf(events).filter((call) => !call.subagent);
   const questions = calls.filter((call) => call.name === ASK).flatMap((call) => (Array.isArray(call.input.questions) ? call.input.questions : []));
   if (questions.some((q) => q?.question === card.question)) return ASK;
   const reply = replyText(events);
-  const first = String(card.question ?? '').split('\n')[0];
+  // A text of the card's, without its closing stop, word for word in the reply.
+  const carries = (text) => {
+    const words = typeof text === 'string' ? text.trim().replace(/[.!?]$/, '') : '';
+    return words !== '' && reply.includes(words);
+  };
+  const what = String(card.question ?? '').split('\n')[0].replace(/^What this is: /, '');
   const labels = Array.isArray(card.options) ? card.options.filter((l) => typeof l === 'string') : [];
-  if ((typeof card.line === 'string' && reply.includes(card.line)) || (first !== '' && reply.includes(first.replace(/^What this is: /, '')))
-    || (labels.length > 0 && labels.every((l) => reply.includes(l)))) return 'in its reply';
-  if (calls.some((call) => call.name === 'ToolSearch' && new RegExp(ASK, 'i').test(String(call.input.query ?? '')))) return `a search for ${ASK}`;
+  const says = Array.isArray(card.descriptions) ? card.descriptions[labels.indexOf(card.recommend)] : undefined;
+  const decides = typeof says === 'string' ? says.replace(/^Recommended: /, '') : null;
+  if ((typeof card.line === 'string' && reply.includes(card.line)) || carries(what)
+    || (labels.length > 0 && labels.every((l) => reply.includes(l)) && carries(decides))) return 'in its reply';
   return null;
 }
 
@@ -296,8 +311,14 @@ export function codeReads(calls, dir) {
     if (call.name === 'Bash' && typeof call.input.command === 'string') {
       const command = call.input.command;
       if (/\b(?:cat|head|tail|less|grep|rg|sed\s+-n)\b/.test(command)) {
-        // A word that sets a shell variable (C=/path/cli.js) names a file by what follows the =.
-        for (const m of command.matchAll(/(?:^|[\s"'=])([^\s"'|;&<>=]+\.(?:[cm]?js|jsx|[cm]?ts|tsx))(?![\w.])/g)) if (isProductCode(m[1], dir)) read.push(m[1]);
+        // Each word as the shell joins it ("<plugin>/cards/"*.js is one word, outside the project).
+        // A word that sets a shell variable (C=/path/cli.js) names a file by what follows the =; a
+        // search's --include= or --exclude= names which files to search, not a file.
+        const parts = segments(command, false);
+        const named = parts === null
+          ? [...command.matchAll(/(?:^|[\s"'=])([^\s"'|;&<>=]+\.(?:[cm]?js|jsx|[cm]?ts|tsx))(?![\w.])/g)].map((m) => m[1])
+          : parts.flat().filter((word) => !/^--(?:include|exclude)=/.test(word)).map((word) => (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word) ? word.slice(word.indexOf('=') + 1) : word));
+        for (const file of named) if (CODE.test(file) && isProductCode(file, dir)) read.push(file);
       }
     }
   }

@@ -126,7 +126,7 @@ test('the stand-in helper answers what the real front desk command asks: shapes,
 
 test('with Wheelhouse, the scratch plugin holds the real front desk, its command reaches the stand-in, and the session start names the playbook', async () => {
   assert.ok(importClosure(['scripts/frontdesk/cli.js']).includes('scripts/cards/compose.js'), 'what the command imports');
-  for (const file of ['skills/intake/SKILL.md', 'skills/front-desk/SKILL.md', 'scripts/frontdesk/cli.js', 'templates/glossary.json']) assert.ok(PLUGIN_FILES.includes(file), file);
+  for (const file of ['package.json', 'skills/intake/SKILL.md', 'skills/front-desk/SKILL.md', 'scripts/frontdesk/cli.js', 'templates/glossary.json']) assert.ok(PLUGIN_FILES.includes(file), file);
   assert.ok(!PLUGIN_FILES.some((f) => /eval\//.test(f)), 'nothing of the evaluation\'s');
 
   const report = 'A 65-second clip shows as 1:5.\n';
@@ -198,6 +198,9 @@ test('the readers tell the product\'s code from the front desk\'s papers, and fi
     ['Write', { file_path: path.join(dir, 'docs/bugs/video-length.md'), content: 'x' }],
   ));
   assert.deepEqual(codeReads(calls, dir), [path.join(dir, 'duration.js'), 'duration.js', 'Grep *.js  formatDuration']);
+  // A search of the plugin's scripts filtered to code files reads no code of the product's.
+  assert.deepEqual(codeReads(callsOf(events(['Bash', { command: 'grep -rn "should not" "/elsewhere/plugin/scripts" --include=*.js | head' }])), dir), []);
+  assert.deepEqual(codeReads(callsOf(events(['Bash', { command: 'grep -rn total src --include="*.js" src/orders.js' }])), dir), ['src/orders.js']);
   assert.deepEqual(codeWrites(calls, dir), [path.join(dir, 'duration.js')]);
   const stream = events(['say', 'First.'], ['Bash', { command: 'ls' }, '', { parent: 'p1' }], ['say', 'Second.']);
   assert.equal(replyText(stream), 'First.\n\nSecond.');
@@ -254,15 +257,29 @@ test('a card is judged by its card event and how it was put to the director', ()
   assert.equal(howAsked(events(['AskUserQuestion', { questions: [{ ...question, question: 'Something else' }] }]), card), null, 'only the card as composed');
   assert.equal(howAsked(events(['say', `Here is the card.\n\n${card.line}`]), card), 'in its reply');
   assert.equal(howAsked(events(['say', 'Change export as written. Click below.']), card), 'in its reply', 'its first part counts');
-  assert.equal(howAsked(events(['say', 'In my words: **Change it**, **Not now**, **Explain more** or **Show me**.']), card), 'in its reply', 'every option by label counts');
+  // Every label counts only with the card's own words: what the option it recommends says (F83).
+  assert.equal(howAsked(events(['say', 'In my words: **Change it**: It goes ahead. Or, **Not now**, **Explain more** or **Show me**.']), card), 'in its reply');
+  assert.equal(howAsked(events(['say', 'Pick one: **Change it**, **Not now**, **Explain more** or **Show me**.']), card), null, 'the buttons alone say nothing of the change');
   assert.equal(howAsked(events(['say', 'Shall I change it? Not now is fine too.']), card), null, 'some of its labels are not the card');
-  assert.equal(howAsked(events(['ToolSearch', { query: 'select:AskUserQuestion' }]), card), 'a search for AskUserQuestion');
+  assert.equal(howAsked(events(['ToolSearch', { query: 'select:AskUserQuestion' }]), card), null, 'a search for the tool alone is not asking');
   assert.equal(howAsked(events(['say', 'Done.'], ['AskUserQuestion', { questions: [question] }, '', { parent: 'p1' }]), card), null, 'a subagent\'s call is not the session\'s');
+});
+
+test('importClosure follows the imports and refuses one it cannot find', () => {
+  const root = tempFolder('closure-');
+  write(root, 'a/main.js', "import { x } from './b.js';\nexport const y = () => import('../c.js');\n");
+  write(root, 'a/b.js', 'export const x = 1;\n');
+  write(root, 'c.js', "export * from './gone.js';\n");
+  assert.throws(() => importClosure(['a/main.js'], root), /c\.js imports gone\.js, which isn't in the repository/);
+  write(root, 'gone.js', 'export {};\n');
+  assert.deepEqual(importClosure(['a/main.js'], root), ['a/b.js', 'a/main.js', 'c.js', 'gone.js']);
+  assert.throws(() => importClosure(['none.js'], root), /There is no none\.js to copy/);
 });
 
 test('scenario 26 wants route 3, the amendment with its card recorded and asked, and nothing built', () => {
   const dir = tempFolder('scenario-26-');
-  const changed = DESIGN_26.text.replace('An Excel workbook (`.xlsx`), one sheet per day', 'A CSV file');
+  const changed = DESIGN_26.text.replace('An Excel workbook (`.xlsx`), one sheet per day', 'A CSV file')
+    .replace('**Approved by the director on 15 October 2026.**', '**Changed since the director\'s approval; the change card decides it.**');
   write(dir, DESIGN_26.path, changed);
   const hash = briefHash(changed);
   const line = amendLine(WORK_26, hash);
@@ -279,6 +296,11 @@ test('scenario 26 wants route 3, the amendment with its card recorded and asked,
   assert.match(judge26({ reply, events: stream, written: [amendment, stale], calls: [], dir, variant: 'with' }).why, new RegExp(`no card with the line "${line}" was recorded`));
   assert.match(judge26({ reply: `${reply}\n\n${line}`, written: [amendment], calls: [], dir, variant: 'with' }).why, /no card with the line/, 'a line written in the reply is no card');
   assert.match(judge26({ reply, events: events(['say', 'Done.']), written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /recorded, but never put to the director/);
+  // A changed design that still says the director approved it fails (F75, F80).
+  const claiming = DESIGN_26.text.replace('An Excel workbook (`.xlsx`), one sheet per day', 'A CSV file, one per day');
+  write(dir, 'docs/designs/claiming.md', claiming);
+  const claimed = written('amendment', { work: WORK_26, change: 'CSV', hash: briefHash(claiming) });
+  assert.match(judge26({ reply, events: stream, written: [claimed], calls: [], dir, variant: 'with' }).why, /the changed design \(docs\/designs\/claiming\.md\) still says the director approved it/);
   // An amendment naming the approved design, or no document, fails.
   assert.match(judge26({ reply, written: [written('amendment', { work: WORK_26, change: 'x', hash: DESIGN_26.hash })], calls: [], dir, variant: 'with' }).why, /names the design as approved, unchanged/);
   assert.match(judge26({ reply, written: [written('amendment', { work: WORK_26, change: 'x', hash: 'c'.repeat(64) })], calls: [], dir, variant: 'with' }).why, /is no document in the project/);
