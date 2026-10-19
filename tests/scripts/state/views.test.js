@@ -744,6 +744,23 @@ test('Not now, Explain more and Show me keep a card waiting, marked asked', asyn
   });
 });
 
+test('a card a visit handed out is marked asked until a later answer says more', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const other = ev('card', 2, cardData('Pick a shape', { kind: 'question', options: ['Round', 'Square'] }));
+    const handed = (n, cards) => ev('asked', n, { cards });
+    // Shown and dismissed: no answer, but it isn't offered again.
+    const v = build([card, other, handed(3, [card.id])]);
+    assert.deepEqual(v.waiting.map((c) => [c.id, c.asked]), [[card.id, { at: T(3), label: null }], [other.id, null]]);
+    // An answer after it is what the card is marked with; an asked record after the answer marks it again.
+    const answered = ev('card-answer', 4, { card: card.id, label: 'Explain more' });
+    assert.deepEqual(build([card, handed(3, [card.id]), answered]).waiting[0].asked, { at: T(4), label: 'Explain more' });
+    assert.deepEqual(build([card, answered, handed(5, [card.id, other.id])]).waiting[0].asked, { at: T(5), label: null });
+    // It never closes a card, and an answer that decides still does.
+    assert.deepEqual(build([card, handed(3, [card.id]), ev('card-answer', 4, { card: card.id, label: 'Approve' })]).waiting, []);
+  });
+});
+
 test('an option that decides closes the card, even after it was asked about', async () => {
   await withHome(() => {
     const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));

@@ -54,7 +54,7 @@ export function importanceOf(card, views) {
 
 // The card as AskUserQuestion takes it. A card written before cards kept their button words
 // shows each button's label in their place.
-function asQuestion(card) {
+export function asQuestion(card) {
   const { question, header, options, descriptions } = card.data;
   return {
     question,

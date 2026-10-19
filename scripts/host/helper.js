@@ -483,6 +483,11 @@ function placeFolder(cwd) {
 // director's approval of the restore pull request can still be read and kept.
 const FALL_BACK_ROUTES = ['/pr/state', '/state/record'];
 
+// The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
+// ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
+// helper places the project from it.
+const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state'];
+
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
 
@@ -1771,7 +1776,13 @@ export async function startHelper({
     '/state/sync': stateRoute(async ({ project }, ctx) => ({
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
-    '/state/views': stateRoute(async ({ project }) => ({ ok: true, views: await writeViews(project, { now }) })),
+    // With `cards`, the card events too, every one the state holds: the board numbers its list
+    // from them, and the front desk's `again <n>` must find the board's card n.
+    '/state/views': stateRoute(async ({ project, cards }) => ({
+      ok: true,
+      views: await writeViews(project, { now }),
+      ...(cards === true ? { cards: listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card') } : {}),
+    })),
     // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
     '/state/answer': stateRoute(async ({ project, questionId }) => {
       if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
@@ -1873,9 +1884,9 @@ export async function startHelper({
     let ctx = null;
     try {
       const runbookRoute = url.pathname.startsWith('/runbook/');
-      // runbook.js runs inside the sandbox, which cannot read ~/.wheelhouse: it sends its folder,
-      // and the project is placed here.
-      if (runbookRoute && body.cwd !== undefined) body = { ...body, project: placeFolder(body.cwd) };
+      // runbook.js and the front desk run inside the sandbox, which cannot read ~/.wheelhouse: they
+      // send their folder, and the project is placed here.
+      if ((runbookRoute || PLACED_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = { ...body, project: placeFolder(body.cwd) };
       // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
       if (NEEDS_PROFILE.includes(url.pathname) && profileRemote() === null) return send(res, 200, PROFILE_NOT_SET_UP);
       if (url.pathname.startsWith('/profile/')) {

@@ -1,7 +1,7 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
-// only reading, reporting, the runbook, and the foreman's reading and closing
-// of a wake through. On SessionEnd it clears the
+// only reading, reporting, the runbook, the foreman's reading and closing of a
+// wake, and the front desk's reading commands through. On SessionEnd it clears the
 // session's bypass marker and says nothing.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -53,6 +53,28 @@ function isFeatureRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/feature/cli.js');
   if (args === null) return false;
   return (args.length === 1 && args[0] === 'report') || (args.length === 2 && args[0] === 'answer' && QUESTION_ID.test(args[1]));
+}
+
+// The front desk's commands that only read (scripts/frontdesk/cli.js), by their exact words:
+// `cards`, `similar`, `again <n>`, `views <name>`, `explain <term>` (one to four words of letters
+// and digits, a word's parts joined by hyphens) and `preview <pull request>`. `cards` records which cards it
+// handed out, and under STOP the helper refuses that write, so the cards are still given. `card`
+// and `record` write, so they stay refused, as does every other form.
+const VIEW_NAMES = ['rulebook', 'waiting', 'ideas', 'glossary', 'settings'];
+const COUNT = /^[1-9][0-9]{0,8}$/;
+const TERM = /^[\p{L}\p{N}]+(?:[ -][\p{L}\p{N}]+)*$/u;
+function isFrontDeskRead(command, pluginRoots, platform) {
+  const args = scriptArguments(command, pluginRoots, platform, 'scripts/frontdesk/cli.js');
+  if (args === null || args.length === 0) return false;
+  const [name, ...rest] = args;
+  if (name === 'cards' || name === 'similar') return rest.length === 0;
+  if (name === 'again' || name === 'preview') return rest.length === 1 && COUNT.test(rest[0]);
+  if (name === 'views') return rest.length === 1 && VIEW_NAMES.includes(rest[0]);
+  if (name === 'explain') {
+    const term = rest.join(' ');
+    return rest.length > 0 && TERM.test(term) && term.split(' ').length <= 4;
+  }
+  return false;
 }
 
 // A wake file as the foreman is told it: one word naming a .json file, never a flag.
@@ -120,7 +142,8 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   if (input.tool_name === 'Bash') {
     const roots = runbookRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;
-    if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform) || isWakeRead(command, roots, platform)) return undefined;
+    if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform) || isWakeRead(command, roots, platform)
+      || isFrontDeskRead(command, roots, platform)) return undefined;
   }
   return answer.deny(DENIED);
 }

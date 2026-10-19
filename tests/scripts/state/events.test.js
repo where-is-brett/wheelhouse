@@ -529,3 +529,20 @@ test('a reversal is accepted as a plain kind', async () => {
     bad({ topic: 'x', what: 'x', extra: 1 });
   });
 });
+
+test('an asked record names the cards a visit handed out, one to four of them', async () => {
+  await withHome(() => {
+    assert.ok(PLAIN_KINDS.includes('asked'));
+    const made = makeEvent({ kind: 'asked', data: { cards: ['c1', 'c2'] }, now: at(1) });
+    assert.equal(made.sig, undefined);
+    const bad = (data) => assert.throws(() => makeEvent({ kind: 'asked', data }), /asked event/, JSON.stringify(data));
+    bad(undefined);
+    bad({});
+    bad({ cards: [] });
+    bad({ cards: 'c1' });
+    bad({ cards: ['c1', ''] });
+    bad({ cards: ['c1', 2] });
+    bad({ cards: ['a', 'b', 'c', 'd', 'e'] });
+    bad({ cards: ['c1'], label: 'Approve' });
+  });
+});

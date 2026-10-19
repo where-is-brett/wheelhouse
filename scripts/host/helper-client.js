@@ -50,7 +50,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     openPr: post('/pr/open'), //     { project, head, base?, title, body, session? }: no base means the default branch
     updatePr: post('/pr/update'), // { project, number, title?, body? }
     updateBranch: post('/pr/update-branch'), // { project, number }: brings the branch up to date with the default branch (the route comes with the gate's update, Task 21)
-    prState: post('/pr/state'), //   { project, number }
+    prState: post('/pr/state'), //   { project, number } (or `cwd` for `project`, as the runbook's)
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project } -> { ok, config }: the default branch's, read-only, answered under STOP
@@ -60,10 +60,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? }
     state: {
       clone: post('/state/clone'), //   { project }
-      write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold)
+      write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
       record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
-      views: post('/state/views'), //   { project } -> { ok, views }
+      views: post('/state/views'), //   { project, cards? } -> { ok, views, cards? }: with cards: true, the card events too; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
     },

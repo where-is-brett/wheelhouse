@@ -15,7 +15,7 @@ import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
-  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal',
+  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -103,6 +103,8 @@ const PLAIN_SHAPES = {
   card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'importance', 'topic', 'concepts'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
+  // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
+  asked: { must: ['cards'], may: [] },
 };
 
 function checkPlain(kind, data) {
@@ -180,6 +182,10 @@ function checkPlain(kind, data) {
     text('topic');
     text('what');
     optionalText('of');
+  } else if (kind === 'asked') {
+    if (!Array.isArray(data.cards) || data.cards.length === 0 || data.cards.length > CARD.questions || !data.cards.every(isText)) {
+      bad(`needs cards to be a list of one to ${CARD.questions} card ids`);
+    }
   }
 }
 

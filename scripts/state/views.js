@@ -212,7 +212,9 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // Two cards asking the same question both close on one answer. A card closes on an answer whose
   // label is one of its options other than Not now, Explain more and Show me, or on a verified
   // signed record after it that carries its question or confirms the event its confirm line names.
-  // Any other answer leaves it waiting, and the latest of them is what `asked` marks. A card
+  // Any other answer leaves it waiting, and the latest of them is what `asked` marks, unless an
+  // `asked` record naming the card came after it: a visit handed the card out, and it may have been
+  // dismissed with no answer at all, so `asked` is then that record's time with no label. A card
   // written before cards carried options has none to check, so any label but those three decides it.
   const answers = sorted.filter((e) => e.kind === 'card-answer');
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
@@ -227,12 +229,16 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     const named = confirmNamed(typeof card.data?.line === 'string' ? card.data.line : question);
     return confirmedAfter(card, named);
   };
+  const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const waiting = [];
   for (const card of sorted.filter((e) => e.kind === 'card')) {
     const mine = answersTo(card);
     if (mine.some((a) => decides(card, a.data?.label)) || closedBySigned(card)) continue;
     const last = mine.at(-1);
-    waiting.push({ id: card.id, at: card.at, data: card.data, asked: last ? { at: last.at, label: last.data?.label ?? null } : null });
+    const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
+    const asked = shown && (!last || byOrder(last, shown) < 0) ? { at: shown.at, label: null }
+      : last ? { at: last.at, label: last.data?.label ?? null } : null;
+    waiting.push({ id: card.id, at: card.at, data: card.data, asked });
   }
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
