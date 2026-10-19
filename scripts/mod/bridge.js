@@ -15,6 +15,8 @@
 //   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
+//   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
+//   { cmd: 'setting', origin, cwd, key, choice }    a choice in the settings pane: sets it and confirms it
 //   { cmd: 'go', origin, cwd }                      /go or the pane: lifts STOP with a signed record
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
 //
@@ -24,6 +26,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { replyRecord as defaultReply } from './reply.js';
 import { pressCard as defaultPress } from './press.js';
+import { settingsRows as defaultRows, pressSetting as defaultSetting, effectiveFor as defaultEffective, ADVANCED } from './settings-pane.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { projectOf as defaultProjectOf, readSmallText } from '../hooks/kit.js';
@@ -76,6 +79,11 @@ const DEFAULTS = {
   featureSlug: defaultFeatureSlug,
   replyRecord: defaultReply,
   pressCard: defaultPress,
+  settingsRows: defaultRows,
+  pressSetting: defaultSetting,
+  readEffective: defaultEffective,
+  // The bridge's own time zone, which the pane's times are worked out in.
+  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   loadInputs: loadBoardInputs,
   stopState: defaultStopState,
   setStop: defaultSetStop,
@@ -170,6 +178,26 @@ async function press(req, d) {
   return answer;
 }
 
+// The settings pane's rows, from the settings views on disk and the profile's: the settings in
+// force, with each row's choices as they are offered now. A project's Locked mark is passed when
+// the project says it.
+async function settings(req, d) {
+  const found = siteOf(req.cwd, d);
+  if (found === null) return no(SAYS.notProject);
+  const effective = d.readEffective({ project: found.project, now: d.now });
+  return { ok: true, rows: d.settingsRows({ effective, now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined }), text: ADVANCED };
+}
+
+// A choice in the settings pane, from the pane alone: the setting is written and the director's
+// confirmation of it signed, as a Confirm click on its card would (settings-pane.js).
+async function setting(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: HELPER_MS });
+  return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
+}
+
 // /go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
 // record's own path, and STOP is lifted only once it is. A record that can't be signed or kept
 // leaves STOP on.
@@ -259,7 +287,7 @@ async function tick(req, d) {
   return answer;
 }
 
-const COMMANDS = { usage, reply, press, go, stop, tick };
+const COMMANDS = { usage, reply, press, settings, setting, go, stop, tick };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {
