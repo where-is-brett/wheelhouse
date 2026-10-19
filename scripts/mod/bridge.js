@@ -8,20 +8,22 @@
 // an agent, it can't read the key, so it signs nothing and says so.
 //
 // Nothing in a request is trusted beyond its `origin`, which the mod takes from Claude Code.
-// Only `composer` (typed) and `bridge` (phoned) are the director's; `sdk`, `peer` and every
-// other origin never count.
+// Only `composer` (typed) and `bridge` (phoned) are the director's messages, and `pane` is the
+// director's press on the pane; `sdk`, `peer` and every other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
 //   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
-//   { cmd: 'go', origin, cwd }                      /go: lifts STOP with a signed record
-//   { cmd: 'stop', origin, cwd }                    a phoned "stop": sets STOP
+//   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
+//   { cmd: 'go', origin, cwd }                      /go or the pane: lifts STOP with a signed record
+//   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
 //
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { replyRecord as defaultReply } from './reply.js';
+import { pressCard as defaultPress } from './press.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { projectOf as defaultProjectOf, readSmallText } from '../hooks/kit.js';
@@ -42,6 +44,8 @@ export const BRIDGE_MS = 5000;
 export const HELPER_MS = 3000;
 export const MAX_REQUEST_BYTES = 64 * 1024;
 const DIRECTOR = ['composer', 'bridge'];
+// The director's press on the pane.
+const PANE = 'pane';
 
 export const SAYS = {
   unreadable: 'Wheelhouse couldn\'t read that request',
@@ -57,7 +61,8 @@ export const SAYS = {
   cantSign: 'Wheelhouse couldn\'t sign that here, so STOP stays on',
   cantLift: 'STOP couldn\'t be lifted, so it stays on',
   nothingBuilding: 'No build work is in progress.',
-  stopNotPhone: 'Only a message from your phone sets STOP here',
+  stopNotPhone: 'Only a message from your phone or a press in the pane sets STOP here',
+  notPane: 'Only a press in the pane counts as one',
   stopOn: 'STOP is on.',
 };
 
@@ -70,6 +75,7 @@ const DEFAULTS = {
   projectOf: defaultProjectOf,
   featureSlug: defaultFeatureSlug,
   replyRecord: defaultReply,
+  pressCard: defaultPress,
   loadInputs: loadBoardInputs,
   stopState: defaultStopState,
   setStop: defaultSetStop,
@@ -148,10 +154,27 @@ async function inProgress(cwd, d) {
   }
 }
 
-// /go: the signed lift-stop action is kept first, by the prompt record's own path, and STOP is
-// lifted only once it is. A record that can't be signed or kept leaves STOP on.
+// A press on a card in the pane, from the pane alone: it records what a click on the same
+// button of the same card would (press.js). A press that only hands the front desk its prompt,
+// under STOP, is still ok, so the mod submits the prompt.
+async function press(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  const { made, says, submit } = await d.pressCard({
+    project, card: req.card, hash: req.hash, label: req.label, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: HELPER_MS,
+  });
+  const answer = { ok: made === true || strings(submit) };
+  if (typeof says === 'string') answer.says = says;
+  if (strings(submit)) answer.submit = submit;
+  return answer;
+}
+
+// /go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
+// record's own path, and STOP is lifted only once it is. A record that can't be signed or kept
+// leaves STOP on.
 async function go(req, d) {
-  if (!fromDirector(req.origin)) return no(SAYS.goNotDirector);
+  if (!fromDirector(req.origin) && req.origin !== PANE) return no(SAYS.goNotDirector);
   if (!(await d.stopState()).on) return { ok: true, says: SAYS.stopOff };
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.goNotProject);
@@ -171,9 +194,9 @@ async function go(req, d) {
   return { ok: true, says: `STOP is off. ${await inProgress(req.cwd, d)}` };
 }
 
-// A typed "stop" is the stop-word hook's; only a phoned one sets STOP here.
+// A typed "stop" is the stop-word hook's; a phoned one or STOP on the pane sets it here.
 async function stop(req, d) {
-  if (req.origin !== 'bridge') return no(SAYS.stopNotPhone);
+  if (req.origin !== 'bridge' && req.origin !== PANE) return no(SAYS.stopNotPhone);
   d.setStop({ by: 'mod', now: d.now });
   return { ok: true, says: SAYS.stopOn };
 }
@@ -236,7 +259,7 @@ async function tick(req, d) {
   return answer;
 }
 
-const COMMANDS = { usage, reply, go, stop, tick };
+const COMMANDS = { usage, reply, press, go, stop, tick };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {

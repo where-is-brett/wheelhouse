@@ -7,14 +7,16 @@ import { Readable } from 'node:stream';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELPER_MS } from '../../../scripts/mod/bridge.js';
-import { readPaneStatus } from '../../../scripts/mod/status.js';
+import { readPaneStatus, hashOf } from '../../../scripts/mod/status.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
-import { keysDir, usageDir } from '../../../scripts/lib/paths.js';
+import { keysDir, usageDir, stateDir } from '../../../scripts/lib/paths.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -216,11 +218,86 @@ test('/go from any other origin leaves STOP on', () => withHome(async () => {
 test('stop from the phone sets STOP by the mod', () => withHome(async () => {
   for (const origin of ['composer', 'sdk', 'peer', undefined]) {
     const answer = await handle({ cmd: 'stop', origin, cwd: '/work' }, deps());
-    assert.deepEqual(answer, { ok: false, says: 'Only a message from your phone sets STOP here' });
+    assert.deepEqual(answer, { ok: false, says: 'Only a message from your phone or a press in the pane sets STOP here' });
     assert.equal(stopState().on, false);
   }
   assert.deepEqual(await handle({ cmd: 'stop', origin: 'bridge', cwd: '/work' }, deps()), { ok: true, says: 'STOP is on.' });
   assert.deepEqual(stopState(), { on: true, by: 'mod', at: NOW.toISOString() });
+}));
+
+test('press is refused for any origin but pane; stop and go accept pane', () => withHome(async () => {
+  enrolKey();
+  const calls = [];
+  const pressCard = async (args) => {
+    calls.push(args);
+    return { made: true, says: 'Recorded: Explain more on card 2', submit: ['Wheelhouse pane: the director pressed Explain more on card 2.'] };
+  };
+  const client = fakeClient();
+  const request = { cmd: 'press', cwd: '/work', card: 'card-1', hash: 'abcdef123456', label: 'Explain more' };
+  for (const origin of ['composer', 'bridge', 'sdk', 'peer', 'Pane', '', undefined, ['pane']]) {
+    const answer = await handle({ ...request, origin }, deps({ pressCard, client }));
+    assert.deepEqual(answer, { ok: false, says: 'Only a press in the pane counts as one' });
+  }
+  assert.equal(calls.length, 0);
+  const answer = await handle({ ...request, origin: 'pane' }, deps({ pressCard, client }));
+  assert.deepEqual(answer, { ok: true, says: 'Recorded: Explain more on card 2', submit: ['Wheelhouse pane: the director pressed Explain more on card 2.'] });
+  assert.equal(JSON.parse(lineOf(answer)).submit[0], 'Wheelhouse pane: the director pressed Explain more on card 2.');
+  assert.equal(calls.length, 1);
+  assert.deepEqual([calls[0].project, calls[0].card, calls[0].hash, calls[0].label, calls[0].client], [P, 'card-1', 'abcdef123456', 'Explain more', client]);
+  // Outside a project, nothing is pressed.
+  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ pressCard, client, projectOf: () => null })), { ok: false, says: 'This isn\'t a Wheelhouse project' });
+  assert.equal(calls.length, 1);
+  // A press that records nothing is not ok; one that only gives its prompt is.
+  const refused = async () => ({ made: false, says: 'That card has already been answered' });
+  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ pressCard: refused })), { ok: false, says: 'That card has already been answered' });
+  const prompt = async () => ({ made: false, says: 'STOP is on', submit: ['Wheelhouse pane: x'] });
+  assert.equal((await handle({ ...request, origin: 'pane' }, deps({ pressCard: prompt }))).ok, true);
+
+  // The pane sets STOP, and lifts it with a signed record, answering what is in progress.
+  assert.deepEqual(await handle({ cmd: 'stop', origin: 'pane', cwd: '/work' }, deps()), { ok: true, says: 'STOP is on.' });
+  assert.deepEqual(stopState(), { on: true, by: 'mod', at: NOW.toISOString() });
+  const go = await handle({ cmd: 'go', origin: 'pane', cwd: '/work' }, deps({ client, loadInputs: building(1) }));
+  assert.deepEqual(go, { ok: true, says: 'STOP is off. In progress: 1 feature building.' });
+  assert.equal(stopState().on, false);
+  assert.equal(client.calls.record.length, 1);
+  assert.equal(client.calls.record[0].event.data.action, 'lift-stop');
+  assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
+}));
+
+test('run where the signing key cannot be read, a press signs nothing and says so', () => withHome(async () => {
+  const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
+  const data = composeCard({
+    why: 'It changes what users see, which is yours to decide at level 3.', because: 'the checks passed and the change is small.',
+    meanwhile: 'Nothing is released and the agents carry on with other work.', level: 3, kind: 'approval', recommend: 'Approve',
+    what: 'Pull request #13 changes the wording on the sign-in page.', options: [{ label: 'Approve', says: 'It goes ahead.' }], target: { pr: 13, sha: FULL },
+  }).card;
+  // A card is a plain event, written without the key.
+  const card = makeEvent({ kind: 'card', data, now: () => NOW });
+  const file = path.join(stateDir(P), eventPath(card));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(card));
+  const check = async () => {
+    const client = { ...fakeClient(), prState: async () => ({ ok: true, result: { headSha: FULL, state: 'open' } }) };
+    const answer = await handle({ cmd: 'press', origin: 'pane', cwd: '/work', card: card.id, hash: hashOf(data.question), label: 'Approve' }, deps({ client }));
+    assert.deepEqual(answer, { ok: false, says: 'Wheelhouse couldn\'t sign that here, so nothing was recorded' });
+    assert.deepEqual(pendingFiles(), []);
+    assert.equal(client.calls.record.length + client.calls.write.length, 0);
+    // The card was let go: nothing claims it.
+    assert.equal(fs.existsSync(path.join(stateDir(P), '..', 'replied', card.id)), false);
+  };
+  // No key at all.
+  await check();
+  // A key this process isn't allowed to read, as inside the sandbox.
+  if (unix && process.getuid?.() !== 0) {
+    enrolKey();
+    const key = path.join(keysDir(), 'signing.pem');
+    fs.chmodSync(key, 0o000);
+    try {
+      await check();
+    } finally {
+      fs.chmodSync(key, 0o600);
+    }
+  }
 }));
 
 test('a request it cannot read answers ok false and exits 0', () => withHome(async (home) => {

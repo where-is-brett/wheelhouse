@@ -46,7 +46,7 @@ export function parseReply(text) {
 }
 
 // The record a reply earned, in plain words.
-function recordedAs(made, question) {
+export function recordedAs(made, question) {
   const data = made.data ?? {};
   if (made.kind === 'approval') return `Approve pull request #${data.pr}`;
   if (made.kind === 'confirmation') {
@@ -76,7 +76,7 @@ function shownNow(project, now) {
 
 // Whether a signed record kept in pending/, not yet taken by the helper, answers the card: it
 // carries the card's question, or confirms the event the card's confirm line names.
-function answeredInPending(project, question) {
+export function answeredInPending(project, question) {
   const named = /^Confirm [a-z-]+ (\S+): "/m.exec(question)?.[1];
   let names;
   try {
@@ -96,10 +96,13 @@ function answeredInPending(project, question) {
   });
 }
 
-// Claims the card for this reply: the marker's path when this reply made it, null when
-// another reply made it first.
-function claim(project, id) {
-  const folder = path.join(stateDir(project), '..', 'replied');
+// The folder of the markers that claim a card: projects/<project>/replied/.
+export const repliedDir = (project) => path.join(stateDir(project), '..', 'replied');
+
+// Claims the card for this reply or press: the marker's path when this one made it, null when
+// another made it first. A press on the pane claims its card in the same folder.
+export function claim(project, id) {
+  const folder = repliedDir(project);
   fs.mkdirSync(folder, { recursive: true });
   const file = path.join(folder, id);
   try {
