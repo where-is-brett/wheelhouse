@@ -174,14 +174,16 @@ test('the playbook decides a level 2 question itself, and puts the review before
   assert.match(playbook, /One call per visit/);
 });
 
-test('the intake writes a changed approved document in place and marks it as waiting for the click, never as approved (F75)', () => {
+test('the intake writes a changed approved document in place and marks it as changed since the approval, never as approved (F75, F80)', () => {
   const rule = intake.split('\n').find((line) => line.includes('**A change to what an approved brief or design builds')) ?? '';
   assert.match(rule, /in place, in the one file the work names/);
   assert.match(rule, /approval line/);
-  assert.match(rule, /changed since the director's approval and waits for their click on the change card/);
+  // The line stays true after the click, since the amendment's hash pins its text (ruling F80).
+  assert.ok(rule.includes('"Changed since the director\'s approval; the change card decides it."'), 'the timeless line');
+  assert.doesNotMatch(rule, /waits for/);
   assert.match(rule, /stays in git at the hash the approval names/);
   assert.match(rule, /`cli\.js record amendment` \(the work, the change, the changed document's hash\)/);
   assert.match(rule, /`amend` card/);
   // The red flags say the same.
-  assert.match(intake, /\n\| "[^"\n]*approval line[^"\n]*" \| [^\n]*waits for the director's click[^\n]*\|\n/);
+  assert.match(intake, /\n\| "[^"\n]*approval line[^"\n]*" \| Replace it: "Changed since the director's approval; the change card decides it\." \|\n/);
 });
