@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, claudeCodeSettings, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
@@ -45,6 +45,13 @@ test('the project settings keep agents out of their own settings and hooks', () 
   for (const p of ['./.claude/settings.json', './.claude/settings.local.json', './.claude/hooks']) {
     assert.ok(s.sandbox.filesystem.denyWrite.includes(p), p);
   }
+});
+
+test('the project settings switch off commit and pull request attribution', () => {
+  const s = projectSettings(config);
+  assert.deepEqual(s.attribution, { commit: '', pr: '', sessionUrl: false });
+  assert.equal(s.includeCoAuthoredBy, false);
+  assert.deepEqual({ attribution: s.attribution, includeCoAuthoredBy: s.includeCoAuthoredBy }, ATTRIBUTION_OFF);
 });
 
 test('the project settings name no user\'s folder', () => {

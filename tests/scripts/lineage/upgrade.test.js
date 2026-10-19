@@ -9,7 +9,7 @@ import { run } from '../../../scripts/lib/run.js';
 import { buildManifest } from '../../../scripts/lineage/manifest.js';
 import { fingerprintFile } from '../../../scripts/lineage/fingerprint.js';
 import {
-  describePlan, isLicenceFile, land, nextRegisterVersion, parseTo, planFromPins, planUpgrade, resolvePins, resolveTag, upgradeDue,
+  describePlan, isLicenceFile, land, nextRegisterVersion, parseTo, planFromPins, planUpgrade, resolvePins, resolveTag, upgradeDue, UpgradeStopped,
 } from '../../../scripts/lineage/upgrade.js';
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -338,7 +338,16 @@ test('land refuses a stopped upgrade and leaves the repository as it was', async
   const { root } = await wheelhouseRepo();
   const head = await g(root, 'rev-parse', 'HEAD');
   const broken = { 'skills/writing-plans/SKILL.md': 'show it to the user\n' };
-  await assert.rejects(land({ root, pins: PINS, fetchTo: fetchCopy(broken) }), /stopped/);
+  // The refusal names the broken override and its anchor, and carries the plan for the command to say.
+  await assert.rejects(land({ root, pins: PINS, fetchTo: fetchCopy(broken) }), (error) => {
+    assert.ok(error instanceof UpgradeStopped);
+    assert.equal(error.message, 'the upgrade is stopped, so nothing lands: anchor gone: nothing-waits: skills/writing-plans/SKILL.md: '
+      + 'link it for your human partner. Rewrite or drop the broken override first');
+    assert.equal(error.plan.kind, 'stopped');
+    assert.deepEqual(error.pins, PINS);
+    assert.ok(describePlan({ plan: error.plan, pins: error.pins }).includes('anchor gone: nothing-waits: skills/writing-plans/SKILL.md: link it for your human partner'));
+    return true;
+  });
   assert.equal(await g(root, 'rev-parse', 'HEAD'), head);
   assert.equal(await g(root, 'branch', '--list', 'upgrade/*'), '');
   assert.equal(await g(root, 'status', '--porcelain'), '');

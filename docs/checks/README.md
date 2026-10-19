@@ -2,7 +2,7 @@
 
 # Design checks
 
-The answers to the checks in section 20 of the design, one note per check.
+The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run: it was needed only for the watcher's fallback, and Shape 1 was taken on check 27's Mac half.
 
 | # | Check | Answer | Note |
 |---|---|---|---|
@@ -32,6 +32,7 @@ The answers to the checks in section 20 of the design, one note per check.
 | 24 | Pinning through Wheelhouse's marketplace | Yes | [24-pinning.md](24-pinning.md) |
 | 27 | Starting and waking sessions from a script | Deferred | [27-sessions.md](27-sessions.md) |
 | 25 | The override wins | Yes, for Superpowers' hand-offs | [25-override.md](25-override.md) |
+| 26 | Plugin monitors | Not run: Shape 1 was taken | None |
 | 28 | Claude Code's update settings in Desktop | Deferred | [28-update-channel.md](28-update-channel.md) |
 | 29 | The hold | Partly | [29-hold.md](29-hold.md) |
 | 30 | The undo | Partly | [30-undo.md](30-undo.md) |

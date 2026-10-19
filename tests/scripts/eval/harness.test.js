@@ -104,7 +104,7 @@ function fakeClaude(folder, { helpFlags, exitCode = 0 } = {}) {
 import fs from 'node:fs';
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
+  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources', '--append-system-prompt']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
   process.exit(0);
 }
 fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), marker: process.env.EVAL_MARKER ?? null }));
@@ -163,7 +163,36 @@ test('runSession leaves out --model when none is given, and reports a non-zero e
   });
   assert.ok(!fake.record().args.includes('--model'));
   assert.ok(!fake.record().args.includes('--plugin-dir'));
+  assert.ok(!fake.record().args.includes('--append-system-prompt'));
   assert.equal(result.exitCode, 3);
+});
+
+test('runSession appends to the system prompt when asked, and checks claude knows the flag', async () => {
+  const folder = tempFolder();
+  const fake = fakeClaude(folder);
+  await runSession({
+    dir: tempFolder('harness-session-'),
+    prompt: 'x',
+    pluginDirs: [],
+    permissionMode: 'dontAsk',
+    maxTurns: 1,
+    appendSystemPrompt: 'You are the front desk.',
+    command: fake.command,
+    commandArgs: fake.commandArgs,
+  });
+  const { args } = fake.record();
+  assert.equal(args[args.indexOf('--append-system-prompt') + 1], 'You are the front desk.');
+  const older = fakeClaude(tempFolder(), { helpFlags: ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources'] });
+  await assert.rejects(runSession({
+    dir: tempFolder('harness-session-'),
+    prompt: 'x',
+    pluginDirs: [],
+    permissionMode: 'dontAsk',
+    maxTurns: 1,
+    appendSystemPrompt: 'You are the front desk.',
+    command: older.command,
+    commandArgs: older.commandArgs,
+  }), /--append-system-prompt/);
 });
 
 // --max-turns is not in `claude --help` (checked on 2.1.302) yet works, so the fake leaves it out of its help
@@ -293,7 +322,11 @@ test('runScenario sets the project up, runs the session, judges it and writes th
   const scenario = {
     id: 99,
     title: 'a stand-in',
-    setup: async (dir, variant) => { setupSaw = { dir, variant }; fs.writeFileSync(path.join(dir, 'marker.txt'), variant); },
+    setup: async (dir, variant) => {
+      setupSaw = { dir, variant };
+      fs.writeFileSync(path.join(dir, 'marker.txt'), variant);
+      return { appendSystemPrompt: `You are the ${variant} desk.` };
+    },
     prompt: 'Do the thing.',
     variants: { with: { pluginDirs: ['/p/with'] }, without: { pluginDirs: ['/p/without'] } },
     permissionMode: 'acceptEdits',
@@ -317,6 +350,7 @@ test('runScenario sets the project up, runs the session, judges it and writes th
   assert.equal(sessionSaw.prompt, 'Do the thing.');
   assert.equal(sessionSaw.maxTurns, 5);
   assert.equal(sessionSaw.permissionMode, 'acceptEdits');
+  assert.equal(sessionSaw.appendSystemPrompt, 'You are the without desk.');
   assert.equal(outcome.pass, true);
   const total = totalUsageOf(events);
   assert.equal(outcome.line, `99 without: pass (variant without) ${total.input} in / ${total.output} out`);
@@ -373,4 +407,50 @@ test('runScenario never passes a session whose result event is an error', async 
   });
   assert.equal(outcome.pass, false);
   assert.match(outcome.line, /result event is an error/);
+});
+
+test('runScenario passes a context from setup to the session and to pass, and closes it afterwards', async () => {
+  const home = tempFolder('harness-home-');
+  let sessionSaw;
+  let passSaw;
+  let closed = 0;
+  const scenario = {
+    id: 96,
+    title: 'a stand-in',
+    setup: async () => ({ env: { EXTRA: 'yes' }, pluginDirs: ['/p/extra'], records: ['r'], evidence: () => ({ seen: 1 }), close: async () => { closed += 1; } }),
+    prompt: 'x',
+    variants: { with: { pluginDirs: ['/p/with'] }, without: { pluginDirs: [] } },
+    pass: ({ context }) => { passSaw = context; return { pass: true, why: 'ok' }; },
+  };
+  await runScenario({
+    scenario,
+    variant: 'with',
+    trial: 1,
+    home,
+    date: '2026-10-18',
+    runner: async (options) => { sessionSaw = options; return { events, exitCode: 0, usage: usageOf(events) }; },
+  });
+  assert.deepEqual(sessionSaw.pluginDirs, ['/p/with', '/p/extra']);
+  assert.deepEqual(sessionSaw.env, { EXTRA: 'yes' });
+  assert.deepEqual(passSaw.records, ['r']);
+  assert.equal(closed, 1);
+  const written = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', '2026-10-18', '96-with-1.json'), 'utf8'));
+  assert.deepEqual(written.evidence, { seen: 1 });
+});
+
+test('runScenario closes the context even when the session fails to start', async () => {
+  const home = tempFolder('harness-home-');
+  let closed = 0;
+  const scenario = {
+    id: 95,
+    title: 'a stand-in',
+    setup: async () => ({ close: () => { closed += 1; } }),
+    prompt: 'x',
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+    pass: () => ({ pass: true, why: 'ok' }),
+  };
+  await assert.rejects(runScenario({
+    scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => { throw new Error('no claude'); },
+  }), /no claude/);
+  assert.equal(closed, 1);
 });
