@@ -50,7 +50,7 @@ import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } f
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
-import { cachedShooter, screenshotsMatch as compareShots } from '../screens/compare.js';
+import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage } from '../screens/shoot.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
@@ -198,8 +198,9 @@ const pagesOf = (config) => (Array.isArray(config?.pages) ? config.pages : []);
 // never committed or pushed.
 const screensDir = (project) => path.join(stateDir(project), '..', 'screens');
 
-// Removes the files in `dir` not modified for SCREENS_KEPT_MS. Best effort.
-function pruneScreens(dir, nowMs) {
+// Removes the files in `dir` not modified for SCREENS_KEPT_MS, by this computer's clock, which is
+// the one that set their times. Best effort.
+function pruneScreens(dir, nowMs = Date.now()) {
   let names = [];
   try { names = fs.readdirSync(dir); } catch { return; }
   for (const name of names) {
@@ -1515,41 +1516,37 @@ export async function startHelper({
     return browserFound;
   }
 
-  // A shootAt(sha, page, size) for one request: the project's cache, and each commit's preview
-  // from the request's adapter, asked once per commit. The same address given for two commits is
-  // not either commit's own (a branch's address, say, shows whatever is newest), so neither has a
-  // preview then.
-  function shooterFor(project, ctx) {
-    const asked = new Map();
-    const addressOf = (sha) => {
-      if (!asked.has(sha)) asked.set(sha, ctx.adapter().then((adapter) => adapter.previewUrl(sha)).catch(() => null));
-      return asked.get(sha);
+  // How the comparison and the photographing find pictures for one request: the project's cache,
+  // each commit's preview from the request's adapter, and the shoot and browser to use.
+  function picturesFor(project, ctx) {
+    return {
+      dir: screensDir(project),
+      previewUrl: async (sha) => (await ctx.adapter()).previewUrl(sha),
+      shoot: screens.shoot ?? shootPage,
+      browser: browserPath(),
+      run,
+      fetch,
     };
-    const previewUrl = async (sha) => {
-      const url = await addressOf(sha);
-      for (const [other, address] of asked) {
-        if (other !== sha && (await address) === url) return null;
-      }
-      return url;
-    };
-    return cachedShooter({ dir: screensDir(project), previewUrl, shoot: screens.shoot ?? shootPage, browser: browserPath(), run, fetch });
   }
 
-  // Whether every page looks the same at both commits. No pages, no comparison: false, and no
-  // browser is opened. One comparison or photographing at a time per project, so pictures of an
-  // approved commit still being taken are in the cache before the gate looks.
+  // Whether every page looks the same at both commits (scripts/screens/compare.js's compareCommits,
+  // which answers false when the head's preview address is one the approved commit's pictures came
+  // from). No pages, no comparison: false, and no browser is opened. One comparison or
+  // photographing at a time per project, so pictures of an approved commit still being taken are
+  // in the cache before the gate looks.
   async function pagesLookSame({ project, before, after, pages }, ctx) {
     if (!Array.isArray(pages) || pages.length === 0) return false;
     return oneAtATime(`screens:${project}`, async () => {
       if (screenshotsMatch) return (await screenshotsMatch({ project, before, after, pages })) === true;
-      return (await compareShots({ before, after, pages, sizes: SCREEN_SIZES, shootAt: shooterFor(project, ctx) })) === true;
+      return (await compareCommits({ before, after, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx) })) === true;
     });
   }
 
   // The approved commit's pages, photographed at every size into the cache when its approval is
-  // recorded, so the pictures are there when an update comes, after the host may have taken that
-  // commit's preview down. In the background: the answer doesn't wait, and nothing is reported.
-  // Nothing under STOP, or when the configuration lists no pages or can't be read.
+  // recorded, each with the address it came from, so the pictures are there when an update comes,
+  // after the host may have taken that commit's preview down. In the background: the answer
+  // doesn't wait, and nothing is reported. Nothing when the configuration lists no pages or can't
+  // be read, and STOP is read before each picture.
   function photographApproved(project, commit, ctx) {
     if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return;
     oneAtATime(`screens:${project}`, async () => {
@@ -1561,11 +1558,8 @@ export async function startHelper({
         return pagesOf(await baseConfig(must));
       }));
       if (pages.length === 0 || stopped()) return;
-      pruneScreens(screensDir(project), now().getTime());
-      const shootAt = shooterFor(project, ctx);
-      for (const page of pages) {
-        for (const size of SCREEN_SIZES) await shootAt(commit, page, size);
-      }
+      pruneScreens(screensDir(project));
+      await photographCommit({ sha: commit, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !stopped() });
     }).catch(() => {});
   }
 
@@ -1600,7 +1594,8 @@ export async function startHelper({
       facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
     } catch { /* not readable: not known whether it is up to date, and nothing carries */ }
     let shown = false;
-    if (facts.approval === true) {
+    // Under STOP the gate refuses anyway, so nothing is compared or photographed.
+    if (facts.approval === true && !stopped()) {
       try { shown = await pagesLookSame({ project, before: from.approval, after: headSha, pages: facts.pages }, ctx); } catch { /* not compared: asked again */ }
     }
     return {

@@ -138,14 +138,19 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       return { sha, state: await mergedResults(sha) };
     },
 
-    // The project's successful deployments, newest first (GitLab can't list them by commit): the
-    // newest of this commit's gives its environment's address. One older than the last hundred
-    // deployments is not found, so it has no preview.
+    // The project's successful deployments, newest first (GitLab can't list them by commit). The
+    // address is the environment's, which shows its newest deployment, so a deployment of this
+    // commit counts only while it is the newest successful one in its own environment; the newest
+    // such gives the address. One older than the last hundred deployments is not found, so it has
+    // no preview.
     async previewUrl(sha) {
       const deployments = await ask(['api', `${project}/deployments?status=success&order_by=id&sort=desc&per_page=100`]);
       if (!Array.isArray(deployments)) throw new Error('GitLab did not list the project\'s deployments');
-      const newest = deployments.filter((d) => d?.sha === sha && d.status === 'success' && Number.isSafeInteger(d.id)).sort((a, b) => b.id - a.id)[0];
-      return newest ? httpsOnly(newest.environment?.external_url) : null;
+      const done = deployments
+        .filter((d) => d?.status === 'success' && Number.isSafeInteger(d.id) && Number.isSafeInteger(d.environment?.id))
+        .sort((a, b) => b.id - a.id);
+      const current = done.find((d) => d.sha === sha && done.find((e) => e.environment.id === d.environment.id) === d);
+      return current ? httpsOnly(current.environment.external_url) : null;
     },
 
     // --auto-merge=false: otherwise, with a pipeline running, glab queues the

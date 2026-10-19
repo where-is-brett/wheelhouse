@@ -628,6 +628,23 @@ test('a commit with no deployment has no preview', async () => {
   assert.equal(await adapter('gitlab', { stdout: gl('deployments.json') }).a.previewUrl('0'.repeat(40)), null);
 });
 
+test('a deployment the host has since superseded is no preview', async () => {
+  // GitHub marks a deployment inactive once another to the same environment succeeds: its newest
+  // status, of any state, must be success.
+  const github = adapter('github', { stdout: gh('deployments.json') }, { stdout: gh('deployment-statuses-pending.json') }, { stdout: gh('deployment-statuses-inactive.json') });
+  assert.equal(await github.a.previewUrl(SHA), null);
+  assert.equal(github.calls.length, 3);
+  // GitLab's address is the environment's, which shows its newest deployment: the commit's must be it.
+  assert.equal(await adapter('gitlab', { stdout: gl('deployments-superseded.json') }).a.previewUrl(GL_SHA), null);
+  // An older deployment of the commit, still the newest in its own environment, counts.
+  const both = JSON.parse(gl('deployments.json'));
+  const superseded = JSON.parse(gl('deployments-superseded.json'));
+  assert.equal(await adapter('gitlab', { stdout: JSON.stringify([superseded[0], ...both]) }).a.previewUrl(GL_SHA), 'https://old-name.review.example.org/');
+  // A deployment whose environment can't be told apart from another's is not taken as current.
+  const unnamed = both.map(({ environment, ...rest }) => ({ ...rest, environment: { external_url: environment.external_url } }));
+  assert.equal(await adapter('gitlab', { stdout: JSON.stringify(unnamed) }).a.previewUrl(GL_SHA), null);
+});
+
 test('only an https address counts as a preview, a failed read is thrown, and the commit must be whole', async () => {
   const statuses = JSON.parse(gh('deployment-statuses.json'));
   for (const environmentUrl of ['http://product.example.app', '', 'javascript:alert(1)', 'file:///etc/passwd', null]) {

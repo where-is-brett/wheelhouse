@@ -69,8 +69,9 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       return ciRead(sha);
     },
 
-    // The commit's deployments come newest first; for each, the newest `success` status gives the
-    // address. A deployment still building, or never successful, is passed over for the one before.
+    // The commit's deployments, newest first: the first whose newest status, of any state, is
+    // `success` gives the address. One still building, failed, or made `inactive` because another
+    // deployment to the same environment has succeeded since is passed over for the one before.
     async previewUrl(sha) {
       const deployments = await ask(['api', `repos/${repo}/deployments?sha=${sha}`]);
       if (!Array.isArray(deployments)) throw new Error('GitHub did not list the commit\'s deployments');
@@ -78,8 +79,8 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       for (const deployment of newest.slice(0, MOST_DEPLOYMENTS)) {
         const statuses = await ask(['api', `repos/${repo}/deployments/${deployment.id}/statuses`]);
         if (!Array.isArray(statuses)) throw new Error('GitHub did not list the deployment\'s statuses');
-        const done = statuses.filter((s) => s?.state === 'success' && Number.isSafeInteger(s.id)).sort((a, b) => b.id - a.id)[0];
-        if (done) return httpsOnly(done.environment_url);
+        const newestStatus = statuses.filter((s) => Number.isSafeInteger(s?.id)).sort((a, b) => b.id - a.id)[0];
+        if (newestStatus?.state === 'success') return httpsOnly(newestStatus.environment_url);
       }
       return null;
     },

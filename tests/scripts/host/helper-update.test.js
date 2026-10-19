@@ -442,9 +442,11 @@ const PAGES = ['/', '/pricing'];
 const BROWSER = '/fake/Google Chrome';
 const previewOf = (sha) => `https://preview-${short(sha)}.example.app/`;
 const screensDir = () => path.join(stateDir('o__p'), '..', 'screens');
-const keptFor = (sha) => {
+// The hashes kept for a commit, and the address they came from.
+const savedFor = (sha) => {
   try { return JSON.parse(fs.readFileSync(path.join(screensDir(), `${sha}.json`), 'utf8')); } catch { return null; }
 };
+const keptFor = (sha) => savedFor(sha)?.shots ?? null;
 const SIZES = ['1280x800', '390x844'];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -460,15 +462,17 @@ function previewing(adapter, previews = {}) {
 // A stand-in for scripts/screens/shoot.js: a picture's hash is made from its page, its size and
 // what `look(url, size)` says ('same' unless told otherwise), so two commits look the same unless
 // `look` tells them apart. No browser runs; every picture asked for is listed.
+const hashOf = (pagePath, size, look = 'same') => crypto.createHash('sha256').update(`${pagePath} ${size} ${look}`).digest('hex');
 function fakeShoot(look = () => 'same') {
   const shots = [];
   const shoot = async ({ browser, url, size }) => {
     shots.push({ browser, url, size: `${size.width}x${size.height}` });
-    const hash = crypto.createHash('sha256').update(`${new URL(url).pathname} ${size.width}x${size.height} ${look(url, size)}`).digest('hex');
-    return { ok: true, hash };
+    return { ok: true, hash: hashOf(new URL(url).pathname, `${size.width}x${size.height}`, look(url, size)) };
   };
   return { shoot, shots };
 }
+// An address a host gives every commit of the branch: it shows whatever is newest.
+const BRANCH_ADDRESS = 'https://product-git-feature-tweak.example.app/';
 
 async function until(check, what) {
   const end = Date.now() + 20 * 1000;
@@ -505,8 +509,9 @@ test('an approval carries over a clean update when every page looks the same', a
       assert.ok(shots.every((s) => s.browser === BROWSER));
       const urls = (sha) => PAGES.map((page) => new URL(page.slice(1), previewOf(sha)).href);
       assert.deepEqual([...new Set(shots.map((s) => s.url))].sort(), [...urls(pr.head), ...urls(head)].sort());
-      // The pictures' hashes are kept beside the mirror, one file per commit.
+      // The pictures' hashes are kept beside the mirror, one file per commit, with the address they came from.
       for (const sha of [pr.head, head]) {
+        assert.equal(savedFor(sha).address, previewOf(sha));
         assert.deepEqual(Object.keys(keptFor(sha)).sort(), PAGES.flatMap((page) => SIZES.map((size) => `${page} ${size}`)).sort());
       }
     }, { screens: { shoot, browser: BROWSER } });
@@ -539,6 +544,108 @@ test('one page looking different asks the director again', async () => {
       }
       assert.deepEqual(adapter.merges, []);
     }, { screens: { shoot, browser: BROWSER } });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('one address for both commits never carries an approval over, however often the gate asks', async () => {
+  const { pr, home } = await approvedAndUpdated(configWith(PAGES));
+  try {
+    const previews = {};
+    const adapter = previewing(fakeAdapter(pr.remote), previews);
+    const { shoot, shots } = fakeShoot();
+    await withHelper(home, adapter, async (client) => {
+      const { head } = await update(client);
+      // The host gives the branch's address for both commits, then, once the approved commit's
+      // deployment has gone, for the head alone. The foreman asks at every wake.
+      for (const old of [BRANCH_ADDRESS, null]) {
+        Object.assign(previews, { [pr.head]: old, [head]: BRANCH_ADDRESS });
+        for (let attempt = 1; attempt <= 10; attempt += 1) {
+          const answer = await merge(client, { approvalRequired: true });
+          assert.deepEqual([answer.ok, answer.reasons], [false, [`no approval of ${short(head)}`]], `${old} ${attempt}`);
+        }
+      }
+      // Nothing was photographed, so nothing is kept under the approved commit.
+      assert.deepEqual(shots, []);
+      assert.equal(savedFor(pr.head), null);
+      assert.deepEqual(adapter.merges, []);
+    }, { screens: { shoot, browser: BROWSER } });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('an approval photographed on an address the head is given later never carries over', async () => {
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n', ...configWith(PAGES) }, change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    await as(home, () => reviewed(pr.head));
+    const previews = { [pr.head]: BRANCH_ADDRESS };
+    const adapter = previewing(fakeAdapter(pr.remote), previews);
+    const { shoot, shots } = fakeShoot();
+    await withHelper(home, adapter, async (client) => {
+      assert.equal((await client.state.record({ project: 'o__p', event: makeEvent({ kind: 'approval', data: { pr: 7, commit: pr.head } }) })).ok, true);
+      await until(() => Object.keys(keptFor(pr.head) ?? {}).length === 4, 'the approved commit\'s pictures');
+      assert.equal(savedFor(pr.head).address, BRANCH_ADDRESS);
+
+      await mainMoves(pr.work, { 'a.js': 'a\n' });
+      const { head } = await update(client);
+      Object.assign(previews, { [pr.head]: null, [head]: BRANCH_ADDRESS });
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const answer = await merge(client, { approvalRequired: true });
+        assert.deepEqual([answer.ok, answer.reasons], [false, [`no approval of ${short(head)}`]]);
+      }
+      assert.equal(shots.length, 4, 'the head was never photographed');
+    }, { screens: { shoot, browser: BROWSER } });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('a cache file from before addresses were kept is no picture', async () => {
+  const { pr, home } = await approvedAndUpdated(configWith(PAGES));
+  try {
+    const previews = {};
+    const adapter = previewing(fakeAdapter(pr.remote), previews);
+    const { shoot, shots } = fakeShoot();
+    // The hashes the approved commit's pages would have, with the host's deployment of it gone.
+    const shots0 = Object.fromEntries(PAGES.flatMap((page) => SIZES.map((size) => [`${page} ${size}`, hashOf(page, size)])));
+    previews[pr.head] = null;
+    await withHelper(home, adapter, async (client) => {
+      const { head } = await update(client);
+      fs.mkdirSync(screensDir(), { recursive: true });
+      fs.writeFileSync(path.join(screensDir(), `${pr.head}.json`), `${JSON.stringify(shots0)}\n`);
+      const answer = await merge(client, { approvalRequired: true });
+      assert.deepEqual([answer.ok, answer.reasons], [false, [`no approval of ${short(head)}`]]);
+      assert.deepEqual(shots, []);
+      // The same hashes, kept with the address they came from, count.
+      fs.writeFileSync(path.join(screensDir(), `${pr.head}.json`), `${JSON.stringify({ address: previewOf(pr.head), shots: shots0 })}\n`);
+      assert.deepEqual(await merge(client, { approvalRequired: true }), { ok: true, merged: true, sha: head, ...NONE_FOUND });
+      assert.equal(shots.length, 4);
+    }, { screens: { shoot, browser: BROWSER } });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('STOP halts photographing between pictures, and the gate compares nothing under it', async () => {
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n', ...configWith(PAGES) }, change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    await as(home, () => reviewed(pr.head));
+    await mainMoves(pr.work, { 'a.js': 'a\n' });
+    const adapter = previewing(fakeAdapter(pr.remote));
+    const { shoot: quick, shots } = fakeShoot();
+    let started = 0;
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const shoot = async (args) => { started += 1; await held; return quick(args); };
+    await withHelper(home, adapter, async (client) => {
+      const { head } = await update(client);
+      assert.equal((await client.state.record({ project: 'o__p', event: makeEvent({ kind: 'approval', data: { pr: 7, commit: pr.head } }) })).ok, true);
+      await until(() => started === 1, 'the first picture');
+      setStop({ by: 'prompt' });
+      release();
+      const answer = await merge(client, { approvalRequired: true });
+      assert.equal(answer.ok, false);
+      assert.ok(answer.reasons.includes('STOP is on') && answer.reasons.includes(`no approval of ${short(head)}`), JSON.stringify(answer));
+    }, { screens: { shoot, browser: BROWSER } });
+    // Only the picture under way when STOP came was taken: none after it, and none for the gate.
+    assert.equal(shots.length, 1);
+    await as(home, () => assert.equal(Object.keys(keptFor(pr.head)).length, 1));
   } finally { pr.remote.cleanup(); }
 });
 

@@ -37,3 +37,4 @@ What `gh` printed, as the adapter's tests feed it back. Owner and repository are
 - `deployments-none.json`: the same, for a commit with no deployment.
 - `deployment-statuses.json`: `gh api repos/<repo>/deployments/<id>/statuses` for the older deployment, newest first: `success` with its `environment_url`, after `in_progress` and `pending`.
 - `deployment-statuses-pending.json`: the same for the newer deployment, still `in_progress`.
+- `deployment-statuses-inactive.json` (added 19 October 2026, from the same page's description of `auto_inactive`): the older deployment's statuses once another deployment to the same environment succeeded, with `inactive` newest.
