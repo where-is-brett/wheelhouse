@@ -439,6 +439,35 @@ test('a front desk whose folder goes back into setup closes its pane and clears 
   }
 })
 
+test('a pane the director closed stays closed through a setup run and after it', async ($, on) => {
+  let reply: object = frontDesk('2 cards wait')
+  const { seen, clear, start, clock, panes } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    reply = frontDesk('2 cards wait')
+    await start($, surface)
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+
+    // The director closes the pane; then a setup run starts for the folder: there is nothing for
+    // the mod to close.
+    panes.delete(PANE_ID)
+    clear()
+    reply = setup
+    await clock.advance(TICK_MS)
+    expect(seen.closes).toEqual([])
+    expect(seen.statuses).toEqual([undefined])
+
+    // Setup finishes: the pane the director closed stays closed.
+    clear()
+    reply = frontDesk('1 card waits')
+    await clock.advance(TICK_MS)
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(2)
+    expect(seen.opens).toEqual([])
+    expect(panes.has(PANE_ID)).toBe(false)
+    expect(seen.statuses).toEqual(['1 card waits', '1 card waits'])
+  }
+})
+
 test('session start does not wait for the first tick', async ($, on) => {
   let reply: Reply = { hold: 60000, then: frontDesk('2 cards wait') }
   const { seen, clear, clock, newSession } = world(on, () => reply)

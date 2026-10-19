@@ -707,8 +707,11 @@ test('the tick asks whether the session\'s folder is being set up, and runs noth
   assert.deepEqual(await handle(tickOf(repo, { idle: true }), live({ ...spies, beingSetUp })), SETUP_TICK);
   assert.deepEqual(asked, [repo]);
   assert.deepEqual(ran, []);
-  // A journal that can't be read leaves the folder counted as being set up.
-  assert.deepEqual(await handle(tickOf(repo), live({ ...spies, beingSetUp: () => ({ folder: repo, run: null, journal: false }) })), SETUP_TICK);
+  // A journal that can't be read leaves a folder with no project record counted as being set up
+  // (kit.js gives `journal: false` only for one; a registered folder's is null).
+  const fresh = fs.realpathSync.native(tempFolder('wh-bridge-unread-'));
+  const unread = (cwd) => (cwd === fresh ? { folder: fresh, run: null, journal: false } : null);
+  assert.deepEqual(await handle(tickOf(fresh), live({ ...spies, beingSetUp: unread })), SETUP_TICK);
   assert.deepEqual(ran, []);
 
   // Not being set up, the same session is the front desk, as before.

@@ -106,8 +106,8 @@ async function showOld($: EngineInterface, session: string) {
 // a reload's included, retitle it only while it is open, so a pane the director closed stays
 // closed. A session whose role is no longer the front desk's (a foreman known only from its
 // first prompt, or a project whose folder setup is working on again) closes the pane and clears
-// the status line, and forgets that it opened the pane, so a front-desk answer after it (setup
-// finished) opens the pane as at the session's start.
+// the status line; when the pane was open it forgets that it opened it, so a front-desk answer
+// after it (setup finished) opens the pane again, while a pane the director closed stays closed.
 async function show($: EngineInterface, answer: Answer, session: string, now: number) {
   const before = (await $.state.get(ROLE)).value
   if (answer.role !== undefined) await $.state.set(ROLE, answer.role)
@@ -122,8 +122,11 @@ async function show($: EngineInterface, answer: Answer, session: string, now: nu
     }
     $.ui.status(answer.status)
   } else if (answer.role !== undefined && answer.role !== FRONT_DESK && before === FRONT_DESK) {
-    if (await paneIsOpen($)) await $.ui.close({ id: PANE_ID })
-    await $.state.set(OPENED, null)
+    // Only a pane the mod itself closes is forgotten: one the director closed stays closed.
+    if (await paneIsOpen($)) {
+      await $.ui.close({ id: PANE_ID })
+      await $.state.set(OPENED, null)
+    }
     $.ui.status(undefined)
   }
 }
