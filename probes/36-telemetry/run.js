@@ -10,6 +10,9 @@
 //   node run.js read                          what the receiver has seen so far
 //   node run.js settings set|unset (--user | --file <settings.json>)
 //   node run.js launch-env set|unset          launchctl setenv (macOS) or user variables (Windows)
+//   node run.js show-env                      the variables as NAME=value lines (for the local environment editor)
+//   (--user and launch-env change the account they run in: on macOS only the throwaway account of
+//    check 35 is allowed; on Windows they need --allow-own-account, which run.md's Windows steps pass)
 //   node run.js cli-trial [--cases a,b,c]     agent only: the command line stands in for Desktop
 //   node run.js cleanup <root>
 // `--root` defaults to this script's own folder, so the copy that `setup` makes runs as it is.
@@ -27,6 +30,7 @@ const HERE = path.dirname(SELF);
 const REQUESTS = 'requests.jsonl';
 const PROMPT = 'Write the numbers one to forty in words, one per line.';
 // Added to the real telemetry settings only so the first export comes within a second.
+export const THROWAWAY_ACCOUNT = 'wh35probe'; // check 35's throwaway macOS account
 const PROBE_ONLY = { OTEL_METRIC_EXPORT_INTERVAL: '1000' };
 
 // The four telemetry settings from scripts/telemetry/env.js (the copy beside this script
@@ -58,6 +62,23 @@ export function assertScratch(dir) {
   const named = name.startsWith('wheelhouse-check36') || (name === 'check36' && parent.startsWith('wheelhouse-check35'));
   if (!inside || !named) {
     throw new Error(`Refusing to touch ${resolved}: not a wheelhouse-check36 folder (or check36 inside wheelhouse-check35) in a temporary place`);
+  }
+}
+
+// `--user` and `launch-env` change the account they run in. On macOS that must be the
+// throwaway account of check 35, never the director's own; on Windows the sitting has no
+// throwaway account (it uses the director's own), so the steps must pass --allow-own-account.
+export function assertIntendedAccount({ platform = process.platform, username = os.userInfo().username, args = [] } = {}) {
+  if (platform === 'darwin') {
+    if (username !== THROWAWAY_ACCOUNT) {
+      throw new Error(`Refusing: this changes the signed-in account's own Claude settings or launch environment, and on macOS that is allowed only in check 35's throwaway account (${THROWAWAY_ACCOUNT}), not in "${username}". Use --file <settings.json> on a scratch file instead.`);
+    }
+  } else if (platform === 'win32') {
+    if (!args.includes('--allow-own-account')) {
+      throw new Error('Refusing: this changes this Windows account\'s own Claude settings or user environment variables. The Windows sitting uses the director\'s own account on purpose and undoes it afterwards; pass --allow-own-account to say that is intended.');
+    }
+  } else {
+    throw new Error('Refusing: --user and launch-env are for the sittings on macOS and Windows.');
   }
 }
 
@@ -300,6 +321,7 @@ async function settingsCommand(args) {
   const state = readState(root);
   const values = await probeEnv(state.port);
   if (action === 'set') {
+    if (!args.includes('--file') && args.includes('--user')) assertIntendedAccount({ args });
     const file = settingsFile(args);
     if (state.settings?.active) throw new Error(`Already set in ${state.settings.file}; run "settings unset" first`);
     const existed = fs.existsSync(file);
@@ -370,6 +392,7 @@ async function launchEnvCommand(args) {
   const state = readState(root);
   const values = await probeEnv(state.port);
   if (action === 'set') {
+    assertIntendedAccount({ args });
     if (state.launchEnv?.active) throw new Error('Already set; run "launch-env unset" first');
     const previous = {};
     for (const key of Object.keys(values)) previous[key] = launch.get(key);
@@ -397,6 +420,11 @@ async function launchEnvCommand(args) {
   } else {
     throw new Error('Usage: launch-env set|unset');
   }
+}
+
+async function showEnv(args) {
+  const state = readState(rootOf(args));
+  for (const [key, value] of Object.entries(await probeEnv(state.port))) console.log(`${key}=${value}`);
 }
 
 // ---------- the agent-only trial: the command line stands in for Desktop ----------
@@ -474,13 +502,14 @@ const COMMANDS = {
   setup, receiver, stop, read, cleanup,
   settings: settingsCommand,
   'launch-env': launchEnvCommand,
+  'show-env': showEnv,
   'cli-trial': cliTrial,
 };
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(SELF)) {
   const [command, ...rest] = process.argv.slice(2);
   if (!COMMANDS[command]) {
-    console.error('Usage: node run.js setup | receiver | stop | read | settings set|unset | launch-env set|unset | cli-trial | cleanup <root>');
+    console.error('Usage: node run.js setup | receiver | stop | read | settings set|unset | launch-env set|unset | show-env | cli-trial | cleanup <root>');
     process.exit(2);
   }
   try {

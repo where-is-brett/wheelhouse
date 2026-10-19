@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { addEnv, removeEnv, summarise, assertScratch, describe, probeEnv } from '../../../probes/36-telemetry/run.js';
+import { addEnv, removeEnv, summarise, assertScratch, describe, probeEnv, assertIntendedAccount, THROWAWAY_ACCOUNT } from '../../../probes/36-telemetry/run.js';
 
 const script = fileURLToPath(new URL('../../../probes/36-telemetry/run.js', import.meta.url));
 const sample = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../../fixtures/otlp-metrics.json', import.meta.url)), 'utf8'));
@@ -71,6 +71,47 @@ test('settings set then unset on a named file restores it, and names no other fi
     assert.match(run('settings', 'unset'), /matches the copy taken before .*: YES/);
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), original);
     assert.throws(() => run('settings', 'set'), /Say which file/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--user and launch-env are allowed on macOS only in check 35\'s throwaway account', () => {
+  assert.doesNotThrow(() => assertIntendedAccount({ platform: 'darwin', username: THROWAWAY_ACCOUNT }));
+  assert.throws(() => assertIntendedAccount({ platform: 'darwin', username: 'someone' }), /throwaway account/);
+});
+
+test('on Windows they need --allow-own-account, and other systems are refused', () => {
+  assert.throws(() => assertIntendedAccount({ platform: 'win32', username: 'someone', args: ['set', '--user'] }), /--allow-own-account/);
+  assert.doesNotThrow(() => assertIntendedAccount({ platform: 'win32', username: 'someone', args: ['set', '--allow-own-account'] }));
+  assert.throws(() => assertIntendedAccount({ platform: 'linux', username: 'someone' }), /macOS and Windows/);
+});
+
+test('settings set --user from another account is refused and writes nothing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-check36-test-'));
+  const config = path.join(root, 'config');
+  try {
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: config, HOME: root, USERPROFILE: root };
+    execFileSync(process.execPath, [script, 'setup', '--root', root], { env });
+    const result = spawnSync(process.execPath, [script, 'settings', 'set', '--user', '--root', root], { env, encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing/);
+    assert.ok(!fs.existsSync(path.join(config, 'settings.json')));
+    const launch = spawnSync(process.execPath, [script, 'launch-env', 'set', '--root', root], { env, encoding: 'utf8' });
+    assert.equal(launch.status, 1);
+    assert.match(launch.stderr, /Refusing/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('show-env prints the five variables as NAME=value', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-check36-test-'));
+  try {
+    execFileSync(process.execPath, [script, 'setup', '--root', root]);
+    const lines = execFileSync(process.execPath, [script, 'show-env', '--root', root], { encoding: 'utf8' }).trim().split('\n');
+    assert.equal(lines.length, 5);
+    assert.ok(lines.includes('CLAUDE_CODE_ENABLE_TELEMETRY=1'));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
