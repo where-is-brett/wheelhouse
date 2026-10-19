@@ -75,6 +75,20 @@ export function settingWords(key, value, until) {
   return `${label}: ${sayValue(key, value)}${until ? `, until ${sayTime(until)}` : ''}`;
 }
 
+// What each decision level lets Wheelhouse do, in plain words (design section 6).
+const LEVEL_WORDS = {
+  1: 'decide quietly and record it',
+  2: 'decide alone and tell you',
+  3: 'propose and wait for you',
+  4: 'only you decide',
+};
+
+// A decision topic's level in plain words, on one line: `"copy-changes": decide alone and tell you
+// (level 2)`. A level's confirm card names it by these words (ruling F42).
+export function levelWords(topic, level) {
+  return `"${topic}": ${LEVEL_WORDS[level]} (level ${level})`;
+}
+
 // One line per setting, everyday then advanced: "Presence: away, until 18 October 2026, 18:00 UTC (yours)".
 export function settingsText(effective) {
   const lines = [];

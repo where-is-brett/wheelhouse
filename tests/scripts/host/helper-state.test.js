@@ -406,6 +406,41 @@ test('the front desk names its folder, and the helper places the project from it
   } finally { await c.close(); await repo.cleanup(); }
 });
 
+test('with review, the views carry the delegation review worked out from the project\'s events', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const write = async (kind, data) => {
+        const got = await c.client.state.write({ project: PROJECT, kind, data });
+        assert.equal(got.ok, true, got.refused);
+        return got.id;
+      };
+      // Five pull requests on one topic, each approved with the card's deciding label.
+      for (const pr of [1, 2, 3, 4, 5]) {
+        const card = await write('card', {
+          question: `Approve pull request #${pr}?`, header: 'Approval', options: ['Approve', 'Not now', 'Explain more', 'Show me'], kind: 'approval', level: 3, topic: 'copy-changes',
+        });
+        await write('card-answer', { card, label: 'Approve' });
+      }
+      await write('reversal', { topic: 'colours', what: 'The director undid the colour change' });
+      const first = await c.client.state.views({ project: PROJECT, review: true });
+      assert.equal(first.ok, true, first.refused);
+      assert.equal(first.review.due, false, 'the project began a few seconds ago');
+      assert.equal(first.review.since, null);
+      assert.deepEqual(first.review.proposals.map(({ topic, from, to }) => ({ topic, from, to })), [
+        { topic: 'colours', from: 2, to: 3 }, { topic: 'copy-changes', from: 3, to: 2 },
+      ]);
+      assert.equal((await c.client.state.views({ project: PROJECT })).review, undefined, 'only when asked for');
+      // Once the review is recorded, it counts from there.
+      await write('note', { review: 'delegation', at: T0.toISOString() });
+      const after = await c.client.state.views({ project: PROJECT, review: true });
+      assert.match(after.review.since, /^2026-10-18T/);
+      assert.deepEqual(after.review.proposals, []);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
 test('/push refuses wheelhouse-state and wheelhouse-lock from a caller, whatever folder it names', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);

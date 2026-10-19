@@ -1,16 +1,18 @@
 // tests/scripts/frontdesk/learning.test.js
 // What learning works out from the director's clicks: the concepts they know and the settings
-// they would like, each proposed once.
+// they would like, each proposed once, and the delegation review's proposals.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { conceptProposals, settingProposals, conceptSetting, dayOf } from '../../../scripts/frontdesk/learning.js';
+import {
+  conceptProposals, settingProposals, conceptSetting, dayOf, delegationProposals, delegationReview, lastReview, reviewDue,
+} from '../../../scripts/frontdesk/learning.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { effectiveSettings } from '../../../scripts/settings/effective.js';
-import { KNOWN_AFTER } from '../../../scripts/lib/front-desk.js';
+import { DELEGATE_AFTER, KNOWN_AFTER } from '../../../scripts/lib/front-desk.js';
 import { as, tempFolder } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -218,5 +220,181 @@ test('a proposal turned down is not made again for 30 days', async () => {
     assert.deepEqual(settingProposals(declined, before, { now: when(day(13)), boardAsks: asks }), []);
     const NOV_9 = new Date(Date.UTC(2026, 10, 9, 12)).toISOString();
     assert.equal(settingProposals(declined, profileFrom([tab, chosen, confirmed], NOV_9), { now: when(NOV_9), boardAsks: asks }).length, 1);
+  });
+});
+
+// --- The delegation review ---
+
+const DOC = 'fedcba9876543210'.repeat(4);
+const APPROVAL = (n, { topic = 'copy-changes', level = 3 } = {}) => ({
+  kind: 'approval', level, topic, what: `Pull request #${n} changes the wording on the sign-in page.`, why: 'It changes what users see.',
+  options: [{ label: 'Approve', says: 'It merges.' }], recommend: 'Approve', because: 'the checks passed', meanwhile: 'Nothing is released.',
+  target: { pr: n, sha: FULL }, ...(level === 4 ? { checks: 'It changes nothing in the checks.' } : {}),
+});
+const WORK = (work, topic = 'copy-changes') => ({
+  kind: 'approve-work', level: 3, topic, what: `The work ${work} is written up and ready.`, why: 'It changes what users see.',
+  options: [{ label: 'Approve', says: 'It is built.' }], recommend: 'Approve', because: 'it is small', meanwhile: 'Nothing is built.',
+  target: { work, lane: 'small', hash: DOC },
+});
+const AMEND = (work, topic = 'copy-changes') => ({
+  kind: 'amend', level: 3, topic, what: `A change to the approved ${work}: shorter wording.`, why: 'It changes approved work.',
+  options: [{ label: 'Change it', says: 'The work changes.' }], recommend: 'Change it', because: 'it is clearer', meanwhile: 'The work waits.',
+  target: { work, hash: DOC },
+});
+const cardOf = (input, at) => makeEvent({ kind: 'card', data: composeCard(input).card, now: when(at) });
+// A card asked on day d and answered a minute later, with its deciding label unless another is given.
+const approved = (input, d, label = 'Approve') => {
+  const card = cardOf(input, day(d));
+  return [card, answer(card, label, day(d, 1))];
+};
+// Five pull requests approved unchanged on five days from d.
+const five = (d, make = (n) => APPROVAL(n)) => [0, 1, 2, 3, 4].flatMap((i) => approved(make(d + i), d + i));
+const levelEvent = (key, value, at) => makeEvent({ kind: 'level', data: { key, value, words: `"${key}": level ${value}` }, now: when(at) });
+const confirmed = (event, at) => makeEvent({ ...confirmationFor(event), now: when(at) });
+const reversal = (topic, at) => makeEvent({ kind: 'reversal', data: { topic, what: 'The director undid a change made alone' }, now: when(at) });
+const reviewNote = (at) => makeEvent({ kind: 'note', data: { review: 'delegation', at }, now: when(at) });
+const withoutBecause = (proposals) => proposals.map(({ because, ...rest }) => rest);
+
+test('a level-3 topic approved unchanged five times is proposed for level 2', async () => {
+  await inHome(async () => {
+    assert.equal(DELEGATE_AFTER, 5);
+    const now = when(day(20));
+    const events = five(10);
+    const proposed = delegationProposals(events, { now });
+    assert.deepEqual(withoutBecause(proposed), [{ topic: 'copy-changes', from: 3, to: 2 }]);
+    assert.match(proposed[0].because, /^you approved it as proposed 5 times/);
+    // Four are not enough.
+    assert.deepEqual(delegationProposals(events.slice(2), { now }), []);
+    // Only approvals since the last review count.
+    assert.deepEqual(delegationProposals(events, { now, since: day(11, 30) }), []);
+    assert.deepEqual(withoutBecause(delegationProposals([...events, ...five(21)], { now: when(day(27)), since: day(20) })), [{ topic: 'copy-changes', from: 3, to: 2 }]);
+
+    // A reply code's signed record counts as the click it stands for; one no enrolled computer signed doesn't.
+    const cards = [10, 11, 12, 13, 14].map((n) => cardOf(APPROVAL(n), day(n)));
+    const signed = cards.map((card, i) => makeEvent({ kind: 'approval', data: { pr: 10 + i, commit: FULL, question: card.data.question }, now: when(day(10 + i, 5)) }));
+    assert.equal(delegationProposals([...cards, ...signed], { now, enrolled: readEnrolled() }).length, 1);
+    assert.deepEqual(delegationProposals([...cards, ...signed], { now, enrolled: [] }), []);
+
+    // A card put off is no approval; a level 2 card, an answer or a product question's choice, and a card with no topic don't count.
+    assert.deepEqual(delegationProposals([10, 11, 12, 13, 14].flatMap((n) => approved(APPROVAL(n), n, 'Not now')), { now }), []);
+    assert.deepEqual(delegationProposals(five(10, (n) => APPROVAL(n, { level: 2 })), { now }), []);
+    assert.deepEqual(delegationProposals([10, 11, 12, 13, 14].flatMap((n) => approved({ ...QUESTION(n), level: 3, topic: 'copy-changes' }, n, 'Plain')), { now }), []);
+    assert.deepEqual(delegationProposals(five(10, (n) => ({ ...APPROVAL(n), topic: undefined })), { now }), []);
+    // Topics are counted by their exact slug.
+    const split = five(10, (n) => APPROVAL(n, { topic: n % 2 === 0 ? 'copy-changes' : 'copy-change' }));
+    assert.deepEqual(delegationProposals(split, { now }), []);
+
+    // Already level 2 in force, or a proposal for level 2 waiting: nothing to propose.
+    const lower = levelEvent('copy-changes', 2, day(16));
+    assert.deepEqual(delegationProposals([...events, lower], { now }), []);
+    assert.deepEqual(delegationProposals([...events, lower, confirmed(lower, day(16, 1))], { now }), []);
+    // Level 3 in force is where the topic is proposed from.
+    const three = levelEvent('copy-changes', 3, day(1));
+    assert.equal(delegationProposals([three, confirmed(three, day(1, 1)), ...events], { now }).length, 1);
+  });
+});
+
+test('an approval followed by an amendment does not count as unchanged', async () => {
+  await inHome(async () => {
+    const now = when(day(20));
+    const amendment = (work, at) => makeEvent({ kind: 'amendment', data: { work, change: 'Shorter wording', hash: DOC }, now: when(at) });
+    const works = ['page-a', 'page-b', 'page-c', 'page-d', 'page-e'];
+    const events = works.flatMap((work, i) => approved(WORK(work), 10 + i));
+    assert.equal(delegationProposals(events, { now }).length, 1);
+    // page-c, approved on the 12th, changed after: four left.
+    assert.deepEqual(delegationProposals([...events, amendment('page-c', day(18))], { now }), []);
+    // A change to other work, or one before the approval, leaves the approval unchanged.
+    assert.equal(delegationProposals([...events, amendment('page-z', day(18))], { now }).length, 1);
+    assert.equal(delegationProposals([amendment('page-c', day(9)), ...events], { now }).length, 1);
+    // A change approved with Change it counts too, until the work is changed again.
+    const withAmend = [...events.slice(0, 8), ...approved(AMEND('page-e'), 15, 'Change it')];
+    assert.equal(delegationProposals(withAmend, { now }).length, 1);
+    assert.deepEqual(delegationProposals([...withAmend, amendment('page-e', day(16))], { now }), []);
+    // An approval the director later reversed doesn't count either.
+    const sixth = [...events, ...approved(WORK('page-f'), 16)];
+    assert.equal(delegationProposals(sixth, { now }).length, 1);
+    assert.deepEqual(withoutBecause(delegationProposals([...sixth, reversal('copy-changes', day(11, 30))], { now, since: day(11) })), [{ topic: 'copy-changes', from: 2, to: 3 }]);
+  });
+});
+
+test('a reversed topic is proposed one level up', async () => {
+  await inHome(async () => {
+    const now = when(day(20));
+    const proposed = delegationProposals([reversal('colours', day(12))], { now });
+    assert.deepEqual(withoutBecause(proposed), [{ topic: 'colours', from: 2, to: 3 }]);
+    assert.match(proposed[0].because, /^you undid a decision made on it without you/);
+    assert.match(delegationProposals([reversal('colours', day(12)), reversal('colours', day(13))], { now })[0].because, /^you undid 2 decisions/);
+    // A reversal from before the last review is not this review's.
+    assert.deepEqual(delegationProposals([reversal('colours', day(12))], { now, since: day(13) }), []);
+    // A reversed topic is not proposed for level 2 in the same review, however often it was approved.
+    const approvedToo = [...five(10, (n) => APPROVAL(n, { topic: 'colours' })), reversal('colours', day(16))];
+    assert.deepEqual(withoutBecause(delegationProposals(approvedToo, { now })), [{ topic: 'colours', from: 2, to: 3 }]);
+    // Level 2 in force moves up; level 3 in force, or a proposal for level 3 waiting, has nowhere to go.
+    const two = levelEvent('colours', 2, day(1));
+    assert.equal(delegationProposals([two, confirmed(two, day(1, 1)), reversal('colours', day(12))], { now }).length, 1);
+    const three = levelEvent('colours', 3, day(1));
+    assert.deepEqual(delegationProposals([three, confirmed(three, day(1, 1)), reversal('colours', day(12))], { now }), []);
+    assert.deepEqual(delegationProposals([reversal('colours', day(12)), levelEvent('colours', 3, day(14))], { now }), []);
+    // A reversal only moves a topic from 2 to 3: one at level 1 in force stays for the director to move.
+    const one = levelEvent('colours', 1, day(1));
+    assert.deepEqual(delegationProposals([one, confirmed(one, day(1, 1)), reversal('colours', day(12))], { now }), []);
+    // A topic that isn't a slug is never counted.
+    assert.deepEqual(delegationProposals([reversal('Colours and fonts', day(12))], { now }), []);
+  });
+});
+
+test('money, secrets and the guardrails are never proposed for a lower level', async () => {
+  await inHome(async () => {
+    const now = when(day(20));
+    for (const topic of ['money', 'secrets', 'guardrails']) {
+      // One card at level 4 for the topic, then five approvals at level 3.
+      const events = [cardOf(APPROVAL(9, { topic, level: 4 }), day(1)), ...five(10, (n) => APPROVAL(n, { topic }))];
+      assert.deepEqual(delegationProposals(events, { now }), [], topic);
+      // Nor does a reversal move it to level 3, which would be a lower level than its own.
+      assert.deepEqual(delegationProposals([...events, reversal(topic, day(16))], { now }), [], topic);
+    }
+    // Level 4 in force holds a topic the same way.
+    const four = levelEvent('payments', 4, day(1));
+    const events = [four, confirmed(four, day(1, 1)), ...five(10, (n) => APPROVAL(n, { topic: 'payments' }))];
+    assert.deepEqual(delegationProposals(events, { now }), []);
+    assert.deepEqual(delegationProposals([...events, reversal('payments', day(16))], { now }), []);
+  });
+});
+
+test('the review is due every two weeks by default and follows the setting', async () => {
+  await inHome(async () => {
+    const first = makeEvent({ kind: 'idea', data: { key: 'x', title: 'An idea' }, now: when(day(1)) });
+    // No events: nothing to review.
+    assert.equal(reviewDue({ events: [], now: when(day(20)), days: 14 }), false);
+    // From the project's first event, with no review yet.
+    assert.equal(reviewDue({ events: [first], now: when(day(14)), days: 14 }), false);
+    assert.equal(reviewDue({ events: [first], now: when(day(15)), days: 14 }), true);
+    // From the latest review.
+    const done = reviewNote(day(10));
+    assert.equal(reviewDue({ events: [first, reviewNote(day(3)), done], now: when(day(15)), days: 14 }), false);
+    assert.equal(reviewDue({ events: [first, done], now: when(day(24)), days: 14 }), true);
+    // Another note is not a review.
+    const other = makeEvent({ kind: 'note', data: { incident: 'i1', words: 'No blame' }, now: when(day(10)) });
+    assert.equal(reviewDue({ events: [first, other], now: when(day(15)), days: 14 }), true);
+    assert.equal(lastReview([first, other]), null);
+    assert.equal(lastReview([first, reviewNote(day(3)), done, other]), done.at);
+    // Every 7 days.
+    assert.equal(reviewDue({ events: [first, done], now: when(day(16)), days: 7 }), false);
+    assert.equal(reviewDue({ events: [first, done], now: when(day(17)), days: 7 }), true);
+
+    // The review as the helper gives it: due by the project's setting in force, since the last
+    // review, with the proposals counted since then.
+    const events = [first, done, ...five(11)];
+    assert.deepEqual(delegationReview(events, { now: when(day(17)) }), {
+      due: false, since: done.at, proposals: delegationProposals(events, { now: when(day(17)), since: done.at }),
+    });
+    assert.equal(delegationReview(events, { now: when(day(17)) }).proposals.length, 1);
+    const weekly = makeEvent({ kind: 'setting', data: { key: 'delegationReviewDays', value: 7, words: 'Days between delegation reviews: 7 days' }, now: when(day(2)) });
+    const setTo7 = [weekly, confirmed(weekly, day(2, 1)), ...events];
+    assert.equal(delegationReview(setTo7, { now: when(day(17)) }).due, true);
+    // An unconfirmed setting has no effect.
+    assert.equal(delegationReview([weekly, ...events], { now: when(day(17)) }).due, false);
+    // With no review yet, since is null and everything counts.
+    assert.deepEqual(delegationReview([first, ...five(11)], { now: when(day(17)) }).since, null);
   });
 });

@@ -1,6 +1,6 @@
 // tests/scripts/frontdesk/cli.test.js
 // The front desk's one command, against a fake helper that keeps its events in memory and builds
-// the views from them as the real one does.
+// the views from them as the real one does (the delegation review too).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { main, readInput, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/frontdesk/cli.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
-import { makeEvent, dataHash, listEvents, PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { delegationReview } from '../../../scripts/frontdesk/learning.js';
+import { levelWords } from '../../../scripts/settings/effective.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
@@ -66,8 +68,13 @@ function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {
     state: {
       views: async (body) => {
         calls.push(['views', body]);
+        const built = views();
         return {
-          ok: true, views: views(), ...(stopped() ? { stop: true } : {}), ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
+          ok: true,
+          views: built,
+          ...(stopped() ? { stop: true } : {}),
+          ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
+          ...(body.review === true ? { review: delegationReview(held, { now: NOW, enrolled: readEnrolled(), views: built }) } : {}),
         };
       },
       write: async (body) => {
@@ -92,7 +99,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {
       return { ok: true, result: { headSha: head, state: 'open', mergeable: 'clean' } };
     },
   };
-  return { client, calls, held, writes: () => calls.filter(([name]) => name === 'write').map(([, body]) => body) };
+  return { client, calls, held, views, writes: () => calls.filter(([name]) => name === 'write').map(([, body]) => body) };
 }
 
 // Runs one command; resolves with { code, out, err, json }.
@@ -435,6 +442,122 @@ test('record setting records its confirm card and marks it asked, except a conce
   });
 });
 
+// A pull request's approval on the topic copy-changes, asked at T(n) and approved a second later.
+const approvedOn = (pr, n, topic = 'copy-changes') => {
+  const card = cardEvent({ ...APPROVAL, what: `Pull request #${pr} changes the wording on the sign-in page.`, topic, target: { pr, sha: FULL } }, n);
+  return [card, makeEvent({ kind: 'card-answer', data: { card: card.id, label: 'Approve' }, now: () => T(n + 1) })];
+};
+const reversalOf = (topic, n) => makeEvent({ kind: 'reversal', data: { topic, what: 'The director undid a change made alone' }, now: () => T(n) });
+
+test('review asks each proposal as a confirm card for a level, and records the review last', async () => {
+  await inHome(async () => {
+    const events = [...[1, 2, 3, 4, 5].flatMap((pr) => approvedOn(pr, pr * 2)), reversalOf('colours', 20)];
+    const helper = fakeHelper({ events });
+    let made = 0;
+    const review = async () => {
+      let out = '';
+      let err = '';
+      const code = await main(['review'], { cwd: CWD, client: helper.client, now: () => NOW, makeId: () => `level-${(made += 1)}`, out: (t) => { out += t; }, err: (t) => { err += t; } });
+      assert.equal(code, 0, err);
+      return JSON.parse(out);
+    };
+    const first = await review();
+    assert.deepEqual(helper.calls[0], ['views', { cwd: CWD, review: true }]);
+    const writes = helper.writes();
+    assert.deepEqual(writes.map((w) => w.kind), ['level', 'card', 'level', 'card', 'asked', 'note']);
+    // Each proposal is a level event under the id its card was composed with, with its words and its reason.
+    const [up, upCard, down, downCard, asked, note] = writes;
+    assert.equal(up.id, 'level-1');
+    assert.deepEqual({ ...up.data, because: undefined }, { key: 'colours', value: 3, words: levelWords('colours', 3), because: undefined });
+    assert.match(up.data.because, /^you undid a decision/);
+    assert.deepEqual({ ...down.data, because: undefined }, { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: undefined });
+    assert.match(down.data.because, /^you approved it as proposed 5 times/);
+    assert.equal(upCard.data.line, confirmLine({ kind: 'level', id: 'level-1', data: up.data }));
+    assert.equal(downCard.data.line, confirmLine({ kind: 'level', id: 'level-2', data: down.data }));
+    assert.equal(downCard.data.kind, 'confirm');
+    // The cards are asked as composed, marked asked, and the review is recorded after them.
+    assert.deepEqual(first.questions.map((q) => q.question), [upCard.data.question, downCard.data.question]);
+    assert.ok(first.questions[1].question.includes(down.data.because));
+    assert.equal(first.left, 0);
+    assert.equal(first.problems, undefined);
+    const cardIds = helper.held.filter((e) => e.kind === 'card' && e.data.kind === 'confirm').map((e) => e.id);
+    assert.deepEqual(asked.data, { cards: cardIds });
+    assert.deepEqual(note.data, { review: 'delegation', at: NOW.toISOString() });
+    // Straight after, nothing is due and each proposal waits for the director: no cards, the review recorded again.
+    const again = await review();
+    assert.deepEqual(again, { questions: [], left: 0 });
+    assert.deepEqual(helper.writes().slice(writes.length).map((w) => w.kind), ['note']);
+    // The levels view lists both, waiting for the director.
+    const levels = await run(helper, ['views', 'levels']);
+    assert.equal(levels.code, 0, levels.err);
+    assert.deepEqual(levels.out.trim().split('\n'), [
+      `${levelWords('colours', 3)} (waiting for the director to confirm it)`,
+      `${levelWords('copy-changes', 2)} (waiting for the director to confirm it)`,
+    ]);
+  });
+});
+
+test('review gives one call\'s worth of cards and leaves the rest waiting on the board', async () => {
+  await inHome(async () => {
+    const topics = ['alpha', 'bravo', 'charlie', 'delta', 'echo'];
+    const helper = fakeHelper({ events: topics.map((topic, i) => reversalOf(topic, i + 1)) });
+    const out = await run(helper, ['review']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.questions.length, CARD.questions);
+    assert.equal(out.json.left, 1);
+    assert.equal(helper.views().waiting.length, 5);
+    assert.equal(helper.writes().find((w) => w.kind === 'asked').data.cards.length, CARD.questions);
+    assert.equal(helper.writes().at(-1).kind, 'note');
+  });
+});
+
+test('card takes a topic as a slug, in lower case, and refuses one that is not', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const given = await run(helper, ['card'], JSON.stringify({ ...PRODUCT(1), topic: ' Copy-Changes ' }));
+    assert.equal(given.code, 0, given.err);
+    assert.equal(helper.held.find((e) => e.kind === 'card').data.topic, 'copy-changes');
+    for (const topic of ['copy changes', 'copy_changes', '', 'x'.repeat(41), 7]) {
+      const refused = await run(helper, ['card'], JSON.stringify({ ...PRODUCT(2), topic }));
+      assert.equal(refused.code, 1, JSON.stringify(topic));
+      assert.match(refused.err, /topic/);
+    }
+    assert.equal(helper.held.filter((e) => e.kind === 'card').length, 1);
+  });
+});
+
+test('record reversal keeps its topic as a slug in lower case, as a card does', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const out = await run(helper, ['record', 'reversal'], JSON.stringify({ topic: 'Colours', what: 'The director put the old colours back' }));
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(helper.writes()[0].data, { topic: 'colours', what: 'The director put the old colours back' });
+    const refused = await run(helper, ['record', 'reversal'], JSON.stringify({ topic: 'the colours', what: 'Undone' }));
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /topic/);
+    assert.equal(helper.writes().length, 1);
+  });
+});
+
+test('views levels lists the topics: their levels in force, those waiting, and those on earlier cards', async () => {
+  await inHome(async () => {
+    const level = (key, value, n) => makeEvent({ kind: 'level', data: { key, value, words: levelWords(key, value) }, now: () => T(n) });
+    const inForce = level('copy-changes', 2, 1);
+    const events = [
+      inForce, makeEvent({ ...confirmationFor(inForce), now: () => T(2) }), level('colours', 3, 3),
+      cardEvent({ ...PRODUCT(1), topic: 'pricing' }, 4), cardEvent({ ...PRODUCT(2), topic: 'copy-changes' }, 5),
+    ];
+    const out = await run(fakeHelper({ events }), ['views', 'levels']);
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(out.out.trim().split('\n'), [
+      `${levelWords('copy-changes', 2)} (in force)`,
+      `${levelWords('colours', 3)} (waiting for the director to confirm it)`,
+      '"pricing": on earlier cards',
+    ]);
+    assert.equal((await run(fakeHelper(), ['views', 'levels'])).out, 'No decision topics yet.\n');
+  });
+});
+
 test('again gives the card the board numbers n, and records it as asked', async () => {
   await inHome(async () => {
     const one = cardEvent(PRODUCT(1), 1);
@@ -505,7 +628,11 @@ test('under STOP the reading commands run and record is refused', async () => {
     const again = await run(helper, ['again', '1']);
     assert.equal(again.code, 0);
     assert.equal(again.json.problems, undefined);
-    for (const name of ['rulebook', 'waiting', 'ideas', 'glossary', 'settings']) assert.equal((await run(helper, ['views', name])).code, 0, name);
+    for (const name of ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels']) assert.equal((await run(helper, ['views', name])).code, 0, name);
+    // The review writes, so it waits until STOP is lifted.
+    const review = await run(helper, ['review']);
+    assert.equal(review.code, 1);
+    assert.match(review.err, /STOP/);
     assert.equal((await run(helper, ['explain', 'merge'])).code, 0);
     assert.equal((await run(helper, ['similar'], 'export a report')).code, 0);
     assert.equal((await run(helper, ['similar', 'export', 'a', 'report'])).code, 0);
@@ -657,7 +784,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['preview', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, record, similar, views, explain\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, record, similar, views, explain, review\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -717,6 +844,6 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, record, similar, views, explain\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, record, similar, views, explain, review\n');
   assert.equal(done.stdout, '');
 });

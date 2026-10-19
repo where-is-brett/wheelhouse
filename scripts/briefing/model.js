@@ -115,6 +115,15 @@ function sourceLines(sources) {
   return out;
 }
 
+// The watch line for a delegation review that is due (ruling F43), or null. `review` is
+// { due, days }, worked out by the caller from the state: `days` between reviews.
+function reviewLine(review) {
+  if (!isRecord(review) || review.due !== true) return null;
+  const { days } = review;
+  if (!Number.isInteger(days) || days <= 0 || days === 14) return 'The fortnightly look at what I can decide alone is due';
+  return `The look at what I can decide alone is due (every ${days} days)`;
+}
+
 // "Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance.", each
 // part left out when it isn't known; null when none is.
 function usageLine(usage) {
@@ -127,10 +136,11 @@ function usageLine(usage) {
   return said.length > 0 ? `Usage this week: ${said.join(', ')}.` : null;
 }
 
-// briefingModel({ model, usage, sources, since, now, wasRaised }) -> Briefing.
+// briefingModel({ model, usage, sources, since, now, wasRaised, review }) -> Briefing.
 // `model` is boardModel's, `usage` usageFigures', `sources` the sources report, `since` the time of
 // the last briefing. `wasRaised(id)` says whether an unusual item was raised already (the usage
-// store's by default).
+// store's by default). `review` is { due, days }: whether the delegation review is due, and the
+// days between reviews, as the caller worked it out from the state.
 export function briefingModel(options) {
   try {
     return build(isRecord(options) ? options : {});
@@ -139,7 +149,7 @@ export function briefingModel(options) {
   }
 }
 
-function build({ model, usage, sources, since, now, wasRaised = realWasRaised }) {
+function build({ model, usage, sources, since, now, wasRaised = realWasRaised, review }) {
   const briefing = EMPTY();
   const board = isRecord(model) ? model : {};
   const director = isRecord(board.director) ? board.director : {};
@@ -161,9 +171,10 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised })
   const report = isRecord(sources) && (Number.isNaN(sinceMs) || msOf(sources.at) > sinceMs) ? sources : null;
   const fromSources = report ? part(() => sourceLines(report), []) : [];
   const damaged = part(() => list(board.missing).filter((line) => typeof line === 'string' && DAMAGED.test(line)), []);
+  const due = part(() => reviewLine(review), null);
   // Unusual use is news and the health lines stand from one briefing to the next, so unusual use
-  // comes first and is the last of `watch` to be cut for length.
-  briefing.watch = [...unusual.map((u) => u.line), ...health, ...fromSources, ...damaged];
+  // comes first and is the last of `watch` to be cut for length; a review that is due follows it.
+  briefing.watch = [...unusual.map((u) => u.line), ...(due === null ? [] : [due]), ...health, ...fromSources, ...damaged];
   briefing.raise = unusual.map((u) => u.id);
   briefing.usage = part(() => usageLine(usage), null);
   return briefing;

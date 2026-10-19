@@ -598,3 +598,32 @@ test('a setting waiting for its confirmation whose card was not written gets its
     assert.equal(stateWrites.length, 2);
   });
 });
+
+test('the briefing says when the delegation review is due, worked out from the state on disk', async () => {
+  await withProject(async ({ repo }) => {
+    const given = [];
+    const briefing = (options) => {
+      given.push(options.review);
+      return { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] };
+    };
+    // No events: nothing to review.
+    await run(repo, 'Hello', NOW, { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: false, days: 14 });
+    // The project's first event was 18 days ago, and there has been no review.
+    store(stateDir(P), [makeEvent({ kind: 'idea', data: { key: 'x', title: 'An idea' }, now: () => new Date(noon(1)) })]);
+    await run(repo, 'Hello', '2026-10-19T15:00:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: true, days: 14 });
+    const out = await run(repo, 'Hello', '2026-10-19T18:00:00.000Z');
+    assert.match(contextOf(out), /^- The fortnightly look at what I can decide alone is due$/m);
+    // A review six days ago: not due again yet.
+    store(stateDir(P), [makeEvent({ kind: 'note', data: { review: 'delegation', at: noon(13) }, now: () => new Date(noon(13)) })]);
+    await run(repo, 'Hello', '2026-10-19T21:00:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: false, days: 14 });
+    // The project's setting in force decides the days.
+    put(viewFile('settings'), { delegationReviewDays: { key: 'delegationReviewDays', id: 's1', at: noon(1), value: 7, before: null } });
+    await run(repo, 'Hello', '2026-10-19T23:30:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: false, days: 7 });
+    await run(repo, 'Hello', '2026-10-20T12:00:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: true, days: 7 });
+  });
+});

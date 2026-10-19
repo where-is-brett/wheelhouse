@@ -2,7 +2,8 @@
 // What the director asks Wheelhouse to show, added to the turn as context. Agents can't read
 // ~/.wheelhouse/, so this hook, which runs outside the sandbox, reads it for them: the board, the
 // briefing, the settings or the changed sources when the prompt is one of the plugin's commands,
-// and the briefing on the first prompt after a gap of `briefingGapHours`.
+// and the briefing on the first prompt after a gap of `briefingGapHours`. The briefing says when the
+// delegation review is due, worked out here from the project's events, since the front desk can't.
 //
 // In a project's main folder only: never in a feature worktree, never for the foreman, never
 // outside a Wheelhouse project. It records each session's role from its first prompt (sessionRole),
@@ -51,7 +52,7 @@ import { answerLine, confirmLine } from '../state/card-lines.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { helperClient } from '../host/helper-client.js';
-import { clickOutcomes, conceptProposals, conceptSetting, settingProposals } from '../frontdesk/learning.js';
+import { clickOutcomes, conceptProposals, conceptSetting, reviewDue, settingProposals } from '../frontdesk/learning.js';
 import { settingCard, writeSetting } from '../frontdesk/cli.js';
 import { profileDir, stateDir } from '../lib/paths.js';
 import { stopState } from '../lib/stop.js';
@@ -253,6 +254,14 @@ async function learn({ project, cwd, client, at, boardAsks }) {
   for (const data of proposals) await tried(() => writeSetting({ client: asker, cwd, data, words }));
 }
 
+// Whether the delegation review is due (ruling F43), from the project's events on disk and the
+// `delegationReviewDays` in force: { due, days }, or null when the state can't be read.
+function reviewOf(project, settings, at) {
+  const value = settings?.delegationReviewDays?.value;
+  const days = Number.isInteger(value) && value > 0 ? value : SETTINGS.delegationReviewDays.default;
+  return attempt(() => ({ due: reviewDue({ events: listEvents(stateDir(project), { report: () => {} }), now: at, days }), days }));
+}
+
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
 async function build(want, { project, cwd, at, client, load, command, since, briefingModel, reserve }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
@@ -270,7 +279,7 @@ async function build(want, { project, cwd, at, client, load, command, since, bri
   } else if (want === 'sources') {
     body = isRecord(sources) ? (sourcesText(sources) || NONE_CHANGED) : NOT_CHECKED;
   } else {
-    const briefing = briefingModel({ model, usage, sources, since, now: at });
+    const briefing = briefingModel({ model, usage, sources, since, now: at, review: reviewOf(project, settings, at) });
     const length = settings?.briefing?.value;
     const words = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
     const parts = briefingParts(briefing, { words });

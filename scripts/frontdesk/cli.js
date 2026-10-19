@@ -9,8 +9,10 @@
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
-//   views <name>    one view as short lines: rulebook, waiting, ideas, glossary or settings
+//   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings or levels
 //   explain <term>  the glossary's plain words for a term, with its example
+//   review          the delegation review: each proposal as a level waiting for the director, with
+//                   its confirm card, as AskUserQuestion's input; then records the review as done
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project. Nothing here
 // writes a director's answer: `record` takes only the plain kinds the front desk decides, never a
@@ -27,9 +29,9 @@ import { numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS } from '../settings/catalogue.js';
 import { CARD } from '../lib/front-desk.js';
-import { effectiveSettings, settingsText, settingWords } from '../settings/effective.js';
+import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine } from '../state/card-lines.js';
+import { answerLine, ID } from '../state/card-lines.js';
 import { countsAtOnce } from '../state/views.js';
 
 // An error whose message is said to the session as it is.
@@ -41,8 +43,8 @@ export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
   'work', 'amendment', 'incident', 'note',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings']);
-const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'explain'];
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels']);
+const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'explain', 'review'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -65,6 +67,8 @@ const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 // Every run of line breaks, to put each answered line on one line.
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+// A decision topic: a slug, so the delegation review counts it exactly (ruling F40).
+const TOPIC = new RegExp(`^${ID}$`);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
@@ -238,13 +242,22 @@ export async function cards({ client, cwd, now }) {
 
 // --- card ---
 
+// A card's or a reversal's topic in lower case, refused when it isn't a slug (ruling F40).
+function topicOf(given) {
+  const topic = typeof given === 'string' ? given.trim().toLowerCase() : '';
+  if (!TOPIC.test(topic)) throw new CliError('A topic is a short slug: lower-case letters, digits and hyphens, at most 40, such as copy-changes');
+  return topic;
+}
+
 // Composes one card and records it, unless a waiting card already carries its set line: then that
 // card comes back as it was recorded, so the director is asked the card the state holds, with
 // `alreadyAsked` when a visit has handed it out already. The card handed out is recorded as asked.
-// An approval whose target names only the pull request gets its head commit from the host.
+// An approval whose target names only the pull request gets its head commit from the host. A
+// topic is kept in lower case, so the delegation review counts it as one.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
+  const topic = input.topic === undefined ? undefined : topicOf(input.topic);
   const { views } = await viewsOf(client, cwd);
   let target = input.target;
   if (input.kind === 'approval' && isPlain(target) && target.sha === undefined && Number.isSafeInteger(target.pr) && target.pr >= 1) {
@@ -254,7 +267,7 @@ export async function card({ client, cwd, input, now }) {
     if (typeof sha !== 'string' || !HEAD.test(sha)) throw new CliError(`The host gave no head commit for pull request #${target.pr}`);
     target = { ...target, sha };
   }
-  const { question, card: data } = composePlain({ ...input, target }, await wordsOf(client, views, now));
+  const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
   const found = existingCard(views, data.line);
   if (found !== null) {
     const waiting = views.waiting.find((c) => c.id === found);
@@ -369,6 +382,8 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
     if (got.card === undefined) return got;
     return { ...got, ...withProblems(await markAsked(client, cwd, [got.card.id], false)) };
   }
+  // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
+  if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
   if (kind !== 'ruling') return answered(await write(client, cwd, kind, input));
 
   const { words } = input;
@@ -385,6 +400,80 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
     throw new CliError(`The ruling was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
   }
   return { ...answered(got), card: { question, id: made.id }, ...withProblems(await markAsked(client, cwd, [made.id], false)) };
+}
+
+// --- review ---
+
+// The confirm card for a level the delegation review proposes, which names the level by its id and
+// its words, and gives the review's reason (ruling F42).
+function levelCard(event, words) {
+  const lower = event.data.value < 3;
+  return composePlain({
+    kind: 'confirm',
+    level: 3,
+    what: `A change to what I can decide alone, from the regular look at it: ${event.data.words}`,
+    why: 'Only you change what I can decide without you, so it comes to you.',
+    options: [{
+      label: 'Confirm',
+      says: lower ? 'I decide these myself from now on, and tell you in the briefing.' : 'I bring these to you as cards again, and wait for your answer.',
+    }],
+    recommend: 'Confirm',
+    because: event.data.because,
+    meanwhile: 'Nothing changes until you confirm.',
+    target: { event },
+  }, words);
+}
+
+// The delegation review (design section 6): { questions, left }, and `problems` when something
+// couldn't be done. The helper works out the proposals from the project's events; each is written
+// as a `level` event with its words and reason, under the id its confirm card was composed with,
+// then the card. One call's worth of cards is handed out and marked asked; the rest wait on the
+// board, counted in `left`. The review is recorded as done last, even with nothing to propose, so
+// it isn't due again until the next period. Under STOP nothing is written, so it is refused.
+export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
+  const got = await client.state.views({ cwd, review: true });
+  if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
+  if (got.stop === true) throw new CliError('STOP is on, so the review waits until it is lifted');
+  if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
+  const words = await wordsOf(client, got.views, now);
+  const problems = [];
+  const made = [];
+  for (const proposal of got.review.proposals) {
+    const { topic, to, because } = isPlain(proposal) ? proposal : {};
+    if (typeof topic !== 'string' || !TOPIC.test(topic) || ![1, 2, 3, 4].includes(to) || typeof because !== 'string') {
+      problems.push('A proposal from the helper couldn\'t be read');
+      continue;
+    }
+    const id = makeId();
+    const data = { key: topic, value: to, words: levelWords(topic, to), because };
+    let composed;
+    try {
+      composed = levelCard({ kind: 'level', id, data }, words);
+    } catch (error) {
+      problems.push(`The proposal for ${topic} couldn't be made a card: ${error.message}`);
+      continue;
+    }
+    try {
+      const wrote = await write(client, cwd, 'level', data, id);
+      if (wrote.id !== id) throw new CliError(`it was recorded as ${wrote.id}, not under the id its confirm card names`);
+    } catch (error) {
+      problems.push(`The proposal for ${topic} wasn't recorded: ${error.message}`);
+      continue;
+    }
+    try {
+      made.push({ question: composed.question, id: (await write(client, cwd, 'card', composed.card)).id });
+    } catch (error) {
+      problems.push(`The proposal for ${topic} was recorded as ${id}, but its confirm card wasn't: ${error.message}`);
+    }
+  }
+  const asked = made.slice(0, CARD.questions);
+  problems.push(...await markAsked(client, cwd, asked.map((c) => c.id), false));
+  try {
+    await write(client, cwd, 'note', { review: 'delegation', at: new Date(typeof now === 'function' ? now() : now).toISOString() });
+  } catch (error) {
+    problems.push(`The review wasn't recorded as done, so it will be due again: ${error.message}`);
+  }
+  return { questions: asked.map((c) => c.question), left: made.length - asked.length, ...withProblems(problems) };
 }
 
 // --- similar ---
@@ -404,7 +493,7 @@ const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 // One view as short lines.
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
-  const { views, cards: events } = await viewsOf(client, cwd, { cards: name === 'waiting' });
+  const { views, cards: events } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels' });
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
     return listed(rules.map((r) => `${flat(r.words)} (${r.status === 'accepted' ? 'in force' : 'waiting for the director to confirm it'})`), 'The rulebook is empty.');
@@ -420,10 +509,28 @@ export async function view({ client, cwd, name, now }) {
   }
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
+  if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
   // settings: the project's over the director's own, over the defaults
   const profile = await client.profile.views({});
   const own = profile?.ok === true && isPlain(profile.views?.settings) ? profile.views.settings : {};
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
+}
+
+// The decision topics, for a card to reuse one: each level in force, each level waiting for the
+// director's confirmation, then the topics on earlier cards with neither, each sorted by topic.
+function levelLines(views, events) {
+  const inForce = Object.values(isPlain(views.levels) ? views.levels : {}).filter((l) => isPlain(l) && TOPIC.test(l.key ?? '') && [1, 2, 3, 4].includes(l.value))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const waiting = (Array.isArray(views.unconfirmed) ? views.unconfirmed : [])
+    .filter((u) => u?.kind === 'level' && TOPIC.test(u.data?.key ?? '') && [1, 2, 3, 4].includes(u.data?.value))
+    .sort((a, b) => a.data.key.localeCompare(b.data.key));
+  const named = new Set([...inForce.map((l) => l.key), ...waiting.map((u) => u.data.key)]);
+  const onCards = [...new Set(events.map((e) => e.data?.topic).filter((t) => typeof t === 'string' && TOPIC.test(t) && !named.has(t)))].sort();
+  return [
+    ...inForce.map((l) => `${levelWords(l.key, l.value)} (in force)`),
+    ...waiting.map((u) => `${levelWords(u.data.key, u.data.value)} (waiting for the director to confirm it)`),
+    ...onCards.map((t) => `"${t}": on earlier cards`),
+  ];
 }
 
 // --- explain ---
@@ -501,6 +608,9 @@ export async function main(argv, {
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));
+    } else if (command === 'review') {
+      only(rest, 0, 'review takes no arguments');
+      json(await review({ client: helper, cwd: here, now, ...(makeId ? { makeId } : {}) }));
     } else if (command === 'views') {
       only(rest, 1, `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}`);
       lines(await view({ client: helper, cwd: here, name: rest[0], now }));

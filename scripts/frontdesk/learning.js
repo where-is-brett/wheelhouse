@@ -6,6 +6,11 @@
 // The board-context hook runs it once a visit, outside the sandbox, since the front desk can't read
 // the state or the profile; the hook writes what it proposes.
 //
+// The delegation review (design section 6) is learnt from the same clicks: every
+// `delegationReviewDays` it proposes which decision topics could move between levels 3 and 2. The
+// helper works it out for `cli.js review` (delegationReview), which writes each proposal as a
+// `level` event with its confirm card; only the director's Confirm moves a level.
+//
 // The shapes the proposals take:
 //   events    the project's events, as its state holds them
 //   profile   { events, settings, unconfirmed }: the profile's events, the settings in force
@@ -19,10 +24,14 @@
 // A card's click is judged as the waiting view judges it (cardOutcomes): a reply code's signed
 // record counts as the click it stands for. A proposal already waiting for its confirmation in the
 // profile, or put off with Not now on its card in the last TURNED_DOWN_DAYS, is not made again.
-import { cardOutcomes } from '../state/views.js';
+import { buildViews, cardOutcomes } from '../state/views.js';
 import { readEnrolled } from '../state/signing.js';
+import { ID, LANES } from '../state/card-lines.js';
+import { DECIDING } from '../cards/compose.js';
+import { effectiveSettings } from '../settings/effective.js';
+import { SETTINGS } from '../settings/catalogue.js';
 import { conceptOf } from './glossary.js';
-import { KNOWN_AFTER } from '../lib/front-desk.js';
+import { DELEGATE_AFTER, KNOWN_AFTER } from '../lib/front-desk.js';
 
 // How long a Not now on a proposal's card holds the proposal back.
 export const TURNED_DOWN_DAYS = 30;
@@ -152,4 +161,120 @@ export function settingProposals(events, profile, { now, enrolled, outcomes: giv
     if (recent.length >= EXPLAINED_CARDS) propose('explanations', 'plain', `you asked for more explanation on ${EXPLAINED_CARDS} cards this week`);
   }
   return out;
+}
+
+// --- The delegation review ---
+
+// A decision topic, as a card and a reversal name it: a slug, counted exactly (ruling F40).
+const TOPIC = new RegExp(`^${ID}$`);
+// The work an approve-work or amend card's set line names.
+const WORK_LINES = [new RegExp(`^Approve (${ID}) \\((?:${LANES}) lane\\) as written, `), new RegExp(`^Change the approved (${ID}) to this, `)];
+
+const topicOf = (data) => (typeof data?.topic === 'string' && TOPIC.test(data.topic) ? data.topic : null);
+
+function workOf(card) {
+  const line = typeof card.data?.line === 'string' ? card.data.line : '';
+  for (const pattern of WORK_LINES) {
+    const found = pattern.exec(line);
+    if (found) return found[1];
+  }
+  return null;
+}
+
+// The time of the latest delegation review (a `note` with `review: 'delegation'`), or null.
+export function lastReview(events) {
+  return list(events).filter((e) => isRecord(e) && e.kind === 'note' && e.data?.review === 'delegation' && typeof e.at === 'string')
+    .map((e) => e.at).sort().at(-1) ?? null;
+}
+
+// reviewDue({ events, now, days }) -> whether `days` have passed since the latest review, or with
+// none since the project's first event (ruling F43). A project with no events has nothing to review.
+export function reviewDue({ events, now, days }) {
+  const times = list(events).filter((e) => isRecord(e) && typeof e.at === 'string' && Number.isFinite(ms(e.at))).map((e) => e.at).sort();
+  if (times.length === 0) return false;
+  const every = Number.isFinite(days) && days > 0 ? days : SETTINGS.delegationReviewDays.default;
+  return instant(now) - ms(lastReview(events) ?? times[0]) >= every * DAY_MS;
+}
+
+// delegationProposals(events, { now, since, enrolled, outcomes, views }) -> [{ topic, from, to, because }], by topic.
+// `events` are the project's; `views` its views (built here when not given), for the levels in
+// force and the level proposals waiting. Counted since `since`, the last review (none: all time).
+// A topic is proposed for level 2 (from 3) once DELEGATE_AFTER of its level 3 cards were approved
+// unchanged (ruling F38): decided by the kind's deciding label, or by the signed record a reply
+// code earns, with no reversal of the topic after it and, for an approve-work or amend card, no
+// amendment after it to the work its set line names. Answer and question cards don't count: their
+// options are choices, not approvals. A topic reversed since the last review is proposed from 2 to
+// 3 instead, and not for level 2. Never proposed (ruling F39): a topic with any card at level 4 or
+// level 4 in force (the guardrails, secrets and money), a level the topic already has in force or
+// waiting for its confirmation, and a move from any level in force other than the one it is from.
+export function delegationProposals(events, { now, since, enrolled, outcomes: given, views: built } = {}) {
+  const nowMs = instant(now);
+  const all = list(events).filter(isRecord);
+  const keys = enrolled ?? readEnrolled();
+  const outcomes = given ?? cardOutcomes(all, keys);
+  const views = built ?? buildViews(all, keys, { now: () => new Date(nowMs) });
+  const inPeriod = (at) => after(at, since) && ms(at) <= nowMs;
+  const later = (e, at) => ms(e.at) > ms(at);
+
+  const reversals = all.filter((e) => e.kind === 'reversal' && topicOf(e.data) !== null);
+  const amendments = all.filter((e) => e.kind === 'amendment' && typeof e.data?.work === 'string');
+  const inForce = (topic) => (isRecord(views.levels?.[topic]) ? views.levels[topic].value : undefined);
+  const waiting = (topic, value) => list(views.unconfirmed).some((u) => u?.kind === 'level' && u.data?.key === topic && u.data?.value === value);
+  const highest = new Set([
+    ...outcomes.filter(({ card }) => card.data?.level === 4).map(({ card }) => topicOf(card.data)).filter((t) => t !== null),
+    ...Object.keys(isRecord(views.levels) ? views.levels : {}).filter((t) => inForce(t) === 4),
+  ]);
+
+  const unchanged = ({ card, decided }) => {
+    const topic = topicOf(card.data);
+    const deciding = DECIDING[card.data?.kind];
+    if (topic === null || card.data.level !== 3 || deciding === undefined || decided === null) return false;
+    if ((decided.label !== null && decided.label !== deciding) || !inPeriod(decided.at)) return false;
+    if (reversals.some((r) => r.data.topic === topic && later(r, decided.at))) return false;
+    if (card.data.kind !== 'approve-work' && card.data.kind !== 'amend') return true;
+    const work = workOf(card);
+    return work !== null && !amendments.some((m) => m.data.work === work && later(m, decided.at));
+  };
+  const approvals = new Map();
+  for (const outcome of outcomes.filter(unchanged)) approvals.set(outcome.card.data.topic, (approvals.get(outcome.card.data.topic) ?? 0) + 1);
+  const reversed = new Map();
+  for (const r of reversals.filter((e) => inPeriod(e.at))) reversed.set(r.data.topic, (reversed.get(r.data.topic) ?? 0) + 1);
+  const period = since === undefined || since === null ? 'so far' : 'since the last review';
+
+  const out = [];
+  for (const topic of [...new Set([...approvals.keys(), ...reversed.keys()])].sort()) {
+    if (highest.has(topic)) continue;
+    const level = inForce(topic);
+    const undone = reversed.get(topic);
+    if (undone !== undefined) {
+      if ((level === undefined || level === 2) && !waiting(topic, 3)) {
+        const what = undone === 1 ? 'a decision' : `${undone} decisions`;
+        out.push({ topic, from: 2, to: 3, because: `you undid ${what} made on it without you ${period}` });
+      }
+      continue;
+    }
+    const n = approvals.get(topic);
+    if (n >= DELEGATE_AFTER && (level === undefined || level === 3) && !waiting(topic, 2)) {
+      out.push({ topic, from: 3, to: 2, because: `you approved it as proposed ${n} times ${period}, with nothing changed or undone after` });
+    }
+  }
+  return out;
+}
+
+// delegationReview(events, { now, enrolled, views }) -> { due, since, proposals }, for the helper's
+// /state/views (ruling F41): whether the review is due by the project's `delegationReviewDays` in
+// force over the default, the time of the last review (null when there has been none), and the
+// proposals counted since then.
+export function delegationReview(events, { now, enrolled, views: built } = {}) {
+  const nowMs = instant(now);
+  const all = list(events).filter(isRecord);
+  const keys = enrolled ?? readEnrolled();
+  const views = built ?? buildViews(all, keys, { now: () => new Date(nowMs) });
+  const settings = effectiveSettings({ project: isRecord(views.settings) ? views.settings : {}, now: nowMs });
+  const since = lastReview(all);
+  return {
+    due: reviewDue({ events: all, now: nowMs, days: settings.delegationReviewDays?.value }),
+    since,
+    proposals: delegationProposals(all, { now: nowMs, since, enrolled: keys, views }),
+  };
 }

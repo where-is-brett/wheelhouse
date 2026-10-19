@@ -190,3 +190,16 @@ test('unconfirmed changes and what waits come straight from the board model', ()
     assert.deepEqual(briefingModel(odd), { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] });
   }
 });
+
+test('the delegation review, when due, is something to watch, after unusual use and before the health lines', () => withHome(() => {
+  const usage = usageWith({ unusual: [{ kind: 'session', id: 'session:abc', tokens: 1200000, median: 300000, cause: 'a long test run', unit: 'tokens' }] });
+  const model = board({ health: [{ level: 'watch', text: 'The weekly allowance is 90% used' }] });
+  const unusual = 'One session used 1.2M tokens, against a usual 300K: a long test run';
+  const watch = (review) => briefingModel({ model, usage, now: NOW, wasRaised: never, review }).watch;
+  assert.deepEqual(watch({ due: true, days: 14 }), [unusual, 'The fortnightly look at what I can decide alone is due', 'The weekly allowance is 90% used']);
+  assert.deepEqual(watch({ due: true, days: 7 }), [unusual, 'The look at what I can decide alone is due (every 7 days)', 'The weekly allowance is 90% used']);
+  // Not due, or not worked out: nothing said.
+  for (const review of [{ due: false, days: 14 }, undefined, null, 'due']) assert.deepEqual(watch(review), [unusual, 'The weekly allowance is 90% used']);
+  // What it raises is still only the unusual use, which opens `watch`.
+  assert.deepEqual(briefingModel({ model, usage, now: NOW, wasRaised: never, review: { due: true, days: 14 } }).raise, ['session:abc']);
+}));
