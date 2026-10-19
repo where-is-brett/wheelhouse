@@ -53,7 +53,7 @@ export function sayTime(iso) {
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function sayValue(key, value) {
+export function sayValue(key, value) {
   if (key.startsWith('known:')) return value ? 'yes' : 'no';
   if (key === 'notifications') {
     const channels = value.channels.length ? value.channels.join(', ') : 'none';

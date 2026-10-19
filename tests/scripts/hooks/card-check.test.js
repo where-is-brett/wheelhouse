@@ -42,6 +42,7 @@ const INPUTS = {
   amend: { ...common, kind: 'amend', recommend: 'Change it', what: 'A change to the plan you approved for export-csv.', options: [says('Change it')], target: { work: 'export-csv', hash: DOC } },
   'lift-incident': { ...common, kind: 'lift-incident', recommend: 'End it', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, kind: 'incident-fix', recommend: 'Merge the fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
+  setup: { ...common, kind: 'setup', recommend: 'Go ahead', what: 'Setup step 6, Changes to this computer: transcripts are kept 30 days.', options: [says('Go ahead')], target: { step: 6, hash: DOC } },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 const cardOf = (kind) => composeCard(INPUTS[kind]).question;
@@ -171,6 +172,7 @@ test('the first part must name what each kind\'s set line names', () => {
     runbook: ['put the product back to an earlier release', 'cut the access'],
     'ci-push': ['ci-fix branch', 'main branch'],
     confirm: ['money is shown in dollars', 'money is shown in euros'],
+    setup: ['step 6,', 'step 16,'],
   };
   for (const [kind, [right, wrong]] of Object.entries(cases)) {
     const card = textOf(kind);
@@ -241,3 +243,27 @@ test('the refusal tells the front desk where a right card comes from', async () 
   assert.match(reason(await decide(call(q), inProject)), /cli\.js card/);
 });
 
+test('the card check hook and cardProblems agree on every composed card', async () => {
+  for (const kind of Object.keys(INPUTS)) {
+    const card = cardOf(kind);
+    const lines = card.question.split('\n');
+    const variants = [
+      card.question,
+      lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
+      lines.filter((l) => !l.startsWith('Reply code:')).join('\n'),
+      `${card.question}\n${lines.at(-1)}`,
+      card.question.replace(/^Why it's coming to you:.*$/m, "Why it's coming to you:"),
+      card.question.replace(/#\d+/g, '#99'),
+    ];
+    for (const question of variants) {
+      const problems = cardProblems(question);
+      const out = await decide(call({ ...card, question }), inProject);
+      if (problems.length === 0) {
+        assert.equal(out, undefined, `${kind}: ${question}`);
+      } else {
+        const text = reason(out);
+        for (const problem of problems) assert.ok(text.includes(`Question 1 ("${card.header}") ${problem}.`), `${kind}: ${problem}`);
+      }
+    }
+  }
+});

@@ -18,6 +18,7 @@ import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
+import { LEADS } from '../../../scripts/lib/mod-numbers.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
 const P = 'owner__name';
@@ -499,6 +500,44 @@ test('the role comes from the session\'s first prompt and is kept: the wake line
     assert.ok(contextOf(await send('Hello', 's-desk')).length > 0);
     assert.equal(contextOf(await send(`${FOREMAN_PROMPT_LEAD} handle wake-1.json`, 's-desk', '2026-10-19T12:10:00.000Z')), cardsLine(1));
     assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-desk'), 'utf8')), { role: 'front-desk' });
+  });
+});
+
+test('the board-context hook records nothing for /go, /digest or /wheelhouse', async () => {
+  await withProject(async ({ repo }) => {
+    // Cards no visit has asked would bring their line, and the gap a briefing, if the prompt counted.
+    put(viewFile('waiting'), unasked(2));
+    const seen = { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' };
+    markSeen(P, seen);
+    for (const command of ['/go', '/digest', '/wheelhouse', '  /GO  ', '/wheelhouse now']) {
+      assert.equal(await run(repo, command, NOW), undefined, command);
+      assert.deepEqual(readSeen(P, { now: at(NOW) }), { ...seen, weeklyAt: null }, command);
+    }
+    // The plugin's own commands are different commands, and a line with more after it is a prompt.
+    assert.match(contextOf(await run(repo, '/wheelhouse:settings', NOW)), /^Cards to ask this visit: 2/);
+    assert.ok(contextOf(await run(repo, '/go\nand then some', NOW)).includes(HEADINGS.briefing));
+  });
+});
+
+test('a courier wake neither restarts the gap nor brings the briefing', async () => {
+  await withProject(async ({ repo }) => {
+    put(viewFile('waiting'), unasked(2));
+    const seen = { promptAt: '2026-10-19T08:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' };
+    markSeen(P, seen);
+    assert.equal(await run(repo, `${LEADS.courier} 2 cards are waiting.`, NOW), undefined);
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { ...seen, weeklyAt: null });
+    // The next prompt of the director's is still the first after the gap.
+    assert.ok(contextOf(await run(repo, 'Morning', NOW)).includes(HEADINGS.briefing));
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
+  });
+});
+
+test('a pane press after two hours brings the briefing', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T09:00:00.000Z') });
+    const out = await run(repo, `${LEADS.pane} the director pressed Approve on card 1 (c1).`, NOW);
+    assert.ok(contextOf(out).includes(HEADINGS.briefing), contextOf(out));
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
   });
 });
 

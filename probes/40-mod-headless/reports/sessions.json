@@ -1,0 +1,717 @@
+{
+  "digest": {
+    "exitCode": 0,
+    "stderr": "",
+    "eventTypes": [
+      "system:init",
+      "system:commands_changed",
+      "assistant",
+      "result:success"
+    ],
+    "assistantEvents": 1,
+    "result": {
+      "text": "wheelhouse-probe-40: probe digest",
+      "isError": false,
+      "numTurns": 0,
+      "costUsd": 0,
+      "usage": {
+        "input": 0,
+        "output": 0
+      }
+    },
+    "hookSaw": [],
+    "modLog": [
+      {
+        "event": "session.start"
+      },
+      {
+        "event": "command.run",
+        "command": "digest"
+      }
+    ],
+    "partLog": []
+  },
+  "idle": {
+    "timer": {
+      "sessionStartAt": 643,
+      "fires": [
+        {
+          "fire": 1,
+          "t": 5670
+        },
+        {
+          "fire": 2,
+          "t": 10668
+        },
+        {
+          "fire": 3,
+          "t": 15671
+        },
+        {
+          "fire": 4,
+          "t": 20675
+        },
+        {
+          "fire": 5,
+          "t": 25678
+        },
+        {
+          "fire": 6,
+          "t": 30683
+        },
+        {
+          "fire": 7,
+          "t": 35684
+        },
+        {
+          "fire": 8,
+          "t": 40686
+        },
+        {
+          "fire": 9,
+          "t": 45688
+        }
+      ],
+      "submitCalledAt": 15675,
+      "submitResolvedAt": 15747,
+      "timerPromptSeenByHookAt": null,
+      "timerPromptOrigin": null,
+      "resultsAt": [
+        {
+          "t": 2729,
+          "result": "ok",
+          "numTurns": 1
+        },
+        {
+          "t": 4306,
+          "result": "Prompt dropped by a hook: probe",
+          "numTurns": 0
+        },
+        {
+          "t": 18887,
+          "result": "Got the plugin's timer prompt. It doesn't ask for any action, so I haven't done anything.",
+          "numTurns": 1
+        }
+      ],
+      "lastFireAt": 45688,
+      "endedAt": 18888
+    },
+    "label": "idle",
+    "sessionId": "a3b757bd-dd7f-4340-9c4d-5905993f3b62",
+    "exitCode": 0,
+    "stderr": "",
+    "sends": [
+      {
+        "t": 755,
+        "text": "Reply with the single word: ok."
+      },
+      {
+        "t": 4274,
+        "text": "probe-drop: sent while idle"
+      }
+    ],
+    "eventsHoldDroppedText": false,
+    "events": [
+      {
+        "t": 830,
+        "type": "system",
+        "subtype": "init"
+      },
+      {
+        "t": 2700,
+        "type": "assistant",
+        "blocks": [
+          "text: ok"
+        ]
+      },
+      {
+        "t": 2704,
+        "type": "rate_limit_event"
+      },
+      {
+        "t": 2729,
+        "type": "result",
+        "subtype": "success",
+        "isError": false,
+        "numTurns": 1,
+        "result": "ok",
+        "stopReason": "end_turn",
+        "durationMs": 1949
+      },
+      {
+        "t": 3655,
+        "type": "system",
+        "subtype": "commands_changed"
+      },
+      {
+        "t": 4305,
+        "type": "system",
+        "subtype": "init"
+      },
+      {
+        "t": 4305,
+        "type": "system",
+        "subtype": "informational"
+      },
+      {
+        "t": 4306,
+        "type": "result",
+        "subtype": "success",
+        "isError": false,
+        "numTurns": 0,
+        "result": "Prompt dropped by a hook: probe",
+        "stopReason": null,
+        "durationMs": 19
+      },
+      {
+        "t": 15678,
+        "type": "command_lifecycle"
+      },
+      {
+        "t": 15739,
+        "type": "system",
+        "subtype": "init"
+      },
+      {
+        "t": 17666,
+        "type": "system",
+        "subtype": "thinking_tokens"
+      },
+      {
+        "t": 17949,
+        "type": "system",
+        "subtype": "thinking_tokens"
+      },
+      {
+        "t": 17950,
+        "type": "assistant",
+        "blocks": [
+          "thinking"
+        ]
+      },
+      {
+        "t": 18872,
+        "type": "assistant",
+        "blocks": [
+          "text: Got the plugin's timer prompt. It doesn't ask for any action, so I haven't done "
+        ]
+      },
+      {
+        "t": 18887,
+        "type": "result",
+        "subtype": "success",
+        "isError": false,
+        "numTurns": 1,
+        "result": "Got the plugin's timer prompt. It doesn't ask for any action, so I haven't done anything.",
+        "stopReason": "end_turn",
+        "durationMs": 3206
+      },
+      {
+        "t": 18888,
+        "type": "command_lifecycle"
+      }
+    ],
+    "modLog": [
+      {
+        "t": 643,
+        "event": "session.start"
+      },
+      {
+        "t": 5670,
+        "event": "clock.every",
+        "fire": 1
+      },
+      {
+        "t": 10668,
+        "event": "clock.every",
+        "fire": 2
+      },
+      {
+        "t": 15671,
+        "event": "clock.every",
+        "fire": 3
+      },
+      {
+        "t": 15675,
+        "event": "prompt.submit called"
+      },
+      {
+        "t": 15747,
+        "event": "prompt.submit resolved",
+        "result": {
+          "text": "probe: timer prompt"
+        }
+      },
+      {
+        "t": 20675,
+        "event": "clock.every",
+        "fire": 4
+      },
+      {
+        "t": 25678,
+        "event": "clock.every",
+        "fire": 5
+      },
+      {
+        "t": 30683,
+        "event": "clock.every",
+        "fire": 6
+      },
+      {
+        "t": 35684,
+        "event": "clock.every",
+        "fire": 7
+      },
+      {
+        "t": 40686,
+        "event": "clock.every",
+        "fire": 8
+      },
+      {
+        "t": 45688,
+        "event": "clock.every",
+        "fire": 9
+      }
+    ],
+    "partLog": [
+      {
+        "t": 779,
+        "event": "prompt.submit",
+        "text": "Reply with the single word: ok.",
+        "origin": {
+          "kind": "sdk"
+        },
+        "now": 1792375167235,
+        "isMeta": false,
+        "turnId": null,
+        "wait": false,
+        "command": null,
+        "answer": "next"
+      },
+      {
+        "t": 4298,
+        "event": "prompt.submit",
+        "text": "probe-drop: sent while idle",
+        "origin": {
+          "kind": "sdk"
+        },
+        "now": 1792375170753,
+        "isMeta": false,
+        "turnId": null,
+        "wait": false,
+        "command": null,
+        "answer": "drop"
+      }
+    ],
+    "hookLog": [
+      {
+        "t": 820,
+        "prompt": "Reply with the single word: ok."
+      },
+      {
+        "t": 15731,
+        "prompt": "probe: timer prompt"
+      }
+    ],
+    "transcripts": [
+      {
+        "file": "<session id>.jsonl",
+        "lines": 36,
+        "holdsDroppedText": false,
+        "holdsTimerPrompt": true,
+        "userPrompts": [
+          "Reply with the single word: ok.",
+          "The wheelhouse-probe-40 plugin sent a message:\nprobe: timer prompt\n\nThis is how "
+        ]
+      }
+    ]
+  },
+  "running": {
+    "timer": {
+      "sessionStartAt": 617,
+      "fires": [
+        {
+          "fire": 1,
+          "t": 5625
+        },
+        {
+          "fire": 2,
+          "t": 10625
+        },
+        {
+          "fire": 3,
+          "t": 15629
+        },
+        {
+          "fire": 4,
+          "t": 20633
+        },
+        {
+          "fire": 5,
+          "t": 25635
+        },
+        {
+          "fire": 6,
+          "t": 30636
+        },
+        {
+          "fire": 7,
+          "t": 35638
+        },
+        {
+          "fire": 8,
+          "t": 40640
+        },
+        {
+          "fire": 9,
+          "t": 45643
+        },
+        {
+          "fire": 10,
+          "t": 50646
+        },
+        {
+          "fire": 11,
+          "t": 55650
+        },
+        {
+          "fire": 12,
+          "t": 60653
+        },
+        {
+          "fire": 13,
+          "t": 65657
+        }
+      ],
+      "submitCalledAt": 15632,
+      "submitResolvedAt": 35388,
+      "timerPromptSeenByHookAt": null,
+      "timerPromptOrigin": null,
+      "resultsAt": [
+        {
+          "t": 2366,
+          "result": "ok",
+          "numTurns": 1
+        },
+        {
+          "t": 35330,
+          "result": "**The Keeper of Gannet Rock**\n\nFor thirty-one years, Elias Moran climbed the one hundred and fourteen steps of the Ganne",
+          "numTurns": 1
+        },
+        {
+          "t": 35340,
+          "result": "Prompt dropped by a hook: probe",
+          "numTurns": 0
+        },
+        {
+          "t": 38709,
+          "result": "I got the timer prompt from the wheelhouse-probe-40 plugin. It didn't ask for anything, so I haven't done anything. If i",
+          "numTurns": 1
+        }
+      ],
+      "lastFireAt": 65657,
+      "endedAt": 38710
+    },
+    "label": "running",
+    "sessionId": "be192940-6835-4cf6-ab05-ce88e7532f2e",
+    "exitCode": 0,
+    "stderr": "",
+    "sends": [
+      {
+        "t": 756,
+        "text": "Reply with the single word: ok."
+      },
+      {
+        "t": 12333,
+        "text": "Write a story of about 800 words about a lighthouse keeper. Use no tools."
+      },
+      {
+        "t": 15336,
+        "text": "probe-drop: sent while a turn runs"
+      }
+    ],
+    "eventsHoldDroppedText": false,
+    "events": [
+      {
+        "t": 821,
+        "type": "system",
+        "subtype": "init"
+      },
+      {
+        "t": 2338,
+        "type": "assistant",
+        "blocks": [
+          "text: ok"
+        ]
+      },
+      {
+        "t": 2346,
+        "type": "rate_limit_event"
+      },
+      {
+        "t": 2366,
+        "type": "result",
+        "subtype": "success",
+        "isError": false,
+        "numTurns": 1,
+        "result": "ok",
+        "stopReason": "end_turn",
+        "durationMs": 1588
+      },
+      {
+        "t": 4072,
+        "type": "system",
+        "subtype": "commands_changed"
+      },
+      {
+        "t": 12385,
+        "type": "system",
+        "subtype": "init"
+      },
+      {
+        "t": 13651,
+        "type": "assistant",
+        "blocks": [
+          "thinking"
+        ]
+      },
+      {
+        "t": 35311,
+        "type": "assistant",
+        "blocks": [
+          "text: **The Keeper of Gannet Rock**\n\nFor thirty-one years, Elias Moran climbed the one"
+        ]
+      },
+      {
+        "t": 35330,
+        "type": "result",
+        "subtype": "success",
+        "isError": false,
+        "numTurns": 1,
+        "result": "**The Keeper of Gannet Rock**\n\nFor thirty-one years, Elias Moran climbed the one hundred and fourteen steps of the Ganne",
+        "stopReason": "end_turn",
+        "durationMs": 22992
+      },
+      {
+        "t": 35339,
+        "type": "system",
+        "subtype": "init"
+      },
+      {
+        "t": 35339,
+        "type": "system",
+        "subtype": "informational"
+      },
+      {
+        "t": 35340,
+        "type": "result",
+        "subtype": "success",
+        "isError": false,
+        "numTurns": 0,
+        "result": "Prompt dropped by a hook: probe",
+        "stopReason": null,
+        "durationMs": 8
+      },
+      {
+        "t": 35340,
+        "type": "command_lifecycle"
+      },
+      {
+        "t": 35382,
+        "type": "system",
+        "subtype": "init"
+      },
+      {
+        "t": 37196,
+        "type": "system",
+        "subtype": "thinking_tokens"
+      },
+      {
+        "t": 37614,
+        "type": "system",
+        "subtype": "thinking_tokens"
+      },
+      {
+        "t": 37615,
+        "type": "assistant",
+        "blocks": [
+          "thinking"
+        ]
+      },
+      {
+        "t": 38697,
+        "type": "assistant",
+        "blocks": [
+          "text: I got the timer prompt from the wheelhouse-probe-40 plugin. It didn't ask for an"
+        ]
+      },
+      {
+        "t": 38709,
+        "type": "result",
+        "subtype": "success",
+        "isError": false,
+        "numTurns": 1,
+        "result": "I got the timer prompt from the wheelhouse-probe-40 plugin. It didn't ask for anything, so I haven't done anything. If i",
+        "stopReason": "end_turn",
+        "durationMs": 3367
+      },
+      {
+        "t": 38710,
+        "type": "command_lifecycle"
+      }
+    ],
+    "modLog": [
+      {
+        "t": 617,
+        "event": "session.start"
+      },
+      {
+        "t": 5625,
+        "event": "clock.every",
+        "fire": 1
+      },
+      {
+        "t": 10625,
+        "event": "clock.every",
+        "fire": 2
+      },
+      {
+        "t": 15629,
+        "event": "clock.every",
+        "fire": 3
+      },
+      {
+        "t": 15632,
+        "event": "prompt.submit called"
+      },
+      {
+        "t": 20633,
+        "event": "clock.every",
+        "fire": 4
+      },
+      {
+        "t": 25635,
+        "event": "clock.every",
+        "fire": 5
+      },
+      {
+        "t": 30636,
+        "event": "clock.every",
+        "fire": 6
+      },
+      {
+        "t": 35388,
+        "event": "prompt.submit resolved",
+        "result": {
+          "text": "probe: timer prompt"
+        }
+      },
+      {
+        "t": 35638,
+        "event": "clock.every",
+        "fire": 7
+      },
+      {
+        "t": 40640,
+        "event": "clock.every",
+        "fire": 8
+      },
+      {
+        "t": 45643,
+        "event": "clock.every",
+        "fire": 9
+      },
+      {
+        "t": 50646,
+        "event": "clock.every",
+        "fire": 10
+      },
+      {
+        "t": 55650,
+        "event": "clock.every",
+        "fire": 11
+      },
+      {
+        "t": 60653,
+        "event": "clock.every",
+        "fire": 12
+      },
+      {
+        "t": 65657,
+        "event": "clock.every",
+        "fire": 13
+      }
+    ],
+    "partLog": [
+      {
+        "t": 779,
+        "event": "prompt.submit",
+        "text": "Reply with the single word: ok.",
+        "origin": {
+          "kind": "sdk"
+        },
+        "now": 1792375213477,
+        "isMeta": false,
+        "turnId": null,
+        "wait": false,
+        "command": null,
+        "answer": "next"
+      },
+      {
+        "t": 12343,
+        "event": "prompt.submit",
+        "text": "Write a story of about 800 words about a lighthouse keeper. Use no tools.",
+        "origin": {
+          "kind": "sdk"
+        },
+        "now": 1792375225041,
+        "isMeta": false,
+        "turnId": null,
+        "wait": false,
+        "command": null,
+        "answer": "next"
+      },
+      {
+        "t": 35336,
+        "event": "prompt.submit",
+        "text": "probe-drop: sent while a turn runs",
+        "origin": {
+          "kind": "sdk"
+        },
+        "now": 1792375248034,
+        "isMeta": false,
+        "turnId": null,
+        "wait": false,
+        "command": null,
+        "answer": "drop"
+      }
+    ],
+    "hookLog": [
+      {
+        "t": 812,
+        "prompt": "Reply with the single word: ok."
+      },
+      {
+        "t": 12378,
+        "prompt": "Write a story of about 800 words about a lighthouse keeper. Use no tools."
+      },
+      {
+        "t": 35376,
+        "prompt": "probe: timer prompt"
+      }
+    ],
+    "transcripts": [
+      {
+        "file": "<session id>.jsonl",
+        "lines": 48,
+        "holdsDroppedText": false,
+        "holdsTimerPrompt": true,
+        "userPrompts": [
+          "Reply with the single word: ok.",
+          "Write a story of about 800 words about a lighthouse keeper. Use no tools.",
+          "The wheelhouse-probe-40 plugin sent a message:\nprobe: timer prompt\n\nThis is how "
+        ]
+      }
+    ]
+  }
+}

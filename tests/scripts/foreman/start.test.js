@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, startWatcher, watcherRunning, FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
+import { main, startWatcher, watcherRunning, FOREMAN_PROMPT_LEAD, MONITOR_NOTE } from '../../../scripts/foreman/start.js';
 import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../../../scripts/lib/build-loop.js';
 import { healthFile, lockFile } from '../../../scripts/watcher/main.js';
@@ -130,7 +130,18 @@ test('Shape 2: the foreman\'s long session compacts at 100,000, runs as the fore
   assert.equal(opts.env.PATH, '/bin');
   assert.equal(opts.cwd, checkout);
   assert.equal(opts.stdio, 'inherit');
-  assert.match(r.err, /check 26/);
+}));
+
+test('the Shape 2 start says the mod hands on the wakes', () => withHome(async () => {
+  await project();
+  const { client } = fakeClient({ cfg: config({ watcherShape: 2 }) });
+  const r = await start([P], {
+    client, launch: async () => 0, pluginRoot: ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' }, env: {},
+  });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(MONITOR_NOTE, 'The mod in this session hands it the watcher\'s wakes.');
+  assert.equal(r.err, `${MONITOR_NOTE}\n`);
+  assert.doesNotMatch(r.err, /check 26|nothing wakes/i);
 }));
 
 test('Shape 2 through claude.cmd puts the prompt on the command line, quoted', () => withHome(async () => {

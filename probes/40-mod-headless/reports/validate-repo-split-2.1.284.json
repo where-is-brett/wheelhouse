@@ -1,0 +1,24 @@
+{
+  "success": true,
+  "strict": false,
+  "target": "<repo>/.claude-plugin/marketplace.json",
+  "manifest": {
+    "file": "<repo>/.claude-plugin/marketplace.json",
+    "type": "marketplace",
+    "errors": [],
+    "warnings": [
+      {
+        "path": "description",
+        "message": "No marketplace description provided. Adding a description helps users understand what this marketplace offers",
+        "code": null
+      },
+      {
+        "path": "plugins[0] plugin.json → author",
+        "message": "No author information provided. Consider adding author details for plugin attribution",
+        "code": null
+      }
+    ],
+    "notes": []
+  },
+  "contents": []
+}

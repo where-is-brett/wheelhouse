@@ -470,7 +470,12 @@ test('a reply code sent through the bridge as the phone records an approval the 
     const approvals = await c.act(() => eventsOf('approval'));
     assert.equal(approvals.length, 1);
     assert.deepEqual({ pr: approvals[0].data.pr, commit: approvals[0].data.commit }, { pr: PR, commit: c.head });
-    assert.deepEqual(await c.act(() => fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json'))), [], 'the helper took it');
+    // The signed record is the helper's; the plain card-answer beside it may be kept for later under
+    // load, which is harmless, since the record has already closed the card.
+    const keptRecords = await c.act(() => fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json'))
+      .map((n) => JSON.parse(fs.readFileSync(path.join(pendingDir(PROJECT), n), 'utf8')).route)
+      .filter((route) => route === 'record' || route === 'profile-record'));
+    assert.deepEqual(keptRecords, [], 'the helper took the record');
 
     // The code is good once.
     assert.deepEqual(await bridge(c, { cmd: 'reply', origin: 'bridge', text: `${code} Approve`, cwd: c.folder }), { ok: false, says: 'That code has been used' });

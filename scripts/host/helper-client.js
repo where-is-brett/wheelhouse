@@ -102,6 +102,12 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       contain: post('/runbook/contain'), //          { project } -> { ok, message, output? }: step 5
       candidates: post('/runbook/candidates'), //    { project } -> { ok, candidates: [{ sha, sha12, at, title }] }
     },
+    // Setup's routes (scripts/setup/engine.js). Each names the folder being set up, a full path.
+    setup: {
+      plan: post('/setup/plan'), //     { folder, step } -> { ok, changes, hash, card, director }: read-only, answered under STOP
+      apply: post('/setup/apply'), //   { folder, step, hash } -> { ok, started }: only after the director's click on the card naming that hash; refused under STOP
+      status: post('/setup/status'), // { folder } -> { ok, lines, next, ask }: the folder's run as plain lines, answered under STOP
+    },
     issue: {
       create: post('/issue/create'), // { project, title, body, labels? }
       update: post('/issue/update'), // { project, number, body }

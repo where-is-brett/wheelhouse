@@ -1,7 +1,7 @@
 # .github/workflows/ci.yml
 # Runs the tests on Linux and Windows, and on macOS once a pull request is out of
-# draft or on main, validates the plugin, and checks the lineage manifest against
-# fresh copies of the upstream skills.
+# draft or on main, checks the mod (validator, source, bridge imports and the mod's tests), and
+# checks the lineage manifest against fresh copies of the upstream skills.
 name: CI
 
 on:
@@ -45,8 +45,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - run: npm install --global @anthropic-ai/claude-code@2.1.278
-      - run: claude plugin validate .
+      # Pins the version of Claude Code the mod's checks run on. The mod's bridge call lives in
+      # hooks/mod/ask.ts, which releases before 2.1.299 refuse to follow (check 40 has the table of
+      # releases), so this stays at 2.1.299 while lineage/manifest.json's claudeCode.floor is lower.
+      - run: npm install --global @anthropic-ai/claude-code@2.1.299
+      - run: npm run mod-check
 
   # Fetches each upstream shallow at the manifest's commit and checks the fingerprints, the
   # register's anchors and carried text, and the marketplace's pins.

@@ -16,8 +16,8 @@ export const NO_STATE = 'There is no state for this project on this computer yet
 const NO_BUILD_LOOP = 'The build loop isn\'t running yet';
 const NO_USAGE = 'Usage counts aren\'t on yet';
 const NO_HEALTH = 'How the project stands couldn\'t be read';
-const NO_SETTINGS = 'The settings couldn\'t be read';
-const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
+export const NO_SETTINGS = 'The settings couldn\'t be read';
+export const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
 const NO_CLOCK = 'The board\'s clock couldn\'t be read';
 // The step a feature reads as while the director's Not now to its build commands holds it.
 export const NOT_NOW_STEP = 'waiting on you to allow its build commands';
@@ -157,15 +157,16 @@ function namesQuestion(card, id) {
 // build loop's questions that nobody has answered and no card asked, waiting or not, names.
 // A build-command question is named by its commands, since a session writes its `what`.
 // Oldest first, numbered from 1. Each item says where it came from: `card` is a waiting card's
-// id, `question` a build-loop question's id. The front desk numbers a card by this list.
+// id, `question` a build-loop question's id. The front desk numbers a card by this list. `id`
+// names the item whichever it is: the card's id, or `q:<question id>`.
 export function numberedWaiting(views, events) {
   const questions = isRecord(views?.work) && isRecord(views?.features) && isRecord(views?.questions) ? views.questions : {};
   const cards = list(views?.waiting);
   const named = [...cards, ...list(events).filter((e) => e.kind === 'card')];
-  const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), card: card.id }));
+  const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), id: card.id, card: card.id }));
   for (const [id, entry] of Object.entries(questions)) {
     if (!isRecord(entry) || entry.answer || named.some((card) => namesQuestion(card, id))) continue;
-    items.push({ what: questionWords(entry.question?.data) || 'A question from the build', since: timeOf(entry.question?.at), question: id });
+    items.push({ what: questionWords(entry.question?.data) || 'A question from the build', since: timeOf(entry.question?.at), id: `q:${id}`, question: id });
   }
   return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));
 }
@@ -204,7 +205,7 @@ function namesOnly(text, id) {
   return found.length === 1 && found[0][1] === id;
 }
 
-const waitingList = (views, events) => numberedWaiting(views, events).map(({ n, what, since }) => ({ n, what, since }));
+const waitingList = (views, events) => numberedWaiting(views, events).map(({ n, id, what, since }) => ({ n, id, what, since }));
 
 function workInfo(work, id) {
   const data = isRecord(work[id]) && isRecord(work[id].work?.data) ? work[id].work.data : {};
@@ -255,7 +256,8 @@ function unusualLines(unusual) {
 // projects use retiring soon, and security advisories for the repositories it builds on.
 function extraHealth(incidents, sources) {
   const lines = [];
-  for (const i of list(incidents?.open)) lines.push({ level: 'stop', text: cap(`Incident ${oneLine(i.id)} is open, so nothing merges: ${oneLine(i.what)}`) });
+  // Each incident's line names its incident, so the pane can tell it from other stop lines.
+  for (const i of list(incidents?.open)) lines.push({ level: 'stop', text: cap(`Incident ${oneLine(i.id)} is open, so nothing merges: ${oneLine(i.what)}`), incident: i.id });
   for (const r of list(sources?.retiring)) {
     if (r.routed === true && r.soon === true) lines.push({ level: 'watch', text: cap(`${oneLine(r.model)}, a model your projects use, retires on ${dayMonthYear(r.date) ?? oneLine(r.date)}`) });
   }

@@ -16,12 +16,17 @@ import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
-import { helperAddress, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
+import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
+import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
+import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
 
 const P = 'owner__name';
 
@@ -857,6 +862,206 @@ test('on Windows under STOP, the lineage hold line comes first after STOP, then 
     const lines = text(await lineageRun(f, fixture, folder, { ...stop, platform: 'win32' })).split('\n');
     assert.deepEqual(lines.slice(0, 4), [
       'STOP is on (set by prompt at 2026-10-18T01:00:00.000Z)', LINEAGE_LINE('LICENSE'), WINDOWS_LINE, UNATTENDED_LINE,
+    ]);
+  });
+});
+
+// --- A folder being set up: no project record yet, the plugin switched on in its own settings or a setup run there.
+
+const pluginOn = (folder) => {
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true } }));
+  return folder;
+};
+const setupStart = (f, cwd, extra = {}) => decide(
+  { cwd, session_id: 's1' },
+  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => null, stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, ...extra },
+);
+
+test('a fresh computer gets a signing key and enrols it once', async () => {
+  await withHome(async () => {
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-fresh zoë ')));
+    const f = fake();
+    const out = await setupStart(f, folder);
+    const keyFile = path.join(keysDir(), 'signing.pem');
+    const key = fs.readFileSync(keyFile, 'utf8');
+    assert.deepEqual(readEnrolled().map((e) => e.computer), [computerId()]);
+    assert.equal(text(out), 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.');
+    // The first click can be signed and checked.
+    const signed = makeEvent({ kind: 'action', data: { action: 'lift-stop', question: 'q', label: 'Lift STOP' } });
+    assert.equal(verify(signed, readEnrolled()), true);
+    // A second session start makes no new key and adds nothing.
+    await setupStart(fake(), folder);
+    assert.equal(fs.readFileSync(keyFile, 'utf8'), key);
+    assert.equal(readEnrolled().length, 1);
+  });
+  // A computer that already has a list: its own key is made, and the list is left as it is.
+  await withHome(async () => {
+    const other = { computer: 'aaaaaaaa', publicKey: 'b3RoZXI=', enrolledAt: '2026-10-01T00:00:00.000Z' };
+    enrol(other);
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-listed-')));
+    await setupStart(fake(), folder);
+    assert.ok(fs.existsSync(path.join(keysDir(), 'signing.pem')));
+    assert.deepEqual(readEnrolled(), [other]);
+  });
+  // A key made before, with no list yet (a start cut short): it is enrolled, not replaced.
+  await withHome(async () => {
+    const made = makeSigningKey();
+    const key = fs.readFileSync(path.join(keysDir(), 'signing.pem'), 'utf8');
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-half-')));
+    await setupStart(fake(), folder);
+    assert.equal(fs.readFileSync(path.join(keysDir(), 'signing.pem'), 'utf8'), key);
+    assert.deepEqual(readEnrolled().map((e) => [e.computer, e.publicKey]), [[made.computer, made.publicKey]]);
+  });
+  // Outside every project and setup, nothing is made.
+  await withHome(async () => {
+    await setupStart(fake(), fs.realpathSync.native(tempFolder('wh-stranger-')));
+    assert.equal(fs.existsSync(path.join(keysDir(), 'signing.pem')), false);
+    assert.deepEqual(readEnrolled(), []);
+  });
+});
+
+test('the next session start resumes at the first unfinished step', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-resume '));
+    const run = startRun({ folder, now: () => new Date('2026-10-19T03:00:00.000Z') });
+    const at = (m) => () => new Date(Date.parse('2026-10-19T03:00:00.000Z') + m * 60000);
+    markStep(run.id, 1, 'shownAt', { now: at(1) });
+    markStep(run.id, 1, 'clickedAt', { now: at(2) });
+    markStep(run.id, 1, 'doneAt', { now: at(3) });
+    // Step 2 (the long installs) is still running while step 3 finished.
+    markStep(run.id, 2, 'clickedAt', { now: at(4) });
+    markStep(run.id, 3, 'doneAt', { now: at(5) });
+    const f = fake();
+    const out = await setupStart(f, folder);
+    assert.equal(f.calls.spawn.length, 1, 'the helper is started as in a project');
+    assert.equal(text(out), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    // From a folder inside it too, and once step 2 is done the next is step 4: step 3 is not repeated.
+    markStep(run.id, 2, 'doneAt', { now: at(6) });
+    fs.mkdirSync(path.join(folder, 'web'));
+    const later = await setupStart(fake(), path.join(folder, 'web'));
+    assert.equal(text(later), 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.');
+    // STOP and a helper that could not start are said first.
+    const stopped = await setupStart(fake({ startsUp: false }), folder, { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' }) });
+    assert.deepEqual(text(stopped).split('\n'), [
+      'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
+      NO_HELPER,
+      'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.',
+    ]);
+  });
+});
+
+test('the guards act in a folder being set up', async () => {
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const withRun = fs.realpathSync.native(tempFolder('wh-guarded zoë '));
+    startRun({ folder: withRun });
+    const switchedOn = pluginOn(fs.realpathSync.native(tempFolder('wh-switched-')));
+    const stranger = fs.realpathSync.native(tempFolder('wh-stranger-'));
+    const bash = (cwd, command) => ({ ...call(cwd, 'Bash'), tool_input: { command } });
+    const denied = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny';
+    const tool = (input) => toolGuard(input, { dir: managed, home: os.homedir(), platform: 'darwin', pluginRoot: PLUGIN_ROOT });
+    const stop = (input) => stopGuard(input, { dir: managed, pluginRoot: PLUGIN_ROOT, platform: 'darwin' });
+    for (const folder of [withRun, switchedOn]) {
+      assert.ok(denied(await tool(bash(folder, 'gh pr merge 3'))), folder);
+      assert.ok(denied(await tool({ ...call(folder, 'Read'), tool_input: { file_path: path.join(folder, '.env') } })), folder);
+      assert.ok(denied(await tool({ ...call(folder, 'Write'), tool_input: { file_path: path.join(home, 'keys', 'signing.pem') } })), folder);
+    }
+    assert.equal(await tool(bash(stranger, 'gh pr merge 3')), undefined, 'a folder no one is setting up is left alone');
+    setStop({ by: 'prompt' });
+    const cli = `node ${PLUGIN_ROOT}/scripts/setup/cli.js`;
+    for (const folder of [withRun, switchedOn]) {
+      assert.ok(denied(await stop({ ...call(folder, 'Write'), tool_input: { file_path: path.join(folder, 'a.txt') } })), folder);
+      assert.ok(denied(await stop(bash(folder, 'npm install'))), folder);
+      for (const reading of ['status', 'plan 3', 'plan 10', 'resume']) assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
+      for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x']) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
+      assert.equal(await stop(call(folder, 'Read')), undefined);
+    }
+    assert.equal(await stop({ ...call(stranger, 'Write'), tool_input: { file_path: path.join(stranger, 'a.txt') } }), undefined);
+    liftStop();
+  });
+});
+
+test('in a registered folder setup is still finishing, the session start resumes it and the guards act, with or without its first commit', async () => {
+  // Step 3 registers the folder; step 7 makes its first commit. Between them it has no .git.
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const T = Date.parse('2026-10-19T03:00:00.000Z');
+    const start = (f, cwd) => decide({ cwd, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: managed, stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+    });
+    const STEP_4 = 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.';
+    for (const git of [false, true]) {
+      const folder = fs.realpathSync.native(tempFolder(`wh-registered${git ? '-git' : ''} zoë `));
+      if (git) fs.mkdirSync(path.join(folder, '.git'));
+      writeProject(git ? 'o__git' : 'o__new', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+      const run = startRun({ folder, now: () => new Date(T) });
+      for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+      const f = fake();
+      const out = await start(f, folder);
+      assert.equal(f.calls.spawn.length, 1, `the helper is started (${git ? 'with' : 'without'} .git)`);
+      const lines = text(out).split('\n');
+      assert.ok(lines.includes(STEP_4), lines.join('\n'));
+      assert.ok(!lines.includes(FRONT_DESK_LINE), 'setup, not the front desk, while setup is part-way');
+      // The guards act there, as in a project.
+      const bash = (command) => ({ ...call(folder, 'Bash'), tool_input: { command } });
+      const denied = (answer) => answer?.hookSpecificOutput?.permissionDecision === 'deny';
+      assert.ok(denied(await toolGuard(bash('gh pr merge 3'), { dir: managed, home: os.homedir(), platform: 'darwin', pluginRoot: PLUGIN_ROOT })));
+      setStop({ by: 'prompt' });
+      const stop = (input) => stopGuard(input, { dir: managed, pluginRoot: PLUGIN_ROOT, platform: 'darwin' });
+      assert.ok(denied(await stop(bash('npm install'))));
+      assert.equal(await stop(bash(`node ${PLUGIN_ROOT}/scripts/setup/cli.js resume`)), undefined);
+      liftStop();
+      // Once every step is done, the folder is a project like any other.
+      for (let n = 4; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+      const g = fake();
+      const after = await start(g, folder);
+      if (git) {
+        assert.equal(g.calls.spawn.length, 1);
+        assert.ok(!text(after).includes('Setup is part-way'), text(after));
+        assert.ok(text(after).split('\n').includes(FRONT_DESK_LINE), text(after));
+      } else {
+        assert.equal(after, undefined);
+        assert.equal(g.calls.spawn.length, 0);
+      }
+    }
+  });
+});
+
+test('on Windows, a registered folder being set up gets the Windows lines straight after STOP and setup\'s line in place of the front desk\'s; a folder with no project record gets no Windows lines', async () => {
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const T = Date.parse('2026-10-19T03:00:00.000Z');
+    const me = computerId();
+    const STOP = { on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' };
+    const windows = { platform: 'win32', stopState: () => STOP, guardedSelfTest: async () => null, lowNodeReady: () => false, startLowNodeCopy: () => true };
+    const STEP_4 = 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.';
+    // Registered (step 3 done), with its first commit, Unattended on for this computer.
+    const folder = fs.realpathSync.native(tempFolder('wh-registered-win zoë '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    writeProject('o__win', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const run3 = startRun({ folder, now: () => new Date(T) });
+    for (const n of [1, 2, 3]) markStep(run3.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    const f = fake({ views: { ...VIEWS, settings: unattendedOn(me) } });
+    const out = await decide({ cwd: folder, session_id: 'w1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, dir: managed, pause: async () => {}, startWaitMs: 200,
+      background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, ...windows,
+    });
+    const lines = text(out).split('\n');
+    assert.deepEqual(lines.slice(0, 3), ['STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)', WINDOWS_LINE, UNATTENDED_LINE], lines.join('\n'));
+    assert.ok(lines.includes(STEP_4), lines.join('\n'));
+    assert.ok(!lines.includes(FRONT_DESK_LINE), lines.join('\n'));
+    // No project record yet: setup's short reload, with no Windows lines.
+    const fresh = fs.realpathSync.native(tempFolder('wh-fresh-win-'));
+    startRun({ folder: fresh, now: () => new Date(T) });
+    const g = fake();
+    const short = await decide({ cwd: fresh, session_id: 'w2' }, {
+      pluginRoot: PLUGIN_ROOT, client: g.client, spawn: g.spawn, projectOf: () => null, pause: async () => {}, startWaitMs: 200, ...windows,
+    });
+    assert.deepEqual(text(short).split('\n'), [
+      'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
+      'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.',
     ]);
   });
 });
