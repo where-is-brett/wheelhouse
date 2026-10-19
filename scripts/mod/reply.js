@@ -53,7 +53,7 @@ export function parseReply(text) {
 }
 
 // The record a reply earned, in plain words.
-function recordedAs(made, question) {
+export function recordedAs(made, question) {
   const data = made.data ?? {};
   if (made.kind === 'approval') return `Approve pull request #${data.pr}`;
   if (made.kind === 'confirmation') {
@@ -73,17 +73,24 @@ function recordedAs(made, question) {
 
 const no = (says) => ({ made: false, says });
 
-// The shown view and its damage, built from the state clone as writeViews builds them.
-function shownNow(project, now) {
+// The labels that set the Windows build-commands level from the Unattended card, which only a click
+// on that card sets: no reply and no pane press (press.js) records either.
+export const CLICK_ONLY_LABELS = Object.freeze(['Turn on (dangerous)', USE_GUARDED]);
+
+// Why an Allow on a build-command question asked on another computer records nothing.
+export const ALLOWED_ELSEWHERE = 'Build commands are allowed only on the Windows computer that asked: answer the card there';
+
+// The views and the events they were built from, from the state clone as writeViews builds them.
+// A reply reads its card in the shown view, and a press on the pane in the waiting view.
+export function viewsNow(project, now) {
   const damaged = [];
   const events = listEvents(stateDir(project), { report: () => {}, skipped: damaged });
-  const views = buildViews(events, readEnrolled(), { damaged, now });
-  return { shown: views.shown, damaged: views.damaged };
+  return { views: buildViews(events, readEnrolled(), { damaged, now }), events };
 }
 
 // Whether a signed record kept in pending/, not yet taken by the helper, answers the card: it
 // carries the card's question, or confirms the event the card's confirm line names.
-function answeredInPending(project, question) {
+export function answeredInPending(project, question) {
   const named = /^Confirm [a-z-]+ (\S+): "/m.exec(question)?.[1];
   let names;
   try {
@@ -105,8 +112,9 @@ function answeredInPending(project, question) {
 
 // Whether `question` carries the confirm line of a Windows build-commands setting, in the project's
 // state or the director's profile, as the prompt record would find it. That setting is set only by
-// a click on its own card (design section 12.2), so no reply confirms it, whatever card carries it.
-function confirmsBuilds(project, question) {
+// a click on its own card (design section 12.2), so no reply confirms it, whatever card carries it,
+// and no pane press does either (press.js).
+export function confirmsBuilds(project, question) {
   const builds = (dirOf) => {
     try {
       return listEvents(dirOf(), { report: () => {} }).some((e) => e.kind === 'setting' && typeof e.data?.key === 'string'
@@ -121,8 +129,9 @@ function confirmsBuilds(project, question) {
 // Whether an Allow reply on the answer card for question `id` would grant nothing: the question is
 // a build-command one, and this isn't the computer that recorded it (unknown counts as another). A
 // grant holds only on the computer whose key signed the answer (buildGrants), so an answer signed
-// here would close the card and leave the builder's commands unallowed there.
-function allowsElsewhere(project, id, label) {
+// here would close the card and leave the builder's commands unallowed there. A pane press is
+// refused the same way (press.js).
+export function allowsElsewhere(project, id, label) {
   if (label !== BUILD_QUESTION_LABELS.once && label !== BUILD_QUESTION_LABELS.feature) return false;
   try {
     const asked = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === id).at(-1);
@@ -144,10 +153,13 @@ async function writeAnswer(api, left, project, question, label, now) {
   }
 }
 
-// Claims the card for this reply: the marker's path when this reply made it, null when
-// another reply made it first.
-function claim(project, id) {
-  const folder = path.join(stateDir(project), '..', 'replied');
+// The folder of the markers that claim a card: projects/<project>/replied/.
+export const repliedDir = (project) => path.join(stateDir(project), '..', 'replied');
+
+// Claims the card for this reply or press: the marker's path when this one made it, null when
+// another made it first. A press on the pane claims its card in the same folder.
+export function claim(project, id) {
+  const folder = repliedDir(project);
   fs.mkdirSync(folder, { recursive: true });
   const file = path.join(folder, id);
   try {
@@ -174,7 +186,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   }
   let views;
   try {
-    views = shownNow(project, now);
+    ({ views } = viewsNow(project, now));
   } catch {
     return no('The cards shown can\'t be read yet');
   }
@@ -205,7 +217,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   if (label === USE_GUARDED || (label === 'Confirm' && confirmsBuilds(project, card.question))) return no('That setting is changed only by a click on its own card');
   if (!SIGNED_LABELS.includes(label) && !answers) return no('That option doesn\'t need a reply code');
   if (answers && allowsElsewhere(project, line.slice('Answer question '.length), label)) {
-    return no('Build commands are allowed only on the Windows computer that asked: answer the card there');
+    return no(ALLOWED_ELSEWHERE);
   }
   if (typeof card.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(card.id)) return no('No card has that code');
 

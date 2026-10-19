@@ -21,9 +21,9 @@
 // variables with WHEELHOUSE_ROLE=foreman (ruling R26; the waker sets it for
 // Shape 1's foremen), and a first prompt beginning `Wheelhouse foreman:`. The
 // session runs in this terminal until it ends.
-// The watcher as that session's plugin monitor waits for check 26 (Task 6),
-// which runs only for Shape 2: until it is registered, nothing wakes the
-// session, and the start says so.
+// The mod in that session runs the watcher's loop on its timer, through the
+// bridge's tick (scripts/mod/watch.js), and hands the session each wake line
+// as a prompt; the start says so.
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,7 +45,8 @@ const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 // How long the watcher's lock or health record counts as fresh.
 export const WATCHER_FRESH_MS = 10 * 60 * 1000;
 export const FOREMAN_PROMPT_LEAD = 'Wheelhouse foreman:';
-export const MONITOR_NOTE = "The watcher isn't this session's monitor yet: that waits for check 26 (Task 6). Until then nothing wakes this session.";
+// What the Shape 2 start says about how the session is woken.
+export const MONITOR_NOTE = "The mod in this session hands it the watcher's wakes.";
 
 class StartError extends Error {}
 const refuse = (message) => { throw new StartError(message); };

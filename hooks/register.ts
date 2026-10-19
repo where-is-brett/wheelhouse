@@ -1,8 +1,7 @@
 // hooks/register.ts
 // Wheelhouse's mod. It signs nothing and runs no shell: every call it makes goes to the
-// plugin's bridge, `node <plugin root>/scripts/mod/bridge.js`, through $.process.run, with one
-// JSON request on standard input, and the bridge answers one JSON line, { ok, says? }. Those
-// commands run outside the session's sandbox, so the bridge can sign (check 32).
+// plugin's bridge, `node <plugin root>/scripts/mod/bridge.js`, through ask (hooks/mod/ask.ts),
+// with one JSON request, and the bridge answers one JSON line, { ok, says? }.
 //
 // Four hooks, each passing on with next(e) and never changing the message:
 //   session.start    registers /go and sends the session's usage figures
@@ -12,9 +11,9 @@
 // A message counts as the director's only when it came from the prompt (`composer`) or the
 // phone (`bridge`); every other origin never reaches the bridge.
 import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, SessionCost } from 'claude-code'
+import { ask, type Answer } from './mod/ask'
 
 const FAILED = 'Wheelhouse couldn\'t record that'
-const BRIDGE_MS = 5000
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
 // kept in step by tests/scripts/mod/validate.test.js. The bridge refuses every other option.
@@ -35,25 +34,6 @@ const CODED = new RegExp(`^[${CODE_ALPHABET}]{4} (.+)$`)
 // "stop" as the stop-word hook (scripts/hooks/stop-word.js) reads it: the word, in any case,
 // with any closing full stops or exclamation marks.
 const STOP = /^stop[.!]*$/i
-
-type Answer = { ok: boolean, says?: string }
-
-// The bridge's answer, or null when it couldn't start, exited non-zero, timed out or printed
-// something that isn't its one line.
-async function ask($: EngineInterface, request: Record<string, unknown>): Promise<Answer | null> {
-  try {
-    const run = await $.process.run(['node', `${$.plugin.root}/scripts/mod/bridge.js`], {
-      stdin: JSON.stringify(request),
-      timeoutMs: BRIDGE_MS,
-    })
-    if (run.exitCode !== 0) return null
-    const answer = JSON.parse(run.stdout.trim())
-    if (answer === null || typeof answer !== 'object' || typeof answer.ok !== 'boolean') return null
-    return typeof answer.says === 'string' ? { ok: answer.ok, says: answer.says } : { ok: answer.ok }
-  } catch {
-    return null
-  }
-}
 
 // A request the director made from a message: the bridge's words are a toast, and so is a
 // failure. A `quiet` request is one an ordinary message could be: only a record made is shown.

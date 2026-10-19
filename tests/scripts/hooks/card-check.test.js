@@ -241,3 +241,27 @@ test('the refusal tells the front desk where a right card comes from', async () 
   assert.match(reason(await decide(call(q), inProject)), /cli\.js card/);
 });
 
+test('the card check hook and cardProblems agree on every composed card', async () => {
+  for (const kind of Object.keys(INPUTS)) {
+    const card = cardOf(kind);
+    const lines = card.question.split('\n');
+    const variants = [
+      card.question,
+      lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
+      lines.filter((l) => !l.startsWith('Reply code:')).join('\n'),
+      `${card.question}\n${lines.at(-1)}`,
+      card.question.replace(/^Why it's coming to you:.*$/m, "Why it's coming to you:"),
+      card.question.replace(/#\d+/g, '#99'),
+    ];
+    for (const question of variants) {
+      const problems = cardProblems(question);
+      const out = await decide(call({ ...card, question }), inProject);
+      if (problems.length === 0) {
+        assert.equal(out, undefined, `${kind}: ${question}`);
+      } else {
+        const text = reason(out);
+        for (const problem of problems) assert.ok(text.includes(`Question 1 ("${card.header}") ${problem}.`), `${kind}: ${problem}`);
+      }
+    }
+  }
+});
