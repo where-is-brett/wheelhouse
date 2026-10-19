@@ -409,6 +409,8 @@ export async function decide(input, deps = {}) {
   const end = Date.now() + totalMs;
   const left = withinBudget(end);
   const notes = [];
+  // Whether setup is still finishing here, read once: it holds back the watcher and adds its note.
+  const setup = beingSetUp(input.cwd);
   // Each call may take no longer than the budget that is left.
   const clientNow = () => given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
 
@@ -431,13 +433,13 @@ export async function decide(input, deps = {}) {
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
     // Starting the foreman is the last thing setup does, once its health check's board is green
-    // (ruling R44, scripts/setup/health.js): not while setup is finishing in this project.
-    if (beingSetUp(input.cwd) === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
+    // (rulings R44, R67, scripts/setup/health.js): not while setup is finishing in this project,
+    // which it is until that board has been green.
+    if (setup === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
-  const setup = beingSetUp(input.cwd);
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
 

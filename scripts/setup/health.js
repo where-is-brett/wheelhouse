@@ -12,27 +12,37 @@
 //   STOP's own reason and a Read let through, so STOP is tried without the director;
 // - checks the installed skills against Wheelhouse's manifest (checkInstalled, the lineage check)
 //   and reads the host's protection back;
-// - closes the pull request and deletes the branch, each a `host` change recorded before it is
-//   made, as the push and the pull request were;
 // - records every result in the journal, as step 10's `answer` change ({ health }), and fails the
-//   step, naming them, when any check didn't pass, so a fresh card runs it again.
+//   step, naming them, when any check didn't pass, so a fresh card runs it again;
+// - leaves the pull request open for the session's merge trial when every check passed (ruling
+//   R68); otherwise it closes it and deletes the branch at once. Closing and deleting are each a
+//   `host` change recorded before it is made, as the push and the pull request were, and what came
+//   of them is recorded after, as step 10's `answer` change ({ cleanup }). A trial an earlier
+//   attempt left open is closed first.
 //
 // The session's part. The sandbox's denials are seen only from inside it, so the setup session runs
 // the trials in its own sandboxed Bash, `node "<root>/scripts/health/trials.js" --pr <n> --project
 // <p>`, with the pull request and project `cli.js health` names, and hands the lines it printed to
 // `cli.js health`, a reading form the stop guard lets through.
 //
-// healthCheck joins the two: each check passed or failed, a failed one said plainly with what to
-// do, the session's marked "reported by the session" since the helper can't see them itself; then
-// the board's health lines. It is green when every check of both parts passed and no health line
-// is at the STOP level; a watch line is shown but doesn't hold it. The playbook shows the board.
+// The helper's /setup/health route takes the session's lines, then closes the trial pull request
+// and deletes its branch (closeOpenTrial), and healthCheck joins the two: each check passed or
+// failed, a failed one said plainly with what to do, the session's marked "reported by the
+// session" since the helper can't see them itself; then the board's health lines. It is green when
+// every check of both parts passed, the trial is closed and no health line is at the STOP level; a
+// watch line is shown but doesn't hold it. The playbook shows the board.
 //
-// Once the board is green, and only then, finishSetup does the last thing setup does (ruling R44):
+// Step 10 is finished only once the board has been green (ruling R67): the route records that in
+// the run (scripts/lib/setup-run.js, healthGreen), and until then the session start resumes setup
+// at step 10, starts no watcher, and a fresh card runs step 10 again.
+//
+// The first time the board is green, and only then, finishSetup does the last thing setup does (rulings R44, R67):
 // it starts the foreman, by start.js's own start of the watcher, and gives the front desk's first
 // briefing. It is the helper's /setup/health route that runs it, after the session's lines are in:
 // the helper's apply finishes before the session's trials run, so it can't know the board is
 // green, and the sandboxed session can't start a process in the Wheelhouse home. Never under STOP,
-// and never before step 10, which waits for step 8 (Locked).
+// never before step 10, which waits for step 8 (Locked), and once per run: after the green mark the
+// route only reads.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,10 +65,11 @@ import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { startWatcher } from '../foreman/start.js';
 import { projectConfig } from '../watcher/main.js';
 import { readJournal, newId } from './journal.js';
+import { HEALTH_STEP } from '../lib/setup-run.js';
 import { directorGitEnv, directorGitlabApi, STOPPED } from './host.js';
 import { toolsStatus } from './tools.js';
 
-export const HEALTH_STEP = 10;
+export { HEALTH_STEP };
 // The trial's branch: one name, so a retry pushes over its own branch and never makes another.
 export const HEALTH_BRANCH = 'wheelhouse/health-check';
 export const HEALTH_TITLE = 'Wheelhouse health check (setup closes this)';
@@ -77,8 +88,8 @@ const TRIAL_BODY = 'Setup\'s health check opened this pull request to try the me
 
 // ---- What each check is called, expects, and says ----
 
-// The helper's checks. `ok` gives the results that pass; `watch` marks one whose failure is shown
-// but doesn't hold the board.
+// The helper's checks. `ok` gives the results that pass, `okOn` those that pass on one host only,
+// and `results` the words for a result that needs its own.
 const RERUN = 'Run step 10 again';
 export const HELPER_CHECKS = Object.freeze({
   'merge without approval': {
@@ -117,14 +128,17 @@ export const HELPER_CHECKS = Object.freeze({
     todo: 'Run step 7 again, which switches it on with your sign-in, then step 10',
     what: 'the host\'s protection',
   },
-  'trial cleaned up': {
-    expected: 'closed',
-    watch: true,
-    passed: 'The trial pull request was closed and its branch deleted',
-    failed: 'The trial pull request, or its branch, was left on the host',
-    todo: 'Close the pull request named Wheelhouse health check on the host, and delete its branch',
-    what: 'closing the trial pull request',
-  },
+});
+
+// The trial's clean-up, after the session's trials: shown, but a pull request left open doesn't
+// hold the board.
+export const CLEANUP_CHECK = Object.freeze({
+  expected: 'closed',
+  watch: true,
+  passed: 'The trial pull request was closed and its branch deleted',
+  failed: 'The trial pull request, or its branch, was left on the host',
+  todo: 'Close the pull request named Wheelhouse health check on the host, and delete its branch',
+  what: 'closing the trial pull request',
 });
 
 // The session's trials (scripts/health/trials.js), by the names it prints.
@@ -152,11 +166,19 @@ export const SESSION_CHECKS = Object.freeze({
   },
   'run gh': {
     expected: 'refused',
-    // A computer with no gh has none for an agent to run.
-    ok: ['refused', 'not installed'],
+    // The trial looks where setup finds gh (trials.js). On GitLab a computer with no gh has none for
+    // an agent to run. On GitHub setup uses gh, so one the trial didn't find was missed, not absent:
+    // that fails, since an agent's use of the sign-in would then read green untried.
+    okOn: { gitlab: ['refused', 'not installed'] },
     passed: 'An agent couldn\'t use your GitHub sign-in',
     failed: 'An agent could use your GitHub sign-in',
     todo: 'The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again',
+    results: {
+      'not installed': [
+        'The trial didn\'t find gh, which setup uses on GitHub, so whether an agent can use your GitHub sign-in wasn\'t tried',
+        'Run step 10 again; if it says this again, report it to Wheelhouse',
+      ],
+    },
     what: 'running gh',
   },
   'helper health': {
@@ -182,17 +204,19 @@ export const SESSION_CHECKS = Object.freeze({
   },
 });
 
-const passes = (check, result) => (check.ok ?? [check.expected]).includes(result);
+const passes = (check, result, host) => (check.okOn?.[host] ?? check.ok ?? [check.expected]).includes(result);
 
 // One check's line for the director: passed, or failed with what to do. A check that couldn't be
-// tried says so, with what to do.
-function checkLine(check, result, { session = false } = {}) {
+// tried says so, with what to do. Each failure's what to do can be done: a red board leaves step 10
+// to be run again by a fresh card (ruling R67), which runs the session's trials again too.
+function checkLine(check, result, { session = false, host } = {}) {
   const by = session ? ' (reported by the session)' : '';
-  if (passes(check, result)) return `Passed: ${check.passed}.${by}`;
+  if (passes(check, result, host)) return `Passed: ${check.passed}.${by}`;
   if (result === 'could not run') {
-    return `Failed: setup couldn't try ${check.what}. ${session ? 'Run step 10\'s trials again in this session' : RERUN}; if it can't again, check this computer is online and Claude Desktop is open.${by}`;
+    return `Failed: setup couldn't try ${check.what}. ${RERUN}; if it can't again, check this computer is online and Claude Desktop is open.${by}`;
   }
-  return `${check.watch ? 'Watch' : 'Failed'}: ${check.failed} (${check.expected} was expected, ${result} came back). ${check.todo}.${by}`;
+  const [failed, todo] = check.results?.[result] ?? [check.failed, check.todo];
+  return `${check.watch ? 'Watch' : 'Failed'}: ${failed} (${check.expected} was expected, ${result} came back). ${todo}.${by}`;
 }
 
 // ---- The helper's part ----
@@ -209,8 +233,8 @@ function card(repo) {
     level: 3,
     what: `Setup step ${HEALTH_STEP}, ${SETUP_TITLES[HEALTH_STEP]}: setup tries Wheelhouse's safety checks for real on ${repo}. `
       + `It pushes a branch, ${HEALTH_BRANCH}, holding one empty commit, opens a pull request from it, and asks the merge gate to merge it without your approval, which the gate must refuse. `
-      + 'It checks STOP halts an agent, the installed skills and the host\'s protection, then closes the pull request and deletes the branch. '
-      + 'The session then tries the sandbox\'s checks and shows the board.',
+      + 'It checks STOP halts an agent, the installed skills and the host\'s protection. '
+      + 'The session then tries the sandbox\'s checks, the merge among them, and shows the board; setup then closes the pull request and deletes the branch.',
     why: 'A check never tried can\'t be trusted: these show the board is green for real.',
     options: [
       { label: SETUP_LABEL, says: 'Setup runs the checks, then shows the board, with what to do about any that didn\'t pass.' },
@@ -222,11 +246,94 @@ function card(repo) {
   };
 }
 
-// Runs git for the trial branch with the director's own sign-in, in `dir`; its output, or a throw.
+// git's subcommand among its arguments: the first that is neither an option nor a `-c` setting's value.
+function subcommand(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '-c') i += 1;
+    else if (!args[i].startsWith('-')) return args[i];
+  }
+  return '';
+}
+
+// Runs git for the trial branch with the director's own sign-in, in `dir`; its output, or a throw
+// naming only the subcommand.
 async function gitIn(run, { gitPath, env, dir }, args) {
   const got = await run(gitPath, args, { cwd: dir, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
-  if (got.code !== 0) throw new Error(`git ${args.find((a) => !a.startsWith('-')) ?? ''} failed for the trial branch`);
+  if (got.code !== 0) throw new Error(`git ${subcommand(args)} failed for the trial branch`);
   return got.stdout.trim();
+}
+
+// git for the trial, with the director's own sign-in, in a new scratch repository, to `use`; the
+// scratch is removed afterwards. Never the director's own folder.
+async function withTrialGit({ run, findGit, gitEnvFor, host, platform }, use) {
+  const located = await findGit({ platform });
+  if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-health-'));
+  try {
+    const git = { gitPath: located.path, env: gitEnvFor({ host, gitPath: located.path, platform }), dir };
+    await gitIn(run, git, ['init', '-q', '--bare', '.']);
+    return await use(git);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const answerChange = (after, project) => ({ id: newId('chg'), kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after, ...(project ? { project } : {}) });
+
+// Closes the trial pull request and deletes its branch, each recorded (`record`) before it is
+// made, then records what came of them: { pr, branch, closed, deleted }, true only where it was
+// done. `pr` or `sha` null: nothing of that was made.
+async function closeTrial({ project, projectRecord, pr, sha, adapter, gitFor, record }) {
+  let closed = pr === null;
+  let deleted = sha === null;
+  if (pr !== null) {
+    record({ id: newId('chg'), kind: 'host', target: `${projectRecord.repo} pull request ${pr}`, before: { state: 'open' }, after: { state: 'closed' }, project });
+    try {
+      await adapter.closePr(pr);
+      closed = true;
+    } catch { /* left open: recorded so below */ }
+  }
+  if (sha !== null) {
+    record({ id: newId('chg'), kind: 'host', target: `${projectRecord.repo} branch ${HEALTH_BRANCH}`, before: { branch: HEALTH_BRANCH, sha }, after: null, project });
+    try {
+      await gitFor((git) => gitIn(git.run, git, ['push', '-q', projectRecord.remoteUrl, `:refs/heads/${HEALTH_BRANCH}`]));
+      deleted = true;
+    } catch { /* left there: recorded so below */ }
+  }
+  const outcome = { pr, branch: HEALTH_BRANCH, closed, deleted };
+  record(answerChange({ cleanup: outcome }, project));
+  return outcome;
+}
+
+// The latest cleanup record for a pull request in a run, or null.
+function cleanupOf(run, pr) {
+  return (Array.isArray(run?.changes) ? run.changes : [])
+    .filter((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && c.after?.cleanup && c.after.cleanup.pr === pr).at(-1)?.after.cleanup ?? null;
+}
+
+// The trial the run's last attempt left open for the session's trials (ruling R68):
+// { project, pr, branch, sha }, or null when there is none, or it has been cleaned up.
+export function openTrial(run) {
+  const record = helperRecord(run);
+  if (record?.open !== true || !Number.isInteger(record.pr) || cleanupOf(run, record.pr) !== null) return null;
+  return { project: record.project, pr: record.pr, branch: record.branch, sha: record.sha ?? null };
+}
+
+// Closes the trial `setupRun` left open, if there is one, recording each change with `record`;
+// what came of it, or null. The helper's /setup/health route calls it once the session's lines
+// are in, and step 10's apply before it opens another. `run`, `adapterFor`, `findGit`,
+// `gitEnvFor` and `platform` are as healthStep's.
+export async function closeOpenTrial({
+  setupRun, record, run = realRun, adapterFor, findGit, gitEnvFor = directorGitEnv, platform = process.platform,
+} = {}) {
+  const trial = openTrial(setupRun);
+  if (trial === null) return null;
+  const projectRecord = readProject(trial.project);
+  if (projectRecord === null) return null;
+  const adapter = (adapterFor ?? (({ host, repo }) => makeAdapter({ host, repo, run, env: {} })))({ host: projectRecord.host, repo: projectRecord.repo });
+  const finder = findGit ?? (async ({ platform: p }) => (await toolsStatus({ platform: p, run, tools: ['git'] })).git);
+  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform }, (git) => use({ ...git, run }));
+  return closeTrial({ project: trial.project, projectRecord, pr: trial.pr, sha: trial.sha, adapter, gitFor, record });
 }
 
 // The merge gate asked to merge the trial pull request with no approval. Any refusal that leaves it
@@ -309,7 +416,8 @@ async function readProtectionNow({ host, repo, run }) {
   return read.available === false ? 'not offered' : 'off';
 }
 
-const isDone = (run, n) => typeof run?.steps?.[n]?.doneAt === 'string';
+// Whether step 10's apply, the helper's half, has finished: done or not, the board decides that.
+const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 
 // Step 10. `run` runs git and the host's tools; `adapterFor({ host, repo })` the adapter, with the
 // director's own sign-in; `client` the helper's client the merge is asked through; `findGit` the
@@ -335,8 +443,17 @@ export function healthStep({
       const found = projectHere(ctx.folder);
       if (found === null) return { wait: 30 * 1000, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; the health check comes once it has` };
       const { project, record } = found;
+      // The helper's checks are done and the trial is open: the session's trials come next.
+      const setupRun = readJournal().runs.find((r) => r?.id === ctx.runId) ?? null;
+      const trial = openTrial(setupRun);
+      if (trial !== null) {
+        return {
+          wait: 30 * 1000,
+          why: `step 10's own checks are done and its trial pull request, number ${trial.pr}, is open: run cli.js health, then the trials it names in this session's Bash, then cli.js health with every line they printed, and show its board`,
+        };
+      }
       const changes = [{
-        kind: 'host', what: 'health-check', target: `${record.repo}: branch ${HEALTH_BRANCH} and a pull request from it, closed again`,
+        kind: 'host', what: 'health-check', target: `${record.repo}: branch ${HEALTH_BRANCH} and a pull request from it, closed once the session's trials are done`,
         project, host: record.host, repo: record.repo, branch: HEALTH_BRANCH,
       }];
       return { changes, card: card(record.repo), director: 'One click, then read the board' };
@@ -354,29 +471,33 @@ export function healthStep({
       halt();
       const adapter = adapterFor({ host: record.host, repo: record.repo });
       const asker = client ?? helperClient({ timeout: HEALTH_MERGE_WAIT_MS });
+      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform }, (git) => use({ ...git, run }));
+      // A trial an earlier attempt left open is closed first: a pull request from the same branch
+      // can't be opened twice (ruling R68).
+      await closeOpenTrial({ setupRun: readJournal().runs.find((r) => r?.id === ctx.runId) ?? null, record: ctx.record, run, adapterFor, findGit, gitEnvFor, platform });
+      halt();
       const checks = [];
       const add = (name, result) => checks.push({ name, expected: HELPER_CHECKS[name].expected, result, ok: passes(HELPER_CHECKS[name], result) });
-      const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-health-'));
       let pushed = null;
       let number = null;
       let failure = null;
-      let git = null;
       try {
-        const located = await findGit({ platform });
-        if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
-        git = { gitPath: located.path, env: gitEnvFor({ host: record.host, gitPath: located.path, platform }), dir: scratch };
         // The empty commit, on the default branch's tip, made in a scratch repository: never in
         // the director's own folder.
         const base = await adapter.defaultBranch();
-        await gitIn(run, git, ['init', '-q', '--bare', '.']);
-        await gitIn(run, git, ['fetch', '-q', '--depth=1', record.remoteUrl, `refs/heads/${base}`]);
-        const parent = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD']);
-        const tree = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD^{tree}']);
-        const sha = await gitIn(run, git, [...TRIAL_AUTHOR, 'commit-tree', '--no-gpg-sign', tree, '-p', parent, '-m', TRIAL_MESSAGE]);
-        halt();
-        ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} branch ${HEALTH_BRANCH}`, before: null, after: { branch: HEALTH_BRANCH, sha }, project });
-        await gitIn(run, git, ['push', '-q', '--force', record.remoteUrl, `${sha}:refs/heads/${HEALTH_BRANCH}`]);
-        pushed = sha;
+        await gitFor(async (git) => {
+          await gitIn(run, git, ['fetch', '-q', '--depth=1', record.remoteUrl, `refs/heads/${base}`]);
+          const parent = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD']);
+          const tree = await gitIn(run, git, ['rev-parse', 'FETCH_HEAD^{tree}']);
+          const sha = await gitIn(run, git, [...TRIAL_AUTHOR, 'commit-tree', '--no-gpg-sign', tree, '-p', parent, '-m', TRIAL_MESSAGE]);
+          halt();
+          ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} branch ${HEALTH_BRANCH}`, before: null, after: { branch: HEALTH_BRANCH, sha }, project });
+          await gitIn(run, git, ['push', '-q', '--force', record.remoteUrl, `${sha}:refs/heads/${HEALTH_BRANCH}`]);
+          pushed = sha;
+        });
+        // Recorded just before it is opened, as pending, since its number comes only with it;
+        // then by its number.
+        ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} pull request from ${HEALTH_BRANCH}`, before: null, after: { state: 'opening', branch: HEALTH_BRANCH }, project });
         ({ number } = await adapter.openPr({ head: HEALTH_BRANCH, base, title: HEALTH_TITLE, body: TRIAL_BODY }));
         ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} pull request ${number}`, before: null, after: { number, state: 'open', branch: HEALTH_BRANCH }, project });
         halt();
@@ -400,34 +521,19 @@ export function healthStep({
         add('host protection', protection);
       } catch (error) {
         failure = error;
-      } finally {
-        // The trial pull request closed and its branch deleted, each recorded first, whatever
-        // happened before.
-        let clean = true;
-        if (number !== null) {
-          ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} pull request ${number}`, before: { state: 'open' }, after: { state: 'closed' }, project });
-          try {
-            await adapter.closePr(number);
-          } catch {
-            clean = false;
-          }
-        }
-        if (pushed !== null) {
-          ctx.record({ id: newId('chg'), kind: 'host', target: `${record.repo} branch ${HEALTH_BRANCH}`, before: { branch: HEALTH_BRANCH, sha: pushed }, after: null, project });
-          try {
-            await gitIn(run, git, ['push', '-q', record.remoteUrl, `:refs/heads/${HEALTH_BRANCH}`]);
-          } catch {
-            clean = false;
-          }
-        }
-        if (number !== null || pushed !== null) add('trial cleaned up', clean ? 'closed' : 'left open');
-        ctx.record({
-          id: newId('chg'), kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { health: { project, pr: number, branch: HEALTH_BRANCH, checks } }, project,
-        });
-        fs.rmSync(scratch, { recursive: true, force: true });
+      }
+      const failed = checks.filter((c) => !c.ok);
+      // Every check passed: the pull request stays open for the session's merge trial, and the
+      // health route closes it once the session's lines are in (ruling R68). Otherwise the board is
+      // red whatever the session finds, so the trial is cleaned up now. That runs after a STOP
+      // halt too: closing setup's own trial pull request and deleting its branch starts no work,
+      // it only takes back what this step made.
+      const open = failure === null && failed.length === 0 && number !== null;
+      ctx.record(answerChange({ health: { project, pr: number, branch: HEALTH_BRANCH, sha: pushed, checks, open } }, project));
+      if (!open && (number !== null || pushed !== null)) {
+        await closeTrial({ project, projectRecord: record, pr: number, sha: pushed, adapter, gitFor, record: ctx.record });
       }
       if (failure !== null) throw failure;
-      const failed = checks.filter((c) => !c.ok && !HELPER_CHECKS[c.name].watch);
       if (failed.length > 0) throw new Error(`these checks didn't pass: ${failed.map((c) => c.name).join(', ')}; the board says what to do`);
       return [];
     },
@@ -436,7 +542,7 @@ export function healthStep({
 
 // ---- Joining the two parts ----
 
-// The latest record of step 10's checks in a run: { project, pr, branch, checks }, or null.
+// The latest record of step 10's checks in a run: { project, pr, branch, sha, checks, open }, or null.
 export function helperRecord(run) {
   const found = (Array.isArray(run?.changes) ? run.changes : [])
     .filter((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && c.after?.health && Array.isArray(c.after.health.checks)).at(-1);
@@ -460,7 +566,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   let green = true;
   const entry = here?.steps?.[HEALTH_STEP] ?? {};
   const record = helperRecord(here);
-  if (!isDone(here, HEALTH_STEP)) {
+  if (!applied(here)) {
     green = false;
     lines.push(entry.failed
       ? `Failed: step 10 did not finish: ${entry.failed}. ${RERUN} once each line below is seen to.`
@@ -470,7 +576,6 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   const tried = new Map((record?.checks ?? []).map((c) => [c.name, c.result]));
   for (const [name, check] of Object.entries(HELPER_CHECKS)) {
     if (!tried.has(name)) {
-      if (check.watch) continue;
       if (record !== null) {
         green = false;
         lines.push(`Failed: setup couldn't try ${check.what} before step 10 stopped. ${RERUN}.`);
@@ -478,9 +583,20 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
       continue;
     }
     const result = tried.get(name);
-    if (!passes(check, result) && !check.watch) green = false;
+    if (!passes(check, result)) green = false;
     lines.push(checkLine(check, result));
   }
+  // The trial pull request: still open for the session's trials, or how its clean-up went.
+  if (Number.isInteger(record?.pr)) {
+    const cleanup = cleanupOf(here, record.pr);
+    if (cleanup !== null) lines.push(checkLine(CLEANUP_CHECK, cleanup.closed && cleanup.deleted ? 'closed' : 'left open'));
+    else if (record.open === true) {
+      green = false;
+      lines.push(`Waiting: the trial pull request, number ${record.pr}, is open for this session's trials; it is closed once their lines are in.`);
+    }
+  }
+  const found = projectForFolder(folder);
+  const host = found?.record.host;
   // The session's trials, by name: the last line given for each, and any missing named.
   const given = new Map();
   let unreadable = 0;
@@ -496,12 +612,11 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
       continue;
     }
     const result = given.get(name);
-    if (!passes(check, result)) green = false;
-    lines.push(checkLine(check, result, { session: true }));
+    if (!passes(check, result, host)) green = false;
+    lines.push(checkLine(check, result, { session: true, host }));
   }
   if (unreadable > 0) lines.push(`Left out: ${unreadable} ${unreadable === 1 ? 'line' : 'lines'} the session handed in that ${unreadable === 1 ? 'isn\'t a trial\'s' : 'aren\'t trials\''}.`);
   // The board's health lines, and the board itself.
-  const found = projectForFolder(folder);
   const inputs = found === null ? { none: 'This folder isn\'t a registered project yet' } : await load({ cwd: found.record.folder, now, client });
   const health = Array.isArray(inputs?.model?.director?.health) ? inputs.model.director.health : null;
   if (health === null) {

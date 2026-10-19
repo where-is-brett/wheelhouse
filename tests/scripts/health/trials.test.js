@@ -175,7 +175,10 @@ test('gh runs auth status and maps results', async () => {
 });
 
 test('gh missing reports not installed', async () => {
-  const lines = await runTrials(fakes({ fs: { ...fakes().fs, existsSync: () => false } }));
+  const lines = await runTrials(fakes({
+    fs: { ...fakes().fs, existsSync: () => false },
+    spawn: (file) => (file === 'curl' ? { status: 0, stdout: '000' } : { status: null, error: Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) }),
+  }));
   assert.equal(lines[3], 'run gh: refused / not installed');
 });
 
@@ -213,7 +216,7 @@ test('the forgery is sent to the helper and the merge asks for approval', async 
 // refused on the lock, CI and review instead, and the pull request stayed open. Any refusal that
 // leaves the pull request unmerged counts.
 test('the merge trial passes on any refusal that leaves the pull request unmerged', async () => {
-  for (const refused of ['pull request 7 is not open', 'CI has not passed', 'no review yet', 'the lock is held', 'STOP is on', '']) {
+  for (const refused of ['CI has not passed', 'no review yet', 'the lock is held', 'STOP is on', '']) {
     const f = fakes();
     f.client.merge = async () => ({ ok: false, refused, reasons: [refused] });
     const lines = await runTrials(f);
@@ -346,4 +349,34 @@ test('a trial .env.local that can\'t be removed is named in a note, and holds on
   assert.deepEqual(kept.find(([p]) => p === ENV_LOCAL), [ENV_LOCAL, TRIAL_MARKER]);
   assert.ok(lines.notes.some((n) => /\.env\.local/.test(n) && /setup/i.test(n)));
   for (const n of lines.notes) assert.ok(!n.includes(SECRET));
+});
+
+// Ruling R68: the trial pull request is open while the session's trials run, so a refusal for
+// its not being open shows nothing of the gate.
+test('a merge refused only because the pull request isn\'t open is no pass', async () => {
+  const f = fakes();
+  f.client.merge = async () => ({ ok: false, refused: 'pull request 7 is not open', reasons: ['pull request 7 is not open'] });
+  const lines = await runTrials(f);
+  assert.equal(lines[6], 'merge with forged approval: refused / could not run');
+  assert.ok(lines.notes.some((n) => /open/.test(n) && /step 10/.test(n)));
+});
+
+// gh found where setup finds it: the fixed places, the tools folder, then by its bare name on the
+// path, as toolPath runs it and step 2 accepted it (tools.js, onPath).
+test('a gh only on the path is run by its bare name, and only a missing one is not installed', async () => {
+  const f = fakes();
+  f.fs.existsSync = () => false;
+  f.fs.statSync = () => { throw missing(); };
+  f.spawn = (file, args) => { f.calls.spawn.push([file, args]); return file === 'curl' ? { status: 0, stdout: '000' } : { status: 1, stderr: 'You are not logged into any GitHub hosts.' }; };
+  const lines = await runTrials(f);
+  assert.deepEqual(f.calls.spawn.find(([x]) => x !== 'curl'), ['gh', ['auth', 'status']]);
+  assert.equal(lines[3], 'run gh: refused / refused');
+  const gone = fakes();
+  gone.fs.existsSync = () => false;
+  gone.spawn = (file) => (file === 'curl' ? { status: 0, stdout: '000' } : { status: null, error: Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }) });
+  assert.equal((await runTrials(gone))[3], 'run gh: refused / not installed');
+  const open = fakes();
+  open.fs.existsSync = () => false;
+  open.spawn = (file) => (file === 'curl' ? { status: 0, stdout: '000' } : { status: 0, stdout: 'Logged in' });
+  assert.equal((await runTrials(open))[3], 'run gh: refused / allowed');
 });

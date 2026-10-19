@@ -71,7 +71,8 @@ import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor } from './clicks.js';
-import { healthCheck, finishSetup, removeTrialLeftover } from './health.js';
+import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
+import { stepDone, healthGreen, HEALTH_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -181,7 +182,9 @@ export async function loadSteps(modulePath) {
 }
 
 const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
-const isDone = (run, n) => typeof run?.steps?.[n]?.doneAt === 'string';
+// Done: finished, and for the health check, its board green as well (ruling R67), so a red board
+// leaves step 10 to be run again by a fresh card.
+const isDone = (run, n) => stepDone(run, n);
 
 // Running: clicked, not done, not failed, and not past the time a step may take.
 function runningSince(entry, now) {
@@ -245,7 +248,8 @@ function statusLines(run, steps, running) {
   for (const { n } of [...steps].sort((a, b) => a.n - b.n)) {
     const entry = run.steps?.[n] ?? {};
     const name = `Step ${n}, ${SETUP_TITLES[n]}`;
-    if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
+    if (entry.doneAt && !stepDone(run, n)) lines.push(`${name}: its own checks finished at ${entry.doneAt}; the board isn't green yet`);
+    else if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
     else if (entry.failed) lines.push(`${name}: did not finish: ${entry.failed}`);
     else if (entry.clickedAt) {
       lines.push(running(n)
@@ -268,11 +272,12 @@ function statusLines(run, steps, running) {
 // SetupRefusal, which the helper sends as { ok: false, refused }. `mark` records a step's time in
 // the journal (journal.js's markStep; a test can make it fail). `health` joins step 10's checks with
 // the session's trial lines, and `finish` is the last thing setup does once the board is green
-// (scripts/setup/health.js's healthCheck and finishSetup; tests give their own).
+// (scripts/setup/health.js's healthCheck and finishSetup; tests give their own); `closeTrial`
+// closes the trial pull request step 10 left open (closeOpenTrial).
 export function setupRoutes({
   now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
-  health = healthCheck, finish = (args) => finishSetup({ ...args, now }),
+  health = healthCheck, finish = (args) => finishSetup({ ...args, now }), closeTrial = (args) => closeOpenTrial(args),
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -489,12 +494,17 @@ export function setupRoutes({
     return { ok: true, ...statusLines(run, all, running) };
   }
 
-  // Step 10's board (rulings R41, R44): the helper's checks, recorded by step 10's apply, joined
-  // with the trial lines the session ran in its sandbox and hands in, and the board's health lines.
-  // It reads, so it answers under STOP, as status does; what it does besides, only when STOP is
-  // off: it removes a .env.local the session's trial left behind (holding only the trial's
-  // marker), and once the board is green it does the last thing setup does, starting the foreman
-  // and giving the first briefing (`finish`).
+  // Step 10's board (rulings R41, R44, R67, R68): the helper's checks, recorded by step 10's apply,
+  // joined with the trial lines the session ran in its sandbox and hands in, and the board's health
+  // lines. It reads, so it answers under STOP, as status does. Only when STOP is off, and only until
+  // the run's board has been green, does it do more: it removes a .env.local the session's trial
+  // left behind (holding only the trial's marker); once the session's lines are in, it closes the
+  // trial pull request and deletes its branch, recorded in the run; and the first time the board is
+  // green it records that in the run, which finishes setup (setup-run.js, healthGreen), and does
+  // the last thing setup does, starting the foreman and giving the first briefing (`finish`). After
+  // that mark it only reads, so no caller can run setup's ending again, or move what it wrote.
+  // One run's requests are taken one at a time, so two can't both finish it.
+  const healthQueue = new Map();
   async function healthRoute(body) {
     if (Object.keys(body).some((k) => !HEALTH_FIELDS.includes(k))) refuse('the health check takes the folder and the trial lines the session printed, nothing else');
     const folder = admitFolder(body.folder, { userHome });
@@ -502,13 +512,30 @@ export function setupRoutes({
     if (!Array.isArray(lines) || lines.length > MOST_TRIAL_LINES || !lines.every((l) => parseTrialLine(l) !== null)) {
       refuse(`the lines must be the trial lines trials.js printed, as they are, at most ${MOST_TRIAL_LINES}`);
     }
-    const run = runFor(folder, userHome);
-    if (run === null) refuse('setup has not started in this folder');
-    if (!stopped()) removeTrialLeftover(run.folder);
-    const got = await health({ folder: run.folder, run, reported: lines, now });
-    const answer = { ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials };
-    if (!got.green || stopped() || got.project === null) return answer;
-    return { ...answer, ...(await finish({ project: got.project })) };
+    const found = runFor(folder, userHome);
+    if (found === null) refuse('setup has not started in this folder');
+    const before = healthQueue.get(found.id) ?? Promise.resolve();
+    const turn = before.catch(() => {}).then(async () => {
+      const read = (run) => health({ folder: run.folder, run, reported: lines, now });
+      const answerOf = (got) => ({ ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials });
+      let run = runById(found.id);
+      if (healthGreen(run) || stopped()) return answerOf(await read(run));
+      removeTrialLeftover(run.folder);
+      if (lines.length > 0) {
+        await closeTrial({ setupRun: run, record: (c) => addChanges(run.id, [{ ...c, step: HEALTH_STEP }]) });
+        run = runById(found.id);
+      }
+      const got = await read(run);
+      if (!got.green || got.project === null || stopped()) return answerOf(got);
+      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { green: now().toISOString() } }]);
+      return { ...answerOf(got), ...(await finish({ project: got.project })) };
+    });
+    healthQueue.set(found.id, turn);
+    try {
+      return await turn;
+    } finally {
+      if (healthQueue.get(found.id) === turn) healthQueue.delete(found.id);
+    }
   }
 
   return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute };

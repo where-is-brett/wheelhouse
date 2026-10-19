@@ -43,11 +43,27 @@ export function readJournal() {
 export const SETUP_STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b)
   .map((n) => Object.freeze({ n, title: SETUP_TITLES[n] })));
 
+// The health check (ruling R67): its apply's finish is the helper's half only; it counts as done
+// once the helper's /setup/health route has found the whole board green and recorded so in the
+// run, as step 10's `answer` change { green: <time> }.
+export const HEALTH_STEP = 10;
+
+// Whether the run's health check has been green: the mark /setup/health records, once.
+export function healthGreen(run) {
+  return (Array.isArray(run?.changes) ? run.changes : [])
+    .some((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string');
+}
+
+// Whether step n of a run is done: finished, and for the health check, green as well.
+export function stepDone(run, n) {
+  return typeof run?.steps?.[n]?.doneAt === 'string' && (n !== HEALTH_STEP || healthGreen(run));
+}
+
 // The lowest step of a run not yet done, or null when every step is; 1 when there is no run.
 // A step that ran after it (a long step's next cards are asked while it runs) doesn't count.
+// Setup is finished only once the health check's board has been green (ruling R67).
 export function firstUnfinished(run, steps = SETUP_STEPS) {
-  const done = (n) => typeof run?.steps?.[n]?.doneAt === 'string';
-  return steps.map((s) => s.n).sort((a, b) => a - b).find((n) => !done(n)) ?? null;
+  return steps.map((s) => s.n).sort((a, b) => a - b).find((n) => !stepDone(run, n)) ?? null;
 }
 
 // The step that tests a push to the director's phone (Phone notifications, ruling R39).

@@ -1,10 +1,11 @@
 // tests/scripts/setup/health.test.js
-// Step 10, the health check (design section 15, rulings R41 and R44). The helper's part, a long
-// Go-ahead step, tries the merge gate on a throwaway pull request, STOP with the real stop guard
-// under a scratch home, the installed skills and the host's protection, then closes the pull
-// request and deletes its branch; the session's trial lines are handed in through `cli.js health`;
-// healthCheck joins them with the board's health lines; and only a green board starts the foreman
-// and gives the first briefing. Step 7 isn't built yet, so the steps before 10 are marked done
+// Step 10, the health check (design section 15, rulings R41, R44, R67 and R68). The helper's part,
+// a long Go-ahead step, tries the merge gate on a throwaway pull request, STOP with the real stop
+// guard under a scratch home, the installed skills and the host's protection, and leaves the pull
+// request open for the session's trials; the session's trial lines are handed in through
+// `cli.js health`, which then closes the pull request and deletes its branch; healthCheck joins
+// them with the board's health lines; and only a green board marks setup finished, once, starting
+// the foreman and giving the first briefing. Step 7 isn't built yet, so the steps before 10 are marked done
 // here, the host is a bare repository with a stand-in adapter, and nothing reaches a real host or
 // the director's own home.
 import { test } from 'node:test';
@@ -13,8 +14,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  healthStep, healthCheck, mergeTrial, stopTrial, removeTrialLeftover, finishSetup, HELPER_CHECKS, SESSION_CHECKS, HEALTH_BRANCH,
+  healthStep, healthCheck, mergeTrial, stopTrial, removeTrialLeftover, finishSetup, closeOpenTrial, openTrial,
+  HELPER_CHECKS, SESSION_CHECKS, HEALTH_BRANCH,
 } from '../../../scripts/setup/health.js';
+import { healthGreen, firstUnfinished } from '../../../scripts/lib/setup-run.js';
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { startRun, markStep, addChanges, newId, readJournal } from '../../../scripts/setup/journal.js';
@@ -33,9 +36,12 @@ const GREEN_LINES = Object.entries(SESSION_CHECKS).map(([name, c]) => `${name}: 
 // The helper's checks, every one passed.
 const GREEN_CHECKS = Object.entries(HELPER_CHECKS).map(([name, c]) => ({ name, expected: c.expected, result: c.expected, ok: true }));
 
+const TRIAL_SHA = 'a'.repeat(40);
+
 // The run of this folder with steps 1 to `upTo` done, as if each had run; with `checks`, step 10's
-// record of the helper's part, for pull request 12.
-function runWith(folder, { upTo = 10, checks, failed } = {}) {
+// record of the helper's part, for pull request 12, left open for the session's trials unless
+// `open` is false.
+function runWith(folder, { upTo = 10, checks, failed, open = true } = {}) {
   const run = startRun({ folder, now: () => T0 });
   for (let n = 1; n <= upTo; n += 1) markStep(run.id, n, 'doneAt', { now: () => T0 });
   if (failed) {
@@ -44,7 +50,8 @@ function runWith(folder, { upTo = 10, checks, failed } = {}) {
   }
   if (checks) {
     addChanges(run.id, [{
-      id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { health: { project: SLUG, pr: 12, branch: HEALTH_BRANCH, checks } },
+      id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null,
+      after: { health: { project: SLUG, pr: 12, branch: HEALTH_BRANCH, sha: TRIAL_SHA, checks, open } },
     }]);
   }
   return readJournal().runs.find((r) => r.id === run.id);
@@ -76,6 +83,7 @@ test('step 10\'s plan waits for the project, then lists the trial branch and its
     assert.match(first.card.what, /without your approval/);
     assert.match(first.card.what, /STOP/);
     assert.match(first.card.what, /closes the pull request and deletes the branch/);
+    assert.match(first.card.what, /session/);
     assert.equal(typeof first.director, 'string');
   }, { connected: true });
   await withProject(async ({ folder }) => {
@@ -102,18 +110,29 @@ test('through the helper, step 10\'s card waits for steps 7 to 9, then composes 
 // ---- The helper's part ----
 
 // A stand-in adapter over a bare repository: openPr checks the branch is there, prState says
-// open until closePr closes it (or `merged` once the gate let it through).
-function standIn(remote, { merged = () => false } = {}) {
+// open until closePr closes it (or `merged` once the gate let it through). `closeFails` makes
+// closePr throw.
+function standIn(remote, { merged = () => false, closeFails = false, onOpen = () => {} } = {}) {
   const calls = { open: [], close: [], state: [] };
   let closed = false;
+  let next = 12;
   const adapter = {
     defaultBranch: async () => 'main',
     openPr: async (args) => {
+      onOpen();
       calls.open.push({ ...args, onRemote: lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`) });
-      return { number: 12, url: 'https://example.invalid/pull/12' };
+      closed = false;
+      const number = next;
+      next += 1;
+      return { number, url: `https://example.invalid/pull/${number}` };
     },
     prState: async (n) => { calls.state.push(n); return { state: merged() ? 'merged' : (closed ? 'closed' : 'open') }; },
-    closePr: async (n) => { calls.close.push(n); closed = true; return { number: n }; },
+    closePr: async (n) => {
+      calls.close.push(n);
+      if (closeFails) throw new Error('gh pr close failed');
+      closed = true;
+      return { number: n };
+    },
   };
   return { adapter, calls };
 }
@@ -132,15 +151,23 @@ async function productOnRemote(folder) {
 }
 
 const lsRemote = (remote, ref) => execFileSync('git', ['ls-remote', remote, ref], { encoding: 'utf8' }).trim();
+const GIT = async () => ({ ok: true, path: 'git' });
 
-// The step's ctx, keeping each change recorded, and whether the branch was on the remote then.
+// The step's ctx on a real run of the folder (steps 1 to 9 done), keeping each change recorded in
+// the journal as the engine does, with whether the branch was on the remote then.
 function ctxFor(folder, remote, { stopped = () => false } = {}) {
+  const setupRun = runWith(folder, { upTo: 9 });
   const recorded = [];
   return {
     recorded,
+    setupRun,
     ctx: {
-      folder, step: 10, runId: 'run-x', now: () => T0, platform: process.platform, answers: {}, stopped,
-      record: (c) => { for (const one of [c].flat()) recorded.push({ ...one, onRemote: lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`) }); },
+      folder, step: 10, runId: setupRun.id, now: () => T0, platform: process.platform, answers: {}, stopped,
+      record: (c) => {
+        const list = [c].flat().map((one) => ({ ...one, step: 10 }));
+        addChanges(setupRun.id, list);
+        for (const one of list) recorded.push({ ...one, onRemote: lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`) });
+      },
     },
   };
 }
@@ -150,44 +177,42 @@ const merges = (answer) => {
   return { asked, client: { merge: async (a) => { asked.push(a); return typeof answer === 'function' ? answer(a) : answer; } } };
 };
 const REFUSED = { ok: false, refused: 'the lock is held; CI has not passed', reasons: ['the lock is held', 'CI has not passed'] };
+const stepWith = (adapter, client, extra = {}) => healthStep({
+  adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
+});
+const cleanups = (recorded) => recorded.filter((c) => c.kind === 'answer' && c.after?.cleanup).map((c) => c.after.cleanup);
 
-test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, STOP holds, then the pull request is closed and the branch deleted', async () => {
+test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, STOP holds, and the pull request is left open for the session', async () => {
   await withProject(async ({ folder }) => {
     const { remote, main, tree } = await productOnRemote(folder);
     const { adapter, calls } = standIn(remote);
     const { asked, client } = merges(REFUSED);
-    const step = healthStep({ adapterFor: () => adapter, client, findGit: async () => ({ ok: true, path: 'git' }), checkPins: () => 'match', readProtection: async () => 'on' });
+    // The real stop guard, as a child under a scratch home.
+    const step = stepWith(adapter, client, { trySTOP: undefined });
     const { changes } = await step.plan({ folder });
-    const { ctx, recorded } = ctxFor(folder, remote);
+    const { ctx, recorded, setupRun } = ctxFor(folder, remote);
     assert.deepEqual(await step.apply(ctx, changes), []);
 
-    // One empty commit on main's tip, pushed before the pull request was opened.
+    // One empty commit on main's tip, recorded before it was pushed.
     const pushed = recorded[0].after.sha;
     assert.equal(recorded[0].kind, 'host');
     assert.equal(recorded[0].before, null);
     assert.equal(recorded[0].onRemote, '', 'recorded before it was pushed');
-    assert.match(calls.open[0].onRemote, new RegExp(`^${pushed}`));
-    assert.equal(calls.open[0].head, HEALTH_BRANCH);
-    assert.equal(calls.open[0].base, 'main');
     const body = execFileSync('git', ['--git-dir', remote, 'cat-file', '-p', pushed], { encoding: 'utf8' });
     assert.match(body, new RegExp(`^tree ${tree}\nparent ${main}\n`));
+    // The pull request recorded as pending just before it was opened, then by its number.
+    assert.deepEqual([recorded[1].target, recorded[1].before, recorded[1].after], [`${REPO} pull request from ${HEALTH_BRANCH}`, null, { state: 'opening', branch: HEALTH_BRANCH }]);
+    assert.match(calls.open[0].onRemote, new RegExp(`^${pushed}`));
+    assert.deepEqual([calls.open[0].head, calls.open[0].base], [HEALTH_BRANCH, 'main']);
+    assert.equal(recorded[2].target, `${REPO} pull request 12`);
     // The gate asked with no approval, as the foreman would.
     assert.deepEqual(asked, [{ project: SLUG, number: 12, stop: false, bypass: false, approvalRequired: true }]);
-    // Closed and deleted, each recorded before it was made.
-    assert.deepEqual(calls.close, [12]);
-    assert.equal(lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`), '');
+    // Left open, with its branch, for the session's merge trial (ruling R68).
+    assert.deepEqual(calls.close, []);
+    assert.match(lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`), new RegExp(`^${pushed}`));
     assert.equal(lsRemote(remote, 'refs/heads/main').split('\t')[0], main, 'main is as it was');
-    const hosts = recorded.filter((c) => c.kind === 'host');
-    assert.deepEqual(hosts.map((c) => [c.target, c.before === null ? null : Object.keys(c.before)[0], c.after === null ? null : Object.keys(c.after)[0]]), [
-      [`${REPO} branch ${HEALTH_BRANCH}`, null, 'branch'],
-      [`${REPO} pull request 12`, null, 'number'],
-      [`${REPO} pull request 12`, 'state', 'state'],
-      [`${REPO} branch ${HEALTH_BRANCH}`, 'branch', null],
-    ]);
-    assert.ok(hosts[3].onRemote.startsWith(pushed), 'the deletion recorded while the branch was still there');
-    // Every result recorded, all passed, the real stop guard among them.
     const answer = recorded.at(-1);
-    assert.equal(answer.kind, 'answer');
+    assert.equal(answer.after.health.open, true);
     assert.equal(answer.after.health.pr, 12);
     assert.deepEqual(answer.after.health.checks.map((c) => [c.name, c.result, c.ok]), [
       ['merge without approval', 'refused', true],
@@ -195,27 +220,64 @@ test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, S
       ['read under stop', 'allowed', true],
       ['installed skills', 'match', true],
       ['host protection', 'on', true],
-      ['trial cleaned up', 'closed', true],
     ]);
-    // The director's own folder was never a git repository's working copy for it.
-    assert.deepEqual(fs.readdirSync(path.join(folder, '.git')), []);
+    const after = readJournal().runs.find((r) => r.id === setupRun.id);
+    assert.deepEqual(openTrial(after), { project: SLUG, pr: 12, branch: HEALTH_BRANCH, sha: pushed });
+    assert.deepEqual(fs.readdirSync(path.join(folder, '.git')), [], 'the director\'s folder is untouched');
     assert.equal(stopState().on, false, 'STOP was tried under a scratch home, never this one');
+
+    // Closed and deleted by the health route's cleanup, each recorded before it was made, with what came of it.
+    const closing = [];
+    const done = await closeOpenTrial({ setupRun: after, record: (c) => { closing.push({ ...c, onRemote: lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`) }); }, adapterFor: () => adapter, findGit: GIT });
+    assert.deepEqual(done, { pr: 12, branch: HEALTH_BRANCH, closed: true, deleted: true });
+    assert.deepEqual(calls.close, [12]);
+    assert.equal(lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`), '');
+    assert.deepEqual(closing.map((c) => [c.kind, c.target]), [['host', `${REPO} pull request 12`], ['host', `${REPO} branch ${HEALTH_BRANCH}`], ['answer', 'step 10']]);
+    assert.ok(closing[1].onRemote.startsWith(pushed), 'the deletion recorded while the branch was still there');
+    assert.deepEqual(closing[2].after, { cleanup: { pr: 12, branch: HEALTH_BRANCH, closed: true, deleted: true } });
   });
 });
 
-test('a merge the gate lets through fails the step, named, and the trial is still cleaned up', async () => {
+test('step 10 run again closes the trial its last attempt left open before opening another', async () => {
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    const { adapter, calls } = standIn(remote);
+    const step = stepWith(adapter, merges(REFUSED).client);
+    const { changes } = await step.plan({ folder });
+    const { ctx, recorded } = ctxFor(folder, remote);
+    await step.apply(ctx, changes);
+    await step.apply(ctx, changes);
+    assert.deepEqual(calls.close, [12]);
+    assert.ok(recorded.findIndex((c) => c.after?.cleanup?.pr === 12) < recorded.findIndex((c) => c.after?.state === 'opening' && recorded.indexOf(c) > 3));
+    assert.equal(recorded.at(-1).after.health.pr, 13);
+  });
+});
+
+test('a merge the gate lets through fails the step, named, and the trial is cleaned up at once', async () => {
   await withProject(async ({ folder }) => {
     const { remote } = await productOnRemote(folder);
     let through = false;
     const { adapter, calls } = standIn(remote, { merged: () => through });
     const { client } = merges(() => { through = true; return { ok: true, merged: true }; });
-    const step = healthStep({ adapterFor: () => adapter, client, findGit: async () => ({ ok: true, path: 'git' }), trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match', readProtection: async () => 'on' });
+    const step = stepWith(adapter, client);
     const { ctx, recorded } = ctxFor(folder, remote);
     await assert.rejects(step.apply(ctx, (await step.plan({ folder })).changes), /merge without approval/);
-    const checks = recorded.at(-1).after.health.checks;
-    assert.deepEqual(checks.find((c) => c.name === 'merge without approval'), { name: 'merge without approval', expected: 'refused', result: 'MERGED (unexpected)', ok: false });
+    const health = recorded.filter((c) => c.after?.health).at(-1).after.health;
+    assert.deepEqual(health.checks.find((c) => c.name === 'merge without approval'), { name: 'merge without approval', expected: 'refused', result: 'MERGED (unexpected)', ok: false });
+    assert.equal(health.open, false);
     assert.deepEqual(calls.close, [12]);
     assert.equal(lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`), '');
+  });
+});
+
+test('a close or delete that fails is recorded as failed, never as done', async () => {
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    const { adapter } = standIn(remote, { closeFails: true });
+    const step = stepWith(adapter, merges(REFUSED).client, { checkPins: () => 'differ' });
+    const { ctx, recorded } = ctxFor(folder, remote);
+    await assert.rejects(step.apply(ctx, (await step.plan({ folder })).changes), /installed skills/);
+    assert.deepEqual(cleanups(recorded), [{ pr: 12, branch: HEALTH_BRANCH, closed: false, deleted: true }]);
   });
 });
 
@@ -224,12 +286,41 @@ test('STOP coming on stops step 10 before anything is pushed', async () => {
     const { remote } = await productOnRemote(folder);
     const { adapter, calls } = standIn(remote);
     const { asked, client } = merges(REFUSED);
-    const step = healthStep({ adapterFor: () => adapter, client, findGit: async () => ({ ok: true, path: 'git' }) });
+    const step = stepWith(adapter, client);
     const { ctx, recorded } = ctxFor(folder, remote, { stopped: () => true });
     await assert.rejects(step.apply(ctx, (await step.plan({ folder })).changes), (e) => e.message === STOPPED);
     assert.equal(asked.length, 0);
     assert.equal(calls.open.length, 0);
-    assert.equal(recorded.length, 0);
+    assert.equal(recorded.filter((c) => c.kind === 'host').length, 0);
+  });
+});
+
+// Cleaning up setup's own trial is no new work: it runs after a STOP halt too.
+test('after STOP halts step 10, its own trial pull request is still closed and its branch deleted', async () => {
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    let opened = false;
+    const { adapter, calls } = standIn(remote, { onOpen: () => { opened = true; } });
+    const { asked, client } = merges(REFUSED);
+    const step = stepWith(adapter, client);
+    const { ctx, recorded } = ctxFor(folder, remote, { stopped: () => opened });
+    await assert.rejects(step.apply(ctx, (await step.plan({ folder })).changes), (e) => e.message === STOPPED);
+    assert.equal(asked.length, 0, 'the gate is not asked once STOP is on');
+    assert.deepEqual(calls.close, [12]);
+    assert.equal(lsRemote(remote, `refs/heads/${HEALTH_BRANCH}`), '');
+    assert.deepEqual(cleanups(recorded), [{ pr: 12, branch: HEALTH_BRANCH, closed: true, deleted: true }]);
+  });
+});
+
+test('a git command that fails names its subcommand, never a setting\'s value', async () => {
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    const { adapter } = standIn(remote);
+    const real = (await import('../../../scripts/lib/run.js')).run;
+    const run = (file, args, options) => (args.includes('commit-tree') ? Promise.resolve({ code: 1, stdout: '', stderr: 'no' }) : real(file, args, options));
+    const step = stepWith(adapter, merges(REFUSED).client, { run });
+    const { ctx } = ctxFor(folder, remote);
+    await assert.rejects(step.apply(ctx, (await step.plan({ folder })).changes), (e) => e.message === 'git commit-tree failed for the trial branch');
   });
 });
 
@@ -245,6 +336,8 @@ test('the merge trial passes on any refusal that leaves the pull request unmerge
   assert.equal(await trial({ ok: true, merged: false }), 'allowed');
   assert.equal(await trial({ ok: false, refused: 'the host helper could not be reached: is it running?' }), 'could not run');
   assert.equal(await trial({ ok: false, refused: 'the lock is held' }, 'unknown'), 'could not run', 'unmerged must be read back');
+  // A pull request that isn't open shows nothing of the gate (ruling R68).
+  assert.equal(await trial({ ok: false, refused: 'pull request 12 is not open' }, 'closed'), 'could not run');
   assert.equal(await mergeTrial({ client: { merge: async () => { throw new Error('x'); } }, adapter: adapter('open'), project: SLUG, number: 12 }), 'could not run');
 });
 
@@ -262,44 +355,65 @@ test('STOP is tried with the real stop guard under a scratch home: a write refus
 
 // ---- Joining the two parts ----
 
+// Cleans the trial up as the route does, with a stand-in adapter and git that never reach a host.
+const quietGit = async () => ({ code: 0, stdout: '', stderr: '' });
+const closer = (closes = []) => (args) => closeOpenTrial({
+  ...args, adapterFor: () => ({ closePr: async (n) => { closes.push(n); return { number: n }; } }), findGit: GIT, run: quietGit,
+});
+const cleaned = (folder, run) => closer()({ setupRun: run, record: (c) => addChanges(run.id, [{ ...c, step: 10 }]) })
+  .then(() => readJournal().runs.find((r) => r.id === run.id));
+
 test('a green run gives a green board', async () => {
   await withProject(async ({ folder }) => {
-    const run = runWith(folder, { checks: GREEN_CHECKS });
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
     const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD });
     assert.equal(got.green, true, got.lines.join('\n'));
     assert.deepEqual(got.trials, { pr: 12, project: SLUG });
     const helper = got.lines.filter((l) => l.startsWith('Passed:') && !l.endsWith('(reported by the session)'));
     const session = got.lines.filter((l) => l.endsWith('(reported by the session)'));
-    assert.equal(helper.length, Object.keys(HELPER_CHECKS).length);
+    assert.equal(helper.length, Object.keys(HELPER_CHECKS).length + 1, 'and the clean-up');
     assert.equal(session.length, Object.keys(SESSION_CHECKS).length);
     assert.ok(session.every((l) => l.startsWith('Passed:')));
     assert.ok(got.lines.includes('Board: Protection: Standard'));
     assert.match(got.board, /Wheelhouse's board/);
-    // A watch line on the board is shown but holds nothing.
     const watched = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'watch', text: 'Your profile isn\'t backed up off this computer yet' }]) });
     assert.equal(watched.green, true);
   });
 });
 
-test('a failed trial is named with what to do', async () => {
+test('a failed trial is named with what to do, and what to do can be done', async () => {
   await withProject(async ({ folder }) => {
     const checks = GREEN_CHECKS.map((c) => (c.name === 'write under stop' ? { ...c, result: 'allowed', ok: false } : c));
-    const run = runWith(folder, { checks });
+    const run = await cleaned(folder, runWith(folder, { checks }));
     const reported = GREEN_LINES.map((l) => (l.startsWith('read .env.local') ? 'read .env.local: refused / allowed' : l))
       .map((l) => (l.startsWith('helper health') ? 'helper health: reached / could not run' : l));
     const got = await healthCheck({ folder, run, reported, load: OK_BOARD });
     assert.equal(got.green, false);
     assert.ok(got.lines.includes('Failed: With STOP on, an agent\'s change was not refused (refused was expected, allowed came back). Reload this project in Claude Desktop so Wheelhouse\'s checks run in it, then run step 10 again.'), got.lines.join('\n'));
     assert.ok(got.lines.includes('Failed: An agent could read a .env.local file (refused was expected, allowed came back). The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again. (reported by the session)'), got.lines.join('\n'));
-    assert.ok(got.lines.some((l) => /^Failed: setup couldn't try reaching the helper\. Run step 10's trials again in this session.*\(reported by the session\)$/.test(l)), got.lines.join('\n'));
-    // Never hidden: every check has its line.
-    assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch):/.test(l)).length, Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length);
+    assert.ok(got.lines.some((l) => /^Failed: setup couldn't try reaching the helper\. Run step 10 again.*\(reported by the session\)$/.test(l)), got.lines.join('\n'));
+    assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch):/.test(l)).length, Object.keys(HELPER_CHECKS).length + 1 + Object.keys(SESSION_CHECKS).length);
   });
 });
 
-test('trials not handed in, lines that aren\'t trials\', a step 10 that failed and a STOP board line each hold the board', async () => {
+// The trial looks where setup finds gh; on GitHub, where setup uses gh, "not installed" means the
+// trial missed it, so it fails rather than reading green untried. On GitLab there is none to run.
+test('on a GitHub project, a gh the trial couldn\'t find is a failure; on GitLab it passes', async () => {
   await withProject(async ({ folder }) => {
-    const run = runWith(folder, { checks: GREEN_CHECKS });
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const reported = GREEN_LINES.map((l) => (l.startsWith('run gh') ? 'run gh: refused / not installed' : l));
+    const hub = await healthCheck({ folder, run, reported, load: OK_BOARD });
+    assert.equal(hub.green, false);
+    assert.ok(hub.lines.some((l) => /^Failed: .*GitHub sign-in.*not installed came back.*\(reported by the session\)$/.test(l)), hub.lines.join('\n'));
+    writeProject(SLUG, { folder, remoteUrl: 'https://gitlab.com/o/Cafe-Menu.git', host: 'gitlab', repo: REPO, connection: {} });
+    const lab = await healthCheck({ folder, run, reported, load: OK_BOARD });
+    assert.equal(lab.green, true, lab.lines.join('\n'));
+  });
+});
+
+test('trials not handed in, lines that aren\'t trials\', a step 10 that failed, an open trial and a STOP board line each hold the board', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
     const short = await healthCheck({ folder, run, reported: [...GREEN_LINES.slice(1), 'read .env.local refused', 'surprise: refused / refused'], load: OK_BOARD });
     assert.equal(short.green, false);
     assert.ok(short.lines.some((l) => l.startsWith('Not reported by the session: reading .env.local.')), short.lines.join('\n'));
@@ -309,7 +423,12 @@ test('trials not handed in, lines that aren\'t trials\', a step 10 that failed a
     assert.ok(stopped.lines.includes('Board: STOP is on'));
   });
   await withProject(async ({ folder }) => {
-    const run = runWith(folder, { upTo: 9, checks: GREEN_CHECKS.slice(0, 1), failed: 'git push failed for the trial branch' });
+    const open = await healthCheck({ folder, run: runWith(folder, { checks: GREEN_CHECKS }), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(open.green, false, 'the trial pull request is still open');
+    assert.ok(open.lines.some((l) => l.startsWith('Waiting: the trial pull request, number 12, is open for this session\'s trials')), open.lines.join('\n'));
+  });
+  await withProject(async ({ folder }) => {
+    const run = runWith(folder, { upTo: 9, checks: GREEN_CHECKS.slice(0, 1), failed: 'git push failed for the trial branch', open: false });
     const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD });
     assert.equal(got.green, false);
     assert.match(got.lines[0], /^Failed: step 10 did not finish: git push failed for the trial branch\. Run step 10 again/);
@@ -323,18 +442,19 @@ test('trials not handed in, lines that aren\'t trials\', a step 10 that failed a
   });
 });
 
-test('a trial pull request left open is a watch line, not a failure', async () => {
+test('a trial pull request left open by a failed close is a watch line, not a failure', async () => {
   await withProject(async ({ folder }) => {
-    const checks = GREEN_CHECKS.map((c) => (c.name === 'trial cleaned up' ? { ...c, result: 'left open', ok: false } : c));
-    const got = await healthCheck({ folder, run: runWith(folder, { checks }), reported: GREEN_LINES, load: OK_BOARD });
-    assert.equal(got.green, true);
+    const run = runWith(folder, { checks: GREEN_CHECKS });
+    addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { cleanup: { pr: 12, branch: HEALTH_BRANCH, closed: false, deleted: true } } }]);
+    const got = await healthCheck({ folder, run: readJournal().runs.find((r) => r.id === run.id), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.green, true, got.lines.join('\n'));
     assert.ok(got.lines.some((l) => /^Watch: The trial pull request, or its branch, was left on the host .*Close the pull request/.test(l)), got.lines.join('\n'));
   });
 });
 
 test('with the real board, STOP on the computer holds it', async () => {
   await withProject(async ({ folder }) => {
-    const run = runWith(folder, { checks: GREEN_CHECKS });
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
     const client = { health: async () => ({ ok: true }), lock: { read: async () => ({ ok: true, result: null }) }, host: { facts: async () => ({ ok: true, protection: 'on', ci: 'present' }) } };
     setStop({ by: 'prompt' });
     try {
@@ -348,55 +468,106 @@ test('with the real board, STOP on the computer holds it', async () => {
   });
 });
 
-// ---- The helper's /setup/health route, and the end of setup (ruling R44) ----
+// ---- The helper's /setup/health route, and the end of setup (rulings R44, R67, R68) ----
 
-function routesFor(user, { stopped = () => false, load = OK_BOARD, finished = [] } = {}) {
+function routesFor(user, { stopped = () => false, load = OK_BOARD, finished = [], closes = [] } = {}) {
   return setupRoutes({
     now: () => T0, userHome: user, stopped,
     health: (args) => healthCheck({ ...args, load }),
     finish: async (args) => { finished.push(args); return { started: 'The foreman\'s watcher is started.', briefing: 'The briefing.' }; },
+    closeTrial: closer(closes),
   });
 }
+const runOf = (folder) => readJournal().runs.filter((r) => r.folder === folder).at(-1);
 
-test('only a green board, and never under STOP, starts the foreman and gives the first briefing', async () => {
+test('the trial stays open until the session\'s lines are in; then it is closed, and a green board finishes setup once', async () => {
   await withProject(async ({ folder, user }) => {
     runWith(folder, { checks: GREEN_CHECKS });
     const finished = [];
-    const green = await routesFor(user, { finished })['/setup/health']({ folder, lines: GREEN_LINES });
+    const closes = [];
+    const route = routesFor(user, { finished, closes })['/setup/health'];
+    // Asked with no lines, it names the trial for the session, and leaves it open.
+    const asked = await route({ folder });
+    assert.equal(asked.green, false);
+    assert.deepEqual(asked.trials, { pr: 12, project: SLUG });
+    assert.deepEqual(closes, []);
+    assert.equal(firstUnfinished(runOf(folder)), 10, 'step 10 is not finished before the board is green');
+
+    const green = await route({ folder, lines: GREEN_LINES });
     assert.equal(green.ok, true, green.refused);
-    assert.equal(green.green, true);
+    assert.equal(green.green, true, green.lines.join('\n'));
+    assert.deepEqual(closes, [12]);
     assert.deepEqual(finished, [{ project: SLUG }]);
     assert.equal(green.started, 'The foreman\'s watcher is started.');
     assert.equal(green.briefing, 'The briefing.');
-    assert.deepEqual(green.trials, { pr: 12, project: SLUG });
+    assert.equal(healthGreen(runOf(folder)), true);
+    assert.equal(firstUnfinished(runOf(folder)), null, 'setup is finished once the board is green');
 
-    const red = await routesFor(user, { finished })['/setup/health']({ folder, lines: GREEN_LINES.slice(1) });
+    // Asked again, green or with made-up lines: it only reads.
+    const kept = JSON.stringify(readJournal());
+    const again = await route({ folder, lines: GREEN_LINES });
+    const madeUp = await route({ folder, lines: GREEN_LINES.map((l) => l.replace(/ \/ .*$/, ' / allowed')) });
+    assert.equal(again.started, undefined);
+    assert.equal(madeUp.started, undefined);
+    assert.equal(finished.length, 1, 'setup\'s ending runs once per run');
+    assert.deepEqual(closes, [12]);
+    assert.equal(JSON.stringify(readJournal()), kept, 'nothing written after the green mark');
+  });
+});
+
+test('a red board closes the trial, leaves step 10 unfinished, and a fresh card runs it again', async () => {
+  await withProject(async ({ folder, user, plan }) => {
+    runWith(folder, { checks: GREEN_CHECKS });
+    const finished = [];
+    const closes = [];
+    // While the trial is open, step 10's plan tells the session to run the trials.
+    const waiting = await plan(10);
+    assert.equal(waiting.ok, true, waiting.refused);
+    assert.ok(waiting.wait > 0);
+    assert.match(waiting.why, /cli\.js health/);
+    const red = await routesFor(user, { finished, closes })['/setup/health']({ folder, lines: GREEN_LINES.slice(1) });
     assert.equal(red.green, false);
-    assert.equal(red.started, undefined);
-    assert.equal(finished.length, 1);
-    const asked = await routesFor(user, { finished })['/setup/health']({ folder });
-    assert.equal(asked.green, false, 'no lines yet: the session runs its trials first');
-    assert.deepEqual(asked.trials, { pr: 12, project: SLUG });
-    const underStop = await routesFor(user, { finished, stopped: () => true })['/setup/health']({ folder, lines: GREEN_LINES });
-    assert.equal(underStop.ok, true, 'a reading form, answered under STOP');
-    assert.equal(underStop.started, undefined);
-    assert.equal(finished.length, 1);
+    assert.deepEqual(closes, [12]);
+    assert.deepEqual(finished, []);
+    assert.equal(healthGreen(runOf(folder)), false);
+    assert.equal(firstUnfinished(runOf(folder)), 10);
+    // Not "already done": a fresh Go-ahead card for step 10.
+    const card = await plan(10);
+    assert.equal(card.ok, true, card.refused);
+    assert.equal(setLineOf(card.card.question), setupLine(10, card.hash));
+    // A new click is a new attempt: the old finish no longer counts.
+    const run = runOf(folder);
+    markStep(run.id, 10, 'clickedAt', { now: () => T0 });
+    assert.equal(runOf(folder).steps[10].doneAt, undefined);
+  });
+});
+
+test('under STOP the health route only reads: no close, no removal, no green mark, no ending', async () => {
+  await withProject(async ({ folder, user }) => {
+    runWith(folder, { checks: GREEN_CHECKS });
+    const finished = [];
+    const closes = [];
+    const env = path.join(folder, '.env.local');
+    fs.writeFileSync(env, TRIAL_MARKER);
+    const kept = JSON.stringify(readJournal());
+    const got = await routesFor(user, { finished, closes, stopped: () => true })['/setup/health']({ folder, lines: GREEN_LINES });
+    assert.equal(got.ok, true, 'a reading form, answered under STOP');
+    assert.deepEqual([finished, closes], [[], []]);
+    assert.equal(fs.readFileSync(env, 'utf8'), TRIAL_MARKER);
+    assert.equal(JSON.stringify(readJournal()), kept);
   });
 });
 
 test('the health route takes only trial lines, and removes only a trial\'s own leftover .env.local', async () => {
   await withProject(async ({ folder, user }) => {
     runWith(folder, { checks: GREEN_CHECKS });
-    const route = routesFor(user)['/setup/health'];
+    const route = routesFor(user, { load: boardWith([{ level: 'stop', text: 'STOP is on' }]) })['/setup/health'];
     await assert.rejects(route({ folder, lines: ['read .env.local: refused / refused; rm -rf x'] }), /trial/);
     await assert.rejects(route({ folder, lines: 'read .env.local: refused / refused' }), /trial/);
     await assert.rejects(route({ folder, lines: GREEN_LINES, changes: [] }), /folder/);
     await assert.rejects(route({ folder, lines: Array.from({ length: 13 }, () => GREEN_LINES[0]) }), /trial/);
-
     const env = path.join(folder, '.env.local');
     fs.writeFileSync(env, TRIAL_MARKER);
-    await routesFor(user, { stopped: () => true })['/setup/health']({ folder, lines: GREEN_LINES });
-    assert.equal(fs.readFileSync(env, 'utf8'), TRIAL_MARKER, 'nothing removed under STOP');
     await route({ folder, lines: GREEN_LINES });
     assert.equal(fs.existsSync(env), false);
     fs.writeFileSync(env, `${TRIAL_MARKER}SECRET=1\n`);

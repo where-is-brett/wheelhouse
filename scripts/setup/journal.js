@@ -182,7 +182,7 @@ export function findRun(folder) {
 // Records a step's time (field shownAt, clickedAt or doneAt), or that it failed (field
 // failed, with `reason`), or a line a running step says to the director (field say, with `line`:
 // one line, kept with its time, replacing the one before; ruling R40). Recording again replaces
-// the time. A later click or finish clears an earlier failure. With `when`, a test of the step's entry as it stands, read under the
+// the time. A later click or finish clears an earlier failure, and a later click an earlier finish. With `when`, a test of the step's entry as it stands, read under the
 // lock, nothing is recorded unless it passes: a long step's process records only for its own
 // attempt. True when it was recorded.
 export function markStep(runId, step, field, { now = () => new Date(), reason, line, when } = {}) {
@@ -202,8 +202,12 @@ export function markStep(runId, step, field, { now = () => new Date(), reason, l
     else {
       entry[field] = at;
       if (field !== 'shownAt') delete entry.failed;
-      // A new attempt says its own lines, never an earlier attempt's.
-      if (field === 'clickedAt') delete entry.say;
+      // A new attempt says its own lines, never an earlier attempt's, and isn't finished by an
+      // earlier one's finish: the health check is run again after a red board (ruling R67).
+      if (field === 'clickedAt') {
+        delete entry.say;
+        delete entry.doneAt;
+      }
     }
     run.steps[step] = entry;
     return true;

@@ -10,7 +10,7 @@ import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/st
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
-import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { clicksDir, noteShown, noteAsked } from '../../../scripts/setup/clicks.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
@@ -1003,6 +1003,8 @@ test('in a registered folder setup is still finishing, a setup click is kept, wi
       writeProject('o__done', { folder: done, remoteUrl: 'https://example.com/o/d.git', host: 'github', repo: 'o/d', connection: {} });
       const run = startRun({ folder: done, now: () => NOW });
       for (let n = 1; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => NOW });
+      // Step 10 is done once its board has been green (ruling R67).
+      addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: NOW.toISOString() } }]);
       noteShown({ runId: run.id, folder: done, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
       const before = clicks().length;
       await decide({ ...input({ [setupCard(4, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: done }, { client: fake(), now: () => NOW });

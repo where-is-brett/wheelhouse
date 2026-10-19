@@ -103,7 +103,11 @@ test('the first unfinished step is the lowest one not done, whatever ran after i
   assert.equal(firstUnfinished({ steps: { 1: { doneAt: 'x' }, 2: { clickedAt: 'y' }, 3: { doneAt: 'z' } } }), 2);
   assert.equal(firstUnfinished({ steps: { 1: { doneAt: 'x' }, 2: { doneAt: 'y', failed: undefined }, 3: { doneAt: 'z' } } }), 4);
   const all = Object.fromEntries(STEPS.map((s) => [s.n, { doneAt: 'x' }]));
-  assert.equal(firstUnfinished({ steps: all }), null);
+  // The health check is finished only once its board has been green (ruling R67).
+  assert.equal(firstUnfinished({ steps: all }), 10);
+  const green = { step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: '2026-10-20T00:00:00.000Z' } };
+  assert.equal(firstUnfinished({ steps: all, changes: [green] }), null);
+  assert.equal(firstUnfinished({ steps: all, changes: [{ ...green, after: { health: {} } }] }), 10);
 });
 
 test('the hooks read where a run stands as setup does: the same steps, titles, journal reader and click keeper', () => {

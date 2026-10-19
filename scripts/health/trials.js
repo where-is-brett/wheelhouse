@@ -28,6 +28,8 @@ const GH_PATHS = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh', 'C
 const DENIED = new Set(['EPERM', 'EACCES']);
 // What the helper client says when the helper didn't answer: no refusal of anything.
 export const UNREACHED = /could not be reached|did not answer|could not read|cut off/;
+// The gate's refusal of a pull request that isn't open (the helper's /merge).
+const NOT_OPEN = /pull request \d+ is not open/;
 const GH_CLOSED = /not logged in|not logged into|operation not permitted|permission denied|could not read|cannot read|failed to read/;
 
 // How long the trials wait for the helper, and for the merge: a first merge request fills the
@@ -38,8 +40,10 @@ export const MERGE_WAIT_MS = 30 * 1000;
 // one be left (scripts/setup/health.js, removeTrialLeftover).
 export const TRIAL_MARKER = 'WHEELHOUSE_TRIAL=1\n';
 
-// Where `gh` is looked for: the usual places, and the copy setup's step 2 fetched into Wheelhouse's
-// tools folder (scripts/lib/host-tools.js).
+// Where `gh` is looked for first: the usual places, and the copy setup's step 2 fetched into
+// Wheelhouse's tools folder (scripts/lib/host-tools.js). Failing those, the trial runs `gh` by its
+// bare name, found on the path, as toolPath runs it and step 2 accepts it (tools.js, onPath), and
+// as an agent would.
 export function ghPaths({ platform = process.platform } = {}) {
   return [...GH_PATHS, fetchedPath('gh', { platform })];
 }
@@ -136,8 +140,9 @@ export async function runTrials(deps = {}) {
     const paths = ghPaths();
     const gh = paths.find((p) => fs.existsSync(p));
     // A copy the sandbox won't even let the agent see is one it can't run.
-    if (!gh) return paths.some((p) => hidden(fs, p)) ? 'refused' : 'not installed';
-    const out = spawn(gh, ['auth', 'status']);
+    if (!gh && paths.some((p) => hidden(fs, p))) return 'refused';
+    const out = spawn(gh ?? 'gh', ['auth', 'status']);
+    if (!gh && out?.error?.code === 'ENOENT') return 'not installed';
     if (DENIED.has(out?.error?.code)) return 'refused';
     if (out && out.status === 0 && !out.error) return 'allowed';
     return GH_CLOSED.test(`${out?.stdout ?? ''} ${out?.stderr ?? ''}`.toLowerCase()) ? 'refused' : 'could not run';
@@ -169,7 +174,9 @@ export async function runTrials(deps = {}) {
 
   // Any refusal that leaves the pull request unmerged counts (check 31): the gate refuses on
   // whichever condition it finds first, and with the director's real approval on record that is
-  // the lock, CI or review, not the approval. A helper that couldn't be reached refused nothing.
+  // the lock, CI or review, not the approval. A helper that couldn't be reached refused nothing,
+  // and nor did one that found the pull request not open: step 10 keeps its trial pull request open
+  // for this trial (ruling R68), so that says the trial ran on the wrong one.
   await trial('merge with forged approval', 'refused', async () => {
     if (!ready) return 'could not run';
     const forged = path.join(folder, 'forged-approval.json');
@@ -180,6 +187,10 @@ export async function runTrials(deps = {}) {
       } catch { /* the folder file is a stand-in; the helper never reads it */ }
       const answer = await mergeClient.merge({ project: deps.project, number: Number(pr), stop: false, bypass: false, approvalRequired: true });
       if (answer?.merged === true) return 'MERGED (unexpected)';
+      if (answer?.ok === false && NOT_OPEN.test(textOf(answer))) {
+        notes.push('The pull request was not open, so the gate was not tried: run step 10 again, and the trials while its pull request is open.');
+        return 'could not run';
+      }
       if (answer?.ok === false && !UNREACHED.test(textOf(answer))) return 'refused';
       return 'could not run';
     } finally {

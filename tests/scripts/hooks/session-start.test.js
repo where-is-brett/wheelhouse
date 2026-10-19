@@ -23,7 +23,7 @@ import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
@@ -659,7 +659,13 @@ test('the session start starts no watcher in a project setup is still finishing'
     f.client.config = async () => shapeConfig(1);
     await start(f);
     assert.equal(watcherStarts(f).length, 0, 'not while step 10 is unfinished');
+    // Interrupted after step 10's apply, before the board went green (ruling R67): the session
+    // start resumes at step 10 and starts no watcher.
     markStep(setupRun.id, 10, 'doneAt', { now: () => new Date(T + 10 * 60000) });
+    const resumed = await start(f);
+    assert.equal(watcherStarts(f).length, 0, 'not before the board is green');
+    assert.ok(text(resumed).split('\n').includes('Setup is part-way through: step 10, Health check, is next. Follow wheelhouse:setup.'), text(resumed));
+    addChanges(setupRun.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
     await start(f);
     assert.equal(watcherStarts(f).length, 1, 'a project setup has finished is started as any other');
   });
@@ -1047,6 +1053,7 @@ test('in a registered folder setup is still finishing, the session start resumes
       liftStop();
       // Once every step is done, the folder is a project like any other.
       for (let n = 4; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+      addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
       const g = fake();
       const after = await start(g, folder);
       if (git) {
