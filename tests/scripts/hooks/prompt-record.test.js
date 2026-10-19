@@ -397,9 +397,16 @@ test('sendPending stops between records once its deadline has passed and keeps t
     const folder = path.join(home, 'projects', P, 'pending');
     fs.mkdirSync(folder, { recursive: true });
     for (const n of [1, 2, 3]) fs.writeFileSync(path.join(folder, `2026-10-18T0${n}-00-00.000Z-a.json`), JSON.stringify({ route: 'write', body: { n } }));
+    // The deadline leaves a wide margin for the first send to start under load, and the helper
+    // answers only once the deadline has passed, so the check before the second record always
+    // finds it past.
+    const until = Date.now() + 1000;
     const seen = [];
-    const client = { state: { write: async (b) => { seen.push(b.n); await new Promise((r) => setTimeout(r, 60)); return { ok: true }; }, record: async () => ({ ok: true }) } };
-    const result = await sendPending(P, client, { until: Date.now() + 30 });
+    const pastDeadline = async () => {
+      while (Date.now() <= until) await new Promise((r) => setTimeout(r, until - Date.now() + 5));
+    };
+    const client = { state: { write: async (b) => { seen.push(b.n); await pastDeadline(); return { ok: true }; }, record: async () => ({ ok: true }) } };
+    const result = await sendPending(P, client, { until });
     assert.deepEqual(seen, [1]);
     assert.equal(result.sent, 1);
     assert.equal(fs.readdirSync(folder).length, 2);
