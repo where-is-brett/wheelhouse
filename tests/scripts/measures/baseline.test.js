@@ -1,0 +1,255 @@
+// tests/scripts/measures/baseline.test.js
+// The baseline from the private note: the first version's cost per merged pull request, as the
+// director gives the note's figures at the front desk. `cli.js baseline` asks the helper, which
+// reads the figures back on a card; only the director's signed click on that card writes
+// <wheelhouseHome()>/measures/baseline.json, and the figures go nowhere else.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { noteBaseline, readBaseline } from '../../../scripts/measures/baseline.js';
+import { main } from '../../../scripts/measures/cli.js';
+import { startHelper } from '../../../scripts/host/helper.js';
+import { helperClient } from '../../../scripts/host/helper-client.js';
+import { decide } from '../../../scripts/hooks/prompt-record.js';
+import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
+import { makeEvent, writeEvent, listEvents } from '../../../scripts/state/events.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
+import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+const T0 = new Date('2026-10-19T03:00:00.000Z');
+// Made-up figures, each distinctive enough to search a home for.
+const COUNTED = 'Counted by the zebra-lantern tally of every builder session in the note, at list prices';
+const FIGURES = { usd: 4127.35, merges: 37, from: '2026-08-03', to: '2026-09-28', counted: COUNTED };
+const ARGS = ['baseline', '--usd', '4127.35', '--merges', '37', '--from', '2026-08-03', '--to', '2026-09-28', '--counted', COUNTED];
+// 4127.35 / 37 is 111.55.
+const MARKS = ['4127.35', 'zebra-lantern', '111.55'];
+
+// Runs the command with a client, and gives back its exit code and what it wrote.
+async function run(argv, client) {
+  let out = '';
+  let err = '';
+  const code = await main(argv, { client, out: (t) => { out += t; }, err: (t) => { err += t; } });
+  return { code, out, err };
+}
+
+// The director answering a card with one label, as Claude Code gives the prompt record a click.
+function answered(cards, cwd) {
+  const answers = Object.fromEntries(cards.map(([card, label]) => [card.question, label]));
+  return {
+    cwd, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+    tool_input: { questions: cards.map(([card]) => card), answers },
+    tool_response: { answers },
+  };
+}
+
+// A helper client for the prompt record that keeps every request and takes it.
+function spy() {
+  const calls = [];
+  const take = (name) => async (body) => { calls.push([name, body]); return { ok: true }; };
+  return {
+    calls,
+    prState: take('prState'),
+    state: { write: take('state.write'), record: take('state.record') },
+    profile: { record: take('profile.record') },
+  };
+}
+
+// Every file under `dir`, as full paths.
+function filesUnder(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...filesUnder(full));
+    else if (entry.isFile()) out.push(full);
+  }
+  return out;
+}
+
+const git = (cwd, args) => {
+  const got = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
+  assert.equal(got.status, 0, got.stderr);
+  return got.stdout.trim();
+};
+
+// Runs fn with a scratch home, this computer's signing key enrolled and a helper started on it.
+async function withHelper(fn) {
+  const home = shortHome();
+  await as(home, async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => T0 });
+    try {
+      await fn({ home, client: helperClient({ address: helper.address }) });
+    } finally {
+      await helper.close();
+    }
+  });
+}
+
+test('the note\'s cost and count give the cost per merge, with how the note counted', () => {
+  const baseline = noteBaseline({ ...FIGURES, now: () => T0 });
+  assert.deepEqual(baseline, {
+    usdPerMerge: 4127.35 / 37,
+    merges: 37,
+    from: '2026-08-03',
+    to: '2026-09-28',
+    method: 'note',
+    counted: COUNTED,
+    recordedAt: '2026-10-19T03:00:00.000Z',
+  });
+  assert.equal(Math.round(baseline.usdPerMerge * 100) / 100, 111.55);
+  // One day is a period too, and the account of how it counted is kept on one line.
+  const oneDay = noteBaseline({ ...FIGURES, from: '2026-09-01', to: '2026-09-01', counted: '  Every session,\n at list prices.  ', now: () => T0 });
+  assert.equal(oneDay.counted, 'Every session, at list prices.');
+});
+
+test('a missing figure, a zero count or dates the wrong way round are refused', async () => {
+  const refused = (over, pattern) => assert.throws(() => noteBaseline({ ...FIGURES, ...over, now: () => T0 }), pattern);
+  refused({ usd: undefined }, /cost/);
+  refused({ usd: Number.NaN }, /cost/);
+  refused({ usd: -1 }, /cost/);
+  refused({ usd: 0 }, /cost/);
+  refused({ merges: undefined }, /merged/);
+  refused({ merges: 0 }, /merged/);
+  refused({ merges: -3 }, /merged/);
+  refused({ merges: 2.5 }, /merged/);
+  refused({ from: undefined }, /from/);
+  refused({ to: '28 September 2026' }, /to/);
+  refused({ from: '2026-02-30' }, /from/);
+  refused({ from: '2026-09-29', to: '2026-09-28' }, /after/);
+  refused({ counted: undefined }, /counted/);
+  refused({ counted: '   ' }, /counted/);
+  // The refusal never repeats a figure.
+  try {
+    noteBaseline({ ...FIGURES, from: '2026-09-29', now: () => T0 });
+  } catch (error) {
+    for (const mark of [...MARKS, '2026-09-29', '2026-09-28']) assert.ok(!error.message.includes(mark), error.message);
+  }
+
+  // The command refuses before it asks the helper anything, and says so in one line without the figures.
+  const asked = [];
+  const client = { measures: { baseline: async (body) => { asked.push(body); return { ok: true, hash: 'a'.repeat(64), card: {} }; } } };
+  const swap = (flag, value) => ARGS.map((a, i) => (ARGS[i - 1] === flag ? value : a));
+  for (const argv of [swap('--merges', '0'), swap('--usd', 'lots'), swap('--from', '2026-10-01'), ARGS.slice(0, -2), [...ARGS, '--usd', '1'], [...ARGS, '--extra', 'x'], ['baseline'], ['other']]) {
+    const got = await run(argv, client);
+    assert.equal(got.code, 1, argv.join(' '));
+    assert.equal(got.out, '');
+    assert.match(got.err, /^[^\n]+\n$/, argv.join(' '));
+    for (const mark of MARKS) assert.ok(!got.err.includes(mark), got.err);
+  }
+  assert.deepEqual(asked, [], 'nothing was asked for a wrong form or a refused figure');
+
+  // The helper refuses them too, before any card is composed or any figure kept.
+  await withHelper(async ({ home, client: real }) => {
+    const got = await real.measures.baseline({ ...FIGURES, merges: 0 });
+    assert.equal(got.ok, false);
+    assert.match(got.refused, /merged/);
+    const extra = await real.measures.baseline({ ...FIGURES, note: 'x' });
+    assert.equal(extra.ok, false);
+    assert.ok(!fs.existsSync(path.join(home, 'measures')) || filesUnder(path.join(home, 'measures')).length === 0);
+  });
+});
+
+test('the baseline is written only after the director\'s click on the card that reads it back', async () => {
+  await withHelper(async ({ home, client }) => {
+    const cwd = tempFolder('wh-desk ');
+
+    // The card reads the figures back in plain words, with two options.
+    const shown = await run(ARGS, client);
+    assert.equal(shown.code, 0, shown.err);
+    const { hash, card } = JSON.parse(shown.out);
+    assert.match(hash, /^[0-9a-f]{64}$/);
+    assert.deepEqual(card.options.map((o) => o.label), ['Record these', 'Not now']);
+    for (const words of ['4127.35', '37 merged pull requests', '3 August 2026', '28 September 2026', '111.55', COUNTED]) {
+      assert.ok(card.question.includes(words), words);
+    }
+    assert.equal(readBaseline(), null, 'nothing is recorded before the click');
+
+    // Not now writes nothing, and the figures waiting are cleared.
+    await decide(answered([[card, 'Not now']], cwd), { client: spy(), now: () => T0, projectOf: () => null });
+    assert.equal(readBaseline(), null);
+    assert.ok(!filesUnder(home).some((f) => MARKS.some((m) => fs.readFileSync(f, 'utf8').includes(m))), 'Not now clears the figures waiting');
+    const afterNotNow = await run(['baseline', '--confirm', hash], client);
+    assert.equal(afterNotNow.code, 1);
+
+    // Shown again: refused without a click, and refused for a click on a reworded card.
+    const again = JSON.parse((await run(ARGS, client)).out);
+    const refused = await run(['baseline', '--confirm', again.hash], client);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /click/);
+    const reworded = { ...again.card, question: again.card.question.replace('Record nothing', 'Keep nothing') };
+    await decide(answered([[reworded, 'Record these']], cwd), { client: spy(), now: () => T0, projectOf: () => null });
+    assert.equal((await run(['baseline', '--confirm', again.hash], client)).code, 1);
+    assert.equal(readBaseline(), null);
+    // A wrong hash is refused even with a click.
+    await decide(answered([[again.card, 'Record these']], cwd), { client: spy(), now: () => T0, projectOf: () => null });
+    assert.equal((await run(['baseline', '--confirm', 'b'.repeat(64)], client)).code, 1);
+    assert.equal(readBaseline(), null);
+
+    // The click on the card exactly as composed lets the helper write it, once.
+    const recorded = await run(['baseline', '--confirm', again.hash], client);
+    assert.equal(recorded.code, 0, recorded.err);
+    assert.deepEqual(JSON.parse(recorded.out), { recorded: true });
+    for (const mark of MARKS) assert.ok(!recorded.out.includes(mark));
+    assert.deepEqual(readBaseline(), noteBaseline({ ...FIGURES, now: () => T0 }));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, 'measures', 'baseline.json'), 'utf8')), readBaseline());
+    assert.equal((await run(['baseline', '--confirm', again.hash], client)).code, 1, 'a click is used once');
+  });
+});
+
+test('the figures reach no state event', async () => {
+  await withHelper(async ({ home, client }) => {
+    // A registered project, with its state clone holding one commit, and the front desk in its folder.
+    const P = 'o__p';
+    const folder = tempFolder('wh-project ');
+    git(folder, ['init', '-q']);
+    writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const state = stateDir(P);
+    fs.mkdirSync(state, { recursive: true });
+    git(state, ['init', '-q', '-b', 'wheelhouse-state']);
+    fs.writeFileSync(path.join(state, 'README'), 'state\n');
+    git(state, ['add', 'README']);
+    git(state, ['commit', '-q', '-m', 'start']);
+    const head = git(state, ['rev-parse', 'HEAD']);
+
+    // cli -> helper -> card -> click -> write, with an ordinary question answered beside the card.
+    const { hash, card } = JSON.parse((await run(ARGS, client)).out);
+    const plain = { question: 'What this is: the colour of the export button.', header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }], multiSelect: false };
+    const helper = spy();
+    await decide(answered([[card, 'Record these'], [plain, 'Blue']], folder), { client: helper, now: () => T0 });
+    const recorded = await run(['baseline', '--confirm', hash], client);
+    assert.equal(recorded.code, 0, recorded.err);
+    assert.notEqual(readBaseline(), null);
+
+    // The prompt record was live in this project: it recorded the ordinary answer, and nothing of the card.
+    assert.deepEqual(helper.calls.map(([name, body]) => [name, body.kind, body.data?.label]), [['state.write', 'card-answer', 'Blue']]);
+    for (const mark of MARKS) assert.ok(!JSON.stringify(helper.calls).includes(mark), mark);
+
+    // No state event and no write to the state branch.
+    assert.deepEqual(listEvents(state, { report: () => {} }), []);
+    assert.equal(git(state, ['rev-parse', 'HEAD']), head);
+    assert.equal(git(state, ['status', '--porcelain']), '');
+
+    // No file outside <home>/measures/ holds the figures: only the baseline itself does.
+    const holding = [...filesUnder(home), ...filesUnder(folder)].filter((f) => {
+      const text = fs.readFileSync(f, 'latin1');
+      return MARKS.some((m) => text.includes(m));
+    });
+    assert.deepEqual(holding.map((f) => path.relative(home, f)), [path.join('measures', 'baseline.json')]);
+    // The kept click and the shown record are there, and name the card by its hash only.
+    assert.equal(fs.readdirSync(path.join(home, 'measures', 'clicks')).length, 1);
+    assert.equal(fs.readdirSync(path.join(home, 'measures', 'shown')).length, 0, 'the shown record goes once the baseline is written');
+
+    // The state itself refuses an event carrying the baseline card, should one ever be sent.
+    for (const event of [
+      makeEvent({ kind: 'card-answer', data: { question: card.question, label: 'Record these' }, now: () => T0 }),
+      makeEvent({ kind: 'note', data: { text: card.question }, now: () => T0 }),
+    ]) {
+      await assert.rejects(writeEvent({ project: P, event, push: false }), /baseline/);
+    }
+    assert.equal(git(state, ['rev-parse', 'HEAD']), head);
+  });
+});

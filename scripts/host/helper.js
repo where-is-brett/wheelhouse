@@ -52,6 +52,7 @@ import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } f
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
+import { baselineRoutes } from '../measures/baseline.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -2184,8 +2185,12 @@ export async function startHelper({
   // setup's own records: it starts the folder's run when there is none, stamps the card's shownAt
   // and keeps the shown card in setup/shown/. It changes nothing a step lists.
   const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn });
+  // The baseline from the private note (scripts/measures/baseline.js): per computer, no project.
+  // It shows its card under STOP, and records nothing then.
+  const measures = baselineRoutes({ now, stopped, stopRefusal: STOP_REFUSAL });
   const routes = {
     ...setup,
+    ...measures,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -2355,10 +2360,11 @@ export async function startHelper({
         return send(res, 200, { ok: false, refused: 'STOP could not be recorded' });
       }
     }
-    if (url.pathname.startsWith('/setup/')) {
-      // Setup's routes have no project, so no project's secrets: their answers are cleaned as the
-      // other routes' are, without them. A refusal, and each line status gives (a step that did
-      // not finish says why, in an installer's own words), get the key-like scrub too.
+    if (url.pathname.startsWith('/setup/') || url.pathname.startsWith('/measures/')) {
+      // Setup's routes and the baseline's have no project, so no project's secrets: their answers
+      // are cleaned as the other routes' are, without them. A refusal, and each line status gives
+      // (a step that did not finish says why, in an installer's own words), get the key-like scrub
+      // too. Nothing here is logged: the baseline's figures go back only in the card.
       try {
         onArrive(url.pathname);
         const answer = cleanDeep(await route(body), []);

@@ -2,11 +2,12 @@
 // Writes every question card the director sees from one input: the five plain-language parts,
 // the set line the prompt record signs against, and the reply code. The card's text and its
 // set line come from the same target, so a card can't read as one decision and sign another.
-// The front desk asks only what this returns (`cli.js card`), never a card it wrote itself.
+// The front desk asks only what this returns (`cli.js card`), never a card it wrote itself. The
+// baseline card is composed by the helper and comes to the front desk from `scripts/measures/cli.js`.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
-  SETUP_LABEL, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, baselineLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
+  SETUP_LABEL, BASELINE_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
@@ -31,6 +32,7 @@ export const HEADERS = Object.freeze({
   'lift-incident': 'End incident',
   'incident-fix': 'Incident fix',
   setup: 'Setup',
+  baseline: 'Baseline',
   question: 'Question',
 });
 
@@ -47,7 +49,12 @@ export const DECIDING = Object.freeze({
   'lift-incident': 'End it',
   'incident-fix': 'Merge the fix',
   setup: SETUP_LABEL,
+  baseline: BASELINE_LABEL,
 });
+
+// The kinds whose card offers its deciding label and Not now, and no other put-off button: the
+// baseline card reads figures back, and there is nothing more to explain or show.
+const NOT_NOW_ONLY = Object.freeze(['baseline']);
 
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'that feature waits; the others carry on';
@@ -153,6 +160,10 @@ function lineFor(kind, target) {
     }
     return setupLine(t.step, t.hash);
   }
+  if (kind === 'baseline') {
+    if (!HEX.test(t.hash)) bad('needs the hash of the figures it reads back');
+    return baselineLine(t.hash);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -161,13 +172,14 @@ function lineFor(kind, target) {
 // The first part must name what the set line names, for every kind that names something: the
 // pull request (and the incident), the work, the incident, the runbook step's title, the branch,
 // the ruling's words, setup's step. It names no other pull request or commit than the set line's.
-// An answer card, a lift-STOP card and a product question name nothing more.
+// An answer card, a lift-STOP card, a baseline card and a product question name nothing more:
+// a baseline card's first part is the figures themselves, which may hold any words or numbers.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
 // right. The card check judges a card by this too, from the set line alone: with `abbreviated`,
 // the target's commit is the twelve characters the set line holds, so a longer name for the same
 // commit still counts as it.
 export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
-  if (kind === 'question' || !isPlain(target)) return null;
+  if (kind === 'question' || kind === 'baseline' || !isPlain(target)) return null;
   const lower = what.replace(/\s+/g, ' ').toLowerCase();
   const names = (text) => lower.includes(String(text).replace(/\s+/g, ' ').toLowerCase());
   // An id or a branch is a whole word: "ci-fix" is not named by "ci-fix-2", but is by "ci-fix.".
@@ -224,7 +236,8 @@ function offered(kind, given, { build = false, target } = {}) {
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
-  const allowed = [deciding, ...PUT_OFF.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
+  const putOff = NOT_NOW_ONLY.includes(kind) ? ['Not now'] : PUT_OFF;
+  const allowed = [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
   if (!list.some((o) => o.label === deciding)) fail(kind, 'options', `must describe ${deciding}`);
   return allowed.map((label) => ({ label, says: list.find((o) => o.label === label)?.says ?? PUT_OFF_SAYS[label] }));

@@ -69,6 +69,19 @@ export function setupLine(step, hash) {
   return `Set up step ${step} as listed, ${sha12(hash)}`;
 }
 
+// The label whose click on the baseline card records the private note's figures (scripts/measures/).
+export const BASELINE_LABEL = 'Record these';
+// The words the baseline card's set line starts with. A card carrying them holds the private
+// note's figures, which stay in <wheelhouseHome()>/measures/: the prompt record keeps such a card
+// out of the state, and the state refuses an event carrying them (events.js).
+export const BASELINE_WORDS = 'Record the private note\'s figures as the baseline';
+
+// The line on the baseline card: the first twelve characters of the hash of the figures it reads
+// back, so a click stands for those figures and no others.
+export function baselineLine(hash) {
+  return `${BASELINE_WORDS}, ${sha12(hash)}`;
+}
+
 // How the build loop's lines spell a work or incident id, a lane and a question id.
 // The prompt record builds its own patterns from these, so the two agree.
 export const ID = '[a-z0-9-]{1,40}';
@@ -122,7 +135,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // The lines a card's choice is set by, each matching a whole line of the question: the
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
-// and setup's line for a step.
+// setup's line for a step, and the baseline card's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
@@ -135,6 +148,7 @@ export const SET_LINES = [
   new RegExp(`^End incident ${ID} and let merges carry on$`, 'm'),
   new RegExp(`^Merge pull request #[1-9][0-9]* as the fix for incident ${ID}$`, 'm'),
   new RegExp(`^Set up step (?:${Object.keys(SETUP_TITLES).join('|')}) as listed, [0-9a-f]{12}$`, 'm'),
+  new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
 ];
 
 // Every set line a question carries, in the order the patterns are listed.

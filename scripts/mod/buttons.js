@@ -6,11 +6,12 @@
 // Unattended card for build commands on Windows, known by its risk words as the prompt record knows
 // it, gets no button at all: only a click on it when the front desk asks it sets the level. Nor
 // does a setup card: its step goes ahead only by the director's click on the very card setup
-// showed, which only the prompt record counts (scripts/setup/clicks.js).
+// showed, which only the prompt record counts (scripts/setup/clicks.js). Nor does the baseline
+// card, for the same reason (scripts/lib/measures-clicks.js); it is never a card event anyway.
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
-import { setLinesOf } from '../state/card-lines.js';
+import { setLinesOf, BASELINE_WORDS } from '../state/card-lines.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
@@ -59,8 +60,8 @@ function buttonsOf(card) {
 
   // The Unattended card, with or without Use Guarded: nothing on it is answered from the pane.
   if (text.includes(UNATTENDED_CARD().risk)) return { buttons: [], note: CANT_ANSWER };
-  // A setup card: nothing on it is answered from the pane either.
-  if (isSetupCard(card)) return { buttons: [], note: CANT_ANSWER };
+  // A setup card or the baseline card: nothing on it is answered from the pane either.
+  if (isSetupCard(card) || card.kind === 'baseline' || text.includes(BASELINE_WORDS)) return { buttons: [], note: CANT_ANSWER };
 
   // A card with no set line asks a question the front desk takes up: every option is a turn.
   if (kind === 'question' && lines.length === 0) return { buttons: offers.map((label) => button(label, 'turn')), note: null };

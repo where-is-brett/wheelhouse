@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL } from './card-lines.js';
+import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, BASELINE_LABEL, BASELINE_WORDS, baselineLine } from './card-lines.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 
@@ -22,7 +22,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'baseline'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -36,6 +36,10 @@ const ACTION_OWN = {
   // A setup step's click: the run the card was shown for (so a click on one folder's card can't
   // stand for another's), the step and the full SHA-256 of the list of changes its card showed.
   setup: ['runId', 'step', 'hash'],
+  // The baseline card's click: the full hash of the figures it read back. Its question is the
+  // card's set line alone, so the click carries no figure. It is kept in
+  // <wheelhouseHome()>/measures/clicks/ and never written to the state (writeEvent refuses it).
+  baseline: ['hash'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, or put the card off: a click on one is never an answer.
@@ -89,6 +93,10 @@ function checkAction(data) {
     if (!Object.hasOwn(SETUP_TITLES, data.step) || !Number.isInteger(data.step)) bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length}`);
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list of changes its card showed');
     if (data.label !== SETUP_LABEL) bad(`needs the ${SETUP_LABEL} label`);
+  } else if (data.action === 'baseline') {
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the figures its card read back');
+    if (data.label !== BASELINE_LABEL) bad(`needs the ${BASELINE_LABEL} label`);
+    if (data.question !== baselineLine(data.hash)) bad('carries only the baseline card\'s set line as its question');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }
@@ -341,10 +349,18 @@ function removeEmpty(folders) {
   }
 }
 
+// Whether an event carries the baseline card or its click: the private note's figures, and the
+// click on them, stay in <wheelhouseHome()>/measures/ and never enter the state or the profile.
+export function carriesBaseline(event) {
+  if (event?.kind === 'action' && event.data?.action === 'baseline') return true;
+  return String(JSON.stringify(event?.data ?? null)).includes(JSON.stringify(BASELINE_WORDS).slice(1, -1));
+}
+
 // `dir` and `branch` name another clone of events, such as the profile's; by default
-// the project's state clone and its state branch.
+// the project's state clone and its state branch. An event carrying the baseline card is refused.
 export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
+  if (carriesBaseline(event)) throw new Error('An event carrying the baseline card is kept on this computer only, never in the state');
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }

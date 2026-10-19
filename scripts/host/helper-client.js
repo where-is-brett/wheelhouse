@@ -104,6 +104,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       apply: post('/setup/apply'), //   { folder, step, hash } -> { ok, started }: only after the director's click on the card naming that hash; refused under STOP
       status: post('/setup/status'), // { folder } -> { ok, lines, next, ask }: the folder's run as plain lines, answered under STOP
     },
+    // The baseline from the private note (scripts/measures/baseline.js), per computer, no project.
+    measures: {
+      baseline: post('/measures/baseline'), // { usd, merges, from, to, counted } -> { ok, hash, card }: the card reading them back; or { confirm: hash } -> { ok, recorded }: only after the director's click on Record these on that card
+    },
     issue: {
       create: post('/issue/create'), // { project, title, body, labels? }
       update: post('/issue/update'), // { project, number, body }
