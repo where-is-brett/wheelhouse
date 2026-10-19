@@ -40,7 +40,8 @@ test('the ten steps are numbered 1 to 10 in the design\'s order, with its titles
 });
 
 test('until its task fills it, each step lists no changes and its card composes with the setup line', async () => {
-  for (const step of STEPS) {
+  // Step 2, the tools, is filled (tests/scripts/setup/tools.test.js).
+  for (const step of STEPS.filter((s) => s.n !== 2)) {
     const ctx = { folder: '/tmp/x', step: step.n, now: () => NOW };
     const planned = await step.plan(ctx);
     assert.deepEqual(planned.changes, []);
@@ -291,6 +292,33 @@ test('a long step\'s process past its deadline by the wall clock stops, after a 
     fs.writeFileSync(path.join(home, 'release-2'), '');
     assert.equal(await running, 1);
     assert.equal(findRun(folder).steps[2].doneAt, undefined);
+  });
+});
+
+test('a long step\'s process stops one tick before its deadline, so an old process and a new one never overlap', async () => {
+  // Ruling R47: by the deadline the helper counts the step stopped and a fresh click may start it again.
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-tick '));
+    const hash = longWorld(home, folder);
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    const tickMs = 5;
+    const deadline = 20 * MINUTE;
+    // Started at deadline - tickMs: it does nothing at all.
+    assert.equal(await runStep(childArgs({ folder, step: '2', hash, runId: run.id }), { now: () => at(deadline - tickMs), exit: () => {}, tickMs }), 1);
+    assert.equal(fs.existsSync(path.join(folder, 'x.json')), false);
+    // Started a millisecond earlier, it begins; its clock then reaches deadline - tickMs, and the
+    // next tick marks it failed and ends it.
+    const exited = [];
+    let clock = at(deadline - tickMs - 1);
+    const running = runStep(childArgs({ folder, step: '2', hash, runId: run.id }), { now: () => clock, exit: (code) => exited.push(code), tickMs });
+    await until(() => findRun(folder).changes.length === 1);
+    assert.deepEqual(exited, []);
+    clock = at(deadline - tickMs);
+    await until(() => exited.length === 1);
+    assert.match(findRun(folder).steps[2].failed, /still running/);
+    fs.writeFileSync(path.join(home, 'release-2'), '');
+    assert.equal(await running, 1);
   });
 });
 

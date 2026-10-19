@@ -83,7 +83,7 @@ test('the playbook is named front-desk, is used where the session start points, 
 
 test('every command is cli.js exactly as its allow rule matches it', () => {
   const allow = localSettings({ address: '/h/helper.sock', pluginRoot: '/plugin', platform: 'linux' }).permissions.allow;
-  assert.deepEqual(allow, [`Bash(${COMMAND}:*)`]);
+  assert.ok(allow.includes(`Bash(${COMMAND}:*)`), allow.join(', '));
   for (const [file, text] of [[PLAYBOOK, playbook], [INTAKE, intake]]) {
     const nodes = [...text.matchAll(/node "[^"]*"/g)].map((m) => m[0].replaceAll(ROOT_VARIABLE, '/plugin'));
     assert.ok(nodes.length > 0, `${file} names the command`);

@@ -1,0 +1,449 @@
+// tests/scripts/setup/tools.test.js
+// Setup's step 2, the tools: what is on the computer, git's official installer started first and
+// recorded before anything waits on it, gh and glab fetched into Wheelhouse's tools folder and
+// checked before anything is unpacked, Node.js below the floor stopping setup with the README's
+// line, and the allow rule for setup's own command. Nothing real is installed or fetched: `run`
+// and `fetch` are fakes, and every home is a scratch folder.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  toolsStatus, startInstaller, fetchHostTool, toolsStep, hostToolsFor, nodeRefusal, openCommand, pickInstaller, notesChecksums,
+  NODE_LINE, MAC_INSTALLER, GIT_INSTALLER_ARGS, ChecksumError,
+} from '../../../scripts/setup/tools.js';
+import { STEPS, planHash } from '../../../scripts/setup/steps.js';
+import { runApply } from '../../../scripts/setup/engine.js';
+import { startRun, markStep, findRun, reverseChange } from '../../../scripts/setup/journal.js';
+import { toolPath, fetchedPath, toolFolder } from '../../../scripts/lib/host-tools.js';
+import { makeAdapter } from '../../../scripts/host/adapter.js';
+import { protectionStatus } from '../../../scripts/host/protection.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { setupLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { tempFolder, withHome } from '../../helpers/homes.js';
+
+const NOW = new Date('2026-10-19T03:00:00.000Z');
+const PLUGIN = '/Applications/Plug ins/wheelhouse';
+const SETUP_RULE = `Bash(node "${PLUGIN}/scripts/setup/cli.js":*)`;
+const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+
+// ---- A fake computer: what `run` finds and does ----
+
+// state: { platform, clt (macOS command-line tools in), paths: { tool: path }, versions: { tool: text },
+// installerOpen, installs (xcode-select --install calls), opened (Start-Process lines), unpacked }
+function machine(state) {
+  const s = { platform: 'darwin', clt: true, paths: {}, versions: {}, installerOpen: false, installs: 0, opened: [], unpacked: [], calls: [], ...state };
+  const answer = (stdout, code = 0) => ({ code, stdout, stderr: '' });
+  const toolOf = (file) => Object.entries(s.paths).find(([, p]) => p === file)?.[0];
+  s.run = async (file, args = []) => {
+    s.calls.push({ file, args: [...args] });
+    const name = file.split(/[\\/]/).pop();
+    if (name === 'which' || name === 'where') return s.paths[args[0]] ? answer(`${s.paths[args[0]]}\n`) : answer('', 1);
+    if (name === 'xcode-select' && args[0] === '-p') return s.clt ? answer('/Library/Developer/CommandLineTools\n') : answer('', 2);
+    if (name === 'xcode-select' && args[0] === '--install') {
+      s.installs += 1;
+      s.installerOpen = true;
+      return answer('xcode-select: note: install requested for command line developer tools\n');
+    }
+    if (name === 'pgrep') return s.installerOpen && args[1] === MAC_INSTALLER ? answer('4242\n') : answer('', 1);
+    if (name === 'tasklist') return s.installerOpen ? answer(`"${s.installerImage}","${args[1].split(' ').pop()}","Console","1","40,000 K"\n`) : answer('INFO: No tasks are running which match the specified criteria.\n');
+    if (name === 'powershell.exe') {
+      s.opened.push({ args: [...args], folder: s.watchFolder?.() });
+      s.installerOpen = true;
+      return answer('5150\n');
+    }
+    if (/^tar(\.exe)?$/.test(name)) {
+      const [, archive, , into] = args;
+      s.unpacked.push({ archive, into, bytes: fs.readFileSync(archive), args: [...args] });
+      const tool = path.basename(archive).split('_')[0];
+      const binary = `${tool}${s.platform === 'win32' ? '.exe' : ''}`;
+      fs.mkdirSync(path.join(into, `${tool}_x`, 'bin'), { recursive: true });
+      fs.writeFileSync(path.join(into, `${tool}_x`, 'bin', binary), `#!/bin/sh\necho ${tool}\n`);
+      return answer('');
+    }
+    if (args[0] === '--version') {
+      const tool = toolOf(file) ?? path.basename(file).replace(/\.exe$/, '');
+      // A copy in Wheelhouse's tools folder, or being put there.
+      if (file === fetchedPathOf(tool, s.platform) || file.includes(`${path.sep}tools${path.sep}`)) return answer(`${tool} version 2.102.0 (2026-09-30)\n`);
+      const version = s.versions[tool];
+      if (version === undefined) return answer('', 1);
+      return answer(tool === 'node' ? `v${version}\n` : `${tool} version ${version}\n`);
+    }
+    return answer('', 1);
+  };
+  return s;
+}
+const fetchedPathOf = (tool, platform) => {
+  try {
+    return fetchedPath(tool, { platform });
+  } catch {
+    return null;
+  }
+};
+
+const everythingHere = { paths: { git: '/usr/bin/git', node: '/usr/local/bin/node', gh: '/opt/homebrew/bin/gh', glab: '/opt/homebrew/bin/glab' }, versions: { git: '2.39.5', node: '22.3.0', gh: '2.97.0', glab: '1.123.0' } };
+
+// ---- A fake internet: the official release pages ----
+
+const GH_TAG = 'v2.102.0';
+const GH_NAMES = ['gh_2.102.0_macOS_arm64.zip', 'gh_2.102.0_macOS_amd64.zip', 'gh_2.102.0_macOS_universal.pkg', 'gh_2.102.0_windows_amd64.zip', 'gh_2.102.0_windows_amd64.msi', 'gh_2.102.0_linux_amd64.tar.gz'];
+const GIT_TAG = 'v2.56.0.windows.2';
+const GIT_NAME = 'Git-2.56.0.2-64-bit.exe';
+const GIT_BYTES = Buffer.from('the official Git for Windows installer');
+
+function internet({ tamper = false } = {}) {
+  const calls = [];
+  const archive = (name) => Buffer.from(`archive ${name}`);
+  const sums = GH_NAMES.map((name) => `${sha(archive(name))}  ${name}`).join('\n');
+  const notes = `<table><thead><tr><th>Filename</th><th>SHA-256</th></tr></thead><tbody>
+<tr>
+<td>${GIT_NAME}</td>
+<td>${sha(GIT_BYTES)}</td>
+</tr>
+<tr>
+<td>Git-2.56.0.2-arm64.exe</td>
+<td>${'b'.repeat(64)}</td>
+</tr>
+<tr>
+<td>PortableGit-2.56.0.2-64-bit.7z.exe</td>
+<td>${'c'.repeat(64)}</td>
+</tr></tbody></table>`;
+  const fetch = async (url, init = {}) => {
+    calls.push(url);
+    if (url === 'https://github.com/cli/cli/releases/latest' && init.redirect === 'manual') {
+      return new Response(null, { status: 302, headers: { location: `https://github.com/cli/cli/releases/tag/${GH_TAG}` } });
+    }
+    if (url === `https://github.com/cli/cli/releases/download/${GH_TAG}/gh_2.102.0_checksums.txt`) return new Response(sums);
+    const ghFile = GH_NAMES.find((name) => url === `https://github.com/cli/cli/releases/download/${GH_TAG}/${name}`);
+    if (ghFile) {
+      const bytes = archive(ghFile);
+      return new Response(tamper ? Buffer.concat([Buffer.from([bytes[0] ^ 1]), bytes.subarray(1)]) : bytes);
+    }
+    if (url === 'https://github.com/git-for-windows/git/releases/latest' && init.redirect === 'manual') {
+      return new Response(null, { status: 302, headers: { location: `https://github.com/git-for-windows/git/releases/tag/${GIT_TAG}` } });
+    }
+    if (url === `https://github.com/git-for-windows/git/releases/tag/${GIT_TAG}`) return new Response(notes);
+    if (url === `https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/${GIT_NAME}`) {
+      return new Response(tamper ? Buffer.from('a swapped installer') : GIT_BYTES);
+    }
+    return new Response('not found', { status: 404 });
+  };
+  return { fetch, calls, archive };
+}
+
+const noFetch = async (url) => assert.fail(`nothing is fetched here, but ${url} was`);
+const ctxFor = (folder, extra = {}) => ({ folder, step: 2, now: () => NOW, platform: 'darwin', userHome: folder, answers: {}, ...extra });
+
+// ---- toolsStatus ----
+
+test('Node.js below 22 counts as missing', async () => {
+  for (const [version, ok] of [['20.9.0', false], ['21.99.99', false], ['22.0.0', true], ['22.3.0', true], ['24.1.0', true]]) {
+    const m = machine({ ...everythingHere, versions: { ...everythingHere.versions, node: version } });
+    const status = await toolsStatus({ platform: 'darwin', run: m.run, env: {} });
+    assert.deepEqual(status.node, { found: true, version, path: '/usr/local/bin/node', ok }, version);
+  }
+  const none = machine({ ...everythingHere, paths: { ...everythingHere.paths, node: undefined } });
+  assert.deepEqual((await toolsStatus({ platform: 'darwin', run: none.run, env: {} })).node, { found: false, version: null, path: null, ok: false });
+});
+
+test('on a Mac, git counts only once Apple\'s command-line tools are in, and /usr/bin/git is never run before', async () => {
+  const m = machine({ ...everythingHere, clt: false });
+  const status = await toolsStatus({ platform: 'darwin', run: m.run, env: {}, hostTools: ['gh'] });
+  assert.deepEqual(status.git, { found: false, version: null, path: null, ok: false });
+  assert.ok(!m.calls.some((c) => c.file === '/usr/bin/git'), 'running /usr/bin/git would open Apple\'s window');
+  assert.deepEqual(Object.keys(status), ['git', 'node', 'gh']);
+  // A git of the director's own elsewhere counts.
+  const own = machine({ ...everythingHere, clt: false, paths: { ...everythingHere.paths, git: '/opt/homebrew/bin/git' } });
+  assert.equal((await toolsStatus({ platform: 'darwin', run: own.run, env: {} })).git.ok, true);
+});
+
+test('the project\'s host decides which of gh and glab it needs, by its origin, both while it names none', () => {
+  const folder = tempFolder('wh-host Zoë ');
+  assert.deepEqual(hostToolsFor(folder), ['gh', 'glab']);
+  fs.mkdirSync(path.join(folder, '.git'));
+  const config = (url) => fs.writeFileSync(path.join(folder, '.git', 'config'), `[core]\n\tbare = false\n[remote "upstream"]\n\turl = https://gitlab.com/x/y.git\n[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch "main"]\n\tremote = origin\n`);
+  config('git@github.com:a-director/product.git');
+  assert.deepEqual(hostToolsFor(folder), ['gh']);
+  config('https://gitlab.com/group/product.git');
+  assert.deepEqual(hostToolsFor(folder), ['glab']);
+  config('https://git.example.org/team/product.git');
+  assert.deepEqual(hostToolsFor(folder), ['gh', 'glab']);
+});
+
+// ---- The installers ----
+
+test('each installer is fetched into an empty folder and checked before it is opened', async () => {
+  // Windows: Git for Windows' installer, from its release, into a new folder that holds nothing else.
+  const tempRoot = tempFolder('wh-temp ');
+  const net = internet();
+  const m = machine({ platform: 'win32', installerImage: GIT_NAME });
+  m.watchFolder = () => fs.readdirSync(tempRoot).map((d) => [d, fs.readdirSync(path.join(tempRoot, d))]);
+  const recorded = [];
+  const started = await startInstaller({ tool: 'git', platform: 'win32', arch: 'x64', run: m.run, fetch: net.fetch, tempRoot, record: (c) => recorded.push(c), sleep: async () => {} });
+  assert.equal(started.started, true);
+  assert.equal(started.waitsFor, 'admin');
+  assert.equal(started.pid, 5150);
+  assert.equal(m.opened.length, 1);
+  const [[folder, inside]] = m.opened[0].folder;
+  assert.match(folder, /^wheelhouse-git-/);
+  assert.deepEqual(inside, [GIT_NAME], 'the folder held only the installer when it was opened');
+  assert.equal(started.image, path.join(tempRoot, folder, GIT_NAME));
+  assert.deepEqual(fs.readFileSync(started.image), GIT_BYTES);
+  assert.deepEqual(recorded.map((c) => [c.kind, c.target, c.before]), [['folder', path.join(tempRoot, folder), null]]);
+  // macOS: Apple's own window; nothing is fetched.
+  const mac = machine({ clt: false });
+  const onMac = await startInstaller({ tool: 'git', platform: 'darwin', run: mac.run, fetch: noFetch, sleep: async () => {} });
+  assert.deepEqual(onMac, { started: true, waitsFor: 'click', pid: 4242, image: MAC_INSTALLER });
+  assert.equal(mac.installs, 1);
+});
+
+test('a checksum that does not match is refused and nothing is opened', async () => {
+  await withHome(async () => {
+    const tempRoot = tempFolder('wh-temp ');
+    const m = machine({ platform: 'win32' });
+    await assert.rejects(
+      startInstaller({ tool: 'git', platform: 'win32', arch: 'x64', run: m.run, fetch: internet({ tamper: true }).fetch, tempRoot }),
+      (error) => error instanceof ChecksumError && /does not match its published checksum/.test(error.message),
+    );
+    assert.deepEqual(m.opened, []);
+    assert.deepEqual(fs.readdirSync(tempRoot), [], 'nothing was written');
+    // gh: refused before anything is unpacked, and no tools folder is made.
+    const ghMachine = machine({});
+    await assert.rejects(fetchHostTool({ tool: 'gh', platform: 'darwin', arch: 'arm64', fetch: internet({ tamper: true }).fetch, run: ghMachine.run }), ChecksumError);
+    assert.deepEqual(ghMachine.unpacked, []);
+    assert.equal(fs.existsSync(toolFolder('gh')), false);
+    assert.equal(toolPath('gh'), 'gh');
+  });
+});
+
+test('the installer is picked by matching the release\'s names, and only one may match', () => {
+  const names = [...notesChecksums(`${GIT_NAME} | ${'a'.repeat(64)}\nGit-2.56.0.2-arm64.exe | ${'b'.repeat(64)}\nPortableGit-2.56.0.2-64-bit.7z.exe | ${'c'.repeat(64)}\nMinGit-2.56.0.2-64-bit.zip | ${'d'.repeat(64)}`).keys()];
+  assert.equal(names.length, 4);
+  assert.equal(pickInstaller(names, 'x64'), GIT_NAME);
+  assert.equal(pickInstaller(names, 'arm64'), 'Git-2.56.0.2-arm64.exe');
+  assert.throws(() => pickInstaller(names, 'ia32'), /processor/);
+  assert.throws(() => pickInstaller([...names, 'Git-2.57.0-64-bit.exe'], 'x64'), /found 2/);
+});
+
+// ---- gh and glab ----
+
+test('gh is fetched into the tools folder and the adapter runs that copy', async () => {
+  await withHome(async () => {
+    const net = internet();
+    const m = machine({});
+    const recorded = [];
+    const got = await fetchHostTool({ tool: 'gh', platform: 'darwin', arch: 'arm64', fetch: net.fetch, run: m.run, record: (c) => recorded.push(c) });
+    assert.deepEqual(got, { path: path.join(toolFolder('gh'), 'bin', 'gh'), version: '2.102.0' });
+    // The archive for this Mac, checked before it was unpacked, unpacked without -P in a new folder.
+    assert.equal(m.unpacked.length, 1);
+    assert.equal(path.basename(m.unpacked[0].archive), 'gh_2.102.0_macOS_arm64.zip');
+    assert.deepEqual(m.unpacked[0].bytes, net.archive('gh_2.102.0_macOS_arm64.zip'));
+    assert.ok(!m.unpacked[0].args.includes('-P'));
+    assert.deepEqual(m.unpacked[0].args.slice(0, 1), ['-xf']);
+    assert.equal(fs.statSync(got.path).mode & 0o111, 0o111, 'it can be run');
+    assert.equal(fs.readFileSync(path.join(toolFolder('gh'), 'version'), 'utf8'), `${GH_TAG}\n`);
+    assert.deepEqual(fs.readdirSync(path.dirname(toolFolder('gh'))), ['gh'], 'the unpacking folder is gone');
+    assert.deepEqual(recorded.map((c) => [c.kind, c.target, c.before, c.after]), [['folder', toolFolder('gh'), null, { tool: 'gh', version: GH_TAG }]]);
+    // The adapter and the protection calls run that copy.
+    assert.equal(toolPath('gh'), got.path);
+    const calls = [];
+    const fake = async (file, args) => {
+      calls.push(file);
+      return { code: 0, stdout: '{"defaultBranchRef":{"name":"main"}}', stderr: '' };
+    };
+    await makeAdapter({ host: 'github', repo: 'a-director/product', run: fake, env: {} }).defaultBranch();
+    await protectionStatus({ host: 'github', repo: 'a-director/product', run: fake }).catch(() => {});
+    assert.ok(calls.length >= 2);
+    assert.ok(calls.every((file) => file === got.path), calls.join(', '));
+    // glab, not fetched, is still run by its name.
+    assert.equal(toolPath('glab'), 'glab');
+    // Fetched again (a newer release), the copy is replaced and its version before recorded.
+    await fetchHostTool({ tool: 'gh', platform: 'darwin', arch: 'arm64', fetch: net.fetch, run: m.run, record: (c) => recorded.push(c) });
+    assert.deepEqual(recorded[1].before, { version: GH_TAG });
+  });
+});
+
+// ---- Paths with spaces ----
+
+test('an installer path with a space is quoted', async () => {
+  // `run` has no shell, so a path is one argument as it is; only the line PowerShell reads as a
+  // command quotes it, with a quote inside it doubled.
+  const tempRoot = tempFolder("wh-Jo Smith O'Brien Zoë ");
+  const m = machine({ platform: 'win32', installerImage: GIT_NAME });
+  const started = await startInstaller({ tool: 'git', platform: 'win32', arch: 'x64', run: m.run, fetch: internet().fetch, tempRoot, sleep: async () => {} });
+  const { args } = m.opened[0];
+  assert.equal(args.length, 4);
+  assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
+  assert.equal(args[3], `(Start-Process -FilePath '${started.image.replaceAll("'", "''")}' -ArgumentList ${GIT_INSTALLER_ARGS.map((a) => `'${a}'`).join(',')} -PassThru).Id`);
+  assert.deepEqual(openCommand('C:\\Users\\Jo Smith\\Git.exe', [], { systemRoot: 'C:\\Windows' }), {
+    file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-Command', "(Start-Process -FilePath 'C:\\Users\\Jo Smith\\Git.exe' -PassThru).Id"],
+  });
+  // gh's archive, in a home with a space and an accent, reaches tar as one argument.
+  await withHome(async () => {
+    const tar = machine({ platform: 'win32' });
+    await fetchHostTool({ tool: 'gh', platform: 'win32', arch: 'x64', fetch: internet().fetch, run: tar.run });
+    const [archive] = tar.unpacked;
+    assert.match(archive.args[0], /^-xf$/);
+    assert.ok(archive.args[1].includes(' ') && fs.existsSync(path.dirname(archive.args[1])) === false, 'one argument, the whole path, since removed');
+    assert.equal(path.basename(archive.args[1]), 'gh_2.102.0_windows_amd64.zip');
+    assert.match(tar.calls.find((c) => /tar\.exe$/.test(c.file)).file, /System32[\\/]tar\.exe$/);
+    assert.equal(toolPath('gh', { platform: 'win32' }), path.join(toolFolder('gh'), 'bin', 'gh.exe'));
+  }, { prefix: 'wh-home Jo Smith Zoë ' });
+});
+
+// ---- Step 2 ----
+
+test('Node.js missing or too old stops setup with the README\'s line, and nothing is installed', async () => {
+  for (const node of [undefined, '20.9.0']) {
+    const folder = tempFolder('wh-node ');
+    const m = machine({ clt: false, paths: { node: node && '/usr/local/bin/node' }, versions: { node } });
+    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    await assert.rejects(step.plan(ctxFor(folder)), (error) => error.message.startsWith(NODE_LINE) && error.message.includes(node ?? 'not found'));
+    assert.equal(m.installs, 0);
+    assert.ok(!m.calls.some((c) => c.args.includes('--install')));
+    assert.equal(fs.existsSync(path.join(folder, '.claude')), false);
+  }
+  // The line says what to do when every tool is refused for want of node (check 35).
+  assert.match(NODE_LINE, /Node\.js 22 or later/);
+  assert.match(NODE_LINE, /node: command not found/);
+  assert.match(NODE_LINE, /Wheelhouse script/);
+  assert.match(NODE_LINE, /nodejs\.org/);
+  assert.match(nodeRefusal({ found: true, version: '20.9.0' }), /20\.9\.0.*22\.0\.0 or later/);
+});
+
+test('with everything here, the list is only the allow rule, written by key beside the director\'s own, and put back', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj Zoë '));
+    const file = path.join(folder, '.claude', 'settings.local.json');
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, '{"permissions":{"allow":["Bash(ls:*)"]},"theirs":1}\n');
+    const m = machine(everythingHere);
+    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: ['Bash(ls:*)', SETUP_RULE] }]);
+    assert.equal(planned.director, 'One click');
+    // The same world gives the same list, so the hash a card names stays good.
+    assert.equal(planHash((await step.plan(ctxFor(folder))).changes), planHash(planned.changes));
+    const hash = planHash(planned.changes);
+    const { question } = composeCard({ ...planned.card, target: { step: 2, hash } });
+    assert.equal(setLineOf(question.question), setupLine(2, hash));
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    assert.deepEqual(await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id }) }), { ok: true });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)', SETUP_RULE] }, theirs: 1 });
+    // Planned again, nothing is left to change.
+    assert.deepEqual((await step.plan(ctxFor(folder))).changes, []);
+    const [change] = findRun(folder).changes;
+    assert.deepEqual(reverseChange(change), { put: true });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)'] }, theirs: 1 });
+  });
+});
+
+test('git\'s installer starts at once and the step hands back', async () => {
+  await withHome(async () => {
+    assert.equal(STEPS[1].long, true, 'step 2 runs in its own process, so the helper hands back at once');
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    const m = machine({ ...everythingHere, clt: false, paths: { ...everythingHere.paths, gh: undefined, glab: undefined } });
+    const net = internet();
+    let looks = 0;
+    let finish;
+    const finished = new Promise((resolve) => { finish = resolve; });
+    // Each look while it waits: the third finds the tools in.
+    const sleep = async () => {
+      looks += 1;
+      if (looks === 1) await finished;
+      if (looks === 2) m.clt = true;
+    };
+    const step = toolsStep({ run: m.run, fetch: net.fetch, arch: 'arm64', pluginRoot: PLUGIN, env: {}, sleep, pollMs: 1 });
+    fs.mkdirSync(path.join(folder, '.git'));
+    fs.writeFileSync(path.join(folder, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/a-director/product.git\n');
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned.changes.map((c) => [c.kind, c.action ?? null]), [['process', 'install'], ['folder', 'fetch'], ['json-key', null]]);
+    assert.equal(planned.changes[1].tool, 'gh', 'only the host\'s tool');
+    assert.match(planned.card.what, /Apple's own window/);
+    assert.match(planned.director, /Install and Agree/);
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    const applying = runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id, stopped: () => false }) });
+    // While it waits, the installer is already in the journal, and gh and the rule are done.
+    while (looks === 0) await new Promise((resolve) => { setImmediate(resolve); });
+    const kinds = findRun(folder).changes.map((c) => [c.kind, c.after?.tool ?? null]);
+    assert.deepEqual(kinds.filter(([k]) => k === 'process'), [['process', 'git']]);
+    assert.ok(kinds.some(([k, t]) => k === 'folder' && t === 'gh'));
+    assert.ok(kinds.some(([k]) => k === 'json-key'));
+    const installer = findRun(folder).changes.find((c) => c.kind === 'process');
+    assert.deepEqual(installer.after, { tool: 'git', pid: 4242, startedAt: NOW.toISOString(), image: MAC_INSTALLER });
+    assert.equal(installer.before, null);
+    assert.equal(m.installs, 1);
+    // Planned again meanwhile (a retry after the step's time ran out), it waits for the open
+    // installer, and starts no second one.
+    const again = await step.plan(ctxFor(folder, { runId: run.id }));
+    assert.deepEqual(again.changes[0], { kind: 'process', target: 'git', action: 'wait' });
+    assert.match(again.card.what, /already open/);
+    finish();
+    assert.deepEqual(await applying, { ok: true });
+    assert.equal(typeof findRun(folder).steps[2].doneAt, 'string');
+    assert.equal(m.installs, 1, 'one installer');
+    assert.equal(looks, 2);
+  });
+});
+
+test('a wait on an open installer starts none, and an installer closed before git was in fails the step', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    const m = machine({ ...everythingHere, clt: false, installerOpen: true });
+    const run = startRun({ folder, now: () => NOW });
+    // An installer from an earlier attempt, still open.
+    const { addChanges, newId } = await import('../../../scripts/setup/journal.js');
+    addChanges(run.id, [{ id: newId('chg'), step: 2, kind: 'process', target: MAC_INSTALLER, before: null, after: { tool: 'git', pid: 4242, startedAt: NOW.toISOString(), image: MAC_INSTALLER } }]);
+    let looks = 0;
+    const sleep = async () => {
+      looks += 1;
+      if (looks === 2) m.installerOpen = false; // the director closed it with Not Now
+    };
+    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 1 });
+    const planned = await step.plan(ctxFor(folder, { runId: run.id }));
+    assert.deepEqual(planned.changes.slice(0, 1), [{ kind: 'process', target: 'git', action: 'wait' }]);
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id, stopped: () => false }) });
+    assert.equal(m.installs, 0);
+    assert.equal(done.ok, false);
+    assert.match(done.reason, /git installer closed before it finished/);
+    assert.match(findRun(folder).steps[2].failed, /closed before it finished/);
+    // With it closed, a fresh plan starts it again.
+    assert.deepEqual((await step.plan(ctxFor(folder, { runId: run.id }))).changes[0], { kind: 'process', target: 'git', action: 'install', waitsFor: 'click' });
+  });
+});
+
+test('STOP while the installer runs ends the step and leaves the installer to finish', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    const m = machine({ ...everythingHere, clt: false });
+    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep: async () => {}, pollMs: 1 });
+    const planned = await step.plan(ctxFor(folder));
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    let stop = false;
+    const done = runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id, stopped: () => stop }) });
+    stop = true;
+    assert.match((await done).reason, /STOP/);
+    assert.equal(m.installs, 1);
+    assert.equal(m.installerOpen, true);
+  });
+});
+
+test('the longest list\'s card composes within the card\'s length, on a Mac and on Windows', async () => {
+  await withHome(async () => {
+    for (const [platform, pluginRoot] of [['darwin', PLUGIN], ['win32', 'C:\\Users\\Jo Smith\\AppData\\Roaming\\Claude\\plugins\\wheelhouse']]) {
+      const folder = tempFolder('wh-card ');
+      const m = machine({ platform, clt: false, paths: { node: '/usr/local/bin/node' }, versions: { node: '22.3.0' } });
+      const planned = await toolsStep({ run: m.run, fetch: noFetch, pluginRoot, env: {} }).plan(ctxFor(folder, { platform }));
+      assert.deepEqual(planned.changes.map((c) => c.action ?? c.kind), ['install', 'fetch', 'fetch', 'json-key'], platform);
+      const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
+      assert.ok(question.question.includes('gh and glab'), question.question);
+      assert.match(question.question, platform === 'darwin' ? /Apple's own window/ : /Windows asks you to allow it/);
+    }
+  });
+});

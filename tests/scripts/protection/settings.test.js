@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, claudeCodeSettings, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
@@ -162,25 +162,31 @@ test('the local settings allow the command by its full path', () => {
   const root = '/plugins/Zoë wheel house';
   // The file's own rule form: `Bash(x:*)` is `Bash(x *)`.
   const rule = `Bash(node "${root}/scripts/frontdesk/cli.js":*)`;
+  const setupRule = `Bash(node "${root}/scripts/setup/cli.js":*)`;
   assert.equal(frontDeskCommand(root, { platform: 'darwin' }), `node "${root}/scripts/frontdesk/cli.js"`);
-  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule] });
+  assert.equal(setupCommand(root, { platform: 'darwin' }), `node "${root}/scripts/setup/cli.js"`);
+  assert.equal(pluginScriptCommand(root, 'scripts/frontdesk/cli.js', { platform: 'darwin' }), frontDeskCommand(root, { platform: 'darwin' }));
+  assert.throws(() => pluginScriptCommand(root, '../x.js', { platform: 'darwin' }), /inside the plugin/);
+  assert.throws(() => pluginScriptCommand(root, 'scripts/x y.js', { platform: 'darwin' }), /inside the plugin/);
+  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule, setupRule] });
   // With the status line or without it, and beside the socket.
   const full = localSettings({ address, node: '/usr/local/bin/node', pluginRoot: root, ownStatusLine: { type: 'command', command: 'x' }, platform: 'linux' });
-  assert.deepEqual(full.permissions, { allow: [rule] });
+  assert.deepEqual(full.permissions, { allow: [rule, setupRule] });
   assert.deepEqual(full.sandbox, { network: { allowUnixSockets: [address] } });
   // On Windows the path is written with forward slashes after its drive letter, as node and Git Bash take it.
   assert.deepEqual(localSettings({ address, pluginRoot: 'C:\\Users\\Zoë\\wheelhouse', platform: 'win32' }).permissions,
-    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)'] });
+    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Bash(node "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)'] });
   // A folder a rule can't hold as it is gets no rule: the command is then asked about each time.
   for (const bad of ['/x"y', '/x*y', '/x(y', '/x)y', '/x\ny', 'relative/root', '/x`y', '/x$y']) {
     assert.equal(localSettings({ address, pluginRoot: bad, platform: 'linux' }).permissions, undefined, bad);
     assert.equal(frontDeskCommand(bad, { platform: 'linux' }), null, bad);
+    assert.equal(setupCommand(bad, { platform: 'linux' }), null, bad);
   }
   // Merged into settings the director already has, their own rules stay first.
   const merged = mergeSettings({ permissions: { allow: ['Bash(ls:*)'] } }, localSettings({ address, pluginRoot: root, platform: 'darwin' }));
-  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule]);
+  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule, setupRule]);
   // The shared project settings never name it: the path is this computer's.
-  assert.ok(!strings(projectSettings(config)).some((x) => x.includes('frontdesk')));
+  assert.ok(!strings(projectSettings(config)).some((x) => x.includes('frontdesk') || x.includes('setup/cli.js')));
 });
 
 test('the director\'s own status line is found in their user, project or local settings, and Wheelhouse\'s own is not theirs', () => {

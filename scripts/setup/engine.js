@@ -10,6 +10,10 @@
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask }
 //
+// A step may name steps it waits for (`after`, ruling R47): its apply is refused until they are
+// done, while its plan and its questions are asked as usual, so step 3's cards are asked while
+// step 2's installers run, and its Go ahead counts once they have finished.
+//
 // A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
 // list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules? } }`: a question it needs
 // answered first, composed as a `question` card (no set line, no reply code) and recorded as asked
@@ -140,17 +144,38 @@ export function admitFolder(folder, { userHome = os.homedir() } = {}) {
   return refuse(OUTSIDE);
 }
 
-// The steps a module gives, checked: each with its number, title, plan and apply.
+// The steps a step must wait for before it is applied (ruling R47): its `after`, a list of other
+// steps' numbers, or none. Throws for anything else.
+export function stepsBefore(step) {
+  const after = step?.after;
+  if (after === undefined) return [];
+  if (!Array.isArray(after) || !after.every((m) => Number.isInteger(m) && Object.hasOwn(SETUP_TITLES, m) && m !== step.n)) {
+    throw new Error(`Step ${step?.n}'s steps to wait for must be a list of other steps' numbers`);
+  }
+  return after;
+}
+
+// The steps a module gives, checked: each with its number, title, plan and apply, and any steps it waits for.
 export async function loadSteps(modulePath) {
   const steps = (await import(pathToFileURL(modulePath).href)).STEPS;
   const good = Array.isArray(steps) && steps.every((s) => Number.isInteger(s?.n) && Object.hasOwn(SETUP_TITLES, s.n)
     && typeof s.title === 'string' && typeof s.plan === 'function' && typeof s.apply === 'function');
   if (!good) throw new Error('The setup steps could not be read');
+  steps.forEach(stepsBefore);
   return steps;
 }
 
 const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
 const isDone = (run, n) => typeof run?.steps?.[n]?.doneAt === 'string';
+
+// Why a step waiting for step m may not be applied yet: the installers step m started, by name,
+// while it has any (step 2, ruling R47), or that it is not done.
+function waitingOn(run, m) {
+  const tools = [...new Set((run?.changes ?? []).filter((c) => c?.step === m && c.kind === 'process' && typeof c.after?.tool === 'string').map((c) => c.after.tool))];
+  return tools.length > 0
+    ? `step ${m} is still installing: ${tools.join(', ')}; this step goes ahead once it is done`
+    : `step ${m} (${SETUP_TITLES[m]}) is not done yet; this step goes ahead once it is`;
+}
 
 // Running: clicked, not done, not failed, and not past the time a step may take.
 function runningSince(entry, now) {
@@ -335,6 +360,9 @@ export function setupRoutes({
       if (runningIn(current, step.n)) refuse(`${title(step.n)} is already running`);
     };
     startable(run);
+    // A step that waits for others (ruling R47) is not applied before they are done, and its click
+    // is not used, so it still counts once they are; its plan and questions were asked meanwhile.
+    for (const m of stepsBefore(step)) if (!isDone(run, m)) refuse(waitingOn(run, m));
     // The list as it is now, worked out by the helper: the request's hash must name it, and the
     // card this folder was shown for the step must have shown it.
     const ctx = ctxFor(run.folder, step.n, run.id);

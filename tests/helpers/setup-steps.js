@@ -6,7 +6,7 @@
 //     "fail": { "<step>": why }, "planFail": { "<step>": why },
 //     "what": { "<step>": what }, "ask": { "<step>": [{ id, options, typed?, what? }] },
 //     "uses": { "<step>": ["<step>.<id>"] }, "settle": [<step>], "record": { "<step>": record },
-//     "wait": { "<step>": { ms, why } } }
+//     "wait": { "<step>": { ms, why } }, "after": { "<step>": [<step>] } }
 // A file is in the folder being set up, or with `home` in the user's home the step is given;
 // `planMs` makes each plan take that long, so a test can have two requests planning at once. Apply
 // writes each listed key with ctx.applyJsonKey, which records the change in the journal as it is
@@ -21,6 +21,7 @@
 // (or with `record`'s for it, as given);
 // otherwise its list has, after the keys listed, one key in <folder>/.claude/answers.json for each
 // answer in `uses`, named `<step>.<id>`, holding the answer's label or text (null when there is none).
+// A step in `after` waits for the steps named there before it is applied (ruling R47).
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from '../../scripts/lib/paths.js';
@@ -73,6 +74,9 @@ function step(n, { long = false } = {}) {
     n,
     title: SETUP_TITLES[n],
     ...(long ? { long: true } : {}),
+    get after() {
+      return world().after?.[n];
+    },
     async plan(ctx) {
       const { [n]: listed = [], planMs = 0, planFail = {}, what = {}, ask = {}, uses = {}, settle = [], record = {}, wait = {} } = world();
       if (planMs > 0) await new Promise((resolve) => { setTimeout(resolve, planMs); });

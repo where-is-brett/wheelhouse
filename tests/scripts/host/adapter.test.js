@@ -3,6 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makeAdapter, detectHost } from '../../../scripts/host/adapter.js';
+import { tempFolder } from '../../helpers/homes.js';
+
+// gh and glab are run from Wheelhouse's tools folder when setup fetched them there
+// (scripts/lib/host-tools.js); these tests name the bare tools, so they run with an empty one.
+process.env.WHEELHOUSE_HOME = tempFolder('wh-host-tools-');
 
 const fixture = (host, name) => readFileSync(new URL(`../../fixtures/host/${host}/${name}`, import.meta.url), 'utf8');
 const gh = (name) => fixture('github', name);

@@ -12,10 +12,12 @@
 // time never writes over a newer attempt. It runs on when the helper or Desktop goes.
 //
 // <deadline> is the click's time plus STEP_TIMEOUT_MS: when the helper stops counting the step as
-// running and a fresh click may start it again. It is checked against the wall clock every
-// TICK_MS, not by one long timer, since a timer doesn't count the time the computer sleeps: the
-// first tick after waking past it marks the step failed (if it is still this attempt) and ends
-// the process. Started past it, the process does nothing.
+// running and a fresh click may start it again. The process stops one TICK_MS before it, so an old
+// process and a new one never run together. It is checked against the wall clock every TICK_MS,
+// not by one long timer, since a timer doesn't count the time the computer sleeps: the first tick
+// after waking past it marks the step failed (if it is still this attempt) and ends the process.
+// Started past it, the process does nothing. Programs the step started, such as an installer,
+// are not its children to end: they run on, and the step records them so a retry finds them.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +43,9 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
   let expired = false;
   // This attempt: the entry still holds the click this process was started for, and no finish.
   const mine = (entry) => !expired && entry?.clickedAt === clickedAt && !entry.doneAt && !entry.failed;
-  const past = () => now().getTime() >= deadline;
+  // It stops one tick before the deadline (ruling R47), so it has marked the step failed and gone
+  // before the helper stops counting the step as running and a fresh click may start another.
+  const past = () => now().getTime() >= deadline - tickMs;
   if (!mine(run.steps?.[n]) || past()) return 1;
   const fail = (reason) => {
     try {

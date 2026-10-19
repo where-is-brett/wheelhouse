@@ -11,6 +11,8 @@
 //                        | { wait: ms, why: string } | { settled: { record } }>,
 //     apply(ctx, changes) -> Promise<Change[]>,
 //     long?: boolean,        runs in a detached child (scripts/setup/run-step.js)
+//     after?: number[],      steps that must be done before this one is applied (ruling R47);
+//                            its plan and questions are asked meanwhile
 //   }
 //   ctx = { folder, step, runId, now, userHome, platform, answers }, and for apply also
 //         applyJsonKey({ file, key, value, project? }), the journal's key edit, which records the
@@ -44,9 +46,12 @@
 // run it again, so apply must be safe to repeat.
 //
 // Until each step's task (Tasks 7 to 13) fills it in, the step lists no changes (ruling R14).
+// Step 1, the install, is the director's own (the README's line, Task 16), so it lists none.
+// Step 2, the tools, is scripts/setup/tools.js.
 import crypto from 'node:crypto';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+import { toolsStep } from './tools.js';
 
 // The first step of a run not yet done is in scripts/lib/setup-run.js, which the hooks read
 // without reaching this file; it numbers the steps as STEPS does.
@@ -87,4 +92,6 @@ function placeholder(n) {
   };
 }
 
-export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map(placeholder));
+const FILLED = { 2: toolsStep };
+
+export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => (FILLED[n] ? FILLED[n]() : placeholder(n))));

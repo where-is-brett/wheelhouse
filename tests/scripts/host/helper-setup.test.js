@@ -14,8 +14,8 @@ import { setupLine } from '../../../scripts/state/card-lines.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { findRun, readJournal, markStep, reverseChange } from '../../../scripts/setup/journal.js';
-import { setupRoutes } from '../../../scripts/setup/engine.js';
+import { findRun, readJournal, markStep, reverseChange, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { setupRoutes, stepsBefore } from '../../../scripts/setup/engine.js';
 import { keepClick, clicksDir, answersFor } from '../../../scripts/setup/clicks.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { planHash } from '../../../scripts/setup/steps.js';
@@ -522,4 +522,35 @@ test('a card is cleaned before it is composed, so the card sent is within the co
     const shown = JSON.parse(fs.readFileSync(path.join(home, 'setup', 'shown', `${readJournal().runs.at(-1).id}-1.json`), 'utf8'));
     assert.equal(shown.card.question, shorter.card.question);
   });
+});
+
+test('a step that waits for another is asked meanwhile but applied only once that one is done, with the same click', async () => {
+  // Ruling R47: step 3 needs the git that step 2 installs.
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { 3: [KEY(3)], after: { 3: [2] } });
+    const plan = await client.setup.plan({ folder, step: 3 });
+    assert.equal(plan.ok, true, plan.refused);
+    const status = await client.setup.status({ folder });
+    assert.equal(status.ask, 1);
+    click(3, plan.hash);
+    const apply = () => client.setup.apply({ folder, step: 3, hash: plan.hash });
+    assert.match((await apply()).refused, /^step 2 \(Tools\) is not done yet/);
+    // While step 2's installer runs, the refusal names it.
+    const run = runOf(folder);
+    addChanges(run.id, [{ id: newId('chg'), step: 2, kind: 'process', target: 'Install Command Line Developer Tools', before: null, after: { tool: 'git', pid: 4242, startedAt: T0.toISOString(), image: 'Install Command Line Developer Tools' } }]);
+    assert.match((await apply()).refused, /^step 2 is still installing: git/);
+    assert.equal(written(folder), null, 'nothing was written');
+    assert.equal(runOf(folder).steps[3].clickedAt, undefined);
+    // Once step 2 is done, the click the director gave meanwhile still counts.
+    markStep(run.id, 2, 'doneAt', { now: () => T0 });
+    const done = await apply();
+    assert.equal(done.ok, true, done.refused);
+    assert.deepEqual(written(folder), { wheelhouse: { a: 3 } });
+  });
+});
+
+test('the steps a step waits for must be other steps\' numbers', () => {
+  assert.deepEqual(stepsBefore({ n: 3 }), []);
+  assert.deepEqual(stepsBefore({ n: 3, after: [2] }), [2]);
+  for (const after of [[3], [11], ['2'], 2, null]) assert.throws(() => stepsBefore({ n: 3, after }), /other steps' numbers/, JSON.stringify(after));
 });
