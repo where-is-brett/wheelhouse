@@ -31,10 +31,12 @@ export const HOOKS = [
 // line saying what is shown is old. $.prompt.submit hands the front desk the prompts a press's
 // answer holds, and the settings view's Ask the front desk, and hands on the prompts a tick's
 // answer holds: the courier's wake in the front desk, the watcher's lines in a Shape 2 foreman.
+// $.ui.invalidate draws the pane again while a tick hangs, so the line saying what is shown is
+// old comes without a tick's answer; it only draws.
 export const CALLS = [
   '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.prompt.submit', '$.session.id', '$.session.root',
-  '$.session.usage', '$.state.get', '$.state.set', '$.ui.close', '$.ui.open', '$.ui.panes', '$.ui.resolve', '$.ui.status',
-  '$.ui.toast',
+  '$.session.usage', '$.state.get', '$.state.set', '$.ui.close', '$.ui.invalidate', '$.ui.open', '$.ui.panes', '$.ui.resolve',
+  '$.ui.status', '$.ui.toast',
 ];
 // Hooks that must always carry a matcher: one with none would draw every component the engine draws.
 const MATCHED_HOOKS = ['ui.render', 'ui.resolve'];

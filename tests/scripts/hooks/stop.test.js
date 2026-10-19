@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
-import { decide as guard, READ_TOOLS, HALT_TOOLS, DENIED } from '../../../scripts/hooks/stop-guard.js';
+import { decide as guard, READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS, DENIED, SANDBOX_NEEDED } from '../../../scripts/hooks/stop-guard.js';
 import { decide as word, CONTEXT } from '../../../scripts/hooks/stop-word.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stopState, setStop, liftStop } from '../../../scripts/lib/stop.js';
@@ -420,6 +420,47 @@ test('TaskStop and KillShell are let through under STOP; they are not reading to
         assert.ok(!READ_TOOLS.includes(tool));
         assert.equal(await guard(call(main, tool), deps(base)), undefined, tool);
       }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('Claude Code\'s notification tool is let through under STOP, by its exact name, and nothing else new', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      assert.deepEqual(NOTIFY_TOOLS, ['PushNotification']);
+      // Not a reading tool, so the lineage hold, which shares READ_TOOLS, still holds it.
+      assert.ok(!READ_TOOLS.includes('PushNotification') && !HALT_TOOLS.includes('PushNotification'));
+      assert.equal(await guard(call(main, 'PushNotification', { tool_input: { message: 'STOP is on', status: 'proactive' } }), deps(base)), undefined);
+      // Near names and other tools that send or reach outside are still refused.
+      for (const tool of ['pushnotification', 'PushNotification ', 'Notification', 'PushNotifications', 'SendMessage', 'RemoteTrigger', 'mcp__slack__send_message', 'Bash']) {
+        const out = await guard(call(main, tool, { tool_input: { message: 'x', command: 'ls' } }), deps(base));
+        assert.ok(denied(out), JSON.stringify(tool));
+        assert.equal(out.hookSpecificOutput.permissionDecisionReason, DENIED);
+      }
+      // A Bash command naming it is a command like any other.
+      assert.ok(denied(await guard(bash(main, 'PushNotification'), deps(base))));
+      // Outside STOP it passes, as every tool does.
+      liftStop();
+      assert.equal(await guard(call(main, 'PushNotification'), deps(base)), undefined);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a Locked project without the sandbox, the notification tool is not held to the sandbox, and Bash still is', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      const d = { ...deps(base), dir: lockProject(base, main) };
+      setStop({ by: 'prompt' });
+      assert.equal(await guard(call(main, 'PushNotification'), d), undefined);
+      const out = await guard(call(main, 'Bash', { tool_input: { command: 'ls' } }), d);
+      assert.equal(out.hookSpecificOutput.permissionDecisionReason, SANDBOX_NEEDED);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }

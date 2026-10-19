@@ -1,0 +1,19 @@
+20 October 2026, macOS, the repository at fa9a5af (the mod in hooks/register.ts and six files under hooks/mod/).
+Each release fetched with npx --yes @anthropic-ai/claude-code@<version>, HOME an empty folder, PATH only otherwise kept.
+
+2.1.295 | claude plugin validate --json <repo>: success false, 1 error(s) | claude plugin test <repo>: 0 pass, 67 fail, Ran 67 tests across 5 files. [0.78s]
+  error: mod-plan-b4f6a7: <repo>/hooks/register.ts, compiled line 14 `await ask($, {`: $ is passed to "ask", imported from "./mod/ask": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.to(e, "<tier… [+3 chars]
+  each failing test: HooksError: wheelhouse: hooks module did not load: <repo>/hooks/register.ts, compiled line 14 `await ask($, {`: $ is passed to "ask", imported from "./mod/ask": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.to(e, "<tier>")
+2.1.299 | claude plugin validate --json <repo>: success true, 0 error(s) | claude plugin test <repo>: 67 pass, 0 fail, Ran 67 tests across 5 files. [1.53s]
+
+npm run mod-check with claude on PATH resolving to 2.1.295 (exit 1), its first lines:
+  2.1.295 (Claude Code)
+  > mod-check
+  > node scripts/mod/validate.js && claude plugin test .
+  The mod hooks: nothing.
+  It calls: nothing.
+  The mod check failed:
+  - claude plugin validate did not pass.
+  - claude plugin validate found an error: modules../register.ts mod-plan-b4f6a7: <repo>/hooks/register.ts, compiled line 14 `await ask($, {`: $ is passed to "ask", imported from "./mod/ask": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.to(e, "<tier… [+3 chars].
+  - The mod doesn't hook session.start.
+  … and 40 more lines naming a hook it doesn't see or a call the report doesn't list.

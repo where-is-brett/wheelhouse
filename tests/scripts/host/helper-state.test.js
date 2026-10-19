@@ -83,7 +83,8 @@ async function computer(repo, { adapter = fakeAdapter(), envFor } = {}) {
     home, entry, helper,
     client: helperClient({ address: helper.address }),
     as: (fn) => as(home, fn),
-    close: async () => { await helper.close(); fs.rmSync(home, { recursive: true, force: true }); },
+    // Closed inside the home: work still queued then would otherwise reach the real one.
+    close: async () => { await as(home, () => helper.close()); fs.rmSync(home, { recursive: true, force: true }); },
   };
 }
 

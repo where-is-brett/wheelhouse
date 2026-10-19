@@ -82,11 +82,12 @@ async function markAsked($: EngineInterface, key: string, on: boolean): Promise<
 }
 
 // Ask the front desk: a prompt naming the row, in the pane's own words. It goes to the front
-// desk, not the bridge, so it carries no origin of its own. The row is marked asked while the
-// press is held, so its Ask is plain text until the settings view is opened again and a double
-// click, however far apart, asks once. The press itself is released once the prompt is handed
-// over, not once its turn starts, so the other buttons stay live while a turn runs. A prompt that
-// can't be handed unmarks the row, so it can be asked again.
+// desk, not the bridge, so it carries no origin of its own. The row is marked asked once the
+// press is taken, and the mark stays until the settings view is opened again (or the session
+// starts again), so its Ask is plain text till then and a double click, however far apart, asks
+// once. The press itself is released once the prompt is handed over, not once its turn starts,
+// so the other buttons stay live while a turn runs. A prompt that can't be handed unmarks the
+// row, so it can be asked again.
 async function askFrontDesk($: EngineInterface, key: string, rowLabel: string) {
   if (!(await claim($, { on: `setting:${key}`, label: 'ask' }))) return
   let marked = false

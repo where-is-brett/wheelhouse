@@ -498,6 +498,7 @@ test('a question goes from the feature file to state, a click answers it, and on
   });
 });
 
+// scenario 26, its deterministic half
 test('"make the export CSV" while the export builds: the click amends the brief and wakes that session only', async () => {
   await onComputer({}, async (world) => {
     await watch(world);
@@ -551,6 +552,7 @@ test('"make the export CSV" while the export builds: the click amends the brief 
 
 const planFor = (work, files) => `# The ${work} plan\n\n### Task 1: Build it\n\n**Files:**\n${files.map((f) => `- Modify: \`${f}\``).join('\n')}\n\n- [ ] Step 1\n`;
 
+// scenario 28
 test('two features change the same hot file: the second waits with its plan ready', async () => {
   await onComputer({}, async (world) => {
     await watch(world);
@@ -602,6 +604,7 @@ test('two features change the same hot file: the second waits with its plan read
   });
 });
 
+// scenario 29
 test('feature A merges while B is ready: B is updated, tested again, and its review carries over', async () => {
   await onComputer({}, async (world) => {
     const [alpha, beta] = await twoReady(world);
@@ -690,6 +693,7 @@ test('feature A merges while B is ready: B is updated, and B pushes a fix after 
   });
 });
 
+// scenario 30
 test('an incident while two PRs are ready: neither merges; the fix does; the click ends it', async () => {
   await onComputer({}, async (world) => {
     const [alpha, beta] = await twoReady(world);
@@ -792,6 +796,7 @@ async function checkCommand(world, s) {
   return { code, out };
 }
 
+// scenario 31
 test('an installed Superpowers file differs: a warning, a hold, and the gate refuses the PR', async () => {
   await onComputer({ lineage: true }, async (world) => {
     const { root, claudeHome } = world.lineage;
@@ -920,6 +925,7 @@ async function wheelhouseRepo(checkout) {
   return { root, claudeHome };
 }
 
+// scenario 32
 test('an upgrade whose anchor has gone stops before landing', async () => {
   await onComputer({}, async (world) => {
     const { root, claudeHome } = await wheelhouseRepo(world.checkout);

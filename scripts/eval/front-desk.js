@@ -303,6 +303,7 @@ export async function setUpFrontDesk(dir, variant, {
     const prs = Object.fromEntries(Object.entries(pullRequests).map(([number, sha]) => [number, sha === 'head' ? head : sha]));
     helper = await startStandInHelper({
       address,
+      home,
       state: { events: seed, approved, pullRequests: prs },
       onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home }),
     });

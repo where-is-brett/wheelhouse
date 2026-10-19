@@ -1,7 +1,7 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
-// only reading, reporting, the runbook, the foreman's reading and closing of a
-// wake, and the front desk's and setup's reading commands through. On SessionEnd it clears the
+// only reading, reporting, Claude Code's notification, the runbook, the foreman's reading and
+// closing of a wake, and the front desk's and setup's reading commands through. On SessionEnd it clears the
 // session's bypass marker and says nothing. It acts in a registered project and in a folder
 // being set up (kit.js's beingSetUp), as in a project.
 import path from 'node:path';
@@ -19,6 +19,9 @@ import { startedAsScript } from '../lib/started-as-script.js';
 export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite'];
 // They only halt work that is already running.
 export const HALT_TOOLS = ['TaskStop', 'KillShell'];
+// Claude Code's own notification, so the courier's wake for STOP can still reach the director's
+// phone. It only tells them. It is kept out of READ_TOOLS, so the lineage hold still holds it.
+export const NOTIFY_TOOLS = ['PushNotification'];
 export const SANDBOX_NEEDED = 'Locked needs the sandbox on in this project\'s settings';
 export const DENIED = 'STOP is on: only reading, reporting and the runbook carry on';
 
@@ -159,7 +162,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   if (!stopState().on) return undefined;
   // A folder that cannot be placed is held, not waved through.
   if (!inProject && byPath !== null) return undefined;
-  if (READ_TOOLS.includes(input.tool_name) || HALT_TOOLS.includes(input.tool_name)) return undefined;
+  if (READ_TOOLS.includes(input.tool_name) || HALT_TOOLS.includes(input.tool_name) || NOTIFY_TOOLS.includes(input.tool_name)) return undefined;
   if (input.tool_name === 'Bash') {
     const roots = pluginRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;

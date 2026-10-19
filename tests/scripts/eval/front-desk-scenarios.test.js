@@ -260,14 +260,14 @@ process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_i
   assert.equal(sessionIdOf(result.events), 's-1');
 });
 
-test('runScenario runs a scenario\'s prompts as one session, resuming it, with `between` before each later turn', async () => {
+test('runScenario runs a scenario\'s prompts as one session, resuming it, with `between` before each later turn and the scenario\'s extra arguments on each', async () => {
   const home = tempFolder('harness-home-');
   const seen = [];
   const between = [];
   const turn = (n) => [
     { type: 'system', subtype: 'init', session_id: 'sess' },
     { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: `reply ${n}` }] } },
-    { type: 'result', result: `reply ${n}`, usage: { input_tokens: 10 * n, output_tokens: n } },
+    { type: 'result', subtype: 'success', result: `reply ${n}`, usage: { input_tokens: 10 * n, output_tokens: n } },
   ];
   let judged;
   const scenario = {
@@ -275,6 +275,7 @@ test('runScenario runs a scenario\'s prompts as one session, resuming it, with `
     title: 'turns',
     setup: async () => ({ note: 'ctx' }),
     prompts: ['one', 'two', 'three'],
+    extraArgs: ['--permission-prompt-tool', 'stdio'],
     between: ({ turn: t, turns, context }) => { between.push([t, turns.length, context.note]); },
     variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
     pass: ({ turns, events: all }) => { judged = { turns, all }; return { pass: true, why: 'ok' }; },
@@ -282,9 +283,12 @@ test('runScenario runs a scenario\'s prompts as one session, resuming it, with `
   let n = 0;
   const outcome = await runScenario({
     scenario, variant: 'with', trial: 1, home, date: '2026-10-20',
-    runner: async (options) => { seen.push({ prompt: options.prompt, resume: options.resume }); n += 1; return { events: turn(n), exitCode: 0 }; },
+    runner: async (options) => { seen.push({ prompt: options.prompt, resume: options.resume, extraArgs: options.extraArgs }); n += 1; return { events: turn(n), exitCode: 0 }; },
   });
-  assert.deepEqual(seen, [{ prompt: 'one', resume: undefined }, { prompt: 'two', resume: 'sess' }, { prompt: 'three', resume: 'sess' }]);
+  const extraArgs = ['--permission-prompt-tool', 'stdio'];
+  assert.deepEqual(seen, [{ prompt: 'one', resume: undefined, extraArgs }, { prompt: 'two', resume: 'sess', extraArgs }, { prompt: 'three', resume: 'sess', extraArgs }]);
+  assert.equal(outcome.pass, true, outcome.why);
+  assert.equal(outcome.handled, true);
   assert.deepEqual(between, [[1, 1, 'ctx'], [2, 2, 'ctx']]);
   assert.equal(judged.turns.length, 3);
   assert.equal(judged.all.length, 9);
@@ -302,6 +306,33 @@ test('runScenario stops a session it cannot resume, and says how many turns ran'
   };
   const outcome = await runScenario({ scenario, variant: 'with', trial: 1, home, date: '2026-10-20', runner: async () => ({ events: [], exitCode: 0 }) });
   assert.match(outcome.why, /only 1 of 2 turns ran/);
+});
+
+test('runScenario fails a session over several turns when a later turn was not handled, or stopped short', async () => {
+  const home = tempFolder('harness-home-');
+  const scenario = {
+    id: 92, title: 'a later turn', setup: async () => ({}), prompts: ['one', 'two'],
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } }, pass: () => ({ pass: true, why: 'ok' }),
+  };
+  const init = { type: 'system', subtype: 'init', session_id: 'sess' };
+  const done = { type: 'result', subtype: 'success', result: 'ok', usage: {} };
+  const worked = [init, { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Done.' }] } }, done];
+  // The second turn takes nothing in hand: no tool call and no text.
+  const silent = await runScenario({
+    scenario, variant: 'with', trial: 1, home, date: '2026-10-20',
+    runner: async ({ resume }) => ({ events: resume ? [init, done] : worked, exitCode: 0 }),
+  });
+  assert.equal(silent.pass, false);
+  assert.equal(silent.handled, false);
+  assert.match(silent.why, /^not handled/);
+  // The second turn ran out of turns: it did not finish, so the trial may be run again.
+  const short = await runScenario({
+    scenario, variant: 'with', trial: 2, home, date: '2026-10-20',
+    runner: async ({ resume }) => ({ events: resume ? [...worked.slice(0, 2), { ...done, subtype: 'error_max_turns' }] : worked, exitCode: 0 }),
+  });
+  assert.equal(short.pass, false);
+  assert.equal(short.handled, false);
+  assert.match(short.why, /^did not finish/);
 });
 
 // --- The readers ---

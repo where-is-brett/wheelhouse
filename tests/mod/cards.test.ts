@@ -368,3 +368,143 @@ test('the pane origin is sent only from a press', async ($, on) => {
     await ui.unmount()
   }
 })
+
+test('Lift STOP on a picture with no STOP start sends since null, and the bridge\'s refusal is a toast', async ($, on) => {
+  // The bridge lifts only the STOP the pane drew (ruling 21): with no start drawn it refuses, and
+  // the director sees its words.
+  const UNDATED = 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it'
+  let stop: object = { on: true, since: null }
+  let reply: Reply = { ok: false, says: UNDATED }
+  const { seen, clear, start } = world(on, () => reply, () => ({ ...frontDesk(true), pane: { ...model(true), stop } }))
+  for (const surface of SURFACES) {
+    for (const undated of [{ on: true, since: null }, { on: true }, { on: true, since: 42 }]) {
+      stop = undated
+      reply = { ok: false, says: UNDATED }
+      await start($, surface)
+      const ui = await mount($, surface)
+      clear()
+      await ui.press({ key: 'lift-stop' })
+      expect(seen.requests).toEqual([{ cmd: 'go', origin: 'pane', cwd: ROOT, since: null }])
+      expect(seen.toasts).toEqual(['Recording Lift STOP', UNDATED])
+      await ui.redraw()
+      expect((await ui.find({ key: 'lift-stop' }))?.type).toBe('Button')
+      // No answer at all says so too.
+      clear()
+      reply = { exitCode: 1 }
+      await ui.press({ key: 'lift-stop' })
+      expect(seen.toasts).toEqual(['Recording Lift STOP', FAILED])
+      await ui.unmount()
+    }
+  }
+})
+
+test('STOP pressed twice sends once', async ($, on) => {
+  let reply: Reply = { ok: true, says: 'STOP is on.' }
+  const { seen, clear, start, clock } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    // Two presses at once.
+    clear()
+    reply = { ok: true, says: 'STOP is on.' }
+    await Promise.all([ui.press({ key: 'stop' }), ui.press({ key: 'stop' })])
+    expect(seen.requests).toEqual([{ cmd: 'stop', origin: 'pane', cwd: ROOT }])
+    // A second click a moment later, while the first is recorded: STOP is Recording, not a button.
+    clear()
+    reply = { hold: 1000, then: { ok: true, says: 'STOP is on.' } }
+    const pressed = ui.press({ key: 'stop' })
+    await clock.advance(200)
+    await ui.redraw()
+    expect(await ui.find({ key: 'stop' })).toBeUndefined()
+    expect(await texts(ui)).toContain('Recording…')
+    await expect(ui.press({ key: 'stop' })).rejects.toThrow()
+    await clock.advance(800)
+    await pressed
+    expect(seen.requests).toHaveLength(1)
+    await ui.redraw()
+    expect((await ui.find({ key: 'stop' }))?.type).toBe('Button')
+    await ui.unmount()
+  }
+})
+
+test('Lift STOP is plain text while a card press is recorded, and sends nothing', async ($, on) => {
+  let reply: Reply = { ok: true }
+  const { seen, clear, start, clock } = world(on, () => reply, () => frontDesk(true))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    reply = { hold: 2000, then: { ok: true, says: 'Approved' } }
+    const pressed = ui.press({ key: cardKey('card-1', 'Approve') })
+    await clock.settle()
+    await ui.redraw()
+    expect(await ui.find({ key: 'lift-stop' })).toBeUndefined()
+    expect(await texts(ui)).toContain('Lift STOP')
+    await expect(ui.press({ key: 'lift-stop' })).rejects.toThrow()
+    await clock.advance(2000)
+    await pressed
+    expect(seen.requests.map((r: any) => r.cmd)).toEqual(['press'])
+    await ui.redraw()
+    expect((await ui.find({ key: 'lift-stop' }))?.type).toBe('Button')
+
+    // Pressed together, from the same drawing: only the first is sent.
+    clear()
+    reply = { ok: true }
+    await Promise.all([ui.press({ key: cardKey('card-1', 'Approve') }), ui.press({ key: 'lift-stop' })])
+    expect(seen.requests.map((r: any) => r.cmd)).toEqual(['press'])
+    await ui.unmount()
+  }
+})
+
+// Each in a test of its own, so the session's state holds no picture from an earlier answer.
+for (const surface of SURFACES) {
+  for (const [first, line] of [[{ hold: 60000, then: frontDesk() }, 'Reading how the project stands…'], [{ exitCode: 1 }, 'Couldn\'t read the latest at ']] as const) {
+    test(`STOP is drawn before the first tick has answered (${surface}, ${'hold' in first ? 'a tick still running' : 'a failed tick'})`, async ($, on) => {
+      // STOP needs only the session's folder, so the pane carries it from its first drawing.
+      let tickReply: object = first
+      const { seen, clear, clock } = world(on, () => ({ ok: true, says: 'STOP is on.' }), () => tickReply)
+      await $.session.start({ cwd: ROOT, surface, isInteractive: true })
+      await clock.settle()
+      const ui = await mount($, surface)
+      expect(await buttons(ui)).toEqual(['stop'])
+      const drawn = await texts(ui)
+      expect(drawn).toHaveLength(1)
+      expect(drawn[0]).toStartWith(line)
+      clear()
+      await ui.press({ key: 'stop' })
+      expect(seen.requests).toEqual([{ cmd: 'stop', origin: 'pane', cwd: ROOT }])
+      expect(seen.toasts).toEqual(['Recording STOP', 'STOP is on.'])
+      tickReply = frontDesk()
+      await clock.advance(60000)
+      await ui.unmount()
+    })
+  }
+}
+
+test('a press made while a tick runs gets its own tick once that one ends, and only one', async ($, on) => {
+  let tickReply: object = frontDesk()
+  const { seen, clear, start, clock } = world(on, () => ({ ok: true, says: 'Approved' }), () => tickReply)
+  for (const surface of SURFACES) {
+    tickReply = frontDesk()
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    // The timer's tick takes five seconds; two presses come meanwhile.
+    tickReply = { hold: 5000, then: frontDesk() }
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(1)
+    tickReply = frontDesk()
+    await ui.press({ key: cardKey('card-1', 'Approve') })
+    await ui.press({ key: cardKey('card-1', 'Not now') })
+    expect(seen.requests).toHaveLength(2)
+    expect(seen.ticks).toHaveLength(1)
+    // It ends, and one tick follows at once, not two, and not at the timer's next fire.
+    await clock.advance(5000)
+    expect(seen.ticks).toHaveLength(2)
+    await clock.advance(TICK_MS - 5000 - 1)
+    expect(seen.ticks).toHaveLength(2)
+    await clock.advance(1)
+    expect(seen.ticks).toHaveLength(3)
+    await ui.unmount()
+  }
+})

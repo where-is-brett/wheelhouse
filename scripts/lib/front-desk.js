@@ -19,10 +19,12 @@ export const SCREEN_SETTLE_MS = 5000;
 // the front desk write this file without asking. Relative to the project's folder.
 export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
 
-// What a card is about: the cards with a set line, and the one without.
+// What a card is about: the cards with a set line, and the one without. A baseline card reads
+// the private note's figures back (scripts/measures/baseline.js); the helper composes it, and it
+// is never a card event in the state.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
-  'lift-incident', 'incident-fix', 'setup', 'question',
+  'lift-incident', 'incident-fix', 'setup', 'baseline', 'question',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me']);

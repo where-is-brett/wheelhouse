@@ -32,30 +32,30 @@ It does not build notifications by ntfy or Telegram (off by default, design sect
 
 ## Where this plan builds on other plans
 
-Each function this plan calls, and the task that makes it. "Built" means the task's code exists on the branch named, reviewed, not yet merged into `main`.
+Each function this plan calls, and the task that makes it. When the plan was written, on 19 October 2026, the board-and-usage and foreman pieces were built on their branches and the front desk's not started; "merged" below means the code is on `main`, by the pull request named, as the tree stood on 20 October 2026.
 
-| What | Plan, task | Where it stands on 19 October 2026 |
+| What | Plan, task | Where it stands on 20 October 2026 |
 |---|---|---|
-| The bridge (`handle`, `runBridge`, `SAYS`, `BRIDGE_MS`, `HELPER_MS`), the mod's four hooks, `scripts/mod/validate.js` (`checkMod`, `membersIn`, `HOOKS`, `CALLS`), `npm run mod-check` | board-and-usage, Tasks 17 and 18 | built, `claude/focused-pasteur-70cf64` |
-| `earned`, `keepEarned`, `sendKept`, `SIGNED_LABELS` (`scripts/hooks/prompt-record.js`); `replyRecord`, `parseReply` and the reply's private `claim`, `answeredInPending`, `recordedAs` (`scripts/mod/reply.js`); `setLineOf`, `replyCode`, `replyCodeLine` | board-and-usage, Task 16 | built, same branch |
-| `loadBoardInputs({ cwd, now, offline })`, `boardModel` (its waiting list, which this plan's Task 3 gives ids), `glanceLine`, `renderBoard`, `oneLine`, `NOT_A_PROJECT` | board-and-usage, Tasks 12 and 13 | built, same branch |
-| `earned` signing the build loop's clicks too (`approve-work`, `answer`, `amend`, `lift-incident`, `incident-fix`) | board-and-usage Task 16 and build loop Task 8, joined when the second of the two merges (board-and-usage, Card 1) | the board-and-usage branch's `earned` signs the five first-piece labels only |
-| `briefingModel`, `briefingText`, `readSeen`, `markSeen` | board-and-usage, Task 14 | built, same branch |
-| `SETTINGS`, `checkSetting`, `definitionOf`, `say`, `effectiveSettings`, `sayTime`; the helper's `/state/write`, `/profile/write`, `/state/record`, `/profile/record` | board-and-usage, Tasks 3 and 4 | built, same branch |
-| The board-context hook (`commandOf`, `decide`) | board-and-usage, Task 15 | built, same branch |
-| Check 33, the first piece in Desktop | board-and-usage, Task 19 | waits for the director's sitting |
-| `card` data (`kind`, `options`, `line`, `code`, `level`, `importance`), the `waiting` view with `asked` | front desk, Task 1 | not started (`claude/front-desk-build-92aa7a`) |
-| The importance order (`cardsForVisit`, and `importanceOf`, which this plan's Task 8 asks it to export), `askAgain` | front desk, Task 3 | not started |
-| The card check's tests of a card's form (`scripts/hooks/card-check.js`) | front desk, Task 4 | not started |
-| `plainWords`, `glossaryOf` | front desk, Task 5 | not started |
-| `cli.js preview`, `/pr/preview` (for **Show me**) | front desk, Tasks 6 and 12 | not started |
-| `sessionRole`, `recordRole` (`scripts/lib/role.js`), `skills/front-desk/SKILL.md` | front desk, Task 7 | not started |
-| The build loop's card lines and actions (`approve-work`, `answer`, `amend`, `lift-incident`, `incident-fix`) | build loop, Task 8 | merged into `main` (pull request #5) |
-| `makeWaker` (Shape 2's lines), `runWatcher({ loops })`, `projectConfig` | build loop, Task 13 | merged into `main` (pull request #6) |
-| `startWatcher`, `watcherRunning`, `FOREMAN_PROMPT_LEAD`, `MONITOR_NOTE`, `skills/foreman/SKILL.md` | build loop, Task 19 | built, `claude/build-loop-foreman-9786cf` |
-| Check 26, plugin monitors | build loop, Task 6 | not run (needed only for Shape 2) |
+| The bridge (`handle`, `runBridge`, `SAYS`, `BRIDGE_MS`, `HELPER_MS`), the mod's four hooks, `scripts/mod/validate.js` (`checkMod`, `membersIn`, `HOOKS`, `CALLS`), `npm run mod-check` | board-and-usage, Tasks 17 and 18 | merged (pull request #13) |
+| `earned`, `keepEarned`, `sendKept`, `SIGNED_LABELS` (`scripts/hooks/prompt-record.js`); `replyRecord`, `parseReply` and the reply's private `claim`, `answeredInPending`, `recordedAs` (`scripts/mod/reply.js`); `setLineOf`, `replyCode`, `replyCodeLine` | board-and-usage, Task 16 | merged (#13) |
+| `loadBoardInputs({ cwd, now, offline })`, `boardModel` (its waiting list, which this plan's Task 3 gives ids), `glanceLine`, `renderBoard`, `oneLine`, `NOT_A_PROJECT` | board-and-usage, Tasks 12 and 13 | merged (#13) |
+| `earned` signing the build loop's clicks too (`approve-work`, `answer`, `amend`, `lift-incident`, `incident-fix`) | board-and-usage Task 16 and build loop Task 8, joined when the second of the two merged (board-and-usage, Card 1) | joined on `main`: `earned` signs the build loop's five actions beside the first piece's labels |
+| `briefingModel`, `briefingText`, `readSeen`, `markSeen` | board-and-usage, Task 14 | merged (#13) |
+| `SETTINGS`, `checkSetting`, `definitionOf`, `say`, `effectiveSettings`, `sayTime`; the helper's `/state/write`, `/profile/write`, `/state/record`, `/profile/record` | board-and-usage, Tasks 3 and 4 | merged (#13) |
+| The board-context hook (`commandOf`, `decide`) | board-and-usage, Task 15 | merged (#13) |
+| Check 33, the first piece in Desktop | board-and-usage, Task 19 | waits for the director's sitting, folded into check 41's (Task 14) |
+| `card` data (`kind`, `options`, `line`, `code`, `level`, `importance`), the `waiting` view with `asked` | front desk, Task 1 | merged (#16) |
+| The importance order (`cardsForVisit`, and `importanceOf`, which this plan's Task 8 asks it to export), `askAgain` | front desk, Task 3 | merged (#16), `importanceOf` exported (`scripts/cards/visit.js`) |
+| The card check's tests of a card's form (`scripts/hooks/card-check.js`) | front desk, Task 4 | merged (#16), `cardProblems` exported |
+| `plainWords`, `glossaryOf` | front desk, Task 5 | merged (#16) |
+| `cli.js preview`, `/pr/preview` (for **Show me**) | front desk, Tasks 6 and 12 | merged: the command in #16, `preview` and `/pr/preview` in #24 |
+| `sessionRole`, `recordRole` (`scripts/lib/role.js`), `skills/front-desk/SKILL.md` | front desk, Task 7 | merged (#16) |
+| The build loop's card lines and actions (`approve-work`, `answer`, `amend`, `lift-incident`, `incident-fix`) | build loop, Task 8 | merged (#5) |
+| `makeWaker` (Shape 2's lines), `runWatcher({ loops })`, `projectConfig` | build loop, Task 13 | merged (#6) |
+| `startWatcher`, `watcherRunning`, `FOREMAN_PROMPT_LEAD`, `MONITOR_NOTE`, `skills/foreman/SKILL.md` | build loop, Task 19 | merged (#8) |
+| Check 26, plugin monitors | build loop, Task 6 | not needed: Shape 2's wakes come from the mod's timer (this plan's Task 7) |
 | Check 27's Windows half, which may pick Shape 2 there | build loop, Task 5 | waits for the director at the Windows computer |
-| Evaluation scenarios' numbering and runner (`--all`) | evaluation, Task 3 | not started |
+| Evaluation scenarios' numbering and runner (`--all`) | evaluation, Task 3 | merged (#27): `npm run eval` finds each suite under `tests/eval/`, so scenarios 36 and 37 run by `npm run eval -- 36 37` |
 
 ## Decisions for the director
 

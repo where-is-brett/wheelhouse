@@ -70,11 +70,15 @@ declare module 'claude-code' {
       busy: boolean;
       // Where the session drew at its start, as session.start said; null for none.
       surface: string | null;
-      // The role the last tick answered: 'front-desk', 'foreman' or 'feature'.
+      // The role the last tick answered: 'front-desk', 'foreman', 'feature' or 'setup'.
       role: string;
+      // Whether the last answered tick's answer held the pane's model: false for a session given
+      // no pane (a front desk outside a project among them). A failed tick leaves it as it was.
+      pictured: boolean;
       // The id of the session whose front-desk answer opened the pane: once opened, a tick or a
-      // reload only retitles it while it is open.
-      opened: string;
+      // reload only retitles it while it is open. Null once the mod has closed it because the
+      // session's role is no longer the front desk's, so the next front-desk answer opens it.
+      opened: string | null;
       // The press the bridge is recording, or null: while one is, every other button but STOP is
       // drawn as plain text, so a double press sends once.
       pressing: WheelhousePressing | null;

@@ -132,7 +132,7 @@ export async function setUpFeature(dir, {
     }
 
     const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
-    helper = await startStandInHelper({ address });
+    helper = await startStandInHelper({ address, home });
     // What the run's record keeps beside the events: the helper's records and the feature files.
     const evidence = () => ({ helper: helper.records(), questions: questionsIn(dir), ledger: ledgerLines(dir) });
     return { env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, evidence, close };

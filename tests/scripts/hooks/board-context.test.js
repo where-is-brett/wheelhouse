@@ -110,6 +110,19 @@ test('the gap follows the briefingGapHours setting', async () => {
   });
 });
 
+test('a briefing /digest gave restarts the gap: a prompt within two hours of it brings none', async () => {
+  await withProject(async ({ repo }) => {
+    // The last prompt three hours ago, and /digest an hour ago, which marks only the briefing given.
+    markSeen(P, { promptAt: new Date('2026-10-19T09:00:00.000Z'), briefedAt: new Date('2026-10-19T11:00:00.000Z') });
+    assert.equal(await run(repo, 'Thanks', NOW), undefined);
+    assert.equal(readSeen(P, { now: at(NOW) }).briefedAt, '2026-10-19T11:00:00.000Z', 'no briefing was given');
+
+    // /digest over two hours ago: the next prompt brings the briefing.
+    markSeen(P, { promptAt: new Date('2026-10-19T08:00:00.000Z'), briefedAt: new Date('2026-10-19T09:30:00.000Z') });
+    assert.ok(contextOf(await run(repo, 'Back again', NOW)).startsWith(HEADINGS.briefing));
+  });
+});
+
 test('the briefing keeps to the words its setting gives', async () => {
   await withProject(async ({ repo }) => {
     const views = path.join(wheelhouseHome(), 'projects', P, 'views');

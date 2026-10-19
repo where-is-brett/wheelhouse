@@ -2,7 +2,7 @@
 
 # Design checks
 
-The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run: it was needed only for the watcher's fallback, and Shape 1 was taken on check 27's Mac half.
+The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
 
 | # | Check | Answer | Note |
 |---|---|---|---|
@@ -32,7 +32,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 24 | Pinning through Wheelhouse's marketplace | Yes | [24-pinning.md](24-pinning.md) |
 | 27 | Starting and waking sessions from a script | Deferred | [27-sessions.md](27-sessions.md) |
 | 25 | The override wins | Yes, for Superpowers' hand-offs | [25-override.md](25-override.md) |
-| 26 | Plugin monitors | Not run: Shape 1 was taken | None |
+| 26 | Plugin monitors | Not needed: Shape 1 was taken, and Shape 2's wakes come from the mod's timer | None |
 | 28 | Claude Code's update settings in Desktop | Deferred | [28-update-channel.md](28-update-channel.md) |
 | 29 | The hold | Partly | [29-hold.md](29-hold.md) |
 | 30 | The undo | Partly | [30-undo.md](30-undo.md) |
@@ -43,6 +43,10 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 37 | The pasted install line in Desktop | Partly | [37-install-line.md](37-install-line.md) |
 | 38 | `gh` and `glab` without an installer | Partly | [38-host-tools.md](38-host-tools.md) |
 | 34 | Screenshots from a hidden browser | Partly | [34-screens.md](34-screens.md) |
+| 39 | What the transcripts show about a message and a turn | Yes, with two gaps | [39-transcripts.md](39-transcripts.md) |
 | 40 | The mod without a screen | Yes, with five changes | [40-mod-headless.md](40-mod-headless.md) |
+| 33 | The mod's first piece in Desktop | Deferred (held for the director's sitting, with check 41) | [41-mod-desktop.md](41-mod-desktop.md) |
+| 41 | The mod in Desktop | Deferred (held for the director's sitting) | [41-mod-desktop.md](41-mod-desktop.md) |
+| 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |

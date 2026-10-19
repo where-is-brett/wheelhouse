@@ -11,7 +11,7 @@ const P = 'owner__name';
 const T0 = Date.parse('2026-10-19T02:00:00.000Z');
 const at = (ms) => new Date(ms);
 const MIN = 60 * 1000;
-const ASK = 'Ask any new cards now, once, then send Claude\'s notification in one line.';
+const ASK = 'Send Claude\'s notification in one line, then ask any new cards now, once.';
 const HERE = { value: 'here' };
 
 // A pane model as status.js gives it, with only what the courier reads filled in.

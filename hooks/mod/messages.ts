@@ -23,9 +23,9 @@ export function isWheelhouseTraffic(origin: string, text: string): boolean {
 }
 
 // Whether the message is kept out: Wheelhouse traffic reaching the front desk's session. A
-// message kept out starts a tick, unless one is running already.
+// message kept out starts a tick, or, while one runs, one tick once it ends, as a press does.
 export async function keepOut($: EngineInterface, origin: string, text: string): Promise<boolean> {
   if (!isWheelhouseTraffic(origin, text) || !(await isFrontDesk($))) return false
-  void tick($).catch(() => undefined)
+  void tick($, true).catch(() => undefined)
   return true
 }
