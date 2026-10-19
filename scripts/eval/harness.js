@@ -69,10 +69,36 @@ export const EVAL_DENY_COMMANDS = ['security', '/usr/bin/security'].flatMap((c) 
 // AskUserQuestion. Anything else could override or widen the isolation, so it is refused.
 export const TAKEN_EXTRA_ARGS = Object.freeze(['--permission-prompt-tool', 'stdio']);
 
-// The denied tools a scenario may be offered (ruling F99), each only with a PreToolUse hook in the
-// project's local settings that turns the call away, so the call shows in the events and nothing
-// reaches the director's phone.
+// The denied tools a scenario may be offered (ruling F99), each only with the PreToolUse hook in the
+// project's local settings that turns the call away (turnAwayEntry), so the call shows in the events
+// and nothing reaches the director's phone.
 export const OFFERABLE_TOOLS = Object.freeze(['PushNotification']);
+
+// What the hook that turns an offered tool's call away answers it with, by tool.
+export const TURNED_AWAY = Object.freeze({ PushNotification: 'Sent to the director\'s phone.' });
+
+// The script of a PreToolUse hook that turns every call it is given away with `reason`. It fails
+// closed (ruling F107): once its input ends it answers deny, and any failure of its own (its input
+// can't be read, a throw) exits with code 2, which refuses the call too.
+export function turnAwayScript(reason) {
+  const said = JSON.stringify(reason);
+  return `// A stand-in for the director in an evaluation run: every call this hook is given is turned away.
+const refuse = () => { process.stderr.write(${said}); process.exit(2); };
+process.on('uncaughtException', refuse);
+process.stdin.on('error', refuse);
+process.stdin.resume();
+process.stdin.on('end', () => {
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: ${said} } }));
+});
+`;
+}
+
+// The local settings' PreToolUse entry that runs the hook script at `file` for `matcher`. With
+// `onFailure: block`, a hook that can't run at all (no Node, a timeout) refuses the call as well,
+// as Wheelhouse's guards do (hooks/hooks.json).
+export function turnAwayEntry(matcher, file) {
+  return { matcher, hooks: [{ type: 'command', command: `node "${file}"`, timeout: 10, onFailure: 'block' }] };
+}
 
 // A socket's spellings: as given, and through the real path of its folder (the temporary folder
 // has two on macOS), so the sandbox knows it whichever way a command names it.
@@ -128,13 +154,25 @@ function vettedExtraArgs(extraArgs) {
   throw new Error(`An evaluation session takes no extra arguments but ${TAKEN_EXTRA_ARGS.join(' ')}, not ${JSON.stringify(extraArgs)}`);
 }
 
-// Whether the local settings of the project `dir` hold a PreToolUse hook for `tool`.
+// Whether `hook` is the known hook that turns `tool` away, failing closed: it blocks on failure, and
+// its command runs, with nothing else, a script that is turnAwayScript's for that tool word for word.
+function knownHook(hook, tool) {
+  if (hook?.type !== 'command' || hook.onFailure !== 'block' || typeof hook.command !== 'string') return false;
+  const file = /^node "([^"]+)"$/.exec(hook.command)?.[1];
+  try {
+    return file !== undefined && fs.readFileSync(file, 'utf8') === turnAwayScript(TURNED_AWAY[tool]);
+  } catch {
+    return false;
+  }
+}
+
+// Whether the local settings of the project `dir` hold the known hook (knownHook) for `tool` on PreToolUse.
 function turnedAway(dir, tool) {
   try {
     const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8'));
     const entries = Array.isArray(settings?.hooks?.PreToolUse) ? settings.hooks.PreToolUse : [];
     return entries.some((entry) => typeof entry?.matcher === 'string' && entry.matcher.split('|').includes(tool)
-      && Array.isArray(entry.hooks) && entry.hooks.some((hook) => hook?.type === 'command' && typeof hook.command === 'string' && hook.command !== ''));
+      && Array.isArray(entry.hooks) && entry.hooks.some((hook) => knownHook(hook, tool)));
   } catch {
     return false;
   }
@@ -145,7 +183,7 @@ function vettedOffer(offered, dir) {
   if (!Array.isArray(offered)) throw new Error('The tools a session is offered are a list');
   for (const tool of offered) {
     if (!OFFERABLE_TOOLS.includes(tool)) throw new Error(`Of the denied tools, only ${OFFERABLE_TOOLS.join(', ')} can be offered, not ${JSON.stringify(tool)}`);
-    if (!turnedAway(dir, tool)) throw new Error(`${tool} is offered only with a PreToolUse hook in the project's local settings that turns the call away`);
+    if (!turnedAway(dir, tool)) throw new Error(`${tool} is offered only with a PreToolUse hook in the project's local settings that turns the call away: the known one (turnAwayEntry), which fails closed`);
   }
   return offered;
 }

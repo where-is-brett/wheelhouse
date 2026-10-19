@@ -28,7 +28,11 @@ import {
   describeRun,
   parseArgs,
   runScenario,
+  TURNED_AWAY,
+  turnAwayScript,
+  turnAwayEntry,
 } from '../../../scripts/eval/harness.js';
+import { spawn, spawnSync } from 'node:child_process';
 
 const fixture = fileURLToPath(new URL('../../fixtures/eval/stream.jsonl', import.meta.url));
 const events = parseStream(fs.readFileSync(fixture, 'utf8'));
@@ -303,17 +307,58 @@ test('runSession takes no extra arguments but --permission-prompt-tool stdio, so
   }
 });
 
-test('runSession offers PushNotification only when asked and only when the project\'s local settings turn the call away; every other tool stays denied (F99)', async () => {
+test('runSession offers PushNotification only when asked and only when the project\'s local settings turn the call away with the known hook, failing closed; every other tool stays denied (F99, F107)', async () => {
   const deniedOf = (seen) => seen.args[seen.args.indexOf('--disallowedTools') + 1].split(',');
   assert.ok(deniedOf(await sawWith({})).includes('PushNotification'), 'denied unless offered');
   const dir = tempFolder('harness-session-');
   await assert.rejects(sawWith({ offered: ['PushNotification'] }, { dir }), /PushNotification is offered only with a PreToolUse hook/);
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'PushNotification', hooks: [{ type: 'command', command: 'node "/x/turn-away.mjs"' }] }] } }));
+  const hooks = (...entries) => fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { PreToolUse: entries } }));
+  const script = (name, text) => {
+    const file = path.join(tempFolder('harness-hook-'), name);
+    fs.writeFileSync(file, text);
+    return file;
+  };
+  const known = script('push-sent.mjs', turnAwayScript(TURNED_AWAY.PushNotification));
+  // Any other hook is refused: a script that isn't the known one, one whose reason differs, one
+  // that isn't there, and the known one without onFailure block, which lets a crash through.
+  const { onFailure, ...open } = turnAwayEntry('PushNotification', known).hooks[0];
+  for (const [name, entry] of [
+    ['another script', turnAwayEntry('PushNotification', script('turn-away.mjs', 'process.exit(0);\n'))],
+    ['another reason', turnAwayEntry('PushNotification', script('other.mjs', turnAwayScript('Sent.')))],
+    ['no file', turnAwayEntry('PushNotification', path.join(tempFolder(), 'none.mjs'))],
+    ['no onFailure', { matcher: 'PushNotification', hooks: [open] }],
+    ['another command', { matcher: 'PushNotification', hooks: [{ ...turnAwayEntry('PushNotification', known).hooks[0], command: `node "${known}" --allow` }] }],
+  ]) {
+    hooks(entry);
+    await assert.rejects(sawWith({ offered: ['PushNotification'] }, { dir }), /PushNotification is offered only with a PreToolUse hook/, name);
+  }
+  hooks(turnAwayEntry('PushNotification', known));
   const denied = deniedOf(await sawWith({ offered: ['PushNotification'] }, { dir }));
   assert.ok(!denied.includes('PushNotification'));
   assert.deepEqual(denied, DENIED_TOOLS.filter((t) => t !== 'PushNotification'));
   await assert.rejects(sawWith({ offered: ['ListAgents'] }, { dir }), /only PushNotification can be offered/);
+});
+
+test('the turning-away hook answers deny, and a failure of its own refuses the call too (F107)', async () => {
+  const file = path.join(tempFolder('harness-hook-'), 'push-sent.mjs');
+  fs.writeFileSync(file, turnAwayScript(TURNED_AWAY.PushNotification));
+  const out = spawnSync(process.execPath, [file], { input: JSON.stringify({ tool_name: 'PushNotification' }), encoding: 'utf8' });
+  assert.equal(out.status, 0);
+  assert.deepEqual(JSON.parse(out.stdout).hookSpecificOutput, {
+    hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: TURNED_AWAY.PushNotification,
+  });
+  // A throw while it waits for its input exits 2, which Claude Code takes as a refusal.
+  const crash = 'data:text/javascript,setTimeout(() => { throw new Error("broken"); }, 50);';
+  const child = spawn(process.execPath, ['--import', crash, file], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => { stdout += d; });
+  child.stderr.on('data', (d) => { stderr += d; });
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(code, 2);
+  assert.equal(stdout, '');
+  assert.equal(stderr, TURNED_AWAY.PushNotification);
 });
 
 test('runSession puts extra arguments last, as given, without looking for them in --help', async () => {

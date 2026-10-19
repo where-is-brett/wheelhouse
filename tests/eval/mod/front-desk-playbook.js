@@ -25,7 +25,7 @@
 // that very call, so it is offered it (its `offered`, ruling F99), and its set-up (`push`) adds a
 // PreToolUse hook in the same local settings that turns the call away with one line (PUSHED): the
 // call is in the events and nothing reaches the director's phone. runSession offers the tool only
-// when that hook is there.
+// when that hook is the harness's own, which fails closed (ruling F107).
 //
 // The sandbox (rulings F94, F102): the plugin's command imports the repository's own cli.js, which
 // the sandbox denies, so the context names what that command needs of the repository as
@@ -44,6 +44,7 @@ import { asQuestion } from '../../../scripts/cards/visit.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
 import { PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { TURNED_AWAY, turnAwayEntry, turnAwayScript } from '../../../scripts/eval/harness.js';
 
 // The heading of the playbook's section on the pane's and the courier's prompts: the lines the
 // `without` variant leaves out, up to the next heading of the same or a higher level.
@@ -55,7 +56,7 @@ export const EXTRA_ARGS = Object.freeze(['--permission-prompt-tool', 'stdio']);
 export const SHOWN = 'Shown to the director.';
 
 // What the stand-in for the director's phone answers a PushNotification call.
-export const PUSHED = 'Sent to the director\'s phone.';
+export const PUSHED = TURNED_AWAY.PushNotification;
 
 // A pull request's head commit, as the stand-in host gives it to `card`.
 export const HEAD = '3f9c2a1b7d4e5f60718293a4b5c6d7e8f9012345';
@@ -108,19 +109,6 @@ export function boardNumbers(seed) {
   return Object.fromEntries(numberedWaiting(views, seed).filter((item) => item.card).map((item) => [item.card, item.n]));
 }
 
-// A PreToolUse hook's script that turns every call it is given away with `reason`; `what` says
-// whose stand-in it is.
-const turnAway = (what, reason) => `${what}
-process.stdin.resume();
-process.stdin.on('end', () => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: ${JSON.stringify(reason)} } }));
-});
-`;
-const ASK_HOOK = turnAway(`// The director's screen, for an evaluation run: an AskUserQuestion call is turned away with one
-// line saying the cards are shown, since no one is there to click.`, SHOWN);
-const PUSH_HOOK = turnAway(`// The director's phone, for an evaluation run: a PushNotification call is turned away with one
-// line saying it was sent, so nothing reaches a phone.`, PUSHED);
-
 function write(root, relative, content) {
   const file = path.join(root, ...relative.split('/'));
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -143,10 +131,12 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push 
     write(plugin, 'skills/intake/SKILL.md', fs.readFileSync(path.join(REPO_ROOT, 'skills', 'intake', 'SKILL.md'), 'utf8'));
     const cli = pathToFileURL(path.join(REPO_ROOT, 'scripts', 'frontdesk', 'cli.js')).href;
     write(plugin, 'scripts/frontdesk/cli.js', `// scripts/frontdesk/cli.js\nimport { main } from '${cli}';\nmain(process.argv.slice(2)).then((code) => { process.exitCode = code; });\n`);
+    // The hooks turn every call away and fail closed (turnAwayScript, turnAwayEntry): the screen's
+    // saying the cards were shown, since no one is there to click; the phone's saying it was sent.
     const hook = path.join(root, 'ask-shown.mjs');
-    fs.writeFileSync(hook, ASK_HOOK, 'utf8');
+    fs.writeFileSync(hook, turnAwayScript(SHOWN), 'utf8');
     const phone = path.join(root, 'push-sent.mjs');
-    if (push) fs.writeFileSync(phone, PUSH_HOOK, 'utf8');
+    if (push) fs.writeFileSync(phone, turnAwayScript(PUSHED), 'utf8');
 
     // The local settings setUpFrontDesk wrote, with reading the plugin's files, the screen's hook
     // and, with `push`, the phone's.
@@ -155,8 +145,8 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push 
     for (const at of new Set([plugin, fs.realpathSync(plugin)])) settings.permissions.allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
     settings.hooks = {
       PreToolUse: [
-        { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `node "${hook}"` }] },
-        ...(push ? [{ matcher: 'PushNotification', hooks: [{ type: 'command', command: `node "${phone}"` }] }] : []),
+        turnAwayEntry('AskUserQuestion', hook),
+        ...(push ? [turnAwayEntry('PushNotification', phone)] : []),
       ],
     };
     fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);

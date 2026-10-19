@@ -167,6 +167,8 @@ test('37 alone is offered PushNotification, and its project\'s local settings tu
       // The plugin's command runs the repository's own cli.js, so the sandbox reads it there.
       assert.deepEqual(context.readable, repositoryReadable());
       for (const [hook, said] of hooks.map((h, i) => [h, [SHOWN, PUSHED][i]])) {
+        // Each fails closed: a hook that can't run refuses the call (F107).
+        assert.equal(hook.hooks[0].onFailure, 'block', hook.matcher);
         const script = /^node "(.+)"$/.exec(hook.hooks[0].command)[1];
         const out = spawnSync(process.execPath, [script], { input: JSON.stringify({ tool_name: hook.matcher }), encoding: 'utf8' });
         assert.deepEqual(JSON.parse(out.stdout).hookSpecificOutput, { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: said });
