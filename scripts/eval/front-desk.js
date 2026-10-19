@@ -127,10 +127,13 @@ export const PLUGIN_FILES = [
 
 // The hooks' script: it hands what Claude Code gave it to the stand-in helper at `address`, which
 // works out the text the real hook would add over the state as it stands (onHook), and prints it.
-// Nothing is printed when there is no text, or the stand-in can't be reached.
-function hookScript(address) {
+// Nothing is printed when there is no text. When the stand-in can't be reached or its answer can't
+// be read, nothing is printed either, and the failure is added to `failures` (one JSON line each),
+// which hooksGave reads, so a run whose hooks failed shows it.
+function hookScript(address, failures) {
   return `// hooks/context.js
 // What the real session start or board context hook would add, asked of this evaluation's stand-in helper.
+import fs from 'node:fs';
 import http from 'node:http';
 let given = '';
 process.stdin.on('data', (chunk) => { given += chunk; });
@@ -138,19 +141,25 @@ process.stdin.on('end', () => {
   let input = {};
   try { input = JSON.parse(given); } catch { /* nothing to pass on */ }
   const body = JSON.stringify({ event: input.hook_event_name ?? null, source: input.source ?? null, prompt: input.prompt ?? null });
+  const failed = (why) => {
+    const line = { at: new Date().toISOString(), event: input.hook_event_name ?? null, source: input.source ?? null, failed: String(why) };
+    try { fs.appendFileSync(${JSON.stringify(failures)}, JSON.stringify(line) + '\\n'); } catch { /* the run's record lacks it */ }
+    process.stderr.write('The evaluation\\'s stand-in helper gave no hook text: ' + String(why) + '\\n');
+  };
   const req = http.request({ socketPath: ${JSON.stringify(address)}, path: '/eval/hook', method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
     let text = '';
     res.on('data', (chunk) => { text += chunk; });
     res.on('end', () => {
       try {
         const answer = JSON.parse(text);
-        if (typeof answer.text === 'string' && answer.text !== '') {
+        if (answer.ok !== true) failed(answer.refused ?? 'the stand-in refused');
+        else if (typeof answer.text === 'string' && answer.text !== '') {
           process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext: answer.text } }));
         }
-      } catch { /* adds nothing */ }
+      } catch (error) { failed(error.message); }
     });
   });
-  req.on('error', () => {});
+  req.on('error', (error) => failed(error.message));
   req.end(body);
 });
 `;
@@ -287,7 +296,8 @@ export async function setUpFrontDesk(dir, variant, {
     }
 
     const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
-    if (plugin) write(plugin, 'hooks/context.js', hookScript(address));
+    const failures = plugin ? path.join(plugin, 'hooks', 'failed.jsonl') : null;
+    if (plugin) write(plugin, 'hooks/context.js', hookScript(address, failures));
     // What the board context hook keeps in seen.json: the director's last prompt, the last briefing.
     const seen = lastPrompt === undefined ? null : { promptAt: lastPrompt, briefedAt: null };
     const prs = Object.fromEntries(Object.entries(pullRequests).map(([number, sha]) => [number, sha === 'head' ? head : sha]));
@@ -298,8 +308,16 @@ export async function setUpFrontDesk(dir, variant, {
     });
     const seededIds = new Set(seed.map((e) => e.id));
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
-    // What the hooks added, in order: { event, source, text }.
-    const hooksGave = () => helper.records().filter((r) => r.route === 'eval/hook').map(({ event, source, text }) => ({ event, source, text }));
+    // What the hooks added, in order: { event, source, text }, and { …, text: null, failed } for a
+    // hook that couldn't get its text from the stand-in.
+    const hooksGave = () => {
+      const asked = helper.records().filter((r) => r.route === 'eval/hook').map(({ at, event, source, text }) => ({ at, event, source, text }));
+      let lost = [];
+      try {
+        lost = fs.readFileSync(failures, 'utf8').split('\n').filter(Boolean).map((line) => ({ ...JSON.parse(line), text: null }));
+      } catch { /* none failed */ }
+      return [...asked, ...lost].sort((a, b) => a.at.localeCompare(b.at)).map(({ at, ...rest }) => rest);
+    };
     return {
       env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }), head,
       helper, seededIds, evidence, hooksGave, close,

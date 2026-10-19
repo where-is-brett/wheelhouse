@@ -14,7 +14,10 @@
 // Run it with `npm run eval -- 7 --variant with` and `--variant without`.
 //
 // The front desk works in the shop (shop.js), whose order page has one button,
-// green. Judged from the reply, the state written and the calls.
+// green. One session over three of the director's turns: the request, then two
+// answers to brainstorming's questions, so its sizing is done before the pass
+// is judged (ruling F92: brainstorming shapes and sizes, and the lane follows).
+// Judged from every turn's replies, the state written and the calls.
 import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import { callsOf } from '../../../scripts/eval/feature-project.js';
 import {
@@ -24,6 +27,11 @@ import {
 import { SHOP_FILES, clock } from './shop.js';
 
 export const MESSAGE = 'Make the order button blue.';
+export const PROMPTS = [
+  MESSAGE,
+  'It\'s to match the blue in our new logo, #1565c0. Nothing else on the page changes.',
+  'That\'s everything I can tell you. Please size it and take it from here.',
+];
 
 // The end of an approve-work card's line when the director is to see the change before it merges.
 const SHOWN_FIRST = /, and show it to me before it merges$/;
@@ -77,7 +85,7 @@ export default {
     return setUpFrontDesk(dir, variant, { files: SHOP_FILES, lastPrompt: ago(20) });
   },
 
-  prompt: MESSAGE,
+  prompts: PROMPTS,
 
   variants: {
     with: { get pluginDirs() { return [locateSuperpowers(), locateMattSkills()]; } },
@@ -87,5 +95,7 @@ export default {
   permissionMode: 'acceptEdits',
   maxTurns: 40,
 
-  pass: ({ events, dir, context }) => judge({ reply: replyText(events), events, written: writtenEvents(context), calls: callsOf(events), dir }),
+  pass: ({ events, turns, dir, context }) => (turns && turns.length < PROMPTS.length
+    ? { pass: false, why: `did not count: ${turns.length} of ${PROMPTS.length} turns ran` }
+    : judge({ reply: replyText(events), events, written: writtenEvents(context), calls: callsOf(events), dir })),
 };

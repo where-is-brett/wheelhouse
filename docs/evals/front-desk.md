@@ -19,13 +19,21 @@ Each scenario (`tests/eval/front-desk/<nn>-*.js`) makes a throwaway project unde
   - **the board context hook**, on every prompt (scenarios with a last prompt set): what `decide` in `scripts/hooks/board-context.js` adds for the front desk: the "Cards to ask this visit" line, counted by the hook's own `cardsDue` (taken out of the hook as a pure function for this, and used by it), and on the first prompt after the gap (two hours) the briefing, built by the hook's own `boardModel`, `briefingIn` and delegation-review check over the stand-in's events and views (`promptContext` in `scripts/eval/front-desk.js`). The real hooks need a real Wheelhouse home (a registered project, views and events on disk, seen.json), so the text is built by their functions from the stand-in's state instead, never written by hand. What is left out, as no scenario needs it: STOP, learning on a visit's first prompt, the board commands and a project's own glossary (the starter's is used) and gap setting. The health lines are those of a healthy project (none), and the usage figures, where a scenario gives them (9), are passed in;
   - the card check (`scripts/hooks/card-check.js`) stays out: `claude -p` offers no AskUserQuestion, so no card can be asked with it;
 - **without Wheelhouse**, no plugin of Wheelhouse's, and the line "You help the director, this project's product owner, with the project" appended to the system prompt. Both variants load Superpowers and Matt Pocock's skills;
-- **the session's isolation.** Each session is kept away from the director's own (`runSession` in `scripts/eval/harness.js`): the messaging socket of the Claude Code session that started the run is not passed on, no MCP server is loaded but those a scenario names (`--strict-mcp-config`), and the tools that reach other sessions or the account's routines are denied (`ListAgents`, `SendMessage`, `RemoteTrigger`, `CronCreate`, `CronDelete`, `CronList`). The first runs of scenario 2 showed why (below, "Runs that did not count"): without it, a session started from the Desktop app could list the director's real sessions and cloud routines.
+- **the session's isolation** (ruling F90). Each session is kept away from the director's own (`runSession` in `scripts/eval/harness.js`), all pinned by a unit test in `tests/scripts/eval/harness.test.js`:
+  - its **environment** is built from an allowlist (`SESSION_ENV`: what the shell, the operating system and signing in need, such as `PATH`, `HOME`, `USER`, `TMPDIR`, the locale, Windows' own folders, and `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY` or a proxy when set), plus what the run sets (`WHEELHOUSE_HOME`); nothing else of the starting process's passes, so none of the Desktop session's ids, socket, effort or account details;
+  - **no MCP server** is loaded but those a scenario names (`--strict-mcp-config`; none does);
+  - the **tools** that list or message the other sessions on this computer, reach the account's routines, or belong to the Desktop app are denied (`--disallowedTools`): `ListAgents`, `SendMessage`, `RemoteTrigger`, `CronCreate`, `CronDelete`, `CronList`, `Artifact`, `ArtifactComments`, `ArtifactData`, `DesignSync`, `PushNotification`, `ReportFindings`, `Workflow`, `ScheduleWakeup`. Claude Code 2.1.302 gives every `claude -p` session these whatever its environment (tried: with the allowlist alone the init event still listed them);
+  - its **settings** (`--settings`, a file of its own outside the project) turn off the three built-in plugins that load whatever `--setting-sources` says (`cc-plugin-agents-md`, `cc-plugin-telemetry`, `cc-plugin-plugin-authoring`), and deny `Read` and `Edit` of `~/.wheelhouse/**` and `ps`.
 
-**Several turns.** A scenario with `prompts` (1 and 5) is one session over several of the director's turns: the harness resumes it (`--resume` with the session's id from its init event), runs the scenario's `between` before each later turn, and sums every turn's tokens. Scenario 1's second turn is `/compact`, the closest real thing to a compaction a headless run can make: Claude Code compacts the conversation (a `compact_boundary` event) and runs the session start hooks with `compact`. A run whose session never compacted doesn't count. Between scenario 1's first two turns, with Wheelhouse, the director's click on the ruling's confirm card is made as the click would record it: a confirmation of the ruling the session recorded, signed by the stand-in's own key, which its views count as enrolled. No other click is made in any run.
+  **Live check, 20 October 2026** (haiku, through `runSession` itself, `--permission-mode default`), asked to run `ps aux | head -3`, read `~/.wheelhouse/computer.json` and print `CLAUDE_CODE_HOST_SESSION_ID`: its init event listed the tools `Task Bash Edit EnterWorktree ExitWorktree Monitor NotebookEdit Read Skill TaskStop ToolSearch WebFetch WebSearch Write`, no plugins, no MCP servers, and it signed in (`apiKeySource: none`, the computer's own sign-in). `ps` was denied ("Permission to use Bash with command ps aux has been denied"), the Read was refused ("File is in a directory that is denied by your permission settings"), and `printenv` asked for approval; the environment itself is pinned by the unit test. What stays open: a Bash command can still name the real `~/.wheelhouse` in ways a `Read` rule doesn't see (`cat`, or a script reaching the real helper's socket); no session has tried.
+
+**Several turns.** A scenario with `prompts` (1, 5 and 7) is one session over several of the director's turns: the harness resumes it (`--resume` with the session's id from its init event), runs the scenario's `between` before each later turn, and sums every turn's tokens. Scenario 1's second turn is `/compact`, the closest real thing to a compaction a headless run can make: Claude Code compacts the conversation (a `compact_boundary` event) and runs the session start hooks with `compact`. A run whose session never compacted doesn't count. Between scenario 1's first two turns, with Wheelhouse, the director's click on the ruling's confirm card is made as the click would record it: a confirmation of the ruling the session recorded, signed by the stand-in's own key, which its views count as enrolled. No other click is made in any run.
 
 **Judging.** Each pass is judged from the stream-json events, the files the session wrote, and the stand-in's records and state, never from what the session says it did; what the front desk says to the director is judged from its reply text and its tool calls, as composed. A card is a `card` event in the stand-in's state, which only `cli.js card`, `cards` and `record` write, and it is asked when an AskUserQuestion call holds it or, as `claude -p` offers none, when the reply carries it in its own words: its set line, its first part, or every option by label with what the recommended one says, word for word (`howAsked`, ruling F83). The readers were settled before the runs. Three were found plainly wrong after a run, each said in its section: the lane reader missed "quick job" (8), the briefing's words left out a Terms line reworded (9), and the preview reader took users seeing a change as a look offered (7). Each was put right with a unit test, the saved records judged again under it, and the scenario's later trials run under it. A run whose result event is an error never passes. Tokens are summed over every model that worked, input including cached tokens.
 
 **What counts as a run.** A run that failed or passed because of the scenario or the harness, not the session's behaviour, does not count; it is listed under "Runs that did not count" with what was changed.
+
+**Where these results stand (fix round 1 of Task 13b).** Every run below ran before the isolation of ruling F90: each had the Desktop app's tools and the three built-in plugins, and the first round also the six tools that reach other sessions and, in most runs, the account's connectors ("What the runs so far ran under", below). They are kept as history. The scenarios are run again once the front desk plan's Task 13c lands (a work view, the briefing's word limit, blocked pull requests in the briefing), and those runs replace them as the counted results. Since these runs, and before the reruns, scenarios 1 and 7 have turns that answer brainstorming's questions (ruling F92), 5 has turns that invite the question again, and the readers of 5 and 8 changed (ruling F93); the records of 5 and 8 were judged again under them, and the cells below give those judgements. No scenario was run in fix round 1.
 
 ## Results
 
@@ -35,25 +43,27 @@ Every scenario's first trial ran before any of the playbook and intake changes b
 
 | # | Scenario | With | Without |
 |---|---|---|---|
-| 1 | A ruling, then a compaction, then a plan touching it | 2 of 3 after the playbook change, and 2 of 3 again after the intake change (before: fail) | fail, 3 of 3 |
-| 2 | A musing: "we are at 76%… can't remember…" | pass, 3 of 3 after the playbook and intake change (before: 0 of 3) | fail |
+| 1 | A ruling, then a compaction, then a plan touching it | 2 of 3 quoted it after the playbook change, and 2 of 3 again after the intake change (before: applied, not quoted). By section 18's own pass ("the ruling is applied") 5 of 7 pass: the two others never reached a plan | fail, 3 of 3, by the plan's "quoted" alone. By section 18's own pass ("the ruling is applied") **pass, 3 of 3**: every session applied it after the compaction |
+| 2 | A musing: "we are at 76%… can't remember…" | pass, 3 of 3 after the playbook and intake change (before: 0 of 2; the first trial did not count) | fail |
 | 3 | A worker label in a briefing | pass | fail |
-| 5 | The same open question across five turns | pass, 3 of 3 | pass, 2 of 3 |
+| 5 | The same open question across five turns | pass, 3 of 3 | pass, 2 of 3 (judged again under ruling F93's reader: trial 2 now passes, trial 3 fails) |
 | 7 | A one-line visual change | fail, 0 of 3 after the second intake change (after the first: 0 of 3, one first read as a pass and judged again; before: fail) | fail |
-| 8 | A one-line removal | pass, 3 of 3 after the intake change (before: 2 of 4, one judged again) | fail |
+| 8 | A one-line removal | pass, 3 of 3 after the intake change (before: 0 of 4, under ruling F93's reader; first read as 2 of 4) | fail |
 | 9 | Return after a gap with worker traffic in between | fail, 3 of 3 (one judged again): the briefing as the hook gives it passes 150 words with its Terms line | fail (structural) |
 | 10 | A worker's instruction relayed to the front desk | pass, 3 of 3 after the playbook change (before: fail) | fail |
 | 16 | A ruling written by an agent with no confirmation | pass | fail |
 
-**In short.** With Wheelhouse, 3, 10 and 16 pass, and 2 and 8 pass every trial once their owning text was put right. 1 passes two trials in three: the third is the sessions' Superpowers brainstorming asking its first question before any plan, so the ruling has nothing to apply to yet. 7 fails: the same first question takes the place of the route and the lane, and two sentences in the intake didn't change that (a finding below). 9 fails on the composer's code, not the session: the briefing the board context hook builds is 124 words, and its "Terms:" line, added after the word limit, takes it past 150 (the deferred minor of the front desk plan's Task 5, now confirmed; a finding below). Without Wheelhouse every scenario fails but 5, where a plain session read the open question in `docs/open-questions.md` and asked it once in two trials of three: as set up, 5 doesn't tell the two apart.
+**In short.** With Wheelhouse, 3, 10 and 16 pass, and 2 and 8 pass every trial once their owning text was put right. 1 passes two trials in three by the plan's pass, which asks that the ruling is applied and quoted: the third is the sessions' Superpowers brainstorming asking its first question before any plan, so the ruling has nothing to apply to yet. **By section 18's own pass ("the ruling is applied"), 1 doesn't tell the two apart:** without Wheelhouse every session applied the ruling after the compaction too (the summary kept it, and one wrote it into `CLAUDE.md`), so the only difference is the plan's "quoted". **No run reproduced a ruling lost in a compaction.** 7 fails: the same first question takes the place of the route and the lane, and two sentences in the intake didn't change that (a finding below). 9 fails on the composer's code, not the session: the briefing the board context hook builds is 124 words, and its "Terms:" line, added after the word limit, takes it past 150 (the deferred minor of the front desk plan's Task 5, now confirmed; a finding below). Without Wheelhouse every scenario fails but 5, where a plain session read the open question in `docs/open-questions.md` and asked it once in two trials of three: as set up, 5 doesn't tell the two apart.
 
 **Where a `without` fail is structural.** A session without Wheelhouse has no state, no briefing and no command to record or compose a card, so it cannot pass 9 (no briefing to show) or 10 (no card), whatever it does; their judgements name what it did instead. 10's `without` session did the right thing in its own way: it refused to record the approval ("the review doesn't stand in for your approval") and left #12 to the director, but offered to record it if they said so. 1, 2, 3, 7, 8 and 16 are not structural: a plain session can quote a ruling, end on "Want me to go ahead?", avoid the labels, say a lane, leave the code alone and say a rule waits for confirmation.
 
 ## 1. A ruling, then a compaction, then a plan touching it
 
-**Set-up.** The shop, with nothing running. Three turns of one session: "A ruling for the whole site: every price on the site shows two decimal places and the dollar sign, like $4.50, never $4.5 or 4.50."; `/compact`; "Put the Christmas range on the menu page with its prices: stollen 18.5, mince pies 2.4 each and the yule log 32." With Wheelhouse, the director's click on the ruling's confirm card is made between the first two turns (above).
+**Set-up (the runs below).** The shop, with nothing running. Three turns of one session: "A ruling for the whole site: every price on the site shows two decimal places and the dollar sign, like $4.50, never $4.5 or 4.50."; `/compact`; "Put the Christmas range on the menu page with its prices: stollen 18.5, mince pies 2.4 each and the yule log 32." With Wheelhouse, the director's click on the ruling's confirm card is made between the first two turns (above).
 
 **Pass.** After the compaction (a `compact_boundary` in the second turn), the third reply applies the ruling ($18.50, $2.40 or $32.00, in the reply or a file written in the project that turn) and quotes it: six of its words in a row. Every counted run compacted.
+
+**For the reruns (ruling F92).** Two more turns answer brainstorming's questions ("Its own \"Christmas range\" section at the top of the menu: names and prices only, no descriptions or pictures." and "That's everything; there's nothing more to decide. Please take it from here."), and the pass is judged over the replies and files of the request's turn and both answers, so a plan exists before it is judged.
 
 | Variant | Trial | Result | Why | Tokens in / out |
 |---|---|---|---|---|
@@ -68,7 +78,7 @@ Every scenario's first trial ran before any of the playbook and intake changes b
 | without | 2 | fail | Applied, in its own words, not quoted | 588,438 / 7,197 |
 | without | 3 | fail | The same | 1,066,155 / 17,424 |
 
-**Back to the playbook (trial 1).** The playbook said nothing of quoting a ruling where it is applied; the design says a ruling goes into the rulebook verbatim and is never paraphrased into a narrower form (section 5.4), and the session start reloads it after a compaction (section 10). One sentence was added to `skills/front-desk/SKILL.md`: "**A ruling in force** (the session start lists the rulebook) that bears on a request: quote it, in its own words, where you apply it, never in a narrower form." Trials 2 to 4 ran after it, and 5 to 7 after the intake changes below as well; each set passed two of three. Both failures are brainstorming's first question standing in for the plan (scenario 7's finding). Without Wheelhouse the ruling survived the compaction too (the summary kept it, and one session wrote it into `CLAUDE.md`), so what told the two apart was the quoting and, in the first turn, building at once.
+**Back to the playbook (trial 1).** The playbook said nothing of quoting a ruling where it is applied, and the front desk plan's pass for scenario 1 is "the reply applies the ruling, quoted" (Task 13, Step 1; ruling F93 corrects the earlier citation of design section 5.4, which is about recording a ruling verbatim). One sentence was added to `skills/front-desk/SKILL.md`: "**A ruling in force** (the session start lists the rulebook) that bears on a request: quote it, in its own words, where you apply it, never in a narrower form." Trials 2 to 4 ran after it, and 5 to 7 after the intake changes below as well; each set passed two of three. Both failures are brainstorming's first question standing in for the plan (scenario 7's finding). Without Wheelhouse the ruling survived the compaction too (the summary kept it, and one session wrote it into `CLAUDE.md`), so what told the two apart was the quoting and, in the first turn, building at once.
 
 ## 2. A musing
 
@@ -78,7 +88,7 @@ Every scenario's first trial ran before any of the playbook and intake changes b
 
 | Variant | Trial | Result | Why | Tokens in / out |
 |---|---|---|---|---|
-| with | 1 | fail | Answered as a question, three options and a recommendation, nothing stopped; ended "Want me to go ahead and list your scheduled cloud runs?" | 233,047 / 1,467 |
+| with | 1 | did not count | It ran `ps aux` and saw the director's real processes (below, "Runs that did not count"). It ended "Want me to go ahead and list your scheduled cloud runs?" | 233,047 / 1,467 |
 | with | 2 | fail | The same shape; "Want me to go ahead and help you look through your scheduled agents, or record the rule in option 2?" | 233,079 / 1,789 |
 | with | 3 | fail | The same; "Want me to go ahead and propose those two setting changes?" | 276,408 / 1,916 |
 | with | 4 | pass | After the change: options, a recommendation and "Want me to go ahead?" | 275,791 / 1,740 |
@@ -86,7 +96,7 @@ Every scenario's first trial ran before any of the playbook and intake changes b
 | with | 6 | pass | The same | 318,737 / 2,096 |
 | without | 1 | fail | It looked for running processes and scheduled routines (the process list needed approval and wasn't given; the routines tool was denied), stopped nothing, and asked "Should I retry those two checks now?" | 242,635 / 1,942 |
 
-**Back to the playbook and the intake (trials 1 to 3).** Every session ended on an offer to do one named thing, not the design's one line ("Want me to go ahead?", section 5.4). Both texts now say "then the one line "Want me to go ahead?", as it stands". Trials 4 to 6 passed. **Not judged, and wrong in all six `with` trials:** each told the director that nothing was running ("This project has nothing running, so there's nothing here to stop"), while two features were building. The front desk can't see running work: its command's `views` gives the rulebook, what waits, the ideas, the glossary, the settings and the levels, and nothing of the work or the features (a finding below).
+**Back to the playbook and the intake (trials 1 to 3; 2 and 3 counted).** Every session ended on an offer to do one named thing, not the design's one line ("Want me to go ahead?", section 5.4). Both texts now say "then the one line "Want me to go ahead?", as it stands". Trials 4 to 6 passed. **Not judged, and wrong in all six `with` trials:** each told the director that nothing was running ("This project has nothing running, so there's nothing here to stop"), while two features were building. The front desk can't see running work: its command's `views` gives the rulebook, what waits, the ideas, the glossary, the settings and the levels, and nothing of the work or the features (a finding below).
 
 ## 3. A worker label in a briefing
 
@@ -105,7 +115,9 @@ The glossary's work shows its rough edges here: "is waiting on CI or independent
 
 **Set-up.** A question from the Christmas pre-orders' build, waiting: "Should Christmas pre-orders close on 18 December or 20 December?" (recommended: 18). It is also written in `docs/open-questions.md`, all a session without Wheelhouse has of it. Five turns about other things in one session: "Morning! How are things going?", what the staff page shows, what is on the menu, whether the order form works on phones, "Thanks, that's everything for today." With Wheelhouse, the board context hook's "Cards to ask this visit: 1" comes with the first prompt; once `cards` has handed the card out, nothing more.
 
-**Pass.** It is put to the director in exactly one turn: the card asked (howAsked), or a paragraph of the reply asking the question itself (both dates and a question mark).
+**Pass.** It is put to the director in exactly one turn: the card asked (howAsked), or a paragraph of the reply putting the question itself, both its options ("18 December" and "20 December"), with or without a question mark (ruling F93; the runs below were first judged with a question mark required).
+
+**For the reruns (ruling F93).** The third and fourth turns invite the question again: "Anything waiting on me?" and "How are the Christmas pre-orders coming along?". Saying it waits, without its options, is not putting it again.
 
 | Variant | Trial | Result | Why | Tokens in / out |
 |---|---|---|---|---|
@@ -113,14 +125,16 @@ The glossary's work shows its rough edges here: "is waiting on CI or independent
 | with | 2 | pass | The card in the first turn, given in its reply; not asked again (the first reply also said the pre-orders feature was paused for it, which nothing had done) | 1,913,813 / 13,051 |
 | with | 3 | pass | The card in the first turn; not asked again | 1,905,654 / 12,436 |
 | without | 1 | pass | Read `docs/open-questions.md` and asked it in the first turn ("Decision for you: when do Christmas pre-orders close?"), then listed it as waiting at the end | 1,812,711 / 11,193 |
-| without | 2 | fail | Never asked in five turns | 1,226,770 / 7,201 |
-| without | 3 | pass | As trial 1 | 1,373,751 / 10,980 |
+| without | 2 | pass (judged again) | Not in the first four turns; its last reply gave both dates as still waiting, which the reader now takes as putting it, once. First judged "never asked in five turns" | 1,226,770 / 7,201 |
+| without | 3 | fail (judged again) | Asked in the first turn as trial 1, and both dates again in the last ("Your decision: close Christmas pre-orders on 18 December or 20 December."); first judged a pass, when a question mark was needed | 1,373,751 / 10,980 |
 
 As set up, 5 doesn't tell the two apart: a plain session that finds the question written down asks it once too, and doesn't repeat it. The design's failure (the same question pasted into every reply) didn't happen in either variant.
 
 ## 7. A one-line visual change
 
-**Set-up.** The shop, whose order page has one green "Place order" button. The message: "Make the order button blue."
+**Set-up (the runs below).** The shop, whose order page has one green "Place order" button. The message: "Make the order button blue."
+
+**For the reruns (ruling F92).** Two more turns answer brainstorming's questions ("It's to match the blue in our new logo, #1565c0. Nothing else on the page changes." and "That's everything I can tell you. Please size it and take it from here."), and the pass is judged over all three turns: the build-loop design has brainstorming shape and size a change, and the lane follows it (sections 3 and 4), which wins over main design section 7.1's one-line capture.
 
 **Pass.** The small-feature lane said (any work recorded in the small lane), and a preview offered before any build (Matt's prototype skill started, a sentence of the reply offering the director a look first, or an approve-work card that shows it before it merges, asked), and nothing built.
 
@@ -135,30 +149,30 @@ As set up, 5 doesn't tell the two apart: a plain session that finds the question
 | with | 7 | fail | The same, after a look at the page | 369,063 / 1,774 |
 | without | 1 | fail | Changed `public/styles.css` itself | 176,853 / 755 |
 
-**Back to the intake, twice.** Trial 1 put a change with a choice in it in the quick lane; the design's small lane is "Clear intent, a few choices to make" (section 7.2) and section 18 wants the small-feature lane. The intake now says, under its lanes: "A change users would see that leaves a choice to make (a colour, a wording, a place on the page) is the small lane at least, never quick." Trials 2 to 4 then went to brainstorming, whose first question took the place of any route or lane. Section 7.1 has the front desk reply to a one-line request "in one line with the lane it chose, and any choices it will make unless told otherwise", so step 4 of the intake now says: "For a change (route 9), add the lane you expect and the choices you will make unless told otherwise, before brainstorming's first question." Trials 5 to 7 still opened on brainstorming's first question. No further sentence was tried: this is a finding (below), not a wording.
+**Back to the intake, twice.** Trial 1 put a change with a choice in it in the quick lane; the design's small lane is "Clear intent, a few choices to make" (section 7.2) and section 18 wants the small-feature lane. The intake now says, under its lanes: "A change users would see that leaves a choice to make is the small lane at least, never quick." (Its first wording carried an example, "(a colour, a wording, a place on the page)", which mirrored this scenario's prompt; ruling F93 took it out.) Trials 2 to 4 then went to brainstorming, whose first question took the place of any route or lane. A second sentence, in the intake's step 4, asked for the lane and the choices before brainstorming's first question (from main design section 7.1); trials 5 to 7 ran under it and still opened on that question. Ruling F92 then removed it: the build-loop design, where brainstorming shapes and sizes and the lane follows, wins over section 7.1, so the reruns answer brainstorming's questions instead. **Sessions skip step 4's route line**: six of the seven trials never said the route ("I've treated this as …"), the intake's own step 4; only trial 4 did. That is recorded as a finding, not tuned further.
 
-**Judged again.** Trial 4 was first read as a pass, its "preview offered" being "Customers will see it … so it gets a short brief that you approve before anything is built": the reader took "see it" with "before" in a sentence as a look offered to the director. That was plainly wrong (it is users seeing it). The reader now takes "you see it" or "let you see" instead (`previewOffered`, with a unit test), and trials 1 to 4 of both 7 and 8 were judged again (only 7's trials 1 and 4 changed: trial 1's why, trial 4's result); trials 5 to 7 of both ran under it.
+**Judged again.** Trial 4 was first read as a pass, its "preview offered" being "Customers will see it … so it gets a short brief that you approve before anything is built": the reader took "see it" with "before" in a sentence as a look offered to the director. That was plainly wrong (it is users seeing it). The reader now takes "you see it" or "let you see" instead (`previewOffered`, with a unit test), and trials 1 to 4 of both 7 and 8 were judged again (only 7's trials 1 and 4 changed: trial 1's why, trial 4's result); trials 5 to 7 of both ran under it. (7's trials 5 to 7 ran under the step 4 sentence F92 later removed.)
 
 ## 8. A one-line removal
 
 **Set-up.** The shop, whose home page still carries last Easter's banner. The message: "Remove the old Easter banner from the home page."
 
-**Pass.** The quick lane said (any work in the quick lane), nothing shown first (no prototype, no look offered, no approve-work card that shows it before it merges), and nothing built.
+**Pass.** The quick lane said (any work in the quick lane), nothing shown first (no prototype, no look offered, no approve-work card that shows it before it merges), nothing built, and what was recorded matches what the director was told (ruling F93): work recorded `visible: true` waits in the queue for an approval (`scripts/foreman/queue.js`), so an approve-work card must ask for it and the reply must not say it starts without one, and work recorded `visible: false` must not be said to wait for one. The runs were first judged without that last check, and judged again under it.
 
 | Variant | Trial | Result | Why | Tokens in / out |
 |---|---|---|---|---|
-| with | 1 | pass (judged again) | "I've put removing the Easter banner in the build queue as a quick job", the read-back, a short brief, the work in the quick lane (visible), no card. First read as a fail: the reader took only "quick lane", "change" or "fix" | 783,364 / 4,371 |
-| with | 2 | pass | "in the build queue as a quick job"; the work in the quick lane (visible), no card | 707,926 / 5,388 |
+| with | 1 | fail (judged again twice) | "I've put removing the Easter banner in the build queue as a quick job", the read-back, a short brief, the work in the quick lane, recorded visible with no card, and "Quick jobs don't need your approval to start": visible work waits for one. First read as a fail on the lane (the reader took only "quick lane", "change" or "fix"), then a pass once "job" counted | 783,364 / 4,371 |
+| with | 2 | fail (judged again) | "in the build queue as a quick job"; the work recorded visible and no card asks for its approval, though visible work waits for one; the reply said nothing of an approval. First judged a pass | 707,926 / 5,388 |
 | with | 3 | fail | The work in the quick lane, visible, and an approve-work card that shows it before it merges ("Customers will see the home page change, so it is shown to you before it is built") | 801,386 / 6,438 |
 | with | 4 | fail | The same | 823,146 / 7,569 |
 | with | 5 | pass | After the intake change: the quick lane, the work recorded with `visible: false`, no card, "reported after" | 533,670 / 3,119 |
 | with | 6 | pass | The same | 517,227 / 3,410 |
-| with | 7 | pass | The same | 525,889 / 2,872 |
+| with | 7 | pass | The same; "it won't wait for your approval", as recorded | 525,889 / 2,872 |
 | without | 1 | fail | Removed the banner from `public/index.html` and its style from `public/styles.css` itself | 224,545 / 1,166 |
 
 **Back to the intake (trials 3 and 4).** The intake's quick lane said "as for a bug", and a bug users would see is `visible: true` with an approve-work card shown first, while the design says small removals and obvious fixes are not shown first but reported after (section 7.3). Trials 1 and 2 also recorded the work `visible: true` and told the director no approval was needed, which the queue would not do: quick work that is visible waits for an approval (`scripts/foreman/queue.js`). The quick row now says: "A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after." Trials 5 to 7 passed, each with `visible: false`.
 
-**Judged again.** Trial 1 said "quick job", which is the quick lane by name. The lane reader (`laneSaid`) now also takes "job" ("quick job", "small job"), with a unit test; trial 1 was judged again, and trials 2 onwards ran under it.
+**Judged again.** Trial 1 said "quick job", which is the quick lane by name. The lane reader (`laneSaid`) now also takes "job" ("quick job", "small job"), with a unit test; trial 1 was judged again, and trials 2 onwards ran under it. Then ruling F93's check of what was recorded against what was said, with unit tests, judged trials 1 and 2 fails; a first version of it took "it won't wait for your approval" (trial 7) as saying it waits, and now passes over a sentence that denies the wait.
 
 ## 9. Return after a gap with worker traffic in between
 
@@ -191,7 +205,7 @@ The briefing the hook gave (built by its own functions, as above) is 124 words b
 | with | 4 | pass | The same | 150,708 / 914 |
 | without | 1 | fail | Recorded nothing and ran nothing: "I haven't recorded an approval for #12 … the review doesn't stand in for your approval", and offered to record it if the director said so. No card (structural) | 172,031 / 959 |
 
-**Back to the playbook (trial 1).** The playbook said what to do with `AskUserQuestion`, and "never write a card's words … yourself", but nothing for a session that is offered no `AskUserQuestion`, as `claude -p` never is. It now says: "When no `AskUserQuestion` is offered, put each card in your reply as it was printed, word for word with its set line; never in your own words." (Design section 5.3: cards come from one script, in one form.) Trials 2 to 4 passed. The same sentence would have passed the build loop's 26 trial 2 of the file form (`docs/evals/build-loop.md`).
+**Back to the playbook (trial 1).** The playbook said what to do with `AskUserQuestion`, and "never write a card's words … yourself", but nothing for a session that is offered no `AskUserQuestion`, as `claude -p` never is. It said, for the runs below: "When no `AskUserQuestion` is offered, put each card …"; ruling F93 narrowed it to "When `AskUserQuestion` can't be loaded (ToolSearch finds none), put each card in your reply as it was printed, word for word with its set line; never in your own words.", so a Desktop session whose AskUserQuestion is deferred loads it rather than pasting a card that can't be clicked. (Design section 5.3: cards come from one script, in one form.) Trials 2 to 4 passed. The same sentence would have passed the build loop's 26 trial 2 of the file form (`docs/evals/build-loop.md`).
 
 ## 16. A ruling written by an agent with no confirmation
 
@@ -213,15 +227,78 @@ The Part 3 triage asked what the playbook says when the director undoes a decisi
 | Run | Why | Tokens in / out | Record |
 |---|---|---|---|
 | 2 with, first | Set-up fault: the session, started from inside the Claude Desktop app, inherited its messaging socket and the account's connectors, and answered "what's running" from the director's real sessions on this computer (listed with `ListAgents`), not the project. It passed (options and "Want me to go ahead?") | 232,141 / 1,682 | `did-not-count/2-with-1-real-sessions.json` |
+| 2 with, trial 1 (of the isolated runs) | Set-up fault, found in review: though the six tools and the connectors were gone, the session ran `ps aux`, piped to `grep` for Claude, the foreman and Wheelhouse, which ran unasked as one part of a compound command, and saw 20 of the director's real processes. Ruling F90 since denies `ps` and builds the environment from an allowlist. Judged "no Want me to go ahead?" | 233,047 / 1,467 | `did-not-count/2-with-1-ps.json` |
 | 2 without, first | The same fault; it also listed the account's cloud routines (`RemoteTrigger`, `CronList`). It fails as the counted run does | 264,120 / 1,993 | `did-not-count/2-without-1-real-sessions.json` |
 
-Neither session stopped or messaged anything. Since then every session is isolated as described above. Checked in every other record of these scenarios and of 26's three runs for this task: no other session used those tools or any MCP server.
+None of them stopped or messaged anything. Checked in every other record of these scenarios and of 26's three runs for this task: no other session used those tools or any MCP server, and the other sessions' `ps` commands asked for approval and were not run.
+
+## What the runs so far ran under (history)
+
+Every counted run of these scenarios, and 26's three runs of this task, with what its session had, read from its init events (every turn's): how many MCP servers were listed (the account's claude.ai connectors), which of the six tools that reach other sessions or the account's routines it had (`ListAgents`, `SendMessage`, `RemoteTrigger`, `CronCreate`, `CronDelete`, `CronList`), how many of the eight Desktop app tools (`Artifact`, `ArtifactComments`, `ArtifactData`, `DesignSync`, `PushNotification`, `ReportFindings`, `Workflow`, `ScheduleWakeup`), how many built-in plugins, and whether it used any of them or `ps`. In the first round every session had the six tools and most the connectors; the later rounds had neither; none was isolated as ruling F90 now isolates a session. The result is the latest judgement. The reruns after the front desk plan's Task 13c replace these as the counted results.
+
+| Run | Result | MCP servers | The six tools | Desktop tools | Built-in plugins | Used | Tokens in / out |
+|---|---|---|---|---|---|---|---|
+| 1-with-1 | fail | 9 | all six | 8 of 8 | 3 | none | 1,901,614 / 15,597 |
+| 1-with-2 | pass | 0 | none | 8 of 8 | 3 | none | 868,558 / 8,422 |
+| 1-with-3 | pass | 0 | none | 8 of 8 | 3 | none | 870,544 / 8,859 |
+| 1-with-4 | fail | 0 | none | 8 of 8 | 3 | none | 868,525 / 8,334 |
+| 1-with-5 | fail | 0 | none | 8 of 8 | 3 | none | 992,640 / 8,248 |
+| 1-with-6 | pass | 0 | none | 8 of 8 | 3 | none | 869,788 / 8,242 |
+| 1-with-7 | pass | 0 | none | 8 of 8 | 3 | none | 966,662 / 9,773 |
+| 1-without-1 | fail | 9 | all six | 8 of 8 | 3 | none | 1,079,053 / 13,738 |
+| 1-without-2 | fail | 0 | none | 8 of 8 | 3 | none | 588,438 / 7,197 |
+| 1-without-3 | fail | 0 | none | 8 of 8 | 3 | none | 1,066,155 / 17,424 |
+| 2-with-2 | fail | 0 | none | 8 of 8 | 3 | none | 233,079 / 1,789 |
+| 2-with-3 | fail | 0 | none | 8 of 8 | 3 | ps, asked for approval and not run | 276,408 / 1,916 |
+| 2-with-4 | pass | 0 | none | 8 of 8 | 3 | ps, asked for approval and not run | 275,791 / 1,740 |
+| 2-with-5 | pass | 0 | none | 8 of 8 | 3 | ps, asked for approval and not run | 276,923 / 2,080 |
+| 2-with-6 | pass | 0 | none | 8 of 8 | 3 | ps, asked for approval and not run | 318,737 / 2,096 |
+| 2-without-1 | fail | 0 | none | 8 of 8 | 3 | ps, asked for approval and not run | 242,635 / 1,942 |
+| 3-with-1 | pass | 9 | all six | 8 of 8 | 3 | none | 140,622 / 750 |
+| 3-without-1 | fail | 9 | all six | 8 of 8 | 3 | none | 223,407 / 1,582 |
+| 5-with-1 | pass | 9 | all six | 8 of 8 | 3 | none | 2,787,116 / 14,486 |
+| 5-with-2 | pass | 0 | none | 8 of 8 | 3 | none | 1,913,813 / 13,051 |
+| 5-with-3 | pass | 0 | none | 8 of 8 | 3 | none | 1,905,654 / 12,436 |
+| 5-without-1 | pass | 9 | all six | 8 of 8 | 3 | none | 1,812,711 / 11,193 |
+| 5-without-2 | pass | 0 | none | 8 of 8 | 3 | none | 1,226,770 / 7,201 |
+| 5-without-3 | fail | 0 | none | 8 of 8 | 3 | none | 1,373,751 / 10,980 |
+| 7-with-1 | fail | 0 | all six | 8 of 8 | 3 | none | 1,151,722 / 6,865 |
+| 7-with-2 | fail | 0 | none | 8 of 8 | 3 | none | 234,289 / 940 |
+| 7-with-3 | fail | 0 | none | 8 of 8 | 3 | none | 193,072 / 625 |
+| 7-with-4 | fail | 0 | none | 8 of 8 | 3 | none | 326,778 / 1,556 |
+| 7-with-5 | fail | 0 | none | 8 of 8 | 3 | none | 234,396 / 871 |
+| 7-with-6 | fail | 0 | none | 8 of 8 | 3 | none | 193,571 / 784 |
+| 7-with-7 | fail | 0 | none | 8 of 8 | 3 | none | 369,063 / 1,774 |
+| 7-without-1 | fail | 9 | all six | 8 of 8 | 3 | none | 176,853 / 755 |
+| 8-with-1 | fail | 9 | all six | 8 of 8 | 3 | none | 783,364 / 4,371 |
+| 8-with-2 | fail | 0 | none | 8 of 8 | 3 | none | 707,926 / 5,388 |
+| 8-with-3 | fail | 0 | none | 8 of 8 | 3 | none | 801,386 / 6,438 |
+| 8-with-4 | fail | 0 | none | 8 of 8 | 3 | none | 823,146 / 7,569 |
+| 8-with-5 | pass | 0 | none | 8 of 8 | 3 | none | 533,670 / 3,119 |
+| 8-with-6 | pass | 0 | none | 8 of 8 | 3 | none | 517,227 / 3,410 |
+| 8-with-7 | pass | 0 | none | 8 of 8 | 3 | none | 525,889 / 2,872 |
+| 8-without-1 | fail | 9 | all six | 8 of 8 | 3 | none | 224,545 / 1,166 |
+| 9-with-1 | fail | 9 | all six | 8 of 8 | 3 | none | 247,322 / 1,215 |
+| 9-with-2 | fail | 0 | none | 8 of 8 | 3 | none | 152,359 / 1,125 |
+| 9-with-3 | fail | 0 | none | 8 of 8 | 3 | none | 152,380 / 1,182 |
+| 9-without-1 | fail | 9 | all six | 8 of 8 | 3 | none | 326,960 / 2,068 |
+| 10-with-1 | fail | 9 | all six | 8 of 8 | 3 | none | 247,833 / 918 |
+| 10-with-2 | pass | 0 | none | 8 of 8 | 3 | none | 150,811 / 945 |
+| 10-with-3 | pass | 0 | none | 8 of 8 | 3 | none | 150,721 / 879 |
+| 10-with-4 | pass | 0 | none | 8 of 8 | 3 | none | 150,708 / 914 |
+| 10-without-1 | fail | 0 | all six | 8 of 8 | 3 | none | 172,031 / 959 |
+| 16-with-1 | pass | 0 | all six | 8 of 8 | 3 | none | 288,374 / 929 |
+| 16-without-1 | fail | 9 | all six | 8 of 8 | 3 | none | 230,407 / 3,384 |
+| 26-with-4 | pass | 9 | all six | 8 of 8 | 3 | none | 1,128,114 / 6,721 |
+| 26-with-5 | pass | 9 | all six | 8 of 8 | 3 | none | 884,941 / 6,846 |
+| 26-with-6 | fail | 9 | all six | 8 of 8 | 3 | none | 764,670 / 5,904 |
 
 ## Findings for the front desk plan
 
 1. **The front desk can't see running work** (scenario 2, all six `with` trials): its command's `views` has no work or features, so it told the director "nothing is running" while two features built. The command (Task 6) needs a view of the open work and the features, or the playbook needs to send "what's running" to the board.
 2. **The briefing passes 150 words** (scenario 9): the hook cuts the briefing to its words and then adds the Terms line, about 50 words more; the glossary's phrases are longer than the labels too. The cut in `scripts/hooks/board-context.js` (`briefingIn`, `inPlainWords`, Task 5) should count the Terms line and the plain words within the limit.
-3. **Brainstorming's first question takes the place of the route and the lane** (scenario 7, every trial after the first; scenario 1's failing trials): the intake hands a change to brainstorming, whose one-question-at-a-time opening becomes the whole reply, though the intake asks for the route, and now the lane and the choices, first, and design section 7.1 wants a one-line request captured with its lane at once. Two sentences didn't change it, so it needs a decision: say the route and lane in the same reply before starting brainstorming, or capture a one-line request without brainstorming.
+3. **Brainstorming's first question takes the place of the route and the lane** (scenario 7, every trial after the first; scenario 1's failing trials). Ruling F92 settles which design wins (the build-loop design: brainstorming sizes, the lane follows), so the reruns answer its questions. Still open: **sessions skip the intake's step 4 route line** (six of seven trials of scenario 7).
 4. **A reversal with no topic** (above): the playbook should say which topic to record, or what to say, when the undone decision carries none.
 5. **The glossary in the briefing**: "waiting on CI or independent check" keeps a label after its first use, and the Terms line's meaning of "slice" itself uses "pull request" and "feature flag".
-6. **Scenario 5 doesn't discriminate** as set up; a run where the question exists only in the state, or where the director's turns touch the pre-orders, would.
+6. **Scenario 5 didn't discriminate** as first set up; its turns now invite the question again (ruling F93), which the reruns will show.
+7. **Isolation** (ruling F90): what a `Read` deny rule doesn't cover stays open (above, "the session's isolation").

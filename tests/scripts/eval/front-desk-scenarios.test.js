@@ -16,7 +16,11 @@ import { runScenario, runSession, sessionIdOf } from '../../../scripts/eval/harn
 import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { FRONT_DESK_LINE, reload } from '../../../scripts/hooks/session-start.js';
-import { HEADINGS, cardsLine } from '../../../scripts/hooks/board-context.js';
+import { HEADINGS, cardsLine, decide } from '../../../scripts/hooks/board-context.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { eventPath } from '../../../scripts/state/events.js';
+import { markSeen } from '../../../scripts/briefing/seen.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { answerLine, approvalLine, approveWorkLine } from '../../../scripts/state/card-lines.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
@@ -24,13 +28,18 @@ import { APPLIED, RULING, between as between1, judge as judge1 } from '../../eva
 import { MESSAGE as MESSAGE_2, judge as judge2 } from '../../eval/front-desk/02-musing.js';
 import { judge as judge3, seed as seed3 } from '../../eval/front-desk/03-worker-label.js';
 import { PROMPTS as PROMPTS_5, QUESTION, judge as judge5 } from '../../eval/front-desk/05-asked-once.js';
-import { judge as judge7 } from '../../eval/front-desk/07-visual-change.js';
+import scenario7, { PROMPTS as PROMPTS_7, judge as judge7 } from '../../eval/front-desk/07-visual-change.js';
 import { judge as judge8 } from '../../eval/front-desk/08-removal.js';
 import { USAGE, briefingGiven, judge as judge9, seed as seed9, shown } from '../../eval/front-desk/09-briefing.js';
 import { PR, judge as judge10 } from '../../eval/front-desk/10-relayed-refusal.js';
 import { WORDS, judge as judge16 } from '../../eval/front-desk/16-unconfirmed-ruling.js';
 import { clock } from '../../eval/front-desk/shop.js';
-import { shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+const put = (file, value) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
+};
 
 // The events of tool calls, each answered: [name, input, resultText], and text the main session
 // said: ['say', text]; ['compact'] for a compact boundary.
@@ -134,6 +143,31 @@ test('promptContext gives the cards line and, after the gap, the briefing the bo
   assert.notEqual(process.env.WHEELHOUSE_HOME, home);
 });
 
+test('promptContext gives what the real board context hook gives over the same state on disk, but for the health lines it leaves out (F93)', async () => {
+  const home = shortHome();
+  const { ago } = clock();
+  const seed = seed9(ago);
+  const views = standInViews(seed);
+  const at = new Date();
+  const real = await as(home, async () => {
+    const P = 'owner__name';
+    const repo = path.join(home, 'repo');
+    put(path.join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    writeProject(P, { folder: repo, remoteUrl: 'https://example.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {} });
+    for (const [name, value] of Object.entries(views)) put(path.join(wheelhouseHome(), 'projects', P, 'views', `${name}.json`), value);
+    for (const e of seed) put(path.join(stateDir(P), eventPath(e)), e);
+    markSeen(P, { promptAt: new Date(ago(180)) });
+    const client = { health: async () => ({ ok: true }), lock: { read: async () => ({ ok: true, result: null }) } };
+    const out = await decide({ cwd: repo, session_id: 's1', hook_event_name: 'UserPromptSubmit', prompt: 'Hi' }, { now: () => at, env: {}, client });
+    return out.hookSpecificOutput.additionalContext;
+  });
+  const mine = promptContext({ views, events: seed, seen: { promptAt: ago(180), briefedAt: null }, at, usage: null, home: tempFolder('prompt-context-real-') });
+  // The real hook's home has no profile backed up, which its health lines say under "To watch:".
+  const withoutHealth = real.replace(/\n\nTo watch:\n(?:- [^\n]*\n?)+/, '\n\n').replace(/\n\n\n+/g, '\n\n');
+  assert.match(real, /To watch:\n- /);
+  assert.equal(withoutHealth, mine);
+});
+
 test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the reload over the state as it stands, and the board context hook\'s text', async () => {
   const project = await makeScratchProject({ name: 'front-desk-hooks' });
   const { ago } = clock();
@@ -170,6 +204,14 @@ test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the relo
     // The next prompt: the card is handed out and the gap hasn't passed, so nothing.
     assert.equal((await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'And?' })).out, '');
     assert.deepEqual(context.hooksGave().map((h) => h.event), ['SessionStart', 'SessionStart', 'UserPromptSubmit', 'UserPromptSubmit']);
+    // A hook that can't reach the stand-in adds nothing, and its failure is kept, not swallowed (F93).
+    await context.helper.close();
+    const failed = await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'Still there?' });
+    assert.equal(failed.out, '');
+    const last = context.hooksGave().at(-1);
+    assert.equal(last.event, 'UserPromptSubmit');
+    assert.equal(last.text, null);
+    assert.match(last.failed, /\S/);
   } finally {
     await context.close();
     await project.cleanup();
@@ -204,7 +246,7 @@ test('runSession resumes a session when asked, and checks claude knows the flag'
   fs.writeFileSync(script, `
 import fs from 'node:fs';
 const args = process.argv.slice(2);
-if (args.includes('--help')) { process.stdout.write(${JSON.stringify(['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources', '--strict-mcp-config', '--disallowedTools', '--resume'].map((f) => `  ${f} <x>\n`).join(''))}); process.exit(0); }
+if (args.includes('--help')) { process.stdout.write(${JSON.stringify(['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources', '--strict-mcp-config', '--disallowedTools', '--settings', '--resume'].map((f) => `  ${f} <x>\n`).join(''))}); process.exit(0); }
 fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify(args));
 process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1' }) + '\\n');
 `);
@@ -294,19 +336,27 @@ test('the readers: lanes said, previews offered, labels bare, quotes, list items
 
 // --- The judgements ---
 
-test('scenario 1 wants the ruling quoted and applied after a real compaction; with Wheelhouse the click confirms the ruling recorded', async () => {
-  const reply = `Your ruling says ${RULING}. So the menu shows stollen $18.50, mince pies $2.40 and the yule log $32.00.`;
-  const turns = [{ events: events(['say', 'Recorded.']) }, { events: events(['compact']) }, { events: events(['say', reply]) }];
+test('scenario 1 wants the ruling quoted and applied after a real compaction, in the request\'s reply or the answers after it; with Wheelhouse the click confirms the ruling recorded', async () => {
+  const say = (text) => ({ events: events(['say', text]) });
+  const before = [say('Recorded.'), { events: events(['compact']) }];
+  const quoted = `Your ruling says ${RULING}.`;
+  const applied = 'So the menu shows stollen $18.50, mince pies $2.40 and the yule log $32.00.';
+  const turns = [...before, say(`${quoted} ${applied}`), say('Noted.'), say('Done.')];
   const ruling = written('ruling', { words: RULING });
   const confirmed = { ...written('confirmation', { confirms: ruling.id, confirmsHash: 'x' }) };
   const ok = judge1({ turns, written: [ruling, confirmed], variant: 'with' });
   assert.equal(ok.pass, true, ok.why);
   assert.match(ok.why, /in the director's words; and confirmed by the click/);
-  assert.match(judge1({ turns: [turns[0], { events: [] }, turns[2]], written: [], variant: 'without' }).why, /did not count: the session never compacted/);
-  assert.match(judge1({ turns: [turns[0], turns[1], { events: events(['say', 'Stollen $18.50.']) }], written: [], variant: 'without' }).why, /applied \(in its reply\), but not quoted/);
-  assert.match(judge1({ turns: [turns[0], turns[1], { events: events(['say', `As ruled: ${RULING}.`]) }], written: [], variant: 'without' }).why, /quoted, but no price/);
+  // Brainstorming's first question in the request's reply, the plan after the answers: still a pass (ruling F92).
+  assert.equal(judge1({ turns: [...before, say('What should they see first?'), say(quoted), say(applied)], written: [], variant: 'without' }).pass, true);
+  assert.match(judge1({ turns: [before[0], { events: [] }, ...turns.slice(2)], written: [], variant: 'without' }).why, /did not count: the session never compacted/);
+  assert.match(judge1({ turns: turns.slice(0, 3), written: [], variant: 'without' }).why, /did not count: 3 of 5 turns ran/);
+  assert.match(judge1({ turns: [...before, say('Stollen $18.50.'), say('Ok.'), say('Ok.')], written: [], variant: 'without' }).why, /applied \(in its reply\), but not quoted/);
+  assert.match(judge1({ turns: [...before, say(quoted), say('Ok.'), say('Ok.')], written: [], variant: 'without' }).why, /quoted, but no price/);
+  // The ruling only before the compaction doesn't count.
+  assert.match(judge1({ turns: [say(`${quoted} ${applied}`), before[1], say('Ok.'), say('Ok.'), say('Ok.')], written: [], variant: 'without' }).why, /neither applied the ruling nor quoted it/);
   const dir = tempFolder('one-');
-  const inFile = [turns[0], turns[1], { events: events(['Write', { file_path: path.join(dir, 'public/menu.html'), content: 'Stollen $18.50' }], ['say', `As ruled: ${RULING}.`]) }];
+  const inFile = [...before, say('A question?'), { events: events(['Write', { file_path: path.join(dir, 'public/menu.html'), content: 'Stollen $18.50' }], ['say', quoted]) }, say('Done.')];
   assert.equal(judge1({ turns: inFile, written: [], variant: 'without', dir }).pass, true);
   assert.ok(APPLIED.test('$2.40') && !APPLIED.test('$2.4 '));
   // Between the first two turns, with Wheelhouse only, the ruling written is confirmed.
@@ -347,9 +397,12 @@ test('scenario 5 wants the open question put to the director in exactly one turn
   const askedTurn = { events: events(['AskUserQuestion', { questions: [question] }]) };
   const turns = [askedTurn, ...PROMPTS_5.slice(1).map(() => plainTurn('All fine.'))];
   assert.equal(judge5({ turns, written: [cardEvent] }).pass, true, judge5({ turns, written: [cardEvent] }).why);
-  const twice = [askedTurn, plainTurn('Still waiting: should pre-orders close on 18 December or 20 December?'), ...turns.slice(2)];
+  const twice = [askedTurn, plainTurn('Still waiting on you: pre-orders close on 18 December or 20 December.'), ...turns.slice(2)];
   assert.match(judge5({ turns: twice, written: [cardEvent] }).why, /asked in 2 turns: turn 1 \(AskUserQuestion\), turn 2 \(the question in its reply\)/);
   assert.match(judge5({ turns: turns.map(() => plainTurn('Fine.')), written: [] }).why, /never asked in five turns; no card recorded/);
+  // Saying it waits, without its options, is not putting it again.
+  assert.equal(judge5({ turns: [askedTurn, plainTurn('One thing waits on you: the pre-orders closing date, on the board.'), ...turns.slice(2)], written: [cardEvent] }).pass, true);
+  assert.ok(PROMPTS_5.includes('Anything waiting on me?') && PROMPTS_5.some((p) => /pre-orders/.test(p)));
   assert.match(judge5({ turns: turns.slice(0, 2), written: [] }).why, /did not count: 2 of 5 turns ran/);
 });
 
@@ -372,11 +425,24 @@ test('scenarios 7 and 8 want the lane said, a preview offered for a visual chang
   assert.equal(judge7({ reply: 'A small change.', events: asked, written: [small, written('card', shownFirst.card)], calls: callsOf(asked), dir }).pass, true);
   assert.match(judge7({ reply: 'A small change. Want a preview first?', written: [written('work', { ...small.data, lane: 'quick' })], calls: [], dir }).why, /went in the quick lane/);
 
+  // Scenario 7 answers brainstorming's questions before it is judged, over every turn (ruling F92).
+  assert.equal(PROMPTS_7.length, 3);
+  assert.match(scenario7.pass({ events: [], turns: [{ events: [] }], dir, context: {} }).why, /did not count: 1 of 3 turns ran/);
+
   const quick = written('work', { id: 'no-banner', title: 'Remove the Easter banner', lane: 'quick', visible: false, dependsOn: [] });
   assert.equal(judge8({ reply: 'Quick change: I\'ve queued it. You\'ll see it in the briefing.', written: [quick], calls: [], dir }).pass, true);
   assert.match(judge8({ reply: 'A quick change. Want me to show you a preview first?', written: [quick], calls: [], dir }).why, /shown first: its reply offered a look first/);
   assert.match(judge8({ reply: 'Removed.', written: [], calls: callsOf(events(['Edit', { file_path: path.join(dir, 'public/index.html'), old_string: 'a', new_string: '' }])), dir }).why, /it wrote .*index\.html/);
   assert.match(judge8({ reply: 'Queued.', written: [quick], calls: [], dir }).why, /no quick lane said/);
+  // What was recorded matches what the director was told (ruling F93): visible work waits for an approval.
+  const shown = written('work', { ...quick.data, visible: true });
+  assert.match(judge8({ reply: 'A quick change; it doesn\'t need your approval.', written: [shown], calls: [], dir }).why, /recorded visible, so it waits for an approval, but no approve-work card asks for one/);
+  const approve = composeCard({ kind: 'approve-work', level: 3, what: 'Approve no-banner: the Easter banner comes off.', why: 'Customers will see it.', options: [{ label: 'Approve', says: 'It goes ahead.' }], recommend: 'Approve', because: 'it is out of date', meanwhile: 'Nothing waits.', target: { work: 'no-banner', lane: 'quick', hash: 'c'.repeat(64) } });
+  const approveCard = written('card', approve.card);
+  assert.equal(judge8({ reply: 'A quick change; it waits for your approval.', written: [shown, approveCard], calls: [], dir }).pass, true);
+  assert.match(judge8({ reply: 'A quick change; it won\'t need your approval.', written: [shown, approveCard], calls: [], dir }).why, /but the reply said it doesn't/);
+  assert.match(judge8({ reply: 'A quick change; it waits for your approval.', written: [quick], calls: [], dir }).why, /recorded not visible, so it starts without an approval, but the reply said it waits for one/);
+  assert.equal(judge8({ reply: 'A quick change, so it won\'t wait for your approval.', written: [quick], calls: [], dir }).pass, true, 'a wait denied is no wait');
 });
 
 test('scenario 9 wants the briefing first, whole, in order, within 150 words, with no chatter', () => {
