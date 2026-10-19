@@ -10,22 +10,24 @@
 // helper (stand-in-helper.js) on a socket in a Wheelhouse home of its own,
 // reached through WHEELHOUSE_HOME, whose state starts with the scenario's
 // events; and the session's local allow rules. **With Wheelhouse** a scratch
-// plugin named `wheelhouse` holds the intake skill (skills/intake/SKILL.md),
-// the card lines (scripts/state/card-lines.js) and the front desk's command
-// (scripts/frontdesk/cli.js, running the stand-in in front-desk-command.js),
-// and the session's system prompt says it is Wheelhouse's front desk: the
-// front desk plan's playbook and session-start line that will say so are not
-// built yet. **Without**, no plugin of Wheelhouse's and a plain prompt.
+// plugin named `wheelhouse` holds what a real front desk session uses: the
+// front desk's command (scripts/frontdesk/cli.js) with what it imports and
+// reads, the intake and front-desk skills, and a session start hook that gives
+// the line the real session start's reload gives a front desk session over
+// this state (session-start.js, `reload`). The real session start and the
+// board context hook need a real Wheelhouse home, and the card check would
+// never run, as `claude -p` offers no AskUserQuestion, so they stay out.
+// **Without**, no plugin of Wheelhouse's and a plain prompt.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
-import { ATTRIBUTION_OFF } from '../protection/settings.js';
+import { ATTRIBUTION_OFF, frontDeskCommand } from '../protection/settings.js';
 import { helperAddress } from '../lib/paths.js';
 import { briefHash } from '../feature/files.js';
+import { reload } from '../hooks/session-start.js';
 import { locateSuperpowers } from './harness.js';
-import { plainEvent, startStandInHelper } from './stand-in-helper.js';
+import { plainEvent, standInViews, startStandInHelper } from './stand-in-helper.js';
 import { REPO_ROOT, callsOf, filesWritten } from './feature-project.js';
 import { assertUnderTmp } from '../../probes/lib/scratch.js';
 
@@ -49,12 +51,17 @@ const PROJECT_FILES = {
 
 // What the session may run without asking, in the project's local settings (claude -p ignores
 // allow rules in a committed .claude/settings.json; check 25), and, with Wheelhouse, reading
-// the scratch plugin's files (the card lines), as the real plugin's would be read.
+// the scratch plugin's files, as the real plugin's would be read, and the front desk's command
+// by the rule the real local settings hold.
 function allowRules(plugin) {
   const allow = ['Bash(git *)', 'Bash(node *)', 'Bash(npm *)', 'Bash(ls *)', 'Bash(mkdir *)', 'Bash(pwd)'];
   if (plugin) {
     // An absolute path in a Read rule starts with two slashes; the temporary folder has two spellings on macOS.
-    for (const at of new Set([plugin, realOr(plugin)])) allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
+    for (const at of new Set([plugin, realOr(plugin)])) {
+      allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
+      const command = frontDeskCommand(at);
+      if (command !== null) allow.push(`Bash(${command}:*)`);
+    }
   }
   try {
     const skills = path.join(locateSuperpowers(), 'skills');
@@ -68,22 +75,50 @@ export function seedEvent(kind, data, at) {
   return plainEvent(kind, data, new Date(at));
 }
 
-// The system prompts. Each is one line with no double quotes (see runSession).
-export function frontDeskPrompt(pluginRoot) {
-  const cli = path.join(pluginRoot, 'scripts', 'frontdesk', 'cli.js');
-  const lines = path.join(pluginRoot, 'scripts', 'state', 'card-lines.js');
-  return [
-    'You are Wheelhouse\'s front desk for this project: the one session the director, its product owner, talks to.',
-    'Use the wheelhouse:intake skill on every message from the director, before replying and before any other skill.',
-    `Your commands, each run on its own from the project's folder and written out in full, with no shell variables: node '${cli}' similar '<one request>' (the intake's duplicate check over open work, ideas and rejections);`,
-    `node '${cli}' views [work|ideas|rejections|questions] (what the project's state holds);`,
-    `node '${cli}' record <kind> '<data as JSON>' (records a plain event in the project's state, such as work, amendment, idea or incident; run the command with no arguments to see what each carries);`,
-    `node '${cli}' hash <file> (the hash a work event's doc or an amendment names for a document).`,
-    `The cards' lines are in ${lines}. This session has no card tool yet: put each card to the director in your reply, its line first, word for word.`,
-  ].join(' ');
+// The system prompt appended without Wheelhouse: one line with no double quotes (see runSession).
+// With Wheelhouse nothing is appended: the session start hook names the playbook.
+export const PLAIN_PROMPT = 'You help the director, this project\'s product owner, with the project.';
+
+// The repository's files `entries` import, each import followed, relative to the repository:
+// what a copy of them needs to run.
+export function importClosure(entries, root = REPO_ROOT) {
+  const found = new Set();
+  const todo = [...entries];
+  while (todo.length > 0) {
+    const file = todo.pop();
+    if (found.has(file) || !fs.existsSync(path.join(root, file))) continue;
+    found.add(file);
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    for (const m of text.matchAll(/\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)) {
+      todo.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1] ?? m[2])));
+    }
+  }
+  return [...found].sort();
 }
 
-export const PLAIN_PROMPT = 'You help the director, this project\'s product owner, with the project.';
+// What the scratch plugin holds of the repository's: the skills, the front desk's command with
+// what it imports, and the files read beside them (the glossary's starter).
+export const PLUGIN_FILES = [
+  'skills/intake/SKILL.md',
+  'skills/front-desk/SKILL.md',
+  ...importClosure(['scripts/frontdesk/cli.js']),
+  'templates/glossary.json',
+];
+
+// The session start hook's script: the context the real session start gives, worked out at set-up.
+function reloadScript(text) {
+  const answer = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } };
+  return `// hooks/reload.js\n// The real session start's reload for this evaluation's state, worked out when it was set up.\nprocess.stdout.write(${JSON.stringify(JSON.stringify(answer))});\n`;
+}
+
+const HOOKS = {
+  hooks: {
+    SessionStart: [{
+      matcher: 'startup|resume|compact|clear|fork',
+      hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/reload.js"', timeout: 10 }],
+    }],
+  },
+};
 
 // Sets `dir`, the scratch project, up as the project's main checkout for the front desk, and
 // starts the stand-in helper. Options:
@@ -93,10 +128,12 @@ export const PLAIN_PROMPT = 'You help the director, this project\'s product owne
 //   worktree    null, or { work, files }: a feature building in .claude/worktrees/<work>,
 //               on feature/<work>, its files committed there
 // Resolves with the context runScenario takes: { env, pluginDirs, appendSystemPrompt, helper,
-// seededIds, evidence, close }.
+// seededIds, evidence, close }, with `reload`, the session start's text, with Wheelhouse.
 export async function setUpFrontDesk(dir, variant, { files = {}, seed = [], approved = {}, worktree = null } = {}) {
   assertUnderTmp(dir);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-'));
+  // By its real path: the command runs nothing when started through a link in its path (the
+  // temporary folder is one on macOS), as it compares its own address with the one it was given.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-')));
   assertUnderTmp(root);
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { recursive: true });
@@ -125,24 +162,28 @@ export async function setUpFrontDesk(dir, variant, { files = {}, seed = [], appr
     }
     const pluginDirs = [];
     let appendSystemPrompt = PLAIN_PROMPT;
+    let reloadText = null;
     const plugin = variant === 'with' ? path.join(root, 'plugin') : null;
     if (plugin) fs.mkdirSync(plugin, { recursive: true });
     write(dir, '.claude/settings.local.json', `${JSON.stringify({ permissions: { allow: allowRules(plugin) }, ...ATTRIBUTION_OFF }, null, 2)}\n`);
     if (plugin) {
-      write(plugin, '.claude-plugin/plugin.json', `${JSON.stringify({ name: 'wheelhouse', version: '0.0.0', description: 'Wheelhouse\'s front desk: the intake, for one evaluation run.' }, null, 2)}\n`);
-      write(plugin, 'skills/intake/SKILL.md', fs.readFileSync(path.join(REPO_ROOT, 'skills', 'intake', 'SKILL.md'), 'utf8'));
-      write(plugin, 'scripts/state/card-lines.js', fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'state', 'card-lines.js'), 'utf8'));
-      const command = pathToFileURL(path.join(REPO_ROOT, 'scripts', 'eval', 'front-desk-command.js')).href;
-      write(plugin, 'scripts/frontdesk/cli.js', `// scripts/frontdesk/cli.js\nimport { main } from '${command}';\nmain(process.argv.slice(2)).then((code) => { process.exitCode = code; });\n`);
+      write(plugin, '.claude-plugin/plugin.json', `${JSON.stringify({ name: 'wheelhouse', version: '0.0.0', description: 'Wheelhouse\'s front desk, for one evaluation run.' }, null, 2)}\n`);
+      for (const file of PLUGIN_FILES) write(plugin, file, fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'));
+      reloadText = reload({ views: standInViews(seed, approved), stop: null, notes: [], frontDesk: true });
+      write(plugin, 'hooks/hooks.json', `${JSON.stringify(HOOKS, null, 2)}\n`);
+      write(plugin, 'hooks/reload.js', reloadScript(reloadText));
       pluginDirs.push(plugin);
-      appendSystemPrompt = frontDeskPrompt(plugin);
+      appendSystemPrompt = undefined;
     }
 
     const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
     helper = await startStandInHelper({ address, state: { events: seed, approved } });
     const seededIds = new Set(seed.map((e) => e.id));
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
-    return { env: { WHEELHOUSE_HOME: home }, pluginDirs, appendSystemPrompt, helper, seededIds, evidence, close };
+    return {
+      env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }),
+      helper, seededIds, evidence, close,
+    };
   } catch (error) {
     await close();
     throw error;
@@ -170,17 +211,27 @@ export function replyText(events) {
     .join('\n\n');
 }
 
-function strings(value) {
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap(strings);
-  if (value && typeof value === 'object') return Object.values(value).flatMap(strings);
-  return [];
-}
+// The cards the session composed and recorded: card events, which only `cli.js card` and `cli.js
+// cards` write (`record` refuses the kind), each as its data.
+export const cardsRecorded = (written) => written.filter((e) => e.kind === 'card').map((e) => e.data);
 
-// What the main session composed: its reply text and every text in its own tool calls' input.
-export function composedText(events) {
-  const inputs = callsOf(events).filter((call) => !call.subagent).flatMap((call) => strings(call.input));
-  return [replyText(events), ...inputs].join('\n');
+const ASK = 'AskUserQuestion';
+
+// How a recorded card was put to the director, or null when it never was: an AskUserQuestion call
+// of the main session's holding its question as composed; else, since `claude -p` offers no
+// AskUserQuestion (Claude Code 2.1.302), the card in its reply (its set line, its first part, or
+// every one of its options by label), or a search for that tool.
+export function howAsked(events, card) {
+  const calls = callsOf(events).filter((call) => !call.subagent);
+  const questions = calls.filter((call) => call.name === ASK).flatMap((call) => (Array.isArray(call.input.questions) ? call.input.questions : []));
+  if (questions.some((q) => q?.question === card.question)) return ASK;
+  const reply = replyText(events);
+  const first = String(card.question ?? '').split('\n')[0];
+  const labels = Array.isArray(card.options) ? card.options.filter((l) => typeof l === 'string') : [];
+  if ((typeof card.line === 'string' && reply.includes(card.line)) || (first !== '' && reply.includes(first.replace(/^What this is: /, '')))
+    || (labels.length > 0 && labels.every((l) => reply.includes(l)))) return 'in its reply';
+  if (calls.some((call) => call.name === 'ToolSearch' && new RegExp(ASK, 'i').test(String(call.input.query ?? '')))) return `a search for ${ASK}`;
+  return null;
 }
 
 // The skills a call started (`Skill`), by name.

@@ -62,7 +62,9 @@ export function judge({ reply, written, calls, dir, variant }) {
   const notes = [];
   const skills = skillsStarted(calls);
   if (variant === 'with') notes.push(skills.some((s) => /intake/.test(s)) ? 'it started the intake' : 'it did not start the intake');
-  const kinds = written.map((e) => (e.kind === 'work' ? `work ${e.data?.id} (${e.data?.lane})` : `${e.kind}${e.data?.work ? ` ${e.data.work}` : e.data?.key ? ` ${e.data.key}` : ''}`));
+  // A card is named by its kind; the cards asked mark goes without saying.
+  const kinds = written.filter((e) => e.kind !== 'asked').map((e) => (e.kind === 'work' ? `work ${e.data?.id} (${e.data?.lane})`
+    : e.kind === 'card' ? `card (${e.data?.kind})` : `${e.kind}${e.data?.work ? ` ${e.data.work}` : e.data?.key ? ` ${e.data.key}` : ''}`));
   notes.push(kinds.length > 0 ? `recorded: ${kinds.join(', ')}` : 'recorded nothing');
   const tail = ` (${notes.join('; ')})`;
 

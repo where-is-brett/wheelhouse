@@ -2,7 +2,8 @@
 // Scenario 35 (design sections 3, 4 and 15): the director approves a written
 // design at the front desk. Pass: a `work` event in the state naming the design
 // (its path, and its hash as the file stands), and no `superpowers:writing-plans`
-// started at the front desk: the feature session writes the plan.
+// started at the front desk: the feature session writes the plan. The judgement
+// also names the approval card recorded for the work, and how it was asked.
 // Run it with `npm run eval -- 35 --variant with` and `--variant without`.
 //
 // The front desk works in the bakery's order book (bakery.js). The design is
@@ -15,7 +16,7 @@
 import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import { callsOf } from '../../../scripts/eval/feature-project.js';
 import {
-  buildDispatches, codeWrites, composedText, hashOfFile, sameFile, seedEvent, setUpFrontDesk, skillsStarted, writtenEvents,
+  buildDispatches, cardsRecorded, codeWrites, hashOfFile, howAsked, sameFile, seedEvent, setUpFrontDesk, skillsStarted, writtenEvents,
 } from '../../../scripts/eval/front-desk.js';
 import { approveWorkLine } from '../../../scripts/state/card-lines.js';
 import { FILES, OPENING_HOURS, doc } from './bakery.js';
@@ -58,8 +59,9 @@ side of 1 November and of the pick-up days.
 
 export const MESSAGE = `I've read the Christmas pre-orders design (${DESIGN.path}). It's approved: go ahead.`;
 
-// The pass, from the events written and the calls.
-export function judge({ composed, written, calls, dir, variant }) {
+// The pass, from the events written and the calls. The judgement also names the approval card
+// recorded for the work, and how it was put to the director.
+export function judge({ events = [], written, calls, dir, variant }) {
   const notes = [];
   const skills = skillsStarted(calls);
   if (variant === 'with') notes.push(skills.some((s) => /intake/.test(s)) ? 'it started the intake' : 'it did not start the intake');
@@ -78,9 +80,11 @@ export function judge({ composed, written, calls, dir, variant }) {
   const now = hashOfFile(dir, DESIGN.path);
   const work = works.at(-1);
   if (work.data.doc.hash !== now) return { pass: false, why: `the work event names the design with hash ${String(work.data.doc.hash).slice(0, 12)}, not the file's ${String(now).slice(0, 12)}${tail()}` };
-  const line = approveWorkLine(work.data.id, work.data.lane, now);
-  const card = [line, approveWorkLine(work.data.id, work.data.lane, now, { shownFirst: true })].some((l) => composed.includes(l));
-  notes.push(`work ${work.data.id} in the ${work.data.lane} lane${card ? ', with its approval card line' : ', no approval card line'}`);
+  const lines = [false, true].map((shownFirst) => approveWorkLine(work.data.id, work.data.lane, now, { shownFirst }));
+  const card = cardsRecorded(written).findLast((c) => lines.includes(c.line));
+  const how = card === undefined ? null : howAsked(events, card);
+  const asked = card === undefined ? 'no approval card recorded' : `its approval card recorded${how === null ? ', never put to the director' : ` and asked (${how})`}`;
+  notes.push(`work ${work.data.id} in the ${work.data.lane} lane, ${asked}`);
   return { pass: true, why: `a work event names the design, and no writing-plans started${tail()}` };
 }
 
@@ -107,6 +111,6 @@ export default {
   maxTurns: 40,
 
   pass: ({ events, dir, variant, context }) => judge({
-    composed: composedText(events), written: writtenEvents(context), calls: callsOf(events), dir, variant,
+    events, written: writtenEvents(context), calls: callsOf(events), dir, variant,
   }),
 };

@@ -2,11 +2,12 @@
 // A stand-in for the host helper, for evaluation runs only: there is no real
 // host in an evaluation. It answers the few requests a feature session's
 // commands make (scripts/feature/cli.js: push, open-pr, answer and the
-// provenance asked for by report) and the front desk's stand-in command makes
-// (scripts/eval/front-desk-command.js: writing a plain event and reading the views),
-// on the same kind of socket the real helper uses, records each one, and
-// answers as a helper with a host behind it would. Its state is a list of
-// events in memory, not a state branch.
+// provenance asked for by report) and the front desk's command makes
+// (scripts/frontdesk/cli.js: writing a plain event, a card and the cards asked,
+// reading the views and the card events, the director's profile, and a pull
+// request's head), on the same kind of socket the real helper uses, records
+// each one, and answers as a helper with a host behind it would. Its state is
+// a list of events in memory, not a state branch.
 // It reaches no host and signs nothing. A scenario starts it in its setup,
 // points the session at it through WHEELHOUSE_HOME, and reads its records in
 // its pass. Never used by the product, and not run by `npm test` except in its
@@ -17,10 +18,11 @@
 // not be running on the same computer while an evaluation runs there.
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { PLAIN_KINDS } from '../state/events.js';
+import { PLAIN_KINDS, PROTECTED_KINDS, makeEvent } from '../state/events.js';
 import { buildViews } from '../state/views.js';
 
 // The commit `ref` names in the repository at `dir`, or null.
@@ -61,6 +63,25 @@ export function plainEvent(kind, data, at = new Date()) {
   return { v: 1, id: crypto.randomUUID(), at: at.toISOString(), computer: STAND_IN_COMPUTER, kind, data };
 }
 
+const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+// Why a plain event's data is refused, as the real helper's makeEvent refuses it, or null. makeEvent
+// checks the shape, then names this computer from WHEELHOUSE_HOME, so the stand-in's own home is
+// named for that moment, and nothing is written to the real one.
+function shapeProblem(kind, data, home) {
+  const was = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    makeEvent({ kind, data });
+    return null;
+  } catch (error) {
+    return error.message;
+  } finally {
+    if (was === undefined) delete process.env.WHEELHOUSE_HOME;
+    else process.env.WHEELHOUSE_HOME = was;
+  }
+}
+
 // The views of `events`, as /state/views answers them. No click is signed in an evaluation, so
 // `approved` ({ work: hash }) says which work the director approved before the run, and in
 // what document: that work shows as approved while its latest work event still names that hash.
@@ -87,6 +108,9 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
   const records = [];
   const events = [...(state.events ?? [])];
   const approved = { ...(state.approved ?? {}) };
+  // A home of its own, where checking an event's shape may name a stand-in computer.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-stand-in-'));
+  const opened = new Map();
   let nextPr = 1;
   const record = (entry) => {
     records.push({ at: new Date().toISOString(), ...entry });
@@ -126,7 +150,17 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
       const number = nextPr;
       nextPr += 1;
       record({ route: 'pr/open', head: body.head, sha, title: body.title ?? null, body: body.body ?? null, number });
+      opened.set(number, sha);
       return { ok: true, result: { number, url: `https://host.invalid/pull/${number}` } };
+    },
+    // The front desk's card for an approval names the pull request's head: { cwd, number }. Only a
+    // pull request opened through the stand-in is known, open at the commit it was opened at.
+    'POST /pr/state': (body) => {
+      const sha = opened.get(body.number) ?? null;
+      record({ route: 'pr/state', number: body.number ?? null, sha });
+      return sha === null
+        ? { ok: false, refused: `there is no pull request #${body.number}` }
+        : { ok: true, result: { headSha: sha, state: 'open', mergeable: 'clean' } };
     },
     // cli.js answer: { cwd, questionId }.
     'POST /state/answer': (body) => {
@@ -134,23 +168,40 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
       record({ route: 'state/answer', questionId: body.questionId ?? null, answer });
       return { ok: true, answer };
     },
-    // The front desk's record: { project | cwd, kind, data }. A plain kind only, as the real
-    // helper takes; the command checked the event's shape before sending it.
+    // The front desk's record, card and cards asked: { project | cwd, kind, data, id? }. A plain
+    // kind only, in its shape, under the caller's id when one is given, as the real helper takes it.
     'POST /state/write': (body) => {
-      const { kind, data } = body;
-      if (!PLAIN_KINDS.includes(kind) || data === null || typeof data !== 'object' || Array.isArray(data)) {
-        record({ route: 'state/write', kind: kind ?? null, data: data ?? null, refused: true });
-        return { ok: false, refused: PLAIN_KINDS.includes(kind) ? 'the event\'s data must be an object' : 'that kind of event is not known here' };
+      const { kind, data, id } = body;
+      let refused = null;
+      if (PROTECTED_KINDS.includes(kind)) refused = 'a signed kind is recorded through /state/record, never written here';
+      else if (!PLAIN_KINDS.includes(kind)) refused = 'that kind of event is not known';
+      else if (data === null || typeof data !== 'object' || Array.isArray(data)) refused = 'the event\'s data must be an object';
+      else if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refused = 'an id given with a record must be a random UUID in lower case';
+      else if (id !== undefined && events.some((e) => e.id === id)) refused = 'the state already holds an event with that id';
+      else refused = shapeProblem(kind, data, home);
+      if (refused !== null) {
+        record({ route: 'state/write', kind: kind ?? null, data: data ?? null, refused });
+        return { ok: false, refused };
       }
-      const event = plainEvent(kind, data);
+      const event = { ...plainEvent(kind, data), ...(id === undefined ? {} : { id }) };
       events.push(event);
       record({ route: 'state/write', kind, data, id: event.id });
       return { ok: true, id: event.id, pushed: true };
     },
-    // The front desk's reading: { project | cwd } -> the views.
-    'POST /state/views': () => {
-      record({ route: 'state/views' });
-      return { ok: true, views: standInViews(events, approved) };
+    // The front desk's reading: { project | cwd, cards? } -> the views, and with `cards` the card
+    // events. STOP is never on here.
+    'POST /state/views': (body) => {
+      record({ route: 'state/views', ...(body.cards === true ? { cards: true } : {}) });
+      return {
+        ok: true,
+        views: standInViews(events, approved),
+        ...(body.cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
+      };
+    },
+    // The director's profile: no settings of their own.
+    'POST /profile/views': () => {
+      record({ route: 'profile/views' });
+      return { ok: true, views: {} };
     },
     // cli.js report: { cwd, session? }. No provenance on this computer, and STOP is off.
     'POST /lineage/provenance': (body) => {
@@ -190,7 +241,10 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
     records: () => records.map((entry) => ({ ...entry })),
     events: () => events.map((event) => structuredClone(event)),
     close: () => new Promise((resolve) => {
-      server.close(() => resolve());
+      server.close(() => {
+        fs.rmSync(home, { recursive: true, force: true });
+        resolve();
+      });
       server.closeAllConnections?.();
     }),
   };

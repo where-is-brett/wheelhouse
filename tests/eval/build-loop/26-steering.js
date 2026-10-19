@@ -3,8 +3,9 @@
 // while the export feature builds. Pass: route 3 said; the changed design
 // written and an `amendment` recorded for the work with its hash; the amend
 // card's line, `amendLine(work, hash)` from scripts/state/card-lines.js, word
-// for word in what the session composed; and nothing built: no write to the
-// product's code (the feature's worktree included), no build or test command,
+// for word in a card event it recorded with `cli.js card`, and that card put to
+// the director; and nothing built: no write to the product's code (the
+// feature's worktree included), no build or test command,
 // no `writing-plans` and no subagent sent to build. The rest of section 15's
 // pass (the click amends the brief and the session follows it) is the
 // foreman's and the feature session's, and runs in tests/e2e/build-loop.test.js.
@@ -19,7 +20,7 @@
 import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import { callsOf } from '../../../scripts/eval/feature-project.js';
 import {
-  buildCommands, buildDispatches, codeWrites, composedText, documentWithHash, replyText, seedEvent,
+  buildCommands, buildDispatches, cardsRecorded, codeWrites, documentWithHash, howAsked, replyText, seedEvent,
   setUpFrontDesk, skillsStarted, writtenEvents,
 } from '../../../scripts/eval/front-desk.js';
 import { amendLine } from '../../../scripts/state/card-lines.js';
@@ -69,8 +70,8 @@ export const MESSAGE = 'Make the export CSV, not Excel.';
 export const ROUTE_3 = /running work|route\s*3|\bsteer/i;
 export const READ_BACK = /Doing:[\s\S]{0,400}?Not doing:/;
 
-// The pass, from the events written, what the session composed, its calls and its files.
-export function judge({ reply, composed, written, calls, dir, variant }) {
+// The pass, from the events written (the cards among them), the session's events, its calls and its files.
+export function judge({ reply, events = [], written, calls, dir, variant }) {
   const notes = [];
   const skills = skillsStarted(calls);
   if (variant === 'with') notes.push(skills.some((s) => /intake/.test(s)) ? 'it started the intake' : 'it did not start the intake');
@@ -89,7 +90,7 @@ export function judge({ reply, composed, written, calls, dir, variant }) {
   const said = ROUTE_3.test(reply) || READ_BACK.test(reply);
   const amendments = written.filter((e) => e.kind === 'amendment' && e.data?.work === WORK);
   if (amendments.length === 0) {
-    const card = /Change the approved/.test(composed) ? '; it wrote an amend line' : '';
+    const card = cardsRecorded(written).some((c) => c.kind === 'amend') ? '; it recorded an amend card' : '';
     return { pass: false, why: `no amendment recorded for ${WORK} (${said ? 'route 3 said' : 'no route 3 said'}${card})${tail()}` };
   }
   if (!said) return { pass: false, why: `an amendment was recorded, but no route 3 was said and no read-back given${tail()}` };
@@ -98,9 +99,12 @@ export function judge({ reply, composed, written, calls, dir, variant }) {
   const changed = documentWithHash(dir, hash);
   if (changed === null) return { pass: false, why: `the amendment's hash ${hash.slice(0, 12)} is no document in the project${tail()}` };
   const line = amendLine(WORK, hash);
-  if (!composed.includes(line)) return { pass: false, why: `the amendment is recorded (${changed}), but the card line "${line}" is not in what it composed${tail()}` };
+  const card = cardsRecorded(written).findLast((c) => c.line === line);
+  if (card === undefined) return { pass: false, why: `the amendment is recorded (${changed}), but no card with the line "${line}" was recorded${tail()}` };
+  const how = howAsked(events, card);
+  if (how === null) return { pass: false, why: `the amend card "${line}" was recorded, but never put to the director${tail()}` };
   notes.push(`${amendments.length} amendment(s); the changed design is ${changed}`);
-  return { pass: true, why: `route 3 said, the amendment recorded, the card line "${line}" composed, and nothing built${tail()}` };
+  return { pass: true, why: `route 3 said, the amendment recorded, the amend card "${line}" recorded and asked (${how}), and nothing built${tail()}` };
 }
 
 export default {
@@ -128,6 +132,6 @@ export default {
   maxTurns: 40,
 
   pass: ({ events, dir, variant, context }) => judge({
-    reply: replyText(events), composed: composedText(events), written: writtenEvents(context), calls: callsOf(events), dir, variant,
+    reply: replyText(events), events, written: writtenEvents(context), calls: callsOf(events), dir, variant,
   }),
 };
