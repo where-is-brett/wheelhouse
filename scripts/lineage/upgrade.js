@@ -228,10 +228,29 @@ export function movedManifest({ manifest, pins, candidates }) {
   return { ...manifest, upstreams: manifest.upstreams.map((u) => moved.upstreams.find((m) => m.name === u.name) ?? u) };
 }
 
+// Each reason a plan is stopped, one line each: an anchor sentence that has gone, or carried
+// text whose source changed.
+export function stopReasons(plan) {
+  return [
+    ...plan.broken.map((a) => `anchor gone: ${a.id}: ${a.file}: ${a.text}`),
+    ...plan.carriedChanged.map((id) => `carried text's source changed: ${id}`),
+  ];
+}
+
+// The refusal of a stopped upgrade. Its message names each broken override and anchor, and it
+// carries the plan and the pins, so the command can say the whole plan.
+export class UpgradeStopped extends Error {
+  constructor(plan, pins) {
+    super(`the upgrade is stopped, so nothing lands: ${stopReasons(plan).join('; ')}. Rewrite or drop the broken override first`);
+    this.plan = plan;
+    this.pins = pins;
+  }
+}
+
 // Plans the upgrade and, unless it is stopped, writes the new pins, manifest and register version
 // on a new branch of the repository at `root` and commits them. It never pushes: the branch goes
 // out as a pull request, by hand. The working tree must be clean, and nothing changes if the plan
-// is stopped or anything fails. Resolves with { plan, branch, commit }.
+// is stopped (UpgradeStopped, naming what broke) or anything fails. Resolves with { plan, branch, commit }.
 export async function land({ root = repoRoot(), pins, changelog = [], fetchTo = fetchUpstream, run = defaultRun, registerVersion } = {}) {
   const git = async (...args) => {
     const result = await run('git', args, { cwd: root, baseEnv: withoutGitVars(), env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: 120000 });
@@ -250,7 +269,7 @@ export async function land({ root = repoRoot(), pins, changelog = [], fetchTo = 
 
   return withCandidates(pins, fetchTo, async (candidates) => {
     const plan = planUpgrade({ manifest, register, candidates, changelog });
-    if (plan.kind === 'stopped') throw new Error('the upgrade is stopped, so nothing lands: rewrite or drop the broken override first');
+    if (plan.kind === 'stopped') throw new UpgradeStopped(plan, pins);
     const files = {
       [MARKETPLACE_PATH]: repinMarketplace(read(MARKETPLACE_PATH), pins),
       [MANIFEST_PATH]: `${JSON.stringify(movedManifest({ manifest, pins, candidates }), null, 2)}\n`,
@@ -282,8 +301,7 @@ export function describePlan({ plan, pins, assumptions = [] }) {
   const lines = [];
   for (const pin of pins) lines.push(`${pin.name}: ${pin.ref} (${pin.sha})`);
   for (const item of plan.changed) lines.push(`changed: ${item.upstream} ${item.path}`);
-  for (const a of plan.broken) lines.push(`anchor gone: ${a.id}: ${a.file}: ${a.text}`);
-  for (const id of plan.carriedChanged) lines.push(`carried text's source changed: ${id}`);
+  lines.push(...stopReasons(plan));
   if (plan.licenceChanged) lines.push('a licence file changed: the director gets a card');
   for (const id of plan.retest) {
     const assumption = assumptions.find((a) => a.id === id);
@@ -357,6 +375,8 @@ if (Boolean(process.argv[1]) && startedAsScript()) {
       process.exitCode = result.plan.kind === 'stopped' ? 1 : 0;
     }
   } catch (error) {
+    // A stopped land says its whole plan first, as `plan` would.
+    if (error instanceof UpgradeStopped) for (const line of describePlan({ plan: error.plan, pins: error.pins })) out(line);
     process.stderr.write(`${error.message.replace(/\n$/, '')}\n`);
     process.exit(command === 'land' ? 1 : 2);
   }

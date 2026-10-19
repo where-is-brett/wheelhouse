@@ -13,6 +13,8 @@
 //   explain <term>  the glossary's plain words for a term, with its example
 //   review          the delegation review: each proposal as a level waiting for the director, with
 //                   its confirm card, as AskUserQuestion's input; then records the review as done
+//   preview <n>     the address of pull request n's preview, for "Show me", or a sentence saying
+//                   there is none
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project. Nothing here
 // writes a director's answer: `record` takes only the plain kinds the front desk decides, never a
@@ -44,7 +46,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels']);
-const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'explain', 'review'];
+const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'explain', 'review', 'preview'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -565,6 +567,17 @@ export async function explain({ client, cwd, term }) {
   return [`${found}: ${entry.plain}`, ...(entry.example ? [`For example: ${entry.example}`] : [])];
 }
 
+// --- preview ---
+
+// The address of the preview of pull request n's head, which the helper reads from the host, or a
+// plain sentence when there is none.
+export async function preview({ client, cwd, n }) {
+  const got = await client.preview({ cwd, number: n });
+  if (got?.ok !== true) throw new CliError(said(got, `The host helper couldn't read pull request #${n}`));
+  if (typeof got.url === 'string' && got.url !== '') return [got.url];
+  return [`Pull request #${n} has no preview to show: it isn't open, or the host has no finished preview of its latest commit.`];
+}
+
 // --- The command line ---
 
 // Standard input as text. A terminal is refused at once, never waited on: the command is run with
@@ -628,6 +641,9 @@ export async function main(argv, {
     } else if (command === 'review') {
       only(rest, 0, 'review takes no arguments');
       json(await review({ client: helper, cwd: here, now, ...(makeId ? { makeId } : {}) }));
+    } else if (command === 'preview') {
+      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
+      lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));
     } else if (command === 'views') {
       only(rest, 1, `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}`);
       lines(await view({ client: helper, cwd: here, name: rest[0], now }));

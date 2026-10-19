@@ -30,3 +30,11 @@ What `gh` printed, as the adapter's tests feed it back. Owner and repository are
 - `ruleset-refused-free.txt`: what `gh api` prints when GitHub refuses rulesets on a private repository on the free plan.
 - `ruleset-created.json`: the answer to creating a ruleset (only the fields read).
 - `ci-contexts.json`, `ci-contexts-none.json`: the checks seen on the default branch's latest commit, with and without checks.
+
+**Previews (front desk, Task 12), from documentation**, read on 19 October 2026: written to the shapes of GitHub's REST API pages "REST API endpoints for deployments" and "REST API endpoints for deployment statuses", because no repository here deploys a preview (nothing was recorded). Only the fields that matter are kept; owner, addresses and IDs are made up.
+
+- `deployments.json`: `gh api repos/<repo>/deployments?sha=<sha>`, two deployments of the same commit, newest first.
+- `deployments-none.json`: the same, for a commit with no deployment.
+- `deployment-statuses.json`: `gh api repos/<repo>/deployments/<id>/statuses` for the older deployment, newest first: `success` with its `environment_url`, after `in_progress` and `pending`.
+- `deployment-statuses-pending.json`: the same for the newer deployment, still `in_progress`.
+- `deployment-statuses-inactive.json` (added 19 October 2026, from the same page's description of `auto_inactive`): the older deployment's statuses once another deployment to the same environment succeeded, with `inactive` newest.

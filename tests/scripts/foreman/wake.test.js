@@ -462,7 +462,8 @@ test('wake read: work recorded again after its feature closed is offered to star
   const file = wakeFile(path.join(checkout, 'w'), 'one', {});
   const text = (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now })).lines.join('\n');
   assert.match(text, /^- start again \(small\): approved\. Next: act start again /m);
-  assert.doesNotMatch(text, /over/);
+  // The work id as a word: the plugin's path in the command lines may hold "over".
+  assert.doesNotMatch(text, /\bover\b/);
 }));
 
 test('wake done records acted or idle, and measures gives the idle share', () => withHome(async () => {

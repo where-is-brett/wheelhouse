@@ -105,3 +105,37 @@ test('on Windows a timed-out command is killed with its children', async () => {
   await run(process.execPath, sleeper, { timeoutMs: 100, platform: 'linux', killer });
   assert.deepEqual(sent, []);
 });
+
+test('run gives stdout as bytes with encoding buffer', async () => {
+  const result = await run(process.execPath, ['-e', 'process.stdout.write(Buffer.from([0, 255, 104, 105]))'], { encoding: 'buffer' });
+  assert.equal(result.code, 0);
+  assert.ok(Buffer.isBuffer(result.stdout));
+  assert.deepEqual([...result.stdout], [0, 255, 104, 105]);
+});
+
+test('run ends a program when its signal is aborted, and says it was stopped', async () => {
+  const started = Date.now();
+  const stop = new AbortController();
+  setTimeout(() => stop.abort(), 100);
+  const r = await run(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { timeoutMs: 10000, signal: stop.signal });
+  assert.equal(r.stopped, true);
+  assert.equal(r.code, 1);
+  assert.equal(r.timedOut, undefined);
+  assert.ok(Date.now() - started < 5000);
+
+  // A signal aborted before the start stops the program at once; one never aborted changes nothing.
+  const early = await run(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { timeoutMs: 10000, signal: AbortSignal.abort() });
+  assert.equal(early.stopped, true);
+  const quiet = await run(process.execPath, ['-e', 'console.log("done")'], { signal: new AbortController().signal });
+  assert.deepEqual(quiet, { code: 0, stdout: 'done\n', stderr: '' });
+});
+
+test('on Windows a stopped command is killed with its children', async () => {
+  const sent = [];
+  const killer = (file, args) => { sent.push({ file, args }); };
+  const r = await run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 10000, signal: AbortSignal.timeout(100), platform: 'win32', killer });
+  assert.equal(r.stopped, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].file, 'taskkill');
+  assert.deepEqual(sent[0].args.slice(2), ['/T', '/F']);
+});

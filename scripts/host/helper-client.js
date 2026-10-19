@@ -45,16 +45,21 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
   return {
     health: () => ask(address, 'GET', '/health', undefined, timeout),
     stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
-    push: post('/push'), //          { project, dir, refspec }
+    push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
+    pull: post('/pull'), //          { project | cwd, dir, branch } -> { ok, already } or { ok, already: false, merged, from, sha, bundle }, or { ok: false, refused, conflicts? }: `cli.js pull` brings the host's copy of the worktree's own feature branch in; `bundle` (base64) holds the commits the worktree lacks, under refs/wheelhouse/pulled
+    foreman: {
+      run: post('/foreman/run'), // { folder, script: 'act' | 'wake', argv } -> { ok, code, stdout, stderr }: the foreman's command, run by the helper outside the sandbox; `folder` must be the project's main checkout; answered under STOP
+    },
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
-    // /pr/open, /state/answer, /lineage/provenance and /config take `cwd`, a full path, in place of
-    // or beside `project`, and the helper places the project from it (scripts/feature/cli.js runs
-    // where ~/.wheelhouse cannot be read); given both, the folder must be in the project named.
+    // /push, /pull, /pr/open, /state/answer, /lineage/provenance and /config take `cwd`, a full
+    // path, in place of or beside `project`, and the helper places the project from it (scripts/feature/cli.js
+    // runs where ~/.wheelhouse cannot be read); given both, the folder must be in the project named.
     openPr: post('/pr/open'), //     { project | cwd, head, base?, title, body, session }: no base means the default branch; the helper stamps the body with what built it, from the session's provenance on this computer, and refuses a session with none
     updatePr: post('/pr/update'), // { project, number, title?, body?, session }: a new body is stamped as openPr's is; a session with no provenance on this computer is refused
     updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts?, ciPush?: { branch, sha } }: merges the default branch in; refused under STOP; ciPush names the merge commit the director's CI card must approve
     carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate, earlier }: the gate's carry-over rule, read-only, answered under STOP; with no CLEAN review to weigh, 'none' and upToDate false, unread; earlier: a CLEAN review of an earlier commit is on record
     prState: post('/pr/state'), //   { project, number } (or `cwd` for `project`, as the runbook's)
+    preview: post('/pr/preview'), // { project | cwd, number } -> { ok, url: address | null }: the preview of the open pull request's head, for the front desk's Show me; null when it isn't open or has none; read-only, answered under STOP
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project | cwd } -> { ok, config }: the default branch's, read-only, answered under STOP
