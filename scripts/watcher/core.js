@@ -19,7 +19,9 @@
 //       report: boolean,
 //       gone: boolean,                the feature's worktree is missing
 //     }>,
-//     prs: Record<pr, { work, head, ci, mergeable, review } | null>,   null: closed, forget it
+//     prs: Record<pr, { work, head, branch?, ci, mergeable, review } | null>,   null: closed, forget it;
+//                             review is 'clean', 'findings', 'none', or 'needed' (no review of its own,
+//                             and an earlier commit's CLEAN review did not carry over to it)
 //     testMerges: Array<{ a, b, clean, conflicts? }>,   a and b are works
 //     stop: boolean,
 //     polled?: { state?, prs?, testMerge? },   when each was last asked for (sources.js)
@@ -52,7 +54,7 @@
 // its cursor makes the same ids again and the cursor's `seen` list stops any of
 // them waking twice:
 //   - a state event's own id (work-ready, amended, answer, incident,
-//     lift-incident, incident-fix, build);
+//     lift-incident, incident-fix, approval, ci-push, build);
 //   - a question's own id (question, extra-plan);
 //   - `<type>:<work>:<head>` for a PR's events;
 //   - a change of state with no id of its own (stop, clash, the brief's events,
@@ -93,8 +95,9 @@ export const DIGEST_CAP = 200;
 export const FOREMAN_TYPES = Object.freeze([
   'work-ready', 'amended', 'question', 'extra-plan', 'answer', 'merge-ready', 'stuck',
   'over-appetite', 'clash', 'stop', 'incident', 'brief-tampered', 'plan-ready', 'report', 'lift-incident', 'incident-fix',
+  'approval', 'ci-push',
 ]);
-export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'brief-changed', 'answer', 'build']);
+export const FEATURE_TYPES = Object.freeze(['ci-red', 'findings', 'conflict', 'review-needed', 'brief-changed', 'answer', 'build']);
 export const DIGEST_TYPES = Object.freeze(['task-done', 'review-passed', 'ci-running', 'pushed', 'progress', 'skipped-lines']);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -149,10 +152,14 @@ function isWaiting(f, prs) {
   if (s.phase === 'pr-open') {
     const pr = prs[s.pr];
     if (!isPlain(pr)) return false;
-    return !(pr.ci === 'failure' || pr.review === 'findings' || pr.mergeable === 'no');
+    return !(pr.ci === 'failure' || pr.review === 'findings' || pr.mergeable === 'no' || reviewNeeded(pr));
   }
   return false;
 }
+
+// A head that is green and mergeable, but whose earlier CLEAN review did not carry over to it
+// (ruling R119): its session must review it, so it is not waiting on anyone else.
+const reviewNeeded = (p) => p.ci === 'success' && p.mergeable === 'yes' && p.review === 'needed';
 
 // The question and extra-plan ids that are this feature's (`q-<work>-<n>`), and how many are not.
 function ownIds(work, ids) {
@@ -230,12 +237,26 @@ const workOfQuestion = (id) => questionIdOf(id)?.work;
 // An answer to the foreman's own question (ruling R63) is the foreman's alone: the feature never asked it.
 const foremansOwn = (e) => e.type === 'answer' && e.detail?.foreman === true;
 
-// The events from state: every one in the observation is after the cursor; only signed clicks count as actions.
-function stateEvents(next, out) {
+// The open pull request, as last known, that `holds` picks, as [number, state], or null.
+function openPr(prs, holds) {
+  const found = entries(prs).find(([, p]) => isPlain(p) && holds(p));
+  return found ? [Number(found[0]), found[1]] : null;
+}
+
+// The events from state: every one in the observation is after the cursor; only signed clicks count
+// as actions. `prs` is the open pull requests as last known, for the clicks the merge gate waits on
+// (ruling R117): a signed approval of an open pull request's current head, and a CI push for an open
+// pull request's branch, each wake the foreman, which merges the ready pull request from the cursor.
+function stateEvents(next, prs, out) {
   for (const e of list(next.events)) {
     if (!isPlain(e) || typeof e.id !== 'string' || !isPlain(e.data)) continue;
     const { id, kind, data } = e;
-    if (kind === 'work') {
+    if (kind === 'approval' && e.verified === true) {
+      const pr = isPlain(prs[String(data.pr)]) ? prs[String(data.pr)] : null;
+      if (pr !== null && typeof pr.head === 'string' && pr.head === data.commit) {
+        out.push({ type: 'approval', work: pr.work, pr: Number(data.pr), id, detail: { pr: Number(data.pr), head: pr.head } });
+      }
+    } else if (kind === 'work') {
       if (STARTS_UNAPPROVED.includes(data.lane) && data.visible === false) out.push({ type: 'work-ready', work: data.id, id, detail: { lane: data.lane } });
     } else if (kind === 'feature') {
       if (data.step === 'building' && data.brief === undefined && typeof data.work === 'string') out.push({ type: 'build', work: data.work, id, detail: { slice: data.slice ?? null } });
@@ -257,6 +278,12 @@ function stateEvents(next, out) {
         out.push({ type: 'lift-incident', id, detail: { incident: data.incident } });
       } else if (data.action === 'incident-fix') {
         out.push({ type: 'incident-fix', pr: data.pr, id, detail: { incident: data.incident, pr: data.pr } });
+      } else if (data.action === 'ci-push') {
+        const found = typeof data.branch === 'string' ? openPr(prs, (p) => p.branch === data.branch) : null;
+        if (found !== null) {
+          const [pr, p] = found;
+          out.push({ type: 'ci-push', work: p.work, pr, id, detail: { pr, branch: data.branch, sha: data.sha } });
+        }
       }
     }
   }
@@ -338,9 +365,15 @@ const PR_CONDITIONS = [
   ['ci-red', (p) => p.ci === 'failure'],
   ['findings', (p) => p.review === 'findings'],
   ['conflict', (p) => p.mergeable === 'no'],
+  ['review-needed', reviewNeeded],
   ['review-passed', (p) => p.review === 'clean'],
   ['ci-running', (p) => p.ci === 'pending'],
 ];
+
+// What the session reads in a review-needed wake: the head is unreviewed because the gate's
+// update merge moved the context its review was taken against (ruling R119).
+const reviewNeededText = (pr, head) => `The gate brought the branch up to date at ${head}, and the review of the earlier commit didn't carry over to it. `
+  + `Pull the branch, then dispatch wheelhouse:reviewer with pr: ${pr} on ${head}. If ${head} already has its review, there is nothing to do.`;
 
 // The PRs this observation names, each against its last known state.
 function prEvents(prev, next, out) {
@@ -351,7 +384,8 @@ function prEvents(prev, next, out) {
     const sameHead = before !== null && before.head === p.head;
     for (const [type, holds] of PR_CONDITIONS) {
       if (holds(p) && !(sameHead && holds(before))) {
-        out.push({ type, work: p.work, pr, id: `${type}:${p.work}:${p.head}`, detail: { head: p.head } });
+        const detail = type === 'review-needed' ? { head: p.head, next: reviewNeededText(pr, p.head) } : { head: p.head };
+        out.push({ type, work: p.work, pr, id: `${type}:${p.work}:${p.head}`, detail });
       }
     }
     if (before !== null && !sameHead && typeof p.head === 'string') {
@@ -382,7 +416,7 @@ export function diff(prev, next, { handled = new Set(), seen = new Set() } = {})
   const before = isPlain(prev) ? prev : EMPTY;
   const settled = settle(before, next);
   const out = [];
-  stateEvents(next, out);
+  stateEvents(next, settled.prs, out);
   featureEvents(before, next, settled, out);
   prEvents(before, next, out);
   edgeEvents(before, next, out);

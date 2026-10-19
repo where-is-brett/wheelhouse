@@ -884,7 +884,7 @@ test('an amendment that says to pause pauses the feature, and one that says to r
 
 // --- merge and close ---
 
-test('merge brings the pull request up to date, then merges it; a refusal is one line for the director, never tried again', () => withHome(async () => {
+test('merge brings the pull request up to date, then merges it, or waits for CI on the new head; a refusal is one line for the director, never tried again', () => withHome(async () => {
   const checkout = await project();
   const views = emptyViews();
   views.work.mine = workView('mine');
@@ -899,13 +899,22 @@ test('merge brings the pull request up to date, then merges it; a refusal is one
   assert.deepEqual(refused.calls.map(([name]) => name), ['prState', 'updateBranch']);
   assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md' });
 
-  const gate = fakeClient({ views, answers: { updateBranch: { ok: true }, merge: { ok: false, refused: 'no signed CLEAN review on the head commit' } } });
+  // Brought up to date: a new head, so the merge waits for CI on it, and the next merge-ready wakes the foreman.
+  const behind = fakeClient({ views, answers: { updateBranch: { ok: true, updated: true, head: 'd'.repeat(40) } } });
+  const brought = await act(['merge', 'mine'], { client: behind.client });
+  assert.equal(brought.code, 0, brought.err);
+  assert.equal(brought.out, 'Brought pull request #12 for mine up to date at dddddddddddd; the merge waits for CI on that commit, and the next merge-ready wakes the foreman.\n');
+  assert.deepEqual(behind.calls.map(([name]) => name), ['prState', 'updateBranch']);
+  assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md' });
+
+  const current = { ok: true, updated: false, head: 'b'.repeat(40) };
+  const gate = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: 'no signed CLEAN review on the head commit' } } });
   const no = await act(['merge', 'mine'], { client: gate.client });
   refusedInOneLine(no);
   assert.match(no.err.trim(), /^Pull request #12 for mine was not merged: no signed CLEAN review on the head commit\. Ask the director; don't try again\.$/);
   assert.equal(kept().merged, undefined);
 
-  const ok = fakeClient({ views, answers: { updateBranch: { ok: true } } });
+  const ok = fakeClient({ views, answers: { updateBranch: current } });
   const merged = await act(['merge', 'mine'], { client: ok.client });
   assert.equal(merged.code, 0, merged.err);
   assert.equal(merged.out, 'Merged pull request #12 for mine at cccccccccccc; its status reads planning.\n');
@@ -921,6 +930,67 @@ test('merge brings the pull request up to date, then merges it; a refusal is one
 
   views.features.nopr = featureView('nopr', { step: 'building', worktree: worktree(checkout, 'nopr') });
   refusedInOneLine(await act(['merge', 'nopr'], { client: ok.client }));
+}));
+
+test('a merge that waits only for the director\'s click records what it waits for, once, and asks nothing (R117)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12 } });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  const head = 'b'.repeat(40);
+  const current = { ok: true, updated: false, head };
+  const asks = (writes) => writes.filter((w) => w.kind === 'gate-asks');
+
+  // The gate lacks only the director's approval of the head.
+  const approval = { ok: false, refused: 'no approval of bbbbbbb', reasons: ['no approval of bbbbbbb'], needs: { approval: { pr: 12, commit: head } } };
+  const waiting = 'Pull request #12 for mine waits for the director\'s click on #12 at bbbbbbbbbbbb: their approval of that commit. Nothing to do.\n';
+  const first = fakeClient({ views, answers: { updateBranch: current, merge: approval } });
+  const r = await act(['merge', 'mine'], { client: first.client });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, waiting);
+  assert.deepEqual(asks(first.writes).map((w) => w.data), [{ work: 'mine', pr: 12, ask: 'approval', sha: head }]);
+  everyWriteHandledFirst(first.writes);
+  // Again, on a later wake: the record is found, and nothing more is written.
+  const again = fakeClient({ views, answers: { updateBranch: current, merge: approval } });
+  assert.equal((await act(['merge', 'mine'], { client: again.client })).out, waiting);
+  assert.deepEqual(again.writes, []);
+
+  // Anything else unmet besides is still put to the director.
+  const more = { ...approval, refused: 'CI has not passed on bbbbbbb; no approval of bbbbbbb', reasons: ['CI has not passed on bbbbbbb', 'no approval of bbbbbbb'] };
+  const mixed = fakeClient({ views, answers: { updateBranch: current, merge: more } });
+  const asked = await act(['merge', 'mine'], { client: mixed.client });
+  refusedInOneLine(asked);
+  assert.match(asked.err, /Ask the director; don't try again\.$/m);
+  assert.deepEqual(mixed.writes, []);
+  // One reason with no need named is put to the director too.
+  const plain = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: 'CI has not passed on bbbbbbb', reasons: ['CI has not passed on bbbbbbb'] } } });
+  const told = await act(['merge', 'mine'], { client: plain.client });
+  refusedInOneLine(told);
+  assert.match(told.err, /^Pull request #12 for mine was not merged: CI has not passed on bbbbbbb\. Ask the director; don't try again\.$/m);
+  // A need that names another commit than one in full is not waited on either.
+  const odd = fakeClient({ views, answers: { updateBranch: current, merge: { ...approval, needs: { approval: { pr: 12, commit: 'b'.repeat(12) } } } } });
+  refusedInOneLine(await act(['merge', 'mine'], { client: odd.client }));
+  assert.deepEqual(odd.writes, []);
+
+  // Bringing it up to date waits for the director's CI push of that exact merge commit.
+  const merge = 'e'.repeat(40);
+  const ci = { ok: false, refused: 'the branch changes a CI file, so it needs the director\'s click on its card', ciPush: { branch: 'feature/mine', sha: merge } };
+  const ciWaiting = 'Pull request #12 for mine waits for the director\'s click on #12 at eeeeeeeeeeee: their push of feature/mine, which changes a CI file. Nothing to do.\n';
+  const pushing = fakeClient({ views, answers: { updateBranch: ci } });
+  const p = await act(['merge', 'mine'], { client: pushing.client });
+  assert.equal(p.code, 0, p.err);
+  assert.equal(p.out, ciWaiting);
+  assert.deepEqual(pushing.calls.map(([name]) => name), ['prState', 'updateBranch']);
+  assert.deepEqual(asks(pushing.writes).map((w) => w.data), [{ work: 'mine', pr: 12, ask: 'ci-push', sha: merge, branch: 'feature/mine' }]);
+  const pushAgain = fakeClient({ views, answers: { updateBranch: ci } });
+  assert.equal((await act(['merge', 'mine'], { client: pushAgain.client })).out, ciWaiting);
+  assert.deepEqual(pushAgain.writes, []);
+  // The approval asked for earlier is another click: a new head's approval is recorded too.
+  const later = 'f'.repeat(40);
+  const next = fakeClient({ views, answers: { updateBranch: { ok: true, updated: false, head: later }, merge: { ...approval, needs: { approval: { pr: 12, commit: later } } } } });
+  await act(['merge', 'mine'], { client: next.client });
+  assert.deepEqual(asks(next.writes).map((w) => w.data.sha), [later]);
 }));
 
 test('close records the report with every ruling, then closes the feature and forgets its session', () => withHome(async () => {

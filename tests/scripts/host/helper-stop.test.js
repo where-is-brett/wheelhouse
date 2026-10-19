@@ -21,6 +21,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { prOnHost } from '../../helpers/pr-on-host.js';
 
 const HEAD = `abc1234${'0'.repeat(33)}`;
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -74,9 +75,16 @@ function record(kind, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
-function reviewAndApproval() {
-  record('review', { pr: 7, commit: HEAD, verdict: 'CLEAN' });
-  record('approval', { pr: 7, commit: HEAD });
+function reviewAndApproval(commit = HEAD) {
+  record('review', { pr: 7, commit, verdict: 'CLEAN' });
+  record('approval', { pr: 7, commit });
+}
+
+// Pull request 7 on the project's host, up to date, signed for, and the adapter that reports it: for a merge the gate allows.
+async function mergeablePr(p, overrides = {}) {
+  const head = await prOnHost(p.remote.url);
+  reviewAndApproval(head);
+  return fakeAdapter({ prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open' }), ...overrides });
 }
 
 function post(address, p, body) {
@@ -113,6 +121,7 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
           lockTake: client.lock.take(base),
           lockTouch: client.lock.touch(base),
           ciPushLine: client.ciPushLine({ ...base, branch: 'feature', sha: HEAD }),
+          updateBranch: client.updateBranch({ ...base, number: 7 }),
         };
         for (const [name, pending] of Object.entries(writes)) {
           assert.deepEqual(await pending, { ok: false, refused: 'STOP is on' }, name);
@@ -122,6 +131,7 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
         assert.ok(merge.reasons.includes('STOP is on'), JSON.stringify(merge));
 
         assert.equal((await client.prState({ ...base, number: 7 })).ok, true);
+        assert.equal((await client.carried({ ...base, number: 7 })).ok, true);
         assert.equal((await client.ci({ ...base, sha: HEAD })).ok, true);
         assert.equal((await client.issue.list({ ...base, label: 'x' })).ok, true);
         assert.equal((await client.state.views(base)).ok, true);
@@ -159,10 +169,9 @@ test('a merge queued behind another reads STOP when its turn comes', async () =>
   const p = await project();
   try {
     await as(p.home, async () => {
-      reviewAndApproval();
       let reached; const atMerge = new Promise((r) => { reached = r; });
       let release; const held = new Promise((r) => { release = r; });
-      const adapter = fakeAdapter();
+      const adapter = await mergeablePr(p);
       adapter.merge = async (args) => { adapter.merges.push(args); reached(); await held; return { merged: true }; };
       const queue = arrivals();
       await withHelper(adapter, async (client) => {
@@ -295,8 +304,7 @@ test('an expired bypass marker no longer blocks a merge', async () => {
   const p = await project();
   try {
     await as(p.home, async () => {
-      reviewAndApproval();
-      await withHelper(fakeAdapter(), async (client) => {
+      await withHelper(await mergeablePr(p), async (client) => {
         markBypass('session-1', { now: () => new Date(Date.now() - 3 * 3600000) });
         const merge = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.equal(merge.ok, true, JSON.stringify(merge));
@@ -309,8 +317,7 @@ test('a caller\'s stop: false or bypass: false changes nothing; its true adds', 
   const p = await project();
   try {
     await as(p.home, async () => {
-      reviewAndApproval();
-      await withHelper(fakeAdapter(), async (client) => {
+      await withHelper(await mergeablePr(p), async (client) => {
         const clear = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.equal(clear.ok, true, JSON.stringify(clear));
         const stop = await client.merge({ project: 'o__p', number: 7, stop: true, bypass: false });

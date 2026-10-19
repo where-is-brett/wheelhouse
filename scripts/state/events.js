@@ -15,7 +15,7 @@ import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
-  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked',
+  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -106,7 +106,11 @@ const PLAIN_SHAPES = {
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
   asked: { must: ['cards'], may: [] },
+  // The click the merge gate waits for (ruling R117): the director's approval of a pull request's
+  // head, or their CI push of the update merge `sha` to `branch`. Recorded by the foreman's merge.
+  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch'] },
 };
+const GATE_ASKS = ['approval', 'ci-push'];
 
 function checkPlain(kind, data) {
   const bad = (why) => { throw new Error(`A ${kind} event ${why}`); };
@@ -188,6 +192,13 @@ function checkPlain(kind, data) {
     if (!Array.isArray(data.cards) || data.cards.length === 0 || data.cards.length > CARD.questions || !data.cards.every(isText)) {
       bad(`needs cards to be a list of one to ${CARD.questions} card ids`);
     }
+  } else if (kind === 'gate-asks') {
+    slug('work');
+    if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');
+    if (!GATE_ASKS.includes(data.ask)) bad('needs ask to be approval or ci-push');
+    if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
+    if (data.ask === 'ci-push' && !isText(data.branch)) bad('needs the branch the CI push is for');
+    if (data.ask !== 'ci-push' && data.branch !== undefined) bad('has a branch it should not');
   }
 }
 

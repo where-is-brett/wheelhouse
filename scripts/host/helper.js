@@ -27,7 +27,7 @@ import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -39,11 +39,11 @@ import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.j
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
-import { eventHash } from '../state/events.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
 import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
+import { SLUG } from '../lib/build-loop.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -190,8 +190,92 @@ async function branchChanges({ mirror, sha, defaultBranch, run: git }) {
   return { paths: listed.split('\0').filter((p) => p !== ''), config };
 }
 
+// git in the mirror runs no hooks, and a merge reads no attributes from outside it.
+const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
+const MERGE_ONLY = [
+  ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
+];
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+// The patch-id of what `head` changes from its merge base with `base` (design section 12):
+// `git diff` of the two, binary files included, through `git patch-id --verbatim` (which is
+// --stable keeping whitespace; git refuses the two flags together): it ignores line numbers
+// but not whitespace, since indentation can be code (ruling R111).
+// `git(args, options)` runs git in the mirror. Empty when nothing changes; throws when git fails.
+export async function patchIdOf({ git, base, head }) {
+  const common = await git([...NO_HOOKS, 'merge-base', '--end-of-options', base, head], { input: '' });
+  if (common.code !== 0) throw new Error('finding the merge base failed');
+  const diff = await git([...MERGE_ONLY, 'diff', '--no-ext-diff', '--no-textconv', '--binary', '--end-of-options', common.stdout.trim(), head, '--'], { input: '' });
+  if (diff.code !== 0) throw new Error('reading the change failed');
+  const id = await git(['patch-id', '--verbatim'], { input: diff.stdout });
+  if (id.code !== 0) throw new Error('reading the patch-id failed');
+  return id.stdout.trim().split(/\s+/)[0] ?? '';
+}
+
+// Whether `commit` is a clean update merge: two parents, and its tree is the tree `git
+// merge-tree --write-tree` makes of them, so the merge itself changed nothing by hand. With
+// `first`, its first parent must be that commit (the pull request's earlier commit); with
+// `base`, its second parent must be an ancestor of `base` (the default branch's head), so the
+// merge brings in only the default branch, never a side branch of the feature's own.
+export async function cleanUpdate({ git, commit, first, base }) {
+  if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return false;
+  // `commit` is a full ID, so nothing here reads as an option (rev-parse without --verify echoes --end-of-options).
+  const listed = await git([...NO_HOOKS, 'rev-parse', `${commit}^{commit}`, `${commit}^@`], { input: '' });
+  if (listed.code !== 0) return false;
+  const [, ...parents] = listed.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (parents.length !== 2 || !parents.every((p) => FULL_SHA.test(p))) return false;
+  if (first !== undefined && parents[0] !== first) return false;
+  if (base !== undefined) {
+    const fromBase = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', '--end-of-options', parents[1], base], { input: '' });
+    if (fromBase.code !== 0) return false;
+  }
+  const merged = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--no-messages', '--end-of-options', ...parents], { input: '' });
+  if (merged.code !== 0) return false;
+  const own = await git([...NO_HOOKS, 'rev-parse', '--verify', '-q', `${commit}^{tree}`], { input: '' });
+  return own.code === 0 && own.stdout.trim() === merged.stdout.split('\n')[0].trim();
+}
+
+// The author and committer of the commits the helper makes itself.
+const WHEELHOUSE_AUTHOR = {
+  GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid',
+};
+
 const ciPatterns = (config) => [...CI_FILES, ...config.ciFiles];
 const touchesCi = (paths, config) => paths.some((file) => ciPatterns(config).some((p) => matchGlob(p, file, { ignoreCase: true })));
+
+// The incident the gate weighs for a pull request, from the views (design section 12): none open
+// is `{ open: false }`. With any open, it is a fix when a verified `incident-fix` of any open
+// incident names this pull request (the fix the director clicked is the point); otherwise the id
+// is an open incident's, so the reason names one.
+export function incidentFor(views, number) {
+  const open = views.incidents?.open;
+  if (!Array.isArray(open)) return { open: true, isFix: false };
+  if (open.length === 0) return { open: false };
+  const fixing = open.find((i) => Array.isArray(i.fixes) && i.fixes.includes(number));
+  return { open: true, id: (fixing ?? open[0]).id, isFix: fixing !== undefined };
+}
+
+const STATE_BEHIND = 'the state could not be brought up to date';
+const STATE_DAMAGED = 'the state has damaged events, so an open incident or a shown-first change can\'t be ruled out';
+
+// The work a pull request's head branch names: `feature/<work>` or `feature/<work>/<slice>`.
+const FEATURE_BRANCH = new RegExp(`^feature/(${SLUG.source.slice(1, -1)})(?:/[^/]+)?$`);
+
+// Whether the work's signed approval makes the director's approval of this pull request needed
+// because the work is shown first (design section 12). The wish is read from the views, which
+// take it from the verified `approve-work` alone, never from the work event or the caller, and
+// keep it once any of the work's approvals said it, in any lane or for any document (ruling R120).
+// A branch that names no work, or work never approved shown first, adds nothing. For work now in
+// the feature lane, only a pull request that changes one of the project's flag files counts (the
+// switch-on); with no flag files listed, or in any other lane, every pull request of the work does.
+export function shownFirstNeeded({ views, headRef, paths, config }) {
+  const work = FEATURE_BRANCH.exec(typeof headRef === 'string' ? headRef : '')?.[1];
+  if (work === undefined || !Object.hasOwn(views.work ?? {}, work)) return false;
+  const w = views.work[work];
+  if (w.shownFirst !== true && w.approval?.shownFirst !== true) return false;
+  if (w.work?.data?.lane !== 'feature' || config.flagFiles.length === 0) return true;
+  return paths.some((file) => config.flagFiles.some((p) => matchGlob(p, file, { ignoreCase: true })));
+}
 
 // The git configuration files of a folder, read with fs only: running git
 // there could run what the folder's configuration names. Null when the folder
@@ -250,6 +334,14 @@ export const PUSH_REFUSALS = {
   prBase: 'a pull request may only be opened against the default branch',
   profile: 'a profile push may only add new event files under events/, and add or remove bundles under backups/',
   profileNotJson: 'a file in the profile push is not JSON, so nothing is pushed',
+};
+
+// Why /pr/update-branch leaves a pull request alone: only the loop's own feature branches, in
+// this repository and against the default branch, are brought up to date.
+const UPDATE_REFUSALS = {
+  base: 'only a pull request against the default branch is brought up to date',
+  branch: 'only a pull request from a feature/<work> branch is brought up to date',
+  fork: 'the pull request\'s head is not this repository\'s branch of that name, so it is not brought up to date: it may come from a fork',
 };
 
 // A plain branch name: [A-Za-z0-9._/-], not refs/..., not HEAD, and nothing git
@@ -561,6 +653,10 @@ function readBody(req, res) {
 
 export async function startHelper({
   address = helperAddress(), adapterFor, envFor, now = () => new Date(), run = realRun, onArrive = () => {}, fetch = globalThis.fetch, startWaitMs = 30 * 1000,
+  // Whether the preview's screenshots of every changed page are the same at two commits, for an
+  // approval to carry over (design section 12). It answers false until the front desk's plan
+  // builds the comparison, so the director is asked again meanwhile.
+  screenshotsMatch = async () => false,
   // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
   profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
 } = {}) {
@@ -1187,10 +1283,6 @@ export async function startHelper({
   //     a branch that names a filter or a merge driver finds nothing to run.
   // The working refs are dropped afterwards, whatever happened.
   const TEST_MERGE_REFS = ['refs/wheelhouse/tm/a', 'refs/wheelhouse/tm/b'];
-  const NO_HOOKS = ['-c', `core.hooksPath=${NO_FILE}`];
-  const MERGE_ONLY = [
-    ...NO_HOOKS, '-c', `core.attributesFile=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'merge.renormalize=false',
-  ];
   const CONFIG_REFUSED = {
     some: 'the git configuration names a hook, filter or merge driver, so nothing is merged',
     unreadable: 'the git configuration could not be read, so nothing is merged',
@@ -1233,6 +1325,212 @@ export async function startHelper({
     }));
   }
 
+  // git in the mirror with no key, no system or user configuration and no system attributes.
+  const local = (mirror) => (args, options = {}) => unkeyed('git', args, {
+    cwd: mirror, input: '', ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env },
+  });
+
+  // The checks /test-merge makes, for a merge or a diff in the mirror: no hook in the
+  // configuration a keyed fetch reads, and no hook, filter, merge or diff driver in the
+  // mirror's own. The refusal, or null.
+  async function mirrorRefusal(mirror, keyed) {
+    const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
+    for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook|diff)\\.')]) {
+      if (said !== 'none') return CONFIG_REFUSED[said];
+    }
+    return null;
+  }
+
+  const prSource = (project, number) => (recordOf(project).host === 'gitlab' ? `refs/merge-requests/${number}/head` : `refs/pull/${number}/head`);
+
+  // Fetches the pull request's head and the default branch into the mirror with the key, and
+  // checks the head is the one the host reported. Throws otherwise.
+  async function fetchPr({ mirror, keyed, git, number, headSha, defaultBranch, project }) {
+    const prRef = `refs/wheelhouse/pr/${number}`;
+    const fetched = await keyed('git', [
+      ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE,
+      `+${prSource(project, number)}:${prRef}`, `+refs/heads/${defaultBranch}:${BASE_REF}`,
+    ], { cwd: mirror, input: '' });
+    if (fetched.code !== 0) throw new Error('fetching the pull request failed');
+    const head = await git([...NO_HOOKS, 'rev-parse', '--verify', '--end-of-options', `${prRef}^{commit}`]);
+    if (head.code !== 0 || head.stdout.trim() !== headSha) throw new Error('the fetched head is not the head the host reported');
+    return prRef;
+  }
+
+  // The facts the gate's carry-over rule needs, read in the mirror (design section 12): whether
+  // the default branch's head is an ancestor of the pull request's head, and, for each earlier
+  // commit named in `from`, whether what was signed for it still holds for the head. It holds
+  // when its patch-id (against its merge base with the default branch) is the head's, and every
+  // commit after it on the head's first-parent line is a clean update merge. A commit of the
+  // feature's own after it, or an update merge whose resolution changed code, needs the head
+  // signed again. Read-only toward the host. Throws when the mirror cannot say.
+  function carryFacts({ project, number, headSha, defaultBranch, from }, ctx) {
+    if (!plainBranch(defaultBranch)) throw new Error('the default branch is not known');
+    if (typeof headSha !== 'string' || !FULL_SHA.test(headSha)) throw new Error('the head commit is not known');
+    return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const git = local(mirror);
+      const refusal = await mirrorRefusal(mirror, keyed);
+      if (refusal) throw new Error(refusal);
+      const prRef = `refs/wheelhouse/pr/${number}`;
+      try {
+        await fetchPr({ mirror, keyed, git, number, headSha, defaultBranch, project });
+        const onTop = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', BASE_REF, headSha]);
+        if (onTop.code !== 0 && onTop.code !== 1) throw new Error('comparing the branch with the default branch failed');
+        let headPatch = null;
+        const holds = async (commit) => {
+          if (typeof commit !== 'string' || !FULL_SHA.test(commit) || commit === headSha) return false;
+          // The commits after `commit` on the head's first-parent line, newest first. Each must be a
+          // clean update merge whose first parent is the one before it (the oldest's is `commit`)
+          // and whose second parent is from the default branch.
+          const after = await git([...NO_HOOKS, 'rev-list', '--first-parent', '--end-of-options', headSha, `^${commit}`, '--']);
+          const line = after.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+          if (after.code !== 0 || line.length === 0) return false;
+          for (const [i, c] of line.entries()) {
+            if (!(await cleanUpdate({ git, commit: c, first: line[i + 1] ?? commit, base: BASE_REF }))) return false;
+          }
+          headPatch ??= await patchIdOf({ git, base: BASE_REF, head: headSha });
+          return headPatch !== '' && (await patchIdOf({ git, base: BASE_REF, head: commit })) === headPatch;
+        };
+        const out = { upToDate: onTop.code === 0 };
+        for (const [name, commit] of Object.entries(from)) out[name] = await holds(commit);
+        return out;
+      } finally {
+        await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
+      }
+    }));
+  }
+
+  // The review and the approval the gate weighs, and whether the branch is up to date. Each is
+  // the latest signed record for this pull request, in the carried form when it names an
+  // earlier commit and still holds for the head (carryFacts); an approval carries only when the
+  // screenshots of the two commits match too. Anything the mirror can't say leaves the branch
+  // unknown (null, which the gate refuses with its own reason) and nothing carried. The one rule
+  // behind /merge and /pr/carried.
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true }, ctx) {
+    const review = latestFor(views.reviews, number);
+    const approval = withApproval ? latestFor(views.approvals, number) : null;
+    const from = {
+      review: review?.data?.verdict === 'CLEAN' && review.data.commit !== headSha ? review.data.commit : null,
+      approval: approval !== null && approval.data?.commit !== headSha ? approval.data?.commit : null,
+    };
+    let facts = { upToDate: null, review: false, approval: false };
+    try {
+      const defaultBranch = await defaultBranchOf(project, adapter);
+      facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
+    } catch { /* not readable: not known whether it is up to date, and nothing carries */ }
+    let shown = false;
+    if (facts.approval === true) {
+      try { shown = (await screenshotsMatch(from.approval, headSha)) === true; } catch { /* not compared: asked again */ }
+    }
+    return {
+      upToDate: facts.upToDate === null ? null : facts.upToDate === true,
+      review: facts.review === true ? { carried: true, record: review } : review,
+      approval: shown ? { carried: true, record: approval } : approval,
+    };
+  }
+
+  // Whether the head of an open pull request counts as reviewed, by the gate's own rule, and
+  // whether it is up to date: for the watcher, which holds no keys. `earlier` says a verified CLEAN
+  // review of an earlier commit of this pull request is on record, so a head that is not reviewed
+  // had one that did not carry over (ruling R119). Read-only, so STOP lets it through.
+  async function doCarried({ project, number }, ctx) {
+    if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
+    const adapter = await ctx.adapter();
+    const pr = await adapter.prState(number);
+    if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
+    const skipped = [];
+    const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), readEnrolled(), { damaged: skipped, now });
+    const reviews = views.reviews?.[String(number)] ?? {};
+    const earlier = Object.values(reviews).some((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
+    // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
+    // read, so the watcher's poll costs no fetch, and upToDate is not known (false).
+    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false, earlier };
+    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false }, ctx);
+    const own = found.review?.data?.commit === pr.headSha && found.review?.data?.verdict === 'CLEAN';
+    return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
+  }
+
+  // Brings an open pull request's branch up to date with the default branch (design section 12):
+  // in the mirror, `git merge-tree --write-tree` of the head and the default branch; when clean
+  // and the head is behind, a merge commit of the two, pushed to the pull request's branch with
+  // the connection's key through the push rules. A CI file arriving from the default branch is
+  // not the branch's own change, since the rules compare with the merge base. Refused under STOP,
+  // and for any pull request but a feature branch of this repository against the default branch.
+  //
+  // The merge commit is the same commit each time it is built from the same two parents: Wheelhouse
+  // as author and committer, and both dates the later of the parents' committer dates (ruling R118).
+  // So when the branch's own changes touch a CI file, the refusal names that commit (`ciPush`)
+  // and keeps the pending entry its card needs; once the director clicks it, the next call builds
+  // the same commit again and pushes it with their own sign-in, as /push does.
+  async function doUpdateBranch({ project, number }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
+    if (bypassActive({ now })) return { ok: false, refused: BYPASS_PUSH };
+    const adapter = await ctx.adapter();
+    const pr = await adapter.prState(number);
+    if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
+    if (typeof pr.headSha !== 'string' || !FULL_SHA.test(pr.headSha)) refuse('the head commit is not known');
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    if (pr.baseRef !== defaultBranch) return { ok: false, refused: UPDATE_REFUSALS.base };
+    const spelled = checkRefspec(pr.headRef, defaultBranch);
+    if (!spelled.allowed) return { ok: false, refused: spelled.refused };
+    const { branch } = spelled;
+    if (branch === STATE_BRANCH || branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+    if (!FEATURE_BRANCH.test(branch)) return { ok: false, refused: UPDATE_REFUSALS.branch };
+    if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
+    const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const git = local(mirror);
+      const refusal = await mirrorRefusal(mirror, keyed);
+      if (refusal) return { refused: refusal };
+      const prRef = `refs/wheelhouse/pr/${number}`;
+      try {
+        await fetchPr({ mirror, keyed, git, number, headSha: pr.headSha, defaultBranch, project });
+        // A fork's pull request names a branch of the fork: the push would land on this
+        // repository's branch of the same name. Only a head that is that branch is brought up to date.
+        const listed = await keyed('git', [...NO_HOOKS, 'ls-remote', '--heads', REMOTE, `refs/heads/${branch}`], { cwd: mirror, input: '' });
+        if (listed.code !== 0) throw new Error('reading the branch on the host failed');
+        if (listed.stdout.trim().split(/\s+/)[0] !== pr.headSha) return { refused: UPDATE_REFUSALS.fork };
+        const onTop = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', BASE_REF, pr.headSha]);
+        if (onTop.code === 0) return { current: true };
+        if (onTop.code !== 1) throw new Error('comparing the branch with the default branch failed');
+        const merged = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', pr.headSha, BASE_REF]);
+        if (merged.code === 1) return { conflicts: merged.stdout.split('\0').slice(1).filter((name) => name !== '') };
+        if (merged.code !== 0) throw new Error('git could not merge the default branch in');
+        const tree = merged.stdout.split('\0')[0].trim();
+        const base = (await git([...NO_HOOKS, 'rev-parse', '--verify', `${BASE_REF}^{commit}`])).stdout.trim();
+        const dated = await git([...NO_HOOKS, 'log', '--no-walk', '--format=%ct', pr.headSha, base]);
+        const seconds = dated.stdout.split('\n').filter((l) => /^\d+$/.test(l.trim())).map(Number);
+        if (dated.code !== 0 || seconds.length !== 2) throw new Error('reading the commits\' dates failed');
+        const at = `${Math.max(...seconds)} +0000`;
+        const commit = await git([...NO_HOOKS, 'commit-tree', '--no-gpg-sign', tree, '-p', pr.headSha, '-p', base, '-m', `Merge ${defaultBranch} into ${branch}`], {
+          env: { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+        });
+        if (commit.code !== 0 || !FULL_SHA.test(commit.stdout.trim())) throw new Error('making the merge commit failed');
+        const kept = await git([...NO_HOOKS, 'update-ref', `refs/heads/${branch}`, commit.stdout.trim()]);
+        if (kept.code !== 0) throw new Error('keeping the merge commit failed');
+        return { commit: commit.stdout.trim(), mirror };
+      } finally {
+        await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
+      }
+    }));
+    if (made.refused) return { ok: false, refused: made.refused };
+    if (made.conflicts) return { ok: false, refused: 'the branch conflicts with the default branch', conflicts: made.conflicts };
+    if (made.current) return { ok: true, updated: false, head: pr.headSha };
+    try {
+      const pushed = await pushFrom({ project, branch, source: made.mirror, refspec: branch, defaultBranch, ciGuard: true }, ctx);
+      if (pushed.rejected) return { ok: false, refused: 'the branch moved on the host while it was being brought up to date' };
+      if (!pushed.ok && pushed.refused === PUSH_REFUSALS.ciFile) {
+        // The card for this exact commit, which the next call builds again.
+        writePending(project, { branch, sha: made.commit, at: now().toISOString() });
+        return { ok: false, refused: pushed.refused, ciPush: { branch, sha: made.commit } };
+      }
+      if (!pushed.ok) return pushed;
+    } finally {
+      await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
+    }
+    return { ok: true, updated: true, head: made.commit };
+  }
+
   async function doMerge(body, ctx) {
     try {
       return await mergeAnswer(body, ctx);
@@ -1241,6 +1539,18 @@ export async function startHelper({
         await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
         tidyAfterAnswer(body.project);
       }
+    }
+  }
+
+  // Pulls the project's state clone, and pushes what it holds that the host lacks, as /state/sync
+  // does. Whether the pull went through.
+  async function stateFresh(project, ctx) {
+    try {
+      return await oneAtATime(`state:${project}`, async () => (
+        (await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })).pulled === true
+      ));
+    } catch {
+      return false;
     }
   }
 
@@ -1268,22 +1578,37 @@ export async function startHelper({
     // read, the change counts as touching the guardrails.
     let classified = { touchesGuardrails: true, guardrailPaths: [], criticalAreas: [] };
     let readable = true;
+    let changes = null;
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
-      const { paths, config } = await readChanges({ project, number, headSha, defaultBranch }, ctx);
-      classified = classifyChange({ paths, config });
+      changes = await readChanges({ project, number, headSha, defaultBranch }, ctx);
+      classified = classifyChange({ paths: changes.paths, config: changes.config });
     } catch {
       readable = false;
     }
     // A restore is a release that passed review before; the director's approval stands in for it.
     const touchesGuardrails = (!restore && classified.touchesGuardrails) || body.touchesGuardrails === true;
-    const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const ci = await adapter.ciState(headSha);
+    // The state clone is brought up to date first, so an incident declared on another computer is
+    // seen (Ruling 115); when it can't be, the merge waits, a restore excepted, since the runbook
+    // restores the product (step 3) before the state (step 4) (Ruling 116).
+    const stateReasons = [];
+    if (!(await stateFresh(project, ctx)) && !restore) stateReasons.push(STATE_BEHIND);
     const skipped = [];
     const enrolled = readEnrolled();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
+    // A damaged event is dropped from the views, and a dropped incident or approval of work reads as
+    // nothing to do, so with any damage only a restore goes on (Ruling 114). A reply-code clash is
+    // listed with the damage but hides neither, so it doesn't count.
+    const clashes = new Set(views.codeClashes);
+    if (views.damaged.some((d) => !clashes.has(d)) && !restore) stateReasons.push(STATE_DAMAGED);
+    // Work shown first needs the director's approval of the pull request. When the changed files
+    // couldn't be read, the change already counts as touching the guardrails.
+    const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
+    const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore || shownFirst;
     const holdsLock = await lockHeld(project, ctx);
+    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter }, ctx);
     // STOP and bypass are read last, just before the decision, so one set during the
     // fetches above is seen. The caller may only raise them.
     const decision = gateDecision({
@@ -1296,14 +1621,21 @@ export async function startHelper({
       reviewRequired: !restore,
       approvalRequired,
       touchesGuardrails,
-      review: latestFor(views.reviews, number),
-      approval: latestFor(views.approvals, number),
+      review,
+      approval,
       enrolled,
+      upToDate,
+      incident: incidentFor(views, number),
+      // Interim value until Task 27.
+      provenance: { ok: true }, // Task 27 reads the PR's provenance block
     });
-    if (!decision.allow) {
+    if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
-      const reasons = [...said, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
-      return { ok: false, refused: reasons.join('; '), reasons, ...found };
+      const reasons = [...said, ...stateReasons, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
+      // What the director's click can supply, by name, so the foreman can wait for that click
+      // rather than ask (ruling R117). The reasons still list every condition that failed.
+      const needs = decision.approvalMissing === true ? { needs: { approval: { pr: number, commit: headSha } } } : {};
+      return { ok: false, refused: reasons.join('; '), reasons, ...needs, ...found };
     }
     if (stopped() && !restore) {
       const reasons = [...(restoreCheck.matched ? [`restore pull request: ${restoreCheck.why}`] : []), 'STOP is on'];
@@ -1511,7 +1843,6 @@ export async function startHelper({
     const defaultBranch = await defaultBranchOf(project, adapter);
     const branch = `${RESTORE_PREFIX}${sha12}`;
     const onGithub = recordOf(project).host === 'github';
-    const author = { GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid' };
     const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed, must }) => {
       const { head, history } = await defaultHistory(must, defaultBranch);
       if (sha === head || !history.includes(sha)) return { refused: NOT_EARLIER };
@@ -1521,7 +1852,7 @@ export async function startHelper({
         return { refused: 'the default branch already holds exactly those files' };
       }
       const commit = await keyed('git', ['commit-tree', tree, '-p', head, '-m', `Put the product back to release ${sha12}`], {
-        cwd: mirror, input: '', env: { ...author, GIT_AUTHOR_DATE: now().toISOString(), GIT_COMMITTER_DATE: now().toISOString() },
+        cwd: mirror, input: '', env: { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: now().toISOString(), GIT_COMMITTER_DATE: now().toISOString() },
       });
       if (commit.code !== 0) throw new Error('making the restore commit failed');
       await must(['update-ref', `refs/heads/${branch}`, commit.stdout.trim()], 'keeping the restore commit');
@@ -1832,6 +2163,23 @@ export async function startHelper({
       try {
         return await doTestMerge(body, ctx);
       } finally {
+        tidyAfterAnswer(body.project);
+      }
+    },
+    '/pr/update-branch': (body, ctx) => oneAtATime(`merge:${body.project}`, async () => {
+      try {
+        return await doUpdateBranch(body, ctx);
+      } finally {
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
+        tidyAfterAnswer(body.project);
+      }
+    }),
+    // Read-only, so STOP lets it through.
+    '/pr/carried': async (body, ctx) => {
+      try {
+        return await doCarried(body, ctx);
+      } finally {
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
         tidyAfterAnswer(body.project);
       }
     },
