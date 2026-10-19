@@ -21,6 +21,7 @@ function writeList(home, text) {
 
 // A scratch repository with a remote: one pushed commit naming the word, then a tracked file
 // naming it in another case, an untracked one, a binary one, and an unpushed commit naming it.
+// The untracked file is read too, as it is not ignored.
 async function makeRepo() {
   const remote = await makeBareRemote();
   const root = path.join(tempFolder('wh-private-'), 'repo');
@@ -53,6 +54,7 @@ test('a listed word in a tracked file or an unpushed commit message fails, whate
   const added = hits.filter((h) => h.where === 'diff');
   assert.deepEqual(hits.filter((h) => h.where !== 'diff'), [
     { where: 'file', at: 'notes.md', line: 2, wordNo: 2 },
+    { where: 'file', at: 'untracked.md', line: 1, wordNo: 2 },
     { where: 'commit', at: head, line: 3, wordNo: 2 },
   ]);
   // The unpushed commit's added line names it too; the pushed commit's never counts.
@@ -145,7 +147,7 @@ test('a masked path leaves no part of any listed word', () => {
   assert.equal(maskWords('plain.md', ['bar']), 'plain.md');
 });
 
-test('an added line that starts with ++ is read, and file headers are not', async () => {
+test('an added line that starts with ++ is read, and file headers are not read as lines', async () => {
   const root = await makeRepo();
   fs.writeFileSync(path.join(root, 'counter.c'), 'x\n++quillandink;\n');
   await g(root, 'add', 'counter.c');
@@ -153,9 +155,93 @@ test('an added line that starts with ++ is read, and file headers are not', asyn
   const counted = await g(root, 'rev-parse', 'HEAD');
   const hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'diff');
   assert.deepEqual(hits.map((h) => h.at), [counted]);
-  // A word only in a file's name is not counted from the header lines.
+  // A word only in a file's name is counted once, as a name the commit touches (line 0), not
+  // again from the header lines.
   fs.writeFileSync(path.join(root, 'quillandink-notes.md'), 'plain\n');
   await g(root, 'add', '--all');
   await g(root, 'commit', '--quiet', '-m', 'notes');
-  assert.deepEqual((await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'diff').map((h) => h.at), [counted]);
+  const noted = await g(root, 'rev-parse', 'HEAD');
+  const after = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'diff');
+  assert.deepEqual(after.filter((h) => h.line > 0).map((h) => h.at), [counted]);
+  assert.deepEqual(after.filter((h) => h.line === 0), [{ where: 'diff', at: noted, line: 0, wordNo: 1 }]);
+});
+
+test('a file name added in one unpushed commit and taken out in a later one still fails', async () => {
+  const root = await makeRepo();
+  fs.writeFileSync(path.join(root, 'QuillAndInk-draft.md'), 'plain\n');
+  await g(root, 'add', '--all');
+  await g(root, 'commit', '--quiet', '-m', 'draft');
+  const added = await g(root, 'rev-parse', 'HEAD');
+  await g(root, 'rm', '--quiet', 'QuillAndInk-draft.md');
+  await g(root, 'commit', '--quiet', '-m', 'tidy');
+  const removed = await g(root, 'rev-parse', 'HEAD');
+  const hits = await scanRepo({ root, words: ['quillandink'] });
+  // Newest first, as git log gives them.
+  assert.deepEqual(hits, [
+    { where: 'diff', at: removed, line: 0, wordNo: 1 },
+    { where: 'diff', at: added, line: 0, wordNo: 1 },
+  ]);
+  // A renamed file's old name counts too.
+  fs.writeFileSync(path.join(root, 'quillandink.md'), 'plain\n');
+  await g(root, 'add', '--all');
+  await g(root, 'commit', '--quiet', '-m', 'add');
+  await g(root, 'mv', 'quillandink.md', 'plain.md');
+  await g(root, 'commit', '--quiet', '-m', 'rename');
+  const renamed = await g(root, 'rev-parse', 'HEAD');
+  assert.ok((await scanRepo({ root, words: ['quillandink'] })).some((h) => h.at === renamed && h.line === 0));
+  await withHome(async (home) => {
+    writeList(home, 'quillandink\n');
+    const result = await checkPrivate({ root });
+    assert.equal(result.code, 1);
+    const text = result.lines.join('\n');
+    assert.doesNotMatch(text, /quillandink/i);
+    assert.match(text, new RegExp(`commit ${added}, in a file name it touches: word 1 of the private list`));
+  });
+});
+
+test('untracked files that are not ignored are read, by contents and name; ignored and binary ones are not', async () => {
+  const root = await makeRepo();
+  fs.writeFileSync(path.join(root, '.gitignore'), 'cache/\n');
+  fs.mkdirSync(path.join(root, 'drafts'));
+  fs.writeFileSync(path.join(root, 'drafts', 'quillandink-plan.md'), 'plain\n');
+  fs.writeFileSync(path.join(root, 'drafts', 'stock.md'), 'one\ntwo QuillAndInk\n');
+  fs.writeFileSync(path.join(root, 'drafts', 'shelf.bin'), Buffer.from([0, 1, ...Buffer.from('quillandink')]));
+  fs.mkdirSync(path.join(root, 'cache'));
+  fs.writeFileSync(path.join(root, 'cache', 'quillandink.md'), 'quillandink\n');
+  const hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'file');
+  assert.deepEqual(hits.map((h) => [h.at, h.line]).sort(), [['drafts/***-plan.md', 0], ['drafts/stock.md', 2]]);
+});
+
+test('branch and tag names not on the remote are read, and the current branch always', async () => {
+  const root = await makeRepo();
+  // On the remote, and not the current branch: not read.
+  await g(root, 'branch', 'quillandink-pushed');
+  await g(root, 'push', '--quiet', 'origin', 'quillandink-pushed');
+  // Local only: read.
+  await g(root, 'branch', 'feature/QuillAndInk-shelf');
+  await g(root, 'tag', 'quillandink-v1');
+  let hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'ref');
+  assert.deepEqual(hits.map((h) => h.at).sort(), ['refs/heads/feature/***-shelf', 'refs/tags/***-v1']);
+  assert.ok(hits.every((h) => h.line === 0 && h.wordNo === 1));
+  // The current branch, even though it is on the remote.
+  await g(root, 'checkout', '--quiet', 'quillandink-pushed');
+  hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'ref');
+  assert.deepEqual(hits.map((h) => h.at).sort(), ['refs/heads/***-pushed', 'refs/heads/feature/***-shelf', 'refs/tags/***-v1']);
+  await withHome(async (home) => {
+    writeList(home, 'quillandink\n');
+    const text = (await checkPrivate({ root })).lines.join('\n');
+    assert.doesNotMatch(text, /quillandink/i);
+    assert.match(text, /branch or tag refs\/tags\/\*\*\*-v1, in its name: word 1 of the private list/);
+  });
+});
+
+test('with no remote, every local branch and tag name is read', async () => {
+  const root = path.join(tempFolder('wh-private-'), 'repo');
+  fs.mkdirSync(root);
+  await g(root, 'init', '--quiet', '-b', 'main');
+  await g(root, 'commit', '--quiet', '--allow-empty', '-m', 'start');
+  await g(root, 'branch', 'quillandink');
+  await g(root, 'tag', 'v1-quillandink');
+  const hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'ref');
+  assert.deepEqual(hits.map((h) => h.at).sort(), ['refs/heads/***', 'refs/tags/v1-***']);
 });

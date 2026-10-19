@@ -3,9 +3,12 @@
 // (design section 16). The words to look for are kept on this computer only, one to a line, in
 // <wheelhouseHome()>/install/private-words.txt; blank lines and lines starting with # are skipped.
 // It reads every file in the index as staged (binary files skipped; a link's target is read too),
-// the files' names, and the messages and added lines of the commits not yet on the remote's
-// default branch, since a pushed commit can no longer be changed and the public history starts
-// afresh; with no remote, the newest PRIVATE_SCAN_COMMITS.
+// and every untracked file git does not ignore, as it is in the folder; the files' names; the
+// messages, added lines and touched file names of the commits not yet on the remote's default
+// branch, since a pushed commit can no longer be changed and the public history starts afresh
+// (with no remote, the newest PRIVATE_SCAN_COMMITS); and the names of the current branch and of
+// every local branch not on a remote (with no remote, every one) and every tag, since git keeps no
+// record of which tags a remote has without asking it, and the check stays off the network.
 // Matching ignores case. A hit names its place and the word's line in the list, never the word,
 // so the check's own output can be pasted anywhere.
 //   npm run private-check
@@ -104,6 +107,11 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
   const hits = [];
   // A path with every listed word masked, so a hit's place never shows a word.
   const mask = (text) => maskWords(text, listed.map(({ lower }) => lower));
+  // One hit per listed word in a name (a path or a ref), at line 0.
+  const nameHits = (name, where, at) => {
+    const lower = name.toLowerCase();
+    for (const entry of listed) if (lower.includes(entry.lower)) hits.push({ where, at, line: 0, wordNo: entry.wordNo });
+  };
   const lineHits = (lines, where, at) => {
     lines.forEach((raw, i) => {
       if (raw === null) return;
@@ -128,14 +136,43 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
   }
   const blobs = await readBlobs(git, [...new Set(entries.map((e) => e.object).filter(Boolean))]);
   let read = 0;
-  for (const { name, object } of entries) {
+  const readFile = (name, bytes) => {
     const at = mask(name);
-    for (const { lower, wordNo } of listed) if (name.toLowerCase().includes(lower)) hits.push({ where: 'file', at, line: 0, wordNo });
-    const bytes = object ? blobs.get(object) : undefined;
-    if (!bytes || bytes.subarray(0, BINARY_PROBE).includes(0)) continue;
+    nameHits(name, 'file', at);
+    if (!bytes || bytes.subarray(0, BINARY_PROBE).includes(0)) return;
     read += 1;
     lineHits(bytes.toString('utf8').split('\n'), 'file', at);
+  };
+  for (const { name, object } of entries) readFile(name, object ? blobs.get(object) : undefined);
+
+  // Untracked files git does not ignore, as they are in the folder: one `git add --all` from being
+  // staged. A link's target is read as its text; a nested repository (listed as `name/`) by name only.
+  const others = await git(['ls-files', '--others', '--exclude-standard', '-z']);
+  for (const name of (others ?? '').split('\0').filter(Boolean)) {
+    const full = path.join(root, ...name.split('/').filter(Boolean));
+    let bytes;
+    try {
+      const stat = fs.lstatSync(full);
+      if (stat.isSymbolicLink()) bytes = Buffer.from(fs.readlinkSync(full), 'utf8');
+      else if (stat.isFile()) bytes = fs.readFileSync(full);
+    } catch { /* gone since git listed it */ }
+    readFile(name, bytes);
   }
+
+  // Branch and tag names, each with every listed word masked: the current branch, local branches
+  // no remote has (with no remote, all of them), and every tag.
+  const remotes = (await git(['remote']) ?? '').split('\n').map((r) => r.trim()).filter(Boolean);
+  const onRemote = new Set();
+  for (const remoteRef of (await git(['for-each-ref', '--format=%(refname)', 'refs/remotes']) ?? '').split('\n').filter(Boolean)) {
+    const remote = remotes.find((r) => remoteRef.startsWith(`refs/remotes/${r}/`));
+    if (remote) onRemote.add(`refs/heads/${remoteRef.slice(`refs/remotes/${remote}/`.length)}`);
+  }
+  const current = (await git(['symbolic-ref', '--quiet', 'HEAD']))?.trim() ?? '';
+  const refs = new Set(current.startsWith('refs/heads/') ? [current] : []);
+  for (const name of (await git(['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/tags']) ?? '').split('\n').filter(Boolean)) {
+    if (name.startsWith('refs/tags/') || !onRemote.has(name)) refs.add(name);
+  }
+  for (const name of refs) nameHits(name, 'ref', mask(name));
 
   let ref = (await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']))?.trim() ?? '';
   if (ref === '') {
@@ -167,15 +204,25 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
     });
     lineHits(added, 'diff', first.trim());
   }
+
+  // The file names each of those commits touched, old and new names of a rename both, so a name
+  // added and taken out again before the push still fails. The header lines above are not read.
+  const touched = await git(['log', '--name-only', '--no-renames', '-z', '--format=%x1e%H', ...range]);
+  for (const entry of (touched ?? '').split('\x1e').filter((e) => e.trim() !== '')) {
+    const [sha, ...names] = entry.split('\0');
+    for (const name of names.map((n) => n.replace(/^\n/, '')).filter(Boolean)) nameHits(name, 'diff', sha.trim());
+  }
   return { hits, files: read, messages: messages.length };
 }
 
 // Every place in the repository at `root` naming one of `words` (strings, or { word, line } with
-// the word's line in the list), whatever its case: the index's files, by line and by name (line 0);
-// the messages of commits not on the remote's default branch (or, with no remote, the newest
-// `commits`); and the lines those commits added (`where: 'diff'`, numbered within the commit's
-// changes). Each hit is { where: 'file' | 'commit' | 'diff', at, line, wordNo }; a file's path has
-// every listed word masked.
+// the word's line in the list), whatever its case: the index's files and the untracked files git
+// does not ignore, by line and by name (line 0); the messages of commits not on the remote's
+// default branch (or, with no remote, the newest `commits`); the lines those commits added
+// (`where: 'diff'`, numbered within the commit's changes) and the file names they touched
+// (`where: 'diff'`, line 0); and branch and tag names (`where: 'ref'`, line 0). Each hit is
+// { where: 'file' | 'commit' | 'diff' | 'ref', at, line, wordNo }; `at` is a commit's hash, or a
+// path or full ref name with every listed word masked.
 export async function scanRepo({ root, words, commits = PRIVATE_SCAN_COMMITS, run = defaultRun }) {
   return (await scan({ root, words, commits, run })).hits;
 }
@@ -183,7 +230,9 @@ export async function scanRepo({ root, words, commits = PRIVATE_SCAN_COMMITS, ru
 const describe = (hit) => {
   const word = `word ${hit.wordNo} of the private list`;
   if (hit.where === 'commit') return `commit ${hit.at}, line ${hit.line}: ${word}`;
+  if (hit.where === 'diff' && hit.line === 0) return `commit ${hit.at}, in a file name it touches: ${word}`;
   if (hit.where === 'diff') return `commit ${hit.at}, line ${hit.line} of its changes: ${word}`;
+  if (hit.where === 'ref') return `branch or tag ${hit.at}, in its name: ${word}`;
   if (hit.line === 0) return `file ${hit.at}, in a file's name: ${word}`;
   return `file ${hit.at}, line ${hit.line}: ${word}`;
 };
@@ -195,7 +244,7 @@ export async function checkPrivate({ root, file = privateListFile(), run = defau
   if (list.length === 0) return { code: 0, lines: ['The private list on this computer has no words.'] };
   const { hits, files, messages } = await scan({ root, words: list, run });
   if (hits.length === 0) {
-    return { code: 0, lines: [`No private words found: ${files} tracked files and ${messages} commit messages read.`] };
+    return { code: 0, lines: [`No private words found: ${files} staged and untracked files and ${messages} commit messages read.`] };
   }
   return {
     code: 1,
