@@ -214,3 +214,11 @@ test('the intake writes a changed approved document in place and marks it as cha
   // The red flags say the same.
   assert.match(intake, /\n\| "[^"\n]*approval line[^"\n]*" \| Replace it: "Changed since the director's approval; the change card decides it\." \|\n/);
 });
+
+test('the intake reads running work back before anything else, in the read-back\'s own words, and its red flags say so (F89)', () => {
+  const rule = intake.split('\n').find((line) => line.startsWith('3. **Running work.**')) ?? '';
+  // The read-back comes first, word for word, ahead of the changed document and the card.
+  assert.match(rule, /First, before you write or record anything for it, read it back in one line, in these words: "Doing: X\. Not doing: Y\. Done when: Z\."/);
+  assert.match(rule, /A before and after list, or the route in other words, is not the read-back/);
+  assert.match(intake, /\n\| "[^"\n]*read-back[^"\n]*" \| Read it back first: "Doing: X\. Not doing: Y\. Done when: Z\." \|\n/);
+});

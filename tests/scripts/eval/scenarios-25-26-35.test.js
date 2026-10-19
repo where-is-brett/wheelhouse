@@ -308,6 +308,11 @@ test('scenario 26 wants route 3, the amendment with its card recorded and asked,
   // No amendment, or no route said, fails; and building fails first.
   assert.match(judge26({ reply, written: [amendCard], calls: [], dir, variant: 'without' }).why, /no amendment recorded for orders-export \(route 3 said; it recorded an amend card\)/);
   assert.match(judge26({ reply: 'Done.', written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /no route 3 was said/);
+  // The route in the intake's own words for question 3, "work already running", counts (ruling F89).
+  for (const said of ["I've treated this as a change to work that's already running.", 'This is a change to work that is already running.']) {
+    assert.equal(judge26({ reply: said, events: stream, written: [amendment, amendCard], calls: callsOf(stream), dir, variant: 'with' }).pass, true, said);
+  }
+  assert.match(judge26({ reply: 'The export is under way.', written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /no route 3 was said/);
   const built = callsOf(events(
     ['Edit', { file_path: path.join(dir, '.claude/worktrees/orders-export/src/export-rows.js'), old_string: 'a', new_string: 'b' }],
     ['Bash', { command: 'npm test' }],

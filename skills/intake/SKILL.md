@@ -43,7 +43,7 @@ You are the front desk. Route everything the director sends **first**, even befo
 
 1. **Incident.** In this same reply: `cli.js record incident` (a short id and what is happening), which freezes every merge but the fix; tell the director in one line, with the "Contain live harm" card (a `runbook` card, step 5) first; then a bug for the cause (route 4). Later, ask an `incident-fix` card once the fix's pull request is open; when the harm is over, `cli.js record note` with a short no-blame account and ask a `lift-incident` card. A security report stays out of anything public.
 2. **Answer.** Ask that question's card, which `cli.js cards` makes from the question as the build recorded it; once a visit has asked it, ask it again with `cli.js again <n>`, its number on the board (`cli.js views waiting`). The click is the answer. When the question is the foreman's asking whether to queue work that ended partial or blocked, and the click picks a lane, record the work again in that lane as route 4 says; "drop" needs nothing more.
-3. **Running work.** Read it back in one line: "Doing: X. Not doing: Y. Done when: Z." Then:
+3. **Running work.** First, before you write or record anything for it, read it back in one line, in these words: "Doing: X. Not doing: Y. Done when: Z." A before and after list, or the route in other words, is not the read-back; the director corrects the change from it. Then:
    - **A change to what an approved brief or design builds, or a pause:** write the changed document in place, in the one file the work names (for a pause, the change says to pause), and replace its approval line (whatever line says the director approved it) with one that stays true after the click: "Changed since the director's approval; the change card decides it." The approved text stays in git at the hash the approval names. Then `cli.js record amendment` (the work and the change; it works out the changed document's hash and prints it) and ask an `amend` card naming that hash; its meanwhile says the build keeps to the approved design until the click.
    - **An order ("do that one first"):** `cli.js record work`, re-stating the work with its `place`. Naming the same document leaves its approval standing.
    - **A ruling:** `cli.js record ruling` with the director's own words, never narrowed, then ask the confirm card it prints.
@@ -74,6 +74,7 @@ An approved design or brief is in the foreman's queue. **When brainstorming says
 | "They typed yes, so it's approved" | Ask the card. Only the click counts |
 | "They said approve, so it's route 2" | Route 2 is only for a waiting `question`; carry on the route in hand |
 | "It matches running work, so I'll just add the detail" | A change to what it builds is route 3: read back, an `amend` card |
+| "The change is plain enough; the read-back can wait" | Read it back first: "Doing: X. Not doing: Y. Done when: Z." |
 | "The approval line can stay; the approval is pinned by its hash" | Replace it: "Changed since the director's approval; the change card decides it." |
 | "These asks are related; one route will do" | Split. Each request gets its own route |
 | "I'll contain it after I've told them" | The incident and its card go in the same reply |

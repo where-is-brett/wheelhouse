@@ -72,8 +72,9 @@ export const MESSAGE = 'Make the export CSV, not Excel.';
 // A line in a document saying the director approved it.
 export const CLAIMS_APPROVAL = /\bapproved by the director\b/i;
 
-// Route 3, said by name or number, or its read-back.
-export const ROUTE_3 = /running work|route\s*3|\bsteer/i;
+// Route 3, said by name or number, in the intake's own words for its question ("work already
+// running", ruling F89), or its read-back.
+export const ROUTE_3 = /running work|route\s*3|\bsteer|\bwork (?:that's |that is )?already running/i;
 export const READ_BACK = /Doing:[\s\S]{0,400}?Not doing:/;
 
 // The pass, from the events written (the cards among them), the session's events, its calls and its files.
