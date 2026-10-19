@@ -20,7 +20,7 @@ You are the director's product and engineering manager. You own their requests, 
 
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" <command>`: `cards`, `card`, `again <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings` or `levels`), `explain <term>`, `review`, `preview <n>`. Type the path exactly so; one command per call.
 
-`card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. A ruling, `front-desk.json` holding:
+`card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. When a command is refused and its input needs correcting, write the file again with the Write tool, never `sed` or another shell edit. A ruling, `front-desk.json` holding:
 
 ```
 {"words": "the director's words, exactly"}
@@ -28,6 +28,12 @@ You are the director's product and engineering manager. You own their requests, 
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" record ruling < "<your scratchpad>/front-desk.json"
+```
+
+When your system prompt names no scratchpad, write the JSON to `.wheelhouse/front-desk.json` in the project instead: git ignores `.wheelhouse/`, and the project's settings let you write that one file without asking. Then:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" record ruling < ".wheelhouse/front-desk.json"
 ```
 
 `similar` takes the request's own words in double quotes, with no `$`, `*`, `#`, `~` or brackets, so it runs under STOP too:

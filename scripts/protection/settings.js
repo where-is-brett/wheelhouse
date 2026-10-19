@@ -48,6 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
+import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
@@ -263,7 +264,9 @@ export function frontDeskCommand(pluginRoot, { platform = process.platform } = {
 // director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
 // stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command is
 // allowed by its full path, so the director's session isn't asked each time it composes a card or
-// records a decision; the path names this computer's folders too.
+// records a decision; the path names this computer's folders too. Beside it, writing the one file
+// the front desk gives that command its input from when its session has no scratchpad
+// (FRONT_DESK_INPUT, ruling F85), by the project-relative form, and nothing else in the project.
 export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   if (node && pluginRoot && !ownStatusLine) {
@@ -272,7 +275,7 @@ export function localSettings({ address, node, pluginRoot, ownStatusLine = null,
   const frontDesk = pluginRoot ? frontDeskCommand(pluginRoot, { platform }) : null;
   // In this file's `Bash(x:*)` form, the same as `Bash(x *)`. Written on Windows too, unlike the build
   // commands' rules: it reaches only Wheelhouse's own cli.js, by its full path, never `node` itself.
-  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk}:*)`] };
+  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk}:*)`, `Edit(/${FRONT_DESK_INPUT})`] };
   return settings;
 }
 

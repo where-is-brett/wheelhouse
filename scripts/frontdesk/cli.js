@@ -40,7 +40,7 @@ import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, ID } from '../state/card-lines.js';
 import { countsAtOnce } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
-import { endedBy } from '../foreman/queue.js';
+import { endedBy, since } from '../foreman/queue.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -500,7 +500,10 @@ async function withHash(client, cwd, kind, input) {
   if (kind !== 'amendment') return input;
   const { views } = await viewsOf(client, cwd);
   const entry = isPlain(views.work) ? views.work[input.work] : undefined;
-  if (!isPlain(entry) || endedBy(views.reports, input.work, entry.work)) throw new CliError(`The work ${input.work} isn't open, so there is nothing to amend`);
+  // Open as the queue reads it: no report has ended it, and its feature hasn't closed since it was queued.
+  const feature = isPlain(views.features) ? views.features[input.work] : undefined;
+  const closed = feature?.data?.step === 'closed' && since(feature, entry.work);
+  if (!isPlain(entry) || closed || endedBy(views.reports, input.work, entry.work)) throw new CliError(`The work ${input.work} isn't open, so there is nothing to amend`);
   const file = entry.work?.data?.doc?.path;
   if (typeof file !== 'string') {
     if (input.hash !== undefined) return input;

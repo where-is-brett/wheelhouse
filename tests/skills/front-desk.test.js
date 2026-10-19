@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main, RECORD_KINDS, VIEW_NAMES } from '../../scripts/frontdesk/cli.js';
 import { frontDeskCommand, localSettings } from '../../scripts/protection/settings.js';
+import { FRONT_DESK_INPUT } from '../../scripts/lib/front-desk.js';
 import { FRONT_DESK_LINE } from '../../scripts/hooks/session-start.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
 import { CARD_KINDS } from '../../scripts/lib/front-desk.js';
@@ -83,7 +84,7 @@ test('the playbook is named front-desk, is used where the session start points, 
 
 test('every command is cli.js exactly as its allow rule matches it', () => {
   const allow = localSettings({ address: '/h/helper.sock', pluginRoot: '/plugin', platform: 'linux' }).permissions.allow;
-  assert.deepEqual(allow, [`Bash(${COMMAND}:*)`]);
+  assert.deepEqual(allow, [`Bash(${COMMAND}:*)`, `Edit(/${FRONT_DESK_INPUT})`]);
   for (const [file, text] of [[PLAYBOOK, playbook], [INTAKE, intake]]) {
     const nodes = [...text.matchAll(/node "[^"]*"/g)].map((m) => m[0].replaceAll(ROOT_VARIABLE, '/plugin'));
     assert.ok(nodes.length > 0, `${file} names the command`);
@@ -141,8 +142,16 @@ test('the playbook gives JSON input from a file in the scratchpad, written with 
   assert.match(rule, /outside the project, so nothing reaches git/);
   assert.match(intake, /JSON input from a file in your scratchpad folder/);
   const commands = [...playbook.matchAll(/^node "[^"]*" (?:card|record [a-z]+)\b.*$/gm)].map((m) => m[0]);
-  assert.ok(commands.length >= 2);
-  for (const line of commands) assert.match(line, / < "<your scratchpad>\/front-desk\.json"$/);
+  assert.ok(commands.length >= 3);
+  for (const line of commands) assert.ok(line.endsWith(' < "<your scratchpad>/front-desk.json"') || line.endsWith(` < "${FRONT_DESK_INPUT}"`), line);
+  // With no scratchpad named, the one file in the project the local settings let it write (F85).
+  const fallback = playbook.split('\n').find((line) => line.startsWith('When your system prompt names no scratchpad')) ?? '';
+  assert.ok(fallback.includes(`\`${FRONT_DESK_INPUT}\``), fallback);
+  assert.match(fallback, /git ignores `\.wheelhouse\/`/);
+  assert.match(fallback, /without asking/);
+  assert.ok(commands.some((line) => line.endsWith(` < "${FRONT_DESK_INPUT}"`)), 'the fallback is shown');
+  // A refused input is written again with the Write tool, never edited in the shell (F86).
+  assert.match(playbook, /write the file again with the Write tool, never `sed` or another shell edit/);
 });
 
 test('the playbook\'s similar, with the request\'s words as arguments, runs, and runs under STOP', async () => {

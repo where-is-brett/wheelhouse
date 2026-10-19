@@ -14,6 +14,11 @@ export const SCREEN_TIMEOUT_MS = 30000;
 // How long a page's own scripts may run, in the browser's time, before its picture is taken.
 export const SCREEN_SETTLE_MS = 5000;
 
+// The one file in a project's main folder the front desk writes a command's JSON input to when its
+// session has no scratchpad (ruling F85): git ignores `.wheelhouse/`, and the local settings let
+// the front desk write this file without asking. Relative to the project's folder.
+export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
+
 // What a card is about: the cards with a set line, and the one without.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
