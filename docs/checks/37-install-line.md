@@ -65,10 +65,10 @@ The sitting is written out in `probes/37-install-line/run.md`; it runs as step 1
 
 ## Needs the director
 
-The sitting, as step 10b of check 35's Mac sitting (about ten minutes, in the throwaway account, after check 36):
+The sitting, as step 10b of check 35's Mac sitting (about ten minutes of the director's time, in the throwaway account, after check 36; `probes/37-install-line/run.md` gives the same figure):
 
-- Starting a new Desktop session in a scratch project and saying yes if Desktop asks to trust the folder (I2).
-- Pasting the line into that session, clicking what Desktop shows and reading it out (I3), and the same for lines 2 to 4 if line 1 fails.
-- Typing `/reload-plugins` in that session twice, once after the install and once after the settings are written (I6, I8), and saying whether Desktop showed anything of its own.
+- Starting a new Desktop session in a scratch project with the folder picker and saying yes if Desktop asks to trust the folder (I2).
+- Pasting the line into that session, clicking what Desktop shows and reading it out, including all the scope choices, and choosing the project one, "for all collaborators on this repository" (I3); the same for lines 2 to 4 if line 1 fails.
+- Typing `/reload-plugins` in that session up to three times (after the install, after the settings are written, and after the helper's install of the pinned plugins: I6, I8, I9), reading out each answer and whether `/` lists the plugins' skills, and saying whether Desktop showed anything of its own; starting a new session in the folder if the plugins appear only there.
 
 The agent does the rest, including the timing from the session's transcript, the settings and the undo. Before it, the main session pushes the tag `v0.0.0-probe37` and shows that it is readable without a login. Windows (a few of the same steps in the director's own account) is optional and follows check 35's W7.
