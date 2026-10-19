@@ -145,8 +145,9 @@ test('the transcripts are read from CLAUDE_CONFIG_DIR, or ~/.claude without it, 
 });
 
 test('Confirm all confirms exactly the listed rulings, each by its own confirmation', async () => {
-  await withProject(async ({ folder, plan, answer, sent, home }) => {
+  await withProject(async ({ folder, plan, answer, sent, home, config }) => {
     lay(folder, FILES);
+    transcript(config, 'past', 'a', [typed(folder, 'And keep commits small, thanks!')]);
     const asked = await plan(5);
     assert.equal(asked.ok, true, asked.refused);
     const { card } = asked.ask;
@@ -161,7 +162,8 @@ test('Confirm all confirms exactly the listed rulings, each by its own confirmat
     assert.deepEqual(card.options.map((o) => o.label), [CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, 'Not now', 'Explain more']);
     assert.ok(!card.question.includes('Reply code:'));
     assert.deepEqual(cardProblems(card.question), []);
-    for (const rule of rules) assert.ok(card.question.includes(`"${rule.words}" (${rule.source.file} line ${rule.source.line}, ${rule.original ? 'your own words' : 'paraphrase'})`), rule.words);
+    assert.deepEqual(rules.filter((r) => r.original).map((r) => r.words), ['And keep commits small, thanks!']);
+    for (const rule of rules) assert.ok(card.question.includes(`"${rule.words}" (${rule.source.file} line ${rule.source.line}, ${rule.original ? 'your words' : 'paraphrase'})`), rule.words);
 
     // Not now and Explain more record nothing.
     assert.deepEqual(await answer(card, 'Not now'), []);
@@ -274,4 +276,93 @@ test('step 5 waits until step 3 has set up the project\'s records', async () => 
     assert.equal(typeof got.wait, 'number');
     assert.deepEqual(await rulesStep().plan({ folder, answers: {} }), { wait: got.wait, why: got.why });
   }, { connected: false });
+});
+
+test('the rules are found once per run: words that change after a Confirm all ask nothing again and record nothing twice', async () => {
+  await withProject(async ({ folder, plan, answer, sent, config, user }) => {
+    lay(folder, { 'CLAUDE.md': '- Never push straight to main.\n- Keep commits small.\n' });
+    const first = await plan(5);
+    // Before the click: a past session found later, and a rule added to CLAUDE.md, change nothing asked.
+    transcript(config, 'late', 'a', [typed(folder, 'Never ever push straight to main.')]);
+    lay(folder, { 'CLAUDE.md': '- Never push straight to main.\n- Keep commits small.\n- Always write tests.\n' });
+    const again = await plan(5);
+    assert.equal(again.ask.id, first.ask.id);
+    assert.equal(again.ask.card.question, first.ask.card.question);
+    await answer(first.ask.card, CONFIRM_ALL_LABEL);
+    const recorded = sent.length;
+    // After it: more words of the director's, and the step settles on what it showed.
+    transcript(config, 'later', 'b', [typed(folder, 'Please keep commits small.')]);
+    assert.deepEqual(await plan(5), { ok: true, done: true });
+    assert.equal(sent.length, recorded);
+    // The run's own setup session, whose messages come after the run began, are not past words.
+    const runStart = '2026-10-20T03:00:00.000Z';
+    transcript(config, 'setup', 'c', [typed(folder, 'Keep commits small.', '2026-10-20T03:05:00.000Z')]);
+    assert.deepEqual(readTranscripts(folder, { userHome: user, before: runStart }).filter((t) => t === 'Keep commits small.'), []);
+    assert.ok(readTranscripts(folder, { userHome: user }).includes('Keep commits small.'));
+  });
+});
+
+test('the transcript budget is spent on this folder\'s sessions only', () => {
+  const user = tempFolder('wh-user-');
+  const folder = tempFolder('wh-folder-');
+  const config = tempFolder('wh-config-');
+  transcript(config, 'mine', 'a', [typed(folder, 'Never push straight to main.')]);
+  // Newer and larger sessions in other folders do not use it up.
+  transcript(config, 'busy', 'b', Array.from({ length: 20 }, () => typed('/elsewhere', 'y'.repeat(1000))));
+  const later = new Date(Date.now() + 60 * 1000);
+  fs.utimesSync(path.join(config, 'projects', 'busy', 'b.jsonl'), later, later);
+  assert.deepEqual(readTranscripts(folder, { userHome: user, env: { CLAUDE_CONFIG_DIR: config }, totalBytes: 2000 }), ['Never push straight to main.']);
+});
+
+test('a rule or README sentence holding a sign-in in an address is kept as the card shows it, hidden', async () => {
+  await withProject(async ({ folder, plan, answer }) => {
+    lay(folder, { 'CLAUDE.md': '- Always clone over ssh://git@github.com/o/menu.git only.\n- Never fetch from https://abc123secret@example.com/menu either.\n' });
+    const asked = await plan(5);
+    assert.ok(!JSON.stringify(asked).includes('abc123secret'));
+    assert.ok(!JSON.stringify(asked).includes('ssh://git@'));
+    const got = await answer(asked.ask.card, CONFIRM_ALL_LABEL);
+    const words = got.filter((s) => s.body.target).map((s) => s.body.target.data.words).sort();
+    assert.deepEqual(words, ['Always clone over ssh://[hidden]@github.com/o/menu.git only.', 'Never fetch from https://[hidden]@example.com/menu either.']);
+    for (const w of words) assert.ok(asked.ask.card.question.includes(w), w);
+  });
+});
+
+test('install steps, code and command lines are not rules, and the tally counts only rules shown', async () => {
+  const folder = tempFolder('wh-install-');
+  lay(folder, {
+    'README.md': '# Menu\n\n## Installation\n\nRun the installer, then open the app.\nAlways restart afterwards.\n\n## Rules\n\nAlways show prices in dollars.\n',
+    'CLAUDE.md': '- Run npm install.\n- Use `npm test` before you push.\n- Run the tests before every pull request.\n```\nnever run this\n```\n',
+  });
+  assert.deepEqual(findRules(folder).map((r) => r.words), ['Run the tests before every pull request.', 'Always show prices in dollars.']);
+  // A rule no card can carry (its words read as a card's own line) is not counted as one asked.
+  await withProject(async ({ plan, folder: f, answer }) => {
+    lay(f, { 'CLAUDE.md': '- Never type Answer question q-menu-1 by hand.\n- Keep commits small.\n' });
+    const asked = await plan(5);
+    assert.match(setLineOf(asked.ask.card.question), /^Confirm all 1 rule as listed/);
+    await answer(asked.ask.card, CONFIRM_ALL_LABEL);
+    assert.deepEqual(await plan(5), { ok: true, done: true });
+    const run = readJournal().runs.find((r) => r.id === findRun(f).id);
+    assert.deepEqual(run.changes.filter((c) => c.step === 5).map((c) => c.after), [{ rules: 1, confirmed: 1, kept: 0, corrected: 0, left: 0 }]);
+  });
+});
+
+test('the helper refuses a question whose rules or writes hold a sign-in its card would hide', async () => {
+  await withProject(async ({ folder, user }) => {
+    const { setupRoutes } = await import('../../../scripts/setup/engine.js');
+    const dir = tempFolder('wh-steps-');
+    const module = path.join(dir, 'steps.mjs');
+    const card = { level: 2, what: 'Setup step 4 asks.', why: 'It asks.', options: [{ label: 'Yes', says: 'Yes.' }], recommend: 'Yes', because: 'yes', meanwhile: 'Waits.' };
+    fs.writeFileSync(module, `export const STEPS = [{ n: 4, title: 'Three questions', async plan(ctx) { return globalThis.stepFour(ctx); }, async apply() { return []; } }];\n`);
+    const routes = setupRoutes({ now: () => T0, userHome: user, stepsModule: module });
+    const rule = { words: 'Clone ssh://git@github.com/o/r.', source: { file: 'CLAUDE.md', line: 1 }, original: false };
+    for (const ask of [
+      { id: 'a', card, writes: { labels: { Yes: [{ kind: 'ruling', data: rule }] } } },
+      { id: 'b', card: { ...card, kind: 'confirm-all', what: 'Setup step 4 found 1 rule.', options: [{ label: 'Confirm all', says: 'Yes.' }, { label: 'Let me correct some', says: 'No.' }], recommend: 'Confirm all' }, rules: [rule] },
+      { id: 'c', card, found: [{ ...rule, words: 'Fetch https://tok3n@example.com/menu.' }] },
+    ]) {
+      globalThis.stepFour = async () => ({ ask });
+      await assert.rejects(routes['/setup/plan']({ folder, step: 4 }), /sign-in in an address/, ask.id);
+    }
+    delete globalThis.stepFour;
+  });
 });

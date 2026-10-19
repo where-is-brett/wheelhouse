@@ -12,10 +12,13 @@
 //                  description }] }
 //   asked/         each question a run's step last asked (ruling R30), as
 //                  <run id>-<step>-<question id>.json: { runId, folder, step, id, card, typed,
-//                  rules?, writes?, at }, written by the helper when a step's plan asks it; `typed`
-//                  says whether a typed answer counts, `rules` is the list on step 5's card of the
-//                  rules found, `writes` what each answer records in the project's state
-//                  (scripts/lib/setup-writes.js)
+//                  rules?, writes?, found?, at }, written by the helper when a step's plan asks
+//                  it; `typed` says whether a typed answer counts, `rules` is the list on step 5's
+//                  card of the rules found, `writes` what each answer records in the project's
+//                  state (scripts/lib/setup-writes.js), `found` what the step found, kept for the
+//                  rest of the run
+//   answered/      one empty marker per asked question whose answer recorded something in the
+//                  project's state, so it records it once
 //   answers/       each answer as the prompt record signed it: an `action` event `setup-answer`
 //                  { runId, step, questionId, question, label, text }
 // The prompt record reads `shown/` to turn the twelve characters on a card into the full hash
@@ -62,15 +65,17 @@ export function shownFor(runId, step) {
 }
 
 // Records the question a run's step asked: its id within the step, the card as the director is
-// shown it, whether a typed answer counts, and anything the step keeps with it (`rules`, `writes`).
+// shown it, whether a typed answer counts, and anything the step keeps with it (`rules`, `writes`,
+// `found`).
 // Asking it again replaces the record, so only an answer on the card as last asked counts.
-export function noteAsked({ runId, folder, step, id, card, typed = false, rules, writes, now = () => new Date() }) {
+export function noteAsked({ runId, folder, step, id, card, typed = false, rules, writes, found, now = () => new Date() }) {
   const asked = shownCard(card);
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id)) || typeof folder !== 'string' || asked === null) {
     throw new Error('An asked question needs its run, folder, step, id and card');
   }
   const record = {
-    runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), ...(writes === undefined ? {} : { writes }), at: now().toISOString(),
+    runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), ...(writes === undefined ? {} : { writes }),
+    ...(found === undefined ? {} : { found }), at: now().toISOString(),
   };
   writeWhole(path.join(askedDir(), `${runId}-${step}-${id}.json`), `${JSON.stringify(record)}\n`);
 }
@@ -80,6 +85,19 @@ export function askedRecord(runId, step, id) {
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id))) return null;
   const r = readAsked(path.join(askedDir(), `${runId}-${step}-${id}.json`));
   return r && r.runId === runId && r.step === step && r.id === id ? r : null;
+}
+
+// Every question a run's step has asked, oldest first.
+export function askedIn(runId, step) {
+  if (!RUN_ID.test(String(runId)) || !Number.isInteger(step)) return [];
+  let names;
+  try {
+    names = fs.readdirSync(askedDir()).filter((n) => n.startsWith(`${runId}-${step}-`) && n.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  return names.map((n) => readAsked(path.join(askedDir(), n))).filter((r) => r !== null && r.runId === runId && r.step === step)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 // Every event kept in one of setup's folders on this computer; a file that isn't one is passed over.

@@ -20,8 +20,10 @@
 // list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules?, writes? } }`: a question it
 // needs answered first, composed as a `question` card (no set line, no reply code), or, for a card
 // of kind `confirm-all`, as setup's card of the rules found, whose line names the hash of `rules`
-// (ruling R35), and recorded as asked in setup/asked/ with its `rules` and `writes` (what an answer
-// records in the project's state, which the prompt record signs: scripts/lib/setup-writes.js); the
+// (ruling R35), and recorded as asked in setup/asked/ with its `rules`, `writes` (what an answer
+// records in the project's state, which the prompt record signs: scripts/lib/setup-writes.js) and
+// `found` (what the step found, kept for the rest of its run: ruling R62), none holding a sign-in
+// in an address, which the card would show hidden; the
 // prompt record keeps the director's answer on that exact card, signed, and every step's plan reads
 // every answer of its run in ctx.answers, so the list a Go ahead's hash names already holds the
 // choices, and a later answer that changes it makes that Go ahead CHANGED.
@@ -309,13 +311,18 @@ export function setupRoutes({
     const got = await step.plan(ctx);
     const bad = (what) => new Error(`Step ${step.n}'s plan gave ${what}`);
     if (got?.ask !== undefined) {
-      const { id, card, typed, rules, writes } = got.ask ?? {};
+      const { id, card, typed, rules, writes, found } = got.ask ?? {};
       if (typeof id !== 'string' || !SETUP_QUESTION_ID.test(id)) throw bad('a question without an id of up to 40 lowercase letters, digits and dashes');
       if (!card || typeof card !== 'object') throw bad('a question without its card');
       if (typed !== undefined && typeof typed !== 'boolean') throw bad('a question whose typed answer is neither allowed nor refused');
       if (writes !== undefined && (writes === null || typeof writes !== 'object' || Array.isArray(writes))) throw bad('a question whose writes are not a record of them');
       if (card.kind === 'confirm-all' && !(Array.isArray(rules) && rules.length > 0)) throw bad('a card of the rules found without its rules');
-      return { ask: { id, card, typed: typed === true, rules, writes } };
+      if (found !== undefined && !Array.isArray(found)) throw bad('a question whose list found is not a list');
+      // What a click on the card records is kept with it, so it must read as the card does: with no
+      // sign-in in an address, which the card would show hidden (ruling R33).
+      const kept = { rules, writes, found };
+      if (JSON.stringify(cleanDeep(kept, [])) !== JSON.stringify(kept)) throw bad('a question whose rules or writes hold a sign-in in an address, which its card would hide');
+      return { ask: { id, card, typed: typed === true, rules, writes, found } };
     }
     if (got?.wait !== undefined) {
       if (!Number.isFinite(got.wait) || got.wait < 0 || typeof got.why !== 'string' || got.why === '') throw bad('a wait without its time and why');
@@ -369,7 +376,7 @@ export function setupRoutes({
     if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now });
     if (got.ask) {
-      noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, now });
+      noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, found: got.ask.found, now });
       return { ok: true, ask: { step: step.n, id: got.ask.id, card } };
     }
     if (got.settled) {

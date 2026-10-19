@@ -1222,3 +1222,46 @@ test('setup\'s card of the rules found gets no shown record, even with a reply c
     }
   });
 });
+
+test('the same Confirm all clicked twice, in two sessions, records the rulings once', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-twice-')));
+    try {
+      const { question: card } = composeCard({ ...rulesInput('Cafe', RULES), target: { count: 2, hash: listHash(RULES) } });
+      askedCard(folder, { id: 'rules-1', step: 5, card, rules: RULES });
+      const one = fake();
+      await clickOn(folder, card, 'Confirm all', one);
+      const two = fake();
+      await clickOn(folder, card, 'Confirm all', two);
+      assert.equal(one.calls.record.length, 3);
+      assert.deepEqual(two.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      assert.equal(answersKept(home).length, 1);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('records are kept only together with their answer: an answer that can\'t be kept leaves none pending or sent', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-noanswer-')));
+    try {
+      const { question: card } = composeCard({ ...rulesInput('Cafe', RULES), target: { count: 2, hash: listHash(RULES) } });
+      askedCard(folder, { id: 'rules-1', step: 5, card, rules: RULES });
+      // The answers folder can't be made: a file stands in its place.
+      fs.mkdirSync(path.join(home, 'setup'), { recursive: true });
+      fs.writeFileSync(path.join(home, 'setup', 'answers'), 'not a folder');
+      const c = fake();
+      await clickOn(folder, card, 'Confirm all', c);
+      assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      assert.deepEqual(pendingOf(home), []);
+      // Once it can be kept, the same click records them.
+      fs.rmSync(path.join(home, 'setup', 'answers'));
+      const d = fake();
+      await clickOn(folder, card, 'Confirm all', d);
+      assert.equal(d.calls.record.length, 3);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});

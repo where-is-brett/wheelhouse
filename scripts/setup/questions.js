@@ -21,6 +21,7 @@ import { SETUP_TITLES } from '../state/card-lines.js';
 import { stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { scanContent } from '../state/secret-scan.js';
+import { hide } from '../lib/clean.js';
 import { REAL_USERS, LEVELS } from './host.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
@@ -69,7 +70,8 @@ export function readmeOf(folder) {
 }
 
 // The README's first sentence of prose, outside headings, badges, markup and code, at most
-// DESCRIPTION_CHARS, cut at a word; null when there is none or it holds what looks like a secret.
+// DESCRIPTION_CHARS, cut at a word, with any sign-in in an address hidden, as the card shows it;
+// null when there is none or it holds what looks like a secret.
 export function readmeDescription(folder) {
   const file = readmeOf(folder);
   const text = file === null ? null : readStart(file, README_BYTES);
@@ -86,7 +88,7 @@ export function readmeDescription(folder) {
     const first = plain.split(/(?<=[.!?])\s/)[0];
     if (first.split(' ').length < 3) continue;
     const cut = first.length <= DESCRIPTION_CHARS ? first : `${first.slice(0, DESCRIPTION_CHARS).replace(/\s+\S*$/, '')}…`;
-    return scanContent(cut).length > 0 ? null : cut;
+    return scanContent(cut).length > 0 ? null : hide(cut, []);
   }
   return null;
 }
@@ -108,7 +110,8 @@ export function waitForProject(n) {
 const PHASE = { launched: 'launched', before: 'before-launch' };
 
 // The first question: what the product is and who uses it. Its answer records the product's
-// glossary entry and its phase.
+// glossary entry and its phase. Its id names the phase, so a real-users answer given again asks
+// it again, and the phase recorded follows the answer (Task 9's review).
 function productAsk(name, { described, realUsers }) {
   const phase = realUsers ? PHASE.launched : PHASE.before;
   const phaseWrite = { kind: 'setting', data: { key: 'phase', value: phase } };
@@ -118,7 +121,7 @@ function productAsk(name, { described, realUsers }) {
     { label: PRODUCT.later, says: 'Setup records no description of it yet; you can give one to the front desk later.' },
   ];
   return {
-    id: 'product',
+    id: `product-${phase}`,
     typed: true,
     card: {
       level: 2,
@@ -169,8 +172,9 @@ export function questionsStep() {
       const real = answers['3.real-users'];
       if (!real) return { wait: PROJECT_WAIT_MS, why: 'step 3 has not asked whether the product has real users yet' };
       const realUsers = real.label === REAL_USERS.yes;
-      const product = answers['4.product'];
-      if (!product) return { ask: productAsk(project.name, { described: readmeDescription(ctx.folder), realUsers }) };
+      const asked = productAsk(project.name, { described: readmeDescription(ctx.folder), realUsers });
+      const product = answers[`4.${asked.id}`];
+      if (!product) return { ask: asked };
       const live = answers['4.live-data'];
       if (!live) return { ask: liveDataAsk(project.name) };
       return {

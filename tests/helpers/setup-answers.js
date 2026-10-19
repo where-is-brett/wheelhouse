@@ -32,8 +32,9 @@ export function transcript(config, dir, name, entries) {
   fs.writeFileSync(path.join(config, 'projects', dir, `${name}.jsonl`), `${entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n')}\n`);
 }
 
-// One typed message of the director's in a session whose working folder is `cwd`.
-export const typed = (cwd, text) => ({ type: 'user', cwd, message: { role: 'user', content: text } });
+// One typed message of the director's in a session whose working folder is `cwd`, by default the
+// day before the runs here start, so it is one of their past sessions.
+export const typed = (cwd, text, timestamp = '2026-10-19T00:00:00.000Z') => ({ type: 'user', cwd, timestamp, message: { role: 'user', content: text } });
 
 export async function withProject(fn, { files = {}, connected = true } = {}) {
   const home = shortHome();

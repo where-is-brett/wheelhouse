@@ -35,7 +35,7 @@ import {
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES } from '../state/card-lines.js';
-import { keepClick, shownHash, keepAnswer, askedFor } from '../lib/setup-clicks.js';
+import { keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -284,12 +284,29 @@ function keepSetupClicks(cwd, out, now, project = null) {
       const answer = setupAnswerOf(cwd, click);
       if (!answer) continue;
       const records = setupRecordsOf(answer.asked, answer.made.data, { now });
-      if (records.length > 0 && project === null) continue;
-      for (const { route, body } of records) {
-        const full = { project, ...body };
-        queued.push({ file: keep(project, route, full, now), body: full, route });
+      if (records.length === 0) {
+        keepAnswer(makeEvent({ ...answer.made, now }));
+        continue;
       }
-      keepAnswer(makeEvent({ ...answer.made, now }));
+      if (project === null) continue;
+      // An answer that records something is taken once, and its records are kept only with it: a
+      // second click on the same card records nothing, and records whose answer could not be kept
+      // are taken back, so the question asked again can't record them twice.
+      const claim = claimAnswer(answer.made.data);
+      if (claim === null) continue;
+      const kept = [];
+      try {
+        for (const { route, body } of records) {
+          const full = { project, ...body };
+          kept.push({ file: keep(project, route, full, now), body: full, route });
+        }
+        keepAnswer(makeEvent({ ...answer.made, now }));
+      } catch (error) {
+        for (const { file } of kept) fs.rmSync(file, { force: true });
+        releaseAnswer(claim);
+        throw error;
+      }
+      queued.push(...kept);
     } catch { /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
   }
   return queued;

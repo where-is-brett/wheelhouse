@@ -25,6 +25,16 @@ import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { startHttpHost } from '../../helpers/http-host.js';
 import { hostKeyEnv } from '../../helpers/host-key.js';
+import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
+import { pendingDir } from '../../../scripts/hooks/pending.js';
+import { startRun } from '../../../scripts/setup/journal.js';
+import { noteAsked } from '../../../scripts/setup/clicks.js';
+import { questionsStep } from '../../../scripts/setup/questions.js';
+import { rulesStep } from '../../../scripts/setup/rules.js';
+import { REAL_USERS } from '../../../scripts/setup/host.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { listHash } from '../../../scripts/lib/setup-writes.js';
+import { listEvents } from '../../../scripts/state/events.js';
 
 const PROJECT = 'o__p';
 const TOKEN = 'ghs_STANDINTOKEN0123456789abcdef';
@@ -409,6 +419,76 @@ test('/state/record takes a confirmation with the ruling or setting it confirms,
       assert.equal(views.phase.value, 'launched');
       const rulebook = JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', 'rulebook.json'), 'utf8'));
       assert.deepEqual(rulebook.map((r) => [r.words, r.status]), [['Never push straight to main.', 'accepted']]);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+// Steps 4 and 5 through the real helper: the director's answers on the cards the steps ask, as
+// the prompt record keeps and sends them, reach the project's state, each once, with nothing left
+// pending; and what a hook kept while the helper was away lands when it is sent later.
+test('setup\'s answers record the glossary entry, the phase and the rulings through the real /state routes', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  const config = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-config-'));
+  try {
+    await c.as(async () => {
+      // The project's folder, connected as step 3 leaves it, and its records' clone in place.
+      const folder = readProject(PROJECT).folder;
+      fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(folder, 'CLAUDE.md'), '- Never push straight to main.\n- Keep commits small.\n');
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'clone' } })).ok, true);
+      const run = startRun({ folder, now: at(0) });
+      const ask = async (step, plan, card) => {
+        noteAsked({ runId: run.id, folder, step, id: plan.ask.id, card, typed: plan.ask.typed, rules: plan.ask.rules, writes: plan.ask.writes, now: at(0) });
+        return card;
+      };
+      const click = async (card, label, client) => promptRecord({
+        cwd: folder, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+        tool_input: { questions: [card], answers: { [card.question]: label } }, tool_response: { answers: { [card.question]: label } },
+      }, { client, now: at(500) });
+
+      const product = await questionsStep().plan({ folder, runId: run.id, answers: { '3.real-users': { label: REAL_USERS.yes, text: null } } });
+      const productCard = await ask(4, product, composeCard({ ...product.ask.card, kind: 'question' }).question);
+      const rules = await rulesStep({ env: { CLAUDE_CONFIG_DIR: config } }).plan({ folder, runId: run.id, userHome: config, answers: {}, now: at(0) });
+      const rulesCard = await ask(5, rules, composeCard({ ...rules.ask.card, target: { count: rules.ask.rules.length, hash: listHash(rules.ask.rules) } }).question);
+
+      await click(productCard, 'A menu for a small café.', c.client);
+      await click(rulesCard, 'Confirm all', c.client);
+      assert.deepEqual(fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json')), [], 'nothing left pending');
+      const kinds = (await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).map((f) => f.split('_').at(-2)).sort();
+      assert.deepEqual(kinds, ['action', 'confirmation', 'confirmation', 'confirmation', 'glossary', 'note', 'ruling', 'ruling', 'setting']);
+      const views = (name) => JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', `${name}.json`), 'utf8'));
+      assert.equal(views('glossary').p.data.plain, 'A menu for a small café.');
+      assert.equal(views('settings').phase.value, 'launched');
+      assert.deepEqual(views('rulebook').map((r) => r.status), ['accepted', 'accepted']);
+
+      // Kept while the helper was away, the glossary entry and the phase land once sent.
+      const away = { state: { write: async () => null, record: async () => null }, profile: { record: async () => null }, prState: async () => null };
+      const again = await questionsStep().plan({ folder, runId: run.id, answers: { '3.real-users': { label: REAL_USERS.no, text: null } } });
+      const againCard = await ask(4, again, composeCard({ ...again.ask.card, kind: 'question' }).question);
+      await click(againCard, 'Describe it later', away);
+      assert.equal(fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json')).length, 1);
+      const { sendPending } = await import('../../../scripts/hooks/pending.js');
+      assert.deepEqual(await sendPending(PROJECT, c.client), { sent: 1, kept: 0 });
+      assert.equal(listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === 'setting').length, 2);
+    });
+  } finally { fs.rmSync(config, { recursive: true, force: true }); await c.close(); await repo.cleanup(); }
+});
+
+test('a confirmation that reached the state alone still has its ruling written when the pair is sent', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const ruling = makeEvent({ kind: 'ruling', data: { words: 'Keep commits small.', source: { file: 'CLAUDE.md', line: 2 }, original: false }, now: at(100) });
+      const confirmation = makeEvent({ ...confirmationFor(ruling), now: at(100) });
+      assert.equal((await c.client.state.record({ project: PROJECT, event: confirmation })).ok, true);
+      const pair = await c.client.state.record({ project: PROJECT, event: confirmation, target: ruling });
+      assert.equal(taken(pair), true, pair.refused);
+      const held = listEvents(stateDir(PROJECT), { report: () => {} });
+      assert.equal(held.some((e) => e.id === ruling.id), true, 'the ruling is written');
+      const rulebook = JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', 'rulebook.json'), 'utf8'));
+      assert.deepEqual(rulebook.map((r) => r.status), ['accepted']);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });

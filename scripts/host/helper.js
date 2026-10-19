@@ -81,26 +81,37 @@ const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 // The most of one kept record that is read: a signed click is a few kilobytes.
 const PENDING_BYTES = 256 * 1024;
 
-// The ids of the records the hooks kept in projects/<p>/pending/ to send later:
-// a signed record's own id, the id of the event a kept confirmation carries, or a write's given
-// id. Only regular files of at most PENDING_BYTES are read; anything else, or a file that won't
-// read, is passed over.
-function pendingIds(project) {
-  const ids = new Set();
+// The records the hooks kept in projects/<p>/pending/ to send later, each { route, body }. Only
+// regular files of at most PENDING_BYTES are read; anything else, or a file that won't read, is
+// passed over.
+function pendingRecords(project) {
   let names = [];
   try {
     names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json'));
   } catch { /* none kept */ }
-  for (const name of names) {
+  return names.flatMap((name) => {
     try {
       const file = path.join(pendingDir(project), name);
       const stat = fs.lstatSync(file);
-      if (!stat.isFile() || stat.size > PENDING_BYTES) continue;
-      const { body } = JSON.parse(fs.readFileSync(file, 'utf8'));
-      for (const id of [body?.event?.id, body?.target?.id, body?.id]) if (typeof id === 'string') ids.add(id);
-    } catch { /* not a record */ }
-  }
-  return ids;
+      if (!stat.isFile() || stat.size > PENDING_BYTES) return [];
+      const { route, body } = JSON.parse(fs.readFileSync(file, 'utf8'));
+      return [{ route, body }];
+    } catch {
+      return []; // not a record
+    }
+  });
+}
+
+// The ids those records hold: a signed record's own id, the id of the event a kept confirmation
+// carries, or a write's given id.
+const idsOf = (records) => new Set(records.flatMap(({ body }) => [body?.event?.id, body?.target?.id, body?.id]).filter((id) => typeof id === 'string'));
+
+// Whether a write with this id is one a hook kept to send (a setup answer's glossary entry, ruling
+// R59): a kept write of that very kind and data under that id, and no other kept record holding it.
+function keptWrite(records, { kind, data, id }) {
+  const holding = records.filter(({ body }) => [body?.event?.id, body?.target?.id, body?.id].includes(id));
+  return holding.length > 0 && holding.every(({ route, body }) => route === 'write' && body?.id === id && body.kind === kind
+    && canonicalJson(body.data ?? null) === canonicalJson(data));
 }
 const MOST_OUTPUT = 2000;
 const MOST_KEPT = 64 * 1024;
@@ -1039,8 +1050,12 @@ export async function startHelper({
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
     if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
-    // A signed click a hook kept to send later must never find its id taken.
-    if (id !== undefined && pendingIds(project).has(id)) refuse('a record waiting to be sent from this computer has that id');
+    // A signed click a hook kept to send later must never find its id taken; the kept write itself,
+    // sent, is taken under its id.
+    if (id !== undefined) {
+      const kept = pendingRecords(project);
+      if (idsOf(kept).has(id) && !keptWrite(kept, { kind, data, id })) refuse('a record waiting to be sent from this computer has that id');
+    }
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
     }
@@ -1078,18 +1093,22 @@ export async function startHelper({
     if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
     if (target !== undefined) checkTarget(target, event);
-    // The same record again has been taken (a hook sending its kept copy); another
-    // event under its id has not, and says so in words a hook does not count as taken.
     const events = listEvents(stateDir(project), { report: () => {} });
     const held = events.filter((e) => e.id === event.id);
-    if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
-    if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
-    // The confirmed event goes first, once: a kept copy sent again after it went finds it there.
+    if (held.length > 0 && !held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('another event in the state carries this record\'s id, so it was not recorded');
+    // The confirmed event goes first, once, even when its confirmation is there already: a kept
+    // copy sent again finds it there, and a confirmation that reached the state alone gets it.
     if (target !== undefined) {
       const there = events.filter((e) => e.id === target.id);
       if (there.some((e) => canonicalJson(e) !== canonicalJson(target))) refuse('another event in the state carries the confirmed event\'s id, so neither was recorded');
-      if (there.length === 0) await writeEvent({ project, event: target, push: pushFor(project, ctx), env: ctx.gitEnv });
+      if (there.length === 0) {
+        await writeEvent({ project, event: target, push: pushFor(project, ctx), env: ctx.gitEnv });
+        if (held.length > 0) await freshViews(() => writeViews(project, { now }));
+      }
     }
+    // The same record again has been taken (a hook sending its kept copy); another
+    // event under its id has not, and says so in words a hook does not count as taken.
+    if (held.length > 0) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });

@@ -24,12 +24,12 @@ const README = '# Café Menu\n\n![badge](x.svg)\n\nCafé Menu lets a small café
 
 // Step 3's answers, as the director gave them on step 3's cards: asked for the folder's run and
 // kept signed, as the helper and the prompt record keep them. Gives them as ctx.answers holds them.
-function answerStep3(folder, { realUsers, locked }) {
+function answerStep3(folder, { realUsers, locked, at = T0 }) {
   const run = findRun(folder) ?? startRun({ folder, now: () => T0 });
   const keepOne = (id, labels, label) => {
     const card = { question: `What this is: step 3 asks ${id}.`, header: 'Question', options: labels.map((l) => ({ label: l, description: l })) };
     noteAsked({ runId: run.id, folder, step: 3, id, card, now: () => T0 });
-    keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: run.id, step: 3, questionId: id, question: card.question, label, text: null }, now: () => T0 }));
+    keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: run.id, step: 3, questionId: id, question: card.question, label, text: null }, now: () => at }));
   };
   keepOne('real-users', [REAL_USERS.yes, REAL_USERS.no], realUsers);
   if (locked) keepOne('locked', [LEVELS.locked, LEVELS.standard], locked);
@@ -61,7 +61,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
       // The questions, as the plan gives them with step 3's answers in.
       const step = questionsStep();
       const productAsk = (await step.plan({ folder, answers: step3 })).ask;
-      assert.equal(productAsk.id, 'product');
+      assert.equal(productAsk.id, `product-${phase}`);
       assert.equal(productAsk.typed, true);
       assert.deepEqual(productAsk.card.options.map((o) => o.label), [PRODUCT.readme, PRODUCT.later]);
       assert.match(productAsk.card.what, /Cafe-Menu's entry in the glossary/);
@@ -80,7 +80,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
 
       // Through the helper: the card asked is composed as a question, with no set line.
       const asked = await plan(4);
-      assert.equal(asked.ask.id, 'product');
+      assert.equal(asked.ask.id, `product-${phase}`);
       assert.equal(setLineOf(asked.ask.card.question), null);
       assert.ok(!asked.ask.card.question.includes('Reply code:'));
 
@@ -106,7 +106,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
       assert.deepEqual(views.unconfirmed, []);
       // The answer is kept for the run, typed.
       const runId = findRun(folder).id;
-      assert.deepEqual(answersFor(runId)['4.product'].text, 'A menu for a small café, read by its regulars.');
+      assert.deepEqual(answersFor(runId)[`4.product-${phase}`].text, 'A menu for a small café, read by its regulars.');
 
       // Then live data, which records nothing in the state: step 7 writes liveData from it.
       const live = await plan(4);
@@ -155,10 +155,36 @@ test('a typed description holding a key records nothing, and the question is ask
     const asked = await plan(4);
     const key = `ghp_${'b'.repeat(36)}`;
     assert.deepEqual(await answer(asked.ask.card, `Our menu app, token ${key}`), []);
-    assert.equal(answersFor(findRun(folder).id)['4.product'], undefined);
-    assert.equal((await plan(4)).ask.id, 'product');
+    assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'], undefined);
+    assert.equal((await plan(4)).ask.id, 'product-before-launch');
     const holding = (dir) => fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isDirectory()
       ? holding(path.join(dir, e.name)) : fs.readFileSync(path.join(dir, e.name), 'utf8').includes(key)));
     assert.equal(holding(home), false);
   });
+});
+
+test('a real-users answer given again asks the first question again, so the phase it records follows it', async () => {
+  await withProject(async ({ folder, plan, answer }) => {
+    answerStep3(folder, { realUsers: REAL_USERS.yes });
+    const first = await plan(4);
+    const launched = await answer(first.ask.card, PRODUCT.later);
+    assert.equal(launched[0].body.target.data.value, 'launched');
+    // Step 3's question answered again, the other way, a minute later.
+    answerStep3(folder, { realUsers: REAL_USERS.no, at: new Date(T0.getTime() + 60 * 1000) });
+    const again = await plan(4);
+    assert.ok(again.ask, 'asked again');
+    assert.notEqual(again.ask.id, first.ask.id);
+    const before = await answer(again.ask.card, PRODUCT.later);
+    assert.equal(before[0].body.target.data.value, 'before-launch');
+  });
+});
+
+test('the README\'s words are offered as the card shows them, with any sign-in in an address hidden', async () => {
+  await withProject(async ({ folder, plan, answer }) => {
+    answerStep3(folder, { realUsers: REAL_USERS.no });
+    const asked = await plan(4);
+    assert.ok(!JSON.stringify(asked).includes('tok3nvalue'));
+    const got = await answer(asked.ask.card, PRODUCT.readme);
+    assert.equal(got[0].body.data.plain, 'Café Menu is served from https://[hidden]@menu.example.com for its regulars.');
+  }, { files: { 'README.md': '# Café Menu\n\nCafé Menu is served from https://tok3nvalue@menu.example.com for its regulars.\n' } });
 });

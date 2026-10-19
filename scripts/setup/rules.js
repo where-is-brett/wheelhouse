@@ -22,7 +22,10 @@ import path from 'node:path';
 import { SETUP_TITLES, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL } from '../state/card-lines.js';
 import { scanContent } from '../state/secret-scan.js';
 import { composeCard } from '../cards/compose.js';
-import { listHash } from '../lib/setup-writes.js';
+import { listHash, isRule } from '../lib/setup-writes.js';
+import { hide } from '../lib/clean.js';
+import { readJournal } from './journal.js';
+import { askedIn } from './clicks.js';
 import {
   connectedProject, waitForProject, readmeOf, readStart, isFile, MEANWHILE,
 } from './questions.js';
@@ -33,6 +36,10 @@ export const FILE_BYTES = 256 * 1024;
 export const DOC_FILES = 200;
 export const TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 export const TRANSCRIPT_FILE_BYTES = 4 * 1024 * 1024;
+// How much of a transcript is read to tell whether its session was in the folder, which costs
+// nothing of TRANSCRIPT_BYTES, and of at most how many transcripts.
+export const PROBE_BYTES = 16 * 1024;
+export const PROBE_FILES = 2000;
 // A rule is a sentence of at most RULE_CHARS characters and at least three words.
 export const RULE_CHARS = 300;
 
@@ -54,6 +61,14 @@ const IMPERATIVES = new Set([
 ]);
 // The words that make any sentence a rule (design section 9's "always", "never", "must", "don't").
 const RULE_WORDS = /(?<![\p{L}\p{N}])(?:always|never|must|mustn['’]t|don['’]t|do not)(?![\p{L}\p{N}])/iu;
+// An instruction followed by a command is a step to run, not a rule: "Run npm install", "Use
+// `npm test`".
+const COMMANDS = new Set([
+  'npm', 'npx', 'yarn', 'pnpm', 'bun', 'node', 'deno', 'git', 'gh', 'glab', 'brew', 'pip', 'pip3', 'python', 'python3', 'cd', 'make',
+  'docker', 'curl', 'wget', 'bash', 'sh', 'cargo', 'go', 'claude',
+]);
+// A README's or doc's section of steps to follow, not rules: installing, setting up, running.
+const STEPS_HEADING = /^#{1,6}\s*(?:\d+[.)]?\s*)?(?:install(?:ation|ing)?|getting started|set ?up|setting up|usage|quick ?start|running|development|build(?:ing)?|requirements|prerequisites)\b/i;
 
 const relative = (folder, file) => path.relative(folder, file).split(path.sep).join('/');
 
@@ -107,21 +122,27 @@ function ruleLike(sentence) {
   if (words.length < 3 || sentence.length > RULE_CHARS) return false;
   if (RULE_WORDS.test(sentence)) return true;
   const first = words[0].replace(/[^\p{L}]/gu, '');
-  return /^\p{Lu}/u.test(first) && IMPERATIVES.has(first.toLowerCase());
+  if (!/^\p{Lu}/u.test(first) || !IMPERATIVES.has(first.toLowerCase())) return false;
+  const next = words[1];
+  return !next.startsWith('`') && !COMMANDS.has(next.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase());
 }
 
 // findRules(folder) -> [{ words, source: { file, line } }]: every rule-like sentence in the
-// project's CLAUDE.md, README and docs/, outside code blocks, with its file (from the folder, with
-// forward slashes) and line. A sentence holding what looks like a secret is left out, and a rule
-// found twice in the same words is listed once, where it was found first.
+// project's CLAUDE.md, README and docs/, outside code blocks, and in the README and docs outside
+// sections of steps (installing, setting up, running), with its file (from the folder, with forward
+// slashes) and line. A sentence holding what looks like a secret is left out, any sign-in in an
+// address is hidden, as a card shows it, and a rule found twice in the same words is listed once,
+// where it was found first.
 export function findRules(folder) {
   const out = [];
   const seen = new Set();
   for (const file of ruleFiles(folder)) {
     const text = readStart(file, FILE_BYTES);
     if (text === null) continue;
+    const claude = path.basename(file) === 'CLAUDE.md';
     let fence = null;
     let front = false;
+    let steps = false;
     text.split(/\r\n|\n|\r/).forEach((raw, i) => {
       const trimmed = raw.trim();
       if (i === 0 && trimmed === '---') front = true;
@@ -135,11 +156,15 @@ export function findRules(folder) {
         return;
       }
       if (fence !== null) return;
+      if (/^#{1,6}\s/.test(trimmed)) steps = !claude && STEPS_HEADING.test(trimmed);
+      if (steps) return;
       const line = prose(raw);
       if (line === null) return;
-      for (const words of sentences(line).filter(ruleLike)) {
+      for (const sentence of sentences(line).filter(ruleLike)) {
+        if (scanContent(sentence).length > 0) continue;
+        const words = hide(sentence, []);
         const key = words.toLowerCase();
-        if (seen.has(key) || scanContent(words).length > 0) continue;
+        if (seen.has(key)) continue;
         seen.add(key);
         out.push({ words, source: { file: relative(folder, file), line: i + 1 } });
       }
@@ -172,12 +197,25 @@ function typedIn(entry) {
   return text;
 }
 
-// readTranscripts(folder, { userHome, env }) -> the director's typed messages in their past Claude
-// Code sessions in this folder, newest session first: from ~/.claude/projects/*/*.jsonl (under
-// CLAUDE_CONFIG_DIR when it is set), each entry matched by its `cwd` field, never by the folder's
-// name. At most TRANSCRIPT_BYTES are read, from the newest sessions back, and of each file its
-// first TRANSCRIPT_FILE_BYTES; a line that isn't an entry is passed over.
-export function readTranscripts(folder, { userHome, env = process.env, totalBytes = TRANSCRIPT_BYTES, fileBytes = TRANSCRIPT_FILE_BYTES } = {}) {
+// Whether an entry was written before `before` (an ISO time): by its own timestamp, or, where it
+// has none, by its file's time.
+function earlier(entry, before, fileAt) {
+  if (before === undefined) return true;
+  const limit = Date.parse(before);
+  const at = Date.parse(entry?.timestamp);
+  return Number.isFinite(at) ? at < limit : fileAt < limit;
+}
+
+// readTranscripts(folder, { userHome, env, before }) -> the director's typed messages in their past
+// Claude Code sessions in this folder, newest session first: from ~/.claude/projects/*/*.jsonl
+// (under CLAUDE_CONFIG_DIR when it is set), each entry matched by its `cwd` field, never by the
+// folder's name, and with `before`, only those written before then (the setup run's own sessions
+// are not past words, ruling R62). Each transcript's first PROBE_BYTES tell whether its session
+// was in the folder; of those that were, at most TRANSCRIPT_BYTES are read, from the newest back,
+// and of each its first TRANSCRIPT_FILE_BYTES. A line that isn't an entry is passed over.
+export function readTranscripts(folder, {
+  userHome, env = process.env, before, totalBytes = TRANSCRIPT_BYTES, fileBytes = TRANSCRIPT_FILE_BYTES,
+} = {}) {
   const config = typeof env.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR !== '' ? env.CLAUDE_CONFIG_DIR : path.join(userHome, '.claude');
   const projects = path.join(config, 'projects');
   let realFolder = null;
@@ -205,22 +243,25 @@ export function readTranscripts(folder, { userHome, env = process.env, totalByte
     }
   }
   files.sort((a, b) => b.at - a.at || (a.file < b.file ? -1 : 1));
+  const entries = (text) => text.split('\n').flatMap((line) => {
+    try {
+      return [JSON.parse(line)];
+    } catch {
+      return [];
+    }
+  });
   const typed = [];
   let left = totalBytes;
-  for (const { file, size } of files) {
+  for (const { file, at, size } of files.slice(0, PROBE_FILES)) {
     if (left <= 0) break;
+    const probe = readStart(file, Math.min(size, PROBE_BYTES));
+    if (probe === null || !entries(probe).some((e) => inFolder(e?.cwd, folder, realFolder))) continue;
     const take = Math.min(size, fileBytes, left);
     left -= take;
-    const text = readStart(file, take);
+    const text = take <= PROBE_BYTES ? probe.slice(0, take) : readStart(file, take);
     if (text === null) continue;
-    for (const line of text.split('\n')) {
-      let entry;
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (!inFolder(entry?.cwd, folder, realFolder)) continue;
+    for (const entry of entries(text)) {
+      if (!inFolder(entry?.cwd, folder, realFolder) || !earlier(entry, before, at)) continue;
       const said = typedIn(entry);
       if (said !== null) typed.push(said);
     }
@@ -251,7 +292,7 @@ export function matchWords(rule, transcripts) {
         const have = new Set(tokens(own));
         if (!need.every((t) => have.has(t))) continue;
         if (scanContent(own).length > 0) continue;
-        return { words: own, original: true };
+        return { words: hide(own, []), original: true };
       }
     }
   }
@@ -260,10 +301,10 @@ export function matchWords(rule, transcripts) {
 
 // The rules of the project, each with the director's words where found: [{ words, source,
 // original }], a rule whose words come out the same as an earlier one's listed once.
-export function rulesOf(folder, { userHome, env } = {}) {
+export function rulesOf(folder, { userHome, env, before } = {}) {
   const found = findRules(folder);
   if (found.length === 0) return [];
-  const transcripts = readTranscripts(folder, { userHome, env });
+  const transcripts = readTranscripts(folder, { userHome, env, before });
   const seen = new Set();
   const out = [];
   for (const rule of found) {
@@ -364,15 +405,22 @@ export function rulesStep({ env = process.env } = {}) {
       const project = connectedProject(ctx.folder);
       if (project === null) return waitForProject(5);
       const answers = ctx.answers ?? {};
-      const rules = rulesOf(ctx.folder, { userHome: ctx.userHome, env });
-      const tally = { rules: rules.length, confirmed: 0, kept: 0, corrected: 0, left: 0 };
-      if (rules.length === 0) return { settled: { record: tally } };
-      for (const group of cardsOf(project.name, rules)) {
+      // The rules are found once a run (ruling R62): once a card of them has been asked, the list
+      // kept with it is the list, whatever the files and transcripts say since, so nothing confirmed
+      // is asked again. The run's own sessions, after it began, are not the director's past words.
+      const kept = askedIn(ctx.runId, 5).map((r) => r.found).find((f) => Array.isArray(f) && f.length > 0 && f.every(isRule));
+      const startedAt = readJournal().runs.find((r) => r?.id === ctx.runId)?.startedAt;
+      const before = typeof startedAt === 'string' ? startedAt : (ctx.now?.() ?? new Date()).toISOString();
+      const rules = kept ?? rulesOf(ctx.folder, { userHome: ctx.userHome, env, before });
+      const groups = rules.length === 0 ? [] : cardsOf(project.name, rules);
+      // Only the rules a card can show are counted: one no card can carry is never asked about.
+      const tally = { rules: groups.flat().length, confirmed: 0, kept: 0, corrected: 0, left: 0 };
+      for (const group of groups) {
         const id = groupId(group);
         const got = answers[`5.${id}`];
         if (!got) {
-          const more = group.at(-1) !== rules.at(-1);
-          return { ask: { id, card: rulesCard(project.name, group, { more }), rules: group } };
+          const more = group !== groups.at(-1);
+          return { ask: { id, card: rulesCard(project.name, group, { more }), rules: group, found: rules } };
         }
         if (got.label === CONFIRM_ALL_LABEL) {
           tally.confirmed += group.length;
@@ -380,7 +428,7 @@ export function rulesStep({ env = process.env } = {}) {
         }
         for (const rule of group) {
           const one = answers[`5.${ruleId(rule)}`];
-          if (!one) return { ask: ruleAsk(ruleId(rule), project.name, rule) };
+          if (!one) return { ask: { ...ruleAsk(ruleId(rule), project.name, rule), found: rules } };
           if (typeof one.text === 'string') tally.corrected += 1;
           else if (one.label === RULE_LABELS.keep) tally.kept += 1;
           else tally.left += 1;
