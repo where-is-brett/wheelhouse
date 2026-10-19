@@ -476,7 +476,7 @@ test('a push the host turns down because its branch moved on says to pull, then 
   const client = { push: async () => ({ ok: false, rejected: 'non-fast-forward' }) };
   await assert.rejects(push({ client, worktree: tree }), (e) => e instanceof CliError
     && e.message === 'The branch was not pushed: the host\'s branch has moved on (the gate may have brought it up to date): run `cli.js pull`, then push again');
-  // The helper's own words win when it gives them.
+  // The cli's own line is used even when the helper gives its own words.
   const said = { push: async () => ({ ok: false, rejected: 'non-fast-forward', refused: 'the host\'s branch has moved on' }) };
   await assert.rejects(push({ client: said, worktree: tree }), /run `cli\.js pull`, then push again/);
 });

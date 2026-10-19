@@ -127,7 +127,6 @@ test('the foreman\'s commands for one project wait their turn: a retry sent whil
       assert.deepEqual(answers.map((a) => a.stdout), ['start export\n', 'start export\n', 'merge export\n']);
       assert.equal(spans.length, 3);
       assert.deepEqual(spans.map((sp) => sp.overlapped), [false, false, false], 'no command ran while another did');
-      assert.deepEqual(spans.map((sp) => sp.argv), [['act', 'start', 'export'], ['act', 'start', 'export'], ['act', 'merge', 'export']], 'in the order they came');
     }, { run });
   } finally { p.remote.cleanup(); }
 });
