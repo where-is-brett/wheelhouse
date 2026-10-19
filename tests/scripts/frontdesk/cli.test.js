@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { main, readInput, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/frontdesk/cli.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -106,11 +107,11 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
 }
 
 // Runs one command; resolves with { code, out, err, json }.
-async function run(helper, argv, input) {
+async function run(helper, argv, input, { cwd = CWD } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd: CWD, client: helper.client, input, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -568,6 +569,51 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
     }
     assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'amendment', 'incident', 'note']);
     for (const kind of ['idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal']) assert.ok(RECORD_KINDS.includes(kind), kind);
+  });
+});
+
+test('record works out the hash of the document a work or an amendment names, and prints it', async () => {
+  await inHome(async () => {
+    const dir = tempFolder('wh-frontdesk-docs-');
+    const write = (relative, text) => {
+      fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
+      fs.writeFileSync(path.join(dir, relative), text);
+    };
+    write('docs/bugs/total.md', 'The total counts cancelled orders.\r\n');
+    const helper = fakeHelper();
+    const at = { cwd: dir };
+    const hashOf = (text) => createHash('sha256').update(text.replace(/\r\n?/g, '\n')).digest('hex');
+    const work = { id: 'staff-total', title: 'The total counts cancelled orders', lane: 'bug', visible: false, dependsOn: [] };
+
+    // A work event's document by its path alone: the hash is the file's, line endings evened.
+    const bug = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/total.md' } }), at);
+    assert.equal(bug.code, 0, bug.err);
+    const hash = hashOf('The total counts cancelled orders.\n');
+    assert.deepEqual(helper.held.at(-1).data.doc, { path: 'docs/bugs/total.md', hash });
+    assert.equal(bug.json.hash, hash, 'the hash is printed, for the approval card to name');
+
+    // A hash given must be the file's as it stands; a document that can't be read is refused.
+    const wrong = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/total.md', hash: DOC } }), at);
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.err, /docs\/bugs\/total\.md is not the document's as it stands/);
+    const missing = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/none.md' } }), at);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /docs\/bugs\/none\.md can't be read/);
+
+    // An amendment: the changed document is the one file the work names, written in place.
+    write('docs/bugs/total.md', 'The total leaves cancelled orders out, and says so.\n');
+    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out' }), at);
+    assert.equal(amended.code, 0, amended.err);
+    const changed = hashOf('The total leaves cancelled orders out, and says so.\n');
+    assert.deepEqual(helper.held.at(-1).data, { work: 'staff-total', change: 'Say that cancelled orders are left out', hash: changed });
+    assert.equal(amended.json.hash, changed);
+    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', hash }), at);
+    assert.equal(stale.code, 1);
+    assert.match(stale.err, /is not the document's as it stands/);
+    const nameless = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'no-such-work', change: 'x' }), at);
+    assert.equal(nameless.code, 1);
+    assert.match(nameless.err, /no-such-work names no document/);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1, 'nothing refused was written');
   });
 });
 

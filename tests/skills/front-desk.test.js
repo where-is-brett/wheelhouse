@@ -182,7 +182,7 @@ test('the intake writes a changed approved document in place and marks it as cha
   assert.ok(rule.includes('"Changed since the director\'s approval; the change card decides it."'), 'the timeless line');
   assert.doesNotMatch(rule, /waits for/);
   assert.match(rule, /stays in git at the hash the approval names/);
-  assert.match(rule, /`cli\.js record amendment` \(the work, the change, the changed document's hash\)/);
+  assert.match(rule, /`cli\.js record amendment` \(the work and the change; it works out the changed document's hash and prints it\)/);
   assert.match(rule, /`amend` card/);
   // The red flags say the same.
   assert.match(intake, /\n\| "[^"\n]*approval line[^"\n]*" \| Replace it: "Changed since the director's approval; the change card decides it\." \|\n/);

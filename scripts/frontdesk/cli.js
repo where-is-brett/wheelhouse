@@ -7,7 +7,8 @@
 //                   each lineage hold. Under STOP, the Lift STOP card alone
 //   card            composes one card from the composer's input and records it ({ question, id })
 //   again <n>       the card the board numbers n, to ask again
-//   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON
+//   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
+//                   for a work event's document and an amendment, it works out the hash and prints it
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
 //   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings or levels
@@ -23,6 +24,7 @@
 // come only from the question the build recorded. Every card handed out is recorded as asked, and
 // its words are put in the glossary's plain words. Errors are one line on standard error.
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { helperClient } from '../host/helper-client.js';
@@ -37,6 +39,7 @@ import { effectiveSettings, levelWords, settingsText, settingWords } from '../se
 import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, ID } from '../state/card-lines.js';
 import { countsAtOnce } from '../state/views.js';
+import { briefHash } from '../feature/files.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -463,8 +466,45 @@ export async function writeSetting({ client, cwd, data, words, makeId = () => cr
   return withCard(got);
 }
 
-// Records one event and resolves with { id, pushed }, and for a ruling or a setting its confirm
-// card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
+// The hash of a document in the project, its text with line endings evened, as a work event or an
+// amendment names it: the front desk in the sandbox has no other way to work it out. A hash given
+// must be the document's as it stands. A document that can't be read is refused, unless a hash was
+// given and nothing can be checked against.
+function documentHash(cwd, file, given) {
+  let text = null;
+  try {
+    const full = path.resolve(cwd, file);
+    const stat = fs.statSync(full);
+    if (stat.isFile() && stat.size <= INPUT_BYTES) text = fs.readFileSync(full, 'utf8');
+  } catch {
+    text = null;
+  }
+  if (text === null) {
+    if (typeof given === 'string') return given;
+    throw new CliError(`The document ${file} can't be read: write it first, then record it`);
+  }
+  const hash = briefHash(text);
+  if (given !== undefined && given !== hash) throw new CliError(`The hash given for ${file} is not the document's as it stands (${hash.slice(0, 12)}): leave the hash out, and record works it out`);
+  return hash;
+}
+
+// A work event's document, or an amendment of the one file the work names, with its hash worked out.
+async function withHash(client, cwd, kind, input) {
+  if (kind === 'work' && isPlain(input.doc) && typeof input.doc.path === 'string') {
+    return { ...input, doc: { ...input.doc, hash: documentHash(cwd, input.doc.path, input.doc.hash) } };
+  }
+  if (kind !== 'amendment') return input;
+  const { views } = await viewsOf(client, cwd);
+  const file = views.work?.[input.work]?.work?.data?.doc?.path;
+  if (typeof file !== 'string') {
+    if (input.hash !== undefined) return input;
+    throw new CliError(`The work ${input.work} names no document, so give the changed document's hash`);
+  }
+  return { ...input, hash: documentHash(cwd, file, input.hash) };
+}
+
+// Records one event and resolves with { id, pushed }, with `hash` for a work event's document or an
+// amendment, and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile, and a concept set to false
 // needs no card (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
@@ -490,6 +530,11 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
   }
   // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
   if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
+  if (kind === 'work' || kind === 'amendment') {
+    const data = await withHash(client, cwd, kind, input);
+    const hash = kind === 'work' ? data.doc?.hash : data.hash;
+    return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}) };
+  }
   if (kind !== 'ruling') return answered(await write(client, cwd, kind, input));
 
   const { words } = input;
