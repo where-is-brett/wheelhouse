@@ -1,13 +1,14 @@
 // scripts/mod/digest.js
 // /digest: the briefing since the last one, as text, with no turn of the model's. The mod
 // registers the command and shows the bridge's text as its answer. The briefing is built as the
-// board-context hook builds it after a gap (briefingIn), from the board read offline and the
-// settings in force, so it is within the words the briefing setting gives and goes through the
-// glossary's plain words. Giving it marks the briefing given (briefedAt), so the next one starts
+// board-context hook builds it after a gap (briefingIn), from the board's full inputs (events, sources and
+// the settings in force), so it is within the words the briefing setting gives and goes through
+// the glossary's plain words. The helper is waited for INPUTS_WAIT_MS at most; one that doesn't
+// answer leaves the briefing built from what was read. Giving it marks the briefing given (briefedAt), so the next one starts
 // from it, and marks as raised the unusual use it showed. It leaves the director's last message
 // (promptAt) alone: a command is not a message to the front desk.
 import { loadBoardInputs } from '../board/inputs.js';
-import { briefingIn } from '../hooks/board-context.js';
+import { briefingIn, INPUTS_WAIT_MS } from '../hooks/board-context.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { readSeen, markSeen } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
@@ -27,20 +28,19 @@ function attempt(read, fallback = null) {
   }
 }
 
-// digestText({ cwd, now }) -> { ok, text }. Never throws. `load`, `readEffective`, `briefingModel`
-// and `markRaised` stand in for the real ones in tests.
+// digestText({ cwd, now, client }) -> { ok, text }. Never throws. `load`, `readEffective`,
+// `briefingModel` and `markRaised` stand in for the real ones in tests.
 export async function digestText({
-  cwd, now = () => new Date(), load = loadBoardInputs, readEffective = effectiveFor,
+  cwd, now = () => new Date(), client, load = loadBoardInputs, readEffective = effectiveFor,
   briefingModel = realBriefingModel, markRaised = realMarkRaised,
 } = {}) {
   try {
     const at = attempt(() => new Date(typeof now === 'function' ? now() : now), new Date(NaN));
-    const inputs = await load({ cwd, now: () => at, offline: true });
+    const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
     if (isRecord(inputs) && typeof inputs.none === 'string') return { ok: false, text: inputs.none };
     if (!isRecord(inputs) || typeof inputs.project !== 'string' || !isRecord(inputs.model)) return { ok: false, text: UNBUILT };
     const { project, model, usage, sources } = inputs;
-    // An offline reading holds no settings, so they are read from the views on disk.
-    const settings = readEffective({ project, now: () => at });
+    const settings = isRecord(inputs.settings) ? inputs.settings : readEffective({ project, now: () => at });
     const since = readSeen(project, { now: at }).briefedAt;
     const given = briefingIn({
       project, model, usage, sources, settings, since, at, briefingModel, room: CONTEXT_CHARS - FIRST_LINE.length - 2,

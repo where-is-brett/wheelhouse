@@ -235,7 +235,7 @@ async function stop(req, d) {
 // /digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
 // and marks a briefing given, so whose command it is doesn't matter.
 async function digest(req, d) {
-  return d.digestText({ cwd: req.cwd, now: d.now, load: d.loadInputs, readEffective: d.readEffective });
+  return d.digestText({ cwd: req.cwd, now: d.now, client: clientOf(d), load: d.loadInputs, readEffective: d.readEffective });
 }
 
 // Whether the project's local settings name Wheelhouse's own status line (board-and-usage), which
