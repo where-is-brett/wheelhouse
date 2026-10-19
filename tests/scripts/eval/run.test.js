@@ -69,11 +69,15 @@ function standInRun(calls, outcome = () => true) {
     const name = scenarioName(scenario);
     calls.push(`${name} ${variant} ${trial}`);
     const pass = outcome(name, variant, trial);
+    // As runScenario does, the trial's record is written before its line is printed.
+    const file = path.join(home, '.wheelhouse-evals', date, `${name}-${variant}-${trial}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{}\n');
     return {
       pass,
       handled: true,
       why: pass ? 'stand-in pass' : 'stand-in fail',
-      file: path.join(home, '.wheelhouse-evals', date, `${name}-${variant}-${trial}.json`),
+      file,
       line: `${name} ${variant}: ${pass ? 'pass' : 'fail'}`,
       usage: { input: 100, output: 10 },
     };
@@ -313,6 +317,54 @@ test('--again with nothing marked still prints the report, and exits by the gate
   assert.ok(again.some((line) => /The gate is not passed/.test(line)));
 });
 
+test('--again tops up a round run again that stopped short', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const e2eDir = e2eFolder();
+  const options = {
+    root, home, e2eDir, version: '0', commit: null, print: quiet, designed: [],
+    endToEnd: async (files) => [{ file: files[0], test: 'scenario five holds', pass: true }],
+  };
+  await main(['--all'], { ...options, now: firstNow, run: standInRun([], (name, variant) => (name === '1' ? false : variant === 'with')) });
+  // The round run again stops after its first trial (the terminal is closed, say): the record is
+  // left as it was then.
+  let ran = 0;
+  const once = standInRun([]);
+  await assert.rejects(main(['--again'], {
+    ...options,
+    now: () => new Date('2026-10-20T01:03:03.000Z'),
+    print: (line) => { if (/^1 with/.test(line) && ran > 1) throw new Error('the terminal was closed'); },
+    run: async (job) => { ran += 1; return once(job); },
+  }), /the terminal was closed/);
+  const calls = [];
+  const printed = [];
+  await main(['--again'], { ...options, now: () => new Date('2026-10-20T01:04:03.000Z'), print: (line) => printed.push(line), run: standInRun(calls) });
+  assert.deepEqual(calls, ['1 with 4', '1 with 5'], 'the round is topped up to three, numbered after the trials there');
+  assert.ok(printed.some((line) => /The gate is passed/.test(line)), printed.join('\n'));
+});
+
+test('--again with nothing marked and the gate shut says only a fresh --all clears it', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const e2eDir = e2eFolder();
+  const options = {
+    root, home, e2eDir, version: '0', commit: null, designed: [],
+    endToEnd: async (files) => [{ file: files[0], test: 'scenario five holds', pass: true }],
+  };
+  await main(['--all'], { ...options, now: firstNow, print: quiet, run: standInRun([], (name, variant) => variant === 'with' && name !== '1') });
+  await main(['--again'], { ...options, now: () => new Date('2026-10-20T01:03:03.000Z'), print: quiet, run: standInRun([], () => false) });
+  const printed = [];
+  const code = await main(['--again'], { ...options, now: () => new Date('2026-10-20T01:04:03.000Z'), print: (line) => printed.push(line), run: standInRun([]) });
+  assert.equal(code, 1);
+  assert.ok(printed.some((line) => /only a fresh `npm run eval -- --all` clears/.test(line)), printed.join('\n'));
+});
+
+test('a scenario whose id is not its file\'s number is refused', async () => {
+  const root = suites({ main: { '05-copied.js': scenarioSource(4) } });
+  await assert.rejects(loadScenarios(5, { root }), /05-copied\.js says it is scenario 4, but its file is numbered 5/);
+  await assert.rejects(main(['--all'], { root, home: tempFolder('eval-home-'), print: quiet, run: standInRun([]), endToEnd: async () => [] }), /numbered 5/);
+});
+
 test('--again with no run before it says so', async () => {
   await assert.rejects(main(['--again'], { root: twoSuites(), home: tempFolder('eval-home-'), print: quiet, run: standInRun([]) }), /No run to run again/);
 });
@@ -372,7 +424,7 @@ test('a session that made no tool call is a failed run whatever pass says', asyn
   assert.equal(third.pass, true);
 });
 
-test('parseTap reads each top-level test\'s name and result, Windows line ends too, and a skipped test is no pass', () => {
+test('parseTap reads each test\'s name and result, nested ones and Windows line ends too, and a skipped test is no pass', () => {
   const tap = [
     'TAP version 13',
     'ok 1 - the director\'s \\# one',
@@ -388,6 +440,7 @@ test('parseTap reads each top-level test\'s name and result, Windows line ends t
   assert.deepEqual(parseTap(tap), [
     { test: 'the director\'s # one', pass: true },
     { test: '"two" fails', pass: false },
+    { test: 'inner', pass: true, nested: true },
     { test: 'skipped', pass: false, skipped: true },
     { test: 'a back\\slash', pass: true },
   ]);

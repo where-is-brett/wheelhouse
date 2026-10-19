@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempFolder as madeFolder } from '../../helpers/homes.js';
 import {
   parseStream,
   toolCalls,
@@ -28,9 +28,8 @@ import {
 const fixture = fileURLToPath(new URL('../../fixtures/eval/stream.jsonl', import.meta.url));
 const events = parseStream(fs.readFileSync(fixture, 'utf8'));
 
-function tempFolder(name = 'harness-test-') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), name));
-}
+// A temporary folder, removed once this file's tests are done.
+const tempFolder = (name = 'harness-test-') => madeFolder(name);
 
 test('parseStream reads one event per line, skipping blank lines and keeping unreadable ones visible', () => {
   const parsed = parseStream('{"type":"a"}\n\n   \nnot json\n{"type":"b"}\n');
@@ -475,4 +474,42 @@ test('runScenario judges a run a fail when its pass throws, and still writes its
   const written = JSON.parse(fs.readFileSync(outcome.file, 'utf8'));
   assert.equal(written.handled, true);
   assert.equal(written.events.length, events.length);
+});
+
+// A scenario whose pass says whatever `verdict` says, for the sessions that did not finish.
+const judgedAs = (id, verdict) => ({
+  id,
+  title: 'a stand-in',
+  setup: async () => {},
+  prompt: 'x',
+  variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+  pass: () => (verdict ? { pass: true, why: 'nothing bad happened' } : { pass: false, why: 'the canary leaked' }),
+});
+const withoutResult = events.filter((event) => event.type !== 'result');
+const withResult = (fields) => events.map((event) => (event.type === 'result' ? { ...event, ...fields } : event));
+
+test('a session that did not finish never passes, and is run again when its pass saw nothing wrong', async () => {
+  const home = tempFolder('harness-home-');
+  const trialOf = (scenario, session) => runScenario({ scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => session });
+  const cases = [
+    ['timed out', { events, exitCode: 1, timedOut: true }, /^92 with: fail \(did not finish; claude exited 1; timed out\)/],
+    ['crashed after a turn with a tool call', { events: withoutResult, exitCode: 1 }, /^92 with: fail \(did not finish; claude exited 1\)/],
+    ['stopped at its turn cap without saying it erred', { events: withResult({ subtype: 'error_max_turns', is_error: false }), exitCode: 0 }, /^92 with: fail \(did not finish\)/],
+  ];
+  for (const [what, session, line] of cases) {
+    const outcome = await trialOf(judgedAs(92, true), session);
+    assert.equal(outcome.pass, false, what);
+    assert.equal(outcome.handled, false, `${what}: nothing was shown, so it can be run again`);
+    assert.match(outcome.line, line, what);
+    const written = JSON.parse(fs.readFileSync(outcome.file, 'utf8'));
+    assert.deepEqual(written.judged, { pass: true, why: 'nothing bad happened' }, what);
+  }
+  // A session that did not finish but showed a failure stays a handled failure.
+  const leaked = await trialOf(judgedAs(91, false), { events: withoutResult, exitCode: 1 });
+  assert.equal(leaked.pass, false);
+  assert.equal(leaked.handled, true);
+  assert.match(leaked.line, /^91 with: fail \(the canary leaked; claude exited 1\)/);
+  // A finished session's pass stands.
+  const finished = await trialOf(judgedAs(90, true), { events, exitCode: 0 });
+  assert.equal(finished.pass, true);
 });

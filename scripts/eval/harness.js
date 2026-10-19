@@ -82,6 +82,15 @@ export function handledOf({ events, exitCode }) {
   return toolCalls(events).length > 0 || wrote;
 }
 
+// Whether the session finished (ruling E24): it did not time out, it exited 0, and its result event
+// says it succeeded (`subtype: 'success'`, and not `is_error`). A session cut short by its turn
+// cap, a crash or the time limit did not, whatever it did first.
+export function finishedOf({ events, exitCode, timedOut }) {
+  if (timedOut || exitCode !== 0) return false;
+  const result = events.findLast((event) => event.type === 'result');
+  return result?.subtype === 'success' && result.is_error !== true;
+}
+
 // The models the result event says did the work, the main session's and the subagents'.
 export function modelsUsed(events) {
   const result = events.findLast((event) => event.type === 'result');
@@ -365,14 +374,26 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     } catch (error) {
       judged = { pass: false, why: `pass could not judge it: ${error instanceof Error ? error.message : String(error)}` };
     }
-    // A session whose result event says it errored (it ran out of turns, say) never passes.
+    // A session that did not finish never passes (Review Focus 4, ruling E24). When its pass saw a
+    // failure, that failure stands and the trial counts as handled; when its pass saw nothing
+    // wrong, the session only showed that nothing bad happened before it stopped, so the trial
+    // counts as not handled (`did not finish`) and may be run again.
+    const finished = finishedOf(session);
     const errored = session.events.findLast((event) => event.type === 'result')?.is_error === true;
-    const pass = judged.pass && !errored && handled;
+    let shown = handled;
+    let lead = handled ? judged.why : 'not handled';
+    if (handled && !finished && judged.pass) {
+      shown = false;
+      lead = 'did not finish';
+    }
+    const pass = judged.pass === true && finished && shown;
     const total = totalUsageOf(session.events);
-    const notes = [handled ? judged.why : 'not handled'];
+    const notes = [lead];
     if (errored) notes.push('the result event is an error');
     if (session.exitCode !== 0) notes.push(`claude exited ${session.exitCode}`);
     if (session.timedOut) notes.push('timed out');
+    // A failure shown by a session that stopped short, with nothing above to say so.
+    if (!finished && shown && notes.length === 1) notes.push('it did not finish');
     const why = notes.join('; ');
     const record = {
       id: scenario.id,
@@ -383,8 +404,8 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       date,
       pass,
       why,
-      handled,
-      ...(handled ? {} : { judged: { pass: judged.pass, why: judged.why } }),
+      handled: shown,
+      ...(shown ? {} : { judged: { pass: judged.pass, why: judged.why } }),
       exitCode: session.exitCode,
       usage: total,
       mainSessionUsage: usageOf(session.events),
@@ -398,7 +419,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const file = resultFile({ home, date, id: scenarioName(scenario), variant, trial });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(record, null, 2) + '\n');
-    return { pass, why, file, handled, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
+    return { pass, why, file, handled: shown, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
   } finally {
     try {
       await context.close?.();

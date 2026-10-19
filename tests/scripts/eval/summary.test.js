@@ -30,7 +30,9 @@ function trial(id, variant, number, pass, { leg, safety = false, round = 'first'
   };
 }
 
-const record = (runs, extra = {}) => ({ v: 1, at: '2026-10-20T01:02:03.000Z', date: '2026-10-20', how: 'all', version: '1.2.3', commit: 'abcdef123456', runs, ...extra });
+const record = (runs, extra = {}) => ({
+  v: 1, at: '2026-10-20T01:02:03.000Z', date: '2026-10-20', how: 'all', version: '1.2.3', commit: 'abcdef123456', runs, finished: '2026-10-20T09:00:00.000Z', ...extra,
+});
 const rowOf = (summary, id) => summary.rows.find((row) => row.id === id);
 const options = () => ({ root: emptyRoot(), e2eDir: noE2e(), designed: [] });
 
@@ -166,6 +168,68 @@ test('STOP mid-build: the director\\'s runbook carries on', () => {});
   assert.match(summaryText(unrun), /\| 11 \| an approval file .* \| not run \|/);
 });
 
+test('a round run again that stopped short never passes, and stays marked to be topped up', () => {
+  const summary = summarise(record([
+    // Behaviour: the first trial failed, and the round run again stopped after one passing trial.
+    trial(20, 'with', 1, false), trial(20, 'without', 1, false), trial(20, 'with', 2, true, { round: 'again' }),
+    // Safety: the first trial was not handled, and the round stopped after two passing trials.
+    trial(15, 'with', 1, false, { safety: true, handled: false }), trial(15, 'without', 1, false, { safety: true }),
+    trial(15, 'with', 2, true, { safety: true, round: 'again' }), trial(15, 'with', 3, true, { safety: true, round: 'again' }),
+    // Two legs: trial 3 has only one leg's run, so it is not a whole trial and is not counted.
+    trial(27, 'with', 1, false), trial(27, 'with', 1, true, { leg: 'route' }),
+    trial(27, 'without', 1, false), trial(27, 'without', 1, false, { leg: 'route' }),
+    ...[2, 3].map((n) => trial(27, 'with', n, true, { round: 'again' })), trial(27, 'with', 2, true, { leg: 'route', round: 'again' }),
+  ]), options());
+  assert.equal(rowOf(summary, 20).with, 'fail');
+  assert.match(rowOf(summary, 20).why, /the round run again stopped at 1 of 3/);
+  assert.deepEqual(rowOf(summary, 20).again, ['with']);
+  assert.deepEqual(rowOf(summary, 20).toRun, { with: 2, without: 0 });
+  assert.equal(rowOf(summary, 15).with, 'fail');
+  assert.match(rowOf(summary, 15).why, /the round run again stopped at 2 of 3/);
+  assert.deepEqual(rowOf(summary, 15).toRun, { with: 1, without: 0 });
+  assert.equal(rowOf(summary, 27).with, 'fail');
+  assert.deepEqual(rowOf(summary, 27).toRun, { with: 2, without: 0 });
+  assert.equal(summary.passed, false);
+
+  // A first round marks its variant for TRIALS_AGAIN trials.
+  const first = summarise(record([trial(21, 'with', 1, false), trial(21, 'without', 1, true)]), options());
+  assert.deepEqual(rowOf(first, 21).toRun, { with: TRIALS_AGAIN, without: TRIALS_AGAIN });
+});
+
+test('a run that did not finish never passes the gate', () => {
+  const runs = [trial(20, 'with', 1, true), trial(20, 'without', 1, false)];
+  assert.equal(summarise(record(runs), options()).passed, true);
+  const cut = summarise(record(runs, { finished: undefined }), options());
+  assert.equal(cut.passed, false);
+  assert.match(summaryText(cut), /The gate is not passed:.*the run did not finish/);
+});
+
+test('the report names the scenarios that pass without Wheelhouse too', () => {
+  const summary = summarise(record([
+    trial(20, 'with', 1, true), trial(20, 'without', 1, false),
+    trial(24, 'with', 1, true), trial(24, 'without', 1, true),
+    trial(27, 'with', 1, true), trial(27, 'without', 1, true),
+  ]), options());
+  assert.match(summaryText(summary), /\nPassed without Wheelhouse too, so Wheelhouse makes no difference there: 24, 27\.\n/);
+  assert.doesNotMatch(summaryText(summarise(record([trial(20, 'with', 1, true), trial(20, 'without', 1, false)]), options())), /no difference/);
+});
+
+test('a covered test inside a describe is found and its result read', () => {
+  const e2eDir = tempFolder('eval-e2e-');
+  const file = path.join(e2eDir, 'mod.test.js');
+  fs.writeFileSync(file, `// tests/e2e/mod.test.js
+import { describe, test } from 'node:test';
+
+describe('the pane', () => {
+  // scenario 36
+  test('the pane shows the board', () => {});
+});
+`);
+  const e2e = [{ file, test: 'the pane', pass: true }, { file, test: 'the pane shows the board', pass: true, nested: true }];
+  const summary = summarise(record([], { e2e }), { root: emptyRoot(), e2eDir, designed: [] });
+  assert.deepEqual(summary.covered, [{ id: 36, test: 'the pane shows the board', file, pass: true }]);
+});
+
 test('a report carrying results from another build says so', () => {
   const runs = [trial(20, 'with', 1, true), trial(20, 'without', 1, false)];
   const same = summaryText(summarise(record(runs, { how: 'again', carried: { date: '2026-10-20', version: '1.2.3', commit: 'abcdef123456' } }), options()));
@@ -195,7 +259,7 @@ test('a scenario written in a suite but left out of the run is a row not run', (
   const summary = summarise(record([trial(20, 'with', 1, true), trial(20, 'without', 1, false)]), { root, e2eDir: noE2e(), designed: [] });
   assert.deepEqual(rowOf(summary, 6), {
     id: 6, title: '06-merge-under-pressure.js', suite: 'main', with: 'not run', without: 'not run',
-    trials: { with: 0, without: 0 }, passes: { with: 0, without: 0 }, first: { with: null, without: null },
+    trials: { with: 0, without: 0 }, passes: { with: 0, without: 0 }, first: { with: null, without: null }, toRun: { with: 0, without: 0 },
     tokens: { input: 0, output: 0 }, why: 'not in this run', again: [], safety: false,
   });
   assert.deepEqual(Object.keys(rowOf(summary, 6)).sort(), Object.keys(rowOf(summary, 20)).sort(), 'every row has one shape');

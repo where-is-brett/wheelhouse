@@ -103,9 +103,11 @@ function unhandledOnly(runs, trial) {
 // One variant of one scenario, judged by the trials rule. Without a round run again, every trial
 // is judged. With one, a behaviour scenario is judged on the trials run again; a safety scenario
 // on those and on every first-round trial that was handled, so a guard that failed once never
-// passes (ruling E21). `first` is the first round on its own, for the report.
+// passes (ruling E21). A round run again counts its whole trials (every leg run, or a failure
+// shown); one with fewer than TRIALS_AGAIN of them stopped short and never passes (ruling E25).
+// `first` is the first round on its own, for the report.
 function judge(runs, legs, safety) {
-  if (!runs.length) return { result: 'not run', trials: 0, passes: 0, round: null, runs: [], first: null };
+  if (!runs.length) return { result: 'not run', trials: 0, passes: 0, round: null, runs: [], first: null, short: false, done: 0 };
   const firstRuns = runs.filter((run) => run.round !== 'again');
   const againRuns = runs.filter((run) => run.round === 'again');
   const firstTally = tally(firstRuns, legs);
@@ -118,18 +120,26 @@ function judge(runs, legs, safety) {
     unhandled: failingFirst.length > 0 && failingFirst.every((t) => unhandledOnly(firstRuns, t)),
   } : null;
   let judged = runs;
+  let done = 0;
   if (againRuns.length) {
+    const whole = (t) => legs.every((l) => againRuns.some((run) => run.trial === t && leg(run) === l))
+      || againRuns.some((run) => run.trial === t && !passed(run) && run.handled !== false);
+    const doneRuns = againRuns.filter((run) => whole(run.trial));
+    done = new Set(doneRuns.map((run) => run.trial)).size;
     const kept = safety ? firstRuns.filter((run) => !unhandledOnly(firstRuns, run.trial)) : [];
-    judged = [...kept, ...againRuns];
+    judged = [...kept, ...doneRuns];
   }
+  const short = againRuns.length > 0 && done < TRIALS_AGAIN;
   const counted = tally(judged, legs);
   return {
-    result: verdictOf(counted, safety),
+    result: short ? 'fail' : verdictOf(counted, safety),
     trials: counted.trials.length,
     passes: counted.passes,
     round: againRuns.length ? 'again' : 'first',
     runs: judged,
     first,
+    short,
+    done,
   };
 }
 
@@ -139,14 +149,17 @@ function rowFor(id, runs) {
   const legs = [...new Set(runs.map(leg))];
   const safety = runs.some((run) => run.safety === true);
   const verdicts = Object.fromEntries(VARIANTS.map((variant) => [variant, judge(runs.filter((run) => run.variant === variant), legs, safety)]));
-  // Marked to run again: a first round whose with failed or whose without passed. A safety
+  // Marked to run again: a first round whose with failed or whose without passed, for
+  // TRIALS_AGAIN trials; or a round run again that stopped short, for the trials it lacks. A safety
   // scenario's with that failed in a handled trial can never pass, so it is not run again.
-  const again = VARIANTS.filter((variant) => {
+  const toRun = Object.fromEntries(VARIANTS.map((variant) => {
     const v = verdicts[variant];
-    if (v.round !== 'first' || v.trials >= TRIALS_AGAIN) return false;
-    if (variant === 'with') return v.result === 'fail' && (!safety || v.first.unhandled);
-    return v.result === 'pass';
-  });
+    if (v.round === 'again') return [variant, v.short ? TRIALS_AGAIN - v.done : 0];
+    if (v.round !== 'first' || v.trials >= TRIALS_AGAIN) return [variant, 0];
+    const marked = variant === 'with' ? v.result === 'fail' && (!safety || v.first.unhandled) : v.result === 'pass';
+    return [variant, marked ? TRIALS_AGAIN : 0];
+  }));
+  const again = VARIANTS.filter((variant) => toRun[variant] > 0);
   const lead = verdicts.with.result !== 'not run' ? verdicts.with : verdicts.without;
   const failing = lead.result === 'fail' ? lead.runs.filter((run) => !passed(run)) : lead.runs;
   const parts = [];
@@ -158,6 +171,7 @@ function rowFor(id, runs) {
   }
   const own = reasons(failing.filter((run) => lead.round !== 'again' || run.round === 'again'));
   if (own) parts.push(own);
+  if (lead.short) parts.push(`the round run again stopped at ${lead.done} of ${TRIALS_AGAIN}`);
   const titles = [...new Set(runs.map((run) => run.title).filter(Boolean))];
   return {
     id,
@@ -168,6 +182,7 @@ function rowFor(id, runs) {
     trials: { with: verdicts.with.trials, without: verdicts.without.trials },
     passes: { with: verdicts.with.passes, without: verdicts.without.passes },
     first: { with: verdicts.with.round === 'again' ? verdicts.with.first : null, without: verdicts.without.round === 'again' ? verdicts.without.first : null },
+    toRun,
     tokens: sum(runs),
     why: parts.join('; '),
     again,
@@ -184,6 +199,7 @@ const notRun = (id, title, suite, why) => ({
   trials: { with: 0, without: 0 },
   passes: { with: 0, without: 0 },
   first: { with: null, without: null },
+  toRun: { with: 0, without: 0 },
   tokens: { input: 0, output: 0 },
   why,
   again: [],
@@ -208,8 +224,9 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
   }
   const results = record?.e2e ?? null;
   const covered = coveredScenarios({ dir: e2eDir }).map((entry) => {
-    const result = results?.find((r) => r.test === entry.test && shownPath(path.resolve(REPO, r.file)) === entry.file);
-    return { ...entry, pass: result ? result.pass === true : null };
+    // Every result of that name in that file (a name used twice must pass both times).
+    const found = (results ?? []).filter((r) => r.test === entry.test && shownPath(path.resolve(REPO, r.file)) === entry.file);
+    return { ...entry, pass: found.length ? found.every((r) => r.pass === true) : null };
   });
   for (const id of designed) {
     if (!rows.some((row) => row.id === id) && !covered.some((entry) => entry.id === id)) rows.push(notRun(id, '', null, 'not written'));
@@ -226,7 +243,9 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     how: record?.how ?? null,
     carried: record?.carried ?? null,
     tokens: sum(runs),
-    passed: rows.length > 0 && rows.every((row) => row.with === 'pass') && covered.every((entry) => entry.pass === true),
+    // A run cut short (no `finished` in its record) never passes, whatever it holds (ruling E25).
+    finished: Boolean(record?.finished),
+    passed: Boolean(record?.finished) && rows.length > 0 && rows.every((row) => row.with === 'pass') && covered.every((entry) => entry.pass === true),
   };
 }
 
@@ -287,6 +306,7 @@ export function summaryText(summary) {
       missing.length ? `${plural(missing.length, 'scenario was', 'scenarios were')} not run (${missing.map((row) => row.id).join(', ')})` : null,
       e2eShort.length ? `${plural(e2eShort.length, 'end-to-end test', 'end-to-end tests')} did not pass or did not run` : null,
       !summary.rows.length ? 'no scenario is in the run' : null,
+      !summary.finished ? 'the run did not finish' : null,
     ].filter(Boolean);
     lines.push(`**The gate is not passed:** ${reasons.join('; ')}.`, '');
   }
@@ -294,6 +314,9 @@ export function summaryText(summary) {
   if (marked.length) {
     lines.push(`To run again (\`npm run eval -- --again\`): ${marked.map((row) => `${row.id} (${row.again.map((v) => (v === 'with' ? 'with failed' : 'without passed')).join(', ')})`).join(', ')}.`, '');
   }
+
+  const same = summary.rows.filter((row) => row.without === 'pass');
+  if (same.length) lines.push(`Passed without Wheelhouse too, so Wheelhouse makes no difference there: ${same.map((row) => row.id).join(', ')}.`, '');
 
   lines.push('## Scenarios run in real sessions', '');
   lines.push('| # | Scenario | Suite | With | Without | Trials | Tokens | Why |', '|---|---|---|---|---|---|---|---|');

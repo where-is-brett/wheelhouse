@@ -26,7 +26,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, runScenario, scenarioName, today } from './harness.js';
 import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, shownPath, summarise, summaryText } from './summary.js';
-import { TRIALS_AGAIN } from '../lib/measure-numbers.js';
 import { run as runProgram } from '../lib/run.js';
 
 export { EVAL_ROOT };
@@ -102,6 +101,9 @@ async function loadEntries(id, { root = EVAL_ROOT } = {}) {
   for (const file of findScenarioFiles(id, { root })) {
     const scenario = (await import(pathToFileURL(file).href)).default;
     if (leg !== null && scenario?.leg !== leg) throw new Error(`${file} does not export leg ${leg} of scenario ${id}`);
+    // A file copied from another and left with its id would join that scenario's row.
+    const number = Number(SCENARIO_FILE.exec(path.basename(file))[1]);
+    if (scenario?.id !== number) throw new Error(`${path.basename(file)} says it is scenario ${scenario?.id}, but its file is numbered ${number}`);
     entries.push({ scenario, file, suite: path.basename(path.dirname(file)) });
   }
   return entries;
@@ -128,16 +130,16 @@ function numbersIn(root, suite = null) {
 
 // ------------------------------------------------------------ end-to-end tests
 
-// The top-level tests in a `node --test --test-reporter=tap` report: { test, pass, skipped? }. A
-// skipped test is no pass.
+// Every test in a `node --test --test-reporter=tap` report, a test inside a `describe` (indented)
+// included: { test, pass, skipped?, nested? }. A skipped test is no pass.
 export function parseTap(text) {
   const results = [];
   for (const line of text.split(/\r?\n/)) {
-    const match = /^(not )?ok \d+ - ((?:\\.|[^\\])*?)(?: # (SKIP|TODO)\b.*)?$/.exec(line);
+    const match = /^(\s*)(not )?ok \d+ - ((?:\\.|[^\\])*?)(?: # (SKIP|TODO)\b.*)?$/.exec(line);
     if (!match) continue;
-    const test = match[2].replace(/\\(.)/g, (_, c) => ({ n: '\n', t: '\t', r: '\r' }[c] ?? c));
-    const skipped = match[3] !== undefined;
-    results.push({ test, pass: !match[1] && !skipped, ...(skipped ? { skipped: true } : {}) });
+    const test = match[3].replace(/\\(.)/g, (_, c) => ({ n: '\n', t: '\t', r: '\r' }[c] ?? c));
+    const skipped = match[4] !== undefined;
+    results.push({ test, pass: !match[2] && !skipped, ...(skipped ? { skipped: true } : {}), ...(match[1] ? { nested: true } : {}) });
   }
   return results;
 }
@@ -151,7 +153,7 @@ export async function runEndToEnd(files, { cwd = REPO } = {}) {
     const answer = await runProgram(process.execPath, ['--test', '--test-reporter=tap', '--test-timeout=480000', path.resolve(cwd, file)], {
       cwd, input: '', timeoutMs: E2E_TIMEOUT_MS,
     });
-    for (const result of parseTap(answer.stdout)) results.push({ file, test: result.test, pass: result.pass });
+    for (const result of parseTap(answer.stdout)) results.push({ file, test: result.test, pass: result.pass, ...(result.nested ? { nested: true } : {}) });
   }
   return results;
 }
@@ -261,7 +263,9 @@ export async function main(argv, {
     const before = summarise(last.record, { root, e2eDir, designed });
     const marked = before.rows.filter((row) => row.again.length);
     if (!marked.length) {
-      print('Nothing in it is marked to run again. Its report:');
+      print(before.passed
+        ? 'Nothing in it is marked to run again. Its report:'
+        : 'Nothing in it is marked to run again, and the gate is not passed: a scenario whose round run again failed, or a safety scenario that failed a handled trial, is never run again, so only a fresh `npm run eval -- --all` clears it. Its report:');
       print(summaryText(before));
       return before.passed ? 0 : 1;
     }
@@ -276,7 +280,8 @@ export async function main(argv, {
       for (const variant of row.again) {
         // Every leg's new trials take the same numbers, so a trial is judged across its legs.
         const after = Math.max(...entries.map((entry) => lastTrial(home, date, scenarioName(entry.scenario), variant, carried)));
-        const trials = Array.from({ length: TRIALS_AGAIN }, (_, i) => after + 1 + i);
+        // TRIALS_AGAIN trials, or the ones a round that stopped short still lacks.
+        const trials = Array.from({ length: row.toRun[variant] }, (_, i) => after + 1 + i);
         for (const entry of entries) jobs.push({ ...entry, variant, trials, round: 'again' });
       }
     }
