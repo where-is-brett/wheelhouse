@@ -1,9 +1,11 @@
 // scripts/lib/setup-clicks.js
-// The prompt record's side of setup's clicks (scripts/setup/clicks.js says how they are kept):
-// keeping a signed click in <wheelhouseHome()>/setup/clicks/, and finding the card setup showed,
-// in setup/shown/, that a click was on. It lives apart from scripts/setup/ so the prompt record,
-// which the mod's bridge imports, reaches nothing there (scripts/mod/validate.js, bridgeImports).
-// It writes only the click files; it never writes Claude Code's settings or setup's journal.
+// The prompt record's side of setup's clicks and answers (scripts/setup/clicks.js says how they
+// are kept): keeping a signed click in <wheelhouseHome()>/setup/clicks/ and a signed answer in
+// setup/answers/, and finding the card setup showed, in setup/shown/, or asked, in setup/asked/,
+// that a click was on. It lives apart from scripts/setup/ so the prompt record, which the mod's
+// bridge imports, reaches nothing there (scripts/mod/validate.js, bridgeImports). It writes only
+// the click and answer files; it never writes Claude Code's settings or setup's journal.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from './paths.js';
@@ -11,11 +13,16 @@ import { wheelhouseHome } from './paths.js';
 export const HASH = /^[0-9a-f]{64}$/;
 export const RUN_ID = /^run-[0-9a-f]{10}$/;
 export const EVENT_ID = /^[A-Za-z0-9-]{1,64}$/;
+// A setup question's id within its step (ruling R30).
+export const SETUP_QUESTION_ID = /^[a-z0-9-]{1,40}$/;
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
 
 export const clicksDir = () => path.join(wheelhouseHome(), 'setup', 'clicks');
 export const usedDir = () => path.join(wheelhouseHome(), 'setup', 'clicks-used');
 export const shownDir = () => path.join(wheelhouseHome(), 'setup', 'shown');
+export const askedDir = () => path.join(wheelhouseHome(), 'setup', 'asked');
+export const answersDir = () => path.join(wheelhouseHome(), 'setup', 'answers');
+export const answeredDir = () => path.join(wheelhouseHome(), 'setup', 'answered');
 
 const keyOf = (p) => {
   const text = p.normalize('NFC');
@@ -66,6 +73,39 @@ export function keepClick(event) {
   return file;
 }
 
+// Keeps one signed answer to a setup question, under a name of its time, computer and id, never
+// over another.
+export function keepAnswer(event) {
+  if (event?.kind !== 'action' || event.data?.action !== 'setup-answer' || !event.sig) throw new Error('Only a signed setup answer is kept here');
+  if (typeof event.at !== 'string' || !EVENT_ID.test(String(event.id)) || !/^[0-9a-f]{8}$/.test(String(event.computer))) {
+    throw new Error('A setup answer needs its time, its id and its computer');
+  }
+  const file = path.join(answersDir(), `${event.at.replaceAll(':', '-')}_${event.computer}_answer_${event.id}.json`);
+  writeWhole(file, `${JSON.stringify(event, null, 2)}\n`, { exclusive: true });
+  return file;
+}
+
+// Claims the answer to one asked question, once (Task 9's review): a marker for its run, step, id
+// and words, made exclusively. Gives the marker's path, which `releaseAnswer` removes when what the
+// answer earns could not be kept, or null when the question was answered already, so the same card
+// clicked again, in another session, records nothing twice.
+export function claimAnswer({ runId, step, questionId, question }) {
+  const words = crypto.createHash('sha256').update(String(question)).digest('hex').slice(0, 16);
+  if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(questionId))) throw new Error('An answer to claim needs its run, step and question');
+  const file = path.join(answeredDir(), `${runId}-${step}-${questionId}-${words}`);
+  try {
+    writeWhole(file, `${new Date().toISOString()}\n`, { exclusive: true });
+    return file;
+  } catch (error) {
+    if (error.code === 'EEXIST') return null;
+    throw error;
+  }
+}
+
+export function releaseAnswer(file) {
+  if (typeof file === 'string') fs.rmSync(file, { force: true });
+}
+
 // What a card shows the director, in one form: its text, header, and each option's label and
 // description; null when it isn't a card.
 export function shownCard(card) {
@@ -109,4 +149,38 @@ export function shownHash({ cwd, step, h12, card }) {
   const nearest = Math.max(...found.map(depth));
   const chosen = found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
   return { runId: chosen.runId, hash: chosen.hash };
+}
+
+// An asked record kept in setup/asked/, or null when the file isn't one.
+export function readAsked(file) {
+  try {
+    const r = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return r && RUN_ID.test(String(r.runId)) && Number.isInteger(r.step) && SETUP_QUESTION_ID.test(String(r.id))
+      && typeof r.folder === 'string' && typeof r.typed === 'boolean' && shownCard(r.card) !== null ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+// The question a setup step asked, in a folder holding `cwd`, on exactly the card the director
+// was shown (`card`, the question AskUserQuestion was given: its text, header and each option's
+// label and description): the asked record { runId, folder, step, id, card, typed, at }, or null.
+// When several were asked on that very card, the one of the nearest folder holding `cwd` is
+// taken, as the helper places a folder, and of those the one asked last.
+export function askedFor({ cwd, card }) {
+  const asked = shownCard(card);
+  if (typeof cwd !== 'string' || asked === null) return null;
+  const same = JSON.stringify(asked);
+  let names;
+  try {
+    names = fs.readdirSync(askedDir()).filter((n) => n.endsWith('.json'));
+  } catch {
+    return null;
+  }
+  const found = names.map((n) => readAsked(path.join(askedDir(), n)))
+    .filter((r) => r !== null && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd));
+  if (found.length === 0) return null;
+  const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
+  const nearest = Math.max(...found.map(depth));
+  return found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
 }

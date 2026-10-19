@@ -39,7 +39,7 @@ function fakeClient(answers = {}) {
     const answer = answers[name];
     return typeof answer === 'function' ? answer(body) : answer ?? { ok: false, refused: 'not expected' };
   };
-  return { calls, setup: { plan: route('plan'), apply: route('apply'), status: route('status') } };
+  return { calls, setup: { plan: route('plan'), apply: route('apply'), status: route('status'), health: route('health') } };
 }
 
 test('each form asks the helper for this folder, and only with the folder, the step and the hash', async () => {
@@ -79,6 +79,28 @@ test('resume gives where setup stands and the card of the first step neither don
   const done = fakeClient({ status: { ok: true, lines: ['Every step is done.'], next: null, ask: null } });
   assert.deepEqual(JSON.parse((await run(['resume'], { client: done })).out), { lines: ['Every step is done.'], next: null, plan: null });
   assert.deepEqual(done.calls.map(([name]) => name), ['status']);
+});
+
+// Step 10 (ruling R41): the session hands in the lines its sandboxed trials printed, as they are,
+// and gets back the joined board; with none, it learns which pull request and project to try.
+test('health hands the trial lines to the helper, as they are, and gives back the board', async () => {
+  const lines = ['read .env.local: refused / refused', 'merge with forged approval: refused / MERGED (unexpected)'];
+  const answer = { ok: true, green: false, lines: ['Passed: x.'], board: 'The board.', trials: { pr: 12, project: 'o__r' } };
+  const c = fakeClient({ health: answer });
+  const got = await run(['health', ...lines], { client: c });
+  assert.equal(got.code, 0, got.err);
+  const { ok, ...rest } = answer; // eslint-disable-line no-unused-vars
+  assert.deepEqual(JSON.parse(got.out), rest);
+  const none = await run(['health'], { client: c });
+  assert.equal(none.code, 0, none.err);
+  assert.deepEqual(c.calls, [['health', { folder: path.resolve('/x/Projects/shop'), lines }], ['health', { folder: path.resolve('/x/Projects/shop'), lines: [] }]]);
+  const bad = fakeClient({ health: answer });
+  for (const argv of [['health', 'read .env.local: refused / refused; rm -rf x'], ['health', 'not a trial line'], ['health', ...Array.from({ length: 13 }, () => lines[0])]]) {
+    const refused = await run(argv, { client: bad });
+    assert.equal(refused.code, 1, argv.join(' '));
+    assert.match(refused.err, /^[^\n]+\n$/);
+  }
+  assert.deepEqual(bad.calls, []);
 });
 
 test('a wrong form, a step out of range, a short hash or a refusal is one line on standard error', async () => {
@@ -146,7 +168,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\]\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -155,5 +177,5 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\]\n$/);
 });

@@ -69,6 +69,18 @@ export function setupLine(step, hash) {
   return `Set up step ${step} as listed, ${sha12(hash)}`;
 }
 
+// The labels on setup's card of the rules found in a project (step 5, design section 9): the click
+// on Confirm all confirms every rule the card lists; Let me correct some asks about each in turn.
+export const CONFIRM_ALL_LABEL = 'Confirm all';
+export const CORRECT_SOME_LABEL = 'Let me correct some';
+
+// The line on that card: how many rules it lists and the first twelve characters of the hash of
+// the list (each rule's words, where it was found and whether the words are the director's own),
+// so a click stands for that list and no other.
+export function confirmAllLine(hash, count) {
+  return `Confirm all ${count} ${count === 1 ? 'rule' : 'rules'} as listed, ${sha12(hash)}`;
+}
+
 // The label whose click on the baseline card records the private note's figures (scripts/measures/).
 export const BASELINE_LABEL = 'Record these';
 // The words the baseline card's set line starts with, and its header. A card carrying the words, or
@@ -138,7 +150,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // The lines a card's choice is set by, each matching a whole line of the question: the
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
-// setup's line for a step, and the baseline card's line.
+// setup's line for a step, its line for the rules found, and the baseline card's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
@@ -151,6 +163,7 @@ export const SET_LINES = [
   new RegExp(`^End incident ${ID} and let merges carry on$`, 'm'),
   new RegExp(`^Merge pull request #[1-9][0-9]* as the fix for incident ${ID}$`, 'm'),
   new RegExp(`^Set up step (?:${Object.keys(SETUP_TITLES).join('|')}) as listed, [0-9a-f]{12}$`, 'm'),
+  /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/m,
   new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
 ];
 

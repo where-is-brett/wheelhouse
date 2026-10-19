@@ -1,9 +1,10 @@
 // scripts/board/health.js
 // How a project stands, in lines the board and the briefing show: STOP, the
 // protection level, the connection, the build-commands level on Windows, CI, the
-// approvals that ask again without Chrome, the lock, the helper, the key's renewal
-// and the profile. What only the host knows (protection, CI) comes from a cache
-// kept for a day, so reading never waits on the host.
+// approvals that ask again without Chrome, the lock, the helper, the key's renewal,
+// setup's push test when it didn't reach the phone, and the profile. What only the
+// host knows (protection, CI) comes from a cache kept for a day, so reading never
+// waits on the host.
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
@@ -15,13 +16,24 @@ import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
+import { QUICK_LINE } from '../lib/host-lines.js';
 
 // The STOP line starts with these words, alone or followed by ", since <date>".
 export const STOP_LINE = 'STOP is on';
-export const QUICK_LINE = 'Agents act with your full GitHub or GitLab access, across all your projects.';
+// The quick connection's line, shared with setup's step 3 (scripts/lib/host-lines.js).
+export { QUICK_LINE };
 // An approval carries over an update only when the pages look the same in Chrome's pictures
 // (check 34; rulings F61, F66, F74), so without Chrome each update after an approval asks again.
 export const NO_CHROME_LINE = 'Google Chrome isn\'t on this computer, so a change you approved asks for your click again once it is brought up to date; installing Chrome stops that';
+
+// Setup's push test didn't reach the phone (step 9, ruling R39), on the day it was recorded, `at`
+// (none when it doesn't read as a date). Claude skips a push while the director is at the
+// computer (check 4), so the line says so, with what to check, the second push option among it.
+export function phonePushLine(at) {
+  const on = dayMonthYear(at);
+  return `Setup's test notification didn't reach your phone${on ? ` on ${on}` : ''}. `
+    + 'Claude skips one while you are at the computer; check Remote Control, Push when actions required, and that your phone allows Claude\'s notifications';
+}
 
 // After a helper that did not answer in time, the next reading does not wait on it again for this long.
 const TRIED_FOR_MS = 10 * 60 * 1000;
@@ -152,8 +164,10 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
 
 // The lines for the board, in order. Each is { level: 'ok' | 'watch' | 'stop', text }. `builds` is
 // buildsShown's reading for this computer, { level, lockedUnattended }; missing, it shows nothing.
-// `screens` is readScreens'; only pages listed and Chrome not found bring its line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds, screens } = {}) {
+// `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
+// is setup's push test as this computer's journal last recorded it, { arrived, at }
+// (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds, screens, phonePush } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -179,6 +193,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');
   }
+  if (phonePush?.arrived === false) add('watch', phonePushLine(phonePush.at));
   if (!profile) add('watch', 'Your profile isn\'t backed up off this computer yet');
   return lines;
 }

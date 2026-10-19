@@ -66,10 +66,26 @@ export const KNOWN = { label: 'Concept the director knows', group: 'everyday', c
 // on Windows (design section 12.2).
 export const WINDOWS_BUILD_COMMANDS = { label: 'Build commands on Windows', group: 'everyday', levels: BUILD_LEVELS, default: 'ask', home: 'project' };
 
+// The person's own GitHub App (setup's step 3, ruling R56): { clientId, slug, owner }, the app the
+// narrow GitHub connection signs in to in place of Wheelhouse's, on every computer of theirs; null
+// is none. Setup records it, and it counts only once the director confirms it. The client ID is
+// public, so no secret is kept here.
+export const OWN_GITHUB_APP_KEY = 'own-github-app';
+// The shape of a GitHub App's client ID, which setup checks when it reads an app back.
+export const OWN_APP_CLIENT_ID = /^Iv[A-Za-z0-9._-]{4,60}$/;
+const APP_SLUG = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/;
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const checkOwnApp = (v) => v === null || (isObject(v) && onlyKeys(v, ['clientId', 'slug', 'owner'])
+  && typeof v.clientId === 'string' && OWN_APP_CLIENT_ID.test(v.clientId)
+  && typeof v.slug === 'string' && APP_SLUG.test(v.slug)
+  && typeof v.owner === 'string' && LOGIN.test(v.owner));
+export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced', check: checkOwnApp, default: null, home: 'profile' };
+
 // The catalogue entry for a key, or undefined when Wheelhouse has no such setting.
 export function definitionOf(key) {
   if (typeof key !== 'string') return undefined;
   if (Object.hasOwn(SETTINGS, key)) return SETTINGS[key];
+  if (key === OWN_GITHUB_APP_KEY) return OWN_GITHUB_APP;
   if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
   return CONCEPT.test(key) ? KNOWN : undefined;
 }

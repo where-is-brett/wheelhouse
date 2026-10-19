@@ -1,0 +1,13 @@
+{
+  "name": "Wheelhouse",
+  "description": "Lets Wheelhouse's helper push, open pull requests and keep issues on the repositories you tick, for the agents that build your product.",
+  "url": "https://github.com/where-is-brett/wheelhouse",
+  "public": true,
+  "webhook_active": false,
+  "default_permissions": {
+    "contents": "write",
+    "pull_requests": "write",
+    "issues": "write",
+    "metadata": "read"
+  }
+}

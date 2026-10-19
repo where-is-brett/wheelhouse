@@ -6,8 +6,8 @@
 // baseline card is composed by the helper and comes to the front desk from `scripts/measures/cli.js`.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, baselineLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
-  SETUP_LABEL, BASELINE_LABEL, BASELINE_HEADER, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
+  SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
@@ -33,6 +33,7 @@ export const HEADERS = Object.freeze({
   'lift-incident': 'End incident',
   'incident-fix': 'Incident fix',
   setup: 'Setup',
+  'confirm-all': 'Rules found',
   baseline: BASELINE_HEADER,
   question: 'Question',
 });
@@ -50,8 +51,14 @@ export const DECIDING = Object.freeze({
   'lift-incident': 'End it',
   'incident-fix': 'Merge the fix',
   setup: SETUP_LABEL,
+  'confirm-all': CONFIRM_ALL_LABEL,
   baseline: BASELINE_LABEL,
 });
+
+// The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
+// director's click on the card itself, never on a reply, so a code would make a shown record that
+// is never spent. Setup's card of the rules found (confirm-all, ruling R35) is one too.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all']);
 
 // The kinds whose card offers its deciding label and Not now, and no other put-off button: the
 // baseline card reads figures back, and there is nothing more to explain or show.
@@ -161,6 +168,10 @@ function lineFor(kind, target) {
     }
     return setupLine(t.step, t.hash);
   }
+  if (kind === 'confirm-all') {
+    if (!isCount(t.count) || !HEX.test(t.hash)) bad('needs how many rules it lists and the hash of that list');
+    return confirmAllLine(t.hash, t.count);
+  }
   if (kind === 'baseline') {
     if (!HEX.test(t.hash)) bad('needs the hash of the figures it reads back');
     return baselineLine(t.hash);
@@ -198,6 +209,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
   if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];
   if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
+  if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return null;
@@ -238,9 +250,13 @@ function offered(kind, given, { build = false, target } = {}) {
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
   const putOff = NOT_NOW_ONLY.includes(kind) ? ['Not now'] : PUT_OFF;
-  const allowed = [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
+  // The card of the rules found offers its second answer in place of Show me (ruling R35).
+  const allowed = kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL, 'Not now', 'Explain more']
+    : [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
-  if (!list.some((o) => o.label === deciding)) fail(kind, 'options', `must describe ${deciding}`);
+  for (const must of kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL] : [deciding]) {
+    if (!list.some((o) => o.label === must)) fail(kind, 'options', `must describe ${must}`);
+  }
   return allowed.map((label) => ({ label, says: list.find((o) => o.label === label)?.says ?? PUT_OFF_SAYS[label] }));
 }
 
@@ -280,7 +296,7 @@ export function composeCard(input) {
   const buttons = offered(kind, input.options, { build, target: input.target });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
-  const code = line === null ? null : replyCode(line);
+  const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
   // What the director reads as explanation: the five parts and the checks line, not the set line or the code.
   const explained = [
     `${PART_LABELS[0]} ${what}`,
@@ -290,7 +306,7 @@ export function composeCard(input) {
     `${PART_LABELS[4]} ${meanwhile}`,
     ...(checks === undefined ? [] : [`${PART_LABELS[5]} ${checks}`]),
   ];
-  const text = [...explained, ...(line === null ? [] : [line, replyCodeLine(code)])].join('\n');
+  const text = [...explained, ...(line === null ? [] : [line]), ...(code === null ? [] : [replyCodeLine(code)])].join('\n');
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
   // The baseline card's own words belong to it alone: on another card they would read as the

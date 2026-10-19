@@ -5,15 +5,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
-import { makeEvent, eventPath, dataHash, confirmationFor } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, dataHash, confirmationFor, eventHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
-import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { clicksDir, noteShown } from '../../../scripts/setup/clicks.js';
+import { clicksDir, noteShown, noteAsked } from '../../../scripts/setup/clicks.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
+import { listHash } from '../../../scripts/lib/setup-writes.js';
+import { rulesCard as rulesInput } from '../../../scripts/setup/rules.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -999,6 +1003,8 @@ test('in a registered folder setup is still finishing, a setup click is kept, wi
       writeProject('o__done', { folder: done, remoteUrl: 'https://example.com/o/d.git', host: 'github', repo: 'o/d', connection: {} });
       const run = startRun({ folder: done, now: () => NOW });
       for (let n = 1; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => NOW });
+      // Step 10 is done once its board has been green (ruling R67).
+      addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: NOW.toISOString() } }]);
       noteShown({ runId: run.id, folder: done, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
       const before = clicks().length;
       await decide({ ...input({ [setupCard(4, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: done }, { client: fake(), now: () => NOW });
@@ -1044,6 +1050,220 @@ test('a click on the Unattended card records nothing in a folder with no project
       assert.deepEqual(clicks(), []);
     } finally {
       for (const folder of made) fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('setup cards carry no reply-code line', async () => {
+  // Ruling R36: a setup card is approved only by the director's click on it, never by a reply
+  // code, so the composer gives it none, the card check asks for none, and the prompt record keeps
+  // no shown record for it, which nothing would ever spend.
+  const { question, card } = composeCard({
+    kind: 'setup', level: 3, what: 'Setup step 4, Three questions: nothing changes on this computer.', why: 'Setup asks first.',
+    options: [{ label: 'Go ahead', says: 'Setup records it.' }], recommend: 'Go ahead', because: 'nothing changes', meanwhile: 'Setup waits.', target: { step: 4, hash: H },
+  });
+  assert.equal(question.question.split('\n').at(-1), setupLine(4, H));
+  assert.ok(!question.question.includes('Reply code:'), question.question);
+  assert.equal(card.code, null);
+  assert.deepEqual(cardProblems(question.question), []);
+  assert.match(cardProblems(`${question.question}\n${replyCodeLine(replyCode(setupLine(4, H)))}`).join(' '), /reply code/);
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-code-')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 4, hash: H, card: question, now: () => NOW });
+      // The card as composed, and one by hand with a code line: neither gets a shown record.
+      for (const shown of [question, { ...question, question: setupCard(4, H) }]) {
+        const c = fake();
+        const answers = { [shown.question]: 'Go ahead' };
+        await decide({ ...input(answers), tool_input: { questions: [shown], answers }, cwd: folder }, deps(c));
+        assert.deepEqual(kinds(c), [], shown.question);
+      }
+      assert.deepEqual(clicks().map((e) => e.data.step), [4]);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a registered project an answer on a setup-asked card goes only to setup/answers, and a refused typed answer nowhere', async () => {
+  // Ruling R53: it is not also sent to the state as a card-answer, nor kept pending.
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-asked-')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      const card = {
+        question: 'What this is: Setup step 4 asks what the product is called.', header: 'Question', multiSelect: false,
+        options: [{ label: 'Keep it', description: 'Recommended: Setup keeps the folder\'s name.' }, { label: 'Explain more', description: 'I explain it again.' }],
+      };
+      noteAsked({ runId: run.id, folder, step: 4, id: 'name', card, typed: true, now: () => NOW });
+      const answer = async (label) => {
+        const c = fake();
+        const answers = { [card.question]: label };
+        await decide({ ...input(answers), tool_input: { questions: [card], answers }, cwd: folder }, deps(c));
+        return c;
+      };
+      const answersDir = path.join(home, 'setup', 'answers');
+      const kept = () => (fs.existsSync(answersDir) ? fs.readdirSync(answersDir) : []).map((n) => JSON.parse(fs.readFileSync(path.join(answersDir, n), 'utf8')).data);
+      const none = { write: [], record: [], profileRecord: [], prState: [] };
+      assert.deepEqual((await answer('Café Menu')).calls, none);
+      assert.deepEqual(kept().map((d) => [d.label, d.text]), [[null, 'Café Menu']]);
+      assert.deepEqual((await answer('Keep it')).calls, none);
+      assert.equal(kept().length, 2);
+      // A typed answer holding a key is kept nowhere: not as an answer, a card-answer or pending.
+      const token = `ghp_${'a'.repeat(36)}`;
+      const c = fake({ refuse: true });
+      const answers = { [card.question]: token };
+      await decide({ ...input(answers), tool_input: { questions: [card], answers }, cwd: folder }, deps(c));
+      assert.deepEqual(c.calls, none);
+      assert.equal(kept().length, 2);
+      const holding = (dir) => fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isDirectory()
+        ? holding(path.join(dir, e.name)) : fs.readFileSync(path.join(dir, e.name), 'utf8').includes(token)));
+      assert.equal(holding(home), false);
+      // Explain more on it goes nowhere either.
+      assert.deepEqual((await answer('Explain more')).calls, none);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+// --- What an answer on a setup card records in the project's state (rulings R35, R59).
+
+const RULES = [
+  { words: 'Never push straight to main.', source: { file: 'CLAUDE.md', line: 3 }, original: false },
+  { words: 'Keep commits small.', source: { file: 'CLAUDE.md', line: 4 }, original: true },
+];
+
+// A card a setup step asked in `folder`, recorded as asked, and the director's click on it there.
+function askedCard(folder, { id, step, card, typed = false, rules, writes }) {
+  const run = startRun({ folder, now: () => NOW });
+  noteAsked({ runId: run.id, folder, step, id, card, typed, rules, writes, now: () => NOW });
+  return run;
+}
+const clickOn = (folder, card, label, c) => {
+  const answers = { [card.question]: label };
+  return decide({ ...input(answers), tool_input: { questions: [card], answers }, cwd: folder }, deps(c));
+};
+const pendingOf = (home) => {
+  const dir = path.join(home, 'projects', P, 'pending');
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'))) : [];
+};
+const answersKept = (home) => {
+  const dir = path.join(home, 'setup', 'answers');
+  return fs.existsSync(dir) ? fs.readdirSync(dir).map((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).data) : [];
+};
+
+test('an answer that records something has its records kept pending first, and sent later when the helper is away', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-writes-')));
+    try {
+      const { question: card } = composeCard({ ...rulesInput('Cafe', RULES), target: { count: 2, hash: listHash(RULES) } });
+      askedCard(folder, { id: 'rules-1', step: 5, card, rules: RULES });
+      // The helper is away: every record stays pending, and the answer is kept, since they are.
+      const away = fake({ refuse: true });
+      await clickOn(folder, card, 'Confirm all', away);
+      const kept = pendingOf(home);
+      assert.equal(kept.length, 3);
+      assert.deepEqual(kept.map((k) => k.route), ['record', 'record', 'record']);
+      const withTarget = kept.filter((k) => k.body.target);
+      assert.deepEqual(withTarget.map((k) => k.body.target.data).sort((a, b) => a.source.line - b.source.line), RULES);
+      for (const k of withTarget) assert.equal(k.body.event.data.confirmsHash, eventHash(k.body.target));
+      assert.deepEqual(answersKept(home).map((d) => [d.step, d.questionId, d.label]), [[5, 'rules-1', 'Confirm all']]);
+      assert.deepEqual(away.calls.write, [], 'no card-answer for a setup-asked card');
+      // The next session start sends them, each with what it confirms.
+      const back = fake();
+      await sendPending(P, back);
+      assert.equal(back.calls.record.length, 3);
+      assert.equal(back.calls.record.filter((b) => b.target).length, 2);
+      assert.deepEqual(pendingOf(home), []);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('an asked card that asks for a record setup never writes earns nothing, not even its answer', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-bad-writes-')));
+    try {
+      const card = {
+        question: 'What this is: Setup step 4 asks something.', header: 'Question', multiSelect: false,
+        options: [{ label: 'Yes', description: 'Recommended: yes.' }, { label: 'Explain more', description: 'Again.' }],
+      };
+      const bad = [
+        { kind: 'setting', data: { key: settingKey(computerId()), value: 'unattended' } },
+        { kind: 'setting', data: { key: 'phase', value: 'gone' } },
+        { kind: 'level', data: { topic: 'x', level: 1 } },
+        { kind: 'ruling', data: { words: 'No source' } },
+        { kind: 'glossary', data: { term: 'x', plain: `a key ${'ghp_'}${'d'.repeat(36)}` } },
+      ];
+      for (const [i, write] of bad.entries()) {
+        askedCard(folder, { id: `q-${i}`, step: 4, card: { ...card, question: `${card.question} ${i}` }, writes: { labels: { Yes: [write] } } });
+        const c = fake();
+        await clickOn(folder, { ...card, question: `${card.question} ${i}` }, 'Yes', c);
+        assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] }, JSON.stringify(write));
+      }
+      assert.deepEqual(pendingOf(home), []);
+      assert.deepEqual(answersKept(home), []);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('setup\'s card of the rules found gets no shown record, even with a reply code written on by hand', async () => {
+  await withHome(async () => {
+    const { question } = composeCard({ ...rulesInput('Cafe', RULES), target: { count: 2, hash: listHash(RULES) } });
+    const line = setLineOf(question.question);
+    for (const shown of [question, { ...question, question: `${question.question}\n${replyCodeLine(replyCode(line))}` }]) {
+      const c = fake();
+      const answers = { [shown.question]: 'Explain more' };
+      await decide({ ...input(answers), tool_input: { questions: [shown], answers } }, deps(c));
+      assert.deepEqual(kinds(c), [], shown.question);
+    }
+  });
+});
+
+test('the same Confirm all clicked twice, in two sessions, records the rulings once', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-twice-')));
+    try {
+      const { question: card } = composeCard({ ...rulesInput('Cafe', RULES), target: { count: 2, hash: listHash(RULES) } });
+      askedCard(folder, { id: 'rules-1', step: 5, card, rules: RULES });
+      const one = fake();
+      await clickOn(folder, card, 'Confirm all', one);
+      const two = fake();
+      await clickOn(folder, card, 'Confirm all', two);
+      assert.equal(one.calls.record.length, 3);
+      assert.deepEqual(two.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      assert.equal(answersKept(home).length, 1);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('records are kept only together with their answer: an answer that can\'t be kept leaves none pending or sent', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-noanswer-')));
+    try {
+      const { question: card } = composeCard({ ...rulesInput('Cafe', RULES), target: { count: 2, hash: listHash(RULES) } });
+      askedCard(folder, { id: 'rules-1', step: 5, card, rules: RULES });
+      // The answers folder can't be made: a file stands in its place.
+      fs.mkdirSync(path.join(home, 'setup'), { recursive: true });
+      fs.writeFileSync(path.join(home, 'setup', 'answers'), 'not a folder');
+      const c = fake();
+      await clickOn(folder, card, 'Confirm all', c);
+      assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      assert.deepEqual(pendingOf(home), []);
+      // Once it can be kept, the same click records them.
+      fs.rmSync(path.join(home, 'setup', 'answers'));
+      const d = fake();
+      await clickOn(folder, card, 'Confirm all', d);
+      assert.equal(d.calls.record.length, 3);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
     }
   });
 });

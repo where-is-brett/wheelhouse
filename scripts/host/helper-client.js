@@ -73,7 +73,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     state: {
       clone: post('/state/clone'), //   { project }
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
-      record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
+      record: post('/state/record'), // { project, event, target? }: a signed event made by this computer's hook; a confirmation may carry the plain ruling or setting it confirms
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
       views: post('/state/views'), //   { project, cards?, review?, answers? } -> { ok, views, cards?, review?, answers? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; with answers: true, the card-answer events; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
@@ -108,6 +108,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       plan: post('/setup/plan'), //     { folder, step } -> { ok, changes, hash, card, director }: read-only, answered under STOP
       apply: post('/setup/apply'), //   { folder, step, hash } -> { ok, started }: only after the director's click on the card naming that hash; refused under STOP
       status: post('/setup/status'), // { folder } -> { ok, lines, next, ask }: the folder's run as plain lines, answered under STOP
+      health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing? }: step 10's board, answered under STOP
     },
     // The baseline from the private note (scripts/measures/baseline.js), per computer, no project.
     measures: {

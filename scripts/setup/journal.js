@@ -6,18 +6,19 @@
 //   Change = {
 //     id: string,
 //     step: number,
-//     kind: 'json-key' | 'file' | 'folder' | 'process' | 'host' | 'locked' | 'env',
+//     kind: 'json-key' | 'file' | 'folder' | 'process' | 'host' | 'locked' | 'env' | 'answer',
 //     target: string,        a file or folder path, an environment variable, or a host object
 //     key?: string[],        json-key: the path of the key inside the file
 //     before: unknown | null,  what it held before setup (null: it was absent, or held null)
 //     absent?: true,         json-key: the key was not there before setup (before is then null)
-//     after: unknown,        what setup wrote
+//     after: unknown,        what setup wrote; for `answer`, what a step settled on from the
+//                            director's answers (ruling R32), with nothing to put back
 //     project?: string,
 //   }
 //
 //   Journal = { v: 1, runs: Array<{
 //     id, folder, project?, startedAt,
-//     steps: Record<number, { shownAt?, clickedAt?, doneAt?, failed?: string }>,
+//     steps: Record<number, { shownAt?, clickedAt?, doneAt?, failed?: string, say?: { line, at } }>,
 //     changes: Change[],
 //   }> }
 //
@@ -38,10 +39,13 @@ import { journalFile, readJournal } from '../lib/setup-run.js';
 // reaching these writers.
 export { journalFile, readJournal };
 
-const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env'];
-const STEP_FIELDS = ['shownAt', 'clickedAt', 'doneAt', 'failed'];
+const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env', 'answer'];
+const STEP_FIELDS = ['shownAt', 'clickedAt', 'doneAt', 'failed', 'say'];
+// The longest line a running step may say to the director (ruling R40).
+export const SAY_CHARS = 500;
 const CHANGED = { put: false, why: 'changed since setup' };
 const OWN_STEP = { put: false, why: 'put back by its own step' };
+const NOTHING = { put: false, why: 'nothing to put back' };
 
 // ---- Writing whole files, atomically ----
 
@@ -176,23 +180,34 @@ export function findRun(folder) {
 }
 
 // Records a step's time (field shownAt, clickedAt or doneAt), or that it failed (field
-// failed, with `reason`). Recording again replaces the time. A later click or finish
-// clears an earlier failure. With `when`, a test of the step's entry as it stands, read under the
+// failed, with `reason`), or a line a running step says to the director (field say, with `line`:
+// one line, kept with its time, replacing the one before; ruling R40). Recording again replaces
+// the time. A later click or finish clears an earlier failure, and a later click an earlier finish. With `when`, a test of the step's entry as it stands, read under the
 // lock, nothing is recorded unless it passes: a long step's process records only for its own
 // attempt. True when it was recorded.
-export function markStep(runId, step, field, { now = () => new Date(), reason, when } = {}) {
+export function markStep(runId, step, field, { now = () => new Date(), reason, line, when } = {}) {
   if (!Number.isInteger(step) || step < 1) throw new Error('A step is a number from 1');
   if (!STEP_FIELDS.includes(field)) throw new Error(`The field to record is one of ${STEP_FIELDS.join(', ')}`);
   if (field === 'failed' && (typeof reason !== 'string' || reason === '')) throw new Error('A failed step needs a reason');
+  if (field === 'say' && (typeof line !== 'string' || line.trim() === '' || /[\r\n]/.test(line) || line.length > SAY_CHARS)) {
+    throw new Error(`What a step says is one line of up to ${SAY_CHARS} characters`);
+  }
   const at = stamp(now);
   return update((journal) => {
     const run = runIn(journal, runId);
     const entry = run.steps[step] ?? {};
     if (typeof when === 'function' && !when(structuredClone(entry))) return false;
     if (field === 'failed') entry.failed = reason;
+    else if (field === 'say') entry.say = { line: line.trim(), at };
     else {
       entry[field] = at;
       if (field !== 'shownAt') delete entry.failed;
+      // A new attempt says its own lines, never an earlier attempt's, and isn't finished by an
+      // earlier one's finish: the health check is run again after a red board (ruling R67).
+      if (field === 'clickedAt') {
+        delete entry.say;
+        delete entry.doneAt;
+      }
     }
     run.steps[step] = entry;
     return true;
@@ -398,6 +413,7 @@ export function reverseChange(change) {
     case 'json-key': return reverseJsonKey(change);
     case 'file': return reverseFile(change);
     case 'folder': return reverseFolder(change);
+    case 'answer': return NOTHING;
     default: return OWN_STEP;
   }
 }

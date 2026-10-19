@@ -46,6 +46,10 @@ const INPUTS = {
   'lift-incident': { ...common, kind: 'lift-incident', recommend: 'End it', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, kind: 'incident-fix', recommend: 'Merge the fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
   setup: { ...common, kind: 'setup', recommend: 'Go ahead', what: 'Setup step 6, Changes to this computer: transcripts are kept 30 days.', options: [says('Go ahead')], target: { step: 6, hash: DOC } },
+  'confirm-all': {
+    ...common, kind: 'confirm-all', recommend: 'Confirm all', what: 'Setup step 5 found 2 rules: 1) "Money is shown in dollars"; 2) "Never push to main".',
+    options: [says('Confirm all'), says('Let me correct some')], target: { count: 2, hash: DOC },
+  },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 const cardOf = (kind) => composeCard(INPUTS[kind]).question;
@@ -269,4 +273,12 @@ test('the card check hook and cardProblems agree on every composed card', async 
       }
     }
   }
+});
+
+test('setup\'s card of the rules found needs no reply code, refuses one, and must name how many rules its line does', () => {
+  const card = textOf('confirm-all');
+  assert.deepEqual(cardProblems(card), []);
+  const line = setLineOf(card);
+  assert.match(cardProblems(`${card}\n${replyCodeLine(replyCode(line))}`).join(' '), /reply code line, and a confirm-all card has none/);
+  assert.match(cardProblems(card.replace('found 2 rules', 'found 3 rules')).join(' '), /how many rules it lists, 2/);
 });

@@ -604,3 +604,21 @@ test('a question may say what answering it does to the checks, on one line', asy
     }
   });
 });
+
+test('a confirm-all action carries the full hash of the list and the ids of the rulings it recorded, each once', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const good = { action: 'confirm-all', hash: 'ab'.repeat(32), ids: ['r1', 'r2'], question: 'Confirm all 2 rules as listed, abababababab', label: 'Confirm all' };
+    const made = makeEvent({ kind: 'action', data: good, now: at(1) });
+    assert.equal(verify(made, readEnrolled()), true);
+    for (const [why, data] of [
+      ['short hash', { ...good, hash: 'ab'.repeat(6) }],
+      ['no ids', { ...good, ids: [] }],
+      ['an id twice', { ...good, ids: ['r1', 'r1'] }],
+      ['an id not text', { ...good, ids: ['r1', 2] }],
+      ['another label', { ...good, label: 'Let me correct some' }],
+      ['a field of another action', { ...good, step: 5 }],
+    ]) assert.throws(() => makeEvent({ kind: 'action', data, now: at(1) }), /action event/, why);
+  });
+});

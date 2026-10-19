@@ -24,7 +24,7 @@ export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
 // is never a card event in the state.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
-  'lift-incident', 'incident-fix', 'setup', 'baseline', 'question',
+  'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'question',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me']);

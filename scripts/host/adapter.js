@@ -7,6 +7,7 @@
 // lines and the mappings.
 import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
+import { toolPath } from '../lib/host-tools.js';
 import { publicHttps } from '../screens/pages.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
@@ -123,9 +124,10 @@ export function makeAdapter({ host, repo, run, env }) {
   if (typeof run !== 'function') throw new Error('The adapter needs a run function');
   const file = host === 'github' ? 'gh' : 'glab';
 
-  // Runs one command. Resolves with the exit code and output.
+  // Runs one command, with the copy setup fetched into Wheelhouse's tools folder when there is one
+  // (scripts/lib/host-tools.js). Resolves with the exit code and output.
   async function attempt(args, input) {
-    return run(file, args, { env, input });
+    return run(toolPath(file), args, { env, input });
   }
   // Runs one command and returns its standard output, or throws a plain error
   // naming the command (never its environment) with the output scrubbed.
@@ -170,6 +172,8 @@ export function makeAdapter({ host, repo, run, env }) {
     updatePr: async ({ number, title, body } = {}) => c.updatePr({
       number: wholeNumber(number), title: text(title, 'title', { optional: true }), body: text(body, 'body', { optional: true, empty: true }),
     }),
+    // Closes a pull request without merging it: setup's step 10 closes its trial pull request.
+    closePr: async (number) => c.closePr(wholeNumber(number)),
     prState: async (number) => c.prState(wholeNumber(number)),
     ciState: async (sha) => c.ciState(commit(sha)),
     // The commit a branch points at, in full: the health read asks the default branch's CI with it.
