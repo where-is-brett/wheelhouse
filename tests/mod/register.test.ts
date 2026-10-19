@@ -207,7 +207,11 @@ test('/go answers with the bridge\'s words', async ($, on) => {
   for (const surface of SURFACES) {
     clear()
     await start($, surface)
-    expect(seen.registered).toEqual([{ name: 'go', description: 'Lift STOP' }, { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' }])
+    expect(seen.registered).toEqual([
+      { name: 'go', description: 'Lift STOP' },
+      { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
+      { name: 'digest', description: 'Show the briefing, with no Claude turn' },
+    ])
 
     for (const kind of ['composer', 'bridge']) {
       clear()

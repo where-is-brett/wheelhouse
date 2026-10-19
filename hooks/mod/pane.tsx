@@ -5,14 +5,17 @@
 //
 // A tick sends { cmd: 'tick', session, cwd, idle, surface }. In the front desk's session its
 // answer holds the pane's model (scripts/mod/status.js), the glance and the status line; any
-// other session's answer holds only its role and `every`. One tick runs at a time.
+// other session's answer holds only its role and `every`. One tick runs at a time. Each prompt
+// an answer's `submit` holds (the courier's wake in the front desk's session, the watcher's lines
+// in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it handed, so the
+// next answer doesn't hold it again, and one that can't be handed on is not tried again.
 //
 // The pane has two views: the board, with each card's buttons (hooks/mod/cards.tsx), and the
 // settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both.
 import type { EngineInterface, RenderInput, SessionStartInput, TurnStartInput, TurnCompleteInput } from 'claude-code'
 import { ask, type Answer, type PaneModel } from './ask'
 import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS } from './numbers'
-import { drawCard, drawStop, pressingNow, releaseAll } from './cards'
+import { drawCard, drawStop, pressingNow, releaseAll, submitAll } from './cards'
 import { drawSettings, forgetAsks, showSettings } from './settings'
 
 // Whether every button, STOP included, is held back while a turn runs. Buttons stay live during a
@@ -42,6 +45,9 @@ const SETTINGS = { plugin: 'wheelhouse', key: 'settings' } as const
 // state, so a reload never opens a pane the director closed.
 let timer: { every: number, cancel: () => void } | null = null
 let running = false
+// The ticks' prompts being handed on. A prompt waits behind a running turn, so they are handed
+// on apart from the tick, which goes on ticking, and each tick's after the last tick's.
+let handing: Promise<unknown> = Promise.resolve()
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -130,6 +136,8 @@ async function runTick($: EngineInterface) {
       return
     }
     every = answer.every
+    const prompts = answer.submit ?? []
+    if (prompts.length > 0) handing = handing.then(() => submitAll($, prompts)).catch(() => undefined)
     await $.state.set(TICK, { at: now, failed: false })
     await show($, answer, session, now)
   } catch {
@@ -137,6 +145,11 @@ async function runTick($: EngineInterface) {
   } finally {
     schedule($, every)
   }
+}
+
+// Whether the last answered tick said this is the front desk's session; false before any has.
+export async function isFrontDesk($: EngineInterface): Promise<boolean> {
+  return (await $.state.get(ROLE)).value === FRONT_DESK
 }
 
 // Whether the pane's model is older than STALE_TICKS ticks.

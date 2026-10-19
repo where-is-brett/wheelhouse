@@ -4,14 +4,19 @@
 // with one JSON request, and the bridge answers one JSON line. The prompts the bridge's answers
 // hold, and the settings view's Ask the front desk, are handed to the front desk as prompts.
 //
-// This file only wires the hooks, each passing on with next(e) and never changing the message:
-//   session.start    registers /go and /wheelhouse, sends the session's usage figures and
-//                    starts the pane's ticks (hooks/mod/pane.tsx)
+// This file only wires the hooks, each passing on with next(e) and never changing the message,
+// but for Wheelhouse traffic in the front desk's session (hooks/mod/messages.ts):
+//   session.start    registers /go, /wheelhouse and /digest, sends the session's usage figures
+//                    and starts the pane's ticks (hooks/mod/pane.tsx), which hand on the prompts
+//                    their answers hold
 //   session.measure  sends the usage figures again when the allowance or the cost moved
-//   prompt.submit    a phoned "stop" sends stop; a reply code and an option sends reply
+//   prompt.submit    keeps Wheelhouse traffic out of the front desk and ticks instead; a phoned
+//                    "stop" sends stop; a reply code and an option sends reply
+//   session.receive  keeps Wheelhouse traffic out of the front desk and ticks instead
 //   turn.start       marks the session busy, for the tick
 //   turn.complete    marks it idle again
-//   command.run      /go sends go and answers with the bridge's words; /wheelhouse opens the pane
+//   command.run      /go sends go and answers with the bridge's words; /wheelhouse opens the pane;
+//                    /digest answers with the bridge's briefing
 //   ui.render        draws the pane, with each card's buttons, STOP or Lift STOP and the settings
 //                    view (hooks/mod/cards.tsx, hooks/mod/settings.tsx)
 // A message counts as the director's only when it came from the prompt (`composer`) or the
@@ -20,6 +25,7 @@
 import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, SessionCost } from 'claude-code'
 import { ask, send, FAILED, type Answer } from './mod/ask'
 import { drawPane, openPane, startPane, turnEnded, turnStarted } from './mod/pane'
+import { keepOut, KEPT_OUT } from './mod/messages'
 
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
@@ -94,6 +100,11 @@ export const register: Register = on => {
     } catch {
       // Without the command, the pane still opens at the session's start.
     }
+    try {
+      await $.command.register({ name: 'digest', description: 'Show the briefing, with no Claude turn' })
+    } catch {
+      // Without the command, the front desk still gives the briefing.
+    }
     // Usage is informing only, so the session starts without waiting for it.
     void (async () => {
       try {
@@ -126,7 +137,9 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // Wheelhouse traffic is kept out before anything else; the director's messages never are.
   on('prompt.submit', async ($, e, next) => {
+    if (await keepOut($, e.origin.kind, e.text)) return { drop: KEPT_OUT }
     const asked = requestFor(e)
     if (asked !== null) {
       try {
@@ -151,7 +164,27 @@ export const register: Register = on => {
     return { text: answer?.says ?? FAILED }
   })
 
+  // A delivery for one of the session's agents is not the front desk's conversation.
+  on('session.receive', async ($, e, next) => {
+    if (e.agentId === undefined && await keepOut($, e.origin.kind, e.text)) return { consumed: KEPT_OUT }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('command.run', { command: 'wheelhouse' }, async ($) => openPane($))
+
+  // The bridge's text is the command's output, its own words when it has no briefing included
+  // (or its refusal's, should it refuse); only no answer at all is a toast too.
+  on('command.run', { command: 'digest' }, async ($, e) => {
+    let answer: Answer | null = null
+    try {
+      answer = await ask($, { cmd: 'digest', origin: e.origin.kind, cwd: await $.session.root() })
+    } catch {
+      answer = null
+    }
+    const words = answer?.text ?? answer?.says
+    if (words === undefined) $.ui.toast(FAILED)
+    return { text: words ?? FAILED }
+  })
 
   // The pane's id, PANE_ID, written out so the validator can name the hook; scripts/mod/validate.js
   // checks it is PANE_ID.
