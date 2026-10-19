@@ -12,7 +12,10 @@
       ] }
     ],
     "PreToolUse": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/stop-guard.js\"", "timeout": 10, "onFailure": "block" }] },
+      { "matcher": "*", "hooks": [
+        { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/stop-guard.js\"", "timeout": 10, "onFailure": "block" },
+        { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/lineage-hold.js\"", "timeout": 10, "onFailure": "block" }
+      ] },
       { "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Bash|PowerShell|Monitor|WebFetch|ListMcpResourcesTool|ReadMcpResourceTool|mcp__.*", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/tool-guard.js\"", "timeout": 10, "onFailure": "block" }] }
     ],
     "PostToolUse": [

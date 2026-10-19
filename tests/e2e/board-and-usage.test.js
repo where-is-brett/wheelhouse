@@ -35,6 +35,10 @@ import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { approvalLine, confirmLine, replyCode, replyCodeLine } from '../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
+import { matchingBody } from '../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const PROJECT = 'o__p';
 const PR = 7;
@@ -67,7 +71,7 @@ function fakeAdapter(pr) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: pr.head, mergeable: 'mergeable', state: 'open' }),
+    prState: async () => ({ headSha: pr.head, mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (s) => ({ sha: s, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: PR }),

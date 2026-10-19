@@ -32,7 +32,7 @@ Turn each line into a test before any code. When those tests pass, the work is d
 
 - **The lane only goes up.** If the work proves bigger than this lane, stop. Report `partial` with what you found; the foreman puts the work in the right lane.
 - **Check before you say it is done.** Start `superpowers:verification-before-completion` first, run the checks and read their output.
-- **Conflicts.** When a wake says your branch conflicts with the default branch, do not untangle it by hand: start `mattpocock-skills:resolving-merge-conflicts`, then run the checks and have the result reviewed again.
+- **Conflicts.** When a wake says your branch conflicts with the default branch, merge the default branch into your branch, resolve each conflict so both sides' intent survives, then run the checks and have the result reviewed again.
 - **Builders and reviewers.** Builders are `wheelhouse:builder` and reviews are done by `wheelhouse:reviewer`, each with the model named under "Models by role". Never dispatch a general-purpose subagent for either.
 - **Dispatching a reviewer.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the reviewer that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.
 - **Fix rounds.** A fix and its re-review is one round. After {{fixRounds}} rounds, put what is still open to the director with `ask`.
