@@ -418,8 +418,8 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
 
 test('/digest gives the briefing, and a prompt within the next two hours brings none', { skip: SKIP }, () => onComputer({}, async (c) => {
   const now = Date.now();
-  // The director's first message, an hour ago, brought a briefing; a card has come in since.
-  assert.ok((await prompt(c, 'Good morning', new Date(now - HOUR))).includes(HEADINGS.briefing));
+  // The director's last message, three hours ago, brought a briefing; a card has come in since.
+  assert.ok((await prompt(c, 'Good morning', new Date(now - 3 * HOUR))).includes(HEADINGS.briefing));
   const seen = readSeen(PROJECT);
   await waitingCard(c, 'Which photo goes on the home page?');
 
@@ -428,15 +428,15 @@ test('/digest gives the briefing, and a prompt within the next two hours brings 
   assert.ok(digest.text.startsWith(`${FIRST_LINE}\n\n`), digest.text);
   assert.match(digest.text, /^Waiting on you:\n1\. Which photo goes on the home page\?$/m);
   // The briefing is marked given; the director's last message is not a command's to move.
-  const after = readSeen(PROJECT);
-  assert.equal(after.promptAt, seen.promptAt);
-  assert.ok(Date.parse(after.briefedAt) > Date.parse(seen.briefedAt));
+  const given = readSeen(PROJECT);
+  assert.equal(given.promptAt, seen.promptAt);
+  assert.ok(Date.parse(given.briefedAt) > Date.parse(seen.briefedAt));
 
-  // The director's next prompt, a minute later, brings no briefing.
-  const next = await prompt(c, 'Thanks', new Date(now + MINUTE));
+  // The director's next prompt, a minute later, brings no briefing: /digest gave it.
+  const next = await prompt(c, 'Thanks', new Date(Date.parse(given.briefedAt) + MINUTE));
   assert.ok(next === undefined || !next.includes(HEADINGS.briefing), next);
-  // Two hours after that one, the next does.
-  assert.ok((await prompt(c, 'Back again', new Date(now + MINUTE + 2 * HOUR))).includes(HEADINGS.briefing));
+  // Two hours after /digest, and after that prompt, the next one does.
+  assert.ok((await prompt(c, 'Back again', new Date(Date.parse(given.briefedAt) + MINUTE + 2 * HOUR))).includes(HEADINGS.briefing));
 }));
 
 test('Shape 2: a state event makes one foreman wake line on the next foreman tick', { skip: SKIP }, () => onComputer({}, async (c) => {
