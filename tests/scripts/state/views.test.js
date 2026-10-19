@@ -474,16 +474,30 @@ test('an accepted setting keeps its until and the accepted value it replaced', a
     const s4 = ev('setting', 7, { key: 'quiet', value: 'never confirmed' });
     const v1 = build([s1, conf(2, s1)]);
     assert.deepEqual(v1.settings.quiet, {
-      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null,
+      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, line: null,
     });
     const v2 = build([s1, conf(2, s1), s2, conf(4, s2)]);
     assert.deepEqual(v2.settings.quiet, {
-      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' },
+      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, line: null,
     });
     const v3 = build([s1, conf(2, s1), s2, conf(4, s2), s3, conf(6, s3), s4]);
     assert.deepEqual(v3.settings.quiet.before, { value: false });
     assert.equal(v3.settings.quiet.until, '2026-12-01T00:00:00.000Z');
     assert.equal(v3.settings.quiet.id, s3.id);
+  });
+});
+
+test('an accepted setting carries its event\'s computer and the card line of its latest confirmation', async () => {
+  await withHome(() => {
+    const s1 = ev('setting', 1, { key: 'quiet', value: true });
+    const withLine = (n, line) => makeEvent({ kind: 'confirmation', data: { ...confirmationFor(s1).data, line }, now: at(n) });
+    assert.equal(build([s1, withLine(2, 'The card\'s own line')]).settings.quiet.line, 'The card\'s own line');
+    assert.equal(build([s1, withLine(2, 'The card\'s own line'), conf(3, s1)]).settings.quiet.line, null);
+    assert.equal(build([s1, withLine(2, 7)]).settings.quiet.line, null);
+    assert.equal(build([s1, conf(2, s1)]).settings.quiet.computer, s1.computer);
+    // A level carries neither.
+    const l1 = ev('level', 1, { key: 'ui', value: 2 });
+    assert.deepEqual(Object.keys(build([l1, conf(2, l1)]).levels.ui).sort(), ['at', 'id', 'key', 'value']);
   });
 });
 

@@ -171,6 +171,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // Levels and settings: accepted value per key, plus proposals newer than it
   const unconfirmed = rulebook.filter((r) => r.status === 'proposed')
     .map((r) => ({ kind: 'ruling', id: r.id, at: r.at, data: rulings.find((x) => x.id === r.id).data }));
+  // The latest confirmation of each event, in time order.
+  const lastConfirmation = new Map(confirmations.map((c) => [c.target.id, c.event]));
   const accepted = (kind) => {
     const out = {};
     const all = sorted.filter((e) => e.kind === kind && isPlainKey(e.data?.key));
@@ -182,6 +184,11 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
         const prior = out[e.data.key];
         if (typeof e.data.until === 'string') entry.until = e.data.until;
         entry.before = prior ? { value: prior.value, ...(prior.until === undefined ? {} : { until: prior.until }) } : null;
+        // The computer its event was written on, and the card line its latest confirmation
+        // carries, if any: build commands on Windows count Unattended only from its own line.
+        const line = lastConfirmation.get(e.id).data.line;
+        entry.computer = e.computer;
+        entry.line = typeof line === 'string' ? line : null;
       }
       out[e.data.key] = entry;
     }

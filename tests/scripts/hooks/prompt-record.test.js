@@ -5,10 +5,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
-import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, dataHash, confirmationFor } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
-import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
+import { settingKey } from '../../../scripts/protection/windows-builds.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -438,6 +439,61 @@ test('a Confirm line that matches events in both the state and the profile recor
   });
 });
 
+// --- the Unattended card for build commands on Windows ---
+
+const UNATTENDED = ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'].map((label) => ({ label }));
+const unattendedSetting = (computer, data = {}) => makeEvent({
+  kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended', ...data }, now: () => NOW,
+});
+
+test('Turn on (dangerous) on the Unattended card records a confirmation carrying its line', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    const line = unattendedBuildsLine(on.id, me);
+    const c = fake();
+    await decide(input({ [`${line}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(kinds(c), ['confirmation']);
+    const [rec] = c.calls.record;
+    assert.deepEqual(rec.event.data, { ...confirmationFor(on).data, line });
+    assert.ok(rec.event.sig);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 1);
+  });
+});
+
+test('Turn on (dangerous) records nothing without the line, for another computer\'s event, or for two events', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const c = fake();
+    // A question without the line.
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    await decide(input({ [`${confirmLine(on)}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // Another computer's event, under its own key or under this computer's.
+    const theirs = { ...unattendedSetting('deadbeef'), computer: 'deadbeef' };
+    keepEvent(theirs);
+    await decide(input({ [unattendedBuildsLine(theirs.id, 'deadbeef')]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    const forged = { ...unattendedSetting(me), computer: 'deadbeef' };
+    keepEvent(forged);
+    await decide(input({ [unattendedBuildsLine(forged.id, me)]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // A value other than unattended.
+    const guarded = unattendedSetting(me, { value: 'guarded' });
+    keepEvent(guarded);
+    await decide(input({ [unattendedBuildsLine(guarded.id, me)]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // A question naming two events.
+    const second = unattendedSetting(me);
+    keepEvent(second);
+    await decide(input({ [`${unattendedBuildsLine(on.id, me)} and ${unattendedBuildsLine(second.id, me)}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // The line clicked with another label.
+    await decide(input({ [unattendedBuildsLine(on.id, me)]: 'Keep asking' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 6);
+  });
+});
+
 // --- the build loop's clicks ---
 
 const DOC = 'fedcba9876543210'.repeat(4);
@@ -535,7 +591,8 @@ test('a shown record the helper cannot take is kept pending like every signed re
 });
 
 // The build loop's own labels earn records from a click only: their lines aren't set lines yet.
-const CLICK_ONLY = ['Change it', 'End it', 'Merge the fix'];
+// Unattended for build commands on Windows is set only by a click on its own card.
+const CLICK_ONLY = ['Change it', 'End it', 'Merge the fix', 'Turn on (dangerous)'];
 
 test('every label the prompt record can sign for is in SIGNED_LABELS, or one the build loop answers by click only', () => {
   const source = fs.readFileSync(new URL('../../../scripts/hooks/prompt-record.js', import.meta.url), 'utf8');

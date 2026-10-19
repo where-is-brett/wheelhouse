@@ -1,7 +1,7 @@
 // tests/scripts/settings/catalogue.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS, checkSetting } from '../../../scripts/settings/catalogue.js';
+import { SETTINGS, WINDOWS_BUILD_COMMANDS, checkSetting, definitionOf } from '../../../scripts/settings/catalogue.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
 
@@ -91,4 +91,20 @@ test('until is refused on a setting that is not temporary', () => {
   assert.throws(() => checkSetting('autonomy', 'cautious', '2026-10-18T18:00:00.000Z'), { message: 'autonomy can\'t have an end time' });
   assert.throws(() => checkSetting('presence', 'away', 'six o\'clock'), /presence can't end at six o'clock/);
   assert.doesNotThrow(() => checkSetting('autonomy', 'cautious', undefined));
+});
+
+test('build commands on Windows is a setting per computer, kept in the project, Ask by default', () => {
+  const def = definitionOf('windowsBuildCommands:0a1b2c3d');
+  assert.equal(def, WINDOWS_BUILD_COMMANDS);
+  assert.deepEqual(def.levels, ['ask', 'guarded', 'unattended']);
+  assert.equal(def.default, 'ask');
+  assert.equal(def.home, 'project');
+  assert.equal(def.group, 'everyday');
+  assert.equal(def.label, 'Build commands on Windows');
+  for (const value of ['ask', 'guarded', 'unattended']) assert.doesNotThrow(() => checkSetting('windowsBuildCommands:0a1b2c3d', value));
+  assert.throws(() => checkSetting('windowsBuildCommands:0a1b2c3d', 'always'), /can't be always/);
+  assert.throws(() => checkSetting('windowsBuildCommands:0a1b2c3d', 'ask', '2026-10-19T18:00:00.000Z'), /can't have an end time/);
+  for (const key of ['windowsBuildCommands', 'windowsBuildCommands:', 'windowsBuildCommands:0A1B2C3D', 'windowsBuildCommands:0a1b2c3', 'windowsBuildCommands:0a1b2c3d4']) {
+    assert.throws(() => checkSetting(key, 'ask'), /no setting called/, key);
+  }
 });

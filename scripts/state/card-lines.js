@@ -21,6 +21,12 @@ export function confirmLine(event) {
   return `Confirm ${event?.kind} ${event?.id}: "${words}"`;
 }
 
+// The line on the Unattended card for build commands on Windows: the click on its
+// Turn on (dangerous) button confirms that one setting event, for that one computer.
+export function unattendedBuildsLine(eventId, computer) {
+  return `Run build commands unattended on this Windows computer, with nothing to hold them (${computer}, ${eventId})`;
+}
+
 // The letters and digits a reply code is made from: none that are easy to mistake for another.
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
 
