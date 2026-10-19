@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, DECIDING, HEADERS } from '../../../scripts/cards/compose.js';
+import { composeCard, answerInput, questionProblem, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/cards/compose.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -377,4 +377,26 @@ test("the prompt record earns the right record from each composed card's decidin
       assert.deepEqual(off.calls.record.map((r) => r.event.kind).filter((k) => k !== 'shown'), [], `${kind}: Explain more`);
     }
   });
+});
+
+test('questionProblem says why a question from the build could not be its answer card, by the composer\'s own rules', () => {
+  const question = {
+    id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator should the export use?', why: 'It changes the file people download.',
+    options: OWN, recommendation: 'Tab', level: 2,
+  };
+  assert.equal(questionProblem(question), null);
+  // The composer's answer card from the same input: the question's own words and options.
+  const { card } = composeCard(answerInput(question, 'Export a report'));
+  assert.equal(card.line, answerLine('q-export-csv-1'));
+  assert.match(card.question, /^My recommendation: Tab, because the session building Export a report recommends it\.$/m);
+  assert.ok(card.question.includes(`While you decide: ${MEANWHILE}`));
+  assert.ok(composeCard(answerInput({ ...question, level: 4 }, 'x')).card.question.includes(`What this does to the checks: ${CHECKS_UNSAID}`));
+  const five = ['A', 'B', 'C', 'D', 'E'].map((label) => ({ label, says: `${label} goes ahead.` }));
+  for (const [name, bad, why] of [
+    ['five options', { ...question, options: five, recommendation: 'A' }, /at most 4/],
+    ['a put-off label', { ...question, options: [...OWN, { label: 'Not now', says: 'Later.' }] }, /Not now/],
+    ['words past the card\'s length', { ...question, why: 'w'.repeat(CARD.chars) }, new RegExp(`${CARD.chars} characters`)],
+    ['a label on two lines', { ...question, options: [{ label: 'Com\nma', says: 'x' }, OWN[1]] }, /one line/],
+    ['no options', { ...question, options: undefined }, /can't be read/],
+  ]) assert.match(questionProblem(bad) ?? '', why, name);
 });

@@ -13,6 +13,10 @@ import { FRONT_DESK_LINE } from '../../scripts/hooks/session-start.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
 import { CARD_KINDS } from '../../scripts/lib/front-desk.js';
 import { approvalLine } from '../../scripts/state/card-lines.js';
+import { decide as stopGuard } from '../../scripts/hooks/stop-guard.js';
+import { words } from '../../scripts/hooks/shell-words.js';
+import { setStop } from '../../scripts/lib/stop.js';
+import { as, shortHome } from '../helpers/homes.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ROOT_VARIABLE = '${CLAUDE_PLUGIN_ROOT}';
@@ -123,4 +127,32 @@ test('each example input in the playbook is accepted as written, the approval wi
     if (args === 'record ruling') assert.ok(answered.card.question.question.startsWith('What this is:'));
   }
   assert.deepEqual(seen.sort(), ['card', 'record ruling']);
+});
+
+test('the playbook\'s similar, with the request\'s words as arguments, runs, and runs under STOP', async () => {
+  const [, line, rest] = /```\n(node "[^"]*" similar ([^\n]+))\n```/.exec(playbook) ?? [];
+  assert.ok(line, 'the playbook shows similar with the request\'s words');
+  const command = line.replaceAll(ROOT_VARIABLE, '/plugin');
+  assert.ok(command.startsWith(`${COMMAND} similar `));
+  const argv = ['similar', ...words(rest, false)];
+  let out = '';
+  let err = '';
+  const code = await main(argv, { cwd: '/projects/shop', client: helper().client, input: '', out: (t) => { out += t; }, err: (t) => { err += t; } });
+  assert.equal(code, 0, err);
+  assert.ok(Array.isArray(JSON.parse(out).similar));
+  // The intake names the same form.
+  assert.match(intake, /`cli\.js similar "<[^>]+>"`/);
+  await as(shortHome(), async () => {
+    setStop({ by: 'prompt' });
+    const input = { cwd: '/projects/shop', session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } };
+    assert.equal(await stopGuard(input, { projectOf: () => ({ project: 'o__p' }), pluginRoot: '/plugin', platform: 'linux' }), undefined);
+  });
+});
+
+test('the playbook says what to do under STOP, with a card already asked, and with a problem `cards` reports', () => {
+  assert.match(playbook, /\*\*STOP:\*\*[^\n]*what was in progress[^\n]*`cards`[^\n]*Lift STOP card/);
+  assert.match(playbook, /`alreadyAsked`/);
+  assert.match(playbook, /`problems`/);
+  assert.match(playbook, /`views glossary`/);
+  assert.match(intake, /`cli\.js again <n>`/);
 });

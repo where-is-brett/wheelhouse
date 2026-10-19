@@ -393,6 +393,7 @@ test('the front desk names its folder, and the helper places the project from it
       assert.deepEqual(views.views.waiting.map((w) => w.id), [wrote.id]);
       assert.deepEqual(views.cards.map((e) => [e.id, e.kind, e.data.question]), [[wrote.id, 'card', 'Pick a colour?']]);
       assert.equal((await c.client.state.views({ project: PROJECT })).cards, undefined, 'only when asked for');
+      assert.equal((await c.client.state.views({ project: PROJECT })).stop, undefined, 'STOP is off');
       assert.deepEqual(await c.client.prState({ cwd: inside, number: 7 }), { ok: true, result: { state: 'closed' } });
       // A folder outside every project, or one that isn't a full path, is refused, and nothing is written.
       for (const cwd of [os.tmpdir(), 'src']) {

@@ -88,6 +88,22 @@ test('ask refuses malformed input in plain words and writes nothing', () => {
   assert.equal(fs.existsSync(featurePaths(tree).questions), false);
 });
 
+test('ask refuses a question the director\'s card could not carry, in the composer\'s words, and writes nothing', () => {
+  const tree = feature();
+  const options = (labels) => labels.flatMap((label) => ['--option', `${label}=Use ${label}`]);
+  const asked = (extra) => ['--what', 'Which provider?', '--why', 'It decides what users see', ...extra, '--level', '3'];
+  for (const [name, argv, why] of [
+    ['five options', asked([...options(['A', 'B', 'C', 'D', 'E']), '--recommend', 'A']), /at most 4/],
+    ['a put-off label', asked([...options(['A', 'Not now']), '--recommend', 'A']), /Not now/],
+    ['words past the card\'s length', ['--what', 'w'.repeat(1200), '--why', 'y', ...options(['A', 'B']), '--recommend', 'A', '--level', '3'], /1200 characters/],
+  ]) {
+    assert.throws(() => ask({ worktree: tree, argv }), (e) => e instanceof CliError && why.test(e.message) && /can't be put to the director as a card/.test(e.message), name);
+  }
+  assert.equal(fs.existsSync(featurePaths(tree).questions), false);
+  // An extra plan is no card for the director, so its options are the foreman's business.
+  assert.equal(ask({ worktree: tree, argv: ['--kind', 'extra-plan', '--plan', 'x.md', ...asked([...options(['A', 'B', 'C', 'D', 'E']), '--recommend', 'A'])] }).id, 'q-login-page-1');
+});
+
 test('ask from the command line prints the id, and malformed input exits non-zero with a message', () => {
   const tree = feature();
   const good = spawnSync(process.execPath, [CLI, 'ask', ...ASK], { cwd: tree, encoding: 'utf8' });

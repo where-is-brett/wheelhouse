@@ -108,6 +108,7 @@ import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
   openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
+import { questionProblem } from '../cards/compose.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { report as reportCheck } from '../feature/cli.js';
 import {
@@ -714,6 +715,9 @@ async function ask(ctx, work, rest) {
   }
   const n = Math.max(FOREMAN_QUESTIONS, ...asked.map((q) => foremanNumber(q.question.data.id, work))) + 1;
   const id = `q-${work}-${n}`;
+  // A question no card could carry would wait for ever unasked: refused by the composer's own rules.
+  const problem = questionProblem({ id, work, ...body });
+  if (problem !== null) refuse(`This question can't be put to the director as a card, so it wasn't asked: ${problem}`);
   await ctx.write('question', { id, work, ...body });
   ctx.say(`Asked the director: ${id}.`);
 }

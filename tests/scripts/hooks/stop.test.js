@@ -166,6 +166,10 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" explain "pull request"`,
         `node "${cli}" explain the-done-contract`,
         `node "${cli}" similar`,
+        // The request's words as plain arguments, quoted or not: nothing a shell would expand.
+        `node "${cli}" similar export the orders to a spreadsheet`,
+        `node "${cli}" similar "Could we export the orders, as a spreadsheet?"`,
+        `node "${cli}" similar "can't sign in on the phone"`,
         `node "${cli}" preview 7`,
       ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
       for (const bad of [
@@ -188,7 +192,13 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" explain --help`,
         `node "${cli}" explain ../x`,
         `node "${cli}" explain ${'word '.repeat(6).trim()}`,
-        `node "${cli}" similar text`,
+        `node "${cli}" similar "$HOME"`,
+        `node "${cli}" similar export *`,
+        `node "${cli}" similar "a {b}"`,
+        `node "${cli}" similar --help`,
+        `node "${cli}" similar ~/notes`,
+        `node "${cli}" similar fix #12 now`,
+        `node "${cli}" similar "a [b]"`,
         `node "${cli}" preview`,
         `node "${cli}" preview x`,
         `node "${cli}" preview 7 8`,

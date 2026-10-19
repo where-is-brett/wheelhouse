@@ -2108,10 +2108,12 @@ export async function startHelper({
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
     // With `cards`, the card events too, every one the state holds: the board numbers its list
-    // from them, and the front desk's `again <n>` must find the board's card n.
+    // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
+    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card.
     '/state/views': stateRoute(async ({ project, cards }) => ({
       ok: true,
       views: await writeViews(project, { now }),
+      ...(stopped() ? { stop: true } : {}),
       ...(cards === true ? { cards: listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card') } : {}),
     })),
     // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.

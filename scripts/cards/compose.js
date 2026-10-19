@@ -45,6 +45,12 @@ export const DECIDING = Object.freeze({
   'incident-fix': 'Merge the fix',
 });
 
+// What an answer card says happens while the director decides.
+export const MEANWHILE = 'that feature waits; the others carry on';
+// The checks line of a level 4 question's card when the build didn't say what answering does to the checks (ruling F18).
+// A card with four options of its own has no Explain more button, so the line also says it can be typed.
+export const CHECKS_UNSAID = 'The build didn\'t say. Choose or type Explain more and I\'ll find out before you answer.';
+
 // What the buttons that put a card off do.
 const PUT_OFF_SAYS = Object.freeze({
   'Not now': 'Leave this waiting; nothing changes yet.',
@@ -58,6 +64,7 @@ const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 const SET_FRAGMENTS = SET_LINES.map((p) => new RegExp(p.source.replace(/^\^/, '').replace(/\$$/, '')));
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const isCount = (x) => Number.isInteger(x) && x >= 1;
 const bare = (text) => text.replace(/[.!?]+$/, '');
 // A reason read as a clause after "because": no closing full stop, and its first word in lower case unless it is a name or acronym.
@@ -260,4 +267,36 @@ export function composeCard(input) {
     concepts: [...(input.concepts ?? termsIn(explained.join('\n'), input.glossary ?? glossaryOf({})))],
   };
   return { question, card };
+}
+
+// The input for the answer card to a question the build recorded, `data` as its question event
+// holds it: its words, its own options with what each says, and its own recommendation (ruling
+// F10). `work` names the work, by its title or its id. A level 4 question's card says what
+// answering does to the checks, in the question's own words, or that the build didn't say (ruling F18).
+export function answerInput(data, work) {
+  if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
+  return {
+    kind: 'answer',
+    level: data.level,
+    what: flat(data.what),
+    why: flat(data.why),
+    options: data.options.map((o) => ({ label: o?.label, says: flat(o?.says) || o?.label })),
+    recommend: data.recommendation,
+    because: `the session building ${work} recommends it`,
+    meanwhile: MEANWHILE,
+    ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
+    target: { questionId: data.id },
+  };
+}
+
+// Why no answer card could be made of a question from the build, as the composer refuses it, or
+// null when one can. The card is judged naming the work by its id, as the front desk names it when
+// the work's title won't fit, so the build's ask commands refuse what no card could carry.
+export function questionProblem(data) {
+  try {
+    composeCard(answerInput(data, data?.work));
+    return null;
+  } catch (error) {
+    return error.message;
+  }
 }

@@ -134,7 +134,10 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
         assert.equal((await client.carried({ ...base, number: 7 })).ok, true);
         assert.equal((await client.ci({ ...base, sha: HEAD })).ok, true);
         assert.equal((await client.issue.list({ ...base, label: 'x' })).ok, true);
-        assert.equal((await client.state.views(base)).ok, true);
+        // The views say STOP is on, so the front desk can offer the Lift STOP card.
+        const views = await client.state.views(base);
+        assert.equal(views.ok, true);
+        assert.equal(views.stop, true);
         assert.equal((await client.lock.read(base)).ok, true);
         assert.equal((await client.state.sync(base)).ok, true);
         assert.equal((await client.state.clone(base)).ok, true);

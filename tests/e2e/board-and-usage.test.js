@@ -161,7 +161,11 @@ async function prompt(c, text) {
 
 // The briefing's own text, without the hook's heading, and its words.
 // The text shown, without its heading or the "cards to ask" line that follows it when cards wait unasked.
-const bodyOf = (context) => context.slice(context.indexOf('\n\n') + 2).replace(/\n\nCards to ask this visit: \d+\. [^\n]*$/, '');
+// The text under the heading, without the "cards to ask" line that comes before it.
+const bodyOf = (context) => {
+  const text = context.replace(/^Cards to ask this visit: \d+\. [^\n]*\n\n/, '');
+  return text.slice(text.indexOf('\n\n') + 2);
+};
 const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 const numbered = (text) => text.split('\n').filter((line) => /^\d+\. /.test(line));
 
@@ -534,11 +538,11 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     // Two hours after the last prompt, the next brings the briefing.
     c.time(3 * HOUR + 5 * MINUTE);
     const context = await prompt(c, 'What happened?');
-    assert.ok(context.startsWith(`${HEADINGS.briefing}\n\n`), context);
+    // The cards waiting unasked are named before the briefing, never inside it.
+    assert.ok(context.startsWith(`${cardsLine(4)}\n\n${HEADINGS.briefing}\n\n`), context);
     const body = bodyOf(context);
     assert.ok(wordsIn(body) <= BRIEFING_WORDS.standard, `${wordsIn(body)} words:\n${body}`);
-    // The cards waiting unasked are named after the briefing, never inside it.
-    assert.ok(context.endsWith(`\n\n${cardsLine(4)}`), context);
+    assert.ok(!body.includes('Cards to ask'), body);
 
     const parts = body.split('\n\n');
     assert.deepEqual(parts.map((part) => part.split('\n')[0]), [

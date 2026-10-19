@@ -324,13 +324,13 @@ test('the gap is time elapsed, whatever the day it crosses, and a last prompt in
   });
 });
 
-test('STOP on changes nothing here', async () => {
+test('STOP on still adds what is asked for, after the line for its Lift STOP card', async () => {
   await withProject(async ({ repo }) => {
     setStop({ by: 'prompt' });
-    assert.ok(contextOf(await run(repo, '/wheelhouse:board', NOW)).startsWith(HEADINGS.board));
-    assert.ok(contextOf(await run(repo, '/wheelhouse:settings', NOW)).startsWith(HEADINGS.settings));
+    assert.ok(contextOf(await run(repo, '/wheelhouse:board', NOW)).startsWith(`${cardsLine(1)}\n\n${HEADINGS.board}`));
+    assert.ok(contextOf(await run(repo, '/wheelhouse:settings', NOW)).startsWith(`${cardsLine(1)}\n\n${HEADINGS.settings}`));
     markSeen(P, { promptAt: new Date('2026-10-19T09:00:00.000Z') });
-    assert.ok(contextOf(await run(repo, 'Hello', NOW)).startsWith(HEADINGS.briefing));
+    assert.ok(contextOf(await run(repo, 'Hello', NOW)).startsWith(`${cardsLine(1)}\n\n${HEADINGS.briefing}`));
   });
 });
 
@@ -390,15 +390,33 @@ test('each command asks only for what the hook added', () => {
 // The waiting view with `n` cards no visit has handed out yet (`asked` null, as the views write it).
 const unasked = (n) => Array.from({ length: n }, (_, i) => ({ id: `u${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Card ${i}` }, asked: null }));
 const viewFile = (name) => path.join(wheelhouseHome(), 'projects', P, 'views', `${name}.json`);
+// A question from the build as its event holds it, which `cli.js cards` makes an answer card of.
+const question = (id) => ({
+  id, work: id.replace(/^q-(.+)-[0-9]+$/, '$1'), what: 'Which separator should the export use?', why: 'It changes the file people download.',
+  options: [{ label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }], recommendation: 'Tab', level: 2,
+});
 
-test('cards no visit has asked bring the "cards to ask" line, after the briefing; asked cards bring none', async () => {
+test('under STOP the line announces the one Lift STOP card that `cli.js cards` puts first, whatever else waits', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    put(viewFile('waiting'), unasked(6));
+    setStop({ by: 'prompt' });
+    assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(1));
+    // With nothing else waiting, the Lift STOP card is still to ask.
+    put(viewFile('waiting'), []);
+    assert.equal(contextOf(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z')), cardsLine(1));
+  });
+});
+
+test('cards no visit has asked bring the "cards to ask" line, before the briefing; asked cards bring none', async () => {
   await withProject(async ({ repo }) => {
     assert.equal(cardsLine(2), 'Cards to ask this visit: 2. Run `cli.js cards` and ask them in one AskUserQuestion call, after the briefing.');
     put(viewFile('waiting'), [...unasked(2), { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }]);
-    // With the briefing: the briefing first, the line after it, outside the data to show.
+    // With the briefing: the line first, then the data to show, which runs to the end, so the line
+    // is read as an instruction and never shown as part of the briefing.
     const briefed = contextOf(await run(repo, 'Hello', NOW));
-    assert.ok(briefed.startsWith(`${HEADINGS.briefing}\n\n`), briefed);
-    assert.ok(briefed.endsWith(`\n\n${cardsLine(2)}`), briefed);
+    assert.ok(briefed.startsWith(`${cardsLine(2)}\n\n${HEADINGS.briefing}\n\n`), briefed);
+    assert.equal(briefed.split(cardsLine(2)).length, 2, 'the line once');
     assert.ok(briefed.length <= CONTEXT_CHARS);
     // Without a briefing, the line alone.
     assert.equal(contextOf(await run(repo, 'And another thing', '2026-10-19T12:10:00.000Z')), cardsLine(2));
@@ -415,14 +433,17 @@ test('the count is at most one call\'s worth, and counts a question from the bui
     assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(4));
     put(viewFile('waiting'), [{ id: 'a1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Answer', line: 'Answer question q-export-1' }, asked: ASKED }]);
     put(viewFile('questions'), {
-      'q-export-1': { question: { data: { id: 'q-export-1' } } },
-      'q-search-2': { question: { data: { id: 'q-search-2' } } },
-      'q-done-3': { question: { data: { id: 'q-done-3' } }, answer: { data: { label: 'Yes' } } },
+      'q-export-1': { question: { data: question('q-export-1') } },
+      'q-search-2': { question: { data: question('q-search-2') } },
+      'q-done-3': { question: { data: question('q-done-3') }, answer: { data: { label: 'Yes' } } },
+      // A question the composer can't make a card of is never counted: `cards` gives it no card.
+      'q-wide-4': { question: { data: { ...question('q-wide-4'), options: ['A', 'B', 'C', 'D', 'E'].map((label) => ({ label, says: label })), recommendation: 'A' } } },
+      'q-unread-5': { question: { data: { id: 'q-unread-5' } } },
     });
     assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(1));
-    // A board command shows the board, then the line.
+    // A board command gives the line, then the board.
     const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
-    assert.ok(board.startsWith(HEADINGS.board) && board.endsWith(`\n\n${cardsLine(1)}`), board);
+    assert.ok(board.startsWith(`${cardsLine(1)}\n\n${HEADINGS.board}`), board);
   });
 });
 

@@ -16,6 +16,7 @@ import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions }
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from './status.js';
+import { questionProblem } from '../cards/compose.js';
 import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
 import { projectOf } from '../hooks/kit.js';
@@ -77,7 +78,9 @@ function nextQuestionId(file, work) {
   return `q-${work}-${highest + 1}`;
 }
 
-// Appends a question to questions.jsonl and returns `{ id }`.
+// Appends a question to questions.jsonl and returns `{ id }`. A question for the director that no
+// card could carry (by the composer's own rules: at most four options, none a button that puts a
+// card off, words that fit the card) is refused, so it never waits unasked.
 export function ask({ worktree, argv }) {
   const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan']);
   const kind = single(found, 'kind') ?? 'question';
@@ -106,6 +109,8 @@ export function ask({ worktree, argv }) {
   const p = featurePaths(worktree);
   const id = nextQuestionId(p.questions, brief.work);
   const question = { id, kind, what, why, options, recommendation, level: Number(levelText), ...(kind === 'extra-plan' ? { plan } : {}) };
+  const problem = kind === 'question' ? questionProblem({ ...question, work: brief.work }) : null;
+  if (problem !== null) throw new CliError(`This question can't be put to the director as a card, so it wasn't asked: ${problem}`);
   const kept = readCapped(p.questions, QUESTIONS_BYTES);
   // A file that is there but can't be read (a link, a folder) must not be replaced.
   if (kept === null && exists(p.questions)) throw new CliError("questions.jsonl can't be added to");

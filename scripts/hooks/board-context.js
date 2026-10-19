@@ -13,8 +13,10 @@
 // informs: a failure, or a build past WAIT_MS, adds nothing and lets the prompt through (the
 // prompt's time is still kept). It only reads the state, so STOP doesn't hold it.
 //
-// When cards wait that no visit has handed out, it adds one line after whatever else it adds,
-// outside the data to show: how many to ask, and that `cli.js cards` gives them (cardsLine).
+// When cards wait that no visit has handed out, it adds one line before whatever else it adds, so
+// the line is read as an instruction and never as the data to show: how many to ask, and that
+// `cli.js cards` gives them (cardsLine). Under STOP the line names the one Lift STOP card that
+// `cli.js cards` puts first, so it doesn't repeat the cards a visit can't mark as asked.
 //
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
@@ -35,7 +37,9 @@ import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js'
 import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { existingCard } from '../cards/visit.js';
+import { questionProblem } from '../cards/compose.js';
 import { answerLine } from '../state/card-lines.js';
+import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 
@@ -162,14 +166,17 @@ function inPlainWords(make, room, words) {
 }
 
 // How many cards `cli.js cards` would hand out now, from the views on disk: the waiting cards no
-// visit has handed out, and the open questions from the build that no waiting card asks yet,
-// which it makes cards of first. At most one call's worth.
+// visit has handed out, and the open questions from the build that no waiting card asks yet and
+// that the composer can make a card of, which it makes cards of first. At most one call's worth.
+// Under STOP, the one Lift STOP card.
 function cardsToAsk(project) {
+  if (stopState().on) return 1;
   const views = localViews(project, ['waiting', 'questions']) ?? {};
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
   const fresh = waiting.filter((card) => card.asked === null || card.asked === undefined).length;
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
-    .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null).length;
+    .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null
+      && questionProblem(entry.question?.data) === null).length;
   return Math.min(CARD.questions, fresh + questions);
 }
 
@@ -248,7 +255,7 @@ export async function decide(input, deps = {}) {
       attempt(() => markSeen(project, { briefedAt: at }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
-    const text = [built?.text, cards].filter((part) => typeof part === 'string').join('\n\n');
+    const text = [cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');
     return text === '' ? undefined : answer.context('UserPromptSubmit', text);
   } catch {
     return undefined;

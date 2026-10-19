@@ -71,15 +71,16 @@ const ownImportance = (card) => (Number.isFinite(card.data?.importance) ? card.d
 
 // The next visit's cards: those never asked (`asked` null), most important first. Within one
 // rank the composer's own importance decides (higher first), then the oldest, then the id.
-// At most CARD.questions; `left` counts the ones not taken. A card put off stays on the board,
-// so the director can still ask for it. The order doesn't depend on the clock.
-export function cardsForVisit(views, _visit = {}) {
+// At most `room` (CARD.questions unless a card of the visit's own takes a place); `left` counts the
+// ones not taken. A card put off stays on the board, so the director can still ask for it. The
+// order doesn't depend on the clock.
+export function cardsForVisit(views, { room = CARD.questions } = {}) {
   const ranked = waitingOf(views).filter((c) => c.asked === null || c.asked === undefined)
     .map((card) => ({ card, rank: importanceOf(card, views) }))
     .sort((a, b) => b.rank - a.rank || ownImportance(b.card) - ownImportance(a.card)
       || (a.card.at < b.card.at ? -1 : a.card.at > b.card.at ? 1 : 0) || (a.card.id < b.card.id ? -1 : 1))
     .map(({ card }) => card);
-  const chosen = ranked.slice(0, CARD.questions);
+  const chosen = ranked.slice(0, Math.max(0, room));
   return { questions: chosen.map(asQuestion), ids: chosen.map((c) => c.id), left: ranked.length - chosen.length };
 }
 
@@ -91,12 +92,17 @@ export function existingCard(views, line) {
   return waitingOf(views).find((c) => c.data?.line === line)?.id ?? null;
 }
 
-// The waiting card the board numbers n, to ask again, or null: there is no such number, or it
-// names a question from the build that no card has asked yet. `events` are the events the board
-// was built from; the board leaves out a build question that a card, even an answered one, names.
-export function askAgain(views, n, { events = [] } = {}) {
+// The waiting card the board numbers n, or null: there is no such number, or it names a question
+// from the build that no card has asked yet. `events` are the events the board was built from; the
+// board leaves out a build question that a card, even an answered one, names.
+export function cardNumbered(views, n, { events = [] } = {}) {
   if (!Number.isInteger(n)) return null;
   const item = numberedWaiting(views, events).find((i) => i.n === n);
-  const card = item?.card === undefined ? undefined : waitingOf(views).find((c) => c.id === item.card);
+  return (item?.card === undefined ? undefined : waitingOf(views).find((c) => c.id === item.card)) ?? null;
+}
+
+// The card the board numbers n, as AskUserQuestion takes it, to ask again; or null.
+export function askAgain(views, n, options = {}) {
+  const card = cardNumbered(views, n, options);
   return card ? asQuestion(card) : null;
 }
