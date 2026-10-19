@@ -268,6 +268,6 @@ test('a scenario written in a suite but left out of the run is a row not run', (
 
 test('the end-to-end tests that cover scenarios are found by their comments', () => {
   const ids = [...new Set(coveredScenarios().map((entry) => entry.id))];
-  assert.deepEqual(ids, [11, 12, 14, 17, 19, 26, 28, 29, 30, 31, 32]);
-  for (const entry of coveredScenarios()) assert.match(entry.file, /^tests\/e2e\/(safety|build-loop)\.test\.js$/);
+  assert.deepEqual(ids, [5, 11, 12, 14, 17, 19, 26, 28, 29, 30, 31, 32]);
+  for (const entry of coveredScenarios()) assert.match(entry.file, /^tests\/e2e\/(safety|build-loop|front-desk)\.test\.js$/);
 });
