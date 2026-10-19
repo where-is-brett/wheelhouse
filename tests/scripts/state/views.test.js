@@ -15,7 +15,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -437,6 +437,9 @@ test('two shown records with one code and different questions are both left out 
     const v = build([a, b, fine]);
     assert.deepEqual(Object.keys(v.shown), ['P3Q4']);
     assert.equal(v.damaged.filter((d) => d.includes('K7M2')).length, 1);
+    // The clash is also listed under its own key, apart from real damage.
+    assert.deepEqual(v.codeClashes, ['a shown code held by two different questions: K7M2']);
+    assert.deepEqual(build([a, b, fine], { damaged: ['/x/bad.json'] }).codeClashes, v.codeClashes);
     // The same question shown again under its code is not damage.
     const again = ev('shown', 4, shownData('P3Q4', 'Fine?'));
     const w = build([fine, again]);

@@ -27,7 +27,7 @@ import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -39,7 +39,6 @@ import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.j
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
-import { eventHash } from '../state/events.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
 import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
@@ -1650,8 +1649,10 @@ export async function startHelper({
     const enrolled = readEnrolled();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
     // A damaged event is dropped from the views, and a dropped incident or approval of work reads as
-    // nothing to do, so with any damage only a restore goes on (Ruling 114).
-    if (views.damaged.length > 0 && !restore) stateReasons.push(STATE_DAMAGED);
+    // nothing to do, so with any damage only a restore goes on (Ruling 114). A reply-code clash is
+    // listed with the damage but hides neither, so it doesn't count.
+    const clashes = new Set(views.codeClashes);
+    if (views.damaged.some((d) => !clashes.has(d)) && !restore) stateReasons.push(STATE_DAMAGED);
     // Work shown first needs the director's approval of the pull request. When the changed files
     // couldn't be read, the change already counts as touching the guardrails.
     const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
