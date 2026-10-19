@@ -23,8 +23,9 @@
 // prompt that is no command, it runs learning (scripts/frontdesk/learning.js) before the cards are
 // counted, within LEARN_WAIT_MS and never under STOP (ruling F32): a concept set to false is written
 // to the profile at once, and each other proposal is written with its confirm card, waiting, so it
-// is asked with this visit's cards. A learnt setting whose card wasn't written gets it then too
-// (ruling F37). Learning adds no text, and a failure or a late helper leaves the rest for next visit.
+// is asked with this visit's cards. A setting waiting for its confirmation whose card wasn't written
+// gets it then too (rulings F37, F45). Learning adds no text, and a failure or a late helper leaves
+// the rest for next visit.
 //
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
@@ -50,7 +51,7 @@ import { answerLine, confirmLine } from '../state/card-lines.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { helperClient } from '../host/helper-client.js';
-import { conceptProposals, conceptSetting, settingProposals } from '../frontdesk/learning.js';
+import { clickOutcomes, conceptProposals, conceptSetting, settingProposals } from '../frontdesk/learning.js';
 import { settingCard, writeSetting } from '../frontdesk/cli.js';
 import { profileDir, stateDir } from '../lib/paths.js';
 import { stopState } from '../lib/stop.js';
@@ -210,9 +211,10 @@ async function within(start, ms) {
 }
 
 // Learning for the visit (ruling F32): the proposals worked out from the project's events, the
-// profile's and the board commands, written through the helper. A learnt setting still waiting
-// whose confirm line no card in this project carries gets its card first (ruling F37). Each write
-// that fails is left for the next visit, which works it out again.
+// profile's and the board commands, written through the helper. A profile setting still waiting
+// for its confirmation, with the words a card names it by, whose confirm line no card in this
+// project carries gets its card first (rulings F37, F45): one whose card wasn't written, learnt or
+// recorded by the front desk. Each write that fails is left for the next visit, which works it out again.
 async function learn({ project, cwd, client, at, boardAsks }) {
   const events = listEvents(stateDir(project), { report: () => {} });
   const own = attempt(() => readProfileViews()) ?? {};
@@ -235,7 +237,7 @@ async function learn({ project, cwd, client, at, boardAsks }) {
 
   const lines = new Set(events.filter((e) => e.kind === 'card').map((e) => e.data?.line));
   for (const entry of unconfirmed) {
-    if (entry.kind !== 'setting' || typeof entry.id !== 'string' || !isRecord(entry.data) || typeof entry.data.because !== 'string') continue;
+    if (entry.kind !== 'setting' || typeof entry.id !== 'string' || !isRecord(entry.data) || typeof entry.data.words !== 'string') continue;
     const event = { kind: 'setting', id: entry.id, data: entry.data };
     if (lines.has(confirmLine(event))) continue;
     await tried(async () => {
@@ -243,9 +245,10 @@ async function learn({ project, cwd, client, at, boardAsks }) {
       if (got?.ok !== true) throw new Error('not written');
     });
   }
+  const outcomes = clickOutcomes(events, profile, { enrolled });
   const proposals = [
-    ...conceptProposals(events, profile, { now: at, enrolled }).map(conceptSetting),
-    ...settingProposals(events, profile, { now: at, enrolled, boardAsks }),
+    ...conceptProposals(events, profile, { now: at, outcomes }).map(conceptSetting),
+    ...settingProposals(events, profile, { now: at, outcomes, boardAsks }),
   ];
   for (const data of proposals) await tried(() => writeSetting({ client: asker, cwd, data, words }));
 }

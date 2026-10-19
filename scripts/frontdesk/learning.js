@@ -10,10 +10,12 @@
 //   events    the project's events, as its state holds them
 //   profile   { events, settings, unconfirmed }: the profile's events, the settings in force
 //             (effectiveSettings, project over profile over defaults) and the profile views' `unconfirmed`
-//   options   { now, enrolled, dayOf, boardAsks }: the clock; the enrolled keys a signed record is
-//             checked against (readEnrolled() when not given); the calendar day of a time (this
-//             computer's local day when not given); and for settingProposals, seen.json's
-//             `boardAsks`, the last board commands as { at, tab, visit }
+//   options   { now, enrolled, outcomes, dayOf, boardAsks }: the clock; the enrolled keys a signed
+//             record is checked against (readEnrolled() when not given); the cards' outcomes from
+//             clickOutcomes, worked out once by a caller that asks for both kinds of proposal
+//             (worked out here when not given); the calendar day of a time (this computer's local
+//             day when not given); and for settingProposals, seen.json's `boardAsks`, the last
+//             board commands as { at, tab, visit }
 // A card's click is judged as the waiting view judges it (cardOutcomes): a reply code's signed
 // record counts as the click it stands for. A proposal already waiting for its confirmation in the
 // profile, or put off with Not now on its card in the last TURNED_DOWN_DAYS, is not made again.
@@ -80,15 +82,15 @@ function conceptsOf(card) {
   return [...new Set(list(card.data?.concepts).filter((t) => typeof t === 'string').map(conceptOf).filter((c) => CONCEPT.test(c)))];
 }
 
-// conceptProposals(events, profile, { now, enrolled, dayOf }) -> [{ concept, known, confirm }], by concept.
+// conceptProposals(events, profile, { now, enrolled, outcomes, dayOf }) -> [{ concept, known, confirm }], by concept.
 // A concept is proposed as known (confirm: true, a card for the `known:<concept>` setting) once
 // cards holding it were decided with no Explain more on KNOWN_AFTER different days, counting only
 // cards decided after the latest Explain more on any card holding it and after its latest setting
 // in the profile. Explain more on a card holding a concept known in force, after that setting,
 // proposes it as not known (confirm: false: written at once, no card), unless false is already the
 // latest value in the profile.
-export function conceptProposals(events, profile, { now, enrolled, dayOf: day = dayOf } = {}) {
-  const outcomes = clickOutcomes(events, profile, { enrolled: enrolled ?? readEnrolled() });
+export function conceptProposals(events, profile, { now, enrolled, outcomes: given, dayOf: day = dayOf } = {}) {
+  const outcomes = given ?? clickOutcomes(events, profile, { enrolled: enrolled ?? readEnrolled() });
   const context = { events, profile, outcomes, nowMs: instant(now) };
   const concepts = [...new Set(outcomes.flatMap(({ card }) => conceptsOf(card)))].sort();
   const out = [];
@@ -120,14 +122,14 @@ export function conceptSetting({ concept, known }) {
   };
 }
 
-// settingProposals(events, profile, { now, enrolled, boardAsks }) -> [{ key, value, because }].
+// settingProposals(events, profile, { now, enrolled, outcomes, boardAsks }) -> [{ key, value, because }].
 // `boardTab: build` when the latest board command of each of the last BOARD_VISITS visits that had
 // one named build, and `explanations: plain` when EXPLAINED_CARDS different cards got Explain more
 // within EXPLAINED_DAYS while some-terms is in force. Either counts only what came after that
 // setting's latest event in the profile, and neither is proposed when it is the value in force.
-export function settingProposals(events, profile, { now, enrolled, boardAsks = [] } = {}) {
+export function settingProposals(events, profile, { now, enrolled, outcomes: given, boardAsks = [] } = {}) {
   const nowMs = instant(now);
-  const outcomes = clickOutcomes(events, profile, { enrolled: enrolled ?? readEnrolled() });
+  const outcomes = given ?? clickOutcomes(events, profile, { enrolled: enrolled ?? readEnrolled() });
   const context = { events, profile, outcomes, nowMs };
   const out = [];
   const propose = (key, value, because) => { if (!heldBack(context, key, value)) out.push({ key, value, because }); };

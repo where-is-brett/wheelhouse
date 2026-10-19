@@ -558,11 +558,17 @@ test('learning never runs under STOP, and a helper that never answers holds the 
     assert.deepEqual(profileWrites, []);
 
     liftStop();
-    const never = () => new Promise(() => {});
+    // A helper that takes learning's write and never answers. The board's inputs ask the answering
+    // client, so the time measured is learning's alone: its bound, not the build's or the helper's.
+    let asked = 0;
+    const never = () => { asked += 1; return new Promise(() => {}); };
     const hung = { ...client, state: { write: never }, profile: { write: never } };
+    const load = (options) => loadBoardInputs({ ...options, client });
     const started = Date.now();
-    const out = contextOf(await run(repo, 'Hello', '2026-10-19T18:00:00.000Z', { client: hung, learnWaitMs: 50 }));
-    assert.ok(Date.now() - started < LEARN_WAIT_MS, `${Date.now() - started} ms`);
+    const out = contextOf(await run(repo, 'Hello', '2026-10-19T18:00:00.000Z', { client: hung, learnWaitMs: 100, load }));
+    const took = Date.now() - started;
+    assert.equal(asked, 1, 'learning reached the helper, which never answered');
+    assert.ok(took >= 100 && took < 1000, `${took} ms`);
     assert.ok(out.startsWith(HEADINGS.briefing), out);
     // What wasn't written is worked out again on the next visit.
     await run(repo, 'Hello', '2026-10-20T09:00:00.000Z', { client: learnt });
@@ -570,20 +576,25 @@ test('learning never runs under STOP, and a helper that never answers holds the 
   });
 });
 
-test('a learnt setting whose card was not written gets its card on the next visit', async () => {
+test('a setting waiting for its confirmation whose card was not written gets its card on the next visit', async () => {
   await withProject(async ({ repo }) => {
     const data = { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you opened the build tab first on each of your last three visits' };
+    // One the director set themselves, whose card wasn't written when `record setting` wrote it.
+    const own = { key: 'briefing', value: 'short', words: 'Briefing length: short' };
     put(path.join(profileViewsDir(), 'unconfirmed.json'), [
       { kind: 'setting', id: 'p-old', at: '2026-10-18T09:00:00.000Z', key: 'boardTab', data },
-      // One the director set themselves, which is not learning's to ask.
-      { kind: 'setting', id: 'p-own', at: '2026-10-18T09:00:00.000Z', key: 'briefing', data: { key: 'briefing', value: 'short', words: 'Briefing length: short' } },
+      { kind: 'setting', id: 'p-own', at: '2026-10-18T09:00:00.000Z', key: 'briefing', data: own },
+      // One with no words, which no card can name.
+      { kind: 'setting', id: 'p-bare', at: '2026-10-18T09:00:00.000Z', key: 'presence', data: { key: 'presence', value: 'away' } },
     ]);
     const { learnt, stateWrites } = learningClient();
     await run(repo, 'Hello', NOW, { client: learnt });
-    assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'setting', id: 'p-old', data })]);
+    assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'setting', id: 'p-old', data }), confirmLine({ kind: 'setting', id: 'p-own', data: own })]);
+    assert.match(stateWrites[0].data.question, /suggested from how you work/);
+    assert.match(stateWrites[1].data.question, /as you asked/);
     // Once a card in this project carries its line, none is written again.
-    store(stateDir(P), [makeEvent({ kind: 'card', data: stateWrites[0].data, now: () => new Date(NOW) })]);
+    store(stateDir(P), stateWrites.map((w) => makeEvent({ kind: 'card', data: w.data, now: () => new Date(NOW) })));
     await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });
-    assert.equal(stateWrites.length, 1);
+    assert.equal(stateWrites.length, 2);
   });
 });

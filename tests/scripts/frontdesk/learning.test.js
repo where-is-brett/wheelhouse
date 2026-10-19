@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { conceptProposals, settingProposals, conceptSetting, dayOf } from '../../../scripts/frontdesk/learning.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { makeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
+import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { effectiveSettings } from '../../../scripts/settings/effective.js';
 import { KNOWN_AFTER } from '../../../scripts/lib/front-desk.js';
@@ -64,6 +65,8 @@ test('a concept is proposed as known after three cards on different days without
     // A card put off or waiting is no answer.
     const putOff = cardAt(day(18));
     assert.deepEqual(conceptProposals([...events.slice(0, 4), putOff, answer(putOff, 'Not now', day(18))], profileOf(), { now: when(day(19)) }), []);
+    // Outcomes worked out once by the caller are the ones used.
+    assert.deepEqual(conceptProposals(events, profileOf(), { now: when(day(13)), outcomes: [] }), []);
     // A concept already known is not proposed again.
     assert.deepEqual(conceptProposals(events, profileOf({ settings: { 'known:pull-request': true } }), { now: when(day(13)) }), []);
     // The days are calendar days in this computer's time zone: a day function decides them.
@@ -163,42 +166,57 @@ test('Explain more on three cards in a week proposes plain explanations', async 
   });
 });
 
+// The profile as the hook reads it: its events, the settings in force and `unconfirmed`, from its views.
+const profileFrom = (events, now) => {
+  const views = buildViews(events, readEnrolled(), { now: when(now) });
+  return { events, settings: effectiveSettings({ project: {}, profile: views.settings, now }), unconfirmed: views.unconfirmed };
+};
+const confirmCardFor = (event) => makeEvent({
+  kind: 'card',
+  now: when(day(1, 1)),
+  data: composeCard({
+    kind: 'confirm', level: 3, what: `A change to your settings: ${event.data.words}`, why: 'It changes only once you confirm it.',
+    options: [{ label: 'Confirm', says: 'It takes effect.' }], recommend: 'Confirm', because: 'it fits', meanwhile: 'Nothing changes.',
+    target: { event },
+  }).card,
+});
+
 test('a proposal turned down is not made again for 30 days', async () => {
   await inHome(async () => {
-    // The proposal, its card put off with Not now, then three more days of answers.
+    const LATE = new Date(Date.UTC(2026, 10, 2, 12)).toISOString();
+    // The proposal, its card put off with Not now. While it waits for its confirmation it is not made again at all.
     const made = setting('known:pull-request', true, day(1));
-    const confirmCard = makeEvent({
-      kind: 'card',
-      now: when(day(1, 1)),
-      data: composeCard({
-        kind: 'confirm', level: 3, what: `A change to your settings: ${made.data.words}`, why: 'It changes only once you confirm it.',
-        options: [{ label: 'Confirm', says: 'It takes effect.' }], recommend: 'Confirm', because: 'it fits', meanwhile: 'Nothing changes.',
-        target: { event: made },
-      }).card,
-    });
-    const events = [confirmCard, answer(confirmCard, 'Not now', day(2)), ...decided(day(3)), ...decided(day(4)), ...decided(day(5))];
-    const profile = profileOf({ events: [made] });
-    assert.deepEqual(conceptProposals(events, profile, { now: when(day(6)) }), []);
-    // 30 days after the Not now it may be proposed again.
-    assert.deepEqual(conceptProposals(events, profile, { now: when(new Date(Date.UTC(2026, 10, 2, 12)).toISOString()) }), [{ concept: 'pull-request', known: true, confirm: true }]);
-    // While the proposal still waits for its confirmation, it is not made again at all.
-    const waiting = profileOf({ events: [made], unconfirmed: [{ kind: 'setting', id: made.id, at: made.at, key: made.data.key, data: made.data }] });
-    assert.deepEqual(conceptProposals(events, waiting, { now: when(new Date(Date.UTC(2026, 10, 2, 12)).toISOString()) }), []);
+    const card = confirmCardFor(made);
+    const putOff = [card, answer(card, 'Not now', day(2))];
+    const answered = [...putOff, ...decided(day(3)), ...decided(day(4)), ...decided(day(5))];
+    const waiting = profileFrom([made], LATE);
+    assert.deepEqual(waiting.unconfirmed.map((u) => u.id), [made.id]);
+    assert.deepEqual(conceptProposals(answered, waiting, { now: when(LATE) }), []);
 
-    // The same for a setting: a Not now on its card holds it back for 30 days.
+    // It stops waiting once a later value of the setting counts: here Explain more made the concept
+    // not known, which counts at once. Three more days of answers after that would propose it again,
+    // but not within 30 days of the Not now.
+    const forgot = setting('known:pull-request', false, day(2, 30));
+    const moved = profileFrom([made, forgot], day(6));
+    assert.deepEqual(moved.unconfirmed, []);
+    assert.equal(moved.settings['known:pull-request'].value, false);
+    assert.deepEqual(conceptProposals(answered, moved, { now: when(day(6)) }), []);
+    // 30 days after the Not now it may be proposed again.
+    assert.deepEqual(conceptProposals(answered, profileFrom([made, forgot], LATE), { now: when(LATE) }), [{ concept: 'pull-request', known: true, confirm: true }]);
+
+    // The same for a setting: the proposal leaves `unconfirmed` once the director sets and confirms
+    // another value, and a Not now on its card still holds it back for 30 days.
     const tab = setting('boardTab', 'build', day(1));
-    const tabCard = makeEvent({
-      kind: 'card',
-      now: when(day(1, 1)),
-      data: composeCard({
-        kind: 'confirm', level: 3, what: `A change to your settings: ${tab.data.words}`, why: 'It changes only once you confirm it.',
-        options: [{ label: 'Confirm', says: 'It takes effect.' }], recommend: 'Confirm', because: 'it fits', meanwhile: 'Nothing changes.',
-        target: { event: tab },
-      }).card,
-    });
+    const tabCard = confirmCardFor(tab);
+    const chosen = setting('boardTab', 'director', day(9, 30));
+    const confirmed = makeEvent({ ...confirmationFor(chosen), now: when(day(9, 31)) });
     const asks = [10, 11, 12].map((d) => ({ at: day(d), tab: 'build', visit: day(d) }));
-    const putOff = [tabCard, answer(tabCard, 'Not now', day(9))];
-    assert.deepEqual(settingProposals(putOff, profileOf({ events: [tab] }), { now: when(day(13)), boardAsks: asks }), []);
-    assert.equal(settingProposals(putOff, profileOf({ events: [tab] }), { now: when(new Date(Date.UTC(2026, 10, 9, 12)).toISOString()), boardAsks: asks }).length, 1);
+    const declined = [tabCard, answer(tabCard, 'Not now', day(9))];
+    const before = profileFrom([tab, chosen, confirmed], day(13));
+    assert.deepEqual(before.unconfirmed, []);
+    assert.equal(before.settings.boardTab.value, 'director');
+    assert.deepEqual(settingProposals(declined, before, { now: when(day(13)), boardAsks: asks }), []);
+    const NOV_9 = new Date(Date.UTC(2026, 10, 9, 12)).toISOString();
+    assert.equal(settingProposals(declined, profileFrom([tab, chosen, confirmed], NOV_9), { now: when(NOV_9), boardAsks: asks }).length, 1);
   });
 });
