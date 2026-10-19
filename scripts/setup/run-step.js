@@ -4,8 +4,9 @@
 //   node run-step.js <steps module> <folder> <step> <hash> <run id> <clicked at> <deadline> <user home>
 // It acts only for the attempt it was started for: the step's journal entry must still hold that
 // click (<clicked at>, as the helper recorded it) and no finish. It works the step's list out
-// again, with the helper's user home so the two work out the same list, and goes ahead only when
-// the list still has the hash the click named, so nothing but that list is ever applied. Its
+// again, with the helper's user home and every answer of the run (ruling R31) so the two work out
+// the same list, and goes ahead only when the list still has the hash the click named, so nothing
+// but that list is ever applied. Its
 // progress goes to the journal: each change as the step makes it, then the step done, or failed
 // with why, each mark only while the entry is still its attempt's, so a process that outlived its
 // time never writes over a newer attempt. It runs on when the helper or Desktop goes.
@@ -21,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { readJournal, markStep } from './journal.js';
 import { loadSteps, runApply } from './engine.js';
 import { planHash } from './steps.js';
+import { answersFor } from './clicks.js';
 import { stopState } from '../lib/stop.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 
@@ -58,7 +60,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     const step = (await loadSteps(modulePath)).find((s) => s.n === n);
     if (!step) return fail(`there is no setup step ${n}`);
     if (stopState().on) return fail('STOP is on');
-    const ctx = { folder, step: n, runId, now, userHome, platform: process.platform, stopped: () => stopState().on };
+    const ctx = { folder, step: n, runId, now, userHome, platform: process.platform, answers: answersFor(runId), stopped: () => stopState().on };
     const got = await step.plan(ctx);
     if (!Array.isArray(got?.changes) || planHash(got.changes) !== hash) return fail('the list changed before the step began, so nothing was changed');
     if (expired) return 1;

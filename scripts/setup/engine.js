@@ -3,9 +3,26 @@
 // change is made here, and only after the director's signed click on a card listing exactly what
 // will change, named by the hash of that list (design section 15, the plan's call 2).
 //
-//   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }
+//   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }, or
+//                                            { ok, ask: { step, id, card } } (a question to ask), or
+//                                            { ok, wait, why } (nothing to ask yet), or
+//                                            { ok, done: true } (the step settled on its answers)
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask }
+//
+// A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
+// list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules? } }`: a question it needs
+// answered first, composed as a `question` card (no set line, no reply code) and recorded as asked
+// in setup/asked/; the prompt record keeps the director's answer on that exact card, signed, and
+// every step's plan reads every answer of its run in ctx.answers, so the list a Go ahead's hash
+// names already holds the choices, and a later answer that changes it makes that Go ahead CHANGED.
+// `{ wait: ms, why }`: nothing to ask yet. `{ settled: { record } }`: every answer is in and the
+// step changes nothing outside setup's own records, so the record is kept in the journal as an
+// `answer` change and the step is done, with no Go ahead.
+//
+// Every card is cleaned of any sign-in in an address (scripts/lib/clean.js) before it is stored,
+// and the cleaned card is the one sent, so the card the director clicks is the card stored (R33).
+// The list is hashed as the step gave it.
 //
 // The helper works out each step's list itself, from the step's own plan, every time; it never
 // reads a list a caller sends, and a request that carries anything but the folder, the step and
@@ -18,9 +35,10 @@
 // nothing a step lists: plan starts the folder's run when there is none and records when the card
 // was shown, which the timed runs read. Under STOP they answer; apply is refused.
 //
-// Every route checks its folder (ruling R16): a full path, placed by its real path, under the
-// user's own ~/Projects, in a registered project's folder, or the folder of a setup run. A step
-// making the folder (step 3 for a new product) widens this in its own task (Task 8).
+// Every route checks its folder (rulings R16, R34): a full path, placed by its real path, under the
+// user's own ~/Projects, in a registered project's folder, the folder of a setup run, or a folder
+// whose own Claude settings switch the Wheelhouse plugin on. The product's folder exists from
+// step 1, with the plugin installed there, so no step makes it.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,9 +49,12 @@ import { projectForFolder } from '../lib/projects.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
-import { readJournal, startRun, markStep, addChanges, applyJsonKey as journalKey } from './journal.js';
+import { hide, cleanDeep } from '../lib/clean.js';
+import { pluginOnIn } from '../lib/plugin-on.js';
+import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
+import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
-import { noteShown, shownFor, freshClicks, useClick, releaseClick } from './clicks.js';
+import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor } from './clicks.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
 export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
@@ -59,11 +80,24 @@ const within = (base, target) => {
   return t.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
 };
 
+function realOrNull(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+}
+
 // The run setup is doing for this real path: the latest run of the nearest folder that is it or
 // holds it (case and accents folded as the system does), as kit.js's beingSetUp places a session,
 // so a session in a folder inside the one being set up carries on that run; null when none does.
+// A run in a folder above a registered project's folder that holds the path is another product's
+// setup, never this one's (ruling R27), so it is passed over.
 function runFor(real) {
-  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real)));
+  const project = projectForFolder(real);
+  const own = project === null ? null : realOrNull(project.record.folder);
+  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real))
+    && !(own !== null && within(r.folder, own)));
   if (holding.length === 0) return null;
   const nearest = Math.max(...holding.map((r) => keyOf(r.folder).length));
   return holding.filter((r) => keyOf(r.folder).length === nearest).at(-1);
@@ -88,6 +122,7 @@ export function admitFolder(folder, { userHome = os.homedir() } = {}) {
   if (projects !== null && within(projects, real)) return real;
   if (projectForFolder(real) !== null) return real;
   if (runFor(real) !== null) return real;
+  if (pluginOnIn(real)) return real;
   return refuse(OUTSIDE);
 }
 
@@ -201,14 +236,31 @@ export function setupRoutes({
     return step;
   }
 
-  const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform });
+  // A step's ctx: with every answer the director has given to its run's questions (ruling R31).
+  const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform, answers: answersFor(runId) });
 
-  // A step's plan with its hash and its card, composed with the setup line.
+  // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling.
   async function planned(step, ctx) {
     const got = await step.plan(ctx);
-    if (!got || !Array.isArray(got.changes)) throw new Error(`Step ${step.n}'s plan gave no list of changes`);
-    const hash = planHash(got.changes);
-    return { ...got, hash };
+    const bad = (what) => new Error(`Step ${step.n}'s plan gave ${what}`);
+    if (got?.ask !== undefined) {
+      const { id, card, typed, rules } = got.ask ?? {};
+      if (typeof id !== 'string' || !SETUP_QUESTION_ID.test(id)) throw bad('a question without an id of up to 40 lowercase letters, digits and dashes');
+      if (!card || typeof card !== 'object') throw bad('a question without its card');
+      if (typed !== undefined && typeof typed !== 'boolean') throw bad('a question whose typed answer is neither allowed nor refused');
+      return { ask: { id, card, typed: typed === true, rules } };
+    }
+    if (got?.wait !== undefined) {
+      if (!Number.isFinite(got.wait) || got.wait < 0 || typeof got.why !== 'string' || got.why === '') throw bad('a wait without its time and why');
+      return { wait: got.wait, why: got.why };
+    }
+    if (got?.settled !== undefined) {
+      const record = got.settled?.record ?? {};
+      if (!record || typeof record !== 'object' || Array.isArray(record)) throw bad('a settling without its record');
+      return { settled: { record } };
+    }
+    if (!got || !Array.isArray(got.changes)) throw bad('no list of changes');
+    return { ...got, hash: planHash(got.changes) };
   }
 
   // A step done or running is not planned again: its card's shown time and record stay as they are.
@@ -218,20 +270,38 @@ export function setupRoutes({
   };
 
   // Answers under STOP, as status does (ruling R19): it writes only setup's own records (the run
-  // when the folder has none, the card's shownAt, the shown card), never anything a step lists.
+  // when the folder has none, the card's shownAt, the shown or asked card, and a settled step's
+  // answer and done mark), never anything a step lists.
   async function plan(body) {
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     let run = runFor(folder);
     showable(run, step.n);
     const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
-    const { question } = composeCard({ ...got.card, kind: 'setup', target: { step: step.n, hash: got.hash } });
+    if (got.wait !== undefined) return { ok: true, wait: got.wait, why: got.why };
+    // The card as the director will see it, cleaned before it is stored, so the stored card is
+    // the one sent (the helper cleans what it sends again, which changes nothing).
+    let card = null;
+    if (got.ask) card = cleanDeep(composeCard({ ...got.ask.card, kind: 'question' }).question, []);
+    else if (got.changes) card = cleanDeep(composeCard({ ...got.card, kind: 'setup', target: { step: step.n, hash: got.hash } }).question, []);
     // Read again: the step may have been started while its plan was worked out.
     if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now });
-    noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card: question, now });
+    if (got.ask) {
+      noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, now });
+      return { ok: true, ask: { step: step.n, id: got.ask.id, card } };
+    }
+    if (got.settled) {
+      // R19 widened (R32): a done mark the director's signed answers earned, with no Go ahead. The
+      // step changes nothing outside setup's own records; what it settled on is kept as an
+      // `answer` change, which uninstall has nothing to put back for.
+      addChanges(run.id, [{ id: newId('chg'), step: step.n, kind: 'answer', target: `step ${step.n}`, before: null, after: got.settled.record }]);
+      mark(run.id, step.n, 'doneAt', { now, when: (entry) => !entry.doneAt });
+      return { ok: true, done: true };
+    }
+    noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card, now });
     mark(run.id, step.n, 'shownAt', { now });
-    return { ok: true, changes: got.changes, hash: got.hash, card: question, director: typeof got.director === 'string' ? got.director : '' };
+    return { ok: true, changes: got.changes, hash: got.hash, card, director: hide(typeof got.director === 'string' ? got.director : '', []) };
   }
 
   async function apply(body) {
@@ -251,6 +321,8 @@ export function setupRoutes({
     // card this folder was shown for the step must have shown it.
     const ctx = ctxFor(run.folder, step.n, run.id);
     const fresh = await planned(step, ctx);
+    // A step that now asks, waits or settles has no list for a Go ahead to name.
+    if (!fresh.changes) refuse(CHANGED);
     // Nothing is awaited from here until the step is marked clicked, so of two requests in flight
     // together (two Go aheads on one card) only one starts the step: the journal is read again
     // here, and the other finds the step running, or done.

@@ -6,12 +6,13 @@
 //   Change = {
 //     id: string,
 //     step: number,
-//     kind: 'json-key' | 'file' | 'folder' | 'process' | 'host' | 'locked' | 'env',
+//     kind: 'json-key' | 'file' | 'folder' | 'process' | 'host' | 'locked' | 'env' | 'answer',
 //     target: string,        a file or folder path, an environment variable, or a host object
 //     key?: string[],        json-key: the path of the key inside the file
 //     before: unknown | null,  what it held before setup (null: it was absent, or held null)
 //     absent?: true,         json-key: the key was not there before setup (before is then null)
-//     after: unknown,        what setup wrote
+//     after: unknown,        what setup wrote; for `answer`, what a step settled on from the
+//                            director's answers (ruling R32), with nothing to put back
 //     project?: string,
 //   }
 //
@@ -38,10 +39,11 @@ import { journalFile, readJournal } from '../lib/setup-run.js';
 // reaching these writers.
 export { journalFile, readJournal };
 
-const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env'];
+const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env', 'answer'];
 const STEP_FIELDS = ['shownAt', 'clickedAt', 'doneAt', 'failed'];
 const CHANGED = { put: false, why: 'changed since setup' };
 const OWN_STEP = { put: false, why: 'put back by its own step' };
+const NOTHING = { put: false, why: 'nothing to put back' };
 
 // ---- Writing whole files, atomically ----
 
@@ -398,6 +400,7 @@ export function reverseChange(change) {
     case 'json-key': return reverseJsonKey(change);
     case 'file': return reverseFile(change);
     case 'folder': return reverseFolder(change);
+    case 'answer': return NOTHING;
     default: return OWN_STEP;
   }
 }

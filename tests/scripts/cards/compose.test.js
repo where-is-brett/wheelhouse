@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, answerInput, questionProblem, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/cards/compose.js';
+import { composeCard, answerInput, questionProblem, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -72,7 +72,7 @@ test('every kind has an input here', () => {
   assert.deepEqual(Object.keys(INPUTS).sort(), [...CARD_KINDS].sort());
 });
 
-test("each kind's card carries the five parts in order, its set line and its reply code", () => {
+test("each kind's card carries the five parts in order, its set line and its reply code, but a setup card no code", () => {
   for (const kind of CARD_KINDS) {
     const { question, card } = composeCard(input(kind));
     const rows = lines(question.question);
@@ -88,6 +88,12 @@ test("each kind's card carries the five parts in order, its set line and its rep
       assert.equal(setLineOf(question.question), null);
       assert.equal(card.line, null);
       assert.equal(card.code, null);
+    } else if (kind === 'setup') {
+      assert.deepEqual(rows.slice(5), [LINES[kind]], 'a setup card is approved by its click alone, so it has no reply code');
+      assert.equal(setLineOf(question.question), LINES[kind]);
+      assert.equal(card.line, LINES[kind]);
+      assert.equal(card.code, null);
+      assert.deepEqual(NO_REPLY_CODE, ['setup']);
     } else {
       assert.deepEqual(rows.slice(5), [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);

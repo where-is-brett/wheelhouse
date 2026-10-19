@@ -49,6 +49,11 @@ export const DECIDING = Object.freeze({
   setup: SETUP_LABEL,
 });
 
+// The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
+// director's click on the card itself, never on a reply, so a code would make a shown record that
+// is never spent. Setup's Confirm all kind (Task 9) joins this list.
+export const NO_REPLY_CODE = Object.freeze(['setup']);
+
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'that feature waits; the others carry on';
 // The checks line of a level 4 question's card when the build didn't say what answering does to the checks (ruling F18).
@@ -263,7 +268,7 @@ export function composeCard(input) {
   const buttons = offered(kind, input.options, { build, target: input.target });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
-  const code = line === null ? null : replyCode(line);
+  const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
   // What the director reads as explanation: the five parts and the checks line, not the set line or the code.
   const explained = [
     `${PART_LABELS[0]} ${what}`,
@@ -273,7 +278,7 @@ export function composeCard(input) {
     `${PART_LABELS[4]} ${meanwhile}`,
     ...(checks === undefined ? [] : [`${PART_LABELS[5]} ${checks}`]),
   ];
-  const text = [...explained, ...(line === null ? [] : [line, replyCodeLine(code)])].join('\n');
+  const text = [...explained, ...(line === null ? [] : [line]), ...(code === null ? [] : [replyCodeLine(code)])].join('\n');
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
 

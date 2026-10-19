@@ -14,6 +14,8 @@ import { startRun, markStep } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { clicksDir, noteShown } from '../../../scripts/setup/clicks.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -1044,6 +1046,38 @@ test('a click on the Unattended card records nothing in a folder with no project
       assert.deepEqual(clicks(), []);
     } finally {
       for (const folder of made) fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('setup cards carry no reply-code line', async () => {
+  // Ruling R36: a setup card is approved only by the director's click on it, never by a reply
+  // code, so the composer gives it none, the card check asks for none, and the prompt record keeps
+  // no shown record for it, which nothing would ever spend.
+  const { question, card } = composeCard({
+    kind: 'setup', level: 3, what: 'Setup step 4, Three questions: nothing changes on this computer.', why: 'Setup asks first.',
+    options: [{ label: 'Go ahead', says: 'Setup records it.' }], recommend: 'Go ahead', because: 'nothing changes', meanwhile: 'Setup waits.', target: { step: 4, hash: H },
+  });
+  assert.equal(question.question.split('\n').at(-1), setupLine(4, H));
+  assert.ok(!question.question.includes('Reply code:'), question.question);
+  assert.equal(card.code, null);
+  assert.deepEqual(cardProblems(question.question), []);
+  assert.match(cardProblems(`${question.question}\n${replyCodeLine(replyCode(setupLine(4, H)))}`).join(' '), /reply code/);
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-code-')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 4, hash: H, card: question, now: () => NOW });
+      // The card as composed, and one by hand with a code line: neither gets a shown record.
+      for (const shown of [question, { ...question, question: setupCard(4, H) }]) {
+        const c = fake();
+        const answers = { [shown.question]: 'Go ahead' };
+        await decide({ ...input(answers), tool_input: { questions: [shown], answers }, cwd: folder }, deps(c));
+        assert.deepEqual(kinds(c), [], shown.question);
+      }
+      assert.deepEqual(clicks().map((e) => e.data.step), [4]);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
     }
   });
 });

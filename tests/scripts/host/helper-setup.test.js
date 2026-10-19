@@ -15,7 +15,8 @@ import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { findRun, readJournal, markStep, reverseChange } from '../../../scripts/setup/journal.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
-import { keepClick, clicksDir } from '../../../scripts/setup/clicks.js';
+import { keepClick, clicksDir, answersFor } from '../../../scripts/setup/clicks.js';
+import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { planHash } from '../../../scripts/setup/steps.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
@@ -425,5 +426,75 @@ test('what setup\'s routes say is cleaned of anything key-like, as the other rou
     assert.equal(planned.ok, false);
     assert.equal(planned.refused.includes(token), false, planned.refused);
     assert.match(planned.refused, /https:\/\/\[hidden\]@example\.com/);
+  });
+});
+
+// The director's click on `card` in a session in `cwd`, as the prompt record sees it.
+async function choose(cwd, card, label, { at = new Date(T0.getTime() - MINUTE) } = {}) {
+  await decide({
+    cwd, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+    tool_input: { questions: [card], answers: { [card.question]: label } },
+    tool_response: { answers: { [card.question]: label } },
+  }, { now: () => at, projectOf: () => null });
+}
+
+test('a card naming ssh://git@… is stored as sent and can be clicked through', async () => {
+  // Ruling R26: the card the helper stores is the card it sends, cleaned of any sign-in in an
+  // address, so the director's click on the card they saw counts.
+  await withSetup(async ({ client, home, folder }) => {
+    const remote = 'ssh://git@github.com/o/r.git';
+    setWorld(home, {
+      1: [{ file: path.join('.claude', 'x.json'), key: ['wheelhouse', 'remote'], value: remote }],
+      what: { 1: `Setup step 1, Install: the remote ${remote} is written.` },
+    });
+    const plan = await client.setup.plan({ folder, step: 1 });
+    assert.equal(plan.ok, true, plan.refused);
+    assert.ok(plan.card.question.includes('ssh://[hidden]@github.com/o/r.git'), plan.card.question);
+    assert.ok(!JSON.stringify(plan).includes('git@'), 'nothing the helper sends holds the sign-in');
+    const shown = JSON.parse(fs.readFileSync(path.join(home, 'setup', 'shown', `${readJournal().runs.at(-1).id}-1.json`), 'utf8'));
+    assert.deepEqual(shown.card.question, plan.card.question, 'the card stored is the card sent');
+    // The list is hashed as the step gave it: the helper applies the real address.
+    assert.equal(plan.hash, planHash([{ kind: 'json-key', target: path.join(fs.realpathSync.native(folder), '.claude', 'x.json'), key: ['wheelhouse', 'remote'], after: remote }]));
+    await choose(folder, plan.card, 'Go ahead');
+    assert.equal(fs.readdirSync(clicksDir()).length, 1, 'the Go ahead is kept');
+    const done = await client.setup.apply({ folder, step: 1, hash: plan.hash });
+    assert.equal(done.ok, true, done.refused);
+    assert.deepEqual(written(folder), { wheelhouse: { remote } });
+
+    // An address with a sign-in in a question card: the answer on the card as sent is kept.
+    setWorld(home, { ask: { 3: [{ id: 'remote', options: ['Use it', 'Another one'], what: 'Setup step 3 found https://jo@bitbucket.org/o/r.git as this folder\'s remote.' }] } });
+    const asked = await client.setup.plan({ folder, step: 3 });
+    assert.equal(asked.ok, true, asked.refused);
+    assert.ok(asked.ask.card.question.includes('https://[hidden]@bitbucket.org/o/r.git'), asked.ask.card.question);
+    await choose(folder, asked.ask.card, 'Use it');
+    assert.deepEqual(Object.values(answersFor(readJournal().runs.at(-1).id)).map((a) => a.label), ['Use it']);
+    assert.equal((await client.setup.plan({ folder, step: 3 })).ask, undefined, 'the answer is in, so the step is not asked again');
+  });
+});
+
+test('from a registered project below a folder being set up, the routes do not carry on its run', async () => {
+  // Ruling R27: a project registered in a folder inside another product's folder, whose setup is
+  // unfinished, has its own run, or none; never the parent's.
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, {});
+    assert.equal((await client.setup.plan({ folder, step: 1 })).ok, true);
+    const parent = readJournal().runs.at(-1);
+    const project = path.join(folder, 'shop');
+    fs.mkdirSync(path.join(project, 'web'), { recursive: true });
+    writeProject('o__shop', { folder: project, remoteUrl: 'https://example.com/o/shop.git', host: 'github', repo: 'o/shop', connection: {} });
+    for (const inside of [project, path.join(project, 'web')]) {
+      const status = await client.setup.status({ folder: inside });
+      assert.equal(status.ok, true);
+      assert.deepEqual(status.lines, ['Setup has not started in this folder.'], inside);
+    }
+    // Its plan starts a run of its own, in its own folder; the parent's is left as it was.
+    assert.equal((await client.setup.plan({ folder: project, step: 2 })).ok, true);
+    const runs = readJournal().runs;
+    assert.equal(runs.length, 2);
+    assert.deepEqual(runs.find((r) => r.id === parent.id).steps, parent.steps);
+    assert.equal(runs.at(-1).folder, fs.realpathSync.native(project));
+    assert.ok((await client.setup.status({ folder: path.join(project, 'web') })).lines[0].startsWith(`Setup of ${runs.at(-1).folder}, `));
+    // The parent's own folder still carries on its run.
+    assert.ok((await client.setup.status({ folder })).lines[0].startsWith(`Setup of ${parent.folder}, `));
   });
 });

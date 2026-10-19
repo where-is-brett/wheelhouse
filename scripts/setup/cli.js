@@ -2,7 +2,11 @@
 // Setup's one command, as `node "<pluginRoot>/scripts/setup/cli.js" <form>`, run in the folder
 // being set up:
 //   plan <step>          the step's list of changes and its card, as AskUserQuestion's question,
-//                        with the list's hash: { step, title, hash, director, changes, card }
+//                        with the list's hash: { step, title, hash, director, changes, card };
+//                        or a question the step asks first, its card to be asked exactly as given:
+//                        { step, title, ask: { step, id, card } }; or { step, title, wait, why },
+//                        nothing to ask for `wait` milliseconds; or { step, title, done: true },
+//                        the step settled on the director's answers
 //   apply <step> <hash>  asks the helper to apply the step, with the full hash `plan` gave; the
 //                        helper goes ahead only after the director's click on the card naming it
 //   status               where setup stands in this folder, as plain lines
@@ -47,7 +51,11 @@ function stepOf(text) {
 
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
-  return { step, title: SETUP_TITLES[step], hash: got.hash, director: got.director, changes: got.changes, card: got.card };
+  const named = { step, title: SETUP_TITLES[step] };
+  if (got.ask !== undefined) return { ...named, ask: got.ask };
+  if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why };
+  if (got.done === true) return { ...named, done: true };
+  return { ...named, hash: got.hash, director: got.director, changes: got.changes, card: got.card };
 }
 
 // Runs a form and resolves with the exit code. `out` and `err` take text to show.

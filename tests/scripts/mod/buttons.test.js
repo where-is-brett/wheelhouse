@@ -131,7 +131,8 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
     const lines = data.question.split('\n');
     const broken = [
       lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
-      lines.filter((l) => !l.startsWith('Reply code:')).join('\n'),
+      // A setup card has no reply code line to take away (ruling R36).
+      ...(kind === 'setup' ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       data.question.replace(/^While you decide:.*$/m, 'While you decide:'),

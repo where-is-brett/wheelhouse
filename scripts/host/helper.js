@@ -25,6 +25,7 @@ import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { gateDecision } from '../gate/conditions.js';
 import { classifyChange, readConfig, CI_FILES } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
+import { hide, cleanDeep } from '../lib/clean.js';
 import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { childEnv } from './connection.js';
@@ -497,8 +498,7 @@ export async function checkPush({
 }
 
 // --- keeping secrets out of answers ---
-
-const CREDENTIAL_URL = /([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@'"]+@/g;
+// `hide` and `cleanDeep` are in scripts/lib/clean.js, which the setup engine uses too.
 
 // The secrets in a connection's environment: the keys themselves, and the
 // header git is given, with the base64 inside it and the key that decodes from it.
@@ -524,25 +524,10 @@ export function secretsOf(env) {
   return [...out].sort((a, b) => b.length - a.length);
 }
 
-function hide(text, secrets) {
-  let out = String(text);
-  for (const s of secrets) out = out.split(s).join('[hidden]');
-  return out.replace(CREDENTIAL_URL, '$1[hidden]@');
-}
-
 // For refusals and errors: the adapter's scrub (key-like text), then every
 // secret and any credentials in an address.
 function clean(text, secrets) {
   return hide(scrub(hide(text, secrets), Object.fromEntries(secrets.map((s, i) => [i, s]))), secrets);
-}
-
-function cleanDeep(value, secrets) {
-  if (typeof value === 'string') return hide(value, secrets);
-  if (Array.isArray(value)) return value.map((v) => cleanDeep(v, secrets));
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cleanDeep(v, secrets)]));
-  }
-  return value;
 }
 
 // --- serving ---

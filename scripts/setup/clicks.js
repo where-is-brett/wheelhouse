@@ -10,25 +10,34 @@
 //                  written by the helper when it works out a step's plan and composes its card;
 //                  `card` is what the director reads: { question, header, options: [{ label,
 //                  description }] }
+//   asked/         each question a run's step last asked (ruling R30), as
+//                  <run id>-<step>-<question id>.json: { runId, folder, step, id, card, typed,
+//                  rules?, at }, written by the helper when a step's plan asks it; `typed` says
+//                  whether a typed answer counts
+//   answers/       each answer as the prompt record signed it: an `action` event `setup-answer`
+//                  { runId, step, questionId, question, label, text }
 // The prompt record reads `shown/` to turn the twelve characters on a card into the full hash
 // the click names, with the run the card was shown for, and counts a click only on the card
 // exactly as the helper composed it (its text, header and each option's label and description),
-// so the words the director read are the helper's for that list. The helper reads `clicks/`
-// before it applies a step.
+// so the words the director read are the helper's for that list. It keeps an answer only on a card
+// exactly as `asked/` holds it, in the same way. The helper reads `clicks/` before it applies a
+// step, and `answers/` whenever it works out a step's plan.
 //
-// What the prompt record needs of this, keeping a click and finding the card it was on, is in
-// scripts/lib/setup-clicks.js, so the mod's bridge, which imports the prompt record, reaches
-// nothing under scripts/setup/.
+// What the prompt record needs of this, keeping a click or an answer and finding the card it was
+// on, is in scripts/lib/setup-clicks.js, so the mod's bridge, which imports the prompt record,
+// reaches nothing under scripts/setup/.
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
+import { PUT_OFF } from '../lib/front-desk.js';
 import {
-  HASH, RUN_ID, EVENT_ID, clicksDir, usedDir, shownDir, writeWhole, shownCard, readShown,
+  HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, writeWhole, shownCard, readShown,
+  readAsked,
 } from '../lib/setup-clicks.js';
 
-export { clicksDir, keepClick, shownHash } from '../lib/setup-clicks.js';
+export { clicksDir, keepClick, shownHash, keepAnswer, askedFor } from '../lib/setup-clicks.js';
 
 // A click dated a little after the helper's clock still counts: two clocks on one computer.
 const SKEW_MS = 60 * 1000;
@@ -50,23 +59,46 @@ export function shownFor(runId, step) {
   return r && r.runId === runId && r.step === step ? r : null;
 }
 
-// Every setup click kept on this computer; a file that isn't one is passed over.
-function keptClicks() {
+// Records the question a run's step asked: its id within the step, the card as the director is
+// shown it, whether a typed answer counts, and anything the step keeps with it (`rules`). Asking
+// it again replaces the record, so only an answer on the card as last asked counts.
+export function noteAsked({ runId, folder, step, id, card, typed = false, rules, now = () => new Date() }) {
+  const asked = shownCard(card);
+  if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id)) || typeof folder !== 'string' || asked === null) {
+    throw new Error('An asked question needs its run, folder, step, id and card');
+  }
+  const record = { runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), at: now().toISOString() };
+  writeWhole(path.join(askedDir(), `${runId}-${step}-${id}.json`), `${JSON.stringify(record)}\n`);
+}
+
+// The question a run's step last asked under that id, or null.
+export function askedRecord(runId, step, id) {
+  if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id))) return null;
+  const r = readAsked(path.join(askedDir(), `${runId}-${step}-${id}.json`));
+  return r && r.runId === runId && r.step === step && r.id === id ? r : null;
+}
+
+// Every event kept in one of setup's folders on this computer; a file that isn't one is passed over.
+function keptIn(dir) {
   let names;
   try {
-    names = fs.readdirSync(clicksDir()).filter((n) => n.endsWith('.json'));
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
   } catch {
     return [];
   }
   return names.flatMap((name) => {
     try {
-      const event = JSON.parse(fs.readFileSync(path.join(clicksDir(), name), 'utf8'));
+      const event = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
       return event && typeof event === 'object' ? [event] : [];
     } catch {
       return [];
     }
   });
 }
+const keptClicks = () => keptIn(clicksDir());
+
+// Made on this computer and signed by its enrolled key.
+const ownSigned = (e, me, enrolled) => e.computer === me && e.sig?.computer === me && EVENT_ID.test(String(e.id)) && verify(e, enrolled);
 
 const used = (event) => fs.existsSync(path.join(usedDir(), String(event.id)));
 
@@ -82,9 +114,33 @@ export function freshClicks({ runId, step, hash, now = () => new Date() }) {
     const age = at - Date.parse(e.at);
     return e.kind === 'action' && e.data?.action === 'setup' && RUN_ID.test(String(runId)) && e.data.runId === runId
       && e.data.step === step && e.data.hash === hash
-      && e.computer === me && e.sig?.computer === me && EVENT_ID.test(String(e.id))
-      && age <= CLICK_FRESH_MS && age >= -SKEW_MS && !used(e) && verify(e, enrolled);
+      && age <= CLICK_FRESH_MS && age >= -SKEW_MS && !used(e) && ownSigned(e, me, enrolled);
   }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
+
+// Every answer the director has given to this run's questions, as each step's plan reads it in
+// ctx.answers: { '<step>.<question id>': { label, text, at } }. An answer counts when it is a
+// setup-answer naming this run, made on this computer and signed by its enrolled key, and the
+// question it answers is the one its step last asked under that id, in the same words, with the
+// label one of that card's own options (never a put-off) or, on a card that takes one, a typed
+// text. Answers are never used up and never go stale: the newest for each question counts.
+export function answersFor(runId) {
+  if (!RUN_ID.test(String(runId))) return {};
+  const enrolled = readEnrolled();
+  const me = computerId();
+  const answers = {};
+  const kept = keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
+    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled));
+  for (const e of kept.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) {
+    const { step, questionId, question, label, text } = e.data;
+    const asked = askedRecord(runId, step, questionId);
+    if (asked === null || asked.card.question !== question) continue;
+    const fits = typeof label === 'string'
+      ? text === null && !PUT_OFF.includes(label) && asked.card.options.some((o) => o.label === label)
+      : label === null && typeof text === 'string' && text !== '' && asked.typed === true;
+    if (fits) answers[`${step}.${questionId}`] = { label, text, at: e.at };
+  }
+  return answers;
 }
 
 // Gives a used click back, when the step it was used for could not be started.

@@ -14,6 +14,7 @@ import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HE
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -1026,6 +1027,34 @@ test('in a registered folder setup is still finishing, the session start resumes
         assert.equal(g.calls.spawn.length, 0);
       }
     }
+  });
+});
+
+test('a run in a parent folder does not put a registered project below it in setup mode', async () => {
+  // Ruling R27: another product's setup, unfinished in a folder above a registered project, is
+  // not the project's. The project gets its front-desk line, and only a run in its own folder counts.
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const parent = fs.realpathSync.native(tempFolder('wh-parent zoë '));
+    const parentRun = startRun({ folder: parent });
+    const folder = path.join(parent, 'shop');
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(folder, 'web'));
+    writeProject('o__shop', { folder, remoteUrl: 'https://example.com/o/shop.git', host: 'github', repo: 'o/shop', connection: {} });
+    assert.equal(beingSetUp(folder), null);
+    assert.equal(beingSetUp(path.join(folder, 'web')), null);
+    const f = fake();
+    const out = await decide({ cwd: folder, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: managed, stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+    });
+    const lines = text(out).split('\n');
+    assert.ok(lines.includes(FRONT_DESK_LINE), lines.join('\n'));
+    assert.ok(!lines.some((l) => l.startsWith('Setup is part-way')), lines.join('\n'));
+    // The parent's own folder is still being set up, and a run in the project's own folder counts there.
+    assert.equal(beingSetUp(parent)?.run?.id, parentRun.id);
+    const own = startRun({ folder: fs.realpathSync.native(folder) });
+    assert.equal(beingSetUp(path.join(folder, 'web'))?.run?.id, own.id);
   });
 });
 

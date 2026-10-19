@@ -11,8 +11,10 @@
 // so a later reply with that code (scripts/mod/reply.js) can count as the click.
 // A Go ahead on a setup card becomes a signed setup action kept in
 // <wheelhouseHome()>/setup/clicks/, where the helper reads it, since there may be no state to
-// record it in yet (Task 13 copies the clicks into the state). In a folder being set up (no
-// project record yet: kit.js's beingSetUp) that is the one click recorded, and nothing else is.
+// record it in yet (Task 13 copies the clicks into the state). An answer to a question a setup
+// step asked becomes a signed setup-answer kept in setup/answers/ the same way. In a folder being
+// set up (no project record yet: kit.js's beingSetUp) those are the only clicks recorded, and
+// nothing else is. A setup card has no reply code, so it gets no shown record.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,12 +24,13 @@ import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
+import { scanContent } from '../state/secret-scan.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES } from '../state/card-lines.js';
-import { keepClick, shownHash } from '../lib/setup-clicks.js';
+import { keepClick, shownHash, keepAnswer, askedFor } from '../lib/setup-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -42,6 +45,7 @@ const AMEND = new RegExp(`Change the approved (${ID}) to this, ${SHA12}`, 'g');
 const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`, 'g');
 const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
 const SETUP = new RegExp(`Set up step ([0-9]{1,2}) as listed, ${SHA12}`, 'g');
+const SETUP_LINE = new RegExp(`^${SETUP.source}$`);
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 
 function ciEntry(project, branch, sha12, now) {
@@ -242,18 +246,38 @@ function setupClickOf(cwd, { question, label, card }) {
   return shown === null ? null : { kind: 'action', data: { action: 'setup', runId: shown.runId, step, hash: shown.hash, question, label } };
 }
 
-// Signs each setup click and keeps it in setup/clicks/. One failing does not stop the rest.
+// The signed record an answer to a setup step's question earns (ruling R30): the card is exactly
+// one setup asked, for a folder holding this session's folder, and the answer is one of its own
+// options, never Explain more or Not now, or, on a card that takes one, typed text in which no
+// secret is found. The record names the run and step the question was asked for, and its id.
+function setupAnswerOf(cwd, { question, label, card, signable, typed }) {
+  if (PUT_OFF.includes(label) || !(signable || typed)) return null;
+  const asked = askedFor({ cwd, card });
+  if (asked === null || asked.card.question !== question) return null;
+  const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question };
+  if (signable) return { kind: 'action', data: { ...data, label, text: null } };
+  if (asked.typed !== true || label.trim() === '' || scanContent(label).length > 0) return null;
+  return { kind: 'action', data: { ...data, label: null, text: label } };
+}
+
+// Signs each setup click and answer and keeps it in setup/clicks/ or setup/answers/. One failing
+// does not stop the rest.
 function keepSetupClicks(cwd, out, now) {
   for (const click of out) {
-    if (!click.signable) continue;
     try {
-      const made = setupClickOf(cwd, click);
-      if (made) keepClick(makeEvent({ ...made, now }));
-    } catch { /* not kept: the helper then refuses the step for want of a click, and the card is asked again */ }
+      const made = click.signable ? setupClickOf(cwd, click) : null;
+      if (made) {
+        keepClick(makeEvent({ ...made, now }));
+        continue;
+      }
+      const answer = setupAnswerOf(cwd, click);
+      if (answer) keepAnswer(makeEvent({ ...answer, now }));
+    } catch { /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
   }
 }
 
-// What was answered, and which answers came from a click on a button the card offered.
+// What was answered, and which answers came from a click on a button the card offered
+// (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other).
 function clicks(input) {
   const ti = input.tool_input ?? {};
   const answers = ti.answers;
@@ -269,10 +293,12 @@ function clicks(input) {
     const q = asked.get(question);
     const offered = Array.isArray(q?.options) && !many && q.options.some((o) => o?.label === raw);
     const agrees = echo === null || (Object.hasOwn(echo, question) && JSON.stringify(echo[question]) === JSON.stringify(raw));
+    const single = Array.isArray(q?.options) && !many && q.multiSelect !== true && agrees;
     out.push({
       question,
       label: many ? raw.join(', ') : raw,
-      signable: offered && q.multiSelect !== true && agrees,
+      signable: offered && single,
+      typed: !offered && single,
       card: q,
     });
   }
@@ -318,7 +344,8 @@ function shownFor(project, input, at, stopState = defaultStopState) {
   for (const q of questions) {
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     const line = setLineOf(q.question);
-    if (line === null) continue;
+    // A setup card has no reply code (ruling R36): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;

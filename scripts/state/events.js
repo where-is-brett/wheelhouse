@@ -11,6 +11,7 @@ import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL } from './card-lines.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
+import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
@@ -22,7 +23,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -36,6 +37,10 @@ const ACTION_OWN = {
   // A setup step's click: the run the card was shown for (so a click on one folder's card can't
   // stand for another's), the step and the full SHA-256 of the list of changes its card showed.
   setup: ['runId', 'step', 'hash'],
+  // The director's answer to a question a setup step asked (ruling R30): the run and step it was
+  // asked for, the question's id within the step, and the option clicked as `label` or, on a card
+  // that takes one, the text typed as `text`; the other is null.
+  'setup-answer': ['runId', 'step', 'questionId', 'text'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, or put the card off: a click on one is never an answer.
@@ -51,7 +56,9 @@ function checkAction(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) bad('needs data');
   if (Object.keys(data).some((k) => !ACTION_KEYS.includes(k))) bad('has a field it should not');
   if (!ACTIONS.includes(data.action)) bad('names an action Wheelhouse does not know');
-  if (typeof data.question !== 'string' || typeof data.label !== 'string') bad('needs the question and the label');
+  // A setup answer typed in has no label: its own check below asks for one of the two.
+  const labelled = typeof data.label === 'string' || (data.action === 'setup-answer' && data.label === null);
+  if (typeof data.question !== 'string' || !labelled) bad('needs the question and the label');
   // A field that belongs to another action is refused here, before the action's own checks.
   const own = ACTION_OWN[data.action];
   if (Object.keys(data).some((k) => !['action', 'question', 'label'].includes(k) && !own.includes(k))) {
@@ -89,6 +96,14 @@ function checkAction(data) {
     if (!Object.hasOwn(SETUP_TITLES, data.step) || !Number.isInteger(data.step)) bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length}`);
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list of changes its card showed');
     if (data.label !== SETUP_LABEL) bad(`needs the ${SETUP_LABEL} label`);
+  } else if (data.action === 'setup-answer') {
+    if (typeof data.runId !== 'string' || !/^run-[0-9a-f]{10}$/.test(data.runId)) bad('needs the setup run its card was asked for');
+    if (!Object.hasOwn(SETUP_TITLES, data.step) || !Number.isInteger(data.step)) bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length}`);
+    if (typeof data.questionId !== 'string' || !SETUP_QUESTION_ID.test(data.questionId)) bad('needs the id of the question it answers');
+    const given = (x) => typeof x === 'string' && x !== '';
+    const one = (given(data.label) && data.text === null) || (data.label === null && given(data.text));
+    if (!one) bad('needs a label or a typed text, one of them, with the other null');
+    if (NOT_AN_ANSWER.includes(data.label)) bad('has a label that is not an answer');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }

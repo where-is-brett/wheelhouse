@@ -1,13 +1,14 @@
 // scripts/hooks/card-check.js
 // Refuses a question card in the wrong form before the director sees it. A card has its five
-// labelled parts; a card with a set line has that one line, its own reply code line, and a
-// first part that names what the set line names and no other pull request or commit. The
-// prompt record is what refuses a wrong click, so this only informs: it refuses nothing it
-// can't read, and a failure of its own lets the card through. A card that doesn't come from
-// scripts/cards/compose.js can fail it; one that does cannot.
+// labelled parts; a card with a set line has that one line, its own reply code line (none for a
+// kind the composer gives no code, such as setup's), and a first part that names what the set
+// line names and no other pull request or commit. The prompt record is what refuses a wrong
+// click, so this only informs: it refuses nothing it can't read, and a failure of its own lets
+// the card through. A card that doesn't come from scripts/cards/compose.js can fail it; one that
+// does cannot.
 import { pathToFileURL } from 'node:url';
 import { runAndExit, answer, projectOf } from './kit.js';
-import { PART_LABELS, whatProblem } from '../cards/compose.js';
+import { PART_LABELS, whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES,
 } from '../state/card-lines.js';
@@ -54,9 +55,12 @@ export function cardProblems(question) {
   if (set.length === 0) return problems;
   if (set.length > 1) return [...problems, `carries ${set.length} set lines, and a card carries one set line`];
   const line = set[0];
+  const found = targetOf(line);
   const expected = replyCodeLine(replyCode(line));
   const codes = lines.filter((l) => l.startsWith(REPLY_CODE));
-  if (codes.length === 0) problems.push(`carries a set line without its reply code line, "${expected}"`);
+  if (found !== null && NO_REPLY_CODE.includes(found.kind)) {
+    if (codes.length > 0) problems.push(`carries a reply code line, and a ${found.kind} card has none: only a click on the card counts`);
+  } else if (codes.length === 0) problems.push(`carries a set line without its reply code line, "${expected}"`);
   else if (codes.some((c) => c !== expected)) problems.push(`carries the wrong reply code line for its set line: it should be "${expected}"`);
   else if (codes.length > 1) problems.push('carries its reply code line more than once');
 
@@ -67,7 +71,6 @@ export function cardProblems(question) {
       if (PART_LABELS.some((label) => l.startsWith(label)) || l === line || l.startsWith(REPLY_CODE)) break;
       first.push(l);
     }
-    const found = targetOf(line);
     const why = found === null ? null : whatProblem(found.kind, first.join(' ').trim(), found.target, { abbreviated: true });
     if (why !== null) problems.push(`has a first part that ${why}`);
   }

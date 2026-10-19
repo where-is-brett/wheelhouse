@@ -142,6 +142,35 @@ test('the folder check admits ~/Projects folders, registered projects and setup 
   });
 });
 
+test('a folder outside ~/Projects whose own settings switch the plugin on is admitted', () => {
+  // Ruling R34: the product's folder exists from step 1, with the plugin installed there, so an
+  // existing project outside ~/Projects (~/code/app, D:\\work\\app) can be set up.
+  withHome(() => {
+    const user = fs.realpathSync.native(tempFolder('wh-home Zoë '));
+    const on = (folder, name, value) => {
+      fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(folder, '.claude', name), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': value } }));
+      return folder;
+    };
+    const shared = on(fs.realpathSync.native(tempFolder('wh-code app ')), 'settings.json', true);
+    assert.equal(admitFolder(shared, { userHome: user }), shared);
+    const local = on(fs.realpathSync.native(tempFolder('wh-local-')), 'settings.local.json', true);
+    assert.equal(admitFolder(local, { userHome: user }), local);
+    // Switched off by the local file, which wins, another plugin, no settings at all, or the
+    // plugin on only in a folder above: refused.
+    const off = on(on(fs.realpathSync.native(tempFolder('wh-off-')), 'settings.json', true), 'settings.local.json', false);
+    assert.throws(() => admitFolder(off, { userHome: user }), /not under ~\/Projects/);
+    const otherPlugin = fs.realpathSync.native(tempFolder('wh-other-'));
+    fs.mkdirSync(path.join(otherPlugin, '.claude'));
+    fs.writeFileSync(path.join(otherPlugin, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'helper@wheelhouse': true } }));
+    assert.throws(() => admitFolder(otherPlugin, { userHome: user }), /not under ~\/Projects/);
+    const bare = fs.realpathSync.native(tempFolder('wh-bare-'));
+    assert.throws(() => admitFolder(bare, { userHome: user }), /not under ~\/Projects/);
+    fs.mkdirSync(path.join(shared, 'web'));
+    assert.throws(() => admitFolder(path.join(shared, 'web'), { userHome: user }), /not under ~\/Projects/);
+  });
+});
+
 const MINUTE = 60 * 1000;
 const at = (ms) => new Date(NOW.getTime() + ms);
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });

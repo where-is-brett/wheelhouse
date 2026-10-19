@@ -6,11 +6,13 @@
 //
 //   Step = {
 //     n: number, title: string,
-//     plan(ctx) -> Promise<{ changes: PlannedChange[], card: CardInput, director: string }>,
+//     plan(ctx) -> Promise<{ changes: PlannedChange[], card: CardInput, director: string }
+//                        | { ask: { id, card: CardInput, typed?: boolean, rules? } }
+//                        | { wait: ms, why: string } | { settled: { record } }>,
 //     apply(ctx, changes) -> Promise<Change[]>,
 //     long?: boolean,        runs in a detached child (scripts/setup/run-step.js)
 //   }
-//   ctx = { folder, step, runId, now, userHome, platform }, and for apply also
+//   ctx = { folder, step, runId, now, userHome, platform, answers }, and for apply also
 //         applyJsonKey({ file, key, value, project? }), the journal's key edit, which records the
 //           change in the journal before it writes the file, and gives the change back;
 //         record(change or changes), to put a change of any other kind in the journal;
@@ -21,6 +23,16 @@
 // (scripts/cards/compose.js) of kind `setup`, without its target: the engine gives it this step
 // and the list's hash, which make its set line. `director` is what the director does, in plain words.
 // `apply` gets the list the helper has just worked out again, never one a caller sent.
+//
+// A plan may give, in place of its list (rulings R30 to R32): `ask`, a question it needs answered
+// first, while ctx.answers lacks it (`id` of up to 40 lowercase letters, digits and dashes; `card`
+// the composer's input without its kind, which is `question`; `typed` when a typed answer
+// counts); `wait`, nothing to ask for that many milliseconds; or `settled`, every answer is in and
+// the step changes nothing outside setup's own records, which marks it done with `record` kept in
+// the journal and no Go ahead. ctx.answers holds every answer of the run, from every step, as
+// { '<step>.<id>': { label, text, at } }: `label` the option clicked, or `text` typed, the other
+// null. An answer is part of the world the list is worked out from, so a later answer that changes
+// the list makes the Go ahead on the old one CHANGED.
 //
 // The step contract: `apply` records each change as it is made, never only at the end. A key in a
 // JSON file goes through ctx.applyJsonKey; any other change is passed to ctx.record just before
