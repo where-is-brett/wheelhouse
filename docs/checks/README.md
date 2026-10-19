@@ -2,7 +2,7 @@
 
 # Design checks
 
-The answers to the checks in section 20 of the design, one note per check.
+The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run: it was needed only for the watcher's fallback, and Shape 1 was taken on check 27's Mac half.
 
 | # | Check | Answer | Note |
 |---|---|---|---|
@@ -32,6 +32,7 @@ The answers to the checks in section 20 of the design, one note per check.
 | 24 | Pinning through Wheelhouse's marketplace | Yes | [24-pinning.md](24-pinning.md) |
 | 27 | Starting and waking sessions from a script | Deferred | [27-sessions.md](27-sessions.md) |
 | 25 | The override wins | Yes, for Superpowers' hand-offs | [25-override.md](25-override.md) |
+| 26 | Plugin monitors | Not run: Shape 1 was taken | None |
 | 28 | Claude Code's update settings in Desktop | Deferred | [28-update-channel.md](28-update-channel.md) |
 | 29 | The hold | Partly | [29-hold.md](29-hold.md) |
 | 30 | The undo | Partly | [30-undo.md](30-undo.md) |
@@ -41,6 +42,7 @@ The answers to the checks in section 20 of the design, one note per check.
 | 36 | Switching telemetry on for Desktop sessions | Partly | [36-telemetry.md](36-telemetry.md) |
 | 37 | The pasted install line in Desktop | Partly | [37-install-line.md](37-install-line.md) |
 | 38 | `gh` and `glab` without an installer | Partly | [38-host-tools.md](38-host-tools.md) |
+| 34 | Screenshots from a hidden browser | Partly | [34-screens.md](34-screens.md) |
 | 40 | The mod without a screen | Yes, with five changes | [40-mod-headless.md](40-mod-headless.md) |
 | 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |

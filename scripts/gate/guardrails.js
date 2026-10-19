@@ -9,7 +9,7 @@
 //              runbook?: { contain?: { describe: string, command: [string] } },
 //              routing?: { foreman, builder, reviewer, reviewerCritical, tester, mechanical },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
-//              hotFiles?: [glob], flagFiles?: [glob] }
+//              hotFiles?: [glob], flagFiles?: [glob], pages?: [path] }
 // Other keys are kept and ignored.
 //
 // The build loop's keys (build-loop design, section 11; main design, section 8),
@@ -29,7 +29,14 @@
 //     matching one of them clash, even if they name different files. Default: package.json,
 //     package-lock.json, pnpm-lock.yaml, yarn.lock and `**/migrations/**`.
 //   - flagFiles: globs for the files where a feature switch is declared, default none.
+//
+// And the front desk's (front desk plan, Task 12): `pages`, at most MOST_PAGES paths on the
+// preview such as `/` and `/pricing`. When every one looks the same at an approved commit and at
+// a later one that only brought the branch up to date, the director's approval carries over
+// (design section 12.3). List public pages only, never one behind a sign-in: a sign-in screen
+// looks the same at every commit. No pages, the default, and an approval never carries over.
 import { matchGlob } from './glob.js';
+import { isPage } from '../screens/pages.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
 // CLAUDE.md, and .mcp.json (it names the connectors agents get).
@@ -50,6 +57,9 @@ export const DEFAULT_SESSION_MODE = 'acceptEdits';
 export const DEFAULT_BUILD_COMMANDS = Object.freeze(['npm test', 'npm run', 'node']);
 export const WATCHER_SHAPES = Object.freeze([1, 2]);
 export const DEFAULT_HOT_FILES = Object.freeze(['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '**/migrations/**']);
+
+// The most pages the configuration may list: each costs a picture at every size at both commits.
+const MOST_PAGES = 20;
 
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]-]{0,127}$/;
 // Its first word starts with a letter or digit, so it never reads as a flag.
@@ -100,6 +110,7 @@ function shapeOk(c) {
     if (contain !== undefined && !(isObject(contain) && typeof contain.describe === 'string' && contain.describe !== '' && strings(contain.command)
       && contain.command.length > 0 && contain.command[0] !== '')) return false;
   }
+  if (c.pages !== undefined && !(Array.isArray(c.pages) && c.pages.length <= MOST_PAGES && c.pages.every(isPage))) return false;
   return buildLoopOk(c);
 }
 

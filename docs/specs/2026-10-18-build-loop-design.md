@@ -50,7 +50,7 @@ This design keeps the loop and changes how it is run:
 | **State files** | The state branch (main design, section 9) | Read by everyone; written only as section 9 allows |
 | **Foreman** | One per project. Queues work, writes briefs, starts and closes feature sessions, checks for clashes, passes questions on, merges through the gate. Starts fresh at every wake. Never builds | State, the feature files, the helper |
 | **Feature sessions** | One Claude session per feature (or per bug, section 5.3). Plans and builds with Superpowers' loop for its lane | Only its own feature files |
-| **Watcher** | A Node.js script that reads the feature files, state, CI and mergeability. Costs no tokens. Where it runs is settled by check 27 (section 11) | Wakes the foreman, or a feature session |
+| **Watcher** | A Node.js script that reads the feature files, state, CI and mergeability. Costs no tokens. A background process outside any session, as check 27 found on the Mac (section 11) | Wakes the foreman, or a feature session |
 | **Helper and gate** | The only route to the host (main design, sections 11 and 12.3) | The host |
 
 **The front desk and the foreman never talk directly.** The front desk writes signed records into state (an approval, an answer, a change to running work, STOP). The watcher sees the new event and wakes the foreman. The foreman writes questions, outcomes and reports into state, and the front desk reads them for cards and the briefing. This replaces the main design's one-line cross-session message from the front desk to the foreman. *Designer's call.*
@@ -178,8 +178,8 @@ Superpowers' loops come with house rules that clash with the gate and the decisi
 4. **The foreman checks for clashes before it builds** (section 12). It also checks pace and whether the work needs another feature's work first. If any check fails, the session waits with its plan ready.
 5. **The done contract becomes tests** before any code, so passing means done in the director's terms.
 6. **The session builds** with its lane's loop (section 4), under the override.
-7. **Feature lane: a tester tries the product.** A read-only session clicks through the preview deployment, or Playwright screenshots from the worktree where there is none, against the done contract, before anything is shown to the director. It reports findings like a reviewer. Quick and small lanes rely on step 5's tests. *Designer's call*, to keep its cost to the lane where it pays.
-8. **Each slice goes up as a pull request, and the session owns it.** Through the helper, on a plain branch, never the default branch. Red CI, review findings or a conflict after main moves wake the session to fix them (section 11). The session never merges.
+7. **Feature lane: a tester tries the product.** A read-only session clicks through the preview deployment, or Playwright screenshots from the worktree where there is none, against the done contract, before anything is shown to the director. It reports findings like a reviewer. Quick and small lanes rely on step 5's tests. *Designer's call*, to keep its cost to the lane where it pays. The tester has a sandboxed `Bash`, for Playwright, and writes only screenshots and notes, in `.wheelhouse/feature/screens/`. *Designer's call.*
+8. **Each slice goes up as a pull request, and the session owns it.** Through the helper, on a plain branch, never the default branch. The session can't push itself, so its `open-pr` command pushes the branch through the helper and then opens the pull request, and its `push` command sends later fixes the same way. When the host's branch has moved on (the gate brought it up to date), a push is turned down, and its `pull` command brings the host's branch in: the helper fetches it into its own mirror, brings it together with the worktree's branch there (a fast-forward or a plain merge, refused on a conflict), and hands back only the commits, which the session's own git brings in. *Designer's call.* Red CI, review findings or a conflict after main moves wake the session to fix them (section 11). The session never merges.
 9. **The watcher sees it is ready:** CI green on the exact head commit, a signed CLEAN review, still mergeable. Only then does it wake the foreman.
 10. **The gate brings it up to date, then the foreman merges** (section 12).
 11. **The feature closes.** The session writes its report, including every ruling from its Superpowers ledger (section 13); the foreman records the outcome in state and closes the session. The front desk tells the director in the next briefing.
@@ -195,7 +195,9 @@ Four files sit between the foreman and each feature session, in a git-ignored fo
 | **Questions** | The session | One entry per question: what, why it matters, the options, a recommendation | The watcher, then the foreman |
 | **Report** | The session | About 300 words at the end: what shipped, tests, assumptions, concerns, and every ruling from its ledger | The foreman, once |
 
-The session spends no turns writing its status: the script builds it. *Designer's call*, following the lineage review.
+The session spends no turns writing its status: the script builds it. *Designer's call*, following the lineage review. A hook runs the script, reading the ledger and the `.git` files directly, at most once every five seconds. Tokens used stay unknown until the usage receiver's store fills them (a later plan), and the appetite's token check waits for that. *Designer's call.*
+
+**Their formats.** The brief and the report are Markdown, each with a JSON block a script reads; the status is JSON; the questions are JSON lines, one question to a line. The session copies each ruling from its Superpowers ledger into the folder as the ledger gains it, not only at the end, because Superpowers deletes its workspace when it finishes. *Designer's call.*
 
 ## 10. When a feature needs the director
 
@@ -203,6 +205,8 @@ The session spends no turns writing its status: the script builds it. *Designer'
 2. **The watcher wakes the foreman**, which records the question in state, linked to the feature.
 3. **The front desk asks once, on a card**, at its next turn with the director. It stays on the waiting-on-you list until answered. Other features carry on.
 4. **The answer is a signed record.** The watcher sees it and wakes that one session, which reads the signed record. A relayed message can never stand in for the director.
+
+**Which records need a click.** Approving a brief or a design, an answer, an amendment to approved work, naming an incident's fix and ending the incident are each a signed `action`, written from the director's click on a card that carries its own line. Declaring an incident is a plain record: anyone may freeze merges, as anyone may set STOP. Quick work that is not shown first is a plain `work` record that any session could write; it still needs the gate's signed review, and it appears in the briefing. Small and feature work never starts without the signed approval. *Designer's call.*
 
 ## 11. What wakes whom
 
@@ -227,6 +231,8 @@ The session spends no turns writing its status: the script builds it. *Designer'
 
 **Wakes are bundled.** Events within about a minute of each other arrive as one wake. *Designer's call.*
 
+**How often the watcher looks:** state every 30 seconds, the feature files every 15, pull requests every minute, and test merges every 10 minutes. *Designer's call.*
+
 **The foreman starts fresh at every wake.** It reads where things stand from state and the feature files, acts, and ends. Its context never grows across wakes, so the first version's long, re-read context does not return. This replaces the main design's "the foreman starts a fresh session per feature" (sections 8 and 10).
 
 **Where the watcher runs, and how the foreman stays fresh.** A plugin monitor delivers its output into the session it runs in, so a watcher inside the foreman's session would make every wake land in the same, growing conversation. Check 27 decides between two shapes:
@@ -236,7 +242,11 @@ The session spends no turns writing its status: the script builds it. *Designer'
 
 *Designer's call.*
 
-**Permission mode for feature sessions.** Nobody is in a feature session's chat, so it must never wait on a permission prompt. It starts in the same explicit mode as the foreman (main design, section 8; never bypass), with the project's allow rules covering the build's usual commands. The brief tells it to report, never to ask: where it would need a new permission, it writes a question and pauses (section 10). A session stalled on a prompt anyway shows as stuck after 20 minutes, and the foreman raises it as a card. *Designer's call.*
+**Check 27 chose Shape 1** on the Mac, where every trial passed (section 16). The watcher uses the `claude -p` route: a fresh `claude -p` in the project's main checkout for each foreman wake; a new feature session started with `claude -p --session-id <id>` in its worktree, the id kept in the watcher's own folder; and that session woken with `claude -p --resume <id>`, its mode and model given again. A start takes about 2 to 6 seconds and a wake about 3 to 10. A project's configuration defaults to Shape 1 (`watcherShape: 1`). Windows is still to be tried: if it fails there, the answer becomes Shape 2, and check 26 runs first. Shape 2 is built behind `watcherShape: 2`, but its plugin monitor is registered only once check 26 has run.
+
+**Where the foreman's and the sessions' commands run.** The project's sandbox denies `~/.wheelhouse/`, where the state clone, the watcher's records and the enrolled keys live. So a feature session's commands send their folder to the helper, which places the project from its own records, as the runbook's command does (main design, section 12.7). The foreman's two commands, `act` and `wake`, run through the helper's `/foreman/run` route, outside the sandbox: only in the project's main checkout, never in a feature worktree, one at a time for each project, and with no host key in their environment. The main checkout is where they run, not an access control: any process that can reach the helper's socket can name the main checkout, and the socket is reachable from the sandbox (check 31). The boundary is the gate and the signed records, and every plain event `act` writes could already be written through `/state/write`. That environment keeps Claude Code's own sign-in variables, to Anthropic or through Bedrock or Vertex (with their cloud credentials, profile, region and project). Only the foreman's own child keeps them: the sessions it starts with `act start` (and, under Shape 1, the foreman session the watcher starts) get the watcher's environment, which drops Claude Code's own `CLAUDE_CODE_*` switches, such as `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`. A director signing in through Bedrock or Vertex sets the switch in Claude Code's settings file until that changes. *Designer's call.*
+
+**Permission mode for feature sessions.** Nobody is in a feature session's chat, so it must never wait on a permission prompt. It starts in the same explicit mode as the foreman (main design, section 8): `acceptEdits`, unless the project's settings name another; bypass and `auto` are refused. *Designer's call.* The allow rules for the build's usual commands are given to the session when it starts, because `claude -p` ignores allow rules in a committed project settings file (check 25). The brief tells it to report, never to ask: where it would need a new permission, it writes a question and pauses (section 10). A session stalled on a prompt anyway shows as stuck after 20 minutes, and the foreman raises it as a card. *Designer's call.*
 
 **On Windows,** where Claude Code has no sandbox, the allow rules for the build's commands follow the project's setting **Build commands on Windows** (main design, sections 12.2 and 14.1): by default a feature session asks for them with a card, and is given them for one run or for the feature once the director clicks; Guarded runs them unattended at low integrity, where its self-test passes on that computer, so they can't change files outside the worktree; and the dangerous level runs them unattended with nothing to hold them, only after the director's click on its own card. The director's decision, 19 October 2026.
 
@@ -247,6 +257,7 @@ The session spends no turns writing its status: the script builds it. *Designer'
 - It plans first (section 8, step 3); the clash check runs on its plan's file map, not a guess.
 - The foreman compares that map with every running feature's, and with anything they share, such as the data model.
 - **Hot files** change one feature at a time: the project's settings list them, starting with the package manifest and lockfile, database migrations and route files. Migrations always go one at a time. *Designer's call.*
+- **A clash** is any file both plans touch, or a file of each that matches the same hot pattern, so two new migrations clash. *Designer's call.*
 - Anything two plans share lives in one design; the plan that builds it first blocks the other.
 
 **While features run,** the watcher test-merges their branches on a schedule with `git merge-tree` in the helper's own mirror, which runs no project code, so a clash in text shows up early. A clash in meaning is caught at the gate, which runs CI on the updated branch, and by the hot-files rule. The watcher never runs the project's tests itself: that would run agent-written code outside the sandbox. *Designer's call*, narrowing the lineage review's suggestion for safety.
@@ -255,6 +266,7 @@ The session spends no turns writing its status: the script builds it. *Designer'
 
 - The gate brings the branch up to date with the default branch and needs CI green on that exact commit (as a merge queue does).
 - The branch's signed review still counts if the feature's own changes did not move: the gate compares the review's diff with the new one by `git patch-id`. Only the merge's own changes then get a short review.
+- **It carries over only across a clean update:** a merge from the default branch whose result is the automatic merge's. A merge whose resolution changed code needs a review of the new head, even with the same patch-id. *Designer's call.*
 - So review cost does not grow with every feature running alongside.
 
 **The gate's conditions** stay as the main design's section 12.3 sets them (CI green on the exact head commit, a signed CLEAN review where required, the director's yes where shown first or level 4, the lock and its fencing counter), with three additions:
@@ -263,11 +275,11 @@ The session spends no turns writing its status: the script builds it. *Designer'
 2. the PR's provenance matches the manifest (section 14.6);
 3. **no incident is open**, unless this PR is the incident's fix.
 
-**The director's approval across an update.** An approval names the PR's head commit, and bringing a branch up to date makes a new one. The approval carries over when the feature's own changes did not move (the same patch-id) and the preview's screenshots of every changed page are identical, which is the main design's section 12.3 rule; otherwise the director is asked again. *Designer's call.*
+**The director's approval across an update.** An approval names the PR's head commit, and bringing a branch up to date makes a new one. The approval carries over when the feature's own changes did not move (the same patch-id) and the preview's screenshots of every page the configuration lists (`pages`), at every size, are identical, which is the main design's section 12.3 rule; otherwise the director is asked again. *Designer's call.*
 
-**Which PRs are shown first.** The front desk decides at approval whether the change is visible (main design, section 7.3) and records it with the approval; the foreman puts it in the brief, and the helper reads that record for the PR, never the agent's say-so. **A slice merged with its flag off is not shown first:** users see nothing. Switching the flag on is the show, at level 3. *Designer's call.*
+**Which PRs are shown first.** The front desk decides at approval whether the change is visible (main design, section 7.3) and records it with the approval; the foreman puts it in the brief, and the helper reads that record for the PR, never the agent's say-so. **A slice merged with its flag off is not shown first:** users see nothing. Switching the flag on is the show, at level 3. *Designer's call.* **Flag files say which PR that is.** In feature-lane work shown first, the PR that changes one of the project's flag files (`flagFiles` in `.claude/wheelhouse.json`) is shown first; a project that lists no flag files shows every PR of that work. *Designer's call.*
 
-**An incident freezes merges.** Declaring one (route 1) records an incident note in state; the gate then refuses every merge except the PR named as its fix. The freeze lifts only on the director's click. *Designer's call*, following Google SRE's incident practice.
+**An incident freezes merges.** Declaring one (route 1) records an incident note in state; the gate then refuses every merge except the PR named as its fix. The fix is named only by the director's click, and the freeze lifts only on the director's click that ends the incident. Meanwhile only bug-lane work may start. *Designer's call*, following Google SRE's incident practice.
 
 ## 13. The record each lane leaves
 
@@ -284,6 +296,8 @@ Superpowers keeps its decisions in a ledger, but the ledger is scratch: at the e
 | Provenance | Yes | Yes | Yes | The PR and state (section 14.6) |
 | The merge | Gate record | Gate record | Gate record | State and the host |
 | The outcome | Report | Report | Report | State |
+
+**No commit or pull request names a model.** A project's settings turn Claude Code's own commit and pull-request attribution off, so no Co-Authored-By line naming a model is added; provenance (section 14.6) records what built each pull request. *Designer's call.*
 
 ## 14. Lineage: what we build on, what we change, and what built each thing
 
@@ -305,7 +319,12 @@ Claude Code can pin a plugin to an exact commit (`sha`) only on a plugin entry i
 
 - **Wheelhouse's marketplace lists Superpowers and Matt's skills** at the commits Wheelhouse has tested, with `ref` and `sha`, and auto-update is off for that marketplace.
 - **The project switches the other copies off** in its `.claude/settings.json`: Anthropic's marketplace copy of Superpowers, and the synced copies of both. Setup writes this; agents cannot (main design, section 12.2).
-- **A new design check proves it** (section 16), in the style of check 15, which tried `ref` but took `sha` from the documentation.
+- **Check 24 proved it** (section 16), in the style of check 15, which tried `ref` but took `sha` from the documentation. **What check 24 tried,** with `github` sources in a scratch marketplace: an entry's `sha` installed that exact commit, Superpowers at `v7.0.0`, `bb92a77741419a4ab5f06e711a283343f1ada0c3`, and Matt's skills at the untagged `c55ee46073ed923f86ce59a5eb3b6d895095d1b7` even though `ref` named the later `v1.3.1`, so `sha` wins over `ref`; the project's settings switching off Anthropic's copy and the synced copies; and auto-update staying off. **The settings it led to,** as built:
+  - The project's `.claude/settings.json` sets `superpowers@claude-plugins-official`, `superpowers@synced` and `mattpocock-skills@synced` to `false` in `enabledPlugins` (tried: only the pinned copies loaded). A project's `false` beats the user's `true`, and leaves the user's other plugins alone.
+  - Auto-update is off by default for every marketplace but Anthropic's; the project also sets `"autoUpdate": false` on Wheelhouse's marketplace in `extraKnownMarketplaces`, so a later change of default does not matter (tried).
+  - What is installed is read from `gitCommitSha` in Claude Code's `installed_plugins.json`, for the project, not from the folder, which is named for the manifest's version (tried).
+  - Wheelhouse's marketplace lists each upstream as a `url` source with its `https` git address, a `ref` and a `sha`, as Anthropic's marketplace does, because updating a `github` source tried SSH and failed on a computer with no GitHub SSH key. Matt's skills are pinned at the tagged `v1.3.1`, `24fe0ef7737efae15c87225755e9f6f5965e4888`, rather than the untagged commit the synced copy happened to be at. **Both are check 24's recommendations, not tried there:** no `url` source with an `https` address, and no install at `24fe0ef…`. Check 30 tried a `url` source only with a local `file://` address.
+  - Each computer needs its own install at project scope: by the documentation, a plugin switched on only in the committed settings is not fetched where it isn't installed (not tried).
 - **Plugins are shared across the computer,** and worktrees read the main checkout's settings, so a feature cannot keep an old pin while the default branch's moves. Pins therefore move only when no feature is running (section 14.4).
 
 ### 14.3 The manifest and the register
@@ -340,7 +359,9 @@ Superpowers released ten versions between March and October 2026, and each of th
 3. **Test.** The anchors first, as a cheap tripwire. Then the changed files go to the independent reviewer, read as untrusted text (main design, section 12.5), so instructions hidden in a skill are caught. Then the evaluation scenarios for the lanes and the overrides, in a throwaway copy (main design, section 18).
 4. **Decide.** If the anchors hold, the scenarios pass and the evaluation is no worse, the upgrade lands with a line in the briefing (level 2). A card comes only when an override or assumption breaks, or a licence file changed. (The director's decision, 18 October 2026.) The same rule carries to each project: a Wheelhouse release that only moves upstream pins, with every check green, is installed with a briefing line; any other release comes as a card (main design, section 12.4).
 5. **Land.** In Wheelhouse's repository, a pull request moves the pin, the manifest and the register through the gate, and a release is cut. In each project, the foreman installs the release only when no feature is running, holding it until the queue drains.
-6. **Undo.** A script reinstalls the previous Wheelhouse release, with its pins, from Wheelhouse's marketplace. Reverting the PR alone would change the settings but not what is installed, and Claude Code deletes old versions 14 days after they are orphaned. The undo script is tested before Wheelhouse relies on it.
+6. **Undo.** A script reinstalls the previous Wheelhouse release, with its pins, from Wheelhouse's marketplace. Reverting the PR alone would change the settings but not what is installed, and Claude Code deletes old versions 14 days after they are orphaned. The undo script is tested before Wheelhouse relies on it. Check 30 found the route: move the marketplace entry back to the previous release's `ref` and `sha`, update the marketplace, then `claude plugin update`; it fetches the release again even after its cached folder is gone. Releases must differ in their manifest's version, or the update does nothing.
+
+**The pins-only release in a project.** Moving a project's Wheelhouse release pin changes `.claude/`, a guardrail (main design, section 12.4). When the new release only moves upstream pins, with its lineage checks green, the pull request needs Wheelhouse's signed review but not the director's approval: their decision on green upgrades (step 4) carries through the guardrail rule. A release counts as pins-only only when Wheelhouse's repository at that tag says so (`lineage/release.json`), the tag's commit is the one the pull request names, and that commit is on Wheelhouse's protected default branch, where the lineage check must pass; anything that can't be read needs the director's approval. An undo gets the same exception only when the release it goes back to is itself pins-only. *Designer's call.*
 
 The weekly check of official sources (main design, section 9.1) adds the two upstream repositories, the release dates and their security advisories.
 
@@ -352,7 +373,7 @@ Claude Code cannot be held at one version outside company-managed settings. So:
 - every PR's provenance records the version that built it;
 - an assumption's probe is re-run when the changelog touches its feature.
 
-Whether the Desktop app's built-in Claude Code follows these settings is to verify (section 16).
+Check 28 (section 16) found the documented settings: `"autoUpdatesChannel": "stable"` and `"minimumVersion": "<the manifest's lowest version>"`. Setup writes them into the user's own settings file, `~/.claude/settings.json`, leaving its other keys alone, and never sets `DISABLE_AUTOUPDATER` or `DISABLE_UPDATES`, which would stop the channel working. The minimum only stops updates going below it; it does not stop an older Claude Code from starting, so checking the version a session runs is Wheelhouse's own job, through provenance. The Desktop app runs its own copy of Claude Code, which it downloads and updates itself, and nothing documented says that copy follows these settings. Until the Desktop trials show it does, Wheelhouse treats Desktop's copy as unaffected: provenance records the version a session really ran, and setup tells the director where to see it (`/status` in the Code tab).
 
 ### 14.6 Provenance, and where it is enforced
 
@@ -361,7 +382,7 @@ Whether the Desktop app's built-in Claude Code follows these settings is to veri
 **Enforcement, in three places:**
 
 1. **At session start, a warning.** A script checks the installed files against the manifest's fingerprints. A session-start hook cannot block anything in Claude Code, so a mismatch raises a card.
-2. **Before each tool call, a hold.** A pre-tool hook refuses edits and commands in a session whose fingerprints did not match, until the mismatch is resolved. Reading carries on.
+2. **Before each tool call, a hold.** A pre-tool hook refuses edits and commands in a session whose fingerprints did not match, until the mismatch is resolved. Reading carries on, and so do halting work already running and the runbook, as under STOP. **One command goes through:** the check, `node <plugin>/scripts/lineage/check.js`, which only reads, says what still differs, and changes nothing. The hold lifts only at the next session start whose check matches, because a session keeps the skills it loaded at its start. A new hold is recorded once in state, for the front desk to raise as a card. *Designer's call.*
 3. **At the gate, a refusal.** A PR whose provenance does not match the manifest cannot merge. CI checks the manifest too, not only the director's computer.
 
 Fingerprinting Superpowers' skills (about 74 files, 584 KB) takes milliseconds in Node.js.
@@ -395,6 +416,8 @@ Added to the main design's section 18:
 | 34 | A per-task review under subagent-driven development | It is done by Wheelhouse's read-only reviewer agent, which cannot write |
 | 35 | The director approves a written design at the front desk | The design goes to the foreman's queue; the front desk does not start `writing-plans` |
 
+**How they run.** Section 10's question path and scenarios 26 and 28 to 32 are an end-to-end test in `npm test` (`tests/e2e/build-loop.test.js`), with the sessions' side run as the sandbox would hold it. Scenarios 20 to 27 and 33 to 35 are evaluation runs in real sessions: `npm run eval`, outside `npm test` because each costs tokens, one trial with Wheelhouse and one without, and three where a result is not as expected or the two are close (main design, section 18). *Designer's call.* Their results are in `docs/evals/build-loop.md`.
+
 **Measures**, added to the main design's: share of foreman turns that do nothing (target: under 10%, against 124 of the first version's wakes); merge-conflict messages per merged PR (target: well below the first version's 66 across 134).
 
 ## 16. Left to the builder, and to verify
@@ -407,15 +430,19 @@ Added to the main design's section 18:
 - the hot-files list's format in the project settings;
 - how the provenance block is laid out.
 
-**To verify before relying on it** (new design checks, continuing the main design's section 20 numbering):
+The build-loop plan settled the feature files' formats (section 9) and the watcher's intervals (section 11).
 
-24. **Pinning through Wheelhouse's marketplace:** that a plugin entry's `sha` installs that exact commit for Superpowers and Matt's skills; that the project's settings can switch off Anthropic's copy and the synced copies; and that auto-update stays off.
-25. **The override wins:** that Superpowers 7.0.0 follows the brief's rules over its own, including the text its session-start hook adds (scenario 24).
-26. **Plugin monitors:** that a plugin monitor runs for the whole of a Desktop session on macOS and Windows, and can be limited to the foreman's session. Needed only for section 11's fallback.
-27. **Starting and waking sessions from a script:** whether a background Node.js process can start a fresh foreman session per batch of events, and start or wake a feature session, in Desktop on macOS and Windows, building on check 1. The answer picks the watcher's shape (section 11).
-28. **Claude Code's update settings in Desktop:** whether the Desktop app's built-in Claude Code follows the stable channel and minimum version.
-29. **The hold:** that a pre-tool hook can refuse edits and commands in a session whose fingerprints did not match, on macOS and Windows.
-30. **The undo:** that the undo script reinstalls a previous commit from Wheelhouse's marketplace, including after Claude Code's 14-day clean-up.
+**To verify before relying on it** (new design checks, continuing the main design's section 20 numbering; each answer and its note in `docs/checks/`):
+
+24. **Pinning through Wheelhouse's marketplace:** that a plugin entry's `sha` installs that exact commit for Superpowers and Matt's skills; that the project's settings can switch off Anthropic's copy and the synced copies; and that auto-update stays off. **Answer:** Yes. An entry's `sha` installed that exact commit for both, even where `ref` named a later tag; with the project's settings switching off Anthropic's copy and the synced copies, only the pinned copies loaded; auto-update stays off. Seen in the terminal and in the Claude Code copy inside the Desktop app, run without a window. The settings are in section 14.2. `docs/checks/24-pinning.md`
+25. **The override wins:** that Superpowers 7.0.0 follows the brief's rules over its own, including the text its session-start hook adds (scenario 24). **Answer:** Yes, for Superpowers' hand-offs. With the override as the brief's first section, a session built the plan and finished without Superpowers' finishing menu or a question; without it, the same session ended on the menu. The override stays first in the brief. The run also found that `claude -p` ignores allow rules in a committed project settings file, so feature sessions are given theirs when they start (section 11). `docs/checks/25-override.md`
+26. **Plugin monitors:** that a plugin monitor runs for the whole of a Desktop session on macOS and Windows, and can be limited to the foreman's session. Needed only for section 11's fallback. **Not run:** Shape 1 was taken on check 27's Mac half (section 11), without it. It runs first if Windows sends the watcher to Shape 2.
+27. **Starting and waking sessions from a script:** whether a background Node.js process can start a fresh foreman session per batch of events, and start or wake a feature session, in Desktop on macOS and Windows, building on check 1. The answer picks the watcher's shape (section 11). **Answer:** Deferred. On the Mac every trial passed on three routes (`claude -p`, an input stream held open, and `claude --bg`), so the build takes Shape 1 by the `claude -p` route (section 11). Sessions started this way did not show in Desktop's session list. Windows is still to be tried, in the Windows sitting. `docs/checks/27-sessions.md`
+28. **Claude Code's update settings in Desktop:** whether the Desktop app's built-in Claude Code follows the stable channel and minimum version. **Answer:** Deferred. The documentation gives the settings and where to write them (section 14.5), but says Desktop downloads and updates its own copy; the trials in Desktop, on the Mac and on Windows, wait for the director's sittings. `docs/checks/28-update-channel.md`
+29. **The hold:** that a pre-tool hook can refuse edits and commands in a session whose fingerprints did not match, on macOS and Windows. **Answer:** Partly. On macOS a pre-tool hook refused an edit, a write and a command, even one with an allow rule, and let a read through. Windows waits for the Windows sitting. `docs/checks/29-hold.md`
+30. **The undo:** that the undo script reinstalls a previous commit from Wheelhouse's marketplace, including after Claude Code's 14-day clean-up. **Answer:** Partly. On macOS, moving the marketplace entry back to the previous release's `ref` and `sha` and running `claude plugin update` reinstalled the previous commit every time, including after its cached folder was deleted, which stood in for the clean-up (section 14.4). Not shown: an `https` address, and Windows. `docs/checks/30-undo.md`
+
+**Check 31 is the safety plan's sitting.** It was planned as check 24, and the build-loop plan renumbered it, since this design owns 24 to 30. **Answer:** Yes, with three changes. At Standard and at Locked every guard held in a real session on the Mac, and a sandboxed agent reaches the helper's socket inside `~/.wheelhouse/`, so no fallback is needed. The changes are to the trials and to what an agent is told after STOP is lifted. `docs/checks/31-safety-live.md`
 
 ## 17. The designer's calls (the director may override)
 
@@ -435,6 +462,29 @@ Added to the main design's section 18:
 - test merges by `git merge-tree` only, with no project code run outside the sandbox (section 12);
 - an approval carried across an update only with the same patch-id and identical screenshots; flag-off slices not shown first; the front desk marking shown-first changes (section 12);
 - lineage living in Wheelhouse's repository and releases, with pin-only green releases installed with a briefing line (section 14).
+
+**From the build-loop plan** (`docs/superpowers/plans/2026-10-18-wheelhouse-build-loop.md`, 18 October 2026), each settled without the director:
+
+- the records that need the director's click (approving a brief or design, an answer, an amendment, an incident's fix and its end), each a signed `action` from a card with its own line; declaring an incident plain, as setting STOP is; quick work that isn't shown first a plain record, still reviewed and briefed (section 10). *Designer's call.*
+- the feature files' formats (Markdown with a JSON block for the brief and the report, JSON for the status, JSON lines for the questions), and the ledger's rulings copied as they appear, since Superpowers deletes its workspace at the end; the status hook at most every five seconds, with tokens unknown until the usage store fills them (section 9). *Designer's call.*
+- a clash as any shared file, or a file of each plan matching the same hot pattern (section 12). *Designer's call.*
+- a review carried over only across a clean update merge with the same patch-id; an approval also only with identical screenshots of every page the configuration lists (`pages`), at every size; with none listed, or any doubt, the director is asked again (section 12). *Designer's call.*
+- flag files deciding which PR of shown-first feature work is shown; with none listed, every PR is (section 12). *Designer's call.*
+- an incident's fix named, and its end given, only by the director's click; only bug-lane work starting meanwhile (section 12). *Designer's call.*
+- a pins-only Wheelhouse release, with its lineage checks green, installed in a project with a review but not the director's approval, carrying their decision on green upgrades through the guardrail rule (section 14.4, and the main design's section 12.4). *Designer's call.*
+- the tester's sandboxed `Bash`, for Playwright, writing only screenshots and notes (section 8). *Designer's call.*
+- the watcher's intervals: state every 30 seconds, feature files every 15, PRs every minute, test merges every 10 minutes (section 11). *Designer's call.*
+- feature sessions starting in `acceptEdits` unless the project says otherwise, never in bypass or `auto` (section 11). *Designer's call.*
+- the hold letting one command through, the read-only check, and lifting at the next session start whose check matches (section 14.6). *Designer's call.*
+- evaluation runs as `npm run eval`, outside `npm test`, one trial with and one without Wheelhouse (section 15). *Designer's call.*
+
+**Made while building it** (19 October 2026):
+
+- Shape 1 taken on check 27's Mac half, by the `claude -p` route, with check 26 left until Windows answers (section 11). *Designer's call.*
+- the foreman's `act` and `wake` commands run by the helper's `/foreman/run` route, outside the sandbox, only in the main checkout, since the sandbox denies the Wheelhouse home folder; a feature session's commands sending their folder for the helper to place (section 11). *Designer's call.*
+- a feature session's branch pushed through the helper, by `open-pr` before it opens the PR and by `push` for later fixes, and the host's copy of it brought in by `pull` (section 8). *Designer's call.*
+- the foreman's commands keeping Claude Code's own sign-in variables, and no host key, so they can start sessions (section 11). *Designer's call.*
+- a project's settings turning Claude Code's commit and PR attribution off, so no commit names a model (section 13). *Designer's call.*
 
 ## 18. Decided by the director
 
