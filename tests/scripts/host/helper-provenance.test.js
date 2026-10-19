@@ -15,7 +15,7 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
-import { BEGIN, WHY, parseProvenance, provenanceBlock, removeProvenance, stampProvenance } from '../../../scripts/lineage/provenance.js';
+import { BEGIN, END, WHY, parseProvenance, provenanceBlock, removeProvenance, stampProvenance } from '../../../scripts/lineage/provenance.js';
 import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { lineageFixture } from '../../helpers/lineage.js';
@@ -23,6 +23,9 @@ import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingProvenance, writeSessionProvenance } from '../../helpers/provenance.js';
 import { main as featureCli } from '../../../scripts/feature/cli.js';
 import { featurePaths, parseReport } from '../../../scripts/feature/files.js';
+import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
+import { provenanceFile } from '../../../scripts/lineage/check.js';
+import { readManifest } from '../../../scripts/lineage/manifest.js';
 
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
@@ -91,6 +94,14 @@ test('a caller\'s own block is replaced by the helper\'s', async () => {
         assert.equal(removeProvenance(sent), 'Shipped the sign-in page.');
         assert.deepEqual(parseProvenance(sent), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
         assert.equal(sent.includes('transcript'), false, 'the block never carries the transcript\'s path');
+        // A forged block whose markers are split around each other is taken out too.
+        const split = `Shipped it.\n<!-- wheel${END}house-provenance -->\n**Built with**\n- Claude Code: 99.0.0\n<!-- /wheel${BEGIN}house-provenance -->\n`;
+        assert.equal((await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: split, session: 'sess-1' })).ok, true);
+        const splitSent = adapter.calls.openPr[1].body;
+        assert.equal(splitSent.split(BEGIN).length, 2, 'one block');
+        assert.equal(splitSent.split(END).length, 2);
+        assert.deepEqual(parseProvenance(splitSent), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
+        adapter.calls.openPr.pop();
 
         // An update's new body is stamped the same way; a title alone leaves the body alone.
         assert.equal((await client.updatePr({ project: 'o__p', number: 7, body: `New text.\n\n${provenanceBlock({})}`, session: 'sess-1' })).ok, true);
@@ -150,6 +161,46 @@ test('a PR built with a mismatched or older install cannot merge', async () => {
   try {
     await as(p.home, async () => {
       const { answer, merges, head } = await mergeWith(p, stampProvenance('The change.', match), root);
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+      assert.deepEqual(merges, [{ number: 7, sha: head }]);
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a pull request from a session\'s first run, whose transcript was empty at its start, says which Claude Code built it and merges (R144)', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      const folder = fs.realpathSync.native(tempFolder('wh-project-'));
+      const fixture = lineageFixture(folder);
+      const floor = readManifest(fixture.root).claudeCode.floor;
+      const transcript = path.join(tempFolder('wh-transcript-'), 't.jsonl');
+      fs.writeFileSync(transcript, '');
+      // The session starts (a foreman's wake, or a feature's first run): its transcript has no
+      // entry yet, so its provenance.json can't say which Claude Code runs it.
+      const quiet = {
+        health: async () => ({ ok: true }),
+        state: { sync: async () => ({ ok: true }), views: async () => ({ ok: true, views: {} }), write: async () => ({ ok: true }), record: async () => ({ ok: true }) },
+      };
+      await sessionStart({ cwd: folder, session_id: 'sess-1', transcript_path: transcript, hook_event_name: 'SessionStart' }, {
+        projectOf: () => ({ project: 'o__p', record: { folder } }), lineageRoot: fixture.root, claudeHome: fixture.claudeHome, client: quiet,
+        spawn: () => ({ unref() {}, on() {} }), pause: async () => {}, background: async () => ({}), stopState: () => ({ on: false }), platform: 'darwin', pluginRoot: '/plugin/root',
+      });
+      assert.equal(JSON.parse(fs.readFileSync(provenanceFile('o__p', 'sess-1'), 'utf8')).claudeCode, null);
+      // The session runs, and Claude Code writes its entries, each with its version.
+      fs.appendFileSync(transcript, `${[
+        { type: 'user', version: floor, message: { content: 'go' } },
+        { type: 'assistant', version: floor, message: { model: 'model-a', content: [] } },
+      ].map((e) => JSON.stringify(e)).join('\n')}\n`);
+      // Its pull request is stamped with the version, and the gate lets it merge.
+      const adapter = fakeAdapter();
+      await withHelper(adapter, async (client) => {
+        assert.equal((await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: 'The change.', session: 'sess-1' })).ok, true);
+      });
+      const body = adapter.calls.openPr[0].body;
+      assert.equal(parseProvenance(body).claudeCode, floor);
+      assert.deepEqual(parseProvenance(body).models, ['model-a']);
+      const { answer, merges, head } = await mergeWith(p, body, fixture.root);
       assert.equal(answer.ok, true, JSON.stringify(answer));
       assert.deepEqual(merges, [{ number: 7, sha: head }]);
     });
@@ -224,11 +275,20 @@ test('the report carries the same block', async () => {
         assert.equal(report.slice(report.indexOf(BEGIN)), body.slice(body.indexOf(BEGIN)), 'the same block, word for word');
         assert.deepEqual(parseProvenance(body), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
 
-        // A session with no provenance here: the report is still whole, says so, and is not stamped.
+        // The helper gives the block, so the report needs nothing from the Wheelhouse home.
+        assert.deepEqual(await client.lineage.provenance({ project: 'o__p', session: 'sess-1' }), { ok: true, block: body.slice(body.indexOf(BEGIN)).trimEnd() });
+        // A session with no provenance here: the report is still whole, says only that it carries no block, and is not stamped.
         fs.writeFileSync(files.session, `${JSON.stringify({ sessionId: 'sess-elsewhere' })}\n`);
+        fs.writeFileSync(files.report, removeProvenance(report));
         said.out = '';
         assert.equal(await featureCli(['report'], deps), 0, said.err);
-        assert.match(said.out, /provenance is not on this computer/);
+        assert.equal(said.out, 'The report is whole.\nThe report carries no provenance block.\n');
+        assert.equal(fs.readFileSync(files.report, 'utf8').includes(BEGIN), false);
+        // Nor when the helper can't be reached.
+        said.out = '';
+        fs.writeFileSync(files.session, `${JSON.stringify({ sessionId: 'sess-1' })}\n`);
+        assert.equal(await featureCli(['report'], { ...deps, client: helperClient({ address: path.join(tempFolder('wh-no-helper-'), 'none.sock') }) }), 0, said.err);
+        assert.equal(said.out, 'The report is whole.\nThe report carries no provenance block.\n');
         // Under STOP nothing is written.
         fs.writeFileSync(files.session, `${JSON.stringify({ sessionId: 'sess-1' })}\n`);
         fs.writeFileSync(files.report, removeProvenance(report));

@@ -45,7 +45,7 @@ import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { SLUG } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
-import { bodyProvenance, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
+import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 
@@ -1681,15 +1681,24 @@ export async function startHelper({
       provenance: restore ? { ok: true } : bodyProvenance(pr.body, pluginRoot),
     });
     if (!decision.allow || stateReasons.length > 0) {
-      const said = [
-        ...(restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : []),
-        ...(releaseCheck.matched && !pinsOnly ? [`release pull request, so it needs the director's approval: ${releaseCheck.why}`] : []),
-      ];
+      const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
       const reasons = [...said, ...stateReasons, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
+      // Why a release pull request needs the director's approval goes in its own field, not the
+      // reasons: it is why the approval is needed, not another condition unmet, so a release
+      // lacking only the approval still waits for the click (rulings R117, R148).
+      const releaseLine = releaseCheck.matched && !pinsOnly ? `release pull request, so it needs the director's approval: ${releaseCheck.why}` : null;
       // What the director's click can supply, by name, so the foreman can wait for that click
       // rather than ask (ruling R117). The reasons still list every condition that failed.
       const needs = decision.approvalMissing === true ? { needs: { approval: { pr: number, commit: headSha } } } : {};
-      return { ok: false, refused: reasons.join('; '), reasons, ...needs, ...found, ...release };
+      return {
+        ok: false,
+        refused: [...(releaseLine === null ? [] : [releaseLine]), ...reasons].join('; '),
+        reasons,
+        ...(releaseLine === null ? {} : { releaseApproval: releaseLine }),
+        ...needs,
+        ...found,
+        ...release,
+      };
     }
     if (stopped() && !restore) {
       const reasons = [...(restoreCheck.matched ? [`restore pull request: ${restoreCheck.why}`] : []), 'STOP is on'];
@@ -2250,6 +2259,13 @@ export async function startHelper({
       } finally {
         tidyAfterAnswer(body.project);
       }
+    },
+    // The block a pull request from this session would be stamped with (ruling R147), for its
+    // report: never the transcript's path. Null when the session's provenance is not on this
+    // computer. Read-only, so STOP lets it through.
+    '/lineage/provenance': (body) => {
+      const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
+      return { ok: true, block: provenance === null ? null : provenanceBlock(provenance) };
     },
     '/host/facts': hostFacts,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),

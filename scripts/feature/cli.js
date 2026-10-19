@@ -22,7 +22,7 @@ import { projectOf } from '../hooks/kit.js';
 import { helperClient } from '../host/helper-client.js';
 import { REPORT_WORDS } from '../lib/build-loop.js';
 import { stopState } from '../lib/stop.js';
-import { sessionProvenance, stampProvenance } from '../lineage/provenance.js';
+import { parseProvenance, withBlock } from '../lineage/provenance.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -211,20 +211,21 @@ export function report({ worktree }) {
   return { missing: inspect(worktree).missing };
 }
 
-// Stamps report.md with the block that says what built it (the same block the helper stamps in
-// the pull request), in place of any it had. Returns whether report.md was written.
-export function stampReport({ worktree, provenance }) {
+// Stamps report.md with `block`, the one that says what built it (the helper's, the same block it
+// stamps in the pull request), in place of any it had. Returns whether report.md was written.
+export function stampReport({ worktree, block }) {
+  if (typeof block !== 'string' || parseProvenance(block) === null) throw new CliError('The helper gave a provenance block that can\'t be read');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const file = featurePaths(worktree).report;
   const text = readCapped(file, REPORT_BYTES);
   if (text === null) throw new CliError("report.md can't be read");
-  const stamped = stampProvenance(text, provenance);
+  const stamped = withBlock(text, block);
   if (stamped === text) return false;
   writeWhole(file, stamped);
   return true;
 }
 
-const NO_PROVENANCE = "This session's provenance is not on this computer, so the report can't say what built it, and open-pr will be refused: run them from a session that started on this computer.";
+const NO_PROVENANCE = 'The report carries no provenance block.';
 
 // --- plan ---
 
@@ -290,7 +291,7 @@ const COMMANDS = ['ask', 'answer', 'plan', 'report', 'open-pr'];
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
   cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), find = featureWorktree, projectOf: findProject = projectOf,
-  provenanceOf = sessionProvenance, stopped = () => stopState().on,
+  stopped = () => stopState().on,
 } = {}) {
   try {
     const [command, ...rest] = argv;
@@ -321,15 +322,21 @@ export async function main(argv, {
         return 1;
       }
       out('The report is whole.\n');
-      // The session's own provenance, from this computer: the session id the hooks kept, in the project's folder.
-      const sessionId = keptSession(featurePaths(worktree).session);
-      let provenance = null;
+      if (stopped()) {
+        out('STOP is on, so the report was not stamped with what built it.\n');
+        return 0;
+      }
+      // The session's own block, from the helper (ruling R147): this command runs where the
+      // Wheelhouse home can't be read. The session is the one the hooks kept.
+      const session = keptSession(featurePaths(worktree).session);
+      let block = null;
       try {
-        provenance = sessionId === null ? null : provenanceOf({ project: findProject(worktree)?.project, sessionId });
+        const placed = session === null ? null : findProject(worktree);
+        const got = placed ? await helper().lineage.provenance({ project: placed.project, session }) : null;
+        if (got?.ok === true && typeof got.block === 'string') block = got.block;
       } catch { /* said below */ }
-      if (provenance === null) out(`${NO_PROVENANCE}\n`);
-      else if (stopped()) out('STOP is on, so the report was not stamped with what built it.\n');
-      else if (stampReport({ worktree, provenance })) out('It now says what built it.\n');
+      if (block === null) out(`${NO_PROVENANCE}\n`);
+      else if (stampReport({ worktree, block })) out('It now says what built it.\n');
     } else {
       const { number, already } = await openPr({ client: helper(), project: project(), worktree, argv: rest });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);

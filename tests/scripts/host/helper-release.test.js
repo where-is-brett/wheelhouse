@@ -18,7 +18,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
-import { RELEASE_WHY, briefingLine, releaseBranch, releaseChange, settingsText } from '../../../scripts/lineage/release.js';
+import { RELEASE_WHY, briefingLine, releaseBranch, releaseChange, settingsText, undoBranch } from '../../../scripts/lineage/release.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
@@ -140,6 +140,13 @@ test('a pins-only release PR merges with a review and no approval', async () => 
       release: { kind: 'pins-only', ref: 'v1.1.0', sha: repo.shas['v1.1.0'] }, briefing: briefingLine('v1.1.0'),
     });
     assert.deepEqual(merged.merges, [{ number: 7, sha: merged.head }]);
+    // An undo's branch names the earlier release the same way, and is weighed the same (R149).
+    const pr = await remoteWithPr({ files: released('v1.1.0') });
+    try {
+      const undone = await mergeRelease({ pr, headRef: undoBranch(repo.shas['v1.1.0']), repo, before: reviewed });
+      assert.equal(undone.answer.ok, true, JSON.stringify(undone.answer));
+      assert.deepEqual(undone.answer.release, { kind: 'pins-only', ref: 'v1.1.0', sha: repo.shas['v1.1.0'] });
+    } finally { pr.cleanup(); }
 
     // The exception lowers the approval only: the review, CI and a caller's raised condition still hold.
     const unreviewed = await tryMerge({});
@@ -185,7 +192,12 @@ test('a release PR changing anything else under .claude/ needs the director\'s a
         const { answer, merges } = await mergeRelease({ pr, headRef: c.headRef, repo, before: reviewed });
         const short = pr.head.slice(0, 7);
         assert.equal(answer.ok, false, c.reason);
-        assert.deepEqual(answer.reasons, [...(c.reason ? [c.reason] : []), `no approval of ${short}`]);
+        // Why the release needs the approval is its own field: the approval is the one reason, so
+        // the foreman waits for the director's click (R117, R148).
+        assert.deepEqual(answer.reasons, [`no approval of ${short}`]);
+        assert.equal(answer.releaseApproval, c.reason ?? undefined);
+        assert.deepEqual(answer.needs, { approval: { pr: 7, commit: pr.head } });
+        assert.equal(answer.refused, [...(c.reason ? [c.reason] : []), `no approval of ${short}`].join('; '));
         assert.equal(answer.release, undefined);
         assert.deepEqual(merges, []);
       } finally { pr.cleanup(); }
@@ -195,7 +207,8 @@ test('a release PR changing anything else under .claude/ needs the director\'s a
     try {
       const gone = { url: pathToFileURL(path.join(os.tmpdir(), 'wh-no-such-repo.git')).href };
       const { answer } = await mergeRelease({ pr, headRef: releaseBranch(sha), repo: gone, before: reviewed });
-      assert.deepEqual(answer.reasons, [why(RELEASE_WHY.fetch), `no approval of ${pr.head.slice(0, 7)}`]);
+      assert.deepEqual(answer.reasons, [`no approval of ${pr.head.slice(0, 7)}`]);
+      assert.equal(answer.releaseApproval, why(RELEASE_WHY.fetch));
     } finally { pr.cleanup(); }
   } finally { repo.cleanup(); }
 });
