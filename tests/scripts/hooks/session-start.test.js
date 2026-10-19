@@ -1,6 +1,7 @@
 // tests/scripts/hooks/session-start.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,10 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
+  TRUST_ASK, MAX_TRUST_CARDS, moreTrust,
 } from '../../../scripts/hooks/session-start.js';
+import { differentKeyLine, fingerprint } from '../../../scripts/lib/trust-clicks.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
 import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HELD } from '../../../scripts/lineage/check.js';
@@ -22,7 +26,7 @@ import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lin
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
-import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -1228,5 +1232,98 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
       'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
       'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.',
     ]);
+  });
+});
+
+// ---- Another of the director's computers (rulings R80, R81) ----
+
+// A public key made here, standing for another computer's.
+const someKey = () => crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+// The trust cards a reload hands over, as AskUserQuestion's questions.
+const trustCards = (out) => text(out).split('\n').filter((l) => l.startsWith(TRUST_ASK)).map((l) => JSON.parse(l.slice(TRUST_ASK.length)));
+const ADDED = '2026-10-19T22:30:00.000Z';
+const AT = Date.parse('2026-10-20T03:00:00.000Z');
+
+test('the front desk is handed a trust card for each computer the profile holds that this one doesn\'t trust, the helper asked at most once an hour', async () => {
+  await withHome(async (home) => {
+    const own = makeSigningKey();
+    enrol({ ...own, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const other = { computer: '0a1b2c3d', publicKey: someKey(), at: ADDED };
+    const known = { computer: '1b2c3d4e', publicKey: someKey() };
+    enrol({ ...known, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    let enrolments = [other, { ...known, publicKey: someKey(), at: ADDED }, { ...own, at: ADDED }];
+    let asked = 0;
+    const f = fake();
+    f.client.profile = { enrolments: async () => { asked += 1; return { ok: true, fetched: true, enrolments }; } };
+    const at = (minutes) => ({ now: () => new Date(AT + minutes * 60000) });
+
+    const out = await run(f, at(0));
+    assert.equal(asked, 1);
+    const [card, ...more] = trustCards(out);
+    assert.deepEqual(more, [], 'one card: this computer and the one it trusts get none');
+    assert.equal(setLineOf(card.question), trustLine(other.computer, ADDED, fingerprint(other.publicKey)));
+    assert.deepEqual(cardProblems(card.question), [], 'the card check lets it through');
+    assert.deepEqual(card.options.map((o) => o.label), ['Trust it', 'Not now', 'Explain more']);
+    // A computer it trusts whose enrolment holds another key: a line, never a card.
+    assert.ok(text(out).split('\n').includes(differentKeyLine(known.computer)));
+    assert.equal(differentKeyLine(known.computer), 'A different key claims your computer 1b2c3d4e; nothing was trusted.');
+    // When it asked is kept beside weekly.json.
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'jobs', 'enrolments.json'), 'utf8')).at, new Date(AT).toISOString());
+
+    // Within the hour the helper isn't asked again: the card comes from what the last fetch found.
+    assert.equal(trustCards(await run(f, at(59))).length, 1);
+    assert.equal(asked, 1);
+    // An hour on it is asked again; an answer that fails keeps what the last fetch found.
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: false, refused: 'the profile could not be reached' }; };
+    assert.equal(trustCards(await run(f, at(60))).length, 1);
+    assert.equal(asked, 2);
+    // And not again for an hour after that ask, though it failed.
+    assert.equal(trustCards(await run(f, at(90))).length, 1);
+    assert.equal(asked, 2);
+
+    // Once trusted, no card.
+    enrol({ computer: other.computer, publicKey: other.publicKey, enrolledAt: new Date(AT).toISOString() });
+    assert.deepEqual(trustCards(await run(f, at(91))), []);
+
+    // At most MAX_TRUST_CARDS a time, and a line saying more are waiting.
+    enrolments = ['2a000001', '2a000002', '2a000003', '2a000004'].map((computer) => ({ computer, publicKey: someKey(), at: ADDED }));
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: true, fetched: true, enrolments }; };
+    const many = await run(f, at(200));
+    assert.equal(trustCards(many).length, MAX_TRUST_CARDS);
+    assert.ok(text(many).includes(moreTrust(4 - MAX_TRUST_CARDS)));
+  });
+});
+
+test('only the front desk is handed trust cards, and only once step 3 is done in a folder being set up', async () => {
+  await withHome(async () => {
+    const own = makeSigningKey();
+    enrol({ ...own, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    let asked = 0;
+    const f = fake();
+    f.client.profile = { enrolments: async () => { asked += 1; return { ok: true, fetched: true, enrolments: [{ computer: '0a1b2c3d', publicKey: someKey(), at: ADDED }] }; } };
+    // The foreman's session: not asked, no card.
+    recordRole('s-foreman', 'foreman');
+    assert.deepEqual(trustCards(await run(f, { now: () => new Date(AT) }, { session_id: 's-foreman' })), []);
+    assert.equal(asked, 0);
+    // A folder being set up: not before step 3 is done; then the card, for setup's session to ask.
+    const folder = fs.realpathSync.native(tempFolder('wh-trust-setup '));
+    const setupRun = startRun({ folder, now: () => new Date(AT) });
+    const g = fake();
+    g.client.profile = f.client.profile;
+    assert.deepEqual(trustCards(await setupStart(g, folder, { now: () => new Date(AT) })), []);
+    assert.equal(asked, 0);
+    markStep(setupRun.id, 3, 'doneAt', { now: () => new Date(AT) });
+    assert.equal(trustCards(await setupStart(g, folder, { now: () => new Date(AT) })).length, 1);
+    assert.equal(asked, 1);
+  });
+});
+
+test('a helper that answers nothing about enrolments costs the session start nothing and adds no line', async () => {
+  await withHome(async () => {
+    const f = fake();
+    f.client.profile = { enrolments: async () => { throw new Error('boom'); } };
+    const out = await run(f, { now: () => new Date(AT) });
+    assert.deepEqual(trustCards(out), []);
+    assert.doesNotMatch(text(out), /different key|trusted/);
   });
 });

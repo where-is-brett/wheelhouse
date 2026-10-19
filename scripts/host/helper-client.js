@@ -86,6 +86,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       record: post('/profile/record'), // { event }: a signed confirmation of a profile event
       sync: post('/profile/sync'), //     {} -> { ok, pulled, unpushed, refused? }: commits new bundles, pulls and pushes
       views: post('/profile/views'), //   {} -> { ok, views }
+      enrolments: post('/profile/enrolments'), // {} -> { ok, fetched, enrolments: [{ computer, publicKey, at }] }: each computer's key as the fetched profile holds it, trusted only on the director's click
     },
     lock: {
       take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }

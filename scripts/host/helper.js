@@ -60,6 +60,7 @@ import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoo
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 import { baselineRoutes } from '../measures/baseline.js';
+import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from '../lib/trust-clicks.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -689,7 +690,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // helper places the project from it.
 const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview'];
 
-const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/state/backup'];
+const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
 
 function checkProject(project) {
@@ -1461,6 +1462,32 @@ export async function startHelper({
     const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile(), now });
     await freshViews(() => writeProfileViews({ now }));
     return profileWritten({ event, result });
+  }
+
+  // The computers' keys the profile holds (ruling R81): the profile's branch fetched into its
+  // tracking ref, then each enrolments/<computer>.json read from that fetched tree, never from the
+  // working tree, and neither the working tree nor the helper's own branch changed. A file that
+  // isn't an enrolment of the computer it is named for is left out. When the fetch fails, what an
+  // earlier fetch brought is read, and `fetched` says so. Nothing here is trusted: the session start
+  // offers each on a card, and only the director's click there trusts it.
+  async function doProfileEnrolments(_body, ctx) {
+    const dir = profileDir();
+    const fetched = (await stateGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], ctx.gitEnv)).code === 0;
+    const listed = await stateGit(dir, ['ls-tree', '-z', '--full-tree', PROFILE_TRACKING, '--', 'enrolments/']);
+    if (listed.code !== 0) return { ok: true, fetched, enrolments: [] };
+    const enrolments = [];
+    for (const entry of listed.stdout.split('\0').filter(Boolean)) {
+      if (enrolments.length >= MAX_ENROLMENTS) break;
+      const m = /^100644 blob ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/s.exec(entry);
+      const file = m === null ? null : ENROLMENT_FILE.exec(m[2]);
+      if (file === null) continue;
+      const size = await stateGit(dir, ['cat-file', '-s', m[1]]);
+      if (size.code !== 0 || Number(size.stdout.trim()) > MAX_ENROLMENT_BYTES) continue;
+      const blob = await stateGit(dir, ['cat-file', 'blob', m[1]]);
+      const found = blob.code === 0 ? enrolmentOf(blob.stdout, file[1]) : null;
+      if (found !== null) enrolments.push(found);
+    }
+    return { ok: true, fetched, enrolments };
   }
 
   // The answer carries the last push's refusal, when the push rules refused it.
@@ -2555,6 +2582,7 @@ export async function startHelper({
     '/profile/record': profileRoute(doProfileRecord),
     '/profile/sync': profileRoute(doProfileSync),
     '/profile/views': profileRoute(async () => ({ ok: true, views: await writeProfileViews({ now }) })),
+    '/profile/enrolments': profileRoute(doProfileEnrolments),
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),

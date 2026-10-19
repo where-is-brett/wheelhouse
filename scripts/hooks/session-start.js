@@ -13,7 +13,9 @@
 // sync, the views and the watcher, which is last and gets what is left. On Windows the Guarded
 // self-test (scripts/windows/low.js) runs after them, within its own 3 seconds or what is left,
 // when the level would be Guarded or the last result is missing or over a day old, and only once
-// the copy of Node.js it needs is whole; the copy itself is made in the background, never here. Context added by a hook is capped at 10,000 characters
+// the copy of Node.js it needs is whole; the copy itself is made in the background, never here.
+// The ask for the profile's enrolments (below) comes after all of that, with what is left. Context
+// added by a hook is capped at 10,000 characters
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
 //
@@ -23,6 +25,14 @@
 // the helper, and says where setup stands. In a project setup is still finishing (step 3 has
 // registered it and step 7 made its first commit), the project's reload says where setup stands in
 // place of the front desk's line, so the session carries on with setup.
+//
+// Another of the director's computers (rulings R80, R81): in the front desk's session, and in a
+// folder being set up once step 3 is done, it asks the helper for the enrolments the profile holds
+// (/profile/enrolments) at most once an hour, keeping when it asked and what it found beside
+// weekly.json; between asks it reads what the last fetch found. Each computer this one doesn't trust
+// yet gets a trust card, composed here, for the session to ask as it is; a computer it trusts whose
+// enrolment holds another key gets a line saying nothing was trusted, never a card. It informs, so a
+// failure is passed over, within the budget.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
@@ -49,7 +59,9 @@ import {
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
-import { SETUP_STEPS, firstUnfinished, journalTrouble } from '../lib/setup-run.js';
+import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
+import { composeCard } from '../cards/compose.js';
+import { differentKeyLine, keepSeen, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -348,6 +360,39 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   return text;
 }
 
+// The most trust cards one session start hands over; the rest come at a later one.
+export const MAX_TRUST_CARDS = 2;
+// The words before a trust card's AskUserQuestion input, as JSON on the same line.
+export const TRUST_ASK = 'Another of the director\'s computers asks to be trusted here: ask the director this card with AskUserQuestion, exactly as given, as a question of its own: ';
+export const moreTrust = (n) => `${n} more of the director's computers ask to be trusted here; their cards come at a later session start.`;
+
+// The trust cards and lines for the enrolments the profile holds (rulings R80, R81). The helper is
+// asked at most once an hour, and only when it is up (`up`); the time is kept whether or not it
+// answered, so a profile that can't be reached costs one ask an hour. Between asks, what the last
+// fetch found is read. It informs, so anything that fails gives no lines.
+async function trustNotes({ client, left, up, now }) {
+  try {
+    if (up && seenDue(now)) {
+      const got = typeof client?.profile?.enrolments === 'function' ? await left(client.profile.enrolments({})) : null;
+      const enrolments = got?.ok === true && Array.isArray(got.enrolments) ? got.enrolments : (readSeen()?.enrolments ?? []);
+      keepSeen({ at: now().toISOString(), enrolments });
+    }
+    const seen = readSeen();
+    if (seen === null) return [];
+    const { offers, clashes } = trustOffers({ enrolments: seen.enrolments, enrolled: readEnrolled(), own: ownKey() });
+    const lines = clashes.map(differentKeyLine);
+    for (const enrolment of offers.slice(0, MAX_TRUST_CARDS)) {
+      try {
+        lines.push(`${TRUST_ASK}${JSON.stringify(composeCard(trustCardInput(enrolment)).question)}`);
+      } catch { /* no card for an enrolment the composer refuses */ }
+    }
+    if (offers.length > MAX_TRUST_CARDS) lines.push(moreTrust(offers.length - MAX_TRUST_CARDS));
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
 // This computer's signing key, made when there is none (or kept when one was made before), and
 // enrolled in this computer's own list when the list is empty, so the director's first click can
 // be signed and checked. A computer that already has a list adds nothing to it here; a damaged
@@ -391,6 +436,11 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs,
   if (!up) lines.push(NO_HELPER);
   const note = setupNote(setup);
   if (note !== null) lines.push(note);
+  // Once step 3 is done, another computer's key may be trusted here, so its records count.
+  if (setup.run !== null && setup.run !== undefined && stepDone(setup.run, 3)) {
+    const client = given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
+    lines.push(...await trustNotes({ client, left: withinBudget(end), up: Boolean(up), now }));
+  }
   return lines.length === 0 ? undefined : answer.context('SessionStart', lines.join('\n'));
 }
 
@@ -453,7 +503,8 @@ export async function decide(input, deps = {}) {
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
   // The front desk's session: not a feature's, nor the foreman's own. Only it is told why the
-  // foreman is held back, as it is the session that speaks to the director.
+  // foreman is held back, as it is the session that speaks to the director, and only it is handed
+  // the trust cards, once step 3 is done here.
   const deskSession = featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
   if (trouble !== null && deskSession) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
@@ -478,6 +529,9 @@ export async function decide(input, deps = {}) {
       ready = guardedReady({ home, now, platform });
     } catch { /* not ready */ }
   }
+  // The trust cards come last, with whatever time is left: they inform, and a card missed now
+  // comes at a later session start.
+  if (deskSession && (setup === null || stepDone(setup.run, 3))) notes.push(...await trustNotes({ client: clientNow(), left, up: Boolean(up), now }));
   const windows = platform === 'win32' && firstForSession(project, input.session_id, now);
   // Anything that fails here, the computer's id included, shows Ask and leaves the rest of the
   // reload as it is.

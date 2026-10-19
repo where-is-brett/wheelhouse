@@ -24,6 +24,12 @@
 // folder, a Record these on it becomes a signed baseline action kept in
 // <wheelhouseHome()>/measures/clicks/, naming only the hash of the figures, and a Not now on it
 // clears the figures waiting. Nothing of that card, not even its plain answer, goes to a project.
+// A trust card asks to trust another of the director's computers (ruling R80): in any folder, a
+// Trust it on it becomes a signed trust action kept in <wheelhouseHome()>/trust/, and that computer's
+// key is enrolled here, only when the enrolment the last fetch of the profile found names the same
+// computer, day and key fingerprint as the card's set line, and this computer doesn't already trust
+// that id with another key (scripts/lib/trust-clicks.js). Nothing of that card, not even its plain
+// answer, goes to a project, and it has no reply code.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -32,13 +38,18 @@ import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js'
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
+import { readEnrolled, enrol, ownKey } from '../state/signing.js';
+import { trustedBy, keepTrustClick, fingerprint } from '../lib/trust-clicks.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine } from '../state/card-lines.js';
+import {
+  setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
+  TRUST_LABEL, TRUST_LINE,
+} from '../state/card-lines.js';
 import { keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale } from '../lib/measures-clicks.js';
@@ -348,6 +359,28 @@ function keepBaselineClicks(out, now) {
   }
 }
 
+// Whether a question carries a trust card's set line: its answers stay on this computer.
+const carriesTrust = (question) => setLinesOf(question).some((line) => TRUST_LINE.test(line));
+
+// Acts on each Trust it on a trust card, in whatever folder: the card carries one set line, a trust
+// card's, and the enrolment the last fetch of the profile found names the same computer, day and
+// key fingerprint (trustedBy). The click is signed and kept in trust/, naming those three and the
+// set line alone, then that computer's key is enrolled here. One failing does not stop the rest.
+function keepTrustClicks(out, now) {
+  for (const click of out) {
+    if (!click.signable || click.label !== TRUST_LABEL) continue;
+    try {
+      const line = setLineOf(click.question);
+      if (line === null || !TRUST_LINE.test(line)) continue;
+      const found = trustedBy(line, { enrolled: readEnrolled(), own: ownKey() });
+      if (found === null) continue;
+      const data = { action: 'trust', computer: found.computer, at: found.at, fingerprint: fingerprint(found.publicKey), question: line, label: TRUST_LABEL };
+      keepTrustClick(makeEvent({ kind: 'action', data, now }));
+      enrol({ computer: found.computer, publicKey: found.publicKey, enrolledAt: now().toISOString() });
+    } catch { /* nothing trusted: the card is offered again at a later session start */ }
+  }
+}
+
 // What was answered, and which answers came from a click on a button the card offered
 // (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other).
 function clicks(input) {
@@ -418,9 +451,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    // A setup card, and setup's card of the rules found, have no reply code (ruling R36): only the
-    // click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line)) continue;
+    // A setup card, setup's card of the rules found and a trust card have no reply code (rulings R36,
+    // R80): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -446,9 +479,10 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   ]);
   keepBaselineClicks(answered, () => at);
   sweepStale(() => at);
-  // The baseline card's answers stay on this computer: none is sent to the project, and none is
-  // kept as a setup answer, which a later step copies into the project's state.
-  const out = answered.filter((click) => !carrying.has(click.question));
+  keepTrustClicks(answered, () => at);
+  // The baseline card's answers and a trust card's stay on this computer: none is sent to the
+  // project, and none is kept as a setup answer, which a later step copies into the project's state.
+  const out = answered.filter((click) => !carrying.has(click.question) && !carriesTrust(click.question));
   const found = find(input.cwd, { dir });
   if (!found) {
     if (beingSetUp(input.cwd) !== null) keepSetupClicks(input.cwd, out, () => at);

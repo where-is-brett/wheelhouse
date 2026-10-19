@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -61,8 +61,27 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   const all = [
     ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
     LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
+    trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL),
   ];
   for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
+});
+
+test('a trust card\'s line names the computer, the day its key was added and the key\'s fingerprint (ruling R80)', () => {
+  const line = trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL);
+  assert.equal(line, 'Trust your computer 0a1b2c3d, added 19 October 2026, key abcdef123456');
+  assert.equal(dayOf('2026-01-05T23:59:59.000Z'), '5 January 2026', 'the day in UTC, day month year');
+  assert.equal(dayOf('not a time'), null);
+  assert.equal(setLineOf(`What this is.\n${line}`), line);
+  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1);
+  assert.deepEqual(TRUST_LINE.exec(line).slice(1), ['0a1b2c3d', '19 October 2026', 'abcdef123456']);
+  for (const near of [
+    'Trust your computer 0A1B2C3D, added 19 October 2026, key abcdef123456',
+    'Trust your computer 0a1b2c3d, added 19 Oct 2026, key abcdef123456',
+    'Trust your computer 0a1b2c3d, added 19 October 2026, key abcdef12345',
+    'Trust your computer 0a1b2c3d, added 2026-10-19, key abcdef123456',
+    'Trust your computer 0a1b2c3d9, added 19 October 2026, key abcdef123456',
+    'Trust your computer 0a1b2c3d, added 19 October 2026, key abcdef123456 now',
+  ]) assert.equal(setLineOf(near), null, near);
 });
 
 test('a near miss of a build loop line is not a set line', () => {

@@ -23,9 +23,10 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { startRun, addChanges, findRun, readJournal } from '../../../scripts/setup/journal.js';
 import { readKey, writeKey } from '../../../scripts/host/keys.js';
+import { NOT_PUBLISHED } from '../../../scripts/setup/computers.js';
 import { readProject } from '../../../scripts/lib/projects.js';
 import { profileRemote } from '../../../scripts/profile/store.js';
-import { stateDir, profileDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { stateDir, profileDir, wheelhouseHome, computerId } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
@@ -432,6 +433,8 @@ test('a new product gets a private repository; an existing one gets none', async
       ['folder', path.join('~', 'profile')],
       ['file', path.join('~', 'projects', slug, 'project.json')],
       ['folder', path.join('~', 'projects', slug, 'state')],
+      // This computer's key, put in the profile last (ruling R79).
+      ['host', `github:${USER}/${PROFILE_REPO}:enrolments/${computerId()}.json`],
     ]);
     assert.deepEqual(run.changes[0].after, { repository: `${USER}/Shop`, private: true, made: true });
     assert.match(lines.at(-1), /Connected: a-director\/Shop on GitHub, Quick/);
@@ -452,6 +455,46 @@ test('a new product gets a private repository; an existing one gets none', async
     assert.ok(!w.calls.slice(before).some((c) => c.args?.[0] === 'repo'));
     assert.equal(readProject(slugFor(`${USER}/old`)).remoteUrl, w.hostUrl({ repo: `${USER}/old` }));
     assert.equal(await g(old, 'config', '--get', 'remote.origin.url'), `git@github.com:${USER}/old.git`, 'the folder\'s own address is left as it is');
+  });
+});
+
+test('step 3 lists this computer\'s key and puts it in the profile, pushed by its exact commit with the director\'s sign-in; a failed push stops the step and a fresh Go ahead publishes it (ruling R79)', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder();
+    const pushes = [];
+    const run = async (file, args, options = {}) => {
+      if (path.basename(file).replace(/\.exe$/, '') === 'git' && args[0] === 'push') pushes.push({ args: [...args], env: options.env });
+      return w.run(file, args, options);
+    };
+    const step = stepFor(w, { run });
+    const planned = await answerAll(step, ctxFor(folder), choose());
+    assert.deepEqual(planned.changes.at(-1), { kind: 'host', target: 'github', action: 'enrolment', computer: computerId(), fingerprint: null });
+    assert.match(planned.card.what, /the project's record and state branch; this computer's key in your profile; protection/);
+    // The profile's push is refused: the step stops, saying so, with the change recorded.
+    w.gitFails = (args) => args[0] === 'push' && String(args.at(-1)).endsWith(':refs/heads/wheelhouse-profile');
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), { message: NOT_PUBLISHED });
+    const profileRemoteUrl = w.hostUrl({ repo: `${USER}/${PROFILE_REPO}` });
+    const file = `enrolments/${computerId()}.json`;
+    assert.equal((await realRun('git', ['cat-file', '-e', `wheelhouse-profile:${file}`], { cwd: profileRemoteUrl })).code !== 0, true);
+    const branch = await g(profileDir(), 'rev-parse', 'refs/heads/wheelhouse-profile');
+    assert.equal(await g(profileDir(), 'status', '--porcelain'), '');
+    // A fresh Go ahead: published on the profile's tip, by the commit's own SHA, with the director's sign-in.
+    w.gitFails = undefined;
+    pushes.length = 0;
+    const { run: journal } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    const tip = await g(profileRemoteUrl, 'rev-parse', 'wheelhouse-profile');
+    const pushed = pushes.filter((p) => p.args.at(-1).endsWith(':refs/heads/wheelhouse-profile'));
+    assert.deepEqual(pushed.map((p) => p.args), [['push', '--no-verify', '--porcelain', profileRemoteUrl, `${tip}:refs/heads/wheelhouse-profile`]]);
+    assert.deepEqual(pushed[0].env, { GIT_NO_REPLACE_OBJECTS: '1', ...directorGitEnv({ host: 'github', gitPath: 'git' }) });
+    const own = JSON.parse(await g(profileRemoteUrl, 'show', `wheelhouse-profile:${file}`));
+    assert.deepEqual(Object.keys(own), ['computer', 'publicKey', 'at']);
+    assert.equal(own.computer, computerId());
+    assert.equal(own.at, NOW.toISOString());
+    // The helper's own branch never carries it.
+    assert.equal(await g(profileDir(), 'rev-parse', 'refs/heads/wheelhouse-profile'), branch);
+    assert.equal(await g(profileDir(), 'status', '--porcelain'), '');
+    assert.deepEqual(journal.changes.filter((c) => c.target.endsWith(file)).map((c) => [c.kind, c.before]), [['host', null]]);
   });
 });
 
@@ -1358,6 +1401,8 @@ test('a second computer joins from an empty folder: the project found on an orga
       `folder ${path.join('<folder>', '.git')}`, `file ${path.join('<folder>', '.claude', 'settings.json')}`,
       `file ${path.join('~', 'profile.json')}`, `folder ${path.join('~', 'profile')}`,
       `folder ${path.join('~', 'projects', 'cafe-co__Cafe-Menu', 'state')}`, `file ${path.join('~', 'projects', 'cafe-co__Cafe-Menu', 'project.json')}`,
+      // A joining computer publishes its key too, so the first computer can trust it (ruling R79).
+      `host github:${USER}/${PROFILE_REPO}:enrolments/${computerId()}.json`,
     ]);
     assert.ok(order.indexOf('answer step 3') === 0, 'joining is recorded before anything is done');
     // The profile found, not made; nothing made on the host at all.

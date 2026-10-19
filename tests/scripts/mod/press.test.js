@@ -506,6 +506,25 @@ test('Turn on (dangerous) on the Unattended card records nothing from the pane, 
   assert.equal(waitingIds().includes(other.id), false);
 }));
 
+test('no press on a trust card records anything or trusts anyone: only the director\'s click on the card itself does (ruling R80)', () => withKey(async (home) => {
+  const trust = putCard(composeCard({
+    ...common, kind: 'trust', recommend: 'Trust it', what: 'Your computer 0a1b2c3d put its key in your profile.',
+    options: [says('Trust it')], target: { computer: '0a1b2c3d', at: '2026-10-19T04:00:00.000Z', fingerprint: 'abcdef012345' },
+  }).card);
+  const before = readEnrolled();
+  for (const label of ['Trust it', 'Not now', 'Explain more']) {
+    const client = fake();
+    const got = await press(trust, client, label);
+    assert.equal(got.made, false, label);
+    assert.equal(untouched(client), 0, label);
+    assert.equal(client.calls.profileRecord.length, 0, label);
+  }
+  assert.deepEqual(readEnrolled(), before, 'nothing enrolled');
+  assert.equal(fs.existsSync(path.join(home, 'trust')), false, 'no trust click kept');
+  assert.deepEqual(pendingFiles(), []);
+  assert.equal(listEvents(stateDir(P), { report: () => {} }).some((e) => e.kind === 'card-answer' || e.kind === 'action'), false);
+}));
+
 test('no press on a setup card records anything: only the director\'s click on the card setup showed lets its step go ahead', () => withKey(async () => {
   const hash = 'fedcba9876543210'.repeat(4);
   const setup = putCard(composeCard({ ...common, kind: 'setup', recommend: 'Go ahead', what: 'Setup step 1, checking this computer, changes nothing on it.', options: [says('Go ahead')], target: { step: 1, hash } }).card);

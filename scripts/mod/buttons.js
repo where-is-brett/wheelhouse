@@ -8,17 +8,21 @@
 // does a setup card, nor setup's card of the rules found: its step goes ahead only by the
 // director's click on the very card setup showed, which only the prompt record counts
 // (scripts/setup/clicks.js). Nor does the baseline card, for the same reason
-// (scripts/lib/measures-clicks.js); it is never a card event anyway.
+// (scripts/lib/measures-clicks.js); it is never a card event anyway. Nor does a trust card (ruling
+// R80): another computer is trusted only by the director's click on the card the session start
+// composed, which only the prompt record counts (scripts/lib/trust-clicks.js).
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
-import { setLinesOf } from '../state/card-lines.js';
+import { setLinesOf, TRUST_LINE } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
 // A setup card's note: setup asks it in its own chat, and that is where it is answered.
 export const SETUP_ANSWER = 'This card can\'t be answered here: answer it in the chat where setup asked it.';
+// A trust card's note: it is answered only in the chat where it was asked.
+export const TRUST_ANSWER = 'This card can\'t be answered here: answer it in the chat where it was asked.';
 const ANSWER_LINE = /^Answer question /;
 const SETUP_LINE = /^(?:Set up step |Confirm all [1-9][0-9]* rules? as listed, )/;
 const EXPLAIN = 'Explain more';
@@ -46,6 +50,12 @@ export function isSetupCard(card) {
   return card?.kind === 'setup' || card?.kind === 'confirm-all' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
 }
 
+// Whether a card is a trust card: of kind trust, or carrying a trust card's set line.
+export function isTrustCard(card) {
+  const text = typeof card?.question === 'string' ? card.question : '';
+  return card?.kind === 'trust' || setLinesOf(text).some((line) => TRUST_LINE.test(line));
+}
+
 // cardButtons(card) -> { buttons, note }. `card` is a card event's data: { kind, question,
 // options }. Never throws.
 export function cardButtons(card) {
@@ -67,6 +77,8 @@ function buttonsOf(card) {
   if (text.includes(UNATTENDED_CARD().risk)) return { buttons: [], note: CANT_ANSWER };
   // A setup card: nothing on it is answered from the pane either, only in setup's chat.
   if (isSetupCard(card)) return { buttons: [], note: SETUP_ANSWER };
+  // A trust card: nor is anything on it, only by the click on the card itself.
+  if (isTrustCard(card)) return { buttons: [], note: TRUST_ANSWER };
   // The baseline card: nor is anything on it, only by the click on the card the helper composed.
   if (card.kind === 'baseline' || baselineWording(text)) return { buttons: [], note: CANT_ANSWER };
 

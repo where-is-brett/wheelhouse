@@ -35,7 +35,10 @@
 //      the profile, where it takes effect on the director's Confirm (ruling R56). An app of their
 //      own on an organisation can't reach the profile on their own account, so a profile made
 //      with it is reached Quick;
-//   5. Wheelhouse's record of the project (writeProject), then its state clone (cloneState).
+//   5. Wheelhouse's record of the project (writeProject), then its state clone (cloneState);
+//   6. this computer's key put in the profile as enrolments/<computer>.json, pushed by its exact
+//      commit with the director's own sign-in, so their other computers can trust it on a click
+//      there (computers.js, ruling R79).
 // Each change is recorded in the journal just before it is made. The step is long (ruling R40): it
 // runs in its own process, and says each thing the director must do (a code, the Install page) as
 // a line, through ctx.say, which /setup/status shows. It waits for step 2 (`after: [2]`, ruling
@@ -103,6 +106,7 @@ import {
   appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
+import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
 
 // The Wheelhouse organisation's GitHub App: null fields until the organisation is made and the app
 // registered (Card 1).
@@ -1158,20 +1162,21 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   else if (appKeys === 'signed-in') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick the project and profile on its Install page, not All repositories`);
   else parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}: a code on GitHub, then tick the project and profile on its Install page, not All repositories`);
   parts.push('the project\'s record and state branch');
+  if (changes.some((c) => c.action === 'enrolment')) parts.push(ENROLMENT_PART);
   // A joining computer's project already has its protection, from the first computer's step 7.
   if (!product.joining) parts.push(protectionPlanLine(host));
   return {
     kind: 'setup',
     level: 3,
     what: `Setup step 3, ${SETUP_TITLES[3]}: ${parts.join('; ')}.`,
-    why: 'Agents reach the host only through Wheelhouse\'s helper, with the connection chosen.',
+    why: 'Agents reach the host only through Wheelhouse\'s helper, as chosen.',
     options: [
       { label: SETUP_LABEL, says: 'Setup does what is listed, saying what to do as it comes.' },
       { label: 'Not now', says: 'Nothing is made yet.' },
     ],
     recommend: SETUP_LABEL,
     because: 'the next steps need the project on the host',
-    meanwhile: 'Setup waits here; nothing is made.',
+    meanwhile: 'Nothing is made yet.',
   };
 }
 
@@ -1313,6 +1318,8 @@ export function hostStep({
       const slug = repo === null ? null : slugFor(repo);
       changes.push({ kind: 'file', target: slug === null ? path.join(wheelhouseHome(), 'projects') : projectFile(slug), action: 'project', repo });
       changes.push({ kind: 'folder', target: slug === null ? path.join(wheelhouseHome(), 'projects') : stateDir(slug), action: 'state', repo });
+      // This computer's key, in the profile for the director's other computers (ruling R79).
+      changes.push(enrolmentChange({ host }));
       return {
         changes,
         card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys }),
@@ -1479,6 +1486,14 @@ export function hostStep({
       record({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: `${JSON.stringify(kept, null, 2)}\n` });
       writeProject(slug, kept);
       if (joined === null) await cloneRecords();
+      // This computer's key, put in the profile with the director's own sign-in (ruling R79).
+      const enrolment = changes.find((c) => c.action === 'enrolment') ?? null;
+      if (enrolment !== null) {
+        halt();
+        await publishEnrolment({
+          profile, listed: enrolment, gitPath: git.path, env: directorGitEnv({ host: Object.hasOwn(TOOL, profile.host) ? profile.host : host, gitPath: git.path, platform }), run, record, now,
+        });
+      }
       say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : 'narrow'}`);
       return [];
     },

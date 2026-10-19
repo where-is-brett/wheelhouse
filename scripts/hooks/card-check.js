@@ -1,11 +1,11 @@
 // scripts/hooks/card-check.js
 // Refuses a question card in the wrong form before the director sees it. A card has its five
 // labelled parts; a card with a set line has that one line, its own reply code line (none for a
-// kind the composer gives no code, such as setup's), and a first part that names what the set
-// line names and no other pull request or commit. The prompt record is what refuses a wrong
-// click, so this only informs: it refuses nothing it can't read, and a failure of its own lets
-// the card through. A card that doesn't come from scripts/cards/compose.js can fail it; one that
-// does cannot.
+// kind the composer gives no code, such as setup's or a trust card's), and a first part that names
+// what the set line names (for a trust card, the computer it trusts) and no other pull request or
+// commit. The prompt record is what refuses a wrong click, so this only informs: it refuses nothing
+// it can't read, and a failure of its own lets the card through. A card that doesn't come from
+// scripts/cards/compose.js can fail it; one that does cannot.
 // In any folder, a card that reads as the baseline card (any of its fixed words however written, or
 // its header with the private note's figures) is refused unless it is the very card the helper
 // composed and recorded as shown, word for word: a reworded copy would carry the figures without
@@ -18,7 +18,7 @@ import { runAndExit, answer, projectOf, beingSetUp } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { PART_LABELS, whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import {
-  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES,
+  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE,
 } from '../state/card-lines.js';
 
 const SHA12 = '([0-9a-f]{12})';
@@ -45,6 +45,7 @@ function targetOf(line) {
   if ((m = new RegExp(`^Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})$`).exec(line))) return { kind: 'incident-fix', target: { incident: m[2], pr: Number(m[1]) } };
   if ((m = new RegExp(`^Set up step ([0-9]{1,2}) as listed, ${SHA12}$`).exec(line)) && Object.hasOwn(SETUP_TITLES, m[1])) return { kind: 'setup', target: { step: Number(m[1]), hash: m[2] } };
   if ((m = new RegExp(`^Confirm all ([1-9][0-9]*) rules? as listed, ${SHA12}$`).exec(line))) return { kind: 'confirm-all', target: { count: Number(m[1]), hash: m[2] } };
+  if ((m = TRUST_LINE.exec(line))) return { kind: 'trust', target: { computer: m[1], fingerprint: m[3] } };
   return null;
 }
 
