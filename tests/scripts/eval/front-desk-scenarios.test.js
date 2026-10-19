@@ -163,8 +163,12 @@ test('promptContext gives what the real board context hook gives over the same s
   });
   const mine = promptContext({ views, events: seed, seen: { promptAt: ago(180), briefedAt: null }, at, usage: null, home: tempFolder('prompt-context-real-') });
   // The real hook's home has no profile backed up, which its health lines say under "To watch:".
-  const withoutHealth = real.replace(/\n\nTo watch:\n(?:- [^\n]*\n?)+/, '\n\n').replace(/\n\n\n+/g, '\n\n');
-  assert.match(real, /To watch:\n- /);
+  // The blocked pull request is there in both; only the health lines are taken out of the real text.
+  const blocked = /^- Pull request #17 for [^\n]* is blocked: [^\n]*$/m;
+  assert.match(real, blocked);
+  assert.match(mine, blocked);
+  const withoutHealth = real.replace(/\nTo watch:\n(?:- [^\n]*\n?)+/, (block) => block.split('\n').filter((line) => !line.startsWith('- ') || blocked.test(line)).join('\n'));
+  assert.notEqual(withoutHealth, real, 'the real text has health lines to take out');
   assert.equal(withoutHealth, mine);
 });
 

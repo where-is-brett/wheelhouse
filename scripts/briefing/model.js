@@ -6,7 +6,7 @@
 // What changed for users and the merges in progress count only when they are after `since`, the
 // last briefing (no since: all of them). What waits, what is building and the open pull requests
 // are shown whenever they stand; a pull request whose work's latest report says blocked is in what
-// to watch, with the report's reason, rather than in progress. Unusual use is raised once: items
+// to watch, in Wheelhouse's own words, rather than in progress. Unusual use is raised once: items
 // already raised are left out, and `raise` lists the ids this briefing includes, in the order they
 // follow the weekly lines in `watch`. The caller marks as raised (markRaised) only those its text
 // showed, `raise.slice(0, shownWatch - weekly)` from briefingParts, once the briefing has really
@@ -102,15 +102,13 @@ function pullRequestName(p, features) {
   return `Pull request #${p.pr}${name ? ` for ${name}` : ''}`;
 }
 
-// The pull requests whose work's latest report says blocked (the board model's `blocked`), with why:
-// the report's first clause ("Checks red on #17"). The rest of the report is the build's own account
-// of what it tried, which the board's build tab gives.
+// The pull requests whose work's latest report says blocked (the board model's `blocked`), in
+// Wheelhouse's own words. The report's summary is text the build wrote, which may carry its own
+// talk or an instruction (design section 12.5), so it stays on the board and never reaches here.
+const BLOCKED = 'is blocked: its build stopped and couldn\'t go on; the board has its report';
 function blockedLines(model) {
   const features = records(model.build?.features);
-  return openPullRequests(model).filter((p) => typeof p.blocked === 'string').map((p) => {
-    const why = oneLine(p.blocked).split(/[:;]\s|[.!?](?:\s|$)/)[0].trim();
-    return `${pullRequestName(p, features)} is blocked${why ? `: ${why}` : ', and its report gives no reason'}`;
-  });
+  return openPullRequests(model).filter((p) => typeof p.blocked === 'string').map((p) => `${pullRequestName(p, features)} ${BLOCKED}`);
 }
 
 function progressLines(model, isNew) {
