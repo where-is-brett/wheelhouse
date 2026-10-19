@@ -25,17 +25,13 @@ import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { keep, taken, withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
-import { stateDir } from '../lib/paths.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { numberedWaiting } from '../board/model.js';
-import { listEvents } from '../state/events.js';
-import { buildViews } from '../state/views.js';
-import { readEnrolled } from '../state/signing.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
 import { cardButtons, kindOf } from './buttons.js';
-import { hashOf } from './status.js';
-import { claim, answeredInPending, repliedDir } from './reply.js';
+import { cardTextOf, hashOf } from './status.js';
+import { claim, answeredInPending, repliedDir, viewsNow } from './reply.js';
 
 const NOT_NOW = 'Not now';
 // Longer than any option a card offers.
@@ -49,6 +45,7 @@ export const SAYS = {
   notOffered: 'That card doesn\'t offer that',
   unread: 'The cards can\'t be read yet',
   noMatch: 'That couldn\'t be recorded: the card no longer matches what it decides',
+  noPrState: 'Wheelhouse couldn\'t check the pull request just now, so nothing was recorded; try again',
   failed: 'That card\'s answer can\'t be recorded now',
   cantSign: 'Wheelhouse couldn\'t sign that here, so nothing was recorded',
   cantLift: 'STOP couldn\'t be lifted, so nothing was recorded',
@@ -59,13 +56,6 @@ export const SAYS = {
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const no = (says) => ({ made: false, says });
 const kept = (says, sent) => (sent ? says : `${says} (kept until the helper takes it)`);
-
-// The views and the events, built from the state clone as writeViews builds them.
-function viewsNow(project, now) {
-  const damaged = [];
-  const events = listEvents(stateDir(project), { report: () => {}, skipped: damaged });
-  return { views: buildViews(events, readEnrolled(), { damaged, now }), events };
-}
 
 // The id of the live shown record that holds the card's reply code, or null when it has none.
 function shownIdOf(shown, question) {
@@ -155,7 +145,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   if (!isRecord(entry?.data)) return no(SAYS.answered);
   const { data } = entry;
   // The text the pane drew: the question, or the title of a card that has none.
-  const question = typeof data.question === 'string' ? data.question : typeof data.title === 'string' ? data.title : '';
+  const question = cardTextOf(data);
   if (typeof hash !== 'string' || hash !== hashOf(question)) return no(SAYS.changed);
   if (typeof label !== 'string' || label === '' || label.length > LABEL_CHARS || /[\p{Cc}\p{Cf}]/u.test(label)) return no(SAYS.notOffered);
   const button = cardButtons(data).buttons.find((b) => b.label === label);
@@ -211,9 +201,21 @@ async function signed({ project, question, label, what, markers, shownAt, api, l
     }
     held.push(file);
   }
+  // Whether earned asked the helper for a pull request's head and got no answer: an error, a
+  // refusal or no answer in time, which earned reads as nothing earned, as it does a moved head.
+  let prUnanswered = false;
+  const watched = {
+    ...api,
+    prState: (args) => {
+      prUnanswered = true;
+      const asked = Promise.resolve().then(() => api.prState(args));
+      asked.then((state) => { prUnanswered = state?.ok !== true; }, () => {});
+      return asked;
+    },
+  };
   let got;
   try {
-    got = await earned({ project, question, label, client: api, now, left, stopState, shownAt });
+    got = await earned({ project, question, label, client: watched, now, left, stopState, shownAt });
   } catch {
     release(held);
     return no(SAYS.failed);
@@ -221,7 +223,7 @@ async function signed({ project, question, label, what, markers, shownAt, api, l
   if (!got) {
     // Nothing was recorded, so the card is let go and can be pressed again.
     release(held);
-    return no(SAYS.noMatch);
+    return no(prUnanswered ? SAYS.noPrState : SAYS.noMatch);
   }
   let lifting = false;
   let record;

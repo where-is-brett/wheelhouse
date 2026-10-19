@@ -288,6 +288,23 @@ test('an approval whose pull request moved records nothing and says why', () => 
   assert.equal(lifted, 0);
 }));
 
+test('an approval whose pull request the helper couldn\'t answer records nothing and says to try again', () => withKey(async () => {
+  const card = putCard(approvalCard());
+  const says = 'Wheelhouse couldn\'t check the pull request just now, so nothing was recorded; try again';
+  // The helper answers that it can't, or fails outright.
+  const refused = fake({ pr: { ok: false, why: 'the host is down' } });
+  assert.deepEqual(await press(card, refused, 'Approve'), { made: false, says });
+  const failing = fake();
+  failing.prState = async () => { throw new Error('the helper is down'); };
+  assert.deepEqual(await press(card, failing, 'Approve'), { made: false, says });
+  for (const client of [refused, failing]) assert.equal(client.calls.record.length + client.calls.write.length, 0);
+  assert.deepEqual(pendingFiles(), []);
+  // The card was let go, and a closed pull request is a card that no longer matches.
+  const closed = fake({ pr: { ok: true, result: { headSha: FULL, state: 'closed' } } });
+  assert.deepEqual(await press(card, closed, 'Approve'), { made: false, says: 'That couldn\'t be recorded: the card no longer matches what it decides' });
+  assert.equal((await press(card, fake(), 'Approve')).made, true);
+}));
+
 test('under STOP, Approve still records and closes its card; Not now says it was not noted', () => withKey(async () => {
   setStop({ by: 'prompt', now: () => NOW });
   const approval = putCard(approvalCard());

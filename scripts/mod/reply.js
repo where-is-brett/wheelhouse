@@ -66,12 +66,12 @@ export function recordedAs(made, question) {
 
 const no = (says) => ({ made: false, says });
 
-// The shown view and its damage, built from the state clone as writeViews builds them.
-function shownNow(project, now) {
+// The views and the events they were built from, from the state clone as writeViews builds them.
+// A reply reads its card in the shown view, and a press on the pane in the waiting view.
+export function viewsNow(project, now) {
   const damaged = [];
   const events = listEvents(stateDir(project), { report: () => {}, skipped: damaged });
-  const views = buildViews(events, readEnrolled(), { damaged, now });
-  return { shown: views.shown, damaged: views.damaged };
+  return { views: buildViews(events, readEnrolled(), { damaged, now }), events };
 }
 
 // Whether a signed record kept in pending/, not yet taken by the helper, answers the card: it
@@ -128,7 +128,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   }
   let views;
   try {
-    views = shownNow(project, now);
+    ({ views } = viewsNow(project, now));
   } catch {
     return no('The cards shown can\'t be read yet');
   }

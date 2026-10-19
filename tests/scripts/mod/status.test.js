@@ -5,10 +5,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
-import { paneModel, paneStatusFile, writePaneStatus, readPaneStatus, QUESTION_WAITS } from '../../../scripts/mod/status.js';
-import { CARD_HASH_CHARS, PANE_LINES } from '../../../scripts/lib/mod-numbers.js';
+import { paneModel, paneStatusFile, writePaneStatus, readPaneStatus, QUESTION_WAITS, cardTextOf } from '../../../scripts/mod/status.js';
+import { needsYou, courierWake } from '../../../scripts/mod/courier.js';
+import { makeEvent } from '../../../scripts/state/events.js';
+import { buildViews } from '../../../scripts/state/views.js';
+import { readEnrolled } from '../../../scripts/state/signing.js';
+import { CARD_HASH_CHARS, LEADS, PANE_LINES } from '../../../scripts/lib/mod-numbers.js';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { numberedWaiting, NO_STATE, NO_SETTINGS, NO_SOURCES } from '../../../scripts/board/model.js';
+import { CANT_ANSWER } from '../../../scripts/mod/buttons.js';
 import { cardNumbered } from '../../../scripts/cards/visit.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -86,7 +91,7 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
   assert.equal(first.note, null);
   assert.deepEqual(third.buttons.map((b) => [b.label, b.does]), [['Comma', 'record'], ['Tab', 'record'], ['Explain more', 'turn']]);
   // A question from the build that no card asks yet is one line and no buttons.
-  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false });
+  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the front desk will ask it');
 }));
 
@@ -130,6 +135,82 @@ test('each card says whether it blocks, by the front desk\'s order, and the open
   assert.deepEqual(damaged.incidents, []);
   assert.ok(damaged.missing.includes('The pane\'s list of open incidents couldn\'t be built'));
 }));
+
+// One courier tick of session s-1 on the pane's model, as the bridge's tick gives it.
+const courierOn = (model, over = {}) => courierWake({
+  project: P, session: 's-1', items: needsYou({ after: model }), presence: { value: 'here' }, quiet: undefined, idle: true, now: () => NOW, timeZone: 'UTC', ...over,
+});
+// Session s-1 opened a day ago, finding nothing, so its ticks are ordinary.
+const openCourier = () => courierWake({ project: P, session: 's-1', items: [], presence: { value: 'here' }, idle: true, now: () => new Date(NOW.getTime() - 24 * 3600 * 1000) });
+
+test('each card says whether the front desk has asked it, and an asked card never wakes the front desk', () => withHome(async (home) => {
+  const repo = register(home);
+  await openCourier();
+  // The waiting view as the state builds it: a card made and asked in one turn, a card put off
+  // with Not now in the chat (still waiting, asked), and a card nobody has asked yet.
+  const event = (kind, data, minute) => makeEvent({ kind, data, now: () => new Date(Date.parse(at(9)) + minute * 60 * 1000) });
+  const made = event('card', approval, 0);
+  const putOff = event('card', answer, 1);
+  const fresh = event('card', { kind: 'question', header: 'Question', options: ['Yes', 'No'], question: 'A new question?', level: 2 }, 2);
+  const events = [made, putOff, fresh, event('asked', { cards: [made.id, putOff.id] }, 3), event('card-answer', { card: putOff.id, label: 'Not now' }, 4)];
+  view('waiting', buildViews(events, readEnrolled(), { now: () => NOW }).waiting);
+  view('work', {});
+  view('features', {});
+  view('questions', {});
+  const model = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(model.cards.map((c) => [c.id, c.asked]), [[made.id, true], [putOff.id, true], [fresh.id, false]]);
+  const got = await courierOn(model);
+  assert.deepEqual(got.sent, [`card:${fresh.id}`]);
+  assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Ask any new cards now, once, then send Claude's notification in one line.`);
+  // The asked cards stay unwoken on later ticks too.
+  assert.deepEqual(await courierOn(model, { now: () => new Date(NOW.getTime() + 3600 * 1000) }), { submit: null, sent: [] });
+}));
+
+test('a build question that holds up all work blocks and wakes while away; one that doesn\'t is held', () => withHome(async (home) => {
+  const repo = register(home);
+  await openCourier();
+  const work = (id, dependsOn = []) => ({ key: id, work: { id: `ev-${id}`, at: at(8), data: { id, title: id, lane: 'build', dependsOn } } });
+  const away = { presence: { value: 'away', until: '2026-10-19T20:00:00.000Z' } };
+  view('waiting', []);
+  view('features', {});
+  view('questions', { 'q-export-csv-2': question('q-export-csv-2', at(11), 'Which encoding?') });
+  // The one open feature asks the question, so all work waits on it.
+  view('work', { 'export-csv': work('export-csv') });
+  const blocking = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(blocking.cards.map((c) => [c.id, c.blocking, c.asked]), [['q:q-export-csv-2', true, false]]);
+  assert.deepEqual((await courierOn(blocking, away)).sent, ['card:q:q-export-csv-2']);
+
+  // Another question, while other work goes on without the work that asks it: held while away.
+  view('questions', { 'q-export-csv-3': question('q-export-csv-3', at(12), 'Which quoting?') });
+  view('work', { 'export-csv': work('export-csv'), 'sign-in': work('sign-in') });
+  const held = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(held.cards.map((c) => [c.id, c.blocking]), [['q:q-export-csv-3', false]]);
+  const later = { ...away, now: () => new Date(NOW.getTime() + 3600 * 1000) };
+  assert.deepEqual(await courierOn(held, later), { submit: null, sent: [] });
+  // Other work that waits on it: the question holds up all work again.
+  view('work', { 'export-csv': work('export-csv'), 'sign-in': work('sign-in', ['export-csv']) });
+  const waits = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(waits.cards.map((c) => [c.id, c.blocking]), [['q:q-export-csv-3', true]]);
+}));
+
+test('a card that fails the card check and offers no Explain more has no button, and its note says it can\'t be answered here', () => withHome(async (home) => {
+  const repo = register(home);
+  // The reply code line left out, and only the deciding option and Not now offered.
+  const broken = { ...approval, question: approval.question.split('\n').filter((l) => !l.startsWith('Reply code:')).join('\n'), options: ['Approve', 'Not now'] };
+  view('waiting', [{ id: 'c-broken', at: at(9), data: broken, asked: null }]);
+  const [card] = (await paneModel({ project: P, cwd: repo, now: () => NOW })).cards;
+  assert.deepEqual(card.buttons, []);
+  assert.equal(card.note, CANT_ANSWER);
+  assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the front desk about it.');
+}));
+
+test('a card\'s text is its question, or its title when it has none', () => {
+  assert.equal(cardTextOf({ question: 'Q?', title: 'T' }), 'Q?');
+  assert.equal(cardTextOf({ title: 'T' }), 'T');
+  assert.equal(cardTextOf({ question: 3, title: 'T' }), 'T');
+  assert.equal(cardTextOf({}), '');
+  assert.equal(cardTextOf(null), '');
+});
 
 test('a build-loop question no card asks yet is one line with no buttons', () => withHome(async (home) => {
   const repo = register(home);

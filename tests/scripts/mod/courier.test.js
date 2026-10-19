@@ -73,6 +73,11 @@ test('a new card, STOP, an incident, a health stop and a finished feature are ea
   assert.deepEqual(await wake(items, { now: () => at(T0 + COURIER_GAP_MS * 2) }), { submit: null, sent: [] });
 }));
 
+test('a card the front desk has asked is not needs-you; an unasked card and a build question are', () => {
+  const after = model({ cards: [{ ...card('c-asked', 1), asked: true }, { ...card('c-new', 2), asked: false }, { ...card('q:q-1', 3, true), asked: false }] });
+  assert.deepEqual(needsYou({ after }), [cardItem('c-new', 2), cardItem('q:q-1', 3, true)]);
+});
+
 test('away lets through STOP, an incident, health and a blocking card, and holds the rest', () => opened(async () => {
   const away = { value: 'away', until: '2026-10-19T07:00:00.000Z' };
   const items = [cardItem('c-plain', 1), cardItem('c-block', 2, true), { id: 'finished:w', kind: 'finished' }];

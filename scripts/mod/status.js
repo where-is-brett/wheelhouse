@@ -21,6 +21,7 @@ import { stopState } from '../lib/stop.js';
 import { listEvents } from '../state/events.js';
 import { CARD_HASH_CHARS, PANE_LINES } from '../lib/mod-numbers.js';
 import { importanceOf, IMPORTANCE } from '../cards/visit.js';
+import { answerLine } from '../state/card-lines.js';
 import { STOP_LINE } from '../board/health.js';
 import { cardButtons, kindOf } from './buttons.js';
 
@@ -81,6 +82,18 @@ export function readPaneStatus(project) {
   }
 }
 
+// The text the pane draws for a card's data, and a press names it by: its question, or its title
+// when it has none.
+export const cardTextOf = (data) => (typeof data?.question === 'string' ? data.question : typeof data?.title === 'string' ? data.title : '');
+
+// Whether a card ranks above level 3 in the front desk's own order: STOP or an incident, level 4,
+// or holding up all work.
+const blocks = (card, views) => importanceOf(card, views) > IMPORTANCE.LEVEL_3;
+
+// The answer card the front desk would compose for a question from the build, as far as its rank
+// reads it: its kind, the question's answer line and the question's level (compose.js).
+const answerCardFor = (id, views) => ({ data: { kind: 'answer', line: answerLine(id), level: views?.questions?.[id]?.question?.data?.level } });
+
 // The first CARD_HASH_CHARS of the SHA-256 of a card's whole text: what a press names the card by.
 export const hashOf = (text) => crypto.createHash('sha256').update(text).digest('hex').slice(0, CARD_HASH_CHARS);
 
@@ -133,17 +146,21 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
   const waiting = new Map(list(views?.waiting).map((card) => [card.id, card]));
   // The board's own numbering: a card is shown by the number the board and the front desk give it.
   const cards = part('cards', () => numberedWaiting(views, cardEvents).flatMap((item) => {
+    // A question from the build no card asks yet: the front desk asks it when it makes its card,
+    // so it is never asked, and it ranks as that card will.
     if (item.card === undefined) {
-      return [{ id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: false }];
+      return [{
+        id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false,
+      }];
     }
     const card = waiting.get(item.card);
     const data = card?.data;
     if (!isRecord(data)) return [];
-    const text = typeof data.question === 'string' ? data.question : typeof data.title === 'string' ? data.title : '';
+    const text = cardTextOf(data);
     const { buttons, note } = cardButtons(data);
-    // Above level 3 in the front desk's own order: STOP or an incident, level 4, or holding up all work.
-    const blocking = importanceOf(card, views) > IMPORTANCE.LEVEL_3;
-    return [{ id: item.id, n: item.n, header: plain(data.header) || HEADERS[kindOf(data)], kind: kindOf(data), text, hash: hashOf(text), buttons, note, blocking }];
+    // Asked: the front desk has handed the card out, or it was put off with no answer.
+    const asked = card.asked !== null && card.asked !== undefined;
+    return [{ id: item.id, n: item.n, header: plain(data.header) || HEADERS[kindOf(data)], kind: kindOf(data), text, hash: hashOf(text), buttons, note, blocking: blocks(card, views), asked }];
   }), []);
 
   const building = part('list of what is building', () => {
