@@ -73,12 +73,25 @@ Run it from a clean copy of Wheelhouse's repository. It refuses a stopped plan. 
 
 It does not push. Push the branch yourself and open a pull request. Both the manifest and the register are guardrails, so this is a level 4 pull request: it needs the independent review and the director's approval through the gate. Run `node scripts/lineage/manifest.js verify` on the Mac before asking, because Actions do not run on this account. Then cut a Wheelhouse release.
 
-In each project, the foreman installs the release only when no feature is running, and holds it until the queue drains. That is not your step.
+A release that only moves the pins, with every check green, carries `lineage/release.json` saying `{ "kind": "pins-only", "lineage": "passed" }`, committed once `manifest.js verify` has passed on the release's commit. Any other release leaves it out or says another kind. In each project, the gate reads that file from Wheelhouse's repository at the release's tag: a pull request that only moves the project to a pins-only release, on Wheelhouse's default branch, needs the review but not the director's approval, and the briefing gets a line. Without the file, the director approves it as any other guardrail change.
+
+In each project, the foreman installs the release only when no feature is running, and holds it until the queue drains (`canInstall` in `scripts/lineage/release.js`). That is not your step.
 
 ## 6. Undo
 
 If a release turns out bad, a script reinstalls the previous Wheelhouse release with its pins from Wheelhouse's marketplace. Reverting the pull request alone is not enough: it would change the settings but not what is installed, and Claude Code deletes old versions 14 days after they are orphaned. Check 30 (`docs/checks/30-undo.md`) found that moving the marketplace entry back to the previous release's `ref` and `sha`, then updating, reinstalls it even when that release's folder is gone.
 
-The undo script must be tested before Wheelhouse relies on an upgrade. Do not land an upgrade while the undo is untested.
+The undo is `undo` in `scripts/lineage/release.js`. It works in two halves:
+
+1. While the project's settings still name the bad release, it opens a pull request on the branch `wheelhouse-release-<commit>` that moves the Wheelhouse marketplace's `ref` back to the earlier tag, and nothing else. The gate weighs it as any release: it needs the director's approval unless the earlier release is itself pins-only.
+2. Once that pull request has merged and the project's folder has it, the reinstall runs from a terminal outside any agent's sandbox, since it writes Claude Code's own folder:
+
+   ```
+   node scripts/lineage/release.js reinstall <project-folder> <tag> <full commit>
+   ```
+
+   It runs `claude plugin marketplace update wheelhouse`, checks this computer's copy of the marketplace is at the tag's commit, then runs `claude plugin update <plugin>@wheelhouse --scope project` for Wheelhouse and each upstream, falling back to uninstall then install where the update leaves another commit in place (two releases with the same `plugin.json` version). It then reads `gitCommitSha` from `installed_plugins.json` and prints what is installed. If the marketplace copy is still at the bad release, start a Claude Code session in the project's folder, which fetches the marketplace again from the changed settings, and run the reinstall again.
+
+The undo must be tested before Wheelhouse relies on an upgrade. Do not land an upgrade while it is untested. The trial is `node probes/29-release/run.js --go`: on a scratch marketplace and project under the temporary folder, it installs one release, moves to another, deletes the first release's folder from the cache, and reinstalls the first with the undo's reinstall, checking the commits from `gitCommitSha`. It changes this computer's plugin list while it runs, backs up and compares the four files it could touch, and puts everything back.
 
 When an upgrade turns out bad, one search of the pull request descriptions for the commit finds everything built with it, because each stamps what built it.

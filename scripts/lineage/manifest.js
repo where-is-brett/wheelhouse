@@ -20,6 +20,10 @@ export const MANIFEST_PATH = 'lineage/manifest.json';
 export const MODELS = 'the routing table in .claude/wheelhouse.json';
 // The marketplace Wheelhouse installs the pinned copies through.
 export const MARKETPLACE = 'wheelhouse';
+// Wheelhouse's own repository on GitHub, named once: the project's settings fetch the
+// marketplace from it, and the gate reads a release's tag from its https address.
+export const WHEELHOUSE_REPO = 'where-is-brett/wheelhouse';
+export const WHEELHOUSE_URL = `https://github.com/${WHEELHOUSE_REPO}.git`;
 
 // The pins (check 24) and what Wheelhouse uses of each upstream. Paths are relative to
 // the upstream's repository root.
@@ -77,8 +81,14 @@ export function readManifest(root = repoRoot()) {
 
 // --- Finding what is installed ---
 
+// Claude Code records a project's folder with its links resolved (on macOS /var is /private/var),
+// so each side is compared as given and as its real path.
+const realOrSame = (dir) => {
+  try { return fs.realpathSync(dir); } catch { return dir; }
+};
+const spelled = (dir) => path.resolve(dir.replace(/\\/g, '/')).toLowerCase();
 const sameFolder = (a, b) => typeof a === 'string' && typeof b === 'string'
-  && path.resolve(a.replace(/\\/g, '/')).toLowerCase() === path.resolve(b.replace(/\\/g, '/')).toLowerCase();
+  && [a, realOrSame(a)].some((x) => [b, realOrSame(b)].some((y) => spelled(x) === spelled(y)));
 
 // The user's Claude folder: CLAUDE_CONFIG_DIR when it is set, else ~/.claude.
 export function claudeHome(env = process.env) {
@@ -87,14 +97,15 @@ export function claudeHome(env = process.env) {
 
 // The project-scope install of `upstream` for `projectDir`, from Claude Code's record of
 // installs: { dir, sha }, or null when there is none (or the record can't be read).
-export function locateInstalled(upstream, { projectDir, claudeHome: home = claudeHome() } = {}) {
+// `marketplace` is Wheelhouse's own unless a probe names a scratch one.
+export function locateInstalled(upstream, { projectDir, claudeHome: home = claudeHome(), marketplace = MARKETPLACE } = {}) {
   let record;
   try {
     record = JSON.parse(fs.readFileSync(path.join(home, 'plugins', 'installed_plugins.json'), 'utf8'));
   } catch {
     return null;
   }
-  const installs = record?.plugins?.[`${upstream.plugin}@${MARKETPLACE}`];
+  const installs = record?.plugins?.[`${upstream.plugin}@${marketplace}`];
   if (!Array.isArray(installs)) return null;
   const found = installs.find((install) => isObject(install) && install.scope === 'project' && sameFolder(install.projectPath, projectDir)
     && typeof install.installPath === 'string' && typeof install.gitCommitSha === 'string');

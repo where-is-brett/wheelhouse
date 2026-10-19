@@ -49,7 +49,7 @@ import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
-import { MARKETPLACE, UPSTREAMS } from '../lineage/manifest.js';
+import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'];
 const HOST_TOOLS = ['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe'];
@@ -101,9 +101,6 @@ export function featureAllowRules(config, { platform = process.platform } = {}) 
 export const SWITCHED_OFF_PLUGINS = Object.freeze([
   'superpowers@claude-plugins-official', 'superpowers@synced', 'mattpocock-skills@synced',
 ]);
-
-// Where Wheelhouse's own marketplace is fetched from.
-const WHEELHOUSE_REPO = 'where-is-brett/wheelhouse';
 
 // The plugin settings (check 24): the copies pinned in Wheelhouse's marketplace on, every
 // other copy off. A project-level false beats the user's true.

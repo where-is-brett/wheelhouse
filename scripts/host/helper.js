@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { computerId, helperAddress, profileDir, stateDir } from '../lib/paths.js';
+import { computerId, helperAddress, profileDir, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { stopState, setStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
@@ -47,6 +47,8 @@ import { pendingDir } from '../hooks/pending.js';
 import { SLUG } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { bodyProvenance, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
+import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
+import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -134,8 +136,10 @@ const CONFIG_FILE = '.claude/wheelhouse.json';
 // connection's key (`run` is the keyed git runner); the head must be the one
 // the host reported. Paths come from the merge base, with renames listed as a
 // delete and an add, so a file moved out of .claude/ still counts by its old
-// path. The configuration is read from the default branch, never the pull request.
-export async function changedPaths({ mirror, host, number, headSha, defaultBranch, run: git }) {
+// path. The configuration is read from the default branch, never the pull request. For each
+// file in `read` that the pull request changes, `files` holds its text at the merge base and at
+// the head (null where it is absent) and the head's mode.
+export async function changedPaths({ mirror, host, number, headSha, defaultBranch, run: git, read = [] }) {
   if (!Number.isInteger(number) || number < 1) throw new Error('the pull request number must be a whole number from 1');
   if (typeof headSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(headSha)) throw new Error('the head commit is not known');
   if (!plainBranch(defaultBranch)) throw new Error('the default branch is not known');
@@ -154,10 +158,23 @@ export async function changedPaths({ mirror, host, number, headSha, defaultBranc
     const base = (await must(['merge-base', BASE_REF, prRef], 'finding the merge base')).trim();
     const listed = await must(['diff', '--name-only', '-z', '--no-renames', base, prRef], 'listing the changed files');
     const paths = listed.split('\0').filter((p) => p !== '');
-    return { paths, config: await baseConfig(must) };
+    const files = {};
+    for (const file of read.filter((f) => paths.includes(f))) {
+      const [before, after] = [await blobAt(must, base, file), await blobAt(must, prRef, file)];
+      files[file] = { base: before.text, head: after.text, headMode: after.mode };
+    }
+    return { paths, config: await baseConfig(must), files };
   } finally {
     await inMirror(['update-ref', '-d', prRef]);
   }
+}
+
+// One file at `commit` in the mirror, through `must`: { text, mode }, both null when it is absent.
+async function blobAt(must, commit, file) {
+  const listed = await must(['ls-tree', '-z', commit, '--', file], 'looking for a changed file');
+  const entry = /^(\d{6}) blob [0-9a-f]+\t/.exec(listed);
+  if (!entry) return { text: null, mode: null };
+  return { text: await must(['cat-file', 'blob', `${commit}:${file}`], 'reading a changed file'), mode: entry[1] };
 }
 
 // The project's configuration from the default branch's commit (BASE_REF),
@@ -660,6 +677,8 @@ export async function startHelper({
   profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
   // The installed Wheelhouse, whose lineage/manifest.json the gate checks a pull request's provenance against.
   pluginRoot = OWN_ROOT,
+  // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
+  wheelhouseRepo = WHEELHOUSE_URL,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1253,9 +1272,28 @@ export async function startHelper({
     return oneAtATime(`mirror:${project}`, async () => {
       const mirror = await mirrorFor(project);
       return changedPaths({
-        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: gitIn(ctx.gitEnv),
+        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: gitIn(ctx.gitEnv), read: [SETTINGS_FILE],
       });
     });
+  }
+
+  // Whether a pull request is a pins-only Wheelhouse release (design section 14.4, ruling R132): its
+  // branch names the release's commit, its only change is the Wheelhouse marketplace's `ref` in the
+  // project's settings, and Wheelhouse's repository, fetched over https into the helper's own
+  // mirror, has that tag at that commit, on its default branch, with a release file saying it only
+  // moves the pins and passed the lineage job. The helper's own finding, never the caller's.
+  // Resolves with `{ matched: false }` for any other pull request, else `{ matched: true, ok, ref,
+  // sha, why? }`; anything that can't be read is not pins-only.
+  async function isPinsOnlyRelease({ pr, changes }) {
+    const named = RELEASE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '');
+    if (!named) return { matched: false };
+    const sha = named[1];
+    const change = changes === null ? null : pinsOnlyChange(changes.paths, changes.files?.[SETTINGS_FILE]);
+    if (change === null) return { matched: true, ok: false, why: `it changes more than the Wheelhouse marketplace's ref in ${SETTINGS_FILE}` };
+    const checked = await oneAtATime('wheelhouse-release', () => checkRelease({
+      ref: change.ref, sha, mirror: path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), url: wheelhouseRepo, git: (args, options) => unkeyed('git', args, options),
+    }));
+    return checked.ok ? { matched: true, ok: true, ref: change.ref, sha } : { matched: true, ok: false, why: checked.why };
   }
 
   // Whether the configuration git reads when `runner` runs in `mirror` sets any
@@ -1587,9 +1625,21 @@ export async function startHelper({
     } catch {
       readable = false;
     }
+    // A pins-only Wheelhouse release needs the review but not the director's approval: it lowers
+    // that one condition and nothing else (design section 14.4).
+    let releaseCheck = { matched: false };
+    if (readable && !restore) {
+      try {
+        releaseCheck = await isPinsOnlyRelease({ pr, changes });
+      } catch {
+        releaseCheck = { matched: true, ok: false, why: 'it could not be checked' };
+      }
+    }
+    const pinsOnly = releaseCheck.ok === true;
     // A restore is a release that passed review before; the director's approval stands in for it.
-    const touchesGuardrails = (!restore && classified.touchesGuardrails) || body.touchesGuardrails === true;
+    const touchesGuardrails = (!restore && !pinsOnly && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
+    const release = pinsOnly ? { release: { kind: 'pins-only', ref: releaseCheck.ref, sha: releaseCheck.sha } } : {};
     const ci = await adapter.ciState(headSha);
     // The state clone is brought up to date first, so an incident declared on another computer is
     // seen (Ruling 115); when it can't be, the merge waits, a restore excepted, since the runbook
@@ -1630,19 +1680,23 @@ export async function startHelper({
       provenance: restore ? { ok: true } : bodyProvenance(pr.body, pluginRoot),
     });
     if (!decision.allow || stateReasons.length > 0) {
-      const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
+      const said = [
+        ...(restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : []),
+        ...(releaseCheck.matched && !pinsOnly ? [`release pull request, so it needs the director's approval: ${releaseCheck.why}`] : []),
+      ];
       const reasons = [...said, ...stateReasons, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
       // What the director's click can supply, by name, so the foreman can wait for that click
       // rather than ask (ruling R117). The reasons still list every condition that failed.
       const needs = decision.approvalMissing === true ? { needs: { approval: { pr: number, commit: headSha } } } : {};
-      return { ok: false, refused: reasons.join('; '), reasons, ...needs, ...found };
+      return { ok: false, refused: reasons.join('; '), reasons, ...needs, ...found, ...release };
     }
     if (stopped() && !restore) {
       const reasons = [...(restoreCheck.matched ? [`restore pull request: ${restoreCheck.why}`] : []), 'STOP is on'];
       return { ok: false, refused: reasons.join('; '), reasons, ...found };
     }
     const merged = await adapter.merge({ number, sha: headSha });
-    if (merged?.merged === true) return { ok: true, merged: true, sha: headSha, ...found };
+    // The front desk adds the briefing line for a pins-only release.
+    if (merged?.merged === true) return { ok: true, merged: true, sha: headSha, ...found, ...(pinsOnly ? { ...release, briefing: briefingLine(releaseCheck.ref) } : {}) };
     return { ok: false, refused: merged?.reason || 'the host did not merge the pull request', ...found };
   }
 
