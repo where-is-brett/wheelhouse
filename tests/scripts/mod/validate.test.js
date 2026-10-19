@@ -360,7 +360,8 @@ test('npm test leaves the mod\'s tests to npm run mod-check', () => {
   assert.match(pkg.scripts.test, /"tests\/\*\*\/\*\.test\.js"$/);
 });
 
-// Fix round 1: what the scans must not be fooled by.
+// What the scans must not be fooled by: spellings of a second process run, a // inside a string or
+// regular expression, a file imported from outside the mod, and a hooks.json naming another module.
 const REAL_ASK = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'ask.ts'), 'utf8');
 
 test('a second process run the scans could miss still fails, under any spelling', () => {
@@ -448,7 +449,7 @@ test('hooks.json naming any module but ./register.ts fails, and so does a report
   assert.deepEqual(checkMod({ report, ...readMod(ROOT) }).problems, []);
 });
 
-// Fix round 2: a // the scanner misreads as a comment must not hide code.
+// What a // the scanner misreads as a comment must not hide: a second process run or a forbidden member.
 const MISREAD = [
   ['hooks/mod/more.ts', "if (x) /\\/\\//.test(y); "],
   ['hooks/mod/more.ts', "if (ok) /https:\\/\\//.test(u) && "],
@@ -479,4 +480,93 @@ test('the scanner reads a regular expression after the ) of if, while, for or wi
   assert.deepEqual(membersIn("while (a) /https:\\/\\//.test(u) && $.ui.toast(1)"), ['$.ui.toast']);
   assert.deepEqual(membersIn("for (;;) /a\\/\\//.test(u); $.ui.toast(1)"), ['$.ui.toast']);
   assert.deepEqual(membersIn('const q = f(a) / 2; // $.fs.read\n$.ui.toast(q / 3)'), ['$.ui.toast']);
+});
+
+// What the bridge's one call may pass besides its argv: a stdin and a timeout, nothing that
+// could change what runs (an env, a cwd), whether spelled out, spread or held in a variable.
+test('the bridge call passes no option but stdin and timeoutMs', () => {
+  const withOptions = (options) => bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': `export const ask = async ($, request) => $.process.run(${ARGV}${options})` });
+  for (const options of ['', ', { stdin: JSON.stringify(request) }', ', { timeoutMs: 5000 }', ', { stdin: x, timeoutMs: 1 + 2, }', ', { stdin, timeoutMs }', ', { stdin: f(a, { b: 1 }), timeoutMs: `${1}` }']) {
+    assert.deepEqual(withOptions(options), { ok: true }, options);
+  }
+  const refused = [
+    ", { stdin: 'x', env: { NODE_OPTIONS: '--import=data:text/javascript,1', PATH: '/tmp/evil' } }",
+    ", { stdin: 'x', cwd: '/tmp/evil' }",
+    ', { env }',
+    ', { ...opts }',
+    ', { stdin: 1, ...opts }',
+    ', opts',
+    ', { ...{ env: {} } }',
+    ", { 'env': {} }",
+    ', { [key]: 1 }',
+    ', { stdin() { return 1 } }',
+    ', { stdin: 1 }, extra',
+    ', { stdin: 1 }.env',
+    ', [{ stdin: 1 }]',
+    ', undefined',
+  ];
+  for (const options of refused) {
+    const result = withOptions(options);
+    assert.equal(result.ok, false, options);
+    assert.match(result.why, /options/, options);
+  }
+  // The same through checkMod, and the real hooks/mod/ask.ts still passes.
+  const result = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, 'hooks/mod/ask.ts': `export const ask = async ($, r) => $.process.run(${ARGV}, { env: { PATH: '/tmp/evil' } })` } });
+  assert.match(result.problems.join('\n'), /options/);
+  assert.deepEqual(bridgeArgv(repoSources()), { ok: true });
+});
+
+// A name ending in `.*`, or `*` itself, is forbidden when it covers a forbidden pattern.
+test('a hook or call named by a wildcard that covers a forbidden one is forbidden', () => {
+  for (const hook of ['tool.*', 'config.*', 'agent.*', 'plugin.*', '*', 'classic.*', 'tool*']) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), true, hook);
+  for (const call of ['$.*', '$.tool.*', '$.fs.*', '$.settings.*', '$.command.*', '$.process.*', '$.prompt.*', '$.session.*', '$.env.*', '*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), true, call);
+  // A wildcard that covers nothing forbidden is not.
+  for (const call of ['$.clock.*', '$.ui.*', '$.plugin.*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), false, call);
+  for (const hook of ['session.*', 'prompt.*', 'command.*']) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), false, hook);
+  const result = checkMod({
+    report: reportWith([`./register.ts hooks: ${FOUR}, tool.*`, `./register.ts calls: ${CALLS.join(', ')}, $.*`]),
+    sources: SOURCES,
+    allow: { hooks: [...HOOKS, 'tool.*'], calls: [...CALLS, '$.*'] },
+  });
+  assert.match(result.problems.join('\n'), /hooks tool\.\*, which the mod must never hook/);
+  assert.match(result.problems.join('\n'), /calls \$\.\*, which the mod must never call/);
+});
+
+// The bridge's graph is read by its literal imports: a name it can't read, a require or a
+// createRequire anywhere in the graph is reported.
+test('a bridge graph that loads a file by a name the checks can\'t read is reported', (t) => {
+  const bridge = (text, more = {}) => bridgeImports(tree(t, { 'scripts/mod/bridge.js': text, ...more })).unfollowed;
+  assert.deepEqual(bridge("import { a } from './a.js';\n", { 'scripts/mod/a.js': 'export const a = 1;\n' }), []);
+  assert.deepEqual(bridge("// require('x') and import(name) are only comments here\nimport('./a.js');\n", { 'scripts/mod/a.js': 'export const a = 1;\n' }), []);
+  const cases = {
+    'a computed import()': 'const m = await import(name);\n',
+    'an import() of a template': 'const m = await import(`./${name}.js`);\n',
+    'a require(': "const m = require('./a.js');\n",
+    'a module.require(': "const m = module.require('./a.js');\n",
+    'createRequire': "import { createRequire } from 'node:module';\nconst r = createRequire(import.meta.url);\n",
+  };
+  for (const [what, text] of Object.entries(cases)) {
+    const direct = bridge(text);
+    assert.equal(direct.length, 1, what);
+    assert.match(direct[0], /scripts\/mod\/bridge\.js.*can't follow/, what);
+    // Deeper in the graph, too.
+    const deep = bridge("import './a.js';\n", { 'scripts/mod/a.js': text });
+    assert.equal(deep.length, 1, what);
+    assert.match(deep[0], /scripts\/mod\/a\.js/, what);
+  }
+});
+
+test('the real bridge graph has no import the checks can\'t follow', () => {
+  assert.deepEqual(bridgeImports(ROOT).unfollowed, []);
+});
+
+// A comment's `//` inside JSX text is not a comment, so a member of $ after it still counts.
+test('a member of $ after a // in text that is not a comment is found, whatever the brief names', () => {
+  const report = fixture('validate-repo.json');
+  const line = '<Text>See https://example.com {$.clock.now()}</Text>';
+  const result = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.tsx': `export const x = () => ${line}\n` } });
+  assert.match(result.problems.join('\n'), /\$\.clock\.now, which its brief doesn't name/);
+  // Allowed members named only in comments are not a problem.
+  const comment = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.ts': '// calls $.ui.toast and $.plugin.root\n' } });
+  assert.deepEqual(comment.problems, []);
 });

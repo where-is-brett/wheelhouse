@@ -31,8 +31,14 @@ export const FORBIDDEN_HOOKS = ['tool.check', 'tool.call', 'tool.describe', 'con
 export const FORBIDDEN_CALLS = ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*', '$.http.*', '$.model.*', '$.command.run', '$.prompt.fill', '$.session.append', '$.process.spawn', '$.env.set'];
 
 // Whether a hook or call, as the validator or the source spells it, is one the patterns name.
-// A hook may carry a matcher after its name (`tool.check{tool=Bash}`).
+// A hook may carry a matcher after its name (`tool.check{tool=Bash}`). A name that is itself
+// a wildcard (`tool.*`, `$.*`, a bare `*`) is forbidden too when what it stands for covers any
+// forbidden pattern: `tool.*` covers `tool.check`, `*` covers all of them.
 export function matchesForbidden(name, patterns) {
+  if (name.endsWith('*')) {
+    const prefix = name.slice(0, -1);
+    if (patterns.some((pattern) => (pattern.endsWith('.*') ? pattern.slice(0, -2) : pattern).startsWith(prefix))) return true;
+  }
   return patterns.some((pattern) => {
     if (pattern.endsWith('.*')) {
       const stem = pattern.slice(0, -2);
@@ -214,10 +220,80 @@ function entriesOf(sources) {
 // The mod's one entry file, the only module hooks/hooks.json and the validator's notes may name.
 const ENTRY = './register.ts';
 const ASK = 'hooks/mod/ask.ts';
-const ARGV = /^\s*\(\s*\[\s*'node'\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/mod\/bridge\.js`\s*\]\s*[,)]/;
+const ARGV = /^\s*\[\s*'node'\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/mod\/bridge\.js`\s*\]\s*$/;
+// The only options the call may pass: what goes in on standard input and how long to wait.
+const OPTION = /^(?:stdin|timeoutMs)\s*(?::|$)/;
+
+// The index just past the string or template literal that starts at `i` (a quote or a backtick).
+function afterString(code, i) {
+  const quote = code[i];
+  let j = i + 1;
+  while (j < code.length) {
+    if (code[j] === '\\') j += 2;
+    else if (code[j] === quote) return j + 1;
+    else if (quote === '`' && code[j] === '$' && code[j + 1] === '{') {
+      const end = closingOutsideStrings(code, j + 1);
+      if (end < 0) return code.length;
+      j = end + 1;
+    } else j += 1;
+  }
+  return code.length;
+}
+
+// The index of the bracket closing the one at `open`, or -1, with brackets inside strings left out.
+function closingOutsideStrings(code, open) {
+  let depth = 0;
+  for (let i = open; i < code.length; i += 1) {
+    const c = code[i];
+    if ('\'"`'.includes(c)) i = afterString(code, i) - 1;
+    else if ('({['.includes(c)) depth += 1;
+    else if (')}]'.includes(c)) {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+// The text split at its commas outside brackets and strings, without a trailing empty item.
+function splitTop(text) {
+  const items = [];
+  let item = '';
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if ('\'"`'.includes(c)) {
+      const end = afterString(text, i);
+      item += text.slice(i, end);
+      i = end - 1;
+      continue;
+    }
+    if ('({['.includes(c)) depth += 1;
+    if (')}]'.includes(c)) depth -= 1;
+    if (c === ',' && depth === 0) { items.push(item); item = ''; } else item += c;
+  }
+  if (item.trim() !== '' || items.length === 0) items.push(item);
+  return items;
+}
+
+// Whether the text between the parentheses of the bridge's call is the bridge's argv and, if
+// anything follows, one object literal whose only keys are stdin and timeoutMs: no env, cwd,
+// spread, computed key or variable, any of which could change what runs.
+function bridgeArguments(args) {
+  const [argv, options, ...more] = splitTop(args);
+  if (!ARGV.test(argv)) return "runs something other than ['node', `${$.plugin.root}/scripts/mod/bridge.js`], the bridge";
+  if (options === undefined && more.length === 0) return null;
+  const text = options.trim();
+  const body = text.startsWith('{') && closingOutsideStrings(text, 0) === text.length - 1 ? splitTop(text.slice(1, -1)) : null;
+  if (more.length > 0 || body === null || !body.every((entry) => entry.trim() === '' || OPTION.test(entry.trim()))) {
+    return "passes options other than stdin and timeoutMs (an object literal with those keys alone), so it could run something other than the bridge";
+  }
+  return null;
+}
 
 // bridgeArgv(sources) -> { ok, why? }: the sources hold exactly one `$.process.run(`, in
-// hooks/mod/ask.ts, and its argv is the literal ['node', `${$.plugin.root}/scripts/mod/bridge.js`].
+// hooks/mod/ask.ts, its argv is the literal ['node', `${$.plugin.root}/scripts/mod/bridge.js`] and
+// its options, if any, are an object literal holding only stdin and timeoutMs.
 // Every `process.run` counts, whatever stands before it (`$?.process.run`, `api.process.run`, a
 // destructured `process`), so a second run can't hide under another receiver's name.
 export function bridgeArgv(sources) {
@@ -240,7 +316,11 @@ export function bridgeArgv(sources) {
   }
   const [{ file, before, rest }] = mentions;
   if (file !== ASK) return { ok: false, why: `The mod's one $.process.run( is in ${file}, not ${ASK}` };
-  if (!/(?<![\w$.])\$\s*\.\s*$/.test(before) || !ARGV.test(rest)) return { ok: false, why: `The mod's $.process.run( in ${ASK} runs something other than ['node', \`\${$.plugin.root}/scripts/mod/bridge.js\`], the bridge` };
+  if (!/(?<![\w$.])\$\s*\.\s*$/.test(before)) return { ok: false, why: `The mod's $.process.run( in ${ASK} isn't a call on $` };
+  const open = rest.indexOf('(');
+  const close = closingOutsideStrings(rest, open);
+  const problem = close < 0 ? "can't be read" : bridgeArguments(rest.slice(open + 1, close));
+  if (problem !== null) return { ok: false, why: `The mod's $.process.run( in ${ASK} ${problem}` };
   return { ok: true };
 }
 
@@ -379,7 +459,7 @@ function taken(clause) {
   return outside ? ['*', ...names] : names;
 }
 
-// bridgeImports(root) -> { files, reaches, missing }: the bridge's static import graph from
+// bridgeImports(root) -> { files, reaches, missing, unfollowed }: the bridge's static import graph from
 // scripts/mod/bridge.js, followed through each file's relative `import … from '…'`,
 // `export … from '…'` and `import('…')`; `node:` and bare specifiers are left. `reaches` names
 // what writes Claude Code's settings: a file importing writeSettings or mergeSettings (or the
@@ -388,11 +468,14 @@ function taken(clause) {
 // scripts/setup/. The graph does reach settings.js itself, through the watcher's waker, which
 // takes only the pure featureAllowRules, and managed.js, through hooks/kit.js's projectOf,
 // which takes only the readers, so the check is on what is imported, not on the file.
-// `missing` lists imports of files that can't be read.
+// `missing` lists imports of files that can't be read; `unfollowed` lists the files in the graph
+// that load another by a name the check can't read (an `import()` of anything but a literal, a
+// `require(` or a `createRequire`), so nothing is loaded the check didn't see.
 export function bridgeImports(root) {
   const files = new Set();
   const reaches = [];
   const missing = new Set();
+  const unfollowed = [];
   const relative = (file) => slashes(path.relative(root, file));
   const resolve = (from, specifier) => {
     const base = path.resolve(path.dirname(path.join(root, from)), specifier);
@@ -417,7 +500,11 @@ export function bridgeImports(root) {
     files.add(file);
     if (NEVER_REACHED(file)) reaches.push(file);
     const code = codeOf(text);
-    for (const { specifier, clause } of importsIn(code)) {
+    const imports = importsIn(code);
+    if (imports.dynamic > 0 || /(?<![\w$])require\s*(?:\?\.\s*)?\(/.test(code) || /(?<![\w$])createRequire(?![\w$])/.test(code)) {
+      unfollowed.push(`${file} loads a file by a name the checks can't follow (an import() that isn't a literal, a require( or a createRequire)`);
+    }
+    for (const { specifier, clause } of imports) {
       if (!specifier.startsWith('.')) continue;
       const target = resolve(file, specifier);
       if (target === SETTINGS) {
@@ -432,7 +519,7 @@ export function bridgeImports(root) {
     }
   };
   visit('scripts/mod/bridge.js');
-  return { files: [...files].sort(), reaches: [...new Set(reaches)], missing: [...missing].sort() };
+  return { files: [...files].sort(), reaches: [...new Set(reaches)], missing: [...missing].sort(), unfollowed };
 }
 
 // checkMod({ report, sources, allow }) -> { hooks, calls, problems }. `report` is what
@@ -498,8 +585,12 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
     }
     const stripped = new Set(membersIn(text));
     // Read again from the raw text: a forbidden member named anywhere, a comment included, fails.
+    // A member the brief doesn't name fails here too, so a // the scan took for a comment (in
+    // JSX text, say) can't hide a call.
     for (const member of rawMembersIn(text)) {
-      if (!stripped.has(member) && matchesForbidden(member, FORBIDDEN_CALLS)) problems.push(`The mod's source names ${member}, which the mod must never call, in text that may be a comment (in ${file})`);
+      if (stripped.has(member)) continue;
+      if (matchesForbidden(member, FORBIDDEN_CALLS)) problems.push(`The mod's source names ${member}, which the mod must never call, in text that may be a comment (in ${file})`);
+      else if (!allowed.has(member)) problems.push(`The mod's source names ${member}, which its brief doesn't name, in text that may be a comment (in ${file})`);
     }
     if (imports.dynamic > 0) problems.push(`The mod's ${file} imports a file by a name the checks can't read`);
     for (const member of membersIn(text)) {
@@ -531,6 +622,7 @@ async function main() {
   const { hooks, calls, problems } = checkMod({ report, ...mod });
   const graph = bridgeImports(ROOT);
   for (const reached of graph.reaches) problems.push(`The bridge's imports reach what writes Claude Code's settings: ${reached}`);
+  for (const loose of graph.unfollowed) problems.push(`The bridge's imports can't be followed: ${loose}`);
   for (const gone of graph.missing) problems.push(`The bridge imports ${gone}, which can't be read`);
   console.log(`The mod hooks: ${hooks.length ? hooks.join(', ') : 'nothing'}.`);
   console.log(`It calls: ${calls.length ? calls.join(', ') : 'nothing'}.`);
