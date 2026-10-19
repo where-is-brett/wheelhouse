@@ -263,7 +263,7 @@ The session spends no turns writing its status: the script builds it. *Designer'
 2. the PR's provenance matches the manifest (section 14.6);
 3. **no incident is open**, unless this PR is the incident's fix.
 
-**The director's approval across an update.** An approval names the PR's head commit, and bringing a branch up to date makes a new one. The approval carries over when the feature's own changes did not move (the same patch-id) and the preview's screenshots of every changed page are identical, which is the main design's section 12.3 rule; otherwise the director is asked again. *Designer's call.*
+**The director's approval across an update.** An approval names the PR's head commit, and bringing a branch up to date makes a new one. The approval carries over when the feature's own changes did not move (the same patch-id) and the preview's screenshots of every page the configuration lists (`pages`), at every size, are identical, which is the main design's section 12.3 rule; otherwise the director is asked again. *Designer's call.*
 
 **Which PRs are shown first.** The front desk decides at approval whether the change is visible (main design, section 7.3) and records it with the approval; the foreman puts it in the brief, and the helper reads that record for the PR, never the agent's say-so. **A slice merged with its flag off is not shown first:** users see nothing. Switching the flag on is the show, at level 3. *Designer's call.*
 
