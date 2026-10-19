@@ -77,7 +77,7 @@ import { sameRemote } from '../state/git.js';
 import { profileRemote, ensureProfileClone, readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl } from './tools.js';
 import {
-  appName, ensureOwnApp, ownAppCode, ownAppFrom, recordOwnApp, helperProfile, sameLogin,
+  appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
 
@@ -114,6 +114,10 @@ export const KEY_DAYS = 365;
 // app's keys. The step waits, with this line, rather than show a Go ahead apply could only refuse.
 export const ownAppElsewhere = (app, where) => `Your own GitHub App, ${app.slug}, belongs to ${app.owner}, and an app of your own reaches only its own account's repositories, so it can't reach ${where}`;
 export const OWN_APP_WAIT_MS = 10 * 60 * 1000;
+// Said when this computer's one `github-app` keys entry holds an installation of another app than
+// the one a project would use (ruling R58): signing in to the other would overwrite the keys that
+// serve the earlier projects, and the profile. The plan waits with it; apply refuses with it.
+export const oneAppLine = ({ kept, using, where }) => `This computer keeps one GitHub App's keys, and they serve your other projects through ${kept}, so ${where} can't be connected through ${using} until a later Wheelhouse update`;
 export const NO_APP_LISTED = 'Step 3\'s list names no GitHub App';
 export const STOPPED = 'STOP came on, so setup stopped here; once STOP is lifted, a fresh Go ahead carries on';
 // How often the browser sign-in looks at STOP while it waits.
@@ -696,6 +700,24 @@ export function appKeysState(app) {
   return Number.isInteger(kept.installationId) && kept.installationId > 0 ? 'installed' : 'signed-in';
 }
 
+// The client ID of the app whose keys this computer keeps with an installation (so they serve a
+// project), or null. A damaged keys file serves nothing.
+export function keptAppInstalled() {
+  try {
+    const kept = readKey('github-app');
+    return kept && typeof kept.clientId === 'string' && Number.isInteger(kept.installationId) && kept.installationId > 0 ? kept.clientId : null;
+  } catch {
+    return null;
+  }
+}
+
+// The words for the app a client ID names, for oneAppLine.
+function appWords(clientId, { appFile, views }) {
+  if (clientId === wheelhouseApp({ appFile })?.clientId) return 'the Wheelhouse app';
+  const own = ownApp({ views });
+  return own && own.clientId === clientId ? `your own app ${own.slug}` : 'another GitHub App';
+}
+
 // The app's keys this computer keeps, with the installation, or null.
 export function keptAppKeys(app) {
   return appKeysState(app) === 'installed' ? keysFor(app) : null;
@@ -964,6 +986,23 @@ export function hostStep({
           app = { clientId: wheelhouse.clientId, slug: wheelhouse.slug, own: false };
         }
       }
+      // One app's keys per computer (ruling R58): a project on another app than the one whose keys
+      // serve the earlier projects waits. On the make route the app is looked up by its name, when
+      // the director is signed in; one not made yet is another app.
+      const keptId = app === null ? null : keptAppInstalled();
+      if (keptId !== null) {
+        let using = app.clientId;
+        if (typeof using !== 'string' && signedIn && typeof app.name === 'string') {
+          try {
+            using = (await readOwnApp({ slug: appSlug(app.name), run })).clientId;
+          } catch (error) {
+            using = error?.code === 'not-found' ? null : undefined;
+          }
+        }
+        if (using !== undefined && using !== keptId) {
+          return { wait: OWN_APP_WAIT_MS, why: oneAppLine({ kept: appWords(keptId, { appFile, views }), using: app.own ? 'your own app' : 'the Wheelhouse app', where }) };
+        }
+      }
       // How far this computer is with the app: a later project needs no new code (design section 15).
       const appKeys = typeof app?.clientId === 'string' ? appKeysState(app) : null;
       const changes = [];
@@ -1067,11 +1106,19 @@ export function hostStep({
               account: projectOwner, user, name: app.name ?? appName(projectOwner), recorded, run, say, open: opener, sleep, now, halt,
             });
             app = { clientId: found.clientId, slug: found.slug, own: true, owner: found.owner };
+          } else if (own) {
+            // The recorded app, at use: GitHub's owner must be the record's and the project's (R57).
+            await checkOwnApp({ app, account: projectOwner, run });
           }
           if (typeof app.slug !== 'string') throw new Error(NO_APP_LISTED);
+          // One app's keys per computer (ruling R58): never overwrite keys serving another app.
+          const keptId = keptAppInstalled();
+          if (keptId !== null && keptId !== app.clientId) {
+            throw new Error(oneAppLine({ kept: appWords(keptId, { appFile, views }), using: own ? 'your own app' : 'the Wheelhouse app', where: `${project.repo} on ${NAME[host]}` }));
+          }
           await connectGithubApp({
             app, repos: [project.repo, ...(withProfile && appReachesProfile ? [profile.repo] : [])], fetch, say, open: opener, sleep, now, record, halt,
-            ...(own ? { startCode: () => ownAppCode({ app, run, fetch, say, open: opener, sleep, now, halt }) } : {}),
+            ...(own ? { startCode: () => ownAppCode({ app, account: projectOwner, run, fetch, say, open: opener, sleep, now, halt }) } : {}),
           });
           // Their own app, once connected, kept in the profile for their other computers.
           if (own) {

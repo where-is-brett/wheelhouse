@@ -12,12 +12,12 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
-  directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, SIGN_UP,
+  directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED,
 } from '../../../scripts/setup/host.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { startRun, addChanges, findRun, readJournal } from '../../../scripts/setup/journal.js';
-import { readKey } from '../../../scripts/host/keys.js';
+import { readKey, writeKey } from '../../../scripts/host/keys.js';
 import { readProject } from '../../../scripts/lib/projects.js';
 import { profileRemote } from '../../../scripts/profile/store.js';
 import { stateDir, profileDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -1071,8 +1071,8 @@ test('their own app on an organisation is made there only by an owner, and reach
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
     assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: 'acme', name: 'Wheelhouse acme' });
     // A member, not an owner: refused before its page opens.
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /Only an owner of acme on GitHub can make a GitHub App there/);
-    assert.ok(!opened.some((u) => u.includes('/apps/new')));
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /Only an owner of acme on GitHub can make or install a GitHub App there/);
+    assert.ok(!opened.some((u) => u.includes('/apps/')));
     // An owner: the organisation's page; the profile on their own account is reached Quick.
     w.memberships = [{ role: 'admin', state: 'active', organization: { login: 'acme' } }];
     const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
@@ -1081,5 +1081,99 @@ test('their own app on an organisation is made there only by an owner, and reach
     assert.equal(profileRemote().connection.mode, 'quick');
     assert.deepEqual(readProject(slugFor('acme/app')).connection, { host: 'github', mode: 'narrow', project: 'acme/app' });
     assert.deepEqual(profile.writes.map((x) => x.data.value), [{ clientId: acme.clientId, slug: acme.slug, owner: 'acme' }]);
+  });
+});
+
+// ---- Fix round 1 (Task 8b) ----
+
+test('a recorded app whose owner on GitHub is not the record\'s is refused at use, before any code or key', async () => {
+  await withHome(async () => {
+    // A writer recorded its own app, asking for no more than the manifest, naming the director as owner.
+    const theirs = { clientId: 'Iv23li.mallory0001', slug: 'helpful-app', owner: 'mallory' };
+    const w = standIn({ apps: { [theirs.slug]: { ...theirs, permissions: MANIFEST_PERMISSIONS } } });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const lying = { settings: { 'own-github-app': { key: 'own-github-app', value: { ...theirs, owner: USER } } }, unconfirmed: [] };
+    const gh = github({ app: theirs, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
+    // Its waits move a clock, so a step that went on would fail fast, not wait.
+    const time = clock();
+    const step = stepFor(w, { fetch: gh.fetch, sleep: time.sleep, profileRoutes: memoryProfile(lying.settings), views: () => lying });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, now: time.now }), /GitHub says the app helpful-app belongs to mallory, not a-director as recorded/);
+    assert.equal(gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length, 0, 'no code');
+    assert.equal(readKey('github-app'), null, 'no keys');
+    // Also when this computer already keeps keys for it with an installation: refused at use.
+    writeKey('github-app', { clientId: theirs.clientId, accessToken: ACCESS, installationId: 77 });
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, now: time.now }), /belongs to mallory/);
+  });
+});
+
+test('apply refuses a recorded app on another account than the project\'s, whatever the plan said', async () => {
+  await withHome(async () => {
+    const w = standIn({ apps: { [OWN.slug]: { ...OWN, permissions: MANIFEST_PERMISSIONS } } });
+    await w.add('acme/app');
+    const folder = productFolder('app');
+    await withOrigin(folder, 'https://github.com/acme/app.git');
+    const step = stepFor(w, { profileRoutes: memoryProfile(), views: () => null });
+    const list = [
+      { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: false, app: { ...OWN, own: true } },
+      { kind: 'file', target: 'x', action: 'project', repo: 'acme/app' },
+    ];
+    await assert.rejects(applyStep(step, folder, list), /Your own GitHub App, wheelhouse-a-director, belongs to a-director, .* so it can't reach acme\/app on GitHub/);
+    assert.deepEqual(readJournal().runs.flatMap((r) => r.changes), [], 'refused before anything was made');
+  });
+});
+
+test('one app\'s keys per computer: a project on another app waits, and apply never overwrites keys that serve one', async () => {
+  await withHome(async () => {
+    const registered = appFile(tempFolder('wh-app-'));
+    const w = standIn({ apps: { [OWN.slug]: { ...OWN, permissions: MANIFEST_PERMISSIONS } } });
+    await w.add(`${USER}/shop`);
+    await w.add('acme/app');
+    const shop = productFolder('shop');
+    await withOrigin(shop, `https://github.com/${USER}/shop.git`);
+    const acme = productFolder('app');
+    await withOrigin(acme, 'https://github.com/acme/app.git');
+    const pick = (way) => choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way });
+    const plain = stepFor(w, { appFile: registered, profileRoutes: memoryProfile(), views: () => null });
+    const waits = async (folder, way, step = plain) => {
+      const planned = await answerAll(step, ctxFor(folder), pick(way));
+      assert.equal(planned.changes, undefined, `${way}: no Go ahead`);
+      assert.equal(planned.wait, OWN_APP_WAIT_MS);
+      return planned.why;
+    };
+    const keys = (clientId) => ({ clientId, accessToken: ACCESS, installationId: 77 });
+
+    // The Wheelhouse app serves an earlier project; this one chose their own app.
+    writeKey('github-app', keys(CLIENT_ID));
+    assert.match(await waits(shop, WAYS.own), /keeps one GitHub App's keys, and they serve your other projects through the Wheelhouse app, so a-director\/shop on GitHub can't be connected through your own app/);
+    // The same app again is no wait: a later project needs a tick, not new keys.
+    assert.ok((await answerAll(plain, ctxFor(shop), pick(WAYS.wheelhouse))).changes);
+
+    // Their own app (recorded and confirmed) serves an earlier project; this one chose Wheelhouse's.
+    writeKey('github-app', keys(OWN.clientId));
+    const confirmed = { settings: { 'own-github-app': { key: 'own-github-app', value: OWN } }, unconfirmed: [] };
+    const recorded = stepFor(w, { appFile: registered, profileRoutes: memoryProfile(confirmed.settings), views: () => confirmed });
+    assert.match(await waits(shop, WAYS.wheelhouse, recorded), /through your own app wheelhouse-a-director, so a-director\/shop on GitHub can't be connected through the Wheelhouse app/);
+
+    // Their own app made for an earlier project and not confirmed yet; this project is on an
+    // organisation, whose app would be another (an org-owned app after a narrow profile too).
+    assert.match(await waits(acme, WAYS.own), /through another GitHub App, so acme\/app on GitHub can't be connected through your own app/);
+    // Their own app, unconfirmed, for this same account: found by its name, the same app, no wait.
+    assert.ok((await answerAll(plain, ctxFor(shop), pick(WAYS.own))).changes);
+
+    // Apply refuses with the same reason, whatever list it is given, and leaves the keys alone.
+    writeKey('github-app', keys(CLIENT_ID));
+    const time = clock();
+    const gh = github({ app: OWN, reach: [`${USER}/shop`] });
+    const step = stepFor(w, { appFile: registered, fetch: gh.fetch, sleep: async (ms) => { time.move(ms); }, profileRoutes: memoryProfile(confirmed.settings), views: () => null });
+    const list = [
+      { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: false, app: { ...OWN, own: true } },
+      { kind: 'file', target: 'x', action: 'project', repo: `${USER}/shop` },
+    ];
+    await assert.rejects(applyStep(step, shop, list, { now: time.now }), /keeps one GitHub App's keys, and they serve your other projects through the Wheelhouse app/);
+    assert.equal(readKey('github-app').clientId, CLIENT_ID, 'the keys serving the earlier project are as they were');
+    assert.equal(gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length, 0);
   });
 });

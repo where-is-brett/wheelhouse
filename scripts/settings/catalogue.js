@@ -71,11 +71,12 @@ export const WINDOWS_BUILD_COMMANDS = { label: 'Build commands on Windows', grou
 // is none. Setup records it, and it counts only once the director confirms it. The client ID is
 // public, so no secret is kept here.
 export const OWN_GITHUB_APP_KEY = 'own-github-app';
-const CLIENT_ID = /^Iv[A-Za-z0-9._-]{4,60}$/;
+// The shape of a GitHub App's client ID, which setup checks when it reads an app back.
+export const OWN_APP_CLIENT_ID = /^Iv[A-Za-z0-9._-]{4,60}$/;
 const APP_SLUG = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/;
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const checkOwnApp = (v) => v === null || (isObject(v) && onlyKeys(v, ['clientId', 'slug', 'owner'])
-  && typeof v.clientId === 'string' && CLIENT_ID.test(v.clientId)
+  && typeof v.clientId === 'string' && OWN_APP_CLIENT_ID.test(v.clientId)
   && typeof v.slug === 'string' && APP_SLUG.test(v.slug)
   && typeof v.owner === 'string' && LOGIN.test(v.owner));
 export const OWN_GITHUB_APP = { label: 'Your own GitHub App', group: 'advanced', check: checkOwnApp, default: null, home: 'profile' };

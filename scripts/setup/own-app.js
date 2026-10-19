@@ -31,7 +31,7 @@ import { toolPath } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { startDeviceSignIn } from '../host/github-app.js';
 import { helperClient } from '../host/helper-client.js';
-import { OWN_GITHUB_APP_KEY, isAllowed } from '../settings/catalogue.js';
+import { OWN_GITHUB_APP_KEY, OWN_APP_CLIENT_ID, isAllowed } from '../settings/catalogue.js';
 import { settingWords } from '../settings/effective.js';
 import { newId } from './journal.js';
 
@@ -159,8 +159,12 @@ export async function readOwnApp({ slug, run = realRun, manifest = readManifest(
   const body = json(got.stdout);
   const clientId = body?.client_id;
   const owner = body?.owner?.login;
-  if (typeof clientId !== 'string' || clientId === '' || typeof body?.slug !== 'string' || !SLUG.test(body.slug) || !LOGIN.test(owner ?? '')) {
+  if (typeof body?.slug !== 'string' || !SLUG.test(body.slug) || !LOGIN.test(owner ?? '')) {
     throw new Error(`GitHub's answer about your app ${slug} could not be read`);
+  }
+  // Checked here, before any keys or installation are made with it.
+  if (typeof clientId !== 'string' || !OWN_APP_CLIENT_ID.test(clientId)) {
+    throw new Error(`GitHub gave your app ${slug} a client ID setup can't read, so setup has not used it`);
   }
   const grown = grownPermissions(body.permissions, manifest);
   if (grown.length > 0) {
@@ -204,6 +208,12 @@ export async function ensureOwnApp({
   account, user, name = appName(account), recorded = null, run = realRun, say = () => {}, open = async () => {},
   sleep = pause, now = () => new Date(), halt = () => {},
 }) {
+  // Only an owner of an organisation makes or installs its app: a member is told so plainly, before
+  // any page opens or any wait begins.
+  const org = !sameLogin(account, user);
+  if (org && !(await appAccounts({ run, user })).some((a) => a.kind === 'org' && sameLogin(a.login, account))) {
+    throw new Error(`Only an owner of ${account} on GitHub can make or install a GitHub App there, so setup has not opened its pages: ask one of its owners to make you one, then ask again`);
+  }
   if (recorded && sameLogin(recorded.owner, account)) {
     const found = await lookFor({ slug: recorded.slug, run });
     if (found !== null && found.clientId === recorded.clientId) return found;
@@ -211,10 +221,6 @@ export async function ensureOwnApp({
   const slug = appSlug(name);
   let found = await lookFor({ slug, run });
   if (found === null) {
-    const org = !sameLogin(account, user);
-    if (org && !(await appAccounts({ run, user })).some((a) => a.kind === 'org' && sameLogin(a.login, account))) {
-      throw new Error(`Only an owner of ${account} on GitHub can make a GitHub App there, so setup has not opened its page: ask one of its owners to make you one, then ask again`);
-    }
     say(`On the page that opens, GitHub's form for your app ${name} is filled in: tick Enable Device Flow, then click Create GitHub App`);
     await open(newAppUrl({ owner: org ? { kind: 'org', login: account } : { kind: 'user' }, name }));
     const until = now().getTime() + APP_WAIT_MS;
@@ -232,17 +238,31 @@ export async function ensureOwnApp({
   return found;
 }
 
-// The code for a sign-in with the person's own app: the app read again first (its permissions may
-// have grown since it was recorded; a refusal stops the sign-in here, naming what grew), then the
-// code asked for. GitHub's "device flow disabled" is said with the app's page opened, and the code
-// asked for again until it is ticked, for APP_WAIT_MS.
-export async function ownAppCode({
-  app, run = realRun, fetch = globalThis.fetch, say = () => {}, open = async () => {}, sleep = pause, now = () => new Date(), halt = () => {},
-}) {
+// The person's own app as recorded (`app`: { clientId, slug, owner }), read back from GitHub and held
+// to what GitHub says: the same client ID, the owner the record names, and that owner the account
+// that holds the project (`account`, ruling R57). The record's words are only its writer's, so a
+// record naming the director as the owner of someone else's app is refused here, by name. Gives
+// what GitHub says of it.
+export async function checkOwnApp({ app, account, run = realRun }) {
   const read = await readOwnApp({ slug: app.slug, run });
   if (read.clientId !== app.clientId) {
     throw new Error(`Your GitHub App ${app.slug} now has another client ID than the one recorded, so setup has not signed in to it`);
   }
+  if (!sameLogin(read.owner, app.owner) || !sameLogin(read.owner, account)) {
+    throw new Error(`GitHub says the app ${read.slug} belongs to ${read.owner}, not ${account} as recorded, so setup has not signed in to it`);
+  }
+  return read;
+}
+
+// The code for a sign-in with the person's own app: the app read again first and checked
+// (checkOwnApp: its permissions may have grown since it was recorded, or its record may name another
+// owner than GitHub's; a refusal stops the sign-in here, naming what is wrong), then the code asked
+// for. GitHub's "device flow disabled" is said with the app's page opened, and the code
+// asked for again until it is ticked, for APP_WAIT_MS.
+export async function ownAppCode({
+  app, account, run = realRun, fetch = globalThis.fetch, say = () => {}, open = async () => {}, sleep = pause, now = () => new Date(), halt = () => {},
+}) {
+  const read = await checkOwnApp({ app, account, run });
   let until = null;
   for (;;) {
     try {
@@ -277,10 +297,15 @@ export function helperProfile(client = helperClient()) {
 }
 
 // The app a profile's views hold for the director, confirmed, or null: an unconfirmed or unreadable
-// entry, or none (null), is no app.
+// entry, or none (null), is no app. A confirmed app counts only while no newer proposal for the key
+// waits: a proposal can only take trust away until it is decided, never add it. So uninstall's put
+// back (putBackOwnApp) shadows a record never confirmed, whose card might be clicked later.
 export function ownAppFrom(views) {
   const entry = views?.settings?.[OWN_GITHUB_APP_KEY];
   if (!entry || typeof entry !== 'object' || entry.value === null || !isAllowed(OWN_GITHUB_APP_KEY, entry.value)) return null;
+  // The views list as unconfirmed only the proposals newer than the accepted value.
+  const waiting = Array.isArray(views?.unconfirmed) ? views.unconfirmed : [];
+  if (waiting.some((u) => u?.kind === 'setting' && (u.key ?? u.data?.key) === OWN_GITHUB_APP_KEY)) return null;
   const { clientId, slug, owner } = entry.value;
   return { clientId, slug, owner };
 }
@@ -313,15 +338,17 @@ export async function recordOwnApp({ clientId, slug, owner }, { record = () => {
 }
 
 // Uninstall's undo of recordOwnApp's change: the profile's `own-github-app` put back to what it held
-// before (none, when it held nothing), but only while it still holds what setup recorded; then, like
-// any profile setting, it takes effect once the director confirms it. The keys file's
-// `github-app` entry is not touched: its own change puts it back.
+// before (none, when it held nothing), but only while it still holds what setup recorded, or setup's
+// record was never confirmed; then, like any profile setting, it takes effect once the director
+// confirms it. The profile has no route that withdraws a proposal, so a record never confirmed is
+// shadowed instead: the put back is a newer proposal, and while it waits ownAppFrom counts no app;
+// once confirmed it is the newer value. Either way a later Confirm of setup's old card never brings
+// setup's app into effect. The keys file's `github-app` entry is not touched: its own change puts it
+// back.
 export async function putBackOwnApp(change, { profile = helperProfile() } = {}) {
   if (change?.kind !== 'host' || change.target !== PROFILE_TARGET) throw new Error('That change is not the profile\'s own GitHub App');
   const current = accepted(await profile.views());
-  if (!same(current, change.after)) {
-    return { put: false, why: same(current, change.before) ? 'never confirmed, so it never took effect' : 'changed since setup' };
-  }
+  if (!same(current, change.after) && !same(current, change.before)) return { put: false, why: 'changed since setup' };
   const got = await writeValue(profile, change.before ?? null);
   if (got?.ok !== true) return { put: false, why: `the profile could not take it: ${got?.why ?? got?.refused ?? 'the helper did not say why'}` };
   return { put: true, id: got.id };

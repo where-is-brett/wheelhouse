@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   MANIFEST_FILE, NEVER, DEVICE_FLOW_OFF, PROFILE_TARGET, readManifest, newAppUrl, appName, appSlug, readOwnApp, grownPermissions,
-  ownAppCode, ensureOwnApp, recordOwnApp, putBackOwnApp, helperProfile, appSettingsUrl,
+  ownAppCode, checkOwnApp, ensureOwnApp, recordOwnApp, putBackOwnApp, helperProfile, appSettingsUrl, ownAppFrom,
 } from '../../../scripts/setup/own-app.js';
 import { appFor } from '../../../scripts/setup/host.js';
 import { reverseChange } from '../../../scripts/setup/journal.js';
@@ -177,17 +177,17 @@ test('an app asking for more than the manifest is refused and named', async () =
 test('their own app is read again at each code sign-in, and a sign-in is refused once its permissions grew', async () => {
   const gh = fakeGh({ apps: { [OWN.slug]: { ...OWN } } });
   const flow = deviceFlow();
-  const code = await ownAppCode({ app: OWN, run: gh.run, fetch: flow.fetch });
+  const code = await ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: flow.fetch });
   assert.equal(code.userCode, 'WXYZ-1234');
   assert.equal(gh.reads(), 1, 'read before the code');
   // On GitHub, the app's owner widens it.
   gh.apps[OWN.slug].permissions = { ...MANIFEST_PERMISSIONS, workflows: 'write' };
-  await assert.rejects(ownAppCode({ app: OWN, run: gh.run, fetch: flow.fetch }), /asks for more than Wheelhouse's: Workflows \(write\)/);
+  await assert.rejects(ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: flow.fetch }), /asks for more than Wheelhouse's: Workflows \(write\)/);
   assert.equal(gh.reads(), 2, 'read again at the second sign-in');
   assert.equal(flow.asked(), 1, 'no code is asked for once it grew');
   // An app whose client ID is not the one recorded is not signed in to either.
   gh.apps[OWN.slug] = { ...OWN, clientId: 'Iv23li.another0001' };
-  await assert.rejects(ownAppCode({ app: OWN, run: gh.run, fetch: flow.fetch }), /another client ID than the one recorded/);
+  await assert.rejects(ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: flow.fetch }), /another client ID than the one recorded/);
   assert.equal(flow.asked(), 1);
 });
 
@@ -201,7 +201,7 @@ test('device flow switched off is said with the page to tick, and asked again', 
     const opened = [];
     const time = clock();
     const code = await ownAppCode({
-      app, run: gh.run, fetch: flow.fetch, say: (line) => lines.push(line), open: async (url) => { opened.push(url); }, sleep: time.sleep, now: time.now,
+      app, account: owner, run: gh.run, fetch: flow.fetch, say: (line) => lines.push(line), open: async (url) => { opened.push(url); }, sleep: time.sleep, now: time.now,
     });
     assert.equal(code.userCode, 'WXYZ-1234');
     assert.deepEqual(lines, [DEVICE_FLOW_OFF]);
@@ -214,16 +214,16 @@ test('device flow switched off is said with the page to tick, and asked again', 
   const gh = fakeGh({ apps: { [OWN.slug]: { ...OWN } } });
   const time = clock();
   await assert.rejects(
-    ownAppCode({ app: OWN, run: gh.run, fetch: deviceFlow({ disabled: Infinity }).fetch, sleep: time.sleep, now: time.now }),
+    ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: deviceFlow({ disabled: Infinity }).fetch, sleep: time.sleep, now: time.now }),
     /Enable Device Flow was not ticked on your app's page after 8 minutes/,
   );
   await assert.rejects(
-    ownAppCode({ app: OWN, run: gh.run, fetch: deviceFlow({ disabled: Infinity }).fetch, halt: () => { throw new Error('STOP came on'); } }),
+    ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: deviceFlow({ disabled: Infinity }).fetch, halt: () => { throw new Error('STOP came on'); } }),
     /STOP came on/,
   );
   // Another refusal is not taken for the tick.
   const refused = async () => ({ ok: true, status: 200, json: async () => ({ error: 'unauthorized_client' }) });
-  await assert.rejects(ownAppCode({ app: OWN, run: gh.run, fetch: refused }), /unauthorized_client/);
+  await assert.rejects(ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: refused }), /unauthorized_client/);
 });
 
 // ---- The profile's record ----
@@ -335,8 +335,6 @@ test('uninstall puts back the profile\'s own-github-app key, and leaves the keys
     const change = await recordOwnApp(OWN, { profile });
     const keyChange = { id: 'chg-key', step: 3, kind: 'host', target: 'key github-app', before: null, after: { key: 'github-app', clientId: OWN.clientId, app: OWN.slug } };
     writeKey('github-app', { clientId: OWN.clientId, accessToken: 'ghu_accesskeyfortests0001', installationId: 77 });
-    // Never confirmed: nothing took effect, so nothing is put back.
-    assert.deepEqual(await putBackOwnApp(change, { profile }), { put: false, why: 'never confirmed, so it never took effect' });
     profile.accept();
     // The journal's own reverse leaves both to their own step.
     assert.deepEqual(reverseChange({ ...change, step: 3 }), { put: false, why: 'put back by its own step' });
@@ -359,4 +357,76 @@ test('uninstall puts back the profile\'s own-github-app key, and leaves the keys
     await putBackOwnApp(over, { profile });
     assert.deepEqual(profile.writes.at(-1).data.value, theirs);
   });
+});
+
+test('a record never confirmed is put back so that a later Confirm of its card never brings it into effect', async () => {
+  await withHome(async () => {
+    const profile = memoryProfile();
+    const change = await recordOwnApp(OWN, { profile });
+    // Uninstall comes before the director confirmed setup's record: the put back is a newer proposal.
+    const put = await putBackOwnApp(change, { profile });
+    assert.equal(put.put, true);
+    assert.deepEqual(profile.writes.map((x) => x.data.value), [OWN, null]);
+    // The director clicks Confirm on setup's old card later: the newer put back still waits, so no app counts.
+    const [old, back] = profile.state.unconfirmed;
+    profile.state.unconfirmed = [back];
+    profile.state.settings[OWN_GITHUB_APP_KEY] = { key: OWN_GITHUB_APP_KEY, id: old.id, value: OWN };
+    assert.equal(ownAppFrom(await profile.views()), null);
+    // Confirming the put back leaves none.
+    profile.accept();
+    assert.equal(ownAppFrom(await profile.views()), null);
+    assert.equal(profile.state.settings[OWN_GITHUB_APP_KEY].value, null);
+    // While any newer proposal waits, a confirmed app counts for nothing: a proposal only takes trust away.
+    assert.equal(ownAppFrom({ settings: { [OWN_GITHUB_APP_KEY]: { value: OWN } }, unconfirmed: [] }).slug, OWN.slug);
+    assert.equal(ownAppFrom({ settings: { [OWN_GITHUB_APP_KEY]: { value: OWN } }, unconfirmed: [{ kind: 'setting', key: OWN_GITHUB_APP_KEY, data: { value: OWN } }] }), null);
+  });
+});
+
+test('the change is recorded before the profile is written', async () => {
+  const profile = memoryProfile();
+  const seen = [];
+  await recordOwnApp(OWN, { profile, record: () => { seen.push(profile.writes.length); } });
+  assert.deepEqual(seen, [0], 'nothing was written when the change was recorded');
+  assert.equal(profile.writes.length, 1);
+  // A write that fails leaves the change recorded, so the journal shows what was tried.
+  const failing = { ...memoryProfile(), write: async () => ({ ok: false, why: 'the helper could not be reached' }) };
+  const recorded = [];
+  await assert.rejects(recordOwnApp(OWN, { profile: failing, record: (c) => recorded.push(c) }), /could not be recorded in your profile: the helper could not be reached/);
+  assert.equal(recorded.length, 1);
+});
+
+test('a recorded app is held to GitHub\'s owner: the record\'s and the project\'s account, before any code', async () => {
+  // A writer records its own app, which asks for no more than the manifest, naming the director as owner.
+  const theirs = { clientId: 'Iv23li.mallory0001', slug: 'helpful-app', owner: 'mallory' };
+  const gh = fakeGh({ apps: { [theirs.slug]: { ...theirs } } });
+  const flow = deviceFlow();
+  const lying = { ...theirs, owner: USER };
+  await assert.rejects(ownAppCode({ app: lying, account: USER, run: gh.run, fetch: flow.fetch }), /GitHub says the app helpful-app belongs to mallory, not a-director as recorded/);
+  await assert.rejects(checkOwnApp({ app: lying, account: USER, run: gh.run }), /belongs to mallory/);
+  // A true record on another account than the project's is refused too (ruling R57).
+  await assert.rejects(checkOwnApp({ app: theirs, account: USER, run: gh.run }), /belongs to mallory, not a-director/);
+  assert.equal(flow.asked(), 0, 'no code was asked for');
+  // The app found by its name on the project's account belongs to someone else: refused, not used.
+  const squatted = fakeGh({ apps: { [OWN.slug]: { ...OWN, owner: 'mallory' } } });
+  await assert.rejects(ensureOwnApp({ account: USER, user: USER, run: squatted.run }), /The GitHub App wheelhouse-a-director belongs to mallory, not a-director, so setup has not used it/);
+  // A client ID that is not a GitHub App's is refused when the app is read, before any keys are made.
+  const odd = fakeGh({ apps: { [OWN.slug]: { ...OWN, clientId: 'not-a-client-id' } } });
+  await assert.rejects(readOwnApp({ slug: OWN.slug, run: odd.run }), /a client ID setup can't read/);
+});
+
+test('an organisation\'s app found by its name is refused plainly to a member who is not an owner', async () => {
+  const acme = { clientId: 'Iv23li.acmeapp0001', slug: 'wheelhouse-acme', owner: 'acme', org: true };
+  const opened = [];
+  const time = clock();
+  for (const recorded of [null, { clientId: acme.clientId, slug: acme.slug, owner: 'acme' }]) {
+    const gh = fakeGh({ apps: { [acme.slug]: acme }, memberships: [{ role: 'member', state: 'active', organization: { login: 'acme' } }] });
+    await assert.rejects(
+      ensureOwnApp({ account: 'acme', user: USER, recorded, run: gh.run, open: async (u) => { opened.push(u); }, sleep: time.sleep, now: time.now }),
+      /Only an owner of acme on GitHub can make or install a GitHub App there/,
+    );
+  }
+  assert.deepEqual(opened, []);
+  assert.equal(time.now().getTime(), NOW.getTime(), 'no wait');
+  const owner = fakeGh({ apps: { [acme.slug]: acme }, memberships: [{ role: 'admin', state: 'active', organization: { login: 'acme' } }] });
+  assert.equal((await ensureOwnApp({ account: 'acme', user: USER, run: owner.run })).clientId, acme.clientId);
 });
