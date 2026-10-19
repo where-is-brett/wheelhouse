@@ -35,7 +35,7 @@
       "errors": [
         {
           "path": "modules../register.ts",
-          "message": "mod-plan-b4f6a7: <repo>/hooks/register.ts, compiled line 18 `await ask($, {`: $ is passed to \"ask\", imported from \"./mod/ask\": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on(\"<event>\", hook), and next.to always next.to(e, \"<tier… [+3 chars]",
+          "message": "<repo>: <repo>/hooks/register.ts, compiled line 18 `await ask($, {`: $ is passed to \"ask\", imported from \"./mod/ask\": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on(\"<event>\", hook), and next.to always next.to(e, \"<tier… [+3 chars]",
           "code": null
         }
       ],

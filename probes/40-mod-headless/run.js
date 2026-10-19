@@ -102,6 +102,9 @@ function scrub(text) {
   pairs.push([fs.realpathSync(os.homedir()), '<home>'], [os.homedir(), '<home>']);
   pairs.sort((a, b) => b[0].length - a[0].length);
   for (const [from, to] of pairs) out = out.split(from).join(to);
+  // A plugin loaded from a folder takes the folder's name, which an error quotes in front of
+  // the path (`<folder>: <repo>/hooks/…`); that name goes too.
+  out = out.replace(new RegExp(`(?<![\\w-])${path.basename(repoDir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=: <repo>)`, 'g'), '<repo>');
   return out.replace(/\/Users\/[^/\s"]+/g, '<home>');
 }
 
@@ -302,7 +305,7 @@ try {
     await record('test', { loggedInWithEmptyHome: loggedIn, status: test.status, stdout: scrub(test.stdout).slice(0, 1500), stderr: scrub(test.stderr).slice(0, 1000) });
   }
 
-  // ---- the release CI pins ---------------------------------------------------------------
+  // ---- the release CI pinned before this plan ----------------------------
   if (wants('ci')) {
     const npx = (args, { cwd, env }) => spawnSync('npx', ['--yes', `@anthropic-ai/claude-code@${CI_VERSION}`, ...args], { cwd, env, encoding: 'utf8', timeout: 240000, maxBuffer: 32 * 1024 * 1024 });
     const scratch = track(fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-probe-40-ci-')));
@@ -310,7 +313,7 @@ try {
     const env = cleanEnv({ HOME: home });
     const version = npx(['--version'], { cwd: scratch, env });
     if (version.status !== 0) {
-      saveReport('ci-2.1.278-help.txt', `npx could not fetch @anthropic-ai/claude-code@${CI_VERSION}: exit ${version.status}\n${version.stderr}`);
+      saveReport('ci-2.1.278-help.txt', `npx could not fetch @anthropic-ai/claude-code@${CI_VERSION}: exit ${version.status}\n${version.stderr}`, { keep: true });
       await record('ci', { fetched: false, status: version.status, stderr: scrub(version.stderr).slice(0, 800) });
     } else {
       const help = ['plugin --help', 'plugin validate --help', 'plugin test --help'].map((line) => {

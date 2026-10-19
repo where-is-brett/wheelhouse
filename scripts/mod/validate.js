@@ -35,8 +35,9 @@ export const FORBIDDEN_CALLS = ['$.tool.*', '$.agent.*', '$.fs.*', '$.settings.*
 // a wildcard (`tool.*`, `$.*`, a bare `*`) is forbidden too when what it stands for covers any
 // forbidden pattern: `tool.*` covers `tool.check`, `*` covers all of them.
 export function matchesForbidden(name, patterns) {
-  if (name.endsWith('*')) {
-    const prefix = name.slice(0, -1);
+  const bare = name.replace(/\{.*\}$/, '');
+  if (bare.endsWith('*')) {
+    const prefix = bare.slice(0, -1);
     if (patterns.some((pattern) => (pattern.endsWith('.*') ? pattern.slice(0, -2) : pattern).startsWith(prefix))) return true;
   }
   return patterns.some((pattern) => {
@@ -276,17 +277,24 @@ function splitTop(text) {
   return items;
 }
 
+const OPTIONS_WHY = 'passes options other than stdin and timeoutMs (an object literal with those keys alone, holding no / or backtick and neither word env nor cwd), so it could run something other than the bridge';
+
 // Whether the text between the parentheses of the bridge's call is the bridge's argv and, if
 // anything follows, one object literal whose only keys are stdin and timeoutMs: no env, cwd,
 // spread, computed key or variable, any of which could change what runs.
 function bridgeArguments(args) {
   const [argv, options, ...more] = splitTop(args);
   if (!ARGV.test(argv)) return "runs something other than ['node', `${$.plugin.root}/scripts/mod/bridge.js`], the bridge";
+  // A backstop on the text after the argv, unparsed, for what the reading of strings below
+  // could miss (a regular expression holding a quote hides what follows it as a string): no
+  // `/`, no backtick and neither word env nor cwd anywhere in it.
+  const after = args.slice(args.indexOf(']') + 1);
+  if (/[/`]/.test(after) || /\b(?:env|cwd)\b/.test(after)) return OPTIONS_WHY;
   if (options === undefined && more.length === 0) return null;
   const text = options.trim();
   const body = text.startsWith('{') && closingOutsideStrings(text, 0) === text.length - 1 ? splitTop(text.slice(1, -1)) : null;
   if (more.length > 0 || body === null || !body.every((entry) => entry.trim() === '' || OPTION.test(entry.trim()))) {
-    return "passes options other than stdin and timeoutMs (an object literal with those keys alone), so it could run something other than the bridge";
+    return OPTIONS_WHY;
   }
   return null;
 }
@@ -318,8 +326,10 @@ export function bridgeArgv(sources) {
   if (file !== ASK) return { ok: false, why: `The mod's one $.process.run( is in ${file}, not ${ASK}` };
   if (!/(?<![\w$.])\$\s*\.\s*$/.test(before)) return { ok: false, why: `The mod's $.process.run( in ${ASK} isn't a call on $` };
   const open = rest.indexOf('(');
-  const close = closingOutsideStrings(rest, open);
-  const problem = close < 0 ? "can't be read" : bridgeArguments(rest.slice(open + 1, close));
+  // The call's end read two ways, with and without knowing strings: a string, template or
+  // regular expression the reading can't tell apart makes them differ, and the call fails.
+  const close = closing(rest, open);
+  const problem = close < 0 || close !== closingOutsideStrings(rest, open) ? "can't be read" : bridgeArguments(rest.slice(open + 1, close));
   if (problem !== null) return { ok: false, why: `The mod's $.process.run( in ${ASK} ${problem}` };
   return { ok: true };
 }

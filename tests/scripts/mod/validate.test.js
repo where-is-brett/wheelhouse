@@ -486,7 +486,7 @@ test('the scanner reads a regular expression after the ) of if, while, for or wi
 // could change what runs (an env, a cwd), whether spelled out, spread or held in a variable.
 test('the bridge call passes no option but stdin and timeoutMs', () => {
   const withOptions = (options) => bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': `export const ask = async ($, request) => $.process.run(${ARGV}${options})` });
-  for (const options of ['', ', { stdin: JSON.stringify(request) }', ', { timeoutMs: 5000 }', ', { stdin: x, timeoutMs: 1 + 2, }', ', { stdin, timeoutMs }', ', { stdin: f(a, { b: 1 }), timeoutMs: `${1}` }']) {
+  for (const options of ['', ', { stdin: JSON.stringify(request) }', ', { timeoutMs: 5000 }', ', { stdin: x, timeoutMs: 1 + 2, }', ', { stdin, timeoutMs }', ', { stdin: f(a, { b: 1 }), timeoutMs: 3000 }']) {
     assert.deepEqual(withOptions(options), { ok: true }, options);
   }
   const refused = [
@@ -504,6 +504,15 @@ test('the bridge call passes no option but stdin and timeoutMs', () => {
     ', { stdin: 1 }.env',
     ', [{ stdin: 1 }]',
     ', undefined',
+    // A regular expression or template holding a quote must not hide a key from the scan: a
+    // `/` or a backtick anywhere in the options fails, and so does the word env or cwd.
+    ", { stdin: /'/, env: { PATH: '/tmp/evil' }, timeoutMs: /'/ }",
+    ', { stdin: /"/, cwd: "/tmp/evil", timeoutMs: /"/ }',
+    ', { stdin: /`/, env: e, timeoutMs: /`/ }',
+    ', { stdin: `x`, timeoutMs: 1 }',
+    ', { stdin: 1, timeoutMs: 10 / 2 }',
+    ", { stdin: 'env' }",
+    ', { stdin: request.cwd }',
   ];
   for (const options of refused) {
     const result = withOptions(options);
@@ -521,6 +530,10 @@ test('a hook or call named by a wildcard that covers a forbidden one is forbidde
   for (const hook of ['tool.*', 'config.*', 'agent.*', 'plugin.*', '*', 'classic.*', 'tool*']) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), true, hook);
   for (const call of ['$.*', '$.tool.*', '$.fs.*', '$.settings.*', '$.command.*', '$.process.*', '$.prompt.*', '$.session.*', '$.env.*', '*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), true, call);
   // A wildcard that covers nothing forbidden is not.
+  // A hook's matcher after a wildcard changes nothing.
+  assert.equal(matchesForbidden('tool.*{tool=Bash}', FORBIDDEN_HOOKS), true);
+  assert.equal(matchesForbidden('*{tool=Bash}', FORBIDDEN_HOOKS), true);
+  assert.equal(matchesForbidden('session.*{x=y}', FORBIDDEN_HOOKS), false);
   for (const call of ['$.clock.*', '$.ui.*', '$.plugin.*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), false, call);
   for (const hook of ['session.*', 'prompt.*', 'command.*']) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), false, hook);
   const result = checkMod({
