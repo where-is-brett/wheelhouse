@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeBrief } from '../../../scripts/install/brief.js';
-import { cardLines, cloneUpstreams, main, NOT_READ } from '../../../scripts/install/cli.js';
+import { cardLines, cloneUpstreams, main, NOT_READ, USAGE } from '../../../scripts/install/cli.js';
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -24,7 +24,7 @@ function brief(folder) {
     ],
     copies: [{ name: 'drafting', path: '.claude/skills/drafting', plugin: 'kit-a' }],
     keep: [],
-    inFlight: { behind: 2, dirty: true, prs: [{ number: 7, branch: 'feature/stock-count' }], worktrees: [] },
+    inFlight: { behind: 2, dirty: true, onDefault: true, prs: [{ number: 7, branch: 'feature/stock-count' }], worktrees: [] },
     deniedAfterSwitchBack: ['gh pr merge --squash'],
     plugins: { off: [], skillsOff: [] },
     docsToAlign: [],
@@ -87,4 +87,48 @@ test('cli survey prints scheduled as null and says to pass --scheduled when no l
   err = [];
   assert.equal(await main(['survey'], options(out, err)), 2);
   assert.match(err.join(''), /--scheduled/);
+});
+
+test('the usage says the brief takes each command the survey says Standard would refuse', () => {
+  assert.match(USAGE, /deniedAfterSwitchBack/);
+  assert.match(USAGE, /`command`/);
+  assert.match(USAGE, /brief/);
+});
+
+// A project with one skill, `skillName`, under .claude/skills/.
+async function projectWithSkill(skillName) {
+  const folder = path.join(tempFolder('wh-cli-'), 'lantern-shop');
+  const skill = path.join(folder, '.claude', 'skills', skillName);
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(path.join(skill, 'SKILL.md'), `---\nname: ${skillName}\ndescription: A made-up skill.\n---\n\nDo it.\n`);
+  await g(folder, 'init', '--quiet', '-b', 'main');
+  await g(folder, 'add', '--all');
+  await g(folder, 'commit', '--quiet', '-m', 'start');
+  return folder;
+}
+
+const KITS = {
+  upstreams: [
+    { name: 'kit-a', plugin: 'kit-a', repo: 'https://example.invalid/kit-a.git', folders: [{ path: 'skills/drafting' }] },
+    { name: 'kit-b', plugin: 'kit-b', repo: 'https://example.invalid/kit-b.git', folders: [{ path: 'skills/charting' }] },
+  ],
+};
+
+test('cli survey clones only the upstreams whose skill names the project uses', async () => {
+  const folder = await projectWithSkill('drafting');
+  const asked = [];
+  const clone = async (pins) => { asked.push(pins.upstreams.map((u) => u.name)); return { clones: { 'kit-a': folder }, remove: () => {} }; };
+  const out = [];
+  assert.equal(await main(['survey', folder], { write: (t) => out.push(t), warn: () => {}, manifest: KITS, clone }), 0);
+  assert.deepEqual(asked, [['kit-a']]);
+});
+
+test('cli survey with no skill name in common clones nothing, so it works offline', async () => {
+  const folder = await projectWithSkill('ship-brief');
+  const out = [];
+  // The real clone: example.invalid can never be reached, so any clone would fail.
+  assert.equal(await main(['survey', folder], { write: (t) => out.push(t), warn: () => {}, manifest: KITS }), 0);
+  const survey = JSON.parse(out.join(''));
+  assert.deepEqual(survey.copies, []);
+  assert.deepEqual(survey.skills.map((s) => s.name), ['ship-brief']);
 });

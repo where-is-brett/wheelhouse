@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
-import { batchSshCommand, commandsIn, deniedByStandard, surveyProject } from '../../../scripts/install/survey.js';
+import { batchSshCommand, commandsIn, deniedByStandard, surveyProject, upstreamsNeeded } from '../../../scripts/install/survey.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -146,6 +146,7 @@ test('in flight: behind, local changes, open pull requests and worktrees', async
   const survey = await surveyProject({ folder, manifest: MANIFEST, run: github, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') });
   assert.equal(survey.inFlight.behind, 2);
   assert.equal(survey.inFlight.dirty, true);
+  assert.equal(survey.inFlight.onDefault, true);
   assert.deepEqual(survey.inFlight.prs, [{ number: 7, branch: 'feature/stock-count' }]);
   assert.equal(survey.inFlight.worktrees.length, 1);
   assert.equal(fs.realpathSync(survey.inFlight.worktrees[0].path), fs.realpathSync(worktree));
@@ -300,4 +301,37 @@ test('a bare main repository is not listed as a worktree in flight', async () =>
   await g(bare, 'worktree', 'add', '--quiet', worktree, 'main');
   const survey = await surveyProject({ folder: worktree, manifest: { upstreams: [] }, run: noPrs, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-') });
   assert.deepEqual(survey.inFlight.worktrees, []);
+});
+
+test('in flight says whether the checkout is on the remote\'s default branch', async () => {
+  const { folder, remote } = await makeProject();
+  const other = path.join(tempFolder('wh-other-'), 'other');
+  await g(path.dirname(other), 'clone', '--quiet', remote.url, other);
+  await g(other, 'commit', '--quiet', '--allow-empty', '-m', 'more');
+  await g(other, 'push', '--quiet', 'origin', 'main');
+  await g(folder, 'checkout', '--quiet', '-b', 'feature/till');
+  const survey = await surveyProject({ folder, manifest: { upstreams: [] }, run: noPrs, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-') });
+  assert.equal(survey.inFlight.onDefault, false);
+  // Still counted from HEAD, which is why onDefault matters.
+  assert.equal(survey.inFlight.behind, 1);
+  await g(folder, 'checkout', '--quiet', '--detach');
+  const detached = await surveyProject({ folder, manifest: { upstreams: [] }, run: noPrs, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-') });
+  assert.equal(detached.inFlight.onDefault, false);
+});
+
+test('with no remote, the checkout is not on a default branch', async () => {
+  const folder = path.join(tempFolder('wh-install-'), 'lantern-shop');
+  fs.mkdirSync(folder);
+  await g(folder, 'init', '--quiet', '-b', 'main');
+  await g(folder, 'commit', '--quiet', '--allow-empty', '-m', 'start');
+  const survey = await surveyProject({ folder, manifest: { upstreams: [] }, run: noPrs, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-') });
+  assert.deepEqual({ behind: survey.inFlight.behind, onDefault: survey.inFlight.onDefault }, { behind: 0, onDefault: false });
+});
+
+test('the upstreams a survey needs are those whose pinned skill names the project uses', () => {
+  const folder = path.join(tempFolder('wh-install-'), 'lantern-shop');
+  copyFixture(FIXTURE, folder);
+  const manifest = { upstreams: [...MANIFEST.upstreams, { name: 'kit-b', plugin: 'kit-b', folders: ['skills/charting'] }] };
+  assert.deepEqual(upstreamsNeeded({ folder, manifest }), ['kit-a']);
+  assert.deepEqual(upstreamsNeeded({ folder: path.join(folder, 'none'), manifest }), []);
 });

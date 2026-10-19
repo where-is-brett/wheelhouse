@@ -22,7 +22,7 @@ function goodBrief(folder) {
     ],
     copies: [{ name: 'drafting', path: '.claude/skills/drafting', plugin: 'kit-a' }],
     keep: [{ name: 'reviewing', path: '.claude/skills/reviewing', why: 'same name, own content' }],
-    inFlight: { behind: 0, dirty: false, prs: [{ number: 7, branch: 'feature/stock-count' }], worktrees: [{ path: path.join(folder, '..', 'wt'), branch: null, dirty: true }] },
+    inFlight: { behind: 0, dirty: false, onDefault: true, prs: [{ number: 7, branch: 'feature/stock-count' }], worktrees: [{ path: path.join(folder, '..', 'wt'), branch: null, dirty: true }] },
     deniedAfterSwitchBack: ['gh pr merge --squash'],
     plugins: { off: [{ id: 'chart-kit@synced', why: 'not used by this project' }], skillsOff: [{ name: 'letter-writer', why: 'personal letters' }] },
     docsToAlign: [{ file: 'README.md', line: 3 }],
@@ -50,6 +50,8 @@ test('a brief with a missing or mistyped key is refused, naming the key', () => 
   const cases = [
     [(b) => { delete b.answers.liveData; }, /answers\.liveData/],
     [(b) => { b.inFlight.behind = '2'; }, /inFlight\.behind/],
+    [(b) => { delete b.inFlight.onDefault; }, /inFlight\.onDefault is missing/],
+    [(b) => { b.inFlight.onDefault = 'yes'; }, /inFlight\.onDefault is not true or false/],
     [(b) => { b.firstVersion[1].kind = 'macro'; }, /firstVersion\[1\]\.kind/],
     [(b) => { delete b.protection; }, /protection/],
     [(b) => { b.computers[0].id = 'the-mac'; }, /computers\[0\]\.id/],

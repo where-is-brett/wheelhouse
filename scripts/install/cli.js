@@ -1,9 +1,12 @@
 // scripts/install/cli.js
 // The install brief's two commands, for the agent writing the private brief:
 //   node scripts/install/cli.js survey <folder> --scheduled <file.json>
-//     Surveys the project read-only and prints the survey as JSON. Each pinned upstream is cloned
-//     bare into its own new temporary folder, removed after, so copies can be told from same-named
-//     skills. `--scheduled` names a JSON list of Claude's scheduled tasks as { name, folder, path? },
+//     Surveys the project read-only and prints the survey as JSON. Each pinned upstream with a
+//     skill whose name one of the project's skills uses is cloned bare into its own new temporary
+//     folder, removed after, so copies can be told from same-named skills; with no such name, none
+//     is cloned and the survey needs no network but the project's own fetch. The survey's
+//     `deniedAfterSwitchBack` lists { command, paths, rule }; the brief's takes only each first-version
+//     entry's `command`, which the agent writes into it. `--scheduled` names a JSON list of Claude's scheduled tasks as { name, folder, path? },
 //     since Claude Code keeps no folder in a scheduled task's own files: make it from the
 //     scheduled-tasks tool's list (list_scheduled_tasks, with each task's runs or prompt for its
 //     folder). Without it the survey's `scheduled` is null, meaning not read, and a note says so.
@@ -17,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { readManifest } from '../lineage/manifest.js';
 import { run, withoutGitVars } from '../lib/run.js';
 import { readBrief } from './brief.js';
-import { surveyProject } from './survey.js';
+import { surveyProject, upstreamsNeeded } from './survey.js';
 
 const CLONE_WAIT_MS = 5 * 60 * 1000;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -80,7 +83,9 @@ function scheduledFrom(file) {
 
 export const USAGE = 'usage: node scripts/install/cli.js survey <folder> --scheduled <file.json> | brief <folder>\n'
   + '  --scheduled: a JSON list of { name, folder, path? }, made from the scheduled-tasks tool\'s list\n'
-  + '  (list_scheduled_tasks). Without it the survey runs, but "scheduled" is null: not read.\n';
+  + '  (list_scheduled_tasks). Without it the survey runs, but "scheduled" is null: not read.\n'
+  + '  deniedAfterSwitchBack: the survey lists { command, paths, rule }; into the brief, write each\n'
+  + '  first-version entry\'s `command` only, as a list of text.\n';
 export const NOT_READ = 'No --scheduled list was given, so "scheduled" is null: the scheduled tasks were not read. '
   + 'Make the list from the scheduled-tasks tool (list_scheduled_tasks), as [{ name, folder, path }], and run the survey again with --scheduled <file.json>.\n';
 
@@ -92,7 +97,9 @@ export async function main(argv, {
   if (command === 'survey' && folder && (rest.length === 0 || (rest.length === 2 && rest[0] === '--scheduled'))) {
     const scheduled = rest.length === 2 ? scheduledFrom(rest[1]) : null;
     const pins = manifest ?? readManifest();
-    const { clones, remove } = await clone(pins);
+    // Only the upstreams a skill name match needs, so a survey with none works offline.
+    const needed = upstreamsNeeded({ folder, manifest: pins });
+    const { clones, remove } = await clone({ ...pins, upstreams: pins.upstreams.filter((u) => needed.includes(u.name)) });
     try {
       const survey = await surveyProject({ folder, manifest: pins, run, upstreams: clones, scheduled });
       write(`${JSON.stringify(survey, null, 2)}\n`);

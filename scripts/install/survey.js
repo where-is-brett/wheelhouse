@@ -11,9 +11,9 @@
 //   SKILL.md, line endings made LF, has the git blob hash of that skill's SKILL.md at some commit
 //   of the upstream (`git log --all --find-object` in a clone given in `upstreams`). Any other
 //   name match is kept and named, "same name, own content".
-// - Work in flight: how far the checkout is behind its remote's default branch (after a fetch),
-//   local changes, open pull or merge requests (`gh pr list` or `glab mr list`, read only), and
-//   worktrees.
+// - Work in flight: how far the checkout's HEAD is behind its remote's default branch (after a
+//   fetch), whether the checkout is on that branch, local changes, open pull or merge requests
+//   (`gh pr list` or `glab mr list`, read only), and worktrees.
 // - The commands the project's `.claude/` files name (gh, glab, git, npm, npx and the deploy
 //   tools), each with the files that name it, and those that Standard's deny rules would still
 //   refuse once the project is switched back. The sandbox is left out: switching back turns it off.
@@ -174,6 +174,15 @@ function pinnedSkills(manifest) {
   return pinned;
 }
 
+// The names of the upstreams whose pinned skills share a name with one of the project's skills in
+// `folder`: the only ones the survey needs a clone of.
+export function upstreamsNeeded({ folder, manifest }) {
+  const pinned = pinnedSkills(manifest);
+  const names = new Set();
+  for (const skill of readSkills(folder)) for (const { upstream } of pinned.get(skill.name) ?? []) names.add(upstream.name);
+  return (manifest?.upstreams ?? []).map((u) => u.name).filter((name) => names.has(name));
+}
+
 async function sortCopies({ folder, skills, manifest, upstreams, git }) {
   const pinned = pinnedSkills(manifest);
   const copies = [];
@@ -313,6 +322,7 @@ export function batchSshCommand({ env = process.env, configured = '' } = {}) {
 async function readInFlight({ folder, host, git, run, sshEnv }) {
   const remotes = (await git(['remote'])).split('\n').map((r) => r.trim()).filter(Boolean);
   let behind = 0;
+  let onDefault = false;
   let prs = [];
   if (remotes.includes('origin')) {
     const configured = (await git(['config', '--get', 'core.sshCommand'], folder, { allowFail: true })).trim();
@@ -323,7 +333,13 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
         if ((await git(['rev-parse', '--verify', '--quiet', candidate], folder, { allowFail: true })).trim() !== '') { ref = candidate; break; }
       }
     }
-    if (ref !== '') behind = Number.parseInt((await git(['rev-list', '--count', `HEAD..${ref}`])).trim(), 10) || 0;
+    // Counted from HEAD, whichever branch is checked out: `onDefault` says whether that is the
+    // default branch, so nothing fast-forwards a checkout on another branch.
+    if (ref !== '') {
+      behind = Number.parseInt((await git(['rev-list', '--count', `HEAD..${ref}`])).trim(), 10) || 0;
+      const branch = (await git(['symbolic-ref', '--quiet', 'HEAD'], folder, { allowFail: true })).trim();
+      onDefault = branch !== '' && branch === `refs/heads/${ref.slice('refs/remotes/origin/'.length)}`;
+    }
     prs = await openRequests({ folder, host, run });
   }
   const dirty = (await git(['status', '--porcelain'])).trim() !== '';
@@ -340,7 +356,7 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
     const changed = there ? (await git(['status', '--porcelain'], at, { allowFail: true })).trim() !== '' : false;
     worktrees.push({ path: at, branch, dirty: changed });
   }
-  return { behind, dirty, prs, worktrees };
+  return { behind, dirty, onDefault, prs, worktrees };
 }
 
 async function openRequests({ folder, host, run }) {

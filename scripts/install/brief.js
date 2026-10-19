@@ -78,6 +78,7 @@ const checkShape = record({
   inFlight: record({
     behind: count,
     dirty: boolean,
+    onDefault: boolean,
     prs: list(record({ number: positive, branch: string })),
     worktrees: list(record({ path: string, branch: textOrNull, dirty: boolean })),
   }),
