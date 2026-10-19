@@ -107,7 +107,7 @@ The director is a product owner, not a developer. They want their product built 
      - that the helper's own PATH finds `claude` when it starts sessions for Shape 1;
      - a director signed in only through `CLAUDE_CODE_OAUTH_TOKEN`: sessions the watcher starts don't get it, so they couldn't sign in. Sessions the watcher starts also lose `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` (they start "CLAUDE", so they are dropped as the host session's); the foreman's commands keep them;
      - scenario 20's counted `with` run is one trial on a set-up tuned to reach the cap, and it passed because the session counted a Minor-rated finding as open: run it three times before the pilot;
-   - **Open, not fixed yet** (the last four are in the ledger too):
+   - **Open, not done yet** (the last four are in the ledger too):
      - the end-to-end test runs Shape 2 only: `act start` in the helper's child, Shape 1's start and the foreman's environment are never run end to end. A stand-in `claude` on the child's PATH would cover them, and answer part of the open question about the helper's PATH;
      - new worktrees branch from the main checkout's last-fetched `origin/main`, and nothing fetches it (older than this plan; for the pilot);
      - `/foreman/run`'s main-checkout check takes the caller's word for the folder: it is where the commands run, not an access control (design section 11);

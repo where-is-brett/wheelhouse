@@ -323,7 +323,7 @@ test('the foreman\'s child keeps the sign-in Claude Code uses for Bedrock and Ve
     AWS_SHARED_CREDENTIALS_FILE: '/h/.aws/credentials', AWS_CONFIG_FILE: '/h/.aws/config', AWS_BEARER_TOKEN_BEDROCK: 'bearer-stand-in',
     ANTHROPIC_BEDROCK_BASE_URL: 'https://bedrock.example.com', CLAUDE_CODE_SKIP_BEDROCK_AUTH: '1',
     GOOGLE_APPLICATION_CREDENTIALS: '/h/adc.json', ANTHROPIC_VERTEX_PROJECT_ID: 'p', CLOUD_ML_REGION: 'global',
-    GOOGLE_CLOUD_PROJECT: 'p', VERTEX_REGION_CLAUDE_HAIKU_4_5: 'us-east5', CLAUDE_CODE_SKIP_VERTEX_AUTH: '1',
+    GOOGLE_CLOUD_PROJECT: 'p', VERTEX_REGION_CLAUDE_MODEL_A: 'us-east5', CLAUDE_CODE_SKIP_VERTEX_AUTH: '1',
   };
   for (const name of Object.keys(cloud).filter((n) => !n.startsWith('VERTEX_REGION_'))) assert.ok(SIGN_IN_NAMES.includes(name), name);
   const env = {
