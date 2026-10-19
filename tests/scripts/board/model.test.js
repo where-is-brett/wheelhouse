@@ -79,6 +79,25 @@ test('a profile setting not yet confirmed is listed among them, as the director\
   assert.deepEqual(model({ profileUnconfirmed: 'damaged' }).director.first, []);
 });
 
+test('a proposal kept as is on its card in this project is no longer listed as waiting for confirmation', () => {
+  const views = emptyViews();
+  views.unconfirmed = [
+    { kind: 'level', id: 'l1', at: at(11), key: 'copy', data: { key: 'copy', value: 2 } },
+    { kind: 'setting', id: 's1', at: at(12), key: 'pace', data: { key: 'pace', value: 2 } },
+  ];
+  const profileUnconfirmed = [
+    { kind: 'setting', id: 'p1', at: at(11), key: 'boardTab', data: { key: 'boardTab', value: 'build' } },
+    { kind: 'setting', id: 'p2', at: at(13), key: 'briefing', data: { key: 'briefing', value: 'short' } },
+  ];
+  views.keptAsIs = ['l1', 'p1'];
+  assert.deepEqual(model({ views, profileUnconfirmed }).director.first, [
+    'A setting: pace 2, not yet confirmed by you',
+    'Your setting: briefing short, not yet confirmed by you',
+  ]);
+  views.keptAsIs = 'damaged';
+  assert.equal(model({ views, profileUnconfirmed }).director.first.length, 4);
+});
+
 test('waiting lists cards and unasked build-loop questions once each, numbered', () => {
   const askedCard = ev('card', at(12), { title: 'Pick a colour', question: 'Answer question q-login-1 about the colour' });
   const other = ev('card', at(11), { title: 'Name the app', question: 'Name the app?' });

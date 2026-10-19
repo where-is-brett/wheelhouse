@@ -133,7 +133,7 @@ export function featureSlug(cwd) {
 // While views are being replaced the old ones sit in `views.old` for a moment (or for good
 // after a crash), so that folder is read when `views` is not there. `names` null reads
 // every view there (the board's inputs).
-export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'unconfirmed', 'damaged']) {
+export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'unconfirmed', 'keptAsIs', 'damaged']) {
   const base = path.join(wheelhouseHome(), 'projects', project, 'views');
   const dir = fs.existsSync(base) ? base : `${base}.old`;
   const out = {};
@@ -273,7 +273,9 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   if (frontDesk) lines.push(FRONT_DESK_LINE);
   lines.push(...notes);
   const title = (d) => show(d?.title ?? d?.question ?? d?.words ?? d?.value ?? '');
-  const unconfirmed = (views?.unconfirmed ?? []).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
+  // A proposal kept as is on its card here is no longer waiting for the director (ruling F49).
+  const kept = new Set(Array.isArray(views?.keptAsIs) ? views.keptAsIs : []);
+  const unconfirmed = (views?.unconfirmed ?? []).filter((u) => !kept.has(u?.id)).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
   const quoted = (unconfirmed.length > 0 || (views?.waiting ?? []).length > 0 || (views?.rulebook ?? []).some((r) => r.status === 'accepted'));
   if (quoted) lines.push('Titles are quoted as agents wrote them.');
   lines.push(...section('Changed without the director\'s confirmation:', unconfirmed));

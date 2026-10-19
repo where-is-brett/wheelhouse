@@ -6,16 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.js';
-import { listEvents, makeEvent, confirmationFor, eventHash, dataHash } from '../../../scripts/state/events.js';
+import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -825,6 +825,66 @@ test('a confirmation closes the card whose confirm line names the event, as it s
     assert.deepEqual(build([ruling, conf(5, ruling), later]).waiting.map((c) => c.id), [later.id]);
     const other = ev('ruling', 3, { words: 'Another', reason: 'x', scope: 'all' });
     assert.deepEqual(build([ruling, other, card, conf(5, other)]).waiting.map((c) => c.id), [card.id]);
+  });
+});
+
+test('Keep as is closes a proposal\'s confirm card, and its proposal stays unconfirmed', async () => {
+  await withHome(() => {
+    const level = ev('level', 1, { key: 'copy-changes', value: 2, words: '"copy-changes": level 2', because: 'you chose it' });
+    const line = confirmLine(level);
+    const card = ev('card', 2, cardData(`What this is: a level.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line }));
+    const putOff = build([level, card, ev('card-answer', 3, { card: card.id, label: 'Not now' })]);
+    assert.deepEqual(putOff.waiting.map((c) => c.id), [card.id]);
+    assert.deepEqual(putOff.keptAsIs, []);
+    const kept = build([level, card, ev('card-answer', 3, { card: card.id, label: 'Keep as is' })]);
+    assert.deepEqual(kept.waiting, []);
+    assert.deepEqual(kept.unconfirmed.map((u) => u.id), [level.id]);
+    assert.deepEqual(kept.levels, {});
+    // keptAsIs names it (ruling F49), so the lists of what waits for the director's confirmation leave it out.
+    assert.deepEqual(kept.keptAsIs, [level.id]);
+    // A profile setting's card kept as is here names the profile's event, which this project's state doesn't hold.
+    const setting = { ...ev('setting', 4, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }), id: 'profile-setting' };
+    const own = ev('card', 5, cardData(`What this is: a setting.\n${confirmLine(setting)}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line: confirmLine(setting) }));
+    assert.deepEqual(build([level, card, own, ev('card-answer', 6, { card: own.id, label: 'Keep as is' })]).keptAsIs, ['profile-setting']);
+  });
+});
+
+test('a project\'s confirm card for a profile setting closes once the profile holds its confirmation', async () => {
+  await withHome(async (home) => {
+    // A profile setting with a card in project B; the director confirmed it from project A's card,
+    // so the confirmation is in the profile and B's state holds no answer.
+    const setting = ev('setting', 1, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' });
+    const line = confirmLine(setting);
+    const card = ev('card', 2, cardData(`What this is: a setting.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line }));
+    const confirmation = conf(3, setting);
+    assert.deepEqual(build([card]).waiting.map((c) => c.id), [card.id]);
+    const closed = build([card], { profile: [setting, confirmation] });
+    assert.deepEqual(closed.waiting, []);
+    // The project's own settings, levels and unconfirmed stay its own.
+    assert.deepEqual(closed.settings, {});
+    assert.deepEqual(closed.unconfirmed, []);
+    // A confirmation the enrolled keys don't verify, or one of another event, closes nothing.
+    const stranger = { ...confirmation, id: 'stranger', sig: { ...confirmation.sig, computer: 'ffffffff' } };
+    assert.deepEqual(build([card], { profile: [setting, stranger] }).waiting.map((c) => c.id), [card.id]);
+    const other = ev('setting', 1, { key: 'briefing', value: 'short', words: 'Briefing: short' });
+    assert.deepEqual(build([card], { profile: [setting, other, conf(3, other)] }).waiting.map((c) => c.id), [card.id]);
+
+    // writeViews reads the profile's events, so the views on disk agree; the profile's own views
+    // are built from the profile alone.
+    const keep = (event, dir) => {
+      const file = path.join(dir, eventPath(event));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(event));
+    };
+    keep(card, stateDir('o__b'));
+    assert.deepEqual((await writeViews('o__b', { now })).waiting.map((c) => c.id), [card.id]);
+    keep(setting, profileDir());
+    keep(confirmation, profileDir());
+    assert.deepEqual((await writeViews('o__b', { now })).waiting, []);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'projects', 'o__b', 'views', 'waiting.json'), 'utf8'));
+    assert.deepEqual(onDisk, []);
+    const own = await writeViews(undefined, { now, dir: profileDir(), out: path.join(home, 'profile-views') });
+    assert.equal(own.settings.boardTab.value, 'build');
   });
 });
 
