@@ -1,7 +1,8 @@
 // tests/mod/register.test.ts
 // The mod's hooks, run by `claude plugin test .` (npm run mod-check), not by node --test.
 // Everything beneath the mod is answered here: the session's figures, the command and toast
-// calls, and `$.process.run`, which stands in for the bridge and never starts a process.
+// calls, and `$.process.run`, which stands in for the bridge and never starts a process. The
+// bridge waits ASK_MS (hooks/mod/numbers.ts) for each of these requests.
 import { test, expect, mock } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -32,6 +33,9 @@ function world(on: any, answer: (request: any) => Answer = () => ({ stdout: '{"o
   on('ui.toast', ($: any, e: any) => { seen.toasts.push(e.text); return { value: undefined } })
   on('process.run', async ($: any, e: any) => {
     const request = JSON.parse(e.init?.stdin ?? 'null')
+    // The pane's ticks are tests/mod/pane.test.ts's: here every session is a feature session,
+    // which stops ticking after its first.
+    if (request?.cmd === 'tick') return { value: { ...RUN_RESULT, exitCode: 0, stdout: '{"ok":true,"role":"feature","every":0}\n' } }
     seen.runs.push({ argv: e.argv, timeoutMs: e.init?.timeoutMs, request })
     if (hold.usage && request?.cmd === 'usage') await clock.sleep(60000)
     const got = answer(request)
@@ -64,7 +68,7 @@ const bridgeCall = (run: any) => {
   expect(run.argv).toHaveLength(2)
   expect(run.argv[0]).toBe('node')
   expect(run.argv[1]).toEndWith('/scripts/mod/bridge.js')
-  expect(run.timeoutMs).toBe(5000)
+  expect(run.timeoutMs).toBe(6500)
   return run.request
 }
 
@@ -203,7 +207,11 @@ test('/go answers with the bridge\'s words', async ($, on) => {
   for (const surface of SURFACES) {
     clear()
     await start($, surface)
-    expect(seen.registered).toEqual([{ name: 'go', description: 'Lift STOP' }])
+    expect(seen.registered).toEqual([
+      { name: 'go', description: 'Lift STOP' },
+      { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
+      { name: 'digest', description: 'Show the briefing, with no Claude turn' },
+    ])
 
     for (const kind of ['composer', 'bridge']) {
       clear()
