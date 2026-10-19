@@ -10,18 +10,21 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
+import { withHome as inOwnHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
 const NOW = new Date('2026-10-18T05:00:00.000Z');
 const P = 'owner__name';
 
-const RULING = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
+// Made in a home of its own: an event names its computer, which is kept in the home, so made with
+// none it would be kept in the real ~/.wheelhouse.
+const RULING = inOwnHome(() => makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW }));
 const OWN = [
   { label: 'Comma', says: 'Commas between values; opens in any spreadsheet.' },
   { label: 'Tab', says: 'Tabs between values; safe for text with commas.' },
@@ -52,6 +55,7 @@ const INPUTS = {
     ...common, recommend: 'Confirm all', kind: 'confirm-all', what: 'Setup step 5 found 2 rules this project follows: 1) "Money is shown in dollars"; 2) "Never push to main".',
     options: [says('Confirm all'), says('Let me correct some')], target: { count: 2, hash: DOC },
   },
+  baseline: { ...common, recommend: 'Record these', kind: 'baseline', what: 'The first version\'s figures from your note: US$100.00 for 4 merged pull requests.', options: [says('Record these')], target: { hash: DOC } },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
 };
 const LINES = {
@@ -67,6 +71,7 @@ const LINES = {
   'incident-fix': incidentFixLine('bad-total', 31),
   setup: setupLine(6, DOC),
   'confirm-all': confirmAllLine(DOC, 2),
+  baseline: baselineLine(DOC),
   question: null,
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
@@ -115,7 +120,7 @@ test("each kind's card carries the five parts in order, its set line and its rep
     // The card keeps the option it recommended, so the delegation review can tell a choice made as recommended.
     assert.equal(card.recommend, INPUTS[kind].recommend, kind);
     // The state accepts the card data as composed.
-    assert.doesNotThrow(() => makeEvent({ kind: 'card', data: card, now: () => NOW }), kind);
+    assert.doesNotThrow(() => inOwnHome(() => makeEvent({ kind: 'card', data: card, now: () => NOW })), kind);
   }
 });
 
@@ -199,7 +204,7 @@ test('decision cards offer the deciding label, Not now, Explain more and Show me
 });
 
 test('a confirm card for a proposal offers Keep as is in place of Show me; any other confirm card keeps its four', () => {
-  const proposal = (kind, data) => makeEvent({ kind, data, now: () => NOW });
+  const proposal = (kind, data) => inOwnHome(() => makeEvent({ kind, data, now: () => NOW }));
   const learnt = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it three times' });
   const level = proposal('level', { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose it five times' });
   for (const event of [learnt, level]) {

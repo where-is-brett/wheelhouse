@@ -2,16 +2,18 @@
 // Writes every question card the director sees from one input: the five plain-language parts,
 // the set line the prompt record signs against, and the reply code. The card's text and its
 // set line come from the same target, so a card can't read as one decision and sign another.
-// The front desk asks only what this returns (`cli.js card`), never a card it wrote itself.
+// The front desk asks only what this returns (`cli.js card`), never a card it wrote itself. The
+// baseline card is composed by the helper and comes to the front desk from `scripts/measures/cli.js`.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
-  SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
+  SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
+import { baselineWording } from '../lib/measures-clicks.js';
 
 // The labels the five parts start with, in order, then the one for a level 4 card.
 export const PART_LABELS = Object.freeze([
@@ -32,6 +34,7 @@ export const HEADERS = Object.freeze({
   'incident-fix': 'Incident fix',
   setup: 'Setup',
   'confirm-all': 'Rules found',
+  baseline: BASELINE_HEADER,
   question: 'Question',
 });
 
@@ -49,12 +52,17 @@ export const DECIDING = Object.freeze({
   'incident-fix': 'Merge the fix',
   setup: SETUP_LABEL,
   'confirm-all': CONFIRM_ALL_LABEL,
+  baseline: BASELINE_LABEL,
 });
 
 // The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
 // director's click on the card itself, never on a reply, so a code would make a shown record that
 // is never spent. Setup's card of the rules found (confirm-all, ruling R35) is one too.
 export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all']);
+
+// The kinds whose card offers its deciding label and Not now, and no other put-off button: the
+// baseline card reads figures back, and there is nothing more to explain or show.
+const NOT_NOW_ONLY = Object.freeze(['baseline']);
 
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'that feature waits; the others carry on';
@@ -164,6 +172,10 @@ function lineFor(kind, target) {
     if (!isCount(t.count) || !HEX.test(t.hash)) bad('needs how many rules it lists and the hash of that list');
     return confirmAllLine(t.hash, t.count);
   }
+  if (kind === 'baseline') {
+    if (!HEX.test(t.hash)) bad('needs the hash of the figures it reads back');
+    return baselineLine(t.hash);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -172,13 +184,14 @@ function lineFor(kind, target) {
 // The first part must name what the set line names, for every kind that names something: the
 // pull request (and the incident), the work, the incident, the runbook step's title, the branch,
 // the ruling's words, setup's step. It names no other pull request or commit than the set line's.
-// An answer card, a lift-STOP card and a product question name nothing more.
+// An answer card, a lift-STOP card, a baseline card and a product question name nothing more:
+// a baseline card's first part is the figures themselves, which may hold any words or numbers.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
 // right. The card check judges a card by this too, from the set line alone: with `abbreviated`,
 // the target's commit is the twelve characters the set line holds, so a longer name for the same
 // commit still counts as it.
 export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
-  if (kind === 'question' || !isPlain(target)) return null;
+  if (kind === 'question' || kind === 'baseline' || !isPlain(target)) return null;
   const lower = what.replace(/\s+/g, ' ').toLowerCase();
   const names = (text) => lower.includes(String(text).replace(/\s+/g, ' ').toLowerCase());
   // An id or a branch is a whole word: "ci-fix" is not named by "ci-fix-2", but is by "ci-fix.".
@@ -236,9 +249,10 @@ function offered(kind, given, { build = false, target } = {}) {
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
+  const putOff = NOT_NOW_ONLY.includes(kind) ? ['Not now'] : PUT_OFF;
   // The card of the rules found offers its second answer in place of Show me (ruling R35).
   const allowed = kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL, 'Not now', 'Explain more']
-    : [deciding, ...PUT_OFF.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
+    : [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
   for (const must of kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL] : [deciding]) {
     if (!list.some((o) => o.label === must)) fail(kind, 'options', `must describe ${must}`);
@@ -292,6 +306,9 @@ export function composeCard(input) {
   const text = [...explained, ...(line === null ? [] : [line]), ...(code === null ? [] : [replyCodeLine(code)])].join('\n');
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
+  // The baseline card's own words belong to it alone: on another card they would read as the
+  // private note's figures, and the card check and the prompt record would treat it as one.
+  if (kind !== 'baseline' && baselineWording(text)) fail(kind, 'text', 'must not use the baseline card\'s words');
 
   const question = {
     question: text,

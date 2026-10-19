@@ -535,7 +535,7 @@ test('views are read from views.old when a crash left no views folder', async ()
 
 // --- final review ---
 
-const OLD_LINE = 'This Claude Code is older than 2.1.295, so a guard that fails does not stop a tool call: update Claude Code';
+const OLD_LINE = 'This Claude Code is older than 2.1.299, so Wheelhouse\'s mod doesn\'t load and a guard that fails may not stop a tool call: update Claude Code';
 
 function transcript(home, entries) {
   const file = path.join(home, 'transcript.jsonl');
@@ -543,15 +543,16 @@ function transcript(home, entries) {
   return file;
 }
 
-test('a Claude Code older than 2.1.295, read from the transcript\'s last entry, is named; a newer or unknown one is not', async () => {
+test('a Claude Code older than 2.1.299, read from the transcript\'s last entry, is named; a newer or unknown one is not', async () => {
   await withHome(async (home) => {
     const f = fake();
     f.client.health = async () => ({ ok: true });
     const said = async (entries) => text(await run(f, {}, { transcript_path: entries === null ? path.join(home, 'absent.jsonl') : transcript(home, entries) }));
-    assert.ok((await said([{ type: 'user', version: '2.1.300' }, { type: 'assistant', version: '2.1.294' }])).includes(OLD_LINE), 'the last entry counts');
+    assert.ok((await said([{ type: 'user', version: '2.1.300' }, { type: 'assistant', version: '2.1.298' }])).includes(OLD_LINE), 'the last entry counts');
+    assert.ok((await said([{ type: 'user', version: '2.1.295' }])).includes(OLD_LINE), 'a guard holds on 2.1.295, but the mod does not load');
     assert.ok((await said([{ type: 'user', version: '2.0.999' }])).includes(OLD_LINE));
     assert.ok((await said([{ type: 'user', version: '1.9.0' }])).includes(OLD_LINE));
-    assert.ok(!(await said([{ type: 'user', version: '2.1.294' }, { type: 'assistant', version: '2.1.295' }])).includes(OLD_LINE));
+    assert.ok(!(await said([{ type: 'user', version: '2.1.298' }, { type: 'assistant', version: '2.1.299' }])).includes(OLD_LINE));
     assert.ok(!(await said([{ type: 'user', version: '2.2.0' }])).includes(OLD_LINE));
     assert.ok(!(await said([{ type: 'user', version: '10.0.0' }])).includes(OLD_LINE));
     assert.ok(!(await said([{ type: 'user' }])).includes(OLD_LINE), 'no version is unknown');
@@ -911,7 +912,7 @@ test('a lineage check that throws is passed over: the session starts and says no
 
 test('the guard floor is the build loop\'s Claude Code floor, named once', () => {
   assert.deepEqual(GUARD_FLOOR, CLAUDE_CODE_FLOOR.split('.').map(Number));
-  assert.equal(OLD_CLAUDE_CODE, 'This Claude Code is older than 2.1.295, so a guard that fails does not stop a tool call: update Claude Code');
+  assert.equal(OLD_CLAUDE_CODE, 'This Claude Code is older than 2.1.299, so Wheelhouse\'s mod doesn\'t load and a guard that fails may not stop a tool call: update Claude Code');
 });
 
 test('on Windows under STOP, the lineage hold line comes first after STOP, then the Windows lines', async () => {

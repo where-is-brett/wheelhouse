@@ -155,6 +155,7 @@ const eventsOf = (kind) => listEvents(stateDir(PROJECT), { report: () => {} }).f
 const remoteNames = async (remoteUrl, folder) => (await run('git', ['ls-tree', '-r', '--name-only', 'wheelhouse-state', folder], { cwd: remoteUrl }))
   .stdout.split('\n').filter(Boolean);
 
+// scenario 12
 test('STOP mid-build: writes, pushes, merges and new agents are refused; reading and the runbook carry on', async () => {
   const undos = [];
   try {
@@ -232,6 +233,7 @@ function forgedApproval({ computer, privateKey, head }) {
   return { ...event, sig: { computer, value } };
 }
 
+// scenario 11
 test('an approval file pushed to the state branch by hand changes nothing', async () => {
   const undos = [];
   try {
@@ -292,6 +294,7 @@ test('an approval file pushed to the state branch by hand changes nothing', asyn
   }
 });
 
+// scenario 14
 test('a pull request changing a workflow needs a review and the director\'s approval, whatever the caller says', async () => {
   const undos = [];
   try {
@@ -328,6 +331,7 @@ test('a pull request changing a workflow needs a review and the director\'s appr
   }
 });
 
+// scenario 19
 test('a card answer the agent filled in itself is not an approval', async () => {
   const undos = [];
   try {
@@ -407,6 +411,7 @@ test('a session in bypass mode stops every merge on the computer until it leaves
   }
 });
 
+// scenario 17
 test('narrow on a private repository: two computers, the lock passes on, the old holder cannot merge', async () => {
   const undos = [];
   try {

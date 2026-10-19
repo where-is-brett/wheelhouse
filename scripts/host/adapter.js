@@ -8,6 +8,7 @@
 import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
+import { publicHttps } from '../screens/pages.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
 
@@ -70,6 +71,11 @@ function refusalOf(output, fallback) {
   if (/\b403\b|forbidden|not accessible|permission|you are not allowed|not authori[sz]ed|protected branch/i.test(text)) return 'this sign-in is not allowed to merge it';
   return fallback;
 }
+
+// A preview's address as the host gave it, or null unless it is an https address on a public host
+// (scripts/screens/pages.js): the helper's browser opens only the host's preview deployment, never
+// a page on this computer or its local network.
+const httpsOnly = publicHttps;
 
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
@@ -155,7 +161,7 @@ export function makeAdapter({ host, repo, run, env }) {
     }
     return { merged: false, queued: true, reason: QUEUE_LINE };
   }
-  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf };
+  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly };
   const c = commands(tools);
 
   return {
@@ -176,6 +182,9 @@ export function makeAdapter({ host, repo, run, env }) {
     // is told from having looked and found nothing.
     hasCi: async (sha, branch) => c.hasCi(commit(sha), text(branch, 'branch')),
     branchHead: async (branch) => commit(await c.branchHead(text(branch, 'branch'))),
+    // The address of the commit's preview deployment, from the host's newest successful deployment
+    // of it, or null when there is none or its address is not https. A failed read is thrown.
+    previewUrl: async (sha) => c.previewUrl(commit(sha)),
     merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({

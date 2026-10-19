@@ -5,11 +5,15 @@
 //   answer   prints the director's answer to a question, once it is signed
 //   plan     records the plan just written, in plan.json, for the status and the foreman
 //   report   checks report.md and that it holds every ruling kept, then stamps it with what built it
-//   open-pr  opens the feature's pull request and keeps its number with its plan
+//   push     pushes the worktree's branch to the host, through the helper (after a fix)
+//   pull     brings the host's copy of the worktree's branch into it, through the helper (when
+//            the host's has moved on, as when the gate brought it up to date)
+//   open-pr  pushes the branch, opens the feature's pull request and keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
 // the worktree, so tests use a fake helper. Files are read and written only in the
 // feature folder, through the safe readers and writers of status.js; the head
-// branch is read from the .git files. Nothing here runs git.
+// branch is read from the .git files. Only `pull` runs git: the session's own, in its
+// worktree, inside the sandbox, to bring in the commits the helper hands back.
 // These commands run inside the project's sandbox, which cannot read ~/.wheelhouse
 // (ruling R150): nothing here reads it. Each helper request carries the worktree's
 // folder as `cwd`, and the helper places the project from it; STOP, too, comes
@@ -17,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { run, withoutGitVars } from '../lib/run.js';
 import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions } from './files.js';
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
@@ -327,6 +332,69 @@ export function recordPlan({ worktree, argv }) {
   return { plan: rel };
 }
 
+// --- push ---
+
+// Pushes the worktree's branch to the host through the helper, which places the project from
+// the worktree's folder and applies its push rules (never the default branch, never a force).
+// Returns `{ branch }`.
+export async function push({ client, worktree }) {
+  const branch = branchOf(worktree);
+  if (branch === null) throw new CliError("This worktree isn't on a branch, so there is nothing to push");
+  const pushed = await client.push({ cwd: worktree, dir: worktree, refspec: branch });
+  if (pushed?.ok === true) return { branch };
+  if (pushed?.rejected === 'non-fast-forward') throw new CliError(`The branch was not pushed: ${MOVED_ON}`);
+  throw new CliError(`The branch was not pushed: ${pushed?.refused ?? 'the host helper gave no answer'}`);
+}
+
+// What a push the host turned down because its branch moved on says.
+const MOVED_ON = 'the host\'s branch has moved on (the gate may have brought it up to date): run `cli.js pull`, then push again';
+
+// --- pull ---
+
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const PULL_MS = 5 * 60 * 1000;
+const UNREADABLE = 'The host helper gave an answer this could not read, so nothing was brought in';
+
+// Brings the host's copy of the worktree's branch into it (final review, I1). The
+// helper, which alone can reach the host, fetches it into its own mirror and brings it together
+// with the worktree's branch there: a fast-forward, or a plain merge it makes itself, refusing a
+// conflict. It hands back only the commits, as a git bundle; no key or setting of the helper's
+// comes with them. The session's own git, here in the sandbox, fetches them from the bundle and
+// moves the branch on with a fast-forward, which git refuses if it would overwrite uncommitted
+// changes. Returns `{ branch, already, merged?, sha? }`.
+export async function pull({ client, worktree }) {
+  const branch = branchOf(worktree);
+  if (branch === null) throw new CliError("This worktree isn't on a branch, so there is nothing to bring the host's branch into");
+  const got = await client.pull({ cwd: worktree, dir: worktree, branch });
+  if (got?.ok !== true) {
+    const files = Array.isArray(got?.conflicts) && got.conflicts.every((f) => typeof f === 'string') && got.conflicts.length > 0
+      ? ` (${got.conflicts.join(', ')})` : '';
+    throw new CliError(`The host's branch was not brought in: ${got?.refused ?? 'the host helper gave no answer'}${files}`);
+  }
+  if (got.already === true) return { branch, already: true };
+  if (!FULL_SHA.test(got.sha ?? '') || !FULL_SHA.test(got.from ?? '') || typeof got.bundle !== 'string' || !BASE64.test(got.bundle)) {
+    throw new CliError(UNREADABLE);
+  }
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const file = path.join(featurePaths(worktree).dir, 'pull.bundle');
+  const git = (args) => run('git', args, {
+    cwd: worktree, baseEnv: withoutGitVars(process.env), env: { GIT_TERMINAL_PROMPT: '0' }, input: '', timeoutMs: PULL_MS,
+  });
+  try {
+    writeWhole(file, Buffer.from(got.bundle, 'base64'));
+    const fetched = await git(['fetch', '-q', '--no-tags', file, 'refs/wheelhouse/pulled']);
+    if (fetched.code !== 0) throw new CliError(`git could not read the commits the helper handed back: ${firstLine(fetched.stderr)}`);
+    const moved = await git(['merge', '-q', '--ff-only', got.sha]);
+    if (moved.code !== 0) throw new CliError(`git could not bring the host's branch in: ${firstLine(moved.stderr)}. If changes are not yet committed, commit them, then run pull again`);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+  return { branch, already: false, merged: got.merged === true, sha: got.sha };
+}
+
+const firstLine = (text) => String(text ?? '').split(/\r?\n/).map((l) => l.replace(/^(?:error|fatal):\s*/, '').trim()).find((l) => l !== '') ?? 'no reason given';
+
 // --- open-pr ---
 
 function keptSession(file) {
@@ -342,8 +410,9 @@ function keptSession(file) {
 // takes a missing base for it) and keeps its number in pr.json, with the plan it was opened for
 // (ruling R88). A pull request kept already is not opened again until the foreman's merge marks
 // it merged: then the next slice's is opened. The report becomes the pull request's body, so
-// nothing is opened until the report passes the `report` check. The helper places the project
-// from the worktree's folder.
+// nothing is opened until the report passes the `report` check. The branch is pushed first,
+// through the helper, since the host opens a pull request only from a branch it holds. The
+// helper places the project from the worktree's folder.
 export async function openPr({ client, worktree, argv }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
@@ -356,6 +425,8 @@ export async function openPr({ client, worktree, argv }) {
   const checked = inspect(worktree);
   if (checked.missing.length > 0) throw new CliError(`The pull request is not opened until the report passes. ${checked.missing.join(' ')}`);
   const session = keptSession(p.session);
+  // The host opens a pull request only from a branch it holds.
+  await push({ client, worktree });
   const opened = await client.openPr({ cwd: worktree, head, title, body: checked.body, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
@@ -370,7 +441,7 @@ export async function openPr({ client, worktree, argv }) {
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'answer', 'plan', 'report', 'open-pr'];
+const COMMANDS = ['ask', 'answer', 'plan', 'report', 'push', 'pull', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -417,6 +488,15 @@ export async function main(argv, {
       const block = usable ? got.block : null;
       if (block === null) out(`${NO_PROVENANCE}\n`);
       else if (stampReport({ worktree, block })) out('It now says what built it.\n');
+    } else if (command === 'push') {
+      if (rest.length > 0) throw new CliError('push takes no arguments');
+      out(`Pushed ${(await push({ client: helper(), worktree })).branch}\n`);
+    } else if (command === 'pull') {
+      if (rest.length > 0) throw new CliError('pull takes no arguments');
+      const pulled = await pull({ client: helper(), worktree });
+      if (pulled.already) out(`Already up to date with the host's ${pulled.branch}\n`);
+      else if (pulled.merged) out(`Brought in the host's ${pulled.branch}: merged with this branch at ${pulled.sha.slice(0, 12)}\n`);
+      else out(`Brought in the host's ${pulled.branch}: this branch is now at ${pulled.sha.slice(0, 12)}\n`);
     } else {
       const { number, already } = await openPr({ client: helper(), worktree, argv: rest });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -60,7 +60,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   // Every set line pattern is used by a line function's output.
   const all = [
     ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
-    LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3),
+    LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
   ];
   for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
 });

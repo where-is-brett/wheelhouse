@@ -116,7 +116,7 @@
     }
   ],
   "claudeCode": {
-    "floor": "2.1.295"
+    "floor": "2.1.299"
   },
   "models": "the routing table in .claude/wheelhouse.json"
 }

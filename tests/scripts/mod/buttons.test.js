@@ -1,18 +1,21 @@
 // tests/scripts/mod/buttons.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardButtons, isSetupCard, CANT_ANSWER } from '../../../scripts/mod/buttons.js';
+import { cardButtons, isSetupCard, CANT_ANSWER, SETUP_ANSWER } from '../../../scripts/mod/buttons.js';
 import { composeCard, DECIDING } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { approvalLine, replyCode, replyCodeLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
+import { withHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
 const NOW = new Date('2026-10-18T05:00:00.000Z');
-const RULING = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
+// Made in a home of its own: an event names its computer, which is kept in the home, so made with
+// none it would be kept in the real ~/.wheelhouse.
+const RULING = withHome(() => makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW }));
 
 const common = {
   why: 'It changes what users see, which is yours to decide at level 3.',
@@ -41,21 +44,26 @@ const INPUTS = {
     ...common, kind: 'confirm-all', recommend: 'Confirm all', what: 'Setup step 5 found 2 rules: 1) "Money is shown in dollars"; 2) "Never push to main".',
     options: [says('Confirm all'), says('Let me correct some')], target: { count: 2, hash: DOC },
   },
+  baseline: { ...common, kind: 'baseline', recommend: 'Record these', what: 'The first version\'s figures from your note: US$100.00 for 4 merged pull requests.', options: [says('Record these')], target: { hash: DOC } },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 // The event data the state keeps for a composed card.
 const dataOf = (kind) => composeCard(INPUTS[kind]).card;
 const SET_LINE_KINDS = Object.keys(DECIDING);
 // A setup card, and setup's card of the rules found, get no button: the step goes ahead only by the
-// director's click on the very card setup showed, which only the prompt record counts.
-const NO_BUTTONS = { buttons: [], note: CANT_ANSWER };
+// director's click on the very card setup showed, which only the prompt record counts. Its note
+// sends the director to the chat where setup asked it. Nor does the baseline card, for that
+// reason; its note is the plain one.
 const SETUP_KINDS = ['setup', 'confirm-all'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline'];
+const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
+const noButtonsFor = (kind) => (SETUP_KINDS.includes(kind) ? NO_BUTTONS : { buttons: [], note: CANT_ANSWER });
 
 test('each kind of card gets its own buttons, and only the options it offers', () => {
   for (const kind of SET_LINE_KINDS) {
     const got = cardButtons(dataOf(kind));
-    if (SETUP_KINDS.includes(kind)) {
-      assert.deepEqual(got, NO_BUTTONS, kind);
+    if (NO_BUTTON_KINDS.includes(kind)) {
+      assert.deepEqual(got, noButtonsFor(kind), kind);
       continue;
     }
     assert.deepEqual(got, {
@@ -131,7 +139,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
   for (const kind of SET_LINE_KINDS) {
     const data = dataOf(kind);
     assert.deepEqual(cardProblems(data.question), [], kind);
-    if (SETUP_KINDS.includes(kind)) assert.deepEqual(cardButtons(data), NO_BUTTONS, kind);
+    if (NO_BUTTON_KINDS.includes(kind)) assert.deepEqual(cardButtons(data), noButtonsFor(kind), kind);
     else assert.ok(cardButtons(data).buttons.some((b) => b.does === 'record'), kind);
     const lines = data.question.split('\n');
     const broken = [
@@ -146,8 +154,8 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       assert.ok(cardProblems(question).length > 0, `${kind}: ${question}`);
       const got = cardButtons({ ...data, question });
       assert.equal(got.buttons.some((b) => b.does === 'record'), false, `${kind}: ${question}`);
-      assert.deepEqual(got.buttons, SETUP_KINDS.includes(kind) ? [] : [{ label: 'Explain more', does: 'turn' }], kind);
-      assert.equal(got.note, CANT_ANSWER, kind);
+      assert.deepEqual(got.buttons, NO_BUTTON_KINDS.includes(kind) ? [] : [{ label: 'Explain more', does: 'turn' }], kind);
+      assert.equal(got.note, SETUP_KINDS.includes(kind) ? SETUP_ANSWER : CANT_ANSWER, kind);
     }
   }
 });
@@ -177,8 +185,10 @@ test('junk gives no buttons and never throws', () => {
 
 test('the Unattended card gets no button on the pane, with or without Use Guarded', () => {
   const computer = '0a1b2c3d';
-  const on = makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended' }, now: () => NOW });
-  const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'guarded', words: 'Run build commands guarded' }, now: () => NOW });
+  const [on, guarded] = withHome(() => [
+    makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended' }, now: () => NOW }),
+    makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'guarded', words: 'Run build commands guarded' }, now: () => NOW }),
+  ]);
   const plain = unattendedCardData(UNATTENDED_CARD(), on.id, computer);
   const offered = unattendedCardData(UNATTENDED_CARD({ guardedReady: true }), on.id, computer, guarded);
   // Without Guarded it has no set line, so it would otherwise be a question whose options are turns.
@@ -194,6 +204,9 @@ test('the Unattended card gets no button on the pane, with or without Use Guarde
 test('a setup card gets no button on the pane, whatever it offers and whatever kind it claims', () => {
   const setup = dataOf('setup');
   assert.equal(isSetupCard(setup), true);
+  // Its note says where to answer it: setup asks it in its own chat, not the front desk.
+  assert.equal(SETUP_ANSWER, 'This card can\'t be answered here: answer it in the chat where setup asked it.');
+  assert.notEqual(SETUP_ANSWER, CANT_ANSWER);
   assert.deepEqual(setup.options, ['Go ahead', 'Not now', 'Explain more', 'Show me']);
   assert.deepEqual(cardButtons(setup), NO_BUTTONS);
   // Offering only Go ahead, or only the turns, it still gets nothing.

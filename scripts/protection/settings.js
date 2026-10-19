@@ -53,7 +53,8 @@ import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js'
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'];
-const HOST_TOOLS = ['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe'];
+// The deploy and hosting tools Standard's deny rules name; the install survey looks for the same ones.
+export const HOST_TOOLS = Object.freeze(['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe']);
 // Each tool, with the names its package has on npm where they differ.
 const RUNNERS = ['npx', 'npm exec', 'pnpm dlx', 'bunx', 'yarn dlx'];
 const PACKAGE_NAMES = ['netlify-cli', '@railway/cli'];
@@ -149,6 +150,16 @@ export function claudeCodeSettings({ floor } = {}) {
   return { autoUpdatesChannel: 'stable', minimumVersion: floor };
 }
 
+// Claude Code's own switch-off for the attribution it adds to commits and pull requests
+// (https://code.claude.com/docs/en/settings-reference, "attribution"): empty strings hide the
+// commit trailer and the pull request line, and sessionUrl false drops the session link.
+// includeCoAuthoredBy is the older, deprecated key that earlier versions still read. Why:
+// the Global Constraints allow no Co-Authored-By line and no model name in commits.
+export const ATTRIBUTION_OFF = {
+  attribution: { commit: '', pr: '', sessionUrl: false },
+  includeCoAuthoredBy: false,
+};
+
 // `release` is { ref } when the project follows a Wheelhouse release; without it the
 // marketplace entry carries no ref. Build commands' allow rules are not here: see featureAllowRules.
 export function projectSettings(config, { release = null } = {}) {
@@ -177,6 +188,7 @@ export function projectSettings(config, { release = null } = {}) {
     autoCompactWindow: 300000,
     disableAllHooks: false,
     enableAllProjectMcpServers: false,
+    ...structuredClone(ATTRIBUTION_OFF),
   };
 }
 

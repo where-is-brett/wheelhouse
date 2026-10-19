@@ -68,6 +68,10 @@
 // `merge` refuses but for an open incident's recorded fix, and under STOP
 // refuses that too.
 //
+// The command forwards to the host helper (ruling R156, scripts/foreman/forward.js):
+// the foreman's session is sandboxed, and these commands read and write the
+// Wheelhouse home, so the helper runs `main` outside the sandbox, in the main checkout.
+//
 // Every command checks the work id, prints a few short lines, and refuses
 // with one plain line and exit code 1. Each may be run again with nothing
 // more done (a wake may repeat, ruling R27): it says what is so already.
@@ -75,8 +79,9 @@
 // Writing state. Every event goes through the helper's /state/write with an
 // id made here, and that id is recorded in the watcher's handled list
 // (scripts/watcher/handled.js) before the write, so the foreman's own
-// records never wake it (R64). The list has no lock: the foreman runs these
-// commands one at a time. A `feature` event replaces the last one in the
+// records never wake it (R64). The list has no lock of its own: the helper's
+// /foreman/run runs a project's foreman commands one at a time, so a retry
+// waits for the first to end. A `feature` event replaces the last one in the
 // features view, so each carries the feature's worktree, branch, plan, files
 // and slice forward. Only `start` and `amend` carry `brief`: a `building`
 // event without it is the session's go-ahead (`build`, ruling R85), and one
@@ -127,6 +132,7 @@ import { cardProblems } from '../hooks/card-check.js';
 import { sameStatus } from '../hooks/feature-status.js';
 import { lockedByPath } from '../hooks/kit.js';
 import { branchOf } from '../hooks/session-start.js';
+import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { CARD } from '../lib/front-desk.js';
@@ -1170,6 +1176,7 @@ export async function main(argv, {
   }
 }
 
+// Run as a command, it forwards to the host helper, which runs `main` outside the sandbox (ruling R156).
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode = await forward('act', process.argv.slice(2));
 }

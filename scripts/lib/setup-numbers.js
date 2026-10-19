@@ -21,3 +21,7 @@ export const STEP_TIMEOUT_MS = 20 * 60 * 1000;
 // the account's launch environment. Both are built (scripts/setup/telemetry.js); this one is used
 // until check 36's sitting shows which one Desktop's sessions take.
 export const TELEMETRY_ROUTE = 'user-settings';
+
+// The baseline from the private note (scripts/measures/baseline.js): how long the figures waiting
+// for the director's click, and the card that read them back, are kept before they count as gone.
+export const BASELINE_WAIT_MS = 24 * 60 * 60 * 1000;

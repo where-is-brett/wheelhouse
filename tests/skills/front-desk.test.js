@@ -17,6 +17,7 @@ import { decide as stopGuard } from '../../scripts/hooks/stop-guard.js';
 import { words } from '../../scripts/hooks/shell-words.js';
 import { setStop } from '../../scripts/lib/stop.js';
 import { as, shortHome } from '../helpers/homes.js';
+import { main as measures } from '../../scripts/measures/cli.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ROOT_VARIABLE = '${CLAUDE_PLUGIN_ROOT}';
@@ -27,6 +28,9 @@ const playbook = read(PLAYBOOK);
 const intake = read(INTAKE);
 const COMMAND = frontDeskCommand('/plugin', { platform: 'linux' });
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
+// The baseline's command (scripts/measures/cli.js), which the playbook names beside the front desk's.
+const MEASURES = COMMAND.replace('/scripts/frontdesk/cli.js', '/scripts/measures/cli.js');
+const MEASURES_LINE = /measures\/cli\.js"? [a-z]+/g;
 
 function frontOf(text, file) {
   const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
@@ -40,7 +44,8 @@ function frontOf(text, file) {
 }
 
 // The commands a text names as cli.js's, by their first word: `node "<root>/…/cli.js" <word>` and `cli.js <word>`.
-const commandWords = (text) => [...text.replaceAll(ROOT_VARIABLE, '/plugin').matchAll(/cli\.js"? ([a-z]+)/g)].map((m) => m[1]);
+// The baseline's command is left out: it is scripts/measures/cli.js's, pinned on its own below.
+const commandWords = (text) => [...text.replaceAll(ROOT_VARIABLE, '/plugin').replace(MEASURES_LINE, '').matchAll(/cli\.js"? ([a-z]+)/g)].map((m) => m[1]);
 
 // The subcommands cli.js lists in its own refusal.
 async function subcommands() {
@@ -87,7 +92,10 @@ test('every command is cli.js exactly as its allow rule matches it', () => {
   for (const [file, text] of [[PLAYBOOK, playbook], [INTAKE, intake]]) {
     const nodes = [...text.matchAll(/node "[^"]*"/g)].map((m) => m[0].replaceAll(ROOT_VARIABLE, '/plugin'));
     assert.ok(nodes.length > 0, `${file} names the command`);
-    for (const command of nodes) assert.equal(command, COMMAND, file);
+    for (const command of nodes) {
+      if (file === PLAYBOOK && command === MEASURES) continue;
+      assert.equal(command, COMMAND, file);
+    }
   }
 });
 
@@ -172,4 +180,22 @@ test('the playbook decides a level 2 question itself, and puts the review before
   assert.match(review, /When `review` gave questions/);
   assert.match(review, /gave none, run `cards` as usual/);
   assert.match(playbook, /One call per visit/);
+});
+
+test('the playbook records the private note\'s figures only by the baseline command, which takes its example as written', async () => {
+  const [, line, rest] = /```\n(node "[^"]*" baseline ([^\n]+))\n```/.exec(playbook) ?? [];
+  assert.ok(line, 'the playbook shows the baseline command');
+  assert.ok(line.replaceAll(ROOT_VARIABLE, '/plugin').startsWith(`${MEASURES} baseline `));
+  const asked = [];
+  const client = { measures: { baseline: async (body) => { asked.push(body); return { ok: true, hash: 'a'.repeat(64), card: { question: 'q' } }; } } };
+  let out = '';
+  let err = '';
+  const code = await measures(['baseline', ...words(rest, false)], { client, out: (t) => { out += t; }, err: (t) => { err += t; } });
+  assert.equal(code, 0, err);
+  assert.deepEqual(Object.keys(asked[0]).sort(), ['counted', 'from', 'merges', 'to', 'usd']);
+  assert.deepEqual(Object.keys(JSON.parse(out)).sort(), ['card', 'hash']);
+  // The second step, the card's two options, and where the figures must never go.
+  for (const words of ['--confirm <hash>', '**Record these**', '**Not now**', 'Never put the figures anywhere else: not in `record`']) {
+    assert.ok(playbook.includes(words), words);
+  }
 });

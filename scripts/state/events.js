@@ -8,7 +8,8 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL } from './card-lines.js';
+import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine } from './card-lines.js';
+import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
@@ -23,7 +24,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -45,6 +46,10 @@ const ACTION_OWN = {
   // full hash of the list the card's line names, and the ids of the rulings the click recorded from
   // it, one per rule listed, each confirmed by its own confirmation.
   'confirm-all': ['hash', 'ids'],
+  // The baseline card's click: the full hash of the figures it read back. Its question is the
+  // card's set line alone, so the click carries no figure. It is kept in
+  // <wheelhouseHome()>/measures/clicks/ and never written to the state (writeEvent refuses it).
+  baseline: ['hash'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, or put the card off: a click on one is never an answer.
@@ -114,6 +119,10 @@ function checkAction(data) {
       bad('needs the ids of the rulings it confirmed, each once');
     }
     if (data.label !== CONFIRM_ALL_LABEL) bad(`needs the ${CONFIRM_ALL_LABEL} label`);
+  } else if (data.action === 'baseline') {
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the figures its card read back');
+    if (data.label !== BASELINE_LABEL) bad(`needs the ${BASELINE_LABEL} label`);
+    if (data.question !== baselineLine(data.hash)) bad('carries only the baseline card\'s set line as its question');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }
@@ -366,10 +375,36 @@ function removeEmpty(folders) {
   }
 }
 
+// Every string a value holds, keys included, at any depth.
+function stringsIn(value, out = []) {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const v of value) stringsIn(v, out);
+  else if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      out.push(k);
+      stringsIn(v, out);
+    }
+  }
+  return out;
+}
+
+// Whether an event carries the baseline card, its click or the private note's figures: they stay
+// in <wheelhouseHome()>/measures/ and never enter the state or the profile. A record reads as the
+// baseline card by any of its fixed words however written, or by its header with the figures; it
+// holds the figures while they wait, in date at `now`, for the director's click
+// (scripts/lib/measures-clicks.js).
+export function carriesBaseline(event, { now = () => new Date() } = {}) {
+  const data = event?.data;
+  if (event?.kind === 'action' && data?.action === 'baseline') return true;
+  if (data?.kind === 'baseline') return true;
+  return carriesFigures(stringsIn(data).join('\n'), data?.header, { now });
+}
+
 // `dir` and `branch` name another clone of events, such as the profile's; by default
-// the project's state clone and its state branch.
-export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
+// the project's state clone and its state branch. An event carrying the baseline card is refused.
+export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH, now = () => new Date() }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
+  if (carriesBaseline(event, { now })) throw new Error(CARRIES_BASELINE);
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }

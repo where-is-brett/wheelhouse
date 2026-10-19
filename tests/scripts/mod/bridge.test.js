@@ -20,6 +20,9 @@ import { keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/path
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
+import { courierFile } from '../../../scripts/mod/courier.js';
 
 const BRIDGE = fileURLToPath(new URL('../../../scripts/mod/bridge.js', import.meta.url));
 const P = 'owner__name';
@@ -497,7 +500,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   // A turn is running: the new card waits.
   assert.equal('submit' in await handle(tickOf(repo, { idle: false }), live({ now: later(1) })), false);
   const woken = await handle(tickOf(repo, { idle: true }), live({ now: later(2) }));
-  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Ask any new cards now, once, then send Claude\'s notification in one line.']);
+  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Send Claude\'s notification in one line, then ask any new cards now, once.']);
   assert.deepEqual(JSON.parse(lineOf(woken)).submit, woken.submit);
   assert.ok(!woken.submit[0].includes('words'));
   // Once handed back, it isn't handed back again.
@@ -520,14 +523,14 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   assert.equal('submit' in late, false);
   assert.ok(!late.pane.missing.includes('The courier couldn\'t run this time'));
   const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
-  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3). Ask any new cards now, once, then send Claude\'s notification in one line.']);
+  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3). Send Claude\'s notification in one line, then ask any new cards now, once.']);
 
   // A second front desk opening now marks nothing and wakes for nothing.
   waiting('c-old', 'c-new', 'c-third', 'c-fourth');
   const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
   assert.equal('submit' in second, false);
   const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));
-  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Ask any new cards now, once, then send Claude\'s notification in one line.']);
+  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Send Claude\'s notification in one line, then ask any new cards now, once.']);
 }));
 
 test('the model is written to status.json before the tick answers', () => withHome(async (home) => {
@@ -616,6 +619,121 @@ test('a feature session or a Shape 1 foreman is told to stop ticking', () => wit
   const elsewhere = tempFolder('wh-bridge-outside-');
   assert.deepEqual(await handle(tickOf(elsewhere), live()), { ok: true, role: 'front-desk', every: 0 });
   assert.deepEqual(await handle({ cmd: 'tick', session: 'sess-1' }, live()), { ok: true, role: 'front-desk', every: 0 });
+}));
+
+// --- tick: a project still being set up ---
+
+// A session in a folder setup is working on is setup's: it keeps ticking, so the pane comes once
+// setup finishes, and is shown nothing meanwhile (ruling 38).
+const SETUP_TICK = { ok: true, role: 'setup', every: TICK_MS };
+
+test('a session in a registered project whose setup run is unfinished is setup\'s: it keeps ticking and is shown nothing', () => withHome(async (home) => {
+  const repo = registered(home);
+  const at = () => NOW;
+  // Step 3 registered the folder; steps 4 to 10 are still to come.
+  const run = startRun({ folder: fs.realpathSync.native(repo), project: P, now: at });
+  for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: at });
+  // A courier record kept from before, which a tick during setup leaves as it was.
+  const courier = courierFile(P);
+  fs.mkdirSync(path.dirname(courier), { recursive: true });
+  fs.writeFileSync(courier, '{"kept":"as it was"}\n');
+  const watched = [];
+  const watchTick = async (args) => { watched.push(args); return { watcher: 'running', submit: [] }; };
+
+  for (const surface of ['desktop', 'terminal']) {
+    for (const idle of [true, false]) {
+      const answer = await handle(tickOf(repo, { surface, idle }), live({ watchTick }));
+      assert.deepEqual(answer, SETUP_TICK, `${surface} ${idle}`);
+      assert.deepEqual(JSON.parse(lineOf(answer)), SETUP_TICK);
+    }
+  }
+  assert.equal(TICK_MS, 15000);
+  // From a folder inside the project too.
+  fs.mkdirSync(path.join(repo, 'web'));
+  assert.deepEqual(await handle(tickOf(path.join(repo, 'web')), live({ watchTick })), SETUP_TICK);
+  // No pane was made, the courier's record is as it was, and the watcher wasn't asked.
+  assert.equal(readPaneStatus(P), null);
+  assert.equal(fs.readFileSync(courier, 'utf8'), '{"kept":"as it was"}\n');
+  assert.deepEqual(watched, []);
+
+  // A step done out of order leaves setup unfinished.
+  markStep(run.id, 10, 'doneAt', { now: at });
+  assert.deepEqual(await handle(tickOf(repo), live({ watchTick })), SETUP_TICK);
+
+  // Every step marked done is not yet the end: the health check counts once its board was green
+  // (setup's ruling R67).
+  for (const { n } of SETUP_STEPS) markStep(run.id, n, 'doneAt', { now: at });
+  assert.deepEqual(await handle(tickOf(repo), live({ watchTick })), SETUP_TICK);
+
+  // Once every step is done and the board was green, the same session's next tick is the front desk's.
+  addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: at().toISOString() } }]);
+  const after = await handle(tickOf(repo), live({ watchTick }));
+  assert.equal(after.ok, true);
+  assert.equal(after.role, 'front-desk');
+  assert.equal(after.every, TICK_MS);
+  assert.equal(after.pane.project, P);
+  assert.equal(after.glance, after.pane.glance);
+  assert.equal(after.status, after.glance);
+  assert.deepEqual(readPaneStatus(P), JSON.parse(JSON.stringify(after.pane)));
+  assert.equal(watched.length, 1);
+}));
+
+test('a folder with no project record that setup is working on is setup\'s too; one it isn\'t stays out of it', () => withHome(async (home) => {
+  // Steps 1 and 2: a run there, the folder not registered yet.
+  const fresh = fs.realpathSync.native(tempFolder('wh-bridge-setup-'));
+  const run = startRun({ folder: fresh, now: () => NOW });
+  assert.deepEqual(await handle(tickOf(fresh), live()), SETUP_TICK);
+  markStep(run.id, 1, 'doneAt', { now: () => NOW });
+  assert.deepEqual(await handle(tickOf(fresh), live()), SETUP_TICK);
+  // A folder whose own settings switch the plugin on, with no run yet.
+  const switched = fs.realpathSync.native(tempFolder('wh-bridge-plugin-on-'));
+  fs.mkdirSync(path.join(switched, '.claude'));
+  fs.writeFileSync(path.join(switched, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true } }));
+  assert.deepEqual(await handle(tickOf(switched), live()), SETUP_TICK);
+  // Neither has a pane.
+  assert.equal(fs.existsSync(path.join(home, 'projects')), false);
+  // A folder setup has nothing to do with is told to stop ticking, as before.
+  assert.deepEqual(await handle(tickOf(tempFolder('wh-bridge-stranger-')), live()), { ok: true, role: 'front-desk', every: 0 });
+}));
+
+test('the tick asks whether the session\'s folder is being set up, and runs nothing for the pane while it is', () => withHome(async (home) => {
+  const repo = registered(home);
+  const asked = [];
+  const ran = [];
+  const spies = {
+    paneModel: async () => { ran.push('paneModel'); return { missing: [] }; },
+    writePaneStatus: () => { ran.push('writePaneStatus'); },
+    courierWake: async () => { ran.push('courierWake'); return { submit: 'Wheelhouse courier: x' }; },
+    readEffective: () => { ran.push('readEffective'); return {}; },
+    watchTick: async () => { ran.push('watchTick'); return { watcher: 'running', submit: [] }; },
+    client: { ...fakeClient(), health: async () => { ran.push('health'); return { ok: true }; } },
+  };
+  const beingSetUp = (cwd) => { asked.push(cwd); return { folder: cwd, run: null, journal: true }; };
+  assert.deepEqual(await handle(tickOf(repo, { idle: true }), live({ ...spies, beingSetUp })), SETUP_TICK);
+  assert.deepEqual(asked, [repo]);
+  assert.deepEqual(ran, []);
+  // A journal that can't be read leaves a folder with no project record counted as being set up
+  // (kit.js gives `journal: false` only for one; a registered folder's is null).
+  const fresh = fs.realpathSync.native(tempFolder('wh-bridge-unread-'));
+  const unread = (cwd) => (cwd === fresh ? { folder: fresh, run: null, journal: false } : null);
+  assert.deepEqual(await handle(tickOf(fresh), live({ ...spies, beingSetUp: unread })), SETUP_TICK);
+  assert.deepEqual(ran, []);
+
+  // Not being set up, the same session is the front desk, as before.
+  const desk = await handle(tickOf(repo), live({ beingSetUp: () => null }));
+  assert.equal(desk.role, 'front-desk');
+  assert.equal(desk.pane.project, P);
+  // A lookup that throws counts as no setup: the session is the front desk.
+  const thrown = await handle(tickOf(repo), live({ beingSetUp: () => { throw new Error('x'); } }));
+  assert.equal(thrown.role, 'front-desk');
+  assert.equal(thrown.every, TICK_MS);
+
+  // A foreman or a feature session in a folder being set up keeps its own answer.
+  const always = () => ({ folder: repo, run: null, journal: true });
+  const shape1 = { ...fakeClient(), config: async () => ({ ok: true, config: { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] } }) };
+  assert.deepEqual(await handle(tickOf(repo), live({ env: { WHEELHOUSE_ROLE: 'foreman' }, client: shape1, beingSetUp: always })), { ok: true, role: 'foreman', every: 0 });
+  fs.writeFileSync(path.join(repo, '.git', 'HEAD'), 'ref: refs/heads/feature/login\n');
+  assert.deepEqual(await handle(tickOf(repo, { session: 'sess-feature' }), live({ beingSetUp: always })), { ok: true, role: 'feature', every: 0 });
 }));
 
 test('a Shape 2 foreman\'s tick runs the watcher\'s loop and hands back its prompts', () => withHome(async (home) => {

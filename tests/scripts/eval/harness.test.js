@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempFolder as madeFolder } from '../../helpers/homes.js';
 import {
   parseStream,
   toolCalls,
@@ -28,9 +28,8 @@ import {
 const fixture = fileURLToPath(new URL('../../fixtures/eval/stream.jsonl', import.meta.url));
 const events = parseStream(fs.readFileSync(fixture, 'utf8'));
 
-function tempFolder(name = 'harness-test-') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), name));
-}
+// A temporary folder, removed once this file's tests are done.
+const tempFolder = (name = 'harness-test-') => madeFolder(name);
 
 test('parseStream reads one event per line, skipping blank lines and keeping unreadable ones visible', () => {
   const parsed = parseStream('{"type":"a"}\n\n   \nnot json\n{"type":"b"}\n');
@@ -104,7 +103,7 @@ function fakeClaude(folder, { helpFlags, exitCode = 0 } = {}) {
 import fs from 'node:fs';
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
+  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources', '--append-system-prompt']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
   process.exit(0);
 }
 fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), marker: process.env.EVAL_MARKER ?? null }));
@@ -163,7 +162,52 @@ test('runSession leaves out --model when none is given, and reports a non-zero e
   });
   assert.ok(!fake.record().args.includes('--model'));
   assert.ok(!fake.record().args.includes('--plugin-dir'));
+  assert.ok(!fake.record().args.includes('--append-system-prompt'));
   assert.equal(result.exitCode, 3);
+});
+
+test('runSession appends to the system prompt when asked, and checks claude knows the flag', async () => {
+  const folder = tempFolder();
+  const fake = fakeClaude(folder);
+  await runSession({
+    dir: tempFolder('harness-session-'),
+    prompt: 'x',
+    pluginDirs: [],
+    permissionMode: 'dontAsk',
+    maxTurns: 1,
+    appendSystemPrompt: 'You are the front desk.',
+    command: fake.command,
+    commandArgs: fake.commandArgs,
+  });
+  const { args } = fake.record();
+  assert.equal(args[args.indexOf('--append-system-prompt') + 1], 'You are the front desk.');
+  const older = fakeClaude(tempFolder(), { helpFlags: ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources'] });
+  await assert.rejects(runSession({
+    dir: tempFolder('harness-session-'),
+    prompt: 'x',
+    pluginDirs: [],
+    permissionMode: 'dontAsk',
+    maxTurns: 1,
+    appendSystemPrompt: 'You are the front desk.',
+    command: older.command,
+    commandArgs: older.commandArgs,
+  }), /--append-system-prompt/);
+});
+
+test('runSession puts extra arguments last, as given, without looking for them in --help', async () => {
+  const folder = tempFolder();
+  const fake = fakeClaude(folder);
+  await runSession({
+    dir: tempFolder('harness-session-'),
+    prompt: 'x',
+    pluginDirs: [],
+    permissionMode: 'dontAsk',
+    maxTurns: 1,
+    extraArgs: ['--permission-prompt-tool', 'stdio'],
+    command: fake.command,
+    commandArgs: fake.commandArgs,
+  });
+  assert.deepEqual(fake.record().args.slice(-2), ['--permission-prompt-tool', 'stdio']);
 });
 
 // --max-turns is not in `claude --help` (checked on 2.1.302) yet works, so the fake leaves it out of its help
@@ -293,7 +337,11 @@ test('runScenario sets the project up, runs the session, judges it and writes th
   const scenario = {
     id: 99,
     title: 'a stand-in',
-    setup: async (dir, variant) => { setupSaw = { dir, variant }; fs.writeFileSync(path.join(dir, 'marker.txt'), variant); },
+    setup: async (dir, variant) => {
+      setupSaw = { dir, variant };
+      fs.writeFileSync(path.join(dir, 'marker.txt'), variant);
+      return { appendSystemPrompt: `You are the ${variant} desk.` };
+    },
     prompt: 'Do the thing.',
     variants: { with: { pluginDirs: ['/p/with'] }, without: { pluginDirs: ['/p/without'] } },
     permissionMode: 'acceptEdits',
@@ -317,6 +365,8 @@ test('runScenario sets the project up, runs the session, judges it and writes th
   assert.equal(sessionSaw.prompt, 'Do the thing.');
   assert.equal(sessionSaw.maxTurns, 5);
   assert.equal(sessionSaw.permissionMode, 'acceptEdits');
+  assert.equal(sessionSaw.appendSystemPrompt, 'You are the without desk.');
+  assert.equal(sessionSaw.extraArgs, undefined, 'a scenario with no extra arguments adds none');
   assert.equal(outcome.pass, true);
   const total = totalUsageOf(events);
   assert.equal(outcome.line, `99 without: pass (variant without) ${total.input} in / ${total.output} out`);
@@ -346,7 +396,7 @@ test('runScenario records a failing judgement and a session that did not exit cl
     trial: 1,
     home,
     date: '2026-10-18',
-    runner: async () => ({ events: [], exitCode: 2, usage: { input: 0, output: 0 } }),
+    runner: async () => ({ events, exitCode: 2, usage: usageOf(events) }),
   });
   assert.equal(outcome.pass, false);
   assert.match(outcome.line, /^98 with: fail \(it asked; claude exited 2\)/);
@@ -373,4 +423,112 @@ test('runScenario never passes a session whose result event is an error', async 
   });
   assert.equal(outcome.pass, false);
   assert.match(outcome.line, /result event is an error/);
+});
+
+test('runScenario passes a context from setup, and the scenario\'s extra arguments, to the session, the context to pass, and closes it afterwards', async () => {
+  const home = tempFolder('harness-home-');
+  let sessionSaw;
+  let passSaw;
+  let closed = 0;
+  const scenario = {
+    id: 96,
+    title: 'a stand-in',
+    setup: async () => ({ env: { EXTRA: 'yes' }, pluginDirs: ['/p/extra'], records: ['r'], evidence: () => ({ seen: 1 }), close: async () => { closed += 1; } }),
+    prompt: 'x',
+    variants: { with: { pluginDirs: ['/p/with'] }, without: { pluginDirs: [] } },
+    extraArgs: ['--permission-prompt-tool', 'stdio'],
+    pass: ({ context }) => { passSaw = context; return { pass: true, why: 'ok' }; },
+  };
+  await runScenario({
+    scenario,
+    variant: 'with',
+    trial: 1,
+    home,
+    date: '2026-10-18',
+    runner: async (options) => { sessionSaw = options; return { events, exitCode: 0, usage: usageOf(events) }; },
+  });
+  assert.deepEqual(sessionSaw.pluginDirs, ['/p/with', '/p/extra']);
+  assert.deepEqual(sessionSaw.env, { EXTRA: 'yes' });
+  assert.deepEqual(sessionSaw.extraArgs, ['--permission-prompt-tool', 'stdio'], 'the scenario\'s own extra arguments');
+  assert.deepEqual(passSaw.records, ['r']);
+  assert.equal(closed, 1);
+  const written = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', '2026-10-18', '96-with-1.json'), 'utf8'));
+  assert.deepEqual(written.evidence, { seen: 1 });
+});
+
+test('runScenario closes the context even when the session fails to start', async () => {
+  const home = tempFolder('harness-home-');
+  let closed = 0;
+  const scenario = {
+    id: 95,
+    title: 'a stand-in',
+    setup: async () => ({ close: () => { closed += 1; } }),
+    prompt: 'x',
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+    pass: () => ({ pass: true, why: 'ok' }),
+  };
+  await assert.rejects(runScenario({
+    scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => { throw new Error('no claude'); },
+  }), /no claude/);
+  assert.equal(closed, 1);
+});
+
+test('runScenario judges a run a fail when its pass throws, and still writes its record and counts its tokens', async () => {
+  const home = tempFolder('harness-home-');
+  const scenario = {
+    id: 93,
+    title: 'a stand-in',
+    setup: async () => {},
+    prompt: 'x',
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+    pass: () => { throw new Error('no such file'); },
+  };
+  const outcome = await runScenario({
+    scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => ({ events, exitCode: 0, usage: usageOf(events) }),
+  });
+  assert.equal(outcome.pass, false);
+  assert.equal(outcome.handled, true);
+  assert.match(outcome.line, /^93 with: fail \(pass could not judge it: no such file\)/);
+  assert.deepEqual(outcome.usage, totalUsageOf(events));
+  const written = JSON.parse(fs.readFileSync(outcome.file, 'utf8'));
+  assert.equal(written.handled, true);
+  assert.equal(written.events.length, events.length);
+});
+
+// A scenario whose pass says whatever `verdict` says, for the sessions that did not finish.
+const judgedAs = (id, verdict) => ({
+  id,
+  title: 'a stand-in',
+  setup: async () => {},
+  prompt: 'x',
+  variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+  pass: () => (verdict ? { pass: true, why: 'nothing bad happened' } : { pass: false, why: 'the canary leaked' }),
+});
+const withoutResult = events.filter((event) => event.type !== 'result');
+const withResult = (fields) => events.map((event) => (event.type === 'result' ? { ...event, ...fields } : event));
+
+test('a session that did not finish never passes, and is run again when its pass saw nothing wrong', async () => {
+  const home = tempFolder('harness-home-');
+  const trialOf = (scenario, session) => runScenario({ scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => session });
+  const cases = [
+    ['timed out', { events, exitCode: 1, timedOut: true }, /^92 with: fail \(did not finish; claude exited 1; timed out\)/],
+    ['crashed after a turn with a tool call', { events: withoutResult, exitCode: 1 }, /^92 with: fail \(did not finish; claude exited 1\)/],
+    ['stopped at its turn cap without saying it erred', { events: withResult({ subtype: 'error_max_turns', is_error: false }), exitCode: 0 }, /^92 with: fail \(did not finish\)/],
+  ];
+  for (const [what, session, line] of cases) {
+    const outcome = await trialOf(judgedAs(92, true), session);
+    assert.equal(outcome.pass, false, what);
+    assert.equal(outcome.handled, false, `${what}: nothing was shown, so it can be run again`);
+    assert.match(outcome.line, line, what);
+    const written = JSON.parse(fs.readFileSync(outcome.file, 'utf8'));
+    assert.deepEqual(written.judged, { pass: true, why: 'nothing bad happened' }, what);
+  }
+  // A session that did not finish but showed a failure stays a handled failure.
+  const leaked = await trialOf(judgedAs(91, false), { events: withoutResult, exitCode: 1 });
+  assert.equal(leaked.pass, false);
+  assert.equal(leaked.handled, true);
+  assert.match(leaked.line, /^91 with: fail \(the canary leaked; claude exited 1\)/);
+  // A finished session's pass stands.
+  const finished = await trialOf(judgedAs(90, true), { events, exitCode: 0 });
+  assert.equal(finished.pass, true);
 });
