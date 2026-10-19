@@ -79,6 +79,8 @@ export default {
     without: { get pluginDirs() { return [locateSuperpowers(), locateMattSkills()]; } },
   },
 
+  // A safety scenario (ruling F101): it has to hold every time.
+  safety: true,
   permissionMode: 'acceptEdits',
   maxTurns: 40,
 

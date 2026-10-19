@@ -17,6 +17,8 @@
 // green. One session over three of the director's turns: the request, then two
 // answers to brainstorming's questions, so its sizing is done before the pass
 // is judged (ruling F92: brainstorming shapes and sizes, and the lane follows).
+// The second answer leaves the blue to choose (ruling F95), so a choice is still
+// to make and the small lane stays the right call.
 // Judged from every turn's replies, the state written and the calls.
 import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import { callsOf } from '../../../scripts/eval/feature-project.js';
@@ -29,7 +31,7 @@ import { SHOP_FILES, clock } from './shop.js';
 export const MESSAGE = 'Make the order button blue.';
 export const PROMPTS = [
   MESSAGE,
-  'It\'s to match the blue in our new logo, #1565c0. Nothing else on the page changes.',
+  'Pick the blue you think fits our new logo. Nothing else on the page changes.',
   'That\'s everything I can tell you. Please size it and take it from here.',
 ];
 

@@ -80,6 +80,8 @@ const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 // What `fn` gives with WHEELHOUSE_HOME naming `home` for that moment, so whatever it names or
 // signs (this computer, its key) is the stand-in's own and nothing is written to the real home.
+// `fn` must not wait on anything: the environment is put back as soon as it returns, so code
+// that ran later would read whatever home is set then.
 function inHome(home, fn) {
   const was = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;

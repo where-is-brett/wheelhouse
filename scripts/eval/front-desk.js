@@ -179,7 +179,8 @@ const EVAL_PROJECT = 'wheelhouse-eval';
 
 // What the board context hook adds to a front desk prompt at `at` (a Date), over the stand-in's
 // `views` and `events`, as board-context.js's decide does: the "cards to ask" line, then, when the
-// gap since the director's last prompt (`seen.promptAt`) has passed, the briefing within what is
+// gap since the later of the director's last prompt (`seen.promptAt`) and the last briefing given
+// (`seen.briefedAt`) has passed, the briefing within what is
 // left of CONTEXT_CHARS. `usage` is the usage figures the briefing reads (usageFigures' shape), or
 // null for none. `seen` ({ promptAt, briefedAt }) is updated as markSeen would. The functions run
 // with WHEELHOUSE_HOME naming `home`, the evaluation's own, so they read nothing of the real one;
@@ -189,7 +190,8 @@ export function promptContext({ views, events, seen, at, usage = null, home }) {
   const was = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {
-    const last = seen.promptAt === null ? NaN : Date.parse(seen.promptAt);
+    const since = [seen.promptAt, seen.briefedAt].filter((t) => typeof t === 'string').sort().at(-1) ?? null;
+    const last = since === null ? NaN : Date.parse(since);
     const due = Number.isNaN(last) || at.getTime() - last >= BRIEFING_GAP_HOURS * 60 * 60 * 1000;
     const count = cardsDue(views, at);
     const cards = count > 0 ? cardsLine(count) : null;
