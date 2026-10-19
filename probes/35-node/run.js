@@ -16,7 +16,7 @@
 // `setup` needs Node.js, so for the macOS sitting it is run from the director's
 // own account, into /Users/Shared/wheelhouse-check35, which the throwaway
 // account can read and write. It copies this script and run.md into that folder,
-// and the hooks run the copy. See run.md.
+// and the hooks run the copy, and starts notes.md for the sitting's results. See run.md.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -99,6 +99,8 @@ function setup(args) {
       plugins: [{ name: 'wheelhouse', source: './plugin', description: 'Scratch copy for check 35.' }],
     }, null, 2) + '\n');
   }
+  const notes = path.join(root, 'notes.md');
+  if (!fs.existsSync(notes)) fs.writeFileSync(notes, '# Check 35 notes\n\nResults of each trial, appended as they are made (see run.md).\n');
   // Readable and writable by any account on this computer, so another account's
   // session can use the folder (the logs are written by that account).
   if (process.platform !== 'win32') execFileSync('chmod', ['-R', 'a+rwX', root]);
