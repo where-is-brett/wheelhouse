@@ -9,7 +9,7 @@ import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { writeViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 
 const P = 'owner__name';
@@ -351,5 +351,103 @@ test('a line that repeats gets a working code on each new card, and two waiting 
     await show(cardOf(step, 'Harm is live again.'));
     const two = await replyRecord({ project: P, text: `${replyCode(step)} Do it`, client: fake(), now: () => LATER });
     assert.match(two.says, /two cards/);
+  });
+});
+
+// --- the build loop's cards ---
+
+const DOC = 'fedcba9876543210'.repeat(4);
+const NEW_DOC = '0123456789abcdef'.repeat(4);
+const QUESTION = { id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file', options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }, { label: 'Show me', says: 'A sample' }], recommendation: 'Comma', level: 2 };
+// The options each card offers (a card holds two to four).
+const WORK_OPTIONS = ['Approve', 'Show me', 'Explain more', 'Not now'];
+const ASK_OPTIONS = ['Comma', 'Tab', 'Semicolon', 'Show me', 'Explain more'];
+
+function buildState() {
+  keepEvent(makeEvent({ kind: 'work', data: { id: 'export-csv', title: 'Export', lane: 'feature', doc: { path: 'd.md', hash: DOC }, visible: true, dependsOn: [] }, now: () => NOW }));
+  keepEvent(makeEvent({ kind: 'amendment', data: { work: 'export-csv', change: 'CSV, not Excel', hash: NEW_DOC }, now: () => NOW }));
+  keepEvent(makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: () => NOW }));
+  keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+}
+
+test('a reply earns the record the click would have on each of the build loop\'s cards', async () => {
+  await withHome(async () => {
+    buildState();
+    const cases = [
+      [approveWorkLine('export-csv', 'feature', DOC), 'Approve', 'Recorded: Approve export-csv', WORK_OPTIONS],
+      [approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true }), 'Approve', 'Recorded: Approve export-csv', WORK_OPTIONS],
+      [amendLine('export-csv', NEW_DOC), 'Change it', 'Recorded: Change export-csv', ['Change it', 'Explain more', 'Not now']],
+      [liftIncidentLine('bad-total'), 'End it', 'Recorded: End incident bad-total', ['End it', 'Explain more', 'Not now']],
+      [incidentFixLine('bad-total', 31), 'Merge the fix', 'Recorded: Merge pull request #31 as the fix', ['Merge the fix', 'Explain more', 'Not now']],
+      [answerLine('q-export-csv-1'), 'Tab', 'Recorded: Answer: Tab', ASK_OPTIONS],
+    ];
+    for (const [line, label, says, options] of cases) {
+      const question = cardOf(line);
+      await show(question, { options });
+      const click = fake();
+      await decide(card(question, label, options), deps(click));
+      const reply = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(line).toLowerCase()} ${label.toLowerCase()}`, client: reply, now: () => LATER });
+      assert.deepEqual(out, { made: true, says });
+      assert.equal(signed(click).length, 1, label);
+      assert.deepEqual(signed(reply), signed(click), label);
+      assert.ok(reply.calls.record[0].event.sig);
+      assert.equal(reply.calls.write.length, 0);
+      assert.equal(reply.calls.prState.length, 0);
+      // A code is good once.
+      const again = fake();
+      const second = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: again, now: () => LATER });
+      assert.deepEqual(second, { made: false, says: 'That code has been used' }, label);
+      assert.equal(again.calls.record.length, 0, label);
+    }
+  });
+});
+
+test('a reply on an approve-work card earns the work approval with its full hash and lane', async () => {
+  await withHome(async () => {
+    buildState();
+    const line = approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true });
+    const question = cardOf(line);
+    await show(question, { options: WORK_OPTIONS });
+    const c = fake();
+    await replyRecord({ project: P, text: `${replyCode(line)} Approve`, client: c, now: () => LATER });
+    assert.deepEqual(signed(c), [{ kind: 'action', data: { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true, question, label: 'Approve' } }]);
+  });
+});
+
+test('a reply on an answer card counts for the question\'s own options, never Explain more, Show me or one it lacks', async () => {
+  await withHome(async () => {
+    buildState();
+    const line = answerLine('q-export-csv-1');
+    const question = cardOf(line);
+    await show(question, { options: ASK_OPTIONS });
+    // Semicolon is on the card but not in the question's options.
+    for (const label of ['Explain more', 'Show me', 'Semicolon']) {
+      const c = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER });
+      assert.equal(out.made, false, label);
+      assert.equal(c.calls.record.length + c.calls.write.length, 0, label);
+    }
+    // The card stays good after those. A code is good once.
+    const c = fake();
+    const out = await replyRecord({ project: P, text: `${replyCode(line)} comma`, client: c, now: () => LATER });
+    assert.deepEqual(out, { made: true, says: 'Recorded: Answer: Comma' });
+    assert.deepEqual(signed(c).map((r) => [r.data.action, r.data.questionId, r.data.label]), [['answer', 'q-export-csv-1', 'Comma']]);
+    const again = fake();
+    assert.equal((await replyRecord({ project: P, text: `${replyCode(line)} Tab`, client: again, now: () => LATER })).made, false);
+  });
+});
+
+test('a reply on a build loop card whose record can\'t be earned records nothing and lets the card go', async () => {
+  await withHome(async () => {
+    // No incident was declared, and the work has moved on to another document.
+    keepEvent(makeEvent({ kind: 'work', data: { id: 'export-csv', title: 'Export', lane: 'feature', doc: { path: 'd.md', hash: NEW_DOC }, visible: true, dependsOn: [] }, now: () => NOW }));
+    for (const [line, label] of [[liftIncidentLine('bad-total'), 'End it'], [approveWorkLine('export-csv', 'feature', DOC), 'Approve']]) {
+      await show(cardOf(line), { options: WORK_OPTIONS });
+      const c = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER });
+      assert.equal(out.made, false, label);
+      assert.equal(c.calls.record.length, 0, label);
+    }
   });
 });

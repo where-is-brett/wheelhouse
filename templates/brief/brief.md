@@ -32,7 +32,7 @@ Turn each line into a test before any code. When those tests pass, the work is d
 
 - **The lane only goes up.** If the work proves bigger than this lane, stop. Report `partial` with what you found; the foreman puts the work in the right lane.
 - **Check before you say it is done.** Start `superpowers:verification-before-completion` first, run the checks and read their output.
-- **Conflicts.** When a wake says your branch conflicts with the default branch, do not untangle it by hand: start `mattpocock-skills:resolving-merge-conflicts`, then run the checks and have the result reviewed again.
+- **Conflicts.** When a wake says your branch conflicts with the default branch, merge the default branch into your branch, resolve each conflict so both sides' intent survives, then run the checks and have the result reviewed again.
 - **Builders and reviewers.** Builders are `wheelhouse:builder` and reviews are done by `wheelhouse:reviewer`, each with the model named under "Models by role". Never dispatch a general-purpose subagent for either.
 - **Dispatching a reviewer.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the reviewer that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.
 - **Fix rounds.** A fix and its re-review is one round. After {{fixRounds}} rounds, put what is still open to the director with `ask`.
@@ -45,7 +45,7 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 {{cli}} ask --what "<what this is>" --why "<why it comes to the director>" --option "<label>=<what it means>" --option "<label>=<what it means>" --recommend <label> --level <1 to 4>
 ```
 
-- Give two or more options and say which you recommend. A matter at decision level 3 or 4 is always a question.
+- Give two to four options and say which you recommend. The director answers on a card, so `ask` refuses a question a card can't carry: more than four options, an option called Not now, Explain more or Show me, or words too long for one card. A matter at decision level 3 or 4 is always a question.
 - After you ask, stop work on that matter and end your turn. The answer wakes you. Then read it with `{{cli}} answer <questionId>`; the id is the one `ask` printed.
 - Report, never ask for a permission: if a tool or an action is refused to you, do not ask for it in chat. Write a question that says what you need and why, and pause.
 - When the plan's scope check splits off a part that is separate work, hand its plan back with `{{cli}} ask --kind extra-plan --plan <path> --what "<the part>" --why "<why it is separate>" --option "queue=Queue it as its own work" --option "drop=Leave it out" --recommend queue --level 2`.
@@ -55,7 +55,7 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 - When your work is built, checked and reviewed, write your report to `{{featureDir}}/report.md`: a fenced json block, then at most {{reportWords}} words on what shipped, the tests, your assumptions and your concerns. Put every ruling from your Superpowers ledger in `rulings`. Then run `{{cli}} report`; it names anything missing, so put that right and run it again.
 - Once `report` passes, open the pull request: `{{cli}} open-pr --title "<what the pull request does>"`. The report becomes the pull request's body, and `open-pr` refuses until the report passes. It goes up through the host helper on your own branch.
 - Once `open-pr` prints the pull request's number (#n), dispatch `wheelhouse:reviewer` on its head commit with `pr: n`, as "Dispatching a reviewer" says. Only that review is recorded as the signed review of the head, and without it the pull request is never merged.
-- Then the pull request is yours until it merges. When a wake tells you of red checks, review findings or a conflict, fix them, push, and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`. You never merge it yourself: the foreman merges once the checks pass and the head's signed review is clean.
+- Then the pull request is yours until it merges. When a wake tells you of red checks, review findings or a conflict, fix them, push, and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`. When a wake says the review is needed (`review-needed`: the gate brought the branch up to date and the review didn't carry over), pull the branch, then dispatch `wheelhouse:reviewer` on the head it names with `pr: n`. You never merge it yourself: the foreman merges once the checks pass and the head's signed review is clean.
 - Do not offer a menu of choices and do not wait for a person to tell you what to do next.
 - Before each `open-pr`, bring `report.md` up to date (the pull request's number in `pr` once there is one, the head commit, and anything that has changed since) and run `{{cli}} report` again: `open-pr` checks it the same way.
 

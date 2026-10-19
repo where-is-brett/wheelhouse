@@ -15,7 +15,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -35,6 +35,13 @@ async function withHome(fn) {
 const base = () => listEvents(fixtures, { report: () => {} });
 const ev = (kind, n, data) => makeEvent({ kind, data, now: at(n) });
 const r001 = () => base().find((e) => e.id === 'r001');
+
+// A card as it was written before cards carried a kind, options and a level; makeEvent no longer takes one.
+const legacyCard = (id, n, data) => ({ v: 1, id, at: T(n), computer: 'aaaaaaaa', kind: 'card', data });
+const cardData = (question, extra = {}) => ({
+  question, header: 'Approve', options: ['Approve', 'Not now', 'Explain more', 'Show me'], kind: 'approval',
+  line: null, code: null, level: 3, importance: 5, ...extra,
+});
 // A signed confirmation of `target`, naming its id and content hash.
 const conf = (n, target) => {
   const { kind, data } = confirmationFor(target);
@@ -278,7 +285,7 @@ test('a confirmation counts only with the confirmed event\'s hash, and only for 
     assert.equal(data.confirmsHash, eventHash(r1));
 
     // A signed confirmation pointing at an event of another kind confirms nothing.
-    const card = ev('card', 3, { key: 'k', value: 1 });
+    const card = ev('card', 3, cardData('Pick a colour?'));
     assert.throws(() => confirmationFor(card), /ruling, a level or a setting/);
     const forCard = makeEvent({ kind: 'confirmation', data: { confirms: card.id, confirmsHash: eventHash(card) }, now: at(4) });
     const v = build([card, forCard]);
@@ -348,9 +355,9 @@ test('views are replaced all at once', async () => {
 
 test('a card-answer with no card id closes the card whose question it quotes', async () => {
   await withHome(() => {
-    const asked = ev('card', 10, { title: 'Pick a size', question: 'Approve pull request #7 at commit abcdef123456?' });
-    const titled = ev('card', 11, { title: 'Pick a shape' });
-    const other = ev('card', 12, { title: 'Pick a sound', question: 'Which sound?' });
+    const asked = ev('card', 10, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const titled = legacyCard('t001', 11, { title: 'Pick a shape' });
+    const other = ev('card', 12, cardData('Which sound?', { options: ['Bell', 'Chime', 'Not now'] }));
     const answers = [
       // The prompt record's shape: the question as shown, and the label clicked.
       ev('card-answer', 20, { question: 'Approve pull request #7 at commit abcdef123456?', label: 'Approve' }),
@@ -437,6 +444,9 @@ test('two shown records with one code and different questions are both left out 
     const v = build([a, b, fine]);
     assert.deepEqual(Object.keys(v.shown), ['P3Q4']);
     assert.equal(v.damaged.filter((d) => d.includes('K7M2')).length, 1);
+    // The clash is also listed under its own key, apart from real damage.
+    assert.deepEqual(v.codeClashes, ['a shown code held by two different questions: K7M2']);
+    assert.deepEqual(build([a, b, fine], { damaged: ['/x/bad.json'] }).codeClashes, v.codeClashes);
     // The same question shown again under its code is not damage.
     const again = ev('shown', 4, shownData('P3Q4', 'Fine?'));
     const w = build([fine, again]);
@@ -516,6 +526,22 @@ test('an approval of another hash leaves the work unapproved', async () => {
     // A click that no enrolled key signed counts for nothing.
     assert.equal(build([w, approve(2, H1)], {}).work['export-csv'].approved, true);
     assert.equal(buildViews([w, approve(2, H1)], [], { now }).work['export-csv'].approved, false);
+  });
+});
+
+test('the wish to see work first stands once any signed approval said it, in any lane or for any document (R120)', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    assert.equal(Object.hasOwn(build([w, approve(2, H1)]).work['export-csv'], 'shownFirst'), false);
+    // Another document's approval, and another lane's: neither approves the work, but the wish stands.
+    for (const said of [approve(2, H2, { shownFirst: true }), approve(2, H1, { shownFirst: true, lane: 'small' })]) {
+      const v = build([w, said]).work['export-csv'];
+      assert.deepEqual([v.approved, v.shownFirst], [false, true]);
+    }
+    // An approval that came later and said otherwise does not take it back.
+    assert.equal(build([w, approve(2, H1, { shownFirst: true }), approve(3, H1)]).work['export-csv'].shownFirst, true);
+    // An unsigned click says nothing.
+    assert.equal(Object.hasOwn(build([w, unsigned(approve(2, H1, { shownFirst: true }))]).work['export-csv'], 'shownFirst'), false);
   });
 });
 
@@ -708,5 +734,104 @@ test('work remembers when it was first recorded', async () => {
     assert.equal(v.work['export-csv'].since, T(2));
     assert.equal(v.work['export-csv'].work.at, T(5), 'the latest event is still the work');
     assert.equal(v.work.login.since, T(3));
+  });
+});
+
+// --- a card stays waiting until it is answered ---
+
+
+test('Not now, Explain more and Show me keep a card waiting, marked asked', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const plain = (n, label) => ev('card-answer', n, { card: card.id, label });
+    const asked = (n, label) => ({ at: T(n), label });
+    assert.equal(build([card]).waiting[0].asked, null);
+    for (const label of ['Not now', 'Explain more', 'Show me']) {
+      const v = build([card, plain(2, label)]);
+      assert.deepEqual(v.waiting.map((c) => c.id), [card.id], label);
+      assert.deepEqual(v.waiting[0].asked, asked(2, label), label);
+      assert.equal(v.status.waitingCount, 1);
+    }
+    // The latest answer that didn't close it is the one marked; an answer quoting the question counts too.
+    const quoted = ev('card-answer', 5, { question: card.data.question, label: 'Explain more' });
+    const v = build([card, plain(2, 'Not now'), plain(3, 'Show me'), quoted, plain(4, 'Not now')]);
+    assert.deepEqual(v.waiting[0].asked, asked(5, 'Explain more'));
+    // A label the card didn't offer is no decision either.
+    const other = build([card, plain(2, 'Something else')]);
+    assert.deepEqual(other.waiting.map((c) => c.id), [card.id]);
+    assert.deepEqual(other.waiting[0].asked, asked(2, 'Something else'));
+  });
+});
+
+test('a card a visit handed out is marked asked until a later answer says more', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const other = ev('card', 2, cardData('Pick a shape', { kind: 'question', options: ['Round', 'Square'] }));
+    const handed = (n, cards) => ev('asked', n, { cards });
+    // Shown and dismissed: no answer, but it isn't offered again.
+    const v = build([card, other, handed(3, [card.id])]);
+    assert.deepEqual(v.waiting.map((c) => [c.id, c.asked]), [[card.id, { at: T(3), label: null }], [other.id, null]]);
+    // An answer after it is what the card is marked with; an asked record after the answer marks it again.
+    const answered = ev('card-answer', 4, { card: card.id, label: 'Explain more' });
+    assert.deepEqual(build([card, handed(3, [card.id]), answered]).waiting[0].asked, { at: T(4), label: 'Explain more' });
+    assert.deepEqual(build([card, answered, handed(5, [card.id, other.id])]).waiting[0].asked, { at: T(5), label: null });
+    // It never closes a card, and an answer that decides still does.
+    assert.deepEqual(build([card, handed(3, [card.id]), ev('card-answer', 4, { card: card.id, label: 'Approve' })]).waiting, []);
+  });
+});
+
+test('an option that decides closes the card, even after it was asked about', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const v = build([card, ev('card-answer', 2, { card: card.id, label: 'Not now' }), ev('card-answer', 3, { card: card.id, label: 'Approve' })]);
+    assert.deepEqual(v.waiting, []);
+    const quoted = build([card, ev('card-answer', 2, { question: card.data.question, label: 'Approve' })]);
+    assert.deepEqual(quoted.waiting, []);
+    // Two cards asking the same question both close on one answer.
+    const twin = ev('card', 4, cardData(card.data.question));
+    assert.deepEqual(build([card, twin, ev('card-answer', 5, { question: card.data.question, label: 'Approve' })]).waiting, []);
+  });
+});
+
+test('a signed record carrying the card\'s question closes it', async () => {
+  await withHome(() => {
+    const question = 'Approve pull request #7 at commit abcdef123456?';
+    const card = ev('card', 1, cardData(question));
+    const signed = (kind, n, data) => ev(kind, n, data);
+    const approval = signed('approval', 3, { pr: 7, commit: 'abcdef123456', words: 'Approve', question });
+    assert.deepEqual(build([card, approval]).waiting, []);
+    const action = signed('action', 3, { action: 'lift-stop', question, label: 'Lift STOP' });
+    assert.deepEqual(build([card, action]).waiting, []);
+    // Not a record from before the card, one for another question, or one from a key that isn't enrolled.
+    const early = signed('approval', 0, { pr: 7, commit: 'abcdef123456', words: 'Approve', question });
+    const elsewhere = signed('approval', 3, { pr: 8, commit: 'abcdef123456', words: 'Approve', question: 'Another?' });
+    const stranger = { ...approval, id: 'stranger', sig: { ...approval.sig, computer: 'ffffffff' } };
+    const unsigned = { ...approval, id: 'unsigned', sig: undefined };
+    assert.deepEqual(build([card, early, elsewhere, stranger, unsigned]).waiting.map((c) => c.id), [card.id]);
+  });
+});
+
+test('a confirmation closes the card whose confirm line names the event, as it spends a shown card', async () => {
+  await withHome(() => {
+    const ruling = ev('ruling', 1, { words: 'Totals to the cent', reason: 'Money', scope: 'all' });
+    const line = confirmLine(ruling);
+    const card = ev('card', 2, cardData(`What this is: a rule.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more'], line }));
+    const bare = ev('card', 2, cardData(`Confirm the rule?\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now'], line: null }));
+    assert.deepEqual(build([ruling, card, bare]).waiting.map((c) => c.id), [card.id, bare.id].sort());
+    const done = build([ruling, card, bare, conf(5, ruling)]);
+    assert.deepEqual(done.waiting, []);
+    // A confirmation from before the card, or of another event, leaves it waiting.
+    const later = ev('card', 9, cardData(`What this is: a rule.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now'], line }));
+    assert.deepEqual(build([ruling, conf(5, ruling), later]).waiting.map((c) => c.id), [later.id]);
+    const other = ev('ruling', 3, { words: 'Another', reason: 'x', scope: 'all' });
+    assert.deepEqual(build([ruling, other, card, conf(5, other)]).waiting.map((c) => c.id), [card.id]);
+  });
+});
+
+test('a card written before cards carried options closes on any answer but a put-off', async () => {
+  await withHome(() => {
+    const old = legacyCard('t002', 1, { title: 'Pick a shape' });
+    assert.deepEqual(build([old, ev('card-answer', 2, { question: 'Pick a shape', label: 'Not now' })]).waiting.map((c) => c.id), [old.id]);
+    assert.deepEqual(build([old, ev('card-answer', 2, { question: 'Pick a shape', label: 'Round' })]).waiting, []);
   });
 });

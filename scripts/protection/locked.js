@@ -111,20 +111,22 @@ function failureLine({ code, stderr }) {
   return `Locked may be partly changed (exit code ${code}): run the update again`;
 }
 
-// The command the administrator prompt runs, as one chain. The new scripts and
-// Node.js go in beside the live ones and are checked there; only then are they
+// The command the administrator prompt runs, as one chain. The new scripts, the
+// lineage folder (the manifest the session start checks the installed skills against,
+// and the register) and Node.js go in beside the live ones and are checked there; only then are they
 // swapped in (mv), so a failed copy never leaves them missing. A failure removes
 // what was copied and exits. The settings file goes in last, and everything is
 // root's and not writable by anyone else.
 function adminShell({ dir, stage, nodeSource }) {
   const own = path.join(dir, 'wheelhouse');
-  const [scriptsNew, binNew, scriptsOld, binOld] = ['scripts.new', 'bin.new', 'scripts.old', 'bin.old'].map((n) => q(path.join(own, n)));
-  const [scripts, bin] = ['scripts', 'bin'].map((n) => q(path.join(own, n)));
+  const [scriptsNew, lineageNew, binNew, scriptsOld, lineageOld, binOld] = ['scripts.new', 'lineage.new', 'bin.new', 'scripts.old', 'lineage.old', 'bin.old'].map((n) => q(path.join(own, n)));
+  const [scripts, lineage, bin] = ['scripts', 'lineage', 'bin'].map((n) => q(path.join(own, n)));
   const settingsNew = q(`${filePath(dir)}.new`);
   const chain = [
     `mkdir -p ${q(own)}`,
-    `rm -rf ${scriptsNew} ${binNew} ${scriptsOld} ${binOld} ${settingsNew}`,
+    `rm -rf ${scriptsNew} ${lineageNew} ${binNew} ${scriptsOld} ${lineageOld} ${binOld} ${settingsNew}`,
     `cp -R ${q(path.join(stage, 'wheelhouse', 'scripts'))} ${scriptsNew}`,
+    `cp -R ${q(path.join(stage, 'wheelhouse', 'lineage'))} ${lineageNew}`,
     `mkdir ${binNew}`,
     `cp ${q(nodeSource)} ${q(path.join(own, 'bin.new', 'node'))}`,
     `chmod 755 ${q(path.join(own, 'bin.new', 'node'))}`,
@@ -132,9 +134,11 @@ function adminShell({ dir, stage, nodeSource }) {
     `cp ${q(path.join(stage, 'wheelhouse', 'locked-projects.json'))} ${q(path.join(stage, 'wheelhouse', 'installed.json'))} ${q(own)}/`,
     `{ [ ! -e ${scripts} ] || mv ${scripts} ${scriptsOld}; }`,
     `mv ${scriptsNew} ${scripts}`,
+    `{ [ ! -e ${lineage} ] || mv ${lineage} ${lineageOld}; }`,
+    `mv ${lineageNew} ${lineage}`,
     `{ [ ! -e ${bin} ] || mv ${bin} ${binOld}; }`,
     `mv ${binNew} ${bin}`,
-    `rm -rf ${scriptsOld} ${binOld}`,
+    `rm -rf ${scriptsOld} ${lineageOld} ${binOld}`,
     `cp ${q(path.join(stage, 'managed-settings.json'))} ${settingsNew}`,
     `mv ${settingsNew} ${q(filePath(dir))}`,
     `chown -R root:wheel ${q(own)} ${q(filePath(dir))}`,
@@ -142,8 +146,8 @@ function adminShell({ dir, stage, nodeSource }) {
   ].join(' && ');
   // Anything moved aside is put back first: the live folders must never be missing, or
   // the old settings file would name scripts that are not there.
-  const restore = [[scriptsOld, scripts], [binOld, bin]].map(([old, live]) => `[ -d ${old} ] && [ ! -d ${live} ] && mv ${old} ${live};`).join(' ');
-  return `${chain} || { ${restore} rm -rf ${scriptsNew} ${binNew} ${settingsNew}; exit 1; }`;
+  const restore = [[scriptsOld, scripts], [lineageOld, lineage], [binOld, bin]].map(([old, live]) => `[ -d ${old} ] && [ ! -d ${live} ] && mv ${old} ${live};`).join(' ');
+  return `${chain} || { ${restore} rm -rf ${scriptsNew} ${lineageNew} ${binNew} ${settingsNew}; exit 1; }`;
 }
 
 // Stages everything for `list`, asks once, and removes the staging folder.
@@ -156,6 +160,7 @@ async function put({ list, dir, run, now, nodeSource, address, line }) {
     const own = path.join(stage, 'wheelhouse');
     fs.mkdirSync(own, { recursive: true });
     fs.cpSync(path.join(PLUGIN_ROOT, 'scripts'), path.join(own, 'scripts'), { recursive: true });
+    fs.cpSync(path.join(PLUGIN_ROOT, 'lineage'), path.join(own, 'lineage'), { recursive: true });
     fs.writeFileSync(path.join(own, 'locked-projects.json'), `${JSON.stringify(list, null, 2)}\n`);
     const { version } = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
     fs.writeFileSync(path.join(own, 'installed.json'), `${JSON.stringify({ version, at: now().toISOString(), pluginRoot: fs.realpathSync(PLUGIN_ROOT) }, null, 2)}\n`);

@@ -56,7 +56,7 @@ test('every brief carries the override whole, before any lane text', () => {
 });
 
 test('each lane names the skills section 5.1 gives it, and no others', () => {
-  const every = ['mattpocock-skills:resolving-merge-conflicts', 'superpowers:verification-before-completion'];
+  const every = ['superpowers:verification-before-completion'];
   const review = ['superpowers:receiving-code-review', 'superpowers:requesting-code-review'];
   const allowed = {
     quick: [...every, 'mattpocock-skills:code-review', 'mattpocock-skills:tdd'],
@@ -160,8 +160,9 @@ test('no brief tells the session to use AskUserQuestion, merge, or wait for a me
     const rest = afterOverride(render(lane));
     for (const line of rest.split('\n')) {
       if (/AskUserQuestion/.test(line)) assert.match(line, /\b[Nn]ever\b/, `${lane}: ${line}`);
-      // A skill's name (resolving-merge-conflicts) is not an instruction to merge.
-      if (/\bmerge\b/i.test(line.replace(/[a-z-]+:[a-z-]+/g, ''))) assert.match(line, /\b[Nn]ever\b|\bdo not\b|\bdon't\b|\bnot\b/, `${lane}: ${line}`);
+      // The conflict rule's own words (merge the default branch into your branch) are the one
+      // sanctioned use of "merge"; any other line that mentions it must forbid it.
+      if (/\bmerge\b/i.test(line.replace(/[a-z-]+:[a-z-]+/g, '').replace('merge the default branch into your branch', ''))) assert.match(line, /\b[Nn]ever\b|\bdo not\b|\bdon't\b|\bnot\b/, `${lane}: ${line}`);
       if (/\bmenu\b/i.test(line)) assert.match(line, /\b[Nn]o\b|\b[Nn]ever\b|\bnot\b/, `${lane}: ${line}`);
       assert.doesNotMatch(line, /finishing-a-development-branch/, lane);
     }

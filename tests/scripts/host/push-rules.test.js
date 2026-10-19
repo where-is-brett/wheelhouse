@@ -18,6 +18,10 @@ import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { ciPushLine } from '../../../scripts/state/card-lines.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
+import { matchingProvenance, writeSessionProvenance } from '../../helpers/provenance.js';
+import { parseProvenance, removeProvenance } from '../../../scripts/lineage/provenance.js';
+
+const SESSION = 'sess-1';
 
 // A run that must not be called: the spelling alone decides these.
 const noRun = async () => {
@@ -265,6 +269,7 @@ async function scenario({ base = { 'README.md': 'x\n' }, change, files = {} }) {
     writeProject('o__p', {
       folder: work, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'narrow', project: 'o/p' },
     });
+    writeSessionProvenance('o__p', SESSION);
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
     await cloneState({ project: 'o__p', remoteUrl: remote.url });
@@ -492,7 +497,7 @@ test('/pr/open refuses a base other than the default branch, and a head the push
       assert.deepEqual(base, { ok: false, refused: PUSH_REFUSALS.prBase });
       assert.deepEqual(await client.openPr({ project: 'o__p', head: 'main', base: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.defaultBranch });
       assert.deepEqual(await client.openPr({ project: 'o__p', head: '+feature', base: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.force });
-      assert.equal((await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '' })).ok, true);
+      assert.equal((await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '', session: SESSION })).ok, true);
     });
   } finally { s.cleanup(); }
 });
@@ -553,11 +558,12 @@ test('/pr/open with no base opens against the default branch, and any other base
   const s = await scenario({ change: { 'a.txt': 'a\n' } });
   try {
     await viaHelper(s, async (client) => {
-      const opened = await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: 'b', session: 'sess-1' });
+      const opened = await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: 'b', session: SESSION });
       assert.equal(opened.ok, true, JSON.stringify(opened));
       assert.equal(opened.result.args.base, 'main');
       assert.equal(opened.result.args.head, 'feature');
-      assert.equal(opened.result.args.body, 'b');
+      assert.equal(removeProvenance(opened.result.args.body), 'b');
+      assert.deepEqual(parseProvenance(opened.result.args.body), matchingProvenance(), 'stamped from the session');
       assert.deepEqual(await client.openPr({ project: 'o__p', head: 'feature', base: null, title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.prBase });
       assert.deepEqual(await client.openPr({ project: 'o__p', head: 'feature', base: 'release', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.prBase });
       assert.deepEqual(await client.openPr({ project: 'o__p', head: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.defaultBranch });
@@ -569,7 +575,7 @@ test('/pr/open sends the plain branch name, and refuses the state and lock branc
   const s = await scenario({ change: { 'a.txt': 'a\n' } });
   try {
     await viaHelper(s, async (client) => {
-      const opened = await client.openPr({ project: 'o__p', head: 'feature:feature', base: 'main', title: 't', body: '' });
+      const opened = await client.openPr({ project: 'o__p', head: 'feature:feature', base: 'main', title: 't', body: '', session: SESSION });
       assert.equal(opened.result.args.head, 'feature');
       for (const head of ['wheelhouse-state', 'wheelhouse-lock']) {
         assert.deepEqual(await client.openPr({ project: 'o__p', head, base: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.ownRequests });

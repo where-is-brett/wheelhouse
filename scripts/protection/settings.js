@@ -49,6 +49,7 @@ import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'];
 const HOST_TOOLS = ['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe'];
@@ -94,7 +95,46 @@ export function featureAllowRules(config, { platform = process.platform } = {}) 
   return unique(commands.map((c) => `Bash(${c}:*)`));
 }
 
-export function projectSettings(config) {
+// The copies of the pinned kits that must stay off in a project (check 24): Anthropic's
+// Superpowers, and the synced copies of Superpowers and Matt Pocock's skills. Two copies
+// of Superpowers share one manifest name, so they must never both be on.
+export const SWITCHED_OFF_PLUGINS = Object.freeze([
+  'superpowers@claude-plugins-official', 'superpowers@synced', 'mattpocock-skills@synced',
+]);
+
+// The plugin settings (check 24): the copies pinned in Wheelhouse's marketplace on, every
+// other copy off. A project-level false beats the user's true.
+function pluginSettings(release) {
+  if (release !== null && !isObject(release)) throw new Error('The release is not { ref }');
+  const ref = release?.ref;
+  if (ref !== undefined && (typeof ref !== 'string' || ref === '')) throw new Error('The release needs a ref that is a tag or branch name');
+  // The one entry `releaseChange` edits: `source.ref` only. A `github` marketplace source takes
+  // repo, ref, path and sparsePaths, and no sha (marketplace reference, read 19 October 2026),
+  // so no sha is written; the pinned kits carry their own shas in the marketplace file. With no
+  // release the entry has no ref, so the marketplace is the repository's default branch.
+  // autoUpdate is off, so nothing moves unless Wheelhouse moves it.
+  const source = { source: 'github', repo: WHEELHOUSE_REPO };
+  if (ref !== undefined) source.ref = ref;
+  return {
+    extraKnownMarketplaces: { [MARKETPLACE]: { source, autoUpdate: false } },
+    enabledPlugins: {
+      ...Object.fromEntries(SWITCHED_OFF_PLUGINS.map((name) => [name, false])),
+      ...Object.fromEntries(UPSTREAMS.map((u) => [`${u.plugin}@${MARKETPLACE}`, true])),
+    },
+  };
+}
+
+// Claude Code's own update settings (check 28): the stable channel, and the lowest version
+// auto-updates may install. Setup writes them where check 28 says; `floor` is
+// manifest.claudeCode.floor, a plain version such as 2.1.100.
+export function claudeCodeSettings({ floor } = {}) {
+  if (typeof floor !== 'string' || !/^\d+\.\d+\.\d+$/.test(floor)) throw new Error(`The floor isn't a version such as 2.1.100: ${JSON.stringify(floor)}`);
+  return { autoUpdatesChannel: 'stable', minimumVersion: floor };
+}
+
+// `release` is { ref } when the project follows a Wheelhouse release; without it the
+// marketplace entry carries no ref. Build commands' allow rules are not here: see featureAllowRules.
+export function projectSettings(config, { release = null } = {}) {
   const credentials = allCredentials();
   const deny = unique([
     'Read(**/.env)', 'Read(**/.env.*)',
@@ -116,6 +156,7 @@ export function projectSettings(config) {
       },
       network: { allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null)]) },
     },
+    ...pluginSettings(release),
     autoCompactWindow: 300000,
     disableAllHooks: false,
     enableAllProjectMcpServers: false,
@@ -169,15 +210,41 @@ export function directorStatusLine({ claudeHome, projectDir }) {
   return null;
 }
 
+// The command that runs the front desk's script (scripts/frontdesk/cli.js), as its allow rule and
+// its playbook write it: `node`, then the script's full path in double quotes. On Windows the path
+// has forward slashes after its drive letter, which node and Git Bash both take, and which the
+// STOP guard reads as the same path. Null when the plugin's folder isn't a full path, or holds a
+// character that could end the quotes or change what the rule matches (a quote, `*`, a
+// parenthesis, `$`, a backtick, a backslash or a control character): that folder gets no rule, and
+// the command is asked about each time.
+export function frontDeskCommand(pluginRoot, { platform = process.platform } = {}) {
+  if (typeof pluginRoot !== 'string') return null;
+  let root = pluginRoot;
+  if (platform === 'win32') {
+    if (!/^[A-Za-z]:[\\/]/.test(root)) return null;
+    root = root.replaceAll('\\', '/');
+  } else if (!root.startsWith('/')) {
+    return null;
+  }
+  if (/["*()$`\\\p{Cc}]/u.test(root)) return null;
+  return `node "${root.replace(/\/+$/, '')}/scripts/frontdesk/cli.js"`;
+}
+
 // The socket's path names this computer's home folder, so it stays out of the
 // shared file. The status line is added only when `node` and `pluginRoot` are given and the
 // director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
-// stays and the share comes from the mod alone.
-export function localSettings({ address, node, pluginRoot, ownStatusLine = null }) {
+// stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command is
+// allowed by its full path, so the director's session isn't asked each time it composes a card or
+// records a decision; the path names this computer's folders too.
+export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   if (node && pluginRoot && !ownStatusLine) {
     settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
   }
+  const frontDesk = pluginRoot ? frontDeskCommand(pluginRoot, { platform }) : null;
+  // In this file's `Bash(x:*)` form, the same as `Bash(x *)`. Written on Windows too, unlike the build
+  // commands' rules: it reaches only Wheelhouse's own cli.js, by its full path, never `node` itself.
+  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk}:*)`] };
   return settings;
 }
 
