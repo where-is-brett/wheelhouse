@@ -2,13 +2,13 @@
 
 # The build loop's evaluation runs
 
-These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-build-loop-design.md`, section 15), each run in real headless Claude Code sessions with and without Wheelhouse. They check that a feature session under the Wheelhouse brief, whose first section is the override (`templates/brief/override.md`), does what the design says, and that the same session without it does not.
+These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-build-loop-design.md`, section 15), each run in real headless Claude Code sessions with and without Wheelhouse. They check that a feature session under the Wheelhouse brief, whose first section is the override (`templates/brief/override.md`), and the front desk under the intake skill (`skills/intake/SKILL.md`), do what the design says, and that the same sessions without them do not.
 
 **Run on** 19 October 2026, on macOS, with Claude Code 2.1.302, Superpowers 7.0.0 loaded from its installed folder, and Matt Pocock's skills 1.2.3, the organisation-synced copy this computer has (the manifest pins 1.3.1; the bug lane names only `tdd` and `code-review`, which both copies have).
 
-**How to run them.** `npm run eval -- <ids> --variant with` and `--variant without` (add `--trials 3` for three). Scenario 33 also needs `WHEELHOUSE_EVAL_ROUTING` in the shell: its routing table (section 33). Each run is a real `claude -p` session that costs tokens, so it never runs in `npm test`. The record of each run, with every stream-json event, is written to `~/.wheelhouse-evals/<date>/<id>-<variant>-<trial>.json`.
+**How to run them.** `npm run eval -- <ids> --variant with` and `--variant without` (add `--trials 3` for three). A scenario whose pass has two legs (27) runs both by its number; `27-route` runs its route leg alone. Scenario 33 also needs `WHEELHOUSE_EVAL_ROUTING` in the shell: its routing table (section 33). Each run is a real `claude -p` session that costs tokens, so it never runs in `npm test`. The record of each run, with every stream-json event, is written to `~/.wheelhouse-evals/<date>/<id>-<variant>-<trial>.json`.
 
-**What a run is.** Each scenario (`tests/eval/build-loop/<id>-*.js`) makes a throwaway project under the temporary folder and removes it afterwards. For scenarios 20 to 23, 27, 33 and 34, `scripts/eval/feature-project.js` sets it up as a feature session's worktree, the way the foreman would:
+**What a run is.** Each scenario (`tests/eval/build-loop/<id>-*.js`) makes a throwaway project under the temporary folder and removes it afterwards. For scenarios 20 to 23, 33 and 34, and 27's bug session's leg, `scripts/eval/feature-project.js` sets it up as a feature session's worktree, the way the foreman would:
 
 - a main checkout on `main` in a folder of its own, and the session's folder a linked worktree of it on `feature/<work>`;
 - the plan (none for a bug), and the brief at `.wheelhouse/feature/brief.md`. **With Wheelhouse**, the brief is the one `scripts/feature/brief.js` renders: the override first, then the work, the lane's text, how to ask and how to finish. **Without**, it is the feature section alone: the goal, the done contract and where the plan is;
@@ -16,7 +16,15 @@ These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-b
 - where a scenario needs Wheelhouse's agents, a scratch plugin named `wheelhouse` holding only `agents/`, so that `wheelhouse:builder` and `wheelhouse:reviewer` resolve. The plugin's hooks are not loaded: they need a real Wheelhouse home. A scenario that needs a reviewer or builder to behave in a set way puts a stand-in in this plugin under the same name; the repository's `agents/` files are never changed for it;
 - allow rules for `git`, `node`, `npm` and Superpowers' own scripts in `.claude/settings.local.json` (`claude -p` ignores allow rules in a committed `.claude/settings.json`; check 25).
 
-Every session gets the same prompt in both variants: read the brief and follow it, the plan is written and may be built (scenario 23: every task is built; finish the branch), and run each shell command on its own, with no shell variables. Each pass is judged from the stream-json events, the project's files and git, and the stand-in helper's records, never from what the session says it did. A run whose result event is an error never passes. Tokens are summed over every model that worked, input including cached tokens.
+For scenarios 25, 26 and 35, and 27's route leg, `scripts/eval/front-desk.js` sets the project up for the front desk instead, which works in the project's main checkout:
+
+- the project's files on `main`, with the documents its open work names; for 26, the feature building in a linked worktree under `.claude/worktrees/`;
+- the stand-in helper, whose state starts with the events the scenario needs (open work, a running feature, an idea, a rejection). It takes the front desk's plain events (`/state/write`) and answers its views (`/state/views`), built by `scripts/state/views.js`. No click is signed in an evaluation, so work the director approved before the run is given to the stand-in by its document's hash, and its views show it approved; no `action` record is made;
+- **with Wheelhouse**, a scratch plugin named `wheelhouse` holding the intake skill, the card lines (`scripts/state/card-lines.js`) and the front desk's command at `scripts/frontdesk/cli.js`. That command is the front desk plan's, not built yet (its Task 6), so a stand-in answers for it (`scripts/eval/front-desk-command.js`): `similar` (the intake's duplicate check over the views), `views`, `record <kind>` (the intake's plain events, checked as the helper checks them, through `/state/write`) and `hash` (a document's hash, which the planned command does not list). It composes no cards: the front desk plan's card tool is not built either, so the session writes a card's line itself, and the scenario looks for it in what the session composed (ruling R155);
+- the session's system prompt. Nothing built yet tells a session it is the front desk (the front desk plan's playbook and session-start line will), so **with Wheelhouse** a line appended to the system prompt says it: it is Wheelhouse's front desk, uses `wheelhouse:intake` on every message, and has those four commands; it has no card tool, so it puts each card in its reply, its line first, word for word. **Without**, the appended line is "You help the director, this project's product owner, with the project", and no plugin of Wheelhouse's is loaded. Both variants load Superpowers and Matt Pocock's skills;
+- the same allow rules as above and, with Wheelhouse, one that lets the session read the plugin's files (the card lines), as it could read the real plugin's.
+
+The prompt of a front desk session is the director's message alone. Every feature session gets the same prompt in both variants: read the brief and follow it, the plan is written and may be built (scenario 23: every task is built; finish the branch), and run each shell command on its own, with no shell variables. Each pass is judged from the stream-json events, the project's files and git, and the stand-in helper's records and state, never from what the session says it did; the one exception is what a front desk says to the director (a route, a card's line), which is judged from what it composed: its reply, and the text in its own tool calls. A run whose result event is an error never passes. Tokens are summed over every model that worked, input including cached tokens.
 
 **What counts as a run.** A run that failed, or passed, because of the scenario or the harness rather than the session's behaviour does not count; it is listed under "Runs that did not count" with what was changed.
 
@@ -28,16 +36,18 @@ Every session gets the same prompt in both variants: read the brief and follow i
 | 21 | Fixes after the final review are re-reviewed | pass | fail |
 | 22 | A choice that changes what users see | pass | fail |
 | 23 | Finishing a branch | pass | fail |
-| 25 | *(to come)* | | |
-| 26 | *(to come)* | | |
-| 27 | A bug session reproduces the bug before any fix | bug session's leg: pass (3 of 3); route-4 leg: to come | bug session's leg: pass (3 of 3); route-4 leg: to come |
+| 25 | One message with three requests, one a duplicate | pass | fail |
+| 26 | "Make the export CSV, not Excel" while the export builds | pass | fail |
+| 27 | A bug report: route 4, then the bug reproduced before any fix | pass (route leg: pass; bug session's leg: pass, 3 of 3) | fail (route leg: fail; bug session's leg: pass, 3 of 3) |
 | 33 | The implementer's model comes from the routing table | pass | fail |
 | 34 | A per-task review by the read-only reviewer | pass | fail |
-| 35 | *(to come)* | | |
+| 35 | The director approves a written design at the front desk | pass | fail |
 
-No scenario failed with Wheelhouse, so no brief, override or agent text was changed. Every counted result is as expected and no pair is close, so each has one counted trial, except 27: without Wheelhouse it passed too, so both its variants were run three times, and both passed every time (section 27 says what that does and does not show). A review of the scenarios tightened 22 (the session must pause after asking) and 23 (a finishing menu or closing question in the last words fails), and all four of their runs were judged again from their saved records, with the same results; for the two `with` runs the events alone were enough, since those records predate the evidence the harness now keeps. Scenario 20 was run again, as its first counted runs never reached the cap on one task.
+No scenario failed with Wheelhouse, so no brief, override, agent, intake or card-line text was changed. Every counted result is as expected and no pair is close, so each has one counted trial, except 27's bug session's leg: without Wheelhouse it passed too, so both its variants were run three times, and both passed every time (section 27 says what that does and does not show). 27 passes only when both its legs do: with Wheelhouse both did; without, the route leg failed. The first reading of 25's `without` run passed a session that had built the duplicate itself; its judge was tightened (section 25) and the run judged again from its saved record, which keeps the new judgement beside the first (`judgedAgain`). A review of the scenarios tightened 22 (the session must pause after asking) and 23 (a finishing menu or closing question in the last words fails), and all four of their runs were judged again from their saved records, with the same results; for the two `with` runs the events alone were enough, since those records predate the evidence the harness now keeps. Scenario 20 was run again, as its first counted runs never reached the cap on one task.
 
-**Where a `without` fail is structural.** The plain brief never names `ask`, `open-pr` or `questions.jsonl`, so a `without` session cannot pass 20 or 23 whatever it does. Their judgements therefore name what the session did instead (for 20, a fourth fix round or rulings on the open findings; for 23, a merge, a menu or a question). A 23 fail with none of those is called structural only. A 20 fail with neither a fourth round nor rulings is called inconclusive on the cap when fewer than three rounds ran; at exactly three rounds, with no question and no rulings, it gives the plain reason ("no question in questions.jsonl; the task's loop ended after 3 fix rounds"). The plain brief of 33 carries no routing table, so a `without` session can match the table only by chance; its judgement says what model it picked, which shows Superpowers' own choice. Neither 27 nor 34 is structural: the plain bug session can write its test first, and `wheelhouse:reviewer` is loaded in both variants of 34, so a plain session could choose it.
+**Where a `without` fail is structural.** The plain brief never names `ask`, `open-pr` or `questions.jsonl`, so a `without` session cannot pass 20 or 23 whatever it does. Their judgements therefore name what the session did instead (for 20, a fourth fix round or rulings on the open findings; for 23, a merge, a menu or a question). A 23 fail with none of those is called structural only. A 20 fail with neither a fourth round nor rulings is called inconclusive on the cap when fewer than three rounds ran; at exactly three rounds, with no question and no rulings, it gives the plain reason ("no question in questions.jsonl; the task's loop ended after 3 fix rounds"). The plain brief of 33 carries no routing table, so a `without` session can match the table only by chance; its judgement says what model it picked, which shows Superpowers' own choice. Neither 27's bug session's leg nor 34 is structural: the plain bug session can write its test first, and `wheelhouse:reviewer` is loaded in both variants of 34, so a plain session could choose it.
+
+The front desk scenarios are partly structural. A `without` session has no command to record an event, so it cannot record the `amendment` 26 needs, or the `work` event 35 and 27's route leg need, whatever it does; their judgements check its behaviour first and name it: for 26, whether it built (a write to the product's code, the feature's worktree included, a build or test command, `writing-plans`, a subagent sent to build); for 35, `writing-plans`; for 27's route leg, reading or changing the code, or brainstorming. Only a `without` fail with none of those would be called structural, and none was. 25 is not structural: a plain session can split the message, name what each request is, find the open work's brief in `docs/work/` and say the spreadsheet download is planned already, and leave the code alone.
 
 ## 20. Fix round 4 under subagent-driven development
 
@@ -111,15 +121,66 @@ Both were judged again with the pause check from their saved records. The `with`
 
 Both were judged again with the menu check from their saved records; the `with` record predates the evidence the harness keeps, so its pull request was read from the `open-pr` call's output ("Opened pull request #1").
 
-## 25. *(to come)*
+## 25. One message with three requests, one a duplicate
 
-## 26. *(to come)*
+**Set-up.** The front desk, in a bakery's order book (`tests/eval/build-loop/bakery.js`: the orders and the day's total, the staff page, customers' accounts, one test). Its state holds two pieces of open work: `orders-export`, a small brief the director approved and not started ("Staff can download the orders list as a CSV file", for the weekly stock count; the brief is `docs/work/orders-export.md`), and `opening-hours`, building; an idea (a loyalty scheme) and a rejection (text-message reminders). The message: "Three things. The day's total on the staff page counts cancelled orders too, so it looks bigger than it is. Staff also need to be able to download the orders list as a spreadsheet for the weekly stock count. And some day, not now, it would be lovely if customers could pay with gift cards."
 
-## 27. A bug session reproduces the bug before any fix
+**Pass.** From the reply, the events written and the calls. Nothing built at the front desk: no write to the product's code. Three routes said, one per request: in the paragraph that names the request, or the next one, a route by name or number (incident, running work, bug, runbook, chore, later or an idea, or "as a change", "is a question" and the like), and for the spreadsheet download that it is joined to what is there ("already", running work or route 3, `orders-export`, an amendment, queued). No second item for the duplicate: no `work` event under another id, and no `idea`, about the export. A route-3 amendment of `orders-export` joins it too, as the intake's step 2 allows.
 
-**Set-up.** Route 4 is decided at the front desk; this scenario starts where it leads, a bug session with the bug brief (`templates/brief/lanes/bug.md`, rendered by `scripts/feature/brief.js`), so the route itself is not checked here. The project has `formatDuration(seconds)`, which shows a video's length on its card, and two tests that pass. It pads the seconds only when they are 0, so the bug report reads: a 65-second clip shows as "1:5". The cause is plain and the fix is one step, so the bug lane's step 4 applies. No plan. Both variants load Superpowers, Matt Pocock's skills (the bug lane starts his `tdd` and `code-review`; `locateMattSkills` in `scripts/eval/harness.js` finds the copy Claude Code has) and Wheelhouse's agents; the `without` brief is the report and the done contract alone.
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with | pass | Started the intake and ran `similar` on each request; then three items. The total: "I've treated this as a bug", the report written down in `docs/work/day-total-cancelled.md` and a `work` event in the bug lane, `visible: true`, with its approval line ("… and show it to me before it merges"). The spreadsheet: "already in the queue as orders-export", approved and not started; nothing recorded for it. Gift cards: "one for later", an `idea` with what it would take and no clash with a rule or past rejection. No code read or written | 275,440 / 2,773 |
+| without | fail | It built at the front desk: read every source file, wrote a failing test, then changed `orders.js` and `staff-page.js` to leave cancelled orders out of the total and, following `docs/work/orders-export.md` ("This follows the plan already written"), built the CSV export itself; gift cards went into `docs/work/gift-cards.md`. It did split the message into three, but the duplicate was done here, not joined to the work that has it | 257,158 / 3,923 |
 
-**What ran, and what is to come.** The scenario's pass has two legs: the front desk says route 4 and records a `work` event in the `bug` lane without looking for the cause, and the bug brief's session runs a failing reproduction test before any change to a source file. Only the second leg ran here, and it is what the results below judge; so 27 is not called a pass as a whole. The route-4 leg needs the front desk harness that scenarios 25 and 26 also need, and lands with them in the next dispatch (31c).
+The `without` run was judged a pass at first: its reply has "already" beside the spreadsheet ("the plan already written") and "change" beside the total ("The change is in `src/orders.js`"). The judge now fails any write to the product's code, and reads the everyday route words only as said of the request; judged again from its saved record, it fails as above. The `with` runs (the counted one and the one under the first set-up) pass under both readings.
+
+**Runs that did not count:**
+
+| Run | What happened | Tokens in / out |
+|---|---|---|
+| with, first set-up | Pass, the same path as the counted run. Run before the set-up let the session read the plugin's files (it read the card lines by running them with `node -e`) and before `record` with no kind printed what each record carries; all four `with` runs were run again under the final set-up | 422,515 / 3,958 |
+
+## 26. "Make the export CSV, not Excel" while the export builds
+
+**Set-up.** The front desk, in the bakery's order book. Its state holds `orders-export` in the feature lane ("Staff can export the orders list as an Excel workbook"), its written design (`docs/designs/2026-10-14-orders-export-design.md`: an Excel workbook, a sheet per day, three slices) approved by the director, and its session building slice 1 of 3 in `.claude/worktrees/orders-export`, where the first piece of code is committed on `feature/orders-export`. The message: "Make the export CSV, not Excel."
+
+**Pass.** Nothing built: no write to the product's code (the feature's worktree included), no build or test command, no `writing-plans` and no subagent sent to build. Route 3 said ("running work", route 3 or steering) or the read-back given ("Doing: … Not doing: …"). An `amendment` of `orders-export` recorded, whose hash is that of a document in the project other than the design as approved (the changed design). And the amend card's line for it, `amendLine('orders-export', hash)`, word for word in what the session composed (ruling R155). Section 15's pass goes on: the click amends the brief, and the session follows it. That is the foreman's and the feature session's part, run with real scripts in `tests/e2e/build-loop.test.js` ("make the export CSV" while the export builds), not here.
+
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with | pass | Started the intake, `similar` and the views; "I've treated this as a change to running work", the read-back (Doing: one CSV file; Not doing: the workbook or a sheet per day; Done when: …), the design rewritten in place for CSV (one file, a total row after each day, which it named as a choice to check), its hash taken, the `amendment` recorded, and the card line "Change the approved orders-export to this, 5c1a0528a035". It said the session building the export keeps to the approved design until the click. No code read or written | 321,602 / 2,358 |
+| without | fail | No amendment (it has no command to record one), and no route said or read-back given. It searched the code, found no export built in the main checkout, and edited the approved design to CSV itself, changing its approval line to say the director had changed the format on 19 October. No card and no question about the change; it asked only whether the per-day totals should stay. It built nothing | 167,707 / 2,215 |
+
+**Runs that did not count:**
+
+| Run | What happened | Tokens in / out |
+|---|---|---|
+| with, first set-up | Pass, the same path ("Change the approved orders-export to this, 561e53db959d"). Run again under the final set-up, as for 25 | 360,585 / 3,534 |
+
+## 27. A bug report: route 4, then the bug reproduced before any fix
+
+**Two legs.** The scenario's pass has two: the front desk says route 4 and records a `work` event in the `bug` lane without looking for the cause (the route leg, `tests/eval/build-loop/27-front-desk-route.js`), and the bug brief's session runs a failing reproduction test before any change to a source file (the bug session's leg, `27-bug-route.js`). Each leg is a session of its own; `npm run eval -- 27` runs both, `27-route` the route leg alone (its records are `27-route-<variant>-<trial>.json`). 27 passes only when both legs do.
+
+### The route leg
+
+**Set-up.** The front desk, in the main checkout of the bug session's project below (`duration.js`, its two tests, a README). Its state holds one piece of open work, unrelated (captions). The message: "A customer says the length on a video's card is wrong: a 65-second clip shows as 1:5."
+
+**Pass.** It neither reads the product's code (Read, a Grep or Glob over code, or `cat` and the like on a code file) nor changes any, nor starts brainstorming; it says the route as a bug (route 4); and it records a `work` event in the `bug` lane whose `doc` names a document in the project by its path and its hash as the file stands (the report, written down).
+
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with | pass | Started the intake and ran `similar` (nothing like it but the captions work); wrote the report down as given in `docs/bugs/card-length-padding.md`, took its hash and recorded the `work` event in the bug lane, `visible: true`, with its approval line ("… and show it to me before it merges"). "I've treated this as a bug." It said it had not looked at the code or tried a fix | 326,927 / 2,111 |
+| without | fail | It looked for the cause and changed the code: searched for "duration", read `duration.js` and its tests, said "Cause is clear", added a test for 65 seconds, saw it fail, then changed `duration.js`. Nothing recorded (it has no command to) and no route said | 208,348 / 1,573 |
+
+**Runs that did not count:**
+
+| Run | What happened | Tokens in / out |
+|---|---|---|
+| with, first set-up | Judged a fail by a fault in the reader: its first command, `C=<the plugin's cli.js>; node $C …; cat <the plugin's card-lines.js>` (refused by the permission check before it ran), was read as reading a code file named `C=…/cli.js` in the project. Read again with the corrected reader it reads and changes no code; otherwise the same path as the counted run. Run again under the final set-up, as for 25 | 511,278 / 3,166 |
+
+### The bug session's leg
+
+**Set-up.** Route 4 is decided at the front desk (the route leg); this leg starts where it leads, a bug session with the bug brief (`templates/brief/lanes/bug.md`, rendered by `scripts/feature/brief.js`). The project has `formatDuration(seconds)`, which shows a video's length on its card, and two tests that pass. It pads the seconds only when they are 0, so the bug report reads: a 65-second clip shows as "1:5". The cause is plain and the fix is one step, so the bug lane's step 4 applies. No plan. Both variants load Superpowers, Matt Pocock's skills (the bug lane starts his `tdd` and `code-review`; `locateMattSkills` in `scripts/eval/harness.js` finds the copy Claude Code has) and Wheelhouse's agents; the `without` brief is the report and the done contract alone.
 
 **Pass (the bug session's leg).** From the order of the tool calls, the session's and its subagents': a write to a test file, then a test command that fails (an error result, or a failure in its output), both before the first write to a source file (a code file that is not a test, outside the session's own folders). A shell command that writes a file (a redirect, `tee`, `sed -i`, `cp` or `mv`) counts as a write.
 
@@ -160,4 +221,19 @@ Both were judged again with the menu check from their saved records; the `with` 
 
 The `without` run was judged again after a fault in the first reading: it counted the "Final-review fix wave" subagent (a fix, which wrote and committed) as a review and named its writes. The verdict is the same; the corrected reader is in `34-read-only-reviewer.js` and its unit test.
 
-## 35. *(to come)*
+## 35. The director approves a written design at the front desk
+
+**Set-up.** The front desk, in the bakery's order book. A written design is in the project, where brainstorming writes one: `docs/superpowers/specs/2026-10-19-christmas-pre-orders-design.md` (pre-orders for the Christmas range, with limits per item, in three slices), committed. Its state holds one piece of open work, unrelated (opening hours). The message is the director's approval of the design, the reply that ends brainstorming's review of a written design, after which brainstorming goes on to `writing-plans`: "I've read the Christmas pre-orders design (docs/superpowers/specs/2026-10-19-christmas-pre-orders-design.md). It's approved: go ahead." Seeding the design and sending the approval as the one message stands in for the turns that shaped it.
+
+**Pass.** A `work` event in the state whose `doc` names the design: its path, and its hash as the file stands. And no `superpowers:writing-plans` started (a `Skill` call) at the front desk. The judgement also says the work's lane and whether its approval card's line (`approveWorkLine`) was in what it composed.
+
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with | pass | Started the intake, read the views and ran `similar` (nothing like it); recorded `christmas-pre-orders` in the feature lane naming the design and its hash, and put its card: "Approve christmas-pre-orders (feature lane) as written, 21fc6b43563b, and show it to me before it merges". It said a typed "approved" is not the sign-off, and that the feature session, not the front desk, writes the plan. No `writing-plans` | 231,664 / 1,912 |
+| without | fail | It started `superpowers:writing-plans` at once, wrote a three-task plan to `docs/superpowers/plans/2026-10-19-christmas-pre-orders.md`, and ended asking which way to build it (Superpowers' execution choice). No code written yet | 275,677 / 7,803 |
+
+**Runs that did not count:**
+
+| Run | What happened | Tokens in / out |
+|---|---|---|
+| with, first set-up | Pass, the same path. Run again under the final set-up, as for 25 | 421,229 / 2,780 |

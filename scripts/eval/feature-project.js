@@ -243,6 +243,21 @@ export function reportBlock(text) {
   return Object.keys(fields).length > 0 ? fields : null;
 }
 
+// The files a call writes: a write tool's file, or a shell command that writes
+// into a file by redirect, `tee`, `sed -i` or `cp`/`mv` onto it.
+export function filesWritten(call) {
+  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(call.name)) return [String(call.input.file_path ?? call.input.notebook_path ?? '')];
+  if (call.name !== 'Bash' || typeof call.input.command !== 'string') return [];
+  const command = call.input.command;
+  const found = [];
+  for (const m of command.matchAll(/(?:>>?|\btee\s+(?:-a\s+)?)\s*["']?([^\s"'|;&<>]+)/g)) found.push(m[1]);
+  if (/\bsed\s+(?:-[a-zA-Z]*i|--in-place)/.test(command)) {
+    for (const m of command.matchAll(/([^\s"'|;&<>]+\.[A-Za-z]+)(?=["']?\s*(?:$|[|;&]))/g)) found.push(m[1]);
+  }
+  for (const m of command.matchAll(/\b(?:cp|mv)\s+(?:-\S+\s+)*\S+\s+["']?([^\s"'|;&<>]+)/g)) found.push(m[1]);
+  return found.filter((file) => file !== '/dev/null');
+}
+
 // Bash calls that made a commit: a `git … commit` whose output shows the new commit.
 export function commitCalls(calls) {
   return calls.filter((call) => /\bgit\b[^\n|;&]*\scommit\b/.test(commandOf(call))

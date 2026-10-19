@@ -2,8 +2,11 @@
 // A stand-in for the host helper, for evaluation runs only: there is no real
 // host in an evaluation. It answers the few requests a feature session's
 // commands make (scripts/feature/cli.js: push, open-pr, answer and the
-// provenance asked for by report) on the same kind of socket the real helper
-// uses, records each one, and answers as a helper with a host behind it would.
+// provenance asked for by report) and the front desk's stand-in command makes
+// (scripts/eval/front-desk-command.js: writing a plain event and reading the views),
+// on the same kind of socket the real helper uses, records each one, and
+// answers as a helper with a host behind it would. Its state is a list of
+// events in memory, not a state branch.
 // It reaches no host and signs nothing. A scenario starts it in its setup,
 // points the session at it through WHEELHOUSE_HOME, and reads its records in
 // its pass. Never used by the product, and not run by `npm test` except in its
@@ -15,7 +18,10 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { PLAIN_KINDS } from '../state/events.js';
+import { buildViews } from '../state/views.js';
 
 // The commit `ref` names in the repository at `dir`, or null.
 function commitOf(dir, ref) {
@@ -47,14 +53,40 @@ function readBody(req) {
 
 const DEFAULT_BRANCHES = ['main', 'master'];
 
+// The computer a stand-in event names: eight hex characters, as a real one's.
+const STAND_IN_COMPUTER = '0e7a1000';
+
+// A plain event as the helper makes one: its id, time and computer are made here.
+export function plainEvent(kind, data, at = new Date()) {
+  return { v: 1, id: crypto.randomUUID(), at: at.toISOString(), computer: STAND_IN_COMPUTER, kind, data };
+}
+
+// The views of `events`, as /state/views answers them. No click is signed in an evaluation, so
+// `approved` ({ work: hash }) says which work the director approved before the run, and in
+// what document: that work shows as approved while its latest work event still names that hash.
+export function standInViews(events, approved = {}) {
+  const views = buildViews(events, []);
+  for (const [work, hash] of Object.entries(approved)) {
+    const entry = views.work?.[work];
+    if (entry && entry.work?.data?.doc?.hash === hash) {
+      Object.assign(entry, { approved: true, approval: { hash, shownFirst: false, lane: entry.work.data.lane } });
+    }
+  }
+  return views;
+}
+
 // Starts the stand-in on `address` (a socket path, or a pipe on Windows).
 // `answers` maps a question id to the label the director chose; any other
-// question has no answer yet. Resolves with { address, records(), close() }:
-// records() gives every request in the order it came, as
-// { at, route, ...what it asked, ...what was answered }.
-export async function startStandInHelper({ address, answers = {} } = {}) {
+// question has no answer yet. `state` is what the project's state holds when the
+// run starts: { events, approved } (see standInViews). Resolves with
+// { address, records(), events(), close() }: records() gives every request in the
+// order it came, as { at, route, ...what it asked, ...what was answered };
+// events() gives the state's events, those the state started with and those written since.
+export async function startStandInHelper({ address, answers = {}, state = {} } = {}) {
   if (typeof address !== 'string' || address === '') throw new Error('The stand-in helper needs an address');
   const records = [];
+  const events = [...(state.events ?? [])];
+  const approved = { ...(state.approved ?? {}) };
   let nextPr = 1;
   const record = (entry) => {
     records.push({ at: new Date().toISOString(), ...entry });
@@ -95,6 +127,24 @@ export async function startStandInHelper({ address, answers = {} } = {}) {
       record({ route: 'state/answer', questionId: body.questionId ?? null, answer });
       return { ok: true, answer };
     },
+    // The front desk's record: { project | cwd, kind, data }. A plain kind only, as the real
+    // helper takes; the command checked the event's shape before sending it.
+    'POST /state/write': (body) => {
+      const { kind, data } = body;
+      if (!PLAIN_KINDS.includes(kind) || data === null || typeof data !== 'object' || Array.isArray(data)) {
+        record({ route: 'state/write', kind: kind ?? null, data: data ?? null, refused: true });
+        return { ok: false, refused: PLAIN_KINDS.includes(kind) ? 'the event\'s data must be an object' : 'that kind of event is not known here' };
+      }
+      const event = plainEvent(kind, data);
+      events.push(event);
+      record({ route: 'state/write', kind, data, id: event.id });
+      return { ok: true, id: event.id, pushed: true };
+    },
+    // The front desk's reading: { project | cwd } -> the views.
+    'POST /state/views': () => {
+      record({ route: 'state/views' });
+      return { ok: true, views: standInViews(events, approved) };
+    },
     // cli.js report: { cwd, session? }. No provenance on this computer, and STOP is off.
     'POST /lineage/provenance': (body) => {
       record({ route: 'lineage/provenance', session: body.session ?? null });
@@ -131,6 +181,7 @@ export async function startStandInHelper({ address, answers = {} } = {}) {
   return {
     address,
     records: () => records.map((entry) => ({ ...entry })),
+    events: () => events.map((event) => structuredClone(event)),
     close: () => new Promise((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections?.();

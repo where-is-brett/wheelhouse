@@ -133,6 +133,8 @@ async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs })
 // `commandArgs` are for tests (a stand-in for claude). `settingSources` defaults
 // to project and local settings only, so the director's own plugins and hooks
 // do not load beside the ones the scenario names with `pluginDirs`.
+// `appendSystemPrompt`, when given, is added to the session's system prompt: one
+// line with no double quotes, so it passes through claude.cmd on Windows too.
 export async function runSession({
   dir,
   prompt,
@@ -141,6 +143,7 @@ export async function runSession({
   model,
   maxTurns,
   env,
+  appendSystemPrompt,
   settingSources = 'project,local',
   timeoutMs = 20 * 60 * 1000,
   command = 'claude',
@@ -148,7 +151,8 @@ export async function runSession({
 }) {
   // With the default command, find claude (on Windows, its .exe or .cmd); a command given is used as it is.
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
-  await checkFlags({ commandArgs, flags: model ? [...NEEDED_FLAGS, '--model'] : NEEDED_FLAGS, env, resolved });
+  const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : [])];
+  await checkFlags({ commandArgs, flags, env, resolved });
   const args = [
     '--output-format', 'stream-json',
     '--verbose',
@@ -157,6 +161,7 @@ export async function runSession({
     '--setting-sources', settingSources,
     ...pluginDirs.flatMap((pluginDir) => ['--plugin-dir', pluginDir]),
     ...(model ? ['--model', model] : []),
+    ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
   ];
   const result = await start(resolved, { lead: commandArgs, args, prompt, cwd: dir, env, timeoutMs });
   const events = parseStream(result.stdout);
@@ -226,6 +231,10 @@ export function locateMattSkills({ home = os.homedir(), env = process.env } = {}
 
 // -------------------------------------------------------------- the scenarios
 
+// A scenario's name in its record's file and its line: its number, and its leg when its pass has
+// more than one, each leg run as a session of its own (27-route).
+export const scenarioName = (scenario) => (scenario.leg ? `${scenario.id}-${scenario.leg}` : String(scenario.id));
+
 export function resultFile({ home = os.homedir(), date, id, variant, trial }) {
   return path.join(home, '.wheelhouse-evals', date, `${id}-${variant}-${trial}.json`);
 }
@@ -258,6 +267,9 @@ export function parseArgs(argv) {
       throw new Error(`Unknown option ${arg}`);
     } else if (/^\d+$/.test(arg)) {
       ids.push(Number(arg));
+    } else if (/^\d+-[a-z]+$/.test(arg)) {
+      // One leg of a scenario whose pass has more than one: 27-route.
+      ids.push(arg);
     } else {
       throw new Error(`Not a scenario number: ${arg}`);
     }
@@ -286,7 +298,8 @@ async function commitSetup(dir) {
 // scenario to judge it, writes the whole record to the evaluations folder in
 // the home folder, and removes the scratch project.
 // setup may return a context: `env` (added to the session's environment),
-// `pluginDirs` (loaded after the variant's own), anything its pass reads (given
+// `pluginDirs` (loaded after the variant's own), `appendSystemPrompt` (added to
+// the session's system prompt), anything its pass reads (given
 // to pass as `context`), `evidence()`, whose answer is kept in the record, and
 // `close()`, called once the run is over, pass or fail.
 export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
@@ -303,6 +316,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       model: scenario.model,
       maxTurns: scenario.maxTurns ?? 30,
       ...(context.env ? { env: context.env } : {}),
+      ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
     });
     const judged = scenario.pass({ events: session.events, dir: project.dir, variant, context });
     // A session whose result event says it errored (it ran out of turns, say) never passes.
@@ -316,6 +330,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const why = notes.join('; ');
     const record = {
       id: scenario.id,
+      ...(scenario.leg ? { leg: scenario.leg } : {}),
       title: scenario.title,
       variant,
       trial,
@@ -332,10 +347,10 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
       events: session.events,
     };
-    const file = resultFile({ home, date, id: scenario.id, variant, trial });
+    const file = resultFile({ home, date, id: scenarioName(scenario), variant, trial });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(record, null, 2) + '\n');
-    return { pass, why, file, line: describeRun({ id: scenario.id, variant, pass, why, usage: total }) };
+    return { pass, why, file, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
   } finally {
     try {
       await context.close?.();

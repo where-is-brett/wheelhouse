@@ -1,11 +1,11 @@
 // tests/eval/build-loop/27-bug-route.js
 // Scenario 27 (design sections 5.3 and 15): a bug report. The front desk
 // sends it down route 4, and the foreman starts a bug session with the bug
-// brief; this scenario starts from that brief, so route 4 itself is the front
-// desk's and not checked here. Pass: the bug session reproduces the bug before
-// any fix: it writes a test file and runs a test command that fails, before
-// its first write to a source file.
-// Run it with `npm run eval -- 27 --variant with` and `--variant without`.
+// brief; this leg starts from that brief. Route 4 itself is the route leg's
+// (27-front-desk-route.js), and 27 passes only when both legs do. Pass: the
+// bug session reproduces the bug before any fix: it writes a test file and
+// runs a test command that fails, before its first write to a source file.
+// `npm run eval -- 27 --variant with` and `--variant without` run both legs.
 //
 // The project has `formatDuration(seconds)`, which shows a video's length on
 // its card, and its tests, which pass. It pads the seconds only when they are
@@ -19,7 +19,7 @@
 // tool call, the session's and its subagents', by the order it was made.
 import path from 'node:path';
 import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harness.js';
-import { agentText, callsOf, setUpFeature } from '../../../scripts/eval/feature-project.js';
+import { agentText, callsOf, filesWritten, setUpFeature } from '../../../scripts/eval/feature-project.js';
 
 const WORK = 'video-length';
 const GOAL = 'A customer reports: "The length on a video\'s card is wrong. A 65-second clip shows as 1:5." The length comes from `formatDuration(seconds)` in `duration.js`.';
@@ -29,7 +29,7 @@ const DONE = [
 ];
 
 // The project as it stands: the bug, and tests that pass because none covers it.
-const files = {
+export const files = {
   'duration.js': `// The length shown on a video's card, as minutes and seconds.
 export function formatDuration(seconds) {
   const minutes = Math.floor(seconds / 60);
@@ -59,7 +59,6 @@ What done means:
 ${DONE.map((line) => `- ${line}`).join('\n')}
 `;
 
-const WRITES = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
 const CODE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
 const TEST_NAME = /(?:^|[\\/])(?:tests?|__tests__)[\\/]|\.(?:test|spec)\.[^.\\/]+$/;
 // Folders whose files are the session's papers, not the product's source.
@@ -68,20 +67,8 @@ const NOT_SOURCE = /(?:^|[\\/])(?:\.wheelhouse|\.superpowers|\.claude|docs|node_
 export const isTestFile = (file) => TEST_NAME.test(file);
 export const isSourceFile = (file) => CODE.test(file) && !isTestFile(file) && !NOT_SOURCE.test(file);
 
-// The files a call writes: a write tool's file, or a shell command that writes
-// into a file by redirect, `tee`, `sed -i` or `cp`/`mv` onto it.
-export function filesWritten(call) {
-  if (WRITES.includes(call.name)) return [String(call.input.file_path ?? call.input.notebook_path ?? '')];
-  if (call.name !== 'Bash' || typeof call.input.command !== 'string') return [];
-  const command = call.input.command;
-  const found = [];
-  for (const m of command.matchAll(/(?:>>?|\btee\s+(?:-a\s+)?)\s*["']?([^\s"'|;&<>]+)/g)) found.push(m[1]);
-  if (/\bsed\s+(?:-[a-zA-Z]*i|--in-place)/.test(command)) {
-    for (const m of command.matchAll(/([^\s"'|;&<>]+\.[A-Za-z]+)(?=["']?\s*(?:$|[|;&]))/g)) found.push(m[1]);
-  }
-  for (const m of command.matchAll(/\b(?:cp|mv)\s+(?:-\S+\s+)*\S+\s+["']?([^\s"'|;&<>]+)/g)) found.push(m[1]);
-  return found.filter((file) => file !== '/dev/null');
-}
+// The files a call writes (shared with the front desk scenarios).
+export { filesWritten };
 
 // A shell command that runs tests.
 export const isTestCommand = (call) => call.name === 'Bash'
