@@ -676,23 +676,29 @@ test('the session start starts no watcher in a project setup is still finishing'
 });
 
 // Whether setup has finished here isn't known while its journal can't be read, so the foreman,
-// the last thing setup starts, isn't started (rulings R44, R67); the rest of the session start
-// goes on as in any project, and the reload says why, naming what to do (ruling R72).
-test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher and says why', async () => {
+// the last thing setup starts, is held back (rulings R44, R67); the rest of the session start
+// goes on as in any project, and the front desk's reload says why, naming what to tell the
+// director (rulings R72, R73).
+test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher and tells the front desk why', async () => {
   await withHome(async (home) => {
-    assert.equal(FOREMAN_HELD_NEWER, 'The foreman wasn\'t started because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Update Wheelhouse.');
-    assert.equal(FOREMAN_HELD_UNREADABLE, 'The foreman wasn\'t started because setup\'s journal couldn\'t be read. Follow wheelhouse:setup.');
+    assert.equal(FOREMAN_HELD_NEWER, 'The foreman is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.');
+    assert.equal(FOREMAN_HELD_UNREADABLE, 'The foreman is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.');
     const folder = fs.realpathSync.native(tempFolder('wh-unreadable journal '));
     fs.mkdirSync(path.join(folder, '.git'));
     writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
-    const start = (f) => decide({ cwd: folder, session_id: 's1' }, {
+    const start = (f, env = {}) => decide({ cwd: folder, session_id: 's1' }, {
       pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
       pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
-      guardedSelfTest: async () => null, startLowNodeCopy: () => true, env: {},
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true, env,
     });
-    const f = fake();
-    f.client.health = async () => ({ ok: true });
-    f.client.config = async () => shapeConfig(1);
+    // A helper that answers and a Shape 1 project: a watcher would be started.
+    const shape1 = () => {
+      const made = fake();
+      made.client.health = async () => ({ ok: true });
+      made.client.config = async () => shapeConfig(1);
+      return made;
+    };
+    const f = shape1();
     const held = [FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE, JOURNAL_UNREADABLE];
     const heldLines = (out) => text(out).split('\n').filter((l) => held.includes(l));
     fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
@@ -715,6 +721,18 @@ test('in a registered folder whose setup journal can\'t be read, the session sta
       // Nothing rewrites the journal.
       assert.equal(fs.readFileSync(journalFile(), 'utf8'), journal);
     }
+    // The foreman's own session and a feature's are held back too, and given no such line.
+    const foreman = shape1();
+    const foremanOut = await start(foreman, { WHEELHOUSE_ROLE: 'foreman' });
+    assert.equal(watcherStarts(foreman).length, 0);
+    assert.deepEqual(heldLines(foremanOut), []);
+    fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/feature/login\n');
+    const feature = shape1();
+    const featureOut = await start(feature);
+    assert.equal(watcherStarts(feature).length, 0);
+    assert.deepEqual(heldLines(featureOut), []);
+    assert.ok(!text(featureOut).split('\n').includes(FRONT_DESK_LINE));
+    fs.rmSync(path.join(folder, '.git', 'HEAD'));
     // Held back with the helper down too, and still said.
     const down = fake({ startsUp: false });
     down.client.config = async () => shapeConfig(1);
@@ -729,7 +747,9 @@ test('in a registered folder whose setup journal can\'t be read, the session sta
     assert.deepEqual(heldLines(readable), []);
     // A readable journal whose runs are elsewhere, too.
     fs.writeFileSync(journalFile(), JSON.stringify({ v: 1, runs: [] }));
-    assert.deepEqual(heldLines(await start(fake())), []);
+    const again = shape1();
+    assert.deepEqual(heldLines(await start(again)), []);
+    assert.equal(watcherStarts(again).length, 1);
   });
 });
 

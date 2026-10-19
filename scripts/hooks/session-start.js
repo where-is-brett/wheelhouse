@@ -70,10 +70,10 @@ export const FRONT_DESK_LINE = 'This is the front desk. Follow wheelhouse:front-
 export const NOT_SET_UP = 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.';
 export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. Follow wheelhouse:setup.`;
 export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
-// In a project, when setup's journal can't be read, whether setup has finished isn't known, so the
-// foreman isn't started (ruling R72): a journal a newer Wheelhouse wrote, or anything else.
-export const FOREMAN_HELD_NEWER = 'The foreman wasn\'t started because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Update Wheelhouse.';
-export const FOREMAN_HELD_UNREADABLE = 'The foreman wasn\'t started because setup\'s journal couldn\'t be read. Follow wheelhouse:setup.';
+// In a project's front desk, when setup's journal can't be read, whether setup has finished isn't
+// known, so the foreman is held back (ruling R72): a journal a newer Wheelhouse wrote, or anything else.
+export const FOREMAN_HELD_NEWER = 'The foreman is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.';
+export const FOREMAN_HELD_UNREADABLE = 'The foreman is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call, which Claude Code reads from 2.1.295; the mod's files load from CLAUDE_CODE_FLOOR
@@ -452,7 +452,10 @@ export async function decide(input, deps = {}) {
 
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
-  if (trouble !== null) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
+  // The front desk's session: not a feature's, nor the foreman's own. Only it is told why the
+  // foreman is held back, as it is the session that speaks to the director.
+  const deskSession = featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
+  if (trouble !== null && deskSession) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
   const stateRoot = stateDir(project);
   // The Guarded self-test, on Windows, when the level read as if it passed would be Guarded, or
@@ -486,7 +489,7 @@ export async function decide(input, deps = {}) {
   }
   const text = reload({
     views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds,
-    frontDesk: setupLine === null && featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
+    frontDesk: setupLine === null && deskSession,
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
