@@ -22,7 +22,10 @@
 //
 // Every write is the whole file: a temporary file beside it, then a rename, so a crash leaves
 // the earlier journal whole. A journal that cannot be read is refused, never replaced.
-// The writers read, change and write in one go with no lock: one process at a time writes.
+// Every writer reads, changes and writes under a lock file beside the journal
+// (journal.json.lock, taken with an exclusive create), so the helper and a long step's
+// child writing together lose nothing. A writer waits up to LOCK_WAIT_MS for it; a lock
+// older than LOCK_STALE_MS belongs to a process that died and is taken over.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -115,12 +118,58 @@ function writeJournal(journal) {
   writeAtomic(journalFile(), `${JSON.stringify(journal, null, 2)}\n`);
 }
 
-// Reads the journal, lets `change` alter it, writes it whole, and gives back what `change` returned.
+const LOCK_STALE_MS = 5000;
+const LOCK_WAIT_MS = 10000;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// Holds the journal's lock while `work` runs. Synchronous: it waits by sleeping. A lock that
+// is old is renamed to a name of its own and removed, so only one waiter takes it over, and a
+// lock someone has just made in its place is put back.
+function withLock(work) {
+  const lock = `${journalFile()}.lock`;
+  const token = `${process.pid}.${crypto.randomBytes(6).toString('hex')}\n`;
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  const until = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      fs.writeFileSync(lock, token, { flag: 'wx' });
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST' && error.code !== 'EPERM' && error.code !== 'EACCES') throw error;
+    }
+    try {
+      const seen = fs.readFileSync(lock, 'utf8');
+      if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+        const taken = `${lock}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.stale`;
+        fs.renameSync(lock, taken);
+        if (fs.readFileSync(taken, 'utf8') !== seen) {
+          try { fs.linkSync(taken, lock); } catch { /* another lock stands */ }
+        }
+        fs.rmSync(taken, { force: true });
+        continue;
+      }
+    } catch { /* it went away, or another waiter took it over: try again */ }
+    if (Date.now() > until) throw new Error(`The setup journal is in use: ${lock} has been held for over ${LOCK_WAIT_MS / 1000} seconds`);
+    pause(10);
+  }
+  try {
+    return work();
+  } finally {
+    // Not removed when it has been taken over meanwhile as stale.
+    try {
+      if (fs.readFileSync(lock, 'utf8') === token) fs.rmSync(lock, { force: true });
+    } catch { /* already gone */ }
+  }
+}
+
+// Under the lock, reads the journal, lets `change` alter it, writes it whole, and gives back what `change` returned.
 function update(change) {
-  const journal = readJournal();
-  const result = change(journal);
-  writeJournal(journal);
-  return result;
+  return withLock(() => {
+    const journal = readJournal();
+    const result = change(journal);
+    writeJournal(journal);
+    return result;
+  });
 }
 
 function runIn(journal, runId) {
@@ -198,6 +247,11 @@ export function addChanges(runId, changes) {
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+// An error for a file that is there but is not what setup wrote: reversal reads it as a change since setup.
+function notJson(message) {
+  return Object.assign(new Error(message), { notJson: true });
+}
+
 // The file's content as an object, with what is needed to write it back the way it was.
 // A missing file is {}. Anything that is not a JSON object is refused, naming the file.
 function readObjectFile(file) {
@@ -214,9 +268,9 @@ function readObjectFile(file) {
   try {
     data = JSON.parse(body);
   } catch {
-    throw new Error(`${file} is not JSON, so setup has left it as it was`);
+    throw notJson(`${file} is not JSON, so setup has left it as it was`);
   }
-  if (!isObject(data)) throw new Error(`${file} does not hold a JSON object, so setup has left it as it was`);
+  if (!isObject(data)) throw notJson(`${file} does not hold a JSON object, so setup has left it as it was`);
   const lead = /^[ \t]+(?=\S)/m.exec(body.slice(body.indexOf('\n') + 1));
   const multiline = body.trim().includes('\n');
   return {
@@ -297,13 +351,20 @@ export function applyJsonKey({ file, key, value, step, project }) {
 
 // ---- Putting changes back ----
 
+// A file that could not be read for a reason other than being gone is left alone and the
+// reason is given as it is, not passed off as the director's own edit.
+function unreadable(target, error) {
+  return { put: false, why: `could not read ${target}: ${error.code ?? error.message}` };
+}
+
 function reverseJsonKey(change) {
   checkKey(change.key);
   let read;
   try {
     read = readObjectFile(change.target);
-  } catch {
-    return CHANGED; // gone, or no longer a JSON object
+  } catch (error) {
+    if (error.notJson) return CHANGED; // no longer a JSON object
+    return unreadable(change.target, error);
   }
   const now = getAt(read.data, change.key);
   if (!now.found || canonicalJson(now.value) !== canonicalJson(change.after)) return CHANGED;
@@ -317,8 +378,8 @@ function reverseFile(change) {
   let text;
   try {
     text = fs.readFileSync(change.target, 'utf8');
-  } catch {
-    return CHANGED;
+  } catch (error) {
+    return error.code === 'ENOENT' ? CHANGED : unreadable(change.target, error);
   }
   if (text !== change.after) return CHANGED;
   if (change.before === null) fs.rmSync(change.target);

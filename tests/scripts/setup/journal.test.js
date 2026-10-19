@@ -1,6 +1,7 @@
 // tests/scripts/setup/journal.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -288,4 +289,86 @@ test('step times give the director\'s minutes from shown to clicked, and the wai
     { step: 2, directorMs: 60000, waitMs: 30000 },
   ]);
   assert.deepEqual(stepTimes({ ...run, steps: {} }), []);
+});
+
+test('a file that cannot be read is reported as it is, not as the director\'s edit', () => {
+  const dir = tempFolder('wh-journal-');
+  // A folder where the file should be: reading it fails with something other than "missing".
+  const target = path.join(dir, 'settings.json');
+  fs.mkdirSync(target);
+  for (const change of [
+    { id: 'j', step: 6, kind: 'json-key', target, key: ['a'], before: null, after: 1 },
+    { id: 'f', step: 7, kind: 'file', target, before: null, after: 'x' },
+  ]) {
+    const result = reverseChange(change);
+    assert.equal(result.put, false);
+    assert.match(result.why, /could not read .*settings\.json: EISDIR/);
+    assert.notEqual(result.why, 'changed since setup');
+  }
+});
+
+const journalUrl = new URL('../../../scripts/setup/journal.js', import.meta.url).href;
+
+// Runs `body` in a separate node process with the same home; resolves with its exit code.
+function child(body) {
+  const code = `import(${JSON.stringify(journalUrl)}).then(async (j) => { const fs = await import('node:fs'); ${body} })`;
+  return new Promise((resolve) => {
+    const proc = spawn(process.execPath, ['-e', code], { env: process.env, stdio: 'ignore' });
+    proc.on('exit', (exit) => resolve(exit));
+  });
+}
+
+test('writers in several processes at once lose nothing', async () => {
+  await withHome(async (home) => {
+    const run = startRun({ folder: '/work/shop', now: at('2026-10-19T01:00:00.000Z') });
+    const go = path.join(home, 'go');
+    const workers = ['a', 'b', 'c'].map((name) => child(`
+      while (!fs.existsSync(${JSON.stringify(go)})) await new Promise((r) => setTimeout(r, 2));
+      for (let i = 1; i <= 25; i++) {
+        j.markStep(${JSON.stringify(run.id)}, i, 'shownAt', { now: () => new Date('2026-10-19T02:00:00.000Z') });
+        j.addChanges(${JSON.stringify(run.id)}, [{ id: '${name}' + i, step: i, kind: 'folder', target: '/x/${name}' + i, before: null, after: true }]);
+      }`));
+    fs.writeFileSync(go, '');
+    for (let i = 1; i <= 25; i++) {
+      addChanges(run.id, [{ id: `p${i}`, step: i, kind: 'folder', target: `/x/p${i}`, before: null, after: true }]);
+      markStep(run.id, 30 + i, 'doneAt', { now: at('2026-10-19T02:00:00.000Z') });
+    }
+    assert.deepEqual(await Promise.all(workers), [0, 0, 0]);
+    const found = findRun('/work/shop');
+    assert.equal(found.changes.length, 25 * 4);
+    assert.equal(new Set(found.changes.map((c) => c.id)).size, 100);
+    for (let i = 1; i <= 25; i++) {
+      assert.equal(found.steps[i].shownAt, '2026-10-19T02:00:00.000Z');
+      assert.equal(found.steps[30 + i].doneAt, '2026-10-19T02:00:00.000Z');
+    }
+    assert.equal(fs.existsSync(`${journalFile()}.lock`), false);
+  });
+});
+
+test('a writer waits for a lock another process holds, and goes on when it is released', async () => {
+  await withHome(async () => {
+    const run = startRun({ folder: '/work/shop', now: at('2026-10-19T01:00:00.000Z') });
+    const lock = `${journalFile()}.lock`;
+    fs.writeFileSync(lock, 'someone-else\n');
+    const releasing = child(`setTimeout(() => fs.rmSync(${JSON.stringify(lock)}), 400)`);
+    const began = Date.now();
+    markStep(run.id, 1, 'shownAt', { now: at('2026-10-19T01:00:05.000Z') });
+    assert.ok(Date.now() - began >= 200, 'the writer waited for the lock');
+    assert.equal(findRun('/work/shop').steps[1].shownAt, '2026-10-19T01:00:05.000Z');
+    assert.equal(fs.existsSync(lock), false);
+    await releasing;
+  });
+});
+
+test('a lock left by a process that died is taken over', () => {
+  withHome(() => {
+    const run = startRun({ folder: '/work/shop', now: at('2026-10-19T01:00:00.000Z') });
+    const lock = `${journalFile()}.lock`;
+    fs.writeFileSync(lock, '99999.dead\n');
+    const old = new Date(Date.now() - 60 * 1000);
+    fs.utimesSync(lock, old, old);
+    markStep(run.id, 1, 'shownAt', { now: at('2026-10-19T01:00:05.000Z') });
+    assert.equal(findRun('/work/shop').steps[1].shownAt, '2026-10-19T01:00:05.000Z');
+    assert.deepEqual(fs.readdirSync(path.dirname(journalFile())), ['journal.json']);
+  });
 });
