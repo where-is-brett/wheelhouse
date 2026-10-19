@@ -28,7 +28,7 @@ import { hostKeyEnv } from '../../helpers/host-key.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { startRun } from '../../../scripts/setup/journal.js';
-import { noteAsked } from '../../../scripts/setup/clicks.js';
+import { noteAsked, keepClick, keepAnswer, copySetupRecords } from '../../../scripts/setup/clicks.js';
 import { questionsStep } from '../../../scripts/setup/questions.js';
 import { rulesStep } from '../../../scripts/setup/rules.js';
 import { REAL_USERS } from '../../../scripts/setup/host.js';
@@ -473,6 +473,25 @@ test('setup\'s answers record the glossary entry, the phase and the rulings thro
       assert.equal(listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === 'setting').length, 2);
     });
   } finally { fs.rmSync(config, { recursive: true, force: true }); await c.close(); await repo.cleanup(); }
+});
+
+test('setup\'s clicks and answers of a run are copied into the state through the real /state/record route, once', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      assert.equal((await c.client.state.clone({ project: PROJECT })).ok, true);
+      const run = startRun({ folder: readProject(PROJECT).folder, now: at(0) });
+      keepClick(makeEvent({ kind: 'action', data: { action: 'setup', runId: run.id, step: 3, hash: 'c'.repeat(64), question: 'Step 3', label: 'Go ahead' }, now: at(100) }));
+      keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: run.id, step: 4, questionId: 'live-data', question: 'Live data?', label: 'No live data', text: null }, now: at(200) }));
+      // By default the copy asks this computer's helper, at its own address.
+      const first = await copySetupRecords(run.id, PROJECT);
+      assert.deepEqual(first, { copied: 2, skipped: 0, failed: 0 });
+      assert.deepEqual(await copySetupRecords(run.id, PROJECT), { copied: 0, skipped: 2, failed: 0 });
+    });
+    const kinds = (await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).map((f) => f.split('_').at(-2));
+    assert.deepEqual(kinds, ['action', 'action']);
+  } finally { await c.close(); await repo.cleanup(); }
 });
 
 test('a confirmation that reached the state alone still has its ruling written when the pair is sent', async () => {

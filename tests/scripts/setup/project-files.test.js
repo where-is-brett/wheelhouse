@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  projectFilesStep, starterConfig, projectFilesChange, projectFilesCard, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
+  projectFilesStep, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { runApply } from '../../../scripts/setup/engine.js';
@@ -28,6 +28,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { directorGitlabApi } from '../../../scripts/setup/host.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { g, push as fixturePush } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -40,11 +41,20 @@ const PLUGIN_ROOT = '/Applications/Wheel house/plugin';
 const ADDRESS = '/h/zoë/.wheelhouse/helper.sock';
 const NODE = '/usr/local/bin/node';
 const REF = 'v1.4.0';
+const GITLAB_TOKEN = 'glpat-directors-own-token-0001';
+const GITLAB_USER = { username: 'a-director', id: 77, name: 'A Director' };
 const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
 
 // ---- The world: a product on a stand-in host, connected as step 3 leaves it ----
 
-async function seedBare(dir, branch = 'main') {
+// The director's own shared settings as the product's repository holds them; `stepOne` says
+// whether step 1's project-scope install switched the plugin on there (check 37): 'committed'
+// (already in the repository), 'modified' (added to the tracked file, not committed) or 'untracked'
+// (the repository has no settings file; step 1's install made one, not committed).
+const OWN_SETTINGS = { theme: 'dark', permissions: { allow: ['Bash(ls:*)'] }, enabledPlugins: { 'their-own@elsewhere': true } };
+const STEP_ONE = { 'wheelhouse@wheelhouse': true };
+
+async function seedBare(dir, branch = 'main', { stepOne = 'committed', gitignore = null } = {}) {
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const made = await realRun('git', ['init', '--bare', '-q', '-b', branch, dir]);
   if (made.code !== 0) throw new Error('git init --bare failed');
@@ -53,8 +63,12 @@ async function seedBare(dir, branch = 'main') {
     await g(work, 'init', '-q', '-b', branch);
     fs.writeFileSync(path.join(work, 'README.md'), '# Shop\n');
     fs.writeFileSync(path.join(work, 'CLAUDE.md'), '# Shop\n\n- Keep commits small.\n');
-    fs.mkdirSync(path.join(work, '.claude'));
-    fs.writeFileSync(path.join(work, '.claude', 'settings.json'), `${JSON.stringify({ theme: 'dark', permissions: { allow: ['Bash(ls:*)'] }, enabledPlugins: { 'wheelhouse@wheelhouse': true, 'their-own@elsewhere': true } }, null, 2)}\n`);
+    if (gitignore !== null) fs.writeFileSync(path.join(work, '.gitignore'), gitignore);
+    if (stepOne !== 'untracked') {
+      fs.mkdirSync(path.join(work, '.claude'));
+      const committed = stepOne === 'committed' ? { ...OWN_SETTINGS, enabledPlugins: { ...STEP_ONE, ...OWN_SETTINGS.enabledPlugins } } : OWN_SETTINGS;
+      fs.writeFileSync(path.join(work, '.claude', 'settings.json'), `${JSON.stringify(committed, null, 2)}\n`);
+    }
     await g(work, 'add', '-A');
     await g(work, 'commit', '-q', '-m', 'The director\'s first commit');
     await g(work, 'push', '-q', dir, branch);
@@ -81,24 +95,42 @@ function kits(root) {
 }
 
 // `defaultBranch` is what the host says; `branch` the folder's own. `claudeMissing`: no `claude`.
-async function world({ defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF } = {}) {
-  const w = { calls: [], protection: [], gitCalls: [] };
+// `host`: 'github' or 'gitlab'. `stepOne` and `gitignore`: as seedBare's. `ownStatusLine`: a status
+// line of the director's in their user settings. `w.duringInstall(plugin)` runs while each pin is
+// installed, and `w.gitFails(args)` makes a git call fail.
+async function world({
+  defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = null, ownStatusLine = null,
+} = {}) {
+  const w = { calls: [], protection: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [] };
+  w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
+  fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
   w.bare = path.join(hostRoot, `${REPO}.git`);
-  await seedBare(w.bare, branch);
+  await seedBare(w.bare, branch, { stepOne, gitignore });
   w.user = tempFolder('wh-user zoë ');
   w.folder = path.join(w.user, 'Projects', 'Shop');
   fs.mkdirSync(path.dirname(w.folder), { recursive: true });
   const cloned = await realRun('git', ['clone', '-q', w.bare, w.folder]);
   if (cloned.code !== 0) throw new Error(cloned.stderr);
   w.folder = fs.realpathSync.native(w.folder);
+  fs.mkdirSync(path.join(w.folder, '.claude'), { recursive: true });
+  // Step 1's project-scope install switched the plugin on in the project's settings (check 37).
+  const shared = path.join(w.folder, '.claude', 'settings.json');
+  if (stepOne === 'untracked') fs.writeFileSync(shared, `${JSON.stringify({ enabledPlugins: STEP_ONE }, null, 2)}\n`);
+  if (stepOne === 'modified') {
+    const was = JSON.parse(fs.readFileSync(shared, 'utf8'));
+    fs.writeFileSync(shared, `${JSON.stringify({ ...was, enabledPlugins: { ...was.enabledPlugins, ...STEP_ONE } }, null, 2)}\n`);
+  }
   // Step 2 wrote setup's own allow rule into this computer's local settings (ruling R43).
   fs.writeFileSync(path.join(w.folder, '.claude', 'settings.local.json'), `${JSON.stringify({ permissions: { allow: [`Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`] } }, null, 2)}\n`);
-  writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
+  writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host, repo: REPO, connection: { host, mode: host === 'gitlab' ? 'narrow' : 'quick', project: REPO } });
   w.claudeHome = path.join(w.user, 'claude config');
   fs.mkdirSync(w.claudeHome, { recursive: true });
   // The install line declared Wheelhouse's marketplace at its release in the user's settings (check 37).
-  if (release) fs.writeFileSync(path.join(w.claudeHome, 'settings.json'), JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref: release } } } }));
+  fs.writeFileSync(path.join(w.claudeHome, 'settings.json'), JSON.stringify({
+    ...(release ? { extraKnownMarketplaces: { wheelhouse: { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref: release } } } } : {}),
+    ...(ownStatusLine ? { statusLine: ownStatusLine } : {}),
+  }));
   const k = kits(tempFolder('wh-kits-'));
   w.manifest = k.manifest;
   const answer = (stdout, code = 0, stderr = '') => ({ code, stdout, stderr });
@@ -106,12 +138,19 @@ async function world({ defaultBranch = 'main', branch = 'main', claudeMissing = 
     const name = path.basename(file).replace(/\.(exe|cmd)$/, '');
     if (name === 'git') {
       w.gitCalls.push({ args: [...args], env: options.env ?? {} });
-      return realRun(file, args, options);
+      if (w.gitFails(args)) return answer('', 1, 'refused by the test');
+      // The step's git reads no global settings or ignore list here, so this computer's own don't count.
+      return realRun(file, args, { ...options, env: { ...options.env, GIT_CONFIG_GLOBAL: w.noGlobal, XDG_CONFIG_HOME: path.dirname(w.noGlobal) } });
     }
     w.calls.push({ tool: name, args: [...args], cwd: options.cwd, env: options.env });
     if (name === 'gh') {
       if (args[0] === 'api' && args[1] === 'user') return answer(JSON.stringify(USER));
       if (args[0] === 'api' && args[1] === `repos/${REPO}`) return answer(JSON.stringify({ full_name: REPO, default_branch: defaultBranch, private: true }));
+      return answer('', 1, 'unknown command');
+    }
+    if (name === 'glab') {
+      if (args[0] === 'auth' && args[1] === 'status' && args.includes('--show-token')) return answer('', 0, `gitlab.com\n  ✓ Logged in to gitlab.com as ${USER.login}\n  ✓ Token found: ${GITLAB_TOKEN}\n`);
+      if (args[0] === 'api' && args[1] === 'user') return answer(JSON.stringify(GITLAB_USER));
       return answer('', 1, 'unknown command');
     }
     if (name === 'claude') {
@@ -128,6 +167,7 @@ async function world({ defaultBranch = 'main', branch = 'main', claudeMissing = 
         // Claude Code writes the project's settings again on the way, in its own layout.
         const settings = path.join(options.cwd, '.claude', 'settings.json');
         fs.writeFileSync(settings, JSON.stringify(JSON.parse(fs.readFileSync(settings, 'utf8'))));
+        await w.duringInstall(plugin);
         return answer(`Successfully installed plugin: ${args[2]} (scope: project)\n`);
       }
       return answer('', 1, 'unknown command');
@@ -136,14 +176,23 @@ async function world({ defaultBranch = 'main', branch = 'main', claudeMissing = 
   };
   // Protection as Task 8's switchOnAsDirector gives it: here it notes what the host held when it
   // was asked, so the order can be read.
-  w.switchOn = async ({ host, repo }) => {
-    w.protection.push({ host, repo, tip: await lsRemote(w.bare, defaultBranch) });
-    return { available: true, on: true, line: `GitHub blocks direct pushes to ${defaultBranch}.` };
+  w.switchOn = async ({ host: on, repo, api }) => {
+    w.protection.push({ host: on, repo, tip: await lsRemote(w.bare, defaultBranch), ...(api ? { api: (await api.get(`/projects/${encodeURIComponent(repo)}`)).status } : {}) });
+    return on === 'gitlab'
+      ? { available: true, on: true, line: `GitLab blocks direct pushes to ${defaultBranch}.`, askPipelines: true }
+      : { available: true, on: true, line: `GitHub blocks direct pushes to ${defaultBranch}.` };
+  };
+  // GitLab's API, reached as directorGitlabApi reaches it with glab's sign-in: the token only in the header.
+  w.fetch = async (url, init = {}) => {
+    w.api.push({ url, auth: init.headers?.Authorization ?? null });
+    const body = url.endsWith(`/projects/${encodeURIComponent(REPO)}`) ? { id: 41, path_with_namespace: REPO, default_branch: defaultBranch } : null;
+    return { status: body ? 200 : 404, text: async () => JSON.stringify(body) };
   };
   w.status = async () => ({ available: true, on: w.protection.length > 0, line: 'read' });
   w.step = projectFilesStep({
     run: (...args) => w.run(...args), findGit: async () => ({ ok: true, path: 'git' }), claude: () => ({ kind: 'direct', file: 'claude' }),
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
+    gitlab: ({ run }) => directorGitlabApi({ run, fetch: w.fetch }),
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
@@ -281,7 +330,7 @@ test('the setup commit holds exactly the three files, and goes up before protect
     // Pushed with the director's own sign-in, their tool as git's credential helper; never the narrow key.
     const pushed = w.gitCalls.find((c) => c.args.includes('push'));
     assert.match(pushed.env.GIT_CONFIG_VALUE_1, /"gh" auth git-credential$/);
-    assert.ok(pushed.args.includes(`HEAD:refs/heads/main`));
+    assert.ok(pushed.args.includes(`${tip}:refs/heads/main`), 'the exact commit, never whatever HEAD is');
     assert.ok(!Object.keys(pushed.env).some((k) => /TOKEN|KEY$/.test(k)));
 
     // Protection was switched on once, after the commit was on the host.
@@ -289,12 +338,13 @@ test('the setup commit holds exactly the three files, and goes up before protect
     // What protection read back is the step's last line for the director.
     assert.match(done.run.steps[7].say.line, /blocks direct pushes/);
 
-    // Recorded first: the push as a host change with the branch's tip before it, then protection.
+    // Recorded first: the commit and the push as host changes with the branch's tip before them, then protection.
     const host = done.run.changes.filter((c) => c.kind === 'host');
-    assert.deepEqual(host.map((c) => c.after?.action), ['push', 'protect']);
+    assert.deepEqual(host.map((c) => c.after?.action), ['commit', 'push', 'protect']);
     assert.equal(host[0].before.sha, tipBefore);
-    assert.equal(host[0].after.sha, tip);
-    assert.equal(host[1].before.on, false);
+    assert.equal(host[1].before.sha, tipBefore);
+    assert.equal(host[1].after.sha, tip);
+    assert.equal(host[2].before.on, false);
 
     // Asked again, nothing is left to commit or push: only protection, which is safe to repeat.
     const again = await w.plan();
@@ -349,6 +399,151 @@ test('a default branch that is Wheelhouse\'s own, or not the folder\'s, is refus
     assert.equal(await g(w.bare, 'log', '-1', '--format=%s', 'main'), COMMIT_MESSAGE);
     assert.equal(await g(w.bare, 'rev-list', '--count', 'main'), '2');
   });
+});
+
+test('step 1\'s install left in the folder, not committed, goes up in setup\'s commit; the director\'s own change is still refused', async () => {
+  for (const stepOne of ['untracked', 'modified']) {
+    await withHome(async () => {
+      const w = await world({ stepOne });
+      const planned = await w.plan();
+      assert.ok(Array.isArray(planned.changes), stepOne);
+      const done = await w.apply(planned.changes);
+      assert.equal(done.ok, true, done.reason);
+      const committed = JSON.parse(await g(w.bare, 'show', 'main:.claude/settings.json'));
+      assert.equal(committed.enabledPlugins['wheelhouse@wheelhouse'], true, stepOne);
+      assert.equal(committed.sandbox.enabled, true);
+      if (stepOne === 'modified') assert.equal(committed.theme, 'dark');
+    });
+  }
+  await withHome(async () => {
+    const w = await world({ stepOne: 'modified' });
+    const file = path.join(w.folder, '.claude', 'settings.json');
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), theme: 'light' }));
+    await assert.rejects(w.plan(), /\.claude\/settings\.json has changes of yours/);
+  });
+});
+
+test('a commit, a branch switch or an edit made while the pins install never goes up', async () => {
+  const cases = {
+    commit: async (w) => {
+      fs.writeFileSync(path.join(w.folder, 'mine.txt'), 'mine\n');
+      await g(w.folder, 'add', 'mine.txt');
+      await g(w.folder, 'commit', '-q', '-m', 'Mine');
+    },
+    'branch switch': (w) => g(w.folder, 'switch', '-q', '-c', 'elsewhere'),
+    edit: (w) => { fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- Draft rule.\n'); },
+  };
+  for (const [name, meanwhile] of Object.entries(cases)) {
+    await withHome(async () => {
+      const w = await world();
+      const tip = await lsRemote(w.bare, 'main');
+      let once = false;
+      w.duringInstall = async () => { if (!once) { once = true; await meanwhile(w); } };
+      const done = await w.apply((await w.plan()).changes);
+      assert.equal(done.ok, false, name);
+      assert.match(done.reason, /changed while|since the card/, name);
+      assert.equal(await lsRemote(w.bare, 'main'), tip, `${name}: nothing went up`);
+      assert.deepEqual(w.protection, [], name);
+      assert.ok(!(await g(w.folder, 'log', '--all', '--format=%s')).includes(COMMIT_MESSAGE), `${name}: no setup commit made`);
+    });
+  }
+  await withHome(async () => {
+    // On the push's retry, the setup commit itself goes up, never a commit of the director's on top of it.
+    const w = await world();
+    const failing = w.run;
+    w.run = async (file, args, options) => (args.includes('push') ? { code: 1, stdout: '', stderr: 'no' } : failing(file, args, options));
+    await w.apply((await w.plan()).changes);
+    w.run = failing;
+    const setupCommit = await g(w.folder, 'rev-parse', 'HEAD');
+    const again = await w.plan();
+    fs.writeFileSync(path.join(w.folder, 'mine.txt'), 'mine\n');
+    await g(w.folder, 'add', 'mine.txt');
+    await g(w.folder, 'commit', '-q', '-m', 'Mine');
+    const done = await w.apply(again.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await lsRemote(w.bare, 'main'), setupCommit);
+  });
+});
+
+test('Claude Code\'s rewrite of the settings during the installs is put back key by key, through the journal', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const file = path.join(w.folder, '.claude', 'settings.json');
+    w.duringInstall = () => {
+      const now = JSON.parse(fs.readFileSync(file, 'utf8'));
+      delete now.autoCompactWindow;
+      fs.writeFileSync(file, JSON.stringify(now));
+    };
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/settings.json').autoCompactWindow, 300000);
+    assert.equal(w.json('.claude/settings.json').theme, 'dark');
+    assert.equal(done.run.changes.filter((c) => c.kind === 'json-key' && c.key.join('.') === 'autoCompactWindow').length, 2);
+    assert.equal(JSON.parse(await g(w.bare, 'show', 'main:.claude/settings.json')).autoCompactWindow, 300000);
+  });
+});
+
+test('a commit that fails leaves nothing staged by setup, and nothing pushed', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.gitFails = (args) => args.includes('commit');
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, false);
+    assert.match(done.reason, /setup commit/);
+    assert.equal(await g(w.folder, 'ls-files', '--', '.claude/wheelhouse.json'), '', 'the intent-to-add entry is gone');
+    assert.equal(await g(w.bare, 'rev-list', '--count', 'main'), '1');
+  });
+});
+
+test('this computer\'s settings are kept out of git, unless the product already ignores them', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    assert.ok(planned.changes.some((c) => c.line === '/.claude/settings.local.json'));
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const exclude = path.join(w.folder, '.git', 'info', 'exclude');
+    assert.ok(fs.readFileSync(exclude, 'utf8').split('\n').includes('/.claude/settings.local.json'));
+    assert.equal(await g(w.folder, 'status', '--porcelain', '--', '.claude/settings.local.json'), '');
+    const change = done.run.changes.find((c) => c.target === exclude);
+    assert.equal(change.kind, 'file');
+    assert.equal(change.line, '/.claude/settings.local.json');
+  });
+  await withHome(async () => {
+    const w = await world({ gitignore: '.claude/settings.local.json\n' });
+    assert.ok(!(await w.plan()).changes.some((c) => c.line !== undefined));
+  });
+});
+
+test('on GitLab: the default branch and protection through glab\'s sign-in, the author\'s no-reply address, and the pipelines line', async () => {
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab' });
+    const planned = await w.plan();
+    assert.match(composeCard({ ...planned.card, target: { step: 7, hash: '0'.repeat(64) } }).question.question, /pipelines must succeed/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'log', '-1', '--format=%an <%ae>', 'main'), `${GITLAB_USER.name} <${GITLAB_USER.id}-${GITLAB_USER.username}@users.noreply.gitlab.com>`);
+    const pushed = w.gitCalls.find((c) => c.args.includes('push'));
+    assert.match(pushed.env.GIT_CONFIG_VALUE_1, /"glab" auth git-credential$/);
+    assert.ok(w.api.length > 0 && w.api.every((a) => a.auth === `Bearer ${GITLAB_TOKEN}`), 'the token only in the header');
+    assert.ok(w.calls.every((c) => !c.args.join(' ').includes(GITLAB_TOKEN)));
+    assert.deepEqual(w.protection.map((p) => [p.host, p.api]), [['gitlab', 200]]);
+    assert.match(done.run.steps[7].say.line, /Pipelines must succeed/);
+  });
+  // An account's own commit address is used where it has one.
+  const run = async () => ({ code: 0, stdout: JSON.stringify({ ...GITLAB_USER, commit_email: 'me@example.invalid' }), stderr: '' });
+  assert.deepEqual(await commitAuthor({ host: 'gitlab', run }), { name: GITLAB_USER.name, email: 'me@example.invalid' });
+});
+
+test('a director with a status line of their own keeps it: none is written for this computer', async () => {
+  await withHome(async () => {
+    const w = await world({ ownStatusLine: { type: 'command', command: 'my-line.sh' } });
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/settings.local.json').statusLine, undefined);
+    assert.deepEqual(w.json('.claude/settings.local.json').sandbox.network.allowUnixSockets, [ADDRESS]);
+  });
+  assert.throws(() => projectFilesChange({ folder: os.tmpdir(), config: starterConfig({ answers: { '4.live-data': { label: LIVE_DATA.no } } }) }), /this computer's local settings/);
 });
 
 test('the pins are installed and the lineage check passes', async () => {
