@@ -14,7 +14,9 @@ import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
+  checkOutJoined,
 } from '../../../scripts/setup/host.js';
+import { setupGit } from '../../../scripts/setup/git.js';
 import { questionsStep } from '../../../scripts/setup/questions.js';
 import { rulesStep } from '../../../scripts/setup/rules.js';
 import { stepsFor, joinedRepo, onRunList, JOINING_STEPS, SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
@@ -491,7 +493,8 @@ test('step 3 lists this computer\'s key and puts it in the profile, pushed by it
       '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', 'push', '--no-verify', '--porcelain', profileRemoteUrl, `${tip}:refs/heads/wheelhouse-profile`,
     ]]);
     assert.notEqual(pushed[0].cwd, profileDir(), 'from a scratch repository, never the helper\'s profile clone');
-    assert.deepEqual(pushed[0].env, { GIT_NO_REPLACE_OBJECTS: '1', ...directorGitEnv({ host: 'github', gitPath: 'git' }) });
+    // Reaching the stand-in host's path, the one setup named, a local path is allowed (ruling R111).
+    assert.deepEqual(pushed[0].env, { GIT_NO_REPLACE_OBJECTS: '1', ...directorGitEnv({ host: 'github', gitPath: 'git' }), GIT_ALLOW_PROTOCOL: 'https:file' });
     const own = JSON.parse(await g(profileRemoteUrl, 'show', `wheelhouse-profile:${file}`));
     assert.deepEqual(Object.keys(own), ['computer', 'publicKey', 'at']);
     assert.equal(own.computer, computerId());
@@ -1693,4 +1696,57 @@ test('a joining computer\'s card says its own app is made, or found in its profi
     assert.match(planned.director, /if your app is not in your profile/);
   });
   assert.equal(launchedIn('..'), true, 'fails closed');
+});
+
+// The stand-in host answering https addresses, as the real host does: a git call naming
+// https://github.com/<repo>.git reaches the bare repository for <repo>. Each git call's arguments
+// are kept in `gits`.
+const overHttps = (w, gits) => async (file, args = [], options = {}) => {
+  if (path.basename(file).replace(/\.exe$/, '') !== 'git') return w.run(file, args, options);
+  gits.push([...args]);
+  let served = false;
+  const local = args.map((a) => {
+    const repo = /^https:\/\/github\.com\/(.+)\.git$/.exec(a)?.[1];
+    if (repo === undefined) return a;
+    served = true;
+    return w.hostUrl({ repo });
+  });
+  return w.run(file, local, served ? { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: 'https:file' } } : options);
+};
+
+test('a folder whose origin is an ssh address of the same repository is fetched by its https address, never by origin, when connected and when joined (ruling R111)', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const https = ({ repo }) => `https://github.com/${repo}.git`;
+    const env = directorGitEnv({ host: 'github', gitPath: 'git' });
+    // This computer's profile first, so only the product's repository is reached below.
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    await makeRepos({ host: 'github', owner: USER, name: 'unused', isNew: false, run: w.run, hostUrl: w.hostUrl });
+    const gits = [];
+
+    // A new product's folder, already pointed at its repository over ssh by the director.
+    const folder = productFolder();
+    await withOrigin(folder, `git@github.com:${USER}/Shop.git`);
+    // Fetched by origin, setup's git would go over ssh, which it never uses.
+    const byOrigin = await setupGit({ env, cwd: folder })(['fetch', '-q', 'origin', 'main']);
+    assert.notEqual(byOrigin.code, 0);
+    assert.match(byOrigin.stderr, /transport 'ssh' not allowed/);
+    await makeRepos({ host: 'github', owner: USER, name: 'Shop', isNew: true, folder, run: overHttps(w, gits), env, hostUrl: https });
+    assert.equal(await g(folder, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: `${USER}/Shop` }), 'rev-parse', 'main'));
+    assert.equal(await g(folder, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+    assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), `git@github.com:${USER}/Shop.git`, 'origin is left as the director set it');
+    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', `https://github.com/${USER}/Shop.git`, '+refs/heads/main:refs/remotes/origin/main']]);
+
+    // A joining computer's folder, pointed at the project over ssh.
+    await seedProject(w, 'cafe-co/Cafe-Menu');
+    const joined = emptyFolder();
+    await withOrigin(joined, 'git@github.com:cafe-co/Cafe-Menu.git');
+    gits.length = 0;
+    await checkOutJoined({
+      folder: joined, repo: 'cafe-co/Cafe-Menu', remoteUrl: https({ repo: 'cafe-co/Cafe-Menu' }), branch: 'main', gitPath: 'git', env, run: overHttps(w, gits), record: () => {},
+    });
+    assert.equal(await g(joined, 'rev-parse', 'HEAD'), await g(w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }), 'rev-parse', 'main'));
+    assert.equal(fs.readFileSync(path.join(joined, '.claude', 'settings.json'), 'utf8'), COMMITTED);
+    assert.deepEqual(gits.filter((a) => a[0] === 'fetch'), [['fetch', '-q', 'https://github.com/cafe-co/Cafe-Menu.git', '+refs/heads/main:refs/remotes/origin/main']]);
+  });
 });

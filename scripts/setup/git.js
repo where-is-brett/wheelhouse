@@ -1,15 +1,24 @@
 // scripts/setup/git.js
-// How setup runs git (rulings R109, R110): every call shuts out git's global and system config, so
-// nothing in ~/.gitconfig or the system's config reaches it, and passes by environment only the
-// settings it needs: the director's own sign-in as git's credential helper, when it uses it; hooks
-// pointed at the null file; no file-system monitor; and, as a second fence, inert values for the
-// core settings that name a program (core.sshCommand, core.askPass, core.editor, core.pager).
+// How setup runs git (rulings R109, R110, R111): every call shuts out git's global and system
+// config, so nothing in ~/.gitconfig or the system's config reaches it, and passes by environment
+// only the settings it needs: the director's own sign-in as git's credential helper, when it uses
+// it; hooks pointed at the null file; no file-system monitor; no automatic maintenance; no going
+// into submodules (whose own settings are never looked at); and, as a second fence, inert values for
+// the core settings that name a program (core.sshCommand, core.askPass, core.editor, core.pager).
+// git may reach a remote over https only (GIT_ALLOW_PROTOCOL, which outranks any protocol.*
+// setting), so no transport that runs a program (ext::, a remote helper) and no ssh; a call to a
+// remote that setup itself named as a path on this computer (the stand-in host's repositories in
+// tests) may use a local path too.
 // Before each call it refuses, naming the key, when the repository's own config (with what it
-// includes, and its worktree config) holds any setting that makes git run a program or send
-// elsewhere: a hook (`hook.*`, which git runs whatever core.hooksPath says), a filter, a diff or
-// merge driver, an ssh command, an editor, a pager, a credential helper, a gpg program, a URL
-// rewrite, a remote's own programs or proxy, an HTTP proxy. No program an agent can name runs in
-// setup's name or with the director's sign-in. Identity is given by each commit as it makes it.
+// includes, and its worktree config) holds any setting on the refusal list below: a hook
+// (`hook.*`, which git runs whatever core.hooksPath says), a filter, a diff or merge driver, an ssh
+// command, an editor, a pager, a credential helper, a gpg program, a URL rewrite, a remote's own
+// programs or proxy, an HTTP proxy, an alternate's refs command, a garbage-collection hook, a
+// bundle address, a protocol permission. Of the programs a repository's settings can name, none on
+// the refusal list runs in setup's name or with the director's sign-in. git's other program
+// settings belong to commands setup never runs (difftool, mergetool, submodule update, an
+// interactive add, an alias) or to a terminal setup's git never has (a command's own pager).
+// Identity is given by each commit as it makes it.
 //
 // What is left out with the global and system config: a proxy or certificate setting kept there
 // (proxies still come from the environment). A director who needs one sees setup's git fail,
@@ -22,20 +31,28 @@ import { toolPath } from '../lib/host-tools.js';
 export const NULL_FILE = '/dev/null';
 const TOOL = { github: 'gh', gitlab: 'glab' };
 const GIT_WAIT_MS = 5 * 60 * 1000;
-// What every call carries, by environment, besides the sign-in: hooks and the monitor off, and the
-// core settings that name a program set to ones that do nothing (a failing `false`, or `cat`).
+// What every call carries, by environment, besides the sign-in: hooks and the monitor off; no
+// automatic maintenance after a commit or fetch; no going into submodules, since git runs there
+// without these settings and with the submodule's own; and the core settings that name a program
+// set to ones that do nothing (a failing `false`, or `cat`).
 const FENCE = [
-  ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'],
+  ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'], ['maintenance.auto', 'false'],
+  ['submodule.recurse', 'false'], ['fetch.recurseSubmodules', 'false'], ['push.recurseSubmodules', 'no'],
   ['core.sshCommand', 'false'], ['core.askPass', 'false'], ['core.editor', 'false'], ['core.pager', 'cat'],
 ];
+// The transports git may use (ruling R111): https, and a local path only where setup named one.
+const HTTPS_ONLY = 'https';
+const WITH_LOCAL = 'https:file';
 
-// The repository settings that make git run a program or send elsewhere (ruling R110), as the
-// lower-case names `git config --name-only` gives (the section and the key in lower case, a
-// subsection as written).
+// The refusal list: the repository settings that make git run a program or send elsewhere in the
+// operations setup performs (rulings R110, R111), as the lower-case names `git config --name-only`
+// gives (the section and the key in lower case, a subsection as written).
 const RUNS_OR_SENDS = [
   /^hook\./i, /^filter\./i, /^diff\.external$/i, /^diff\..+\.(?:command|textconv)$/i, /^merge\..+\.driver$/i,
-  /^core\.(?:sshcommand|fsmonitor|editor|pager|askpass|gitproxy)$/i, /^credential\./i, /^gpg\./i, /^sequence\.editor$/i,
+  /^core\.(?:sshcommand|fsmonitor|editor|pager|askpass|gitproxy|alternaterefscommand|alternaterefsprefixes)$/i,
+  /^credential\./i, /^gpg\./i, /^sequence\.editor$/i, /^gc\.recentobjectshook$/i,
   /^url\..+\.(?:insteadof|pushinsteadof)$/i, /^remote\..+\.(?:uploadpack|receivepack|proxy|vcs)$/i, /^http\.(?:.+\.)?proxy$/i,
+  /^fetch\.bundleuri$/i, /^bundle\./i, /^protocol\.(?:.+\.)?allow$/i,
 ];
 export const runsOrSends = (key) => RUNS_OR_SENDS.some((pattern) => pattern.test(key));
 
@@ -47,13 +64,26 @@ function pairsOf(env) {
   return pairs;
 }
 
-// `env` with git's global and system config shut out, no prompting, and the fence's settings
-// added after whatever it passes already (a later setting wins). Safe to apply twice.
+// Whether a remote's address is a path on this computer (absolute, on either kind of system), never
+// a URL or a `<transport>::` address.
+export const localPath = (url) => typeof url === 'string' && !url.includes('::') && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(url)
+  && (path.posix.isAbsolute(url) || path.win32.isAbsolute(url));
+
+// `env` for git calls that reach the remote `url`, as setup itself named it: https only, and a
+// local path too when `url` is one (the stand-in host's, in tests).
+export const reaching = (env, url) => ({ ...env, GIT_ALLOW_PROTOCOL: localPath(url) ? WITH_LOCAL : HTTPS_ONLY });
+
+// `env` with git's global and system config shut out, no prompting, https the only transport
+// (unless `reaching` allowed a local path), and the fence's settings added after whatever it passes
+// already (a later setting wins). Safe to apply twice.
 export function isolated(env = {}) {
   const pairs = pairsOf(env);
   const missing = FENCE.filter(([key, value]) => !pairs.some(([k, v]) => k === key && v === value));
   const all = [...pairs, ...missing];
-  const out = { ...env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, GIT_CONFIG_COUNT: String(all.length) };
+  const out = {
+    ...env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE,
+    GIT_ALLOW_PROTOCOL: env.GIT_ALLOW_PROTOCOL === WITH_LOCAL ? WITH_LOCAL : HTTPS_ONLY, GIT_CONFIG_COUNT: String(all.length),
+  };
   all.forEach(([key, value], i) => {
     out[`GIT_CONFIG_KEY_${i}`] = key;
     out[`GIT_CONFIG_VALUE_${i}`] = value;

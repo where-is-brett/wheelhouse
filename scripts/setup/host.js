@@ -107,7 +107,7 @@ import {
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
 import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
-import { setupGit, setupGitEnv, refuseCommandSettings } from './git.js';
+import { setupGit, setupGitEnv, refuseCommandSettings, reaching } from './git.js';
 
 // The Wheelhouse organisation's GitHub App: null fields until the organisation is made and the app
 // registered (Card 1).
@@ -673,11 +673,13 @@ export const madeBySetup = (target) => readJournal().runs.flatMap((r) => r?.chan
 // Connects the product's folder to its new repository in place (ruling R34): git init -b main when
 // it has no git, the remote added and fetched, the branch named main (whatever an unborn branch was
 // called) and reset to origin/main without touching the folder's files; any of the repository's
-// files the folder lacks (the README) are written out. The folder's .git is recorded once, when
+// files the folder lacks (the README) are written out. It is fetched by its https address, never by
+// the address the folder's origin names (ruling R111), which may be an ssh one of the same
+// repository, or one an agent wrote. The folder's .git is recorded once, when
 // setup adds the remote. Safe to repeat from any point: a retry finishes what an earlier attempt
 // left, and records nothing again.
 async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
-  const git = setupGit({ run, gitPath, env, cwd: folder });
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder });
   const must = async (args, why) => {
     const done = await git(args);
     if (done.code !== 0) throw new Error(why);
@@ -691,7 +693,7 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
     if (!hadGit) await must(['init', '-q', '-b', 'main'], 'git could not start in this folder');
     await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the repository in this folder');
   }
-  await must(['fetch', '-q', 'origin', 'main'], 'git could not fetch the new repository');
+  await must(['fetch', '-q', remoteUrl, '+refs/heads/main:refs/remotes/origin/main'], 'git could not fetch the new repository');
   const theirs = (await must(['rev-parse', '--verify', 'refs/remotes/origin/main'], 'git could not read the new repository\'s main')).stdout.trim();
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
@@ -719,7 +721,7 @@ export function profileCloneWhole() {
 // Refuses an existing product whose repository has no branch of its own yet (an empty repository):
 // the state branch, pushed next, would become its default branch (ruling R34).
 async function productBranchOn({ host, repo, remoteUrl, gitPath, env, run }) {
-  const listed = await setupGit({ run, gitPath, env, cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl]);
+  const listed = await setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl]);
   if (listed.code !== 0) throw new Error(`${repo} on ${NAME[host]} could not be reached with your sign-in`);
   const own = String(listed.stdout).split(/\r?\n/).map((line) => /\trefs\/heads\/(.+)$/.exec(line)?.[1]).filter(Boolean)
     .filter((branch) => !WHEELHOUSE_BRANCHES.includes(branch));
@@ -749,7 +751,7 @@ async function accountsOf({ host, run, api }) {
 
 // Whether a repository holds Wheelhouse's state branch, read with the director's own sign-in.
 async function holdsState({ remoteUrl, gitPath, env, run }) {
-  const listed = await setupGit({ run, gitPath, env, cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
+  const listed = await setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
@@ -784,9 +786,9 @@ export function joinMissLine({ host, wanted, found }) {
 // folder (checkout -f), so the committed .claude/settings.json replaces the one step 1's install
 // wrote; that one is recorded first, its text as the value before. Files the project doesn't hold
 // (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
-// left as it is.
-async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, run, record }) {
-  const git = setupGit({ run, gitPath, env, cwd: folder });
+// left as it is. Fetched by its https address, never by the one the folder's origin names (R111).
+export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, run, record }) {
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder });
   const must = async (args, why) => {
     const done = await git(args);
     if (done.code !== 0) throw new Error(why);
@@ -800,7 +802,7 @@ async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, r
     if (!hadGit) await must(['init', '-q', '-b', branch], 'git could not start in this folder');
     await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the project\'s repository in this folder');
   }
-  await must(['fetch', '-q', 'origin', branch], 'git could not fetch the project');
+  await must(['fetch', '-q', remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`], 'git could not fetch the project');
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
     // checkout -f writes over what is in its way, so the folder must still hold only step 1's
@@ -903,7 +905,7 @@ export async function makeRepos({
   if (!profileCloneWhole()) {
     keep({ id: newId('chg'), kind: 'folder', target: profileDir(), before: fs.existsSync(profileDir()) ? {} : null, after: { clone: profile.remoteUrl, branch: PROFILE_BRANCH } });
     await refuseSettingsIn({ dir: profileDir(), run, gitPath });
-    await ensureProfileClone({ remote: profile, env });
+    await ensureProfileClone({ remote: profile, env: reaching(env, profile.remoteUrl) });
   }
   return made;
 }
@@ -1432,7 +1434,7 @@ export function hostStep({
       const cloneRecords = async () => {
         record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { clone: remoteUrl, branch: STATE_BRANCH } });
         await refuseSettingsIn({ dir: stateDir(slug), run, gitPath: git.path });
-        await cloneState({ project: slug, remoteUrl, env: gitEnv });
+        await cloneState({ project: slug, remoteUrl, env: reaching(gitEnv, remoteUrl) });
       };
       // A joining computer clones the project's state before anything is connected or registered,
       // and its `phase` refuses Quick on a launched project (design section 11).

@@ -94,7 +94,7 @@ import { protectionStatus as realProtectionStatus } from '../host/protection.js'
 import { projectPath } from '../host/gitlab-key.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
-import { isolated, refuseCommandSettings } from './git.js';
+import { isolated, refuseCommandSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA } from './questions.js';
 import { newId, readJournal } from './journal.js';
@@ -390,8 +390,10 @@ export async function commitAuthor({ host, run = realRun }) {
 // before every call (ruling R109, scripts/setup/git.js): `out(args)` its trimmed output or null,
 // `raw(args)` its output as it is or null, `ok(args)` whether it went through, `must(args, doing)`
 // its output or a throw naming only what was being done. A setting that would run a program throws, naming it.
-function gitIn({ run, gitPath, host, platform, folder }) {
-  const env = directorGitEnv({ host, gitPath, platform });
+// https is its only transport, with a local path too only when `remoteUrl`, the project's address
+// as setup recorded it, is one (ruling R111).
+function gitIn({ run, gitPath, host, platform, folder, remoteUrl }) {
+  const env = reaching(directorGitEnv({ host, gitPath, platform }), remoteUrl);
   const call = async (args) => {
     await refuseCommandSettings({ run, gitPath, cwd: folder });
     return quietly(run, gitPath, args, { cwd: folder, env: isolated(env), baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
@@ -554,10 +556,10 @@ export function projectFilesStep({
   switchOn = switchOnAsDirector, protectionStatus = realProtectionStatus,
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
 } = {}) {
-  const gitFor = async ({ host, platform, folder }) => {
+  const gitFor = async ({ host, platform, folder, remoteUrl }) => {
     const located = await findGit({ platform, run });
     if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
-    return gitIn({ run, gitPath: located.path, host, platform, folder });
+    return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl });
   };
   const lineage = (folder) => checkInstalled({ manifest: manifest(), projectDir: folder, claudeHome: claudeHome(), locate });
   // This computer's part of the list, for either form: the line that keeps its settings out of git
@@ -582,7 +584,7 @@ export function projectFilesStep({
     const { host, repo } = found.record;
     const folder = ctx.folder;
     const at = (rel) => path.join(folder, ...rel.split('/'));
-    const git = await gitFor({ host, platform, folder });
+    const git = await gitFor({ host, platform, folder, remoteUrl: found.record.remoteUrl });
     const committed = await headText(git, CONFIG);
     if (committed === null) {
       throw new Error(`${CONFIG} is not in this folder's last commit of ${repo}, so setup can't read the project's configuration: finish setup on your other computer, bring its commit in here (git pull), then ask again`);
@@ -627,7 +629,7 @@ export function projectFilesStep({
       if (WHEELHOUSE_BRANCHES.includes(branch)) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, which is Wheelhouse's own branch, so setup can't put the project's files there: make the product's own branch the default in the repository's settings on ${NAME[host]}, then ask again`);
       }
-      const git = await gitFor({ host, platform, folder });
+      const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl });
       const current = await git.out(['symbolic-ref', '--short', '-q', 'HEAD']);
       if (current !== branch) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, but this folder is on ${current ?? 'no branch'}: Wheelhouse puts its files on the default branch and merges into it from then on. Switch this folder to ${branch}${current ? `, or make ${current} the default on ${NAME[host]}` : ''}, then ask again`);
@@ -748,7 +750,7 @@ export function projectFilesStep({
           // (ruling R103): rewritten by the installs into a layout of their own but holding the
           // same, it gets the committed text back, recorded first; holding something else, it is
           // left as it is and named.
-          const git = await gitFor({ host, platform, folder });
+          const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl });
           const committed = await headText(git, SETTINGS);
           const text = readText(settingsFile);
           if (committed !== null && text !== committed) {
@@ -777,7 +779,7 @@ export function projectFilesStep({
       // the step with nothing committed or pushed.
       const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
       if (up) {
-        const git = await gitFor({ host, platform, folder });
+        const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl });
         const moved = (what) => new Error(`${what} changed while the pinned kits were installed, so nothing went up: ask for the plan again`);
         const tipNow = await remoteTip(git, record.remoteUrl, up.branch);
         let sha = up.commit ?? null;
@@ -822,9 +824,10 @@ export function projectFilesStep({
           const pushed = await git.ok(['push', '-q', '--no-verify', record.remoteUrl, `${sha}:refs/heads/${up.branch}`]);
           if (!pushed) throw new Error(`the setup commit could not be pushed to ${up.branch} on ${NAME[host]}; it is kept in this folder, and a fresh Go ahead pushes it`);
           // The folder's copy of the branch on the host, told what the host now holds, when its
-          // origin is the repository pushed to.
+          // origin is the repository pushed to: fetched by the address setup recorded, never by the
+          // one origin names (ruling R111).
           const origin = await git.out(['remote', 'get-url', 'origin']);
-          if (origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', 'origin', up.branch]);
+          if (origin !== null && sameRemote(origin, record.remoteUrl)) await git.ok(['fetch', '-q', record.remoteUrl, `+refs/heads/${up.branch}:refs/remotes/origin/${up.branch}`]);
           say(`Setup's commit is on ${up.branch} on ${NAME[host]}`);
         }
       }

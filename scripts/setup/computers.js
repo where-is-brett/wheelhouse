@@ -26,7 +26,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
-import { setupGit } from './git.js';
+import { setupGit, reaching } from './git.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { ownKey, makeSigningKey } from '../state/signing.js';
@@ -92,8 +92,9 @@ export async function publishEnrolment({ profile, listed = null, gitPath = 'git'
   fs.mkdirSync(parent, { recursive: true });
   const dir = fs.mkdtempSync(path.join(parent, 'publish-'));
   // Global and system config shut out, and a hook the scratch's own config declares refused, as
-  // every git call setup makes (ruling R109, scripts/setup/git.js).
-  const call = setupGit({ run, gitPath, env: { GIT_NO_REPLACE_OBJECTS: '1', ...env }, cwd: dir });
+  // every git call setup makes (ruling R109, scripts/setup/git.js); https only, with a local path
+  // too only when the profile's address is one (R111).
+  const call = setupGit({ run, gitPath, env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...env }, profile.remoteUrl), cwd: dir });
   const git = (args, input) => call([...NO_HOOKS, ...args], input === undefined ? {} : { input });
   const must = async (args, input) => {
     const got = await git(args, input);

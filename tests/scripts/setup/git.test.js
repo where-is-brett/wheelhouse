@@ -1,16 +1,21 @@
 // tests/scripts/setup/git.test.js
-// How setup runs git (rulings R109, R110): git's global and system config shut out, hooks pointed at
-// the null file, no file-system monitor and inert core programs, by environment; and any setting
-// of the repository's own config that would run a program or send elsewhere refused, by name,
-// before every call. One test for each way a program could be planted: a hook in the global config,
-// in the repository's config (directly or by an include), or in its hooks folder; a clean or smudge
-// filter; a credential helper; a URL rewrite. Each first shows plain git runs it, where it runs a
-// program, so the test proves something on this git.
+// How setup runs git (rulings R109, R110, R111): git's global and system config shut out, hooks
+// pointed at the null file, no file-system monitor, no automatic maintenance, no going into
+// submodules, inert core programs and https the only transport, by environment; and any setting of
+// the repository's own config on the refusal list refused, by name, before every call. One test for
+// each way a program could be planted: a hook in the global config, in the repository's config
+// (directly or by an include), or in its hooks folder; a clean or smudge filter; a credential
+// helper; a URL rewrite; an ext:: transport; an alternate's refs command; a garbage-collection hook;
+// a bundle address; a hook in a submodule's own config. Each first shows plain git runs it, where it
+// runs a program, so the test proves something on this git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { setupGit, setupGitEnv, isolated, refuseCommandSettings, commandSettingLine, runsOrSends, NULL_FILE } from '../../../scripts/setup/git.js';
+import {
+  setupGit, setupGitEnv, isolated, reaching, localPath, refuseCommandSettings, commandSettingLine, runsOrSends, NULL_FILE,
+} from '../../../scripts/setup/git.js';
 import { directorGitEnv } from '../../../scripts/setup/host.js';
 import { run } from '../../../scripts/lib/run.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -43,7 +48,8 @@ test('a hook declared in git\'s global config never runs in setup\'s git, though
   process.env.HOME = r.root;
   fs.copyFileSync(globalFile, path.join(r.root, '.gitconfig'));
   try {
-    const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: r.bare });
+    // The fetch reaches a path setup named, so a local path is allowed for it (ruling R111).
+    const git = setupGit({ env: reaching(setupGitEnv({ host: 'github' }), r.bare), cwd: r.bare });
     assert.equal((await git(['update-ref', 'refs/x/setup', r.commit])).code, 0);
     assert.equal((await git(['fetch', '-q', '--no-tags', r.bare, '+refs/heads/main:refs/fetched/profile'])).code, 0);
   } finally {
@@ -92,11 +98,13 @@ test('setup\'s environment passes only the sign-in and the fence, and the direct
   assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
   assert.equal(env.GIT_CONFIG_GLOBAL, NULL_FILE);
   assert.equal(env.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(env.GIT_ALLOW_PROTOCOL, 'https');
   const pairs = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
   assert.deepEqual(pairs.slice(0, 2), [['credential.helper', ''], ['credential.helper', pairs[1][1]]]);
   assert.match(pairs[1][1], /^!".*gh" auth git-credential$/);
   assert.deepEqual(pairs.slice(2), [
-    ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'],
+    ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'], ['maintenance.auto', 'false'],
+    ['submodule.recurse', 'false'], ['fetch.recurseSubmodules', 'false'], ['push.recurseSubmodules', 'no'],
     ['core.sshCommand', 'false'], ['core.askPass', 'false'], ['core.editor', 'false'], ['core.pager', 'cat'],
   ]);
   assert.equal(env.PATH, '/opt/git/bin:/usr/bin');
@@ -104,8 +112,17 @@ test('setup\'s environment passes only the sign-in and the fence, and the direct
   // Applied twice it is the same; with no sign-in, only the fence.
   assert.deepEqual(isolated(env), env);
   const bare = setupGitEnv({ env: {}, platform: 'darwin' });
-  assert.equal(bare.GIT_CONFIG_COUNT, '6');
+  assert.equal(bare.GIT_CONFIG_COUNT, '10');
   assert.equal(bare.GIT_CONFIG_KEY_0, 'core.hooksPath');
+  // A local path is allowed only for a call reaching a path setup named, and survives the fence;
+  // anything else setup passes is put back to https.
+  assert.equal(isolated(reaching(env, '/stand-in/host/o/r.git')).GIT_ALLOW_PROTOCOL, 'https:file');
+  assert.equal(isolated(reaching(env, 'C:\\stand-in\\o\\r.git')).GIT_ALLOW_PROTOCOL, 'https:file');
+  for (const url of ['https://github.com/o/r.git', 'git@github.com:o/r.git', 'ssh://git@github.com/o/r.git', 'file:///stand-in/o/r.git', 'ext::sh -c x', '/x::y', null]) {
+    assert.equal(localPath(url), false, String(url));
+    assert.equal(isolated(reaching(env, url)).GIT_ALLOW_PROTOCOL, 'https', String(url));
+  }
+  assert.equal(isolated({ GIT_ALLOW_PROTOCOL: 'https:file:ext' }).GIT_ALLOW_PROTOCOL, 'https');
 });
 
 // A working repository with one commit, a mark file, and plain git in it.
@@ -168,18 +185,159 @@ test('a credential helper and a URL rewrite in the repository\'s config are refu
   }
 });
 
-test('the settings refused are exactly the ones that run a program or send elsewhere (ruling R110)', () => {
+test('the settings refused are exactly the ones that run a program or send elsewhere (rulings R110, R111)', () => {
   const refused = [
     'hook.x.event', 'filter.lfs.clean', 'filter.x.smudge', 'filter.x.process', 'diff.external', 'diff.x.command', 'diff.x.textconv', 'merge.x.driver',
     'core.sshcommand', 'core.fsmonitor', 'core.editor', 'core.pager', 'core.askpass', 'core.gitproxy', 'credential.helper', 'credential.https://h.helper',
-    'gpg.program', 'gpg.ssh.program', 'sequence.editor', 'url.https://x/.insteadof', 'url.https://x/.pushinsteadof',
+    'gpg.program', 'gpg.ssh.program', 'gpg.ssh.defaultkeycommand', 'sequence.editor', 'url.https://x/.insteadof', 'url.https://x/.pushinsteadof',
     'remote.origin.uploadpack', 'remote.origin.receivepack', 'remote.origin.proxy', 'remote.origin.vcs', 'http.proxy', 'http.https://h.proxy',
+    // Ruling R111's sweep.
+    'core.alternaterefscommand', 'core.alternaterefsprefixes', 'gc.recentobjectshook', 'fetch.bundleuri', 'bundle.version', 'bundle.b1.uri',
+    'protocol.allow', 'protocol.ext.allow', 'protocol.file.allow',
   ];
   const kept = [
     'core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates', 'core.ignorecase', 'core.precomposeunicode', 'core.autocrlf',
     'remote.origin.url', 'remote.origin.fetch', 'branch.main.remote', 'branch.main.merge', 'user.name', 'diff.renames', 'merge.ff', 'http.postbuffer',
     'extensions.worktreeconfig', 'include.path',
+    // Settings of commands setup never runs, or that run no program.
+    'protocol.version', 'gc.auto', 'gc.pruneexpire', 'fetch.prune', 'fetch.bundlecreationtoken', 'submodule.m.url', 'submodule.m.update',
+    'core.hookspath', 'maintenance.auto', 'pager.log', 'mergetool.x.cmd', 'difftool.x.cmd', 'interactive.difffilter', 'alias.co',
   ];
   for (const key of refused) assert.equal(runsOrSends(key), true, key);
   for (const key of kept) assert.equal(runsOrSends(key), false, key);
+});
+
+test('an ext:: origin allowed by an included config runs for plain git, and in setup\'s git is refused by name and can\'t run (ruling R111)', async () => {
+  const t = await workTree();
+  const included = path.join(t.root, 'included');
+  fs.writeFileSync(included, `[protocol "ext"]\n\tallow = always\n[remote "origin"]\n\turl = "ext::sh -c touch% ${t.mark}"\n`);
+  // The include comes before origin's own https address, so git's first address for origin is ext::.
+  await t.plain(['config', 'include.path', included]);
+  await t.plain(['remote', 'add', 'origin', 'https://github.com/where-is-brett/nothing.git']);
+  await t.plain(['fetch', '-q', 'origin', 'main']);
+  assert.equal(ran(t.mark), true, 'plain git runs the ext:: command');
+  fs.rmSync(t.mark);
+  const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work });
+  await assert.rejects(git(['fetch', '-q', 'origin', 'main']), { message: commandSettingLine(['protocol.ext.allow']) });
+  assert.equal(ran(t.mark), false);
+  // The transports alone stop it too, with the look left out: https only, or https and a local path.
+  for (const env of [setupGitEnv({ host: 'github' }), reaching(setupGitEnv({ host: 'github' }), t.root)]) {
+    const got = await run('git', ['fetch', '-q', 'origin', 'main'], { cwd: t.work, env: isolated(env), baseEnv: {} });
+    assert.notEqual(got.code, 0);
+    assert.match(got.stderr, /transport 'ext' not allowed/);
+    assert.equal(ran(t.mark), false, env.GIT_ALLOW_PROTOCOL ?? 'https');
+  }
+});
+
+test('an alternate\'s refs command runs on a plain fetch, and is refused by name in setup\'s git (ruling R111)', async () => {
+  const r = await repository();
+  const t = await workTree();
+  fs.writeFileSync(path.join(t.work, '.git', 'objects', 'info', 'alternates'), `${path.join(r.bare, 'objects')}\n`);
+  await t.plain(['config', 'core.alternateRefsCommand', `echo ran >> "${t.mark}"; true`]);
+  await t.plain(['config', 'core.alternateRefsPrefixes', 'refs/heads/']);
+  await t.plain(['fetch', '-q', r.bare, '+refs/heads/main:refs/remotes/x/main']);
+  assert.equal(ran(t.mark), true, 'plain git runs the alternate\'s refs command on fetch');
+  fs.rmSync(t.mark);
+  const git = setupGit({ env: reaching(setupGitEnv({ host: 'github' }), r.bare), cwd: t.work });
+  await assert.rejects(git(['fetch', '-q', r.bare, '+refs/heads/main:refs/remotes/y/main']),
+    { message: commandSettingLine(['core.alternaterefscommand', 'core.alternaterefsprefixes']) });
+  assert.equal(ran(t.mark), false);
+});
+
+// Writes two loose objects into objects/17/, the folder git counts to decide on automatic
+// maintenance (more than one there passes `gc.auto = 1`), aged past `gc.pruneExpire`, so the next
+// commit's maintenance considers removing them.
+async function oldLooseObjects(t, seed) {
+  const old = new Date('2020-01-01T00:00:00Z');
+  for (let i = 0, written = 0; written < 2; i += 1) {
+    const text = `${seed} ${i}\n`;
+    if (!crypto.createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0${text}`).digest('hex').startsWith('17')) continue;
+    const oid = (await run('git', ['hash-object', '-w', '--stdin'], { cwd: t.work, input: text })).stdout.trim();
+    fs.utimesSync(path.join(t.work, '.git', 'objects', oid.slice(0, 2), oid.slice(2)), old, old);
+    written += 1;
+  }
+}
+
+test('a garbage-collection hook runs in a plain commit\'s automatic maintenance, and is refused by name in setup\'s git, whose maintenance is off (ruling R111)', async () => {
+  const t = await workTree();
+  for (const [key, value] of [['gc.auto', '1'], ['gc.pruneExpire', '1.hour.ago'], ['gc.autoDetach', 'false'], ['maintenance.autoDetach', 'false']]) await t.plain(['config', key, value]);
+  await t.plain(['config', 'gc.recentObjectsHook', `echo ran >> "${t.mark}"`]);
+  await oldLooseObjects(t, 'control');
+  await t.plain(['commit', '-q', '--allow-empty', '-m', 'control']);
+  assert.equal(ran(t.mark), true, 'plain git runs the hook in a commit\'s automatic maintenance');
+  fs.rmSync(t.mark);
+  await oldLooseObjects(t, 'setup');
+  const identity = ['-c', 'user.name=T', '-c', 'user.email=t@invalid'];
+  const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work });
+  await assert.rejects(git([...identity, 'commit', '-q', '--allow-empty', '-m', 'setup']), { message: commandSettingLine(['gc.recentobjectshook']) });
+  // The fence alone, with the look left out: no automatic maintenance, so the hook never runs.
+  const got = await run('git', [...identity, 'commit', '-q', '--allow-empty', '-m', 'fenced'], { cwd: t.work, env: isolated(setupGitEnv({ host: 'github' })), baseEnv: {} });
+  assert.equal(got.code, 0);
+  assert.equal(ran(t.mark), false);
+});
+
+test('a bundle address is fetched from by a plain fetch, and is refused by name in setup\'s git (ruling R111)', async () => {
+  const r = await repository();
+  const t = await workTree();
+  // A local port that refuses at once: nothing leaves this computer.
+  await t.plain(['config', 'fetch.bundleURI', 'https://127.0.0.1:9/bundles']);
+  await t.plain(['config', 'fetch.bundleCreationToken', '1']);
+  const trace = path.join(t.root, 'trace');
+  await t.plain(['fetch', '-q', r.bare, '+refs/heads/main:refs/remotes/x/main'], { GIT_TRACE: trace });
+  assert.match(fs.readFileSync(trace, 'utf8'), /git-remote-https https:\/\/127\.0\.0\.1:9\/bundles/, 'plain git goes to the bundle address');
+  let calls = 0;
+  const counted = async (file, args, options) => { calls += 1; return run(file, args, options); };
+  const git = setupGit({ run: counted, env: reaching(setupGitEnv({ host: 'github' }), r.bare), cwd: t.work });
+  await assert.rejects(git(['fetch', '-q', r.bare, '+refs/heads/main:refs/remotes/y/main']), { message: commandSettingLine(['fetch.bundleuri']) });
+  assert.equal(calls, 1, 'only the look ran');
+});
+
+// A project folder with a submodule, whose superproject's main, on its bare remote, has moved the
+// submodule on since: a fetch of main then goes into the submodule. The submodule's own config
+// (never the project's) declares a hook.
+async function withSubmodule() {
+  const root = fs.realpathSync.native(tempFolder('wh-setup-sub-'));
+  const mark = path.join(root, 'hook-ran');
+  const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE };
+  const plain = (cwd, ...args) => run('git', ['-c', 'user.name=T', '-c', 'user.email=t@invalid', '-c', 'protocol.file.allow=always', ...args], { cwd, env });
+  const subBare = path.join(root, 'sub.git');
+  const superBare = path.join(root, 'super.git');
+  const subWork = path.join(root, 'sub');
+  const project = path.join(root, 'project');
+  const other = path.join(root, 'other');
+  for (const dir of [subWork, project]) fs.mkdirSync(dir);
+  await plain(root, 'init', '-q', '--bare', '-b', 'main', subBare);
+  await plain(root, 'init', '-q', '--bare', '-b', 'main', superBare);
+  await plain(subWork, 'init', '-q', '-b', 'main');
+  await plain(subWork, 'commit', '-q', '--allow-empty', '-m', 'one');
+  await plain(subWork, 'push', '-q', subBare, 'main');
+  await plain(project, 'init', '-q', '-b', 'main');
+  await plain(project, 'submodule', 'add', '-q', subBare, 'm');
+  await plain(project, 'commit', '-q', '-m', 'submodule');
+  await plain(project, 'push', '-q', superBare, 'main');
+  await plain(subWork, 'commit', '-q', '--allow-empty', '-m', 'two');
+  await plain(subWork, 'push', '-q', subBare, 'main');
+  await plain(root, 'clone', '-q', '--recurse-submodules', superBare, other);
+  await plain(path.join(other, 'm'), 'pull', '-q', 'origin', 'main');
+  await plain(other, 'commit', '-q', '-am', 'move the submodule on');
+  await plain(other, 'push', '-q', superBare, 'main');
+  await plain(path.join(project, 'm'), 'config', 'hook.planted.event', 'reference-transaction');
+  await plain(path.join(project, 'm'), 'config', 'hook.planted.command', `echo ran >> "${mark}"`);
+  return { project, superBare, mark };
+}
+
+test('a hook in a submodule\'s own config runs when a fetch goes into the submodule, and setup\'s git never goes there (ruling R111)', async () => {
+  // Plain git, with every outside config shut out and hooks and the monitor off as before R111.
+  const control = await withSubmodule();
+  const before = {
+    GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, GIT_ALLOW_PROTOCOL: 'https:file',
+    GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: NULL_FILE, GIT_CONFIG_KEY_1: 'core.fsmonitor', GIT_CONFIG_VALUE_1: 'false',
+  };
+  await run('git', ['fetch', '-q', control.superBare, '+refs/heads/main:refs/remotes/origin/main'], { cwd: control.project, env: before, baseEnv: {} });
+  assert.equal(ran(control.mark), true, 'git ran the submodule\'s hook: its own git there carries none of the parent\'s settings');
+  const s = await withSubmodule();
+  const git = setupGit({ env: reaching(setupGitEnv({ host: 'github' }), s.superBare), cwd: s.project });
+  assert.equal((await git(['fetch', '-q', s.superBare, '+refs/heads/main:refs/remotes/origin/main'])).code, 0);
+  assert.equal((await git(['checkout', '-q', '-f', '-B', 'main', 'refs/remotes/origin/main'])).code, 0);
+  assert.equal(ran(s.mark), false);
 });
