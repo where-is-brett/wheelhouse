@@ -357,6 +357,88 @@ test('a session that turns out to be the foreman closes its pane', async ($, on)
   }
 })
 
+// A session in a folder setup is working on: the bridge answers it as setup's (ruling 38).
+const setup = { ok: true, role: 'setup', every: TICK_MS }
+
+// Each surface in a test of its own, so the session's state holds no role from an earlier answer.
+for (const surface of SURFACES) {
+  test(`a session still in setup draws nothing and keeps ticking, and its first front-desk answer opens the pane (${surface})`, async ($, on) => {
+    let reply: object = setup
+    const { seen, clear, start, clock, panes } = world(on, () => reply)
+    await start($, surface)
+    expect(seen.ticks).toHaveLength(1)
+    expect(seen.opens).toEqual([])
+    expect(seen.closes).toEqual([])
+    expect(seen.statuses).toEqual([])
+    // It ticks every TICK_MS, and nothing is drawn.
+    for (let i = 2; i <= 4; i += 1) {
+      await clock.advance(TICK_MS)
+      expect(seen.ticks).toHaveLength(i)
+    }
+    expect(seen.opens).toEqual([])
+    expect(seen.closes).toEqual([])
+    expect(seen.statuses).toEqual([])
+    expect(panes.has(PANE_ID)).toBe(false)
+    // The pane, if mounted, has nothing to show but its first line.
+    const ui = await mount($, surface)
+    expect(await texts(ui)).toEqual(['Reading how the project stands…'])
+    await ui.unmount()
+
+    // Setup finishes: the next tick answers the front desk, and the pane opens as at a front
+    // desk's session start.
+    clear()
+    reply = frontDesk('2 cards wait')
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(1)
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+    expect(seen.statuses).toEqual(['2 cards wait'])
+    clear()
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(1)
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+  })
+}
+
+test('a front desk whose folder goes back into setup closes its pane and clears the status line, and opens it again after', async ($, on) => {
+  let reply: object = frontDesk('2 cards wait')
+  const { seen, clear, start, clock, panes } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    reply = frontDesk('2 cards wait')
+    await start($, surface)
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+
+    // A setup run starts for the folder: the pane closes and the status line is cleared, and the
+    // timer keeps its interval.
+    clear()
+    reply = setup
+    await clock.advance(TICK_MS)
+    expect(seen.closes).toEqual([PANE_ID])
+    expect(panes.has(PANE_ID)).toBe(false)
+    expect(seen.statuses).toEqual([undefined])
+    clear()
+    await clock.advance(TICK_MS)
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(2)
+    expect(seen.opens).toEqual([])
+    expect(seen.closes).toEqual([])
+    expect(seen.statuses).toEqual([])
+
+    // Setup finishes: the pane the mod closed opens again, as setup's end is the session's start
+    // as the front desk.
+    clear()
+    reply = frontDesk('1 card waits')
+    await clock.advance(TICK_MS)
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: '1 card waits' }])
+    expect(seen.statuses).toEqual(['1 card waits'])
+
+    // A pane the director then closes stays closed.
+    clear()
+    panes.delete(PANE_ID)
+    await clock.advance(TICK_MS)
+    expect(seen.opens).toEqual([])
+  }
+})
+
 test('session start does not wait for the first tick', async ($, on) => {
   let reply: Reply = { hold: 60000, then: frontDesk('2 cards wait') }
   const { seen, clear, clock, newSession } = world(on, () => reply)

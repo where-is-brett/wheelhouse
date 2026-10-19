@@ -49,6 +49,8 @@ const model = () => ({
 const frontDesk = (submit: string[] = []) => ({ ok: true, role: 'front-desk', every: TICK_MS, pane: model(), glance: '2 cards wait', status: '2 cards wait', submit })
 const foreman = (submit: readonly string[] = []) => ({ ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit })
 const feature = () => ({ ok: true, role: 'feature', every: 0 })
+// A session in a folder setup is working on (ruling 38).
+const setup = () => ({ ok: true, role: 'setup', every: TICK_MS })
 
 type Reply = object | { exitCode: number } | 'no-start' | { hold: number, then: object }
 
@@ -218,11 +220,11 @@ test('an app-started foreman\'s first prompt reaches the session after a first t
   }
 })
 
-test('the same message reaches a feature session or the foreman unchanged', async ($, on) => {
+test('the same message reaches a feature session, the foreman or a session still in setup unchanged', async ($, on) => {
   let reply: object = feature()
   const { seen, clear, start, clock } = world(on, () => reply)
   for (const surface of SURFACES) {
-    for (const answer of [feature(), foreman(), { ok: true, role: 'foreman', every: 0, submit: [] }]) {
+    for (const answer of [feature(), foreman(), { ok: true, role: 'foreman', every: 0, submit: [] }, setup()]) {
       reply = answer
       await start($, surface)
       expect(seen.ticks).toHaveLength(1)
@@ -249,6 +251,20 @@ test('the same message reaches a feature session or the foreman unchanged', asyn
     clear()
     expect(await submit($, TRAFFIC[0], 'peer')).toMatchObject({ text: TRAFFIC[0] })
     expect(seen.prompts.map((p: any) => p.text)).toEqual([TRAFFIC[0]])
+
+    // And one whose folder goes into setup, until setup finishes and it is the front desk again.
+    reply = frontDesk()
+    await start($, surface)
+    reply = setup()
+    await clock.advance(TICK_MS)
+    clear()
+    expect(await submit($, TRAFFIC[1], 'peer')).toMatchObject({ text: TRAFFIC[1] })
+    expect(await receive($, TRAFFIC[1], { kind: 'sdk' })).toEqual({ text: TRAFFIC[1] })
+    reply = frontDesk()
+    await clock.advance(TICK_MS)
+    clear()
+    expect(await submit($, TRAFFIC[1], 'peer')).toEqual({ drop: KEPT_OUT })
+    await clock.settle()
   }
 })
 

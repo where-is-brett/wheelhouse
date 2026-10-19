@@ -1,7 +1,7 @@
 // tests/scripts/mod/buttons.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardButtons, isSetupCard, CANT_ANSWER } from '../../../scripts/mod/buttons.js';
+import { cardButtons, isSetupCard, CANT_ANSWER, SETUP_ANSWER } from '../../../scripts/mod/buttons.js';
 import { composeCard, DECIDING } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { makeEvent } from '../../../scripts/state/events.js';
@@ -43,8 +43,9 @@ const INPUTS = {
 const dataOf = (kind) => composeCard(INPUTS[kind]).card;
 const SET_LINE_KINDS = Object.keys(DECIDING);
 // A setup card gets no button: its step goes ahead only by the director's click on the very card
-// setup showed, which only the prompt record counts.
-const NO_BUTTONS = { buttons: [], note: CANT_ANSWER };
+// setup showed, which only the prompt record counts. Its note sends the director to the chat
+// where setup asked it.
+const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
 
 test('each kind of card gets its own buttons, and only the options it offers', () => {
   for (const kind of SET_LINE_KINDS) {
@@ -141,7 +142,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       const got = cardButtons({ ...data, question });
       assert.equal(got.buttons.some((b) => b.does === 'record'), false, `${kind}: ${question}`);
       assert.deepEqual(got.buttons, kind === 'setup' ? [] : [{ label: 'Explain more', does: 'turn' }], kind);
-      assert.equal(got.note, CANT_ANSWER, kind);
+      assert.equal(got.note, kind === 'setup' ? SETUP_ANSWER : CANT_ANSWER, kind);
     }
   }
 });
@@ -188,6 +189,9 @@ test('the Unattended card gets no button on the pane, with or without Use Guarde
 test('a setup card gets no button on the pane, whatever it offers and whatever kind it claims', () => {
   const setup = dataOf('setup');
   assert.equal(isSetupCard(setup), true);
+  // Its note says where to answer it: setup asks it in its own chat, not the front desk.
+  assert.equal(SETUP_ANSWER, 'This card can\'t be answered here: answer it in the chat where setup asked it.');
+  assert.notEqual(SETUP_ANSWER, CANT_ANSWER);
   assert.deepEqual(setup.options, ['Go ahead', 'Not now', 'Explain more', 'Show me']);
   assert.deepEqual(cardButtons(setup), NO_BUTTONS);
   // Offering only Go ahead, or only the turns, it still gets nothing.

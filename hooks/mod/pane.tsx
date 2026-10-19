@@ -5,10 +5,11 @@
 //
 // A tick sends { cmd: 'tick', session, cwd, idle, surface }. In the front desk's session its
 // answer holds the pane's model (scripts/mod/status.js), the glance and the status line; any
-// other session's answer holds only its role and `every`. One tick runs at a time. Each prompt
-// an answer's `submit` holds (the courier's wake in the front desk's session, the watcher's lines
-// in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it handed, so the
-// next answer doesn't hold it again, and one that can't be handed on is not tried again.
+// other session's answer, a session still in setup's included, holds only its role and `every`.
+// One tick runs at a time. Each prompt an answer's `submit` holds (the courier's wake in the
+// front desk's session, the watcher's lines in a Shape 2 foreman's) is handed on in order, once:
+// the bridge has marked it handed, so the next answer doesn't hold it again, and one that can't
+// be handed on is not tried again.
 //
 // The pane has two views: the board, with each card's buttons (hooks/mod/cards.tsx), and the
 // settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both.
@@ -104,7 +105,9 @@ async function showOld($: EngineInterface, session: string) {
 // What an answered tick shows. The session's first front-desk answer opens the pane; later ones,
 // a reload's included, retitle it only while it is open, so a pane the director closed stays
 // closed. A session whose role is no longer the front desk's (a foreman known only from its
-// first prompt) closes the pane and clears the status line.
+// first prompt, or a project whose folder setup is working on again) closes the pane and clears
+// the status line, and forgets that it opened the pane, so a front-desk answer after it (setup
+// finished) opens the pane as at the session's start.
 async function show($: EngineInterface, answer: Answer, session: string, now: number) {
   const before = (await $.state.get(ROLE)).value
   if (answer.role !== undefined) await $.state.set(ROLE, answer.role)
@@ -120,6 +123,7 @@ async function show($: EngineInterface, answer: Answer, session: string, now: nu
     $.ui.status(answer.status)
   } else if (answer.role !== undefined && answer.role !== FRONT_DESK && before === FRONT_DESK) {
     if (await paneIsOpen($)) await $.ui.close({ id: PANE_ID })
+    await $.state.set(OPENED, null)
     $.ui.status(undefined)
   }
 }
