@@ -7,7 +7,14 @@ import path from 'node:path';
 import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE } from '../../../scripts/hooks/session-start.js';
+import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
+import { recordRole } from '../../../scripts/lib/role.js';
+import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
+import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HELD } from '../../../scripts/lineage/check.js';
+import { pendingDir } from '../../../scripts/hooks/pending.js';
+import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
+import { tempFolder } from '../../helpers/homes.js';
+import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
@@ -30,7 +37,7 @@ function withHome(fn) {
 const VIEWS = { rulebook: [], levels: {}, waiting: [], unconfirmed: [], damaged: [] };
 
 function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync = { ok: true } } = {}) {
-  const calls = { spawn: [], health: 0, sync: 0, views: 0, unref: 0 };
+  const calls = { spawn: [], health: 0, sync: 0, views: 0, unref: 0, writes: [] };
   let started = false;
   return {
     calls,
@@ -39,7 +46,7 @@ function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync =
       state: {
         sync: async () => { calls.sync += 1; return sync; },
         views: async () => { calls.views += 1; return { ok: true, views }; },
-        write: async () => ({ ok: true }),
+        write: async (body) => { calls.writes.push(body); return { ok: true }; },
         record: async () => ({ ok: true }),
       },
     },
@@ -48,11 +55,14 @@ function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync =
 }
 
 const PLUGIN_ROOT = '/plugin/root';
+// The installed skills match, unless a test says otherwise.
+const MATCHED = () => ({ ok: true, mismatches: [], manifest: true, upstreams: {}, kept: true });
 const run = (f, extra = {}, input = {}) => decide(
   { cwd: '/x', session_id: 's1', ...input },
-  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), ...extra },
+  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, ...extra },
 );
 const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
+const call = (cwd, tool) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {} });
 
 test('a helper that answers is not started again', async () => {
   await withHome(async () => {
@@ -435,7 +445,7 @@ test('the managed copy writes this session\'s marker; the plugin\'s copy does no
     assert.equal(fs.existsSync(marker), true);
     // An odd session id writes nothing.
     await run(f, { dir: managed, self: path.join(managed, 'wheelhouse', 'scripts', 'hooks', 'session-start.js') }, { session_id: '../x' });
-    assert.deepEqual(fs.readdirSync(path.dirname(marker)), ['s1.managed']);
+    assert.deepEqual(fs.readdirSync(path.dirname(marker)).filter((name) => name.endsWith('.managed')), ['s1.managed']);
   });
 });
 
@@ -579,5 +589,208 @@ test('the session start leaves the watcher alone in Shape 2, and fails open when
     f.client.config = async () => shapeConfig(1);
     await run(f);
     assert.equal(watcherStarts(f).length, 0);
+  });
+});
+
+test('in the project\'s main folder the reload names the front desk\'s playbook, after STOP and damaged state', async () => {
+  await withHome(async () => {
+    assert.equal(FRONT_DESK_LINE, 'This is the front desk. Follow wheelhouse:front-desk.');
+    const lines = text(await run(fake(), { env: {} })).split('\n');
+    assert.equal(lines.filter((l) => l === FRONT_DESK_LINE).length, 1);
+    const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read'] } });
+    const stopped = text(await run(f, { env: {}, stopState: () => ({ on: true, by: 'prompt', at: 'now' }) })).split('\n');
+    assert.deepEqual(stopped.slice(0, 4), ['STOP is on (set by prompt at now)', 'Damaged state:', '- events/bad.json could not be read', FRONT_DESK_LINE]);
+  });
+});
+
+test('a feature worktree and the foreman are not pointed at the front desk\'s playbook', async () => {
+  await withHome(async (home) => {
+    const tree = path.join(home, 'tree');
+    const gitdir = path.join(home, 'main', '.git', 'worktrees', 'tree');
+    fs.mkdirSync(tree, { recursive: true });
+    fs.mkdirSync(gitdir, { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+    fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree })), /front desk/);
+    // Nor when a front-desk role was recorded for the session earlier: the worktree decides.
+    recordRole('s-moved', 'front-desk');
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree, session_id: 's-moved' })), /front desk/);
+    assert.doesNotMatch(text(await run(fake(), { env: { WHEELHOUSE_ROLE: 'foreman' } })), /front desk/);
+    // A foreman known from its first prompt, as the board-context hook recorded it, after a compaction.
+    recordRole('s-foreman', 'foreman');
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { session_id: 's-foreman' })), /front desk/);
+  });
+});
+
+// --- Lineage: the installed upstream skills against Wheelhouse's manifest ---
+
+const LINEAGE_LINE = (paths) => `Lineage: the installed superpowers files differ from Wheelhouse's manifest (${paths}). Edits and commands are held until a session starts with matching files. Raise this with the director as a card.`;
+
+// A session start in a project whose folder is `folder`, checked against the fixture's manifest.
+const lineageRun = (f, fixture, folder, extra = {}, input = {}) => run(f, {
+  lineage: checkLineage, lineageRoot: fixture.root, claudeHome: fixture.claudeHome, projectOf: () => ({ project: P, record: { folder } }), ...extra,
+}, input);
+
+test('an installed Superpowers file that differs raises the warning and writes the hold', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    const stop = { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-18T01:00:00.000Z' }), now: () => new Date('2026-10-19T02:00:00.000Z') };
+    const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read'] } });
+
+    // Matching: no warning, and no hold.
+    assert.doesNotMatch(text(await lineageRun(f, fixture, folder, stop)), /Lineage/);
+    assert.equal(fs.existsSync(holdFile(P)), false);
+
+    fixture.put({ 'skills/brainstorming/SKILL.md': 'brainstorm, changed\n', LICENSE: 'another licence\n' });
+    const lines = text(await lineageRun(f, fixture, folder, stop)).split('\n');
+    assert.equal(lines[0], 'STOP is on (set by prompt at 2026-10-18T01:00:00.000Z)');
+    assert.equal(lines[1], LINEAGE_LINE('skills/brainstorming, LICENSE'), 'first after STOP');
+    assert.equal(lines[2], 'Damaged state:');
+    const held = JSON.parse(fs.readFileSync(holdFile(P), 'utf8'));
+    assert.equal(holdFile(P), path.join(process.env.WHEELHOUSE_HOME, 'projects', P, 'lineage', 'hold.json'));
+    assert.equal(held.at, '2026-10-19T02:00:00.000Z');
+    assert.deepEqual(held.mismatches.map((m) => [m.upstream, m.path]), [['superpowers', 'skills/brainstorming'], ['superpowers', 'LICENSE']]);
+    // While held, the hold hook refuses an edit in the project.
+    assert.equal((await hold(call(folder, 'Edit'), { projectOf: () => ({ project: P }) }))?.hookSpecificOutput?.permissionDecision, 'deny');
+
+    // With no STOP, the warning is the first line; put right, the next start lifts the hold.
+    assert.equal(text(await lineageRun(f, fixture, folder)).split('\n')[0], LINEAGE_LINE('skills/brainstorming, LICENSE'));
+    fixture.restore();
+    assert.doesNotMatch(text(await lineageRun(f, fixture, folder)), /Lineage/);
+    assert.equal(fs.existsSync(holdFile(P)), false);
+    assert.equal(await hold(call(folder, 'Edit'), { projectOf: () => ({ project: P }) }), undefined);
+
+    // Not installed for this project, or a manifest that can't be read: held too.
+    assert.equal(text(await lineageRun(f, fixture, tempFolder('wh-ss-other-'))).split('\n')[0], LINEAGE_LINE('not installed'));
+    assert.equal(text(await lineageRun(f, { ...fixture, root: tempFolder('wh-ss-empty-root-') }, folder)).split('\n')[0], MANIFEST_UNREADABLE);
+    assert.ok(fs.existsSync(holdFile(P)));
+  });
+});
+
+test('a hold is recorded in the state once for each set of mismatches, through the kept records (R146)', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    const at = (time) => ({ now: () => new Date(time) });
+    const f = fake();
+    const holds = () => f.calls.writes.filter((w) => w.kind === 'lineage-hold');
+
+    fixture.put({ LICENSE: 'another licence\n' });
+    await lineageRun(f, fixture, folder, at('2026-10-19T02:00:00.000Z'));
+    assert.deepEqual(holds(), [{
+      project: P, kind: 'lineage-hold', data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] },
+    }]);
+    // The same set at the next starts: not recorded again, and the hold still stands.
+    await lineageRun(f, fixture, folder, at('2026-10-19T03:00:00.000Z'));
+    await lineageRun(f, fixture, folder, at('2026-10-19T04:00:00.000Z'));
+    assert.equal(holds().length, 1);
+    assert.ok(fs.existsSync(holdFile(P)));
+    // Another set is recorded; so is the same set again once a matching start has lifted the hold.
+    fixture.put({ 'skills/brainstorming/SKILL.md': 'changed\n' });
+    await lineageRun(f, fixture, folder, at('2026-10-19T05:00:00.000Z'));
+    assert.deepEqual(holds()[1].data.mismatches, [{ upstream: 'superpowers', path: 'skills/brainstorming' }, { upstream: 'superpowers', path: 'LICENSE' }]);
+    fixture.restore();
+    await lineageRun(f, fixture, folder, at('2026-10-19T06:00:00.000Z'));
+    assert.equal(fs.existsSync(holdFile(P)), false);
+    fixture.put({ LICENSE: 'another licence\n' });
+    await lineageRun(f, fixture, folder, at('2026-10-19T07:00:00.000Z'));
+    assert.equal(holds().length, 3);
+    assert.equal(holds()[2].data.at, '2026-10-19T07:00:00.000Z');
+
+    // With no helper, the record is kept and sent by a later start; the hold stands meanwhile.
+    fixture.restore();
+    await lineageRun(f, fixture, folder);
+    fixture.put({ 'skills/writing-plans/SKILL.md': 'changed\n' });
+    const down = fake({ answersAfterStart: false });
+    const text1 = text(await lineageRun(down, fixture, folder, at('2026-10-19T08:00:00.000Z')));
+    assert.match(text1, /Lineage: the installed superpowers files differ/);
+    assert.equal(fs.readdirSync(pendingDir(P)).filter((n) => n.endsWith('.json')).length, 1);
+    assert.ok(fs.existsSync(holdFile(P)));
+    await lineageRun(f, fixture, folder, at('2026-10-19T09:00:00.000Z'));
+    assert.equal(holds().length, 4);
+    assert.equal(holds()[3].data.at, '2026-10-19T08:00:00.000Z', 'the kept one, not a second');
+    assert.equal(fs.readdirSync(pendingDir(P)).filter((n) => n.endsWith('.json')).length, 0);
+  });
+});
+
+test('a hold that could not be written is not called one, and a record that could not be kept leaves the hold standing', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    const f = fake();
+    // The hold's folder is a file, so the hold can't be written.
+    const lineageFolder = path.dirname(holdFile(P));
+    fs.mkdirSync(path.dirname(lineageFolder), { recursive: true });
+    fs.writeFileSync(lineageFolder, 'not a folder');
+    const first = text(await lineageRun(f, fixture, folder)).split('\n')[0];
+    assert.equal(first, 'Lineage: the installed superpowers files differ from Wheelhouse\'s manifest (LICENSE). The hold could not be written, so edits and commands are not held. Raise this with the director as a card.');
+    assert.equal(text(await lineageRun(f, { ...fixture, root: tempFolder('wh-ss-empty-root-') }, folder)).split('\n')[0], MANIFEST_UNREADABLE_NOT_HELD);
+    assert.equal(f.calls.writes.filter((w) => w.kind === 'lineage-hold').length, 0, 'no hold, so none recorded');
+    fs.rmSync(lineageFolder);
+    // The kept records' folder is a file, so the record can't be kept: the hold still stands and the session starts.
+    fs.mkdirSync(path.dirname(pendingDir(P)), { recursive: true });
+    fs.writeFileSync(pendingDir(P), 'not a folder');
+    assert.equal(text(await lineageRun(f, fixture, folder)).split('\n')[0], LINEAGE_LINE('LICENSE'));
+    assert.ok(fs.existsSync(holdFile(P)));
+    assert.equal(JSON.parse(fs.readFileSync(holdFile(P), 'utf8')).recorded, undefined, 'not marked, so a later start tries again');
+  });
+});
+
+test('provenance is written at each session start', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder, { version: '1.2.3', register: '0.4.0' });
+    const transcript = path.join(tempFolder('wh-ss-transcript-'), 't.jsonl');
+    fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', version: '2.1.300' })}\n`);
+    const f = fake();
+    const file = path.join(process.env.WHEELHOUSE_HOME, 'projects', P, 'sessions', 's1', 'provenance.json');
+    await lineageRun(f, fixture, folder, {}, { transcript_path: transcript });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), {
+      wheelhouse: '1.2.3', upstreams: { superpowers: SHA }, register: '0.4.0', claudeCode: '2.1.300', fingerprints: 'match', transcript,
+    });
+    // The next start of the same session writes it again, as things stand then.
+    fixture.put({ LICENSE: 'another licence\n' });
+    await lineageRun(f, fixture, folder, {}, { transcript_path: transcript });
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).fingerprints, 'mismatch');
+    // Nothing installed for the project: the upstream's commit is null. No transcript entry yet: Claude Code's version is null.
+    const empty = path.join(path.dirname(transcript), 'empty.jsonl');
+    fs.writeFileSync(empty, '');
+    await lineageRun(f, fixture, tempFolder('wh-ss-other-'), {}, { session_id: 's2', transcript_path: empty });
+    const second = JSON.parse(fs.readFileSync(path.join(path.dirname(path.dirname(file)), 's2', 'provenance.json'), 'utf8'));
+    assert.deepEqual(second, {
+      wheelhouse: '1.2.3', upstreams: { superpowers: null }, register: '0.4.0', claudeCode: null, fingerprints: 'mismatch', transcript: empty,
+    });
+    // An odd session id writes no provenance.
+    await lineageRun(f, fixture, folder, {}, { session_id: '../x' });
+    assert.deepEqual(fs.readdirSync(path.dirname(path.dirname(file))).sort(), ['s1', 's2']);
+  });
+});
+
+test('a lineage check that throws is passed over: the session starts and says nothing of it', async () => {
+  await withHome(async () => {
+    const out = await run(fake(), { lineage: () => { throw new Error('boom'); } });
+    assert.doesNotMatch(text(out), /Lineage/);
+  });
+});
+
+test('the guard floor is the build loop\'s Claude Code floor, named once', () => {
+  assert.deepEqual(GUARD_FLOOR, CLAUDE_CODE_FLOOR.split('.').map(Number));
+  assert.equal(OLD_CLAUDE_CODE, 'This Claude Code is older than 2.1.295, so a guard that fails does not stop a tool call: update Claude Code');
+});
+
+test('on Windows under STOP, the lineage hold line comes first after STOP, then the Windows lines', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    const f = fake({ views: { ...VIEWS, settings: unattendedOn(computerId()) } });
+    f.client.health = async () => ({ ok: true });
+    const stop = { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-18T01:00:00.000Z' }), now: () => new Date('2026-10-19T02:00:00.000Z') };
+    const lines = text(await lineageRun(f, fixture, folder, { ...stop, platform: 'win32' })).split('\n');
+    assert.deepEqual(lines.slice(0, 4), [
+      'STOP is on (set by prompt at 2026-10-18T01:00:00.000Z)', LINEAGE_LINE('LICENSE'), WINDOWS_LINE, UNATTENDED_LINE,
+    ]);
   });
 });

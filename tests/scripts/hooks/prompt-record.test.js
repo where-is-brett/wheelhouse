@@ -608,16 +608,46 @@ test('a shown record the helper cannot take is kept pending like every signed re
   });
 });
 
-// The build loop's own labels earn records from a click only: their lines aren't set lines yet.
 // Unattended for build commands on Windows is set only by a click on its own card.
-const CLICK_ONLY = ['Change it', 'End it', 'Merge the fix', 'Turn on (dangerous)'];
+const CLICK_ONLY = ['Turn on (dangerous)'];
 
-test('every label the prompt record can sign for is in SIGNED_LABELS, or one the build loop answers by click only', () => {
+test('every label the prompt record can sign for is in SIGNED_LABELS, or one answered by click only', () => {
   const source = fs.readFileSync(new URL('../../../scripts/hooks/prompt-record.js', import.meta.url), 'utf8');
   const handled = [...source.matchAll(/label === '([^']+)'/g)].map((m) => m[1]);
   assert.ok(handled.length >= 5);
   assert.deepEqual([...new Set(handled)].filter((l) => !CLICK_ONLY.includes(l)).sort(), [...SIGNED_LABELS].sort());
-  assert.ok(CLICK_ONLY.every((l) => handled.includes(l)));
+  assert.ok(CLICK_ONLY.every((l) => handled.includes(l) && !SIGNED_LABELS.includes(l)));
+  assert.ok(['Change it', 'End it', 'Merge the fix'].every((l) => SIGNED_LABELS.includes(l)));
+  // Deciding labels only: never one that asks for more or puts a card off.
+  assert.ok(['Explain more', 'Not now', 'Show me'].every((l) => !SIGNED_LABELS.includes(l)));
+});
+
+test('a card with one of the build loop\'s lines and its code becomes a signed shown record', async () => {
+  await withHome(async () => {
+    const lines = [
+      approveWorkLine('export-csv', 'feature', DOC),
+      approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true }),
+      answerLine('q-export-csv-1'),
+      amendLine('export-csv', NEW_DOC),
+      liftIncidentLine('bad-total'),
+      incidentFixLine('bad-total', 31),
+    ];
+    const questions = lines.map((line) => `What this is.\n${line}\n${replyCodeLine(replyCode(line))}`);
+    const c = fake();
+    await decide(coded(Object.fromEntries(questions.map((q) => [q, 'Not now']))), deps(c));
+    const shown = c.calls.record.filter((r) => r.event.kind === 'shown');
+    assert.deepEqual(shown.map((r) => r.event.data), questions.map((question, i) => ({ code: replyCode(lines[i]), question, options: CODED.map((b) => b.label) })));
+    assert.ok(shown.every((r) => r.event.sig));
+    // A near miss earns none: a short hash, an unknown lane, two lines.
+    const near = [
+      `${approveWorkLine('export-csv', 'feature', DOC).replace(DOC.slice(0, 12), DOC.slice(0, 7))}\nReply code: AAAA`,
+      `${approveWorkLine('export-csv', 'huge', DOC)}\nReply code: ${replyCode(approveWorkLine('export-csv', 'huge', DOC))}`,
+      `${liftIncidentLine('a')}\n${incidentFixLine('a', 3)}\n${replyCodeLine(replyCode(liftIncidentLine('a')))}`,
+    ];
+    const none = fake();
+    await decide(coded(Object.fromEntries(near.map((q) => [q, 'Not now']))), deps(none));
+    assert.equal(none.calls.record.length, 0);
+  });
 });
 
 test('Approve on a work card records nothing when the work, its lane or its document is not what the card says', async () => {
@@ -668,6 +698,12 @@ test('a click on an answer card records the label; Explain more and Not now reco
     await decide(input({ [q]: 'Explain more', [`${q} again`]: 'Not now' }, { options: OPTIONS }), deps(other));
     assert.equal(other.calls.record.length, 0);
     assert.equal(other.calls.write.length, 2);
+
+    // Show me puts a card off too, even when the question holds an option of that name.
+    keepEvent(makeEvent({ kind: 'question', data: { ...QUESTION, options: [...QUESTION.options, { label: 'Show me', says: 'A sample' }] }, now: () => new Date(NOW.getTime() + 1000) }));
+    const sample = fake();
+    await decide(input({ [q]: 'Show me' }, { options: [...OPTIONS, { label: 'Show me' }] }), deps(sample));
+    assert.equal(sample.calls.record.length, 0);
   });
 });
 

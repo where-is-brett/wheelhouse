@@ -11,6 +11,8 @@ export const BUNDLE_MS = 60 * 1000;
 export const FIX_ROUNDS = 3;
 // When an upgrade may be offered: the upstream commit must be this old, and offers are this far apart.
 export const UPGRADE = Object.freeze({ minAgeDays: 7, everyDays: 30 });
+// The lowest Claude Code the design's checks were run on: from it a guard that fails stops the tool call.
+export const CLAUDE_CODE_FLOOR = '2.1.295';
 // The context size at which the foreman compacts when the model's own limit is unknown.
 export const FOREMAN_FALLBACK_COMPACT = 100000;
 // The most words a feature's report may have.

@@ -662,6 +662,68 @@ test('a verified incident lift or incident fix wakes the foreman, with the click
   assert.deepEqual(routed.digest, []);
 });
 
+test('the director\'s approval of an open pull request\'s head, or CI push of its branch, wakes the foreman once (R117)', () => {
+  const open = { 7: prState({ head: 'ddd444', branch: 'feature/login-page', ci: 'success', review: 'clean', mergeable: 'yes' }) };
+  const prev = observation({ prs: open });
+  const approval = (id, data, verified = true) => ({ id, kind: 'approval', data, verified });
+  const events = [
+    approval('ev-approve', { pr: 7, commit: 'ddd444' }),
+    approval('ev-approve-forged', { pr: 7, commit: 'ddd444' }, false),
+    approval('ev-approve-old', { pr: 7, commit: 'aaa111' }),
+    approval('ev-approve-other', { pr: 8, commit: 'ddd444' }),
+    action('ev-push', { action: 'ci-push', branch: 'feature/login-page', sha: 'e'.repeat(40) }),
+    action('ev-push-forged', { action: 'ci-push', branch: 'feature/login-page', sha: 'e'.repeat(40) }, false),
+    action('ev-push-other', { action: 'ci-push', branch: 'feature/search-box', sha: 'e'.repeat(40) }),
+  ];
+  // The PR is known from before: this observation need not name it.
+  const routed = route(diff(prev, observation({ events }), { handled: new Set() }));
+  assert.deepEqual(routed.foreman.map((e) => [e.type, e.id, e.work, e.pr]), [
+    ['approval', 'ev-approve', 'login-page', 7],
+    ['ci-push', 'ev-push', 'login-page', 7],
+  ]);
+  assert.deepEqual(routed.foreman[0].detail, { pr: 7, head: 'ddd444' });
+  assert.deepEqual(routed.foreman[1].detail, { pr: 7, branch: 'feature/login-page', sha: 'e'.repeat(40) });
+  assert.deepEqual(routed.features, {});
+  // Once per event id: a restart from the cursor sends neither again.
+  const first = step({ seen: [], prev }, observation({ events }));
+  assert.equal(first.events.filter((e) => e.type === 'approval' || e.type === 'ci-push').length, 2);
+  assert.deepEqual(step(first.cursor, observation({ events })).events.filter((e) => e.type === 'approval' || e.type === 'ci-push'), []);
+  // A closed pull request is forgotten: a click naming it wakes nobody.
+  const closed = route(diff(prev, observation({ events, prs: { 7: null } }), { handled: new Set() }));
+  assert.deepEqual(closed.foreman, []);
+});
+
+test('a head the gate brought up to date whose review did not carry over wakes its session to review it, once (R119)', () => {
+  const needed = prState({ head: 'ddd444', ci: 'success', review: 'needed', mergeable: 'yes' });
+  const open = feature({ status: status({ phase: 'pr-open', pr: 7, updatedAt: iso(3) }) });
+  const routed = route(diff(observation({ features: { 'login-page': open } }), observation({ features: { 'login-page': open }, prs: { 7: needed } })));
+  const [e] = routed.features['login-page'];
+  assert.deepEqual([routed.features['login-page'].length, e.type, e.id, e.pr], [1, 'review-needed', 'review-needed:login-page:ddd444', 7]);
+  assert.equal(e.detail.head, 'ddd444');
+  assert.match(e.detail.next, /brought the branch up to date at ddd444/);
+  assert.match(e.detail.next, /pull/i);
+  assert.match(e.detail.next, /wheelhouse:reviewer with pr: 7 on ddd444/);
+  assert.deepEqual(routed.foreman, []);
+  // Not with CI pending or a conflict.
+  for (const over of [{ ci: 'pending' }, { mergeable: 'no' }, { mergeable: 'unknown' }]) {
+    const quiet = diff(observation(), observation({ prs: { 7: { ...needed, ...over } } }));
+    assert.deepEqual(quiet.filter((x) => x.type === 'review-needed'), [], JSON.stringify(over));
+  }
+  // Once per head.
+  const again = diff(observation({ prs: { 7: needed } }), observation({ prs: { 7: needed } }));
+  assert.deepEqual(again.filter((x) => x.type === 'review-needed'), []);
+
+  // The state is not waiting: a missed wake surfaces as stuck.
+  let cursor = { seen: [], prev: observation({ features: { 'login-page': open }, prs: { 7: needed } }) };
+  const stuck = [];
+  for (let i = 0; i < 3; i += 1) {
+    const r = step(cursor, observation({ awake: 10 * MIN, features: { 'login-page': open }, prs: {} }));
+    cursor = r.cursor;
+    stuck.push(...r.events.filter((x) => x.type === 'stuck'));
+  }
+  assert.equal(stuck.length, 1);
+});
+
 test('a feature whose phase arrives at done wakes the foreman once with report, to close it (R94)', () => {
   const at = (phase, over = {}) => feature({ status: status({ phase, ...over }) });
   let cursor = { seen: [], prev: observation({ features: { 'login-page': at('pr-open') } }) };

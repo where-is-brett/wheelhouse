@@ -4,11 +4,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, claudeCodeSettings, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
+import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 
 const config = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: ['example.com', 'docs.example.org'] };
 const allCredentials = [...new Set(['darwin', 'linux', 'win32'].flatMap((p) => credentialPaths(p)))];
@@ -156,6 +157,32 @@ test('the local settings name the status line only when the director has none of
   assert.deepEqual(localSettings(base).sandbox, { network: { allowUnixSockets: [address] } });
 });
 
+test('the local settings allow the command by its full path', () => {
+  const address = '/h/.wheelhouse/helper.sock';
+  const root = '/plugins/Zoë wheel house';
+  // The file's own rule form: `Bash(x:*)` is `Bash(x *)`.
+  const rule = `Bash(node "${root}/scripts/frontdesk/cli.js":*)`;
+  assert.equal(frontDeskCommand(root, { platform: 'darwin' }), `node "${root}/scripts/frontdesk/cli.js"`);
+  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule] });
+  // With the status line or without it, and beside the socket.
+  const full = localSettings({ address, node: '/usr/local/bin/node', pluginRoot: root, ownStatusLine: { type: 'command', command: 'x' }, platform: 'linux' });
+  assert.deepEqual(full.permissions, { allow: [rule] });
+  assert.deepEqual(full.sandbox, { network: { allowUnixSockets: [address] } });
+  // On Windows the path is written with forward slashes after its drive letter, as node and Git Bash take it.
+  assert.deepEqual(localSettings({ address, pluginRoot: 'C:\\Users\\Zoë\\wheelhouse', platform: 'win32' }).permissions,
+    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)'] });
+  // A folder a rule can't hold as it is gets no rule: the command is then asked about each time.
+  for (const bad of ['/x"y', '/x*y', '/x(y', '/x)y', '/x\ny', 'relative/root', '/x`y', '/x$y']) {
+    assert.equal(localSettings({ address, pluginRoot: bad, platform: 'linux' }).permissions, undefined, bad);
+    assert.equal(frontDeskCommand(bad, { platform: 'linux' }), null, bad);
+  }
+  // Merged into settings the director already has, their own rules stay first.
+  const merged = mergeSettings({ permissions: { allow: ['Bash(ls:*)'] } }, localSettings({ address, pluginRoot: root, platform: 'darwin' }));
+  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule]);
+  // The shared project settings never name it: the path is this computer's.
+  assert.ok(!strings(projectSettings(config)).some((x) => x.includes('frontdesk')));
+});
+
 test('the director\'s own status line is found in their user, project or local settings, and Wheelhouse\'s own is not theirs', () => {
   const root = tempFolder('wh-statusline-settings-');
   const claudeHome = path.join(root, 'home', '.claude');
@@ -282,4 +309,52 @@ test('a build command a rule cannot hold safely is refused, not allowed', () => 
   for (const bad of ['', ' npm test', 'npm test:*', 'a)', 'rm *', '-x', 'a\nb', 1]) {
     assert.throws(() => featureAllowRules({ ...config, buildCommands: [bad] }), /build command/, String(bad));
   }
+});
+
+test('the project settings switch on the pinned copies and off every other copy', () => {
+  const { enabledPlugins } = projectSettings(config);
+  assert.deepEqual(enabledPlugins, {
+    'superpowers@claude-plugins-official': false,
+    'superpowers@synced': false,
+    'mattpocock-skills@synced': false,
+    'superpowers@wheelhouse': true,
+    'mattpocock-skills@wheelhouse': true,
+  });
+  assert.deepEqual(SWITCHED_OFF_PLUGINS, ['superpowers@claude-plugins-official', 'superpowers@synced', 'mattpocock-skills@synced']);
+  // The same with a release, and with the one-argument call.
+  assert.deepEqual(projectSettings(config, { release: { ref: 'v1.0.0' } }).enabledPlugins, enabledPlugins);
+});
+
+test('auto-update is off for the Wheelhouse marketplace', () => {
+  const entry = projectSettings(config).extraKnownMarketplaces.wheelhouse;
+  assert.equal(entry.autoUpdate, false);
+  assert.deepEqual(Object.keys(projectSettings(config).extraKnownMarketplaces), ['wheelhouse']);
+});
+
+test('the marketplace entry follows the release given, with a ref and no sha, and none without a release', () => {
+  // A github marketplace source takes repo, ref, path and sparsePaths: no sha.
+  const bare = projectSettings(config).extraKnownMarketplaces.wheelhouse;
+  assert.deepEqual(bare, { source: { source: 'github', repo: 'where-is-brett/wheelhouse' }, autoUpdate: false });
+  const released = projectSettings(config, { release: { ref: 'v1.2.3', sha: 'a'.repeat(40) } }).extraKnownMarketplaces.wheelhouse;
+  assert.deepEqual(released, { source: { source: 'github', repo: 'where-is-brett/wheelhouse', ref: 'v1.2.3' }, autoUpdate: false });
+  assert.deepEqual(projectSettings(config, { release: null }).extraKnownMarketplaces.wheelhouse, bare);
+  assert.deepEqual(projectSettings(config, { release: {} }).extraKnownMarketplaces.wheelhouse, bare);
+  assert.throws(() => projectSettings(config, { release: { ref: '' } }), /release/);
+  assert.throws(() => projectSettings(config, { release: { ref: 3 } }), /release/);
+});
+
+test('the plugin settings merge into the director\'s own and leave their plugins alone', () => {
+  const existing = { enabledPlugins: { 'mine@theirs': true, 'superpowers@synced': true }, extraKnownMarketplaces: { theirs: { source: { source: 'github', repo: 'a/b' } } } };
+  const merged = mergeSettings(existing, projectSettings(config));
+  assert.equal(merged.enabledPlugins['mine@theirs'], true);
+  assert.equal(merged.enabledPlugins['superpowers@synced'], false);
+  assert.equal(merged.enabledPlugins['superpowers@wheelhouse'], true);
+  assert.deepEqual(Object.keys(merged.extraKnownMarketplaces).sort(), ['theirs', 'wheelhouse']);
+});
+
+test('claudeCodeSettings sets the stable channel and the floor', () => {
+  assert.deepEqual(claudeCodeSettings({ floor: '2.1.100' }), { autoUpdatesChannel: 'stable', minimumVersion: '2.1.100' });
+  assert.deepEqual(claudeCodeSettings({ floor: CLAUDE_CODE_FLOOR }), { autoUpdatesChannel: 'stable', minimumVersion: CLAUDE_CODE_FLOOR });
+  for (const bad of [undefined, '', 'latest', '2.1', 'v2.1.100', 2]) assert.throws(() => claudeCodeSettings({ floor: bad }), /floor/, String(bad));
+  assert.throws(() => claudeCodeSettings(), /floor/);
 });

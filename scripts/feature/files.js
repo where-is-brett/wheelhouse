@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LANES, SLUG } from '../lib/build-loop.js';
+import { BEGIN as PROVENANCE, removeProvenance } from '../lineage/provenance.js';
 import { isBuildQuestion } from '../protection/windows-builds.js';
 
 export const FEATURE_DIR = '.wheelhouse/feature';
@@ -279,14 +280,15 @@ function validReport(f) {
     && isTexts(f.rulings);
 }
 
-// The report's fields, the text after its JSON block and that text's word count.
-// A body over REPORT_WORDS words is not an error here: the caller sees the count.
-// Throws if the report is anything else.
+// The report's fields, the text after its JSON block and that text's word count. The block
+// `report` stamps saying what built it is not part of that text. A body over REPORT_WORDS
+// words is not an error here: the caller sees the count. Throws if the report is anything else.
 export function parseReport(text) {
   const parsed = splitJsonBlock(text);
   if (!parsed || !validReport(parsed.fields)) throw new Error("The report can't be read");
-  const words = parsed.body.split(/\s+/).filter(Boolean).length;
-  return { ...parsed, words };
+  const body = parsed.body.includes(PROVENANCE) ? removeProvenance(parsed.body) : parsed.body;
+  const words = body.split(/\s+/).filter(Boolean).length;
+  return { ...parsed, body, words };
 }
 
 // --- Keeping the files out of git ---

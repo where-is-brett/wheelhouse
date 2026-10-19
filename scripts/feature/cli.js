@@ -4,12 +4,16 @@
 //            asks for build commands on Windows (design section 12.2)
 //   answer   prints the director's answer to a question, once it is signed
 //   plan     records the plan just written, in plan.json, for the status and the foreman
-//   report   checks report.md and that it holds every ruling kept
+//   report   checks report.md and that it holds every ruling kept, then stamps it with what built it
 //   open-pr  opens the feature's pull request and keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
 // the worktree, so tests use a fake helper. Files are read and written only in the
 // feature folder, through the safe readers and writers of status.js; the head
 // branch is read from the .git files. Nothing here runs git.
+// These commands run inside the project's sandbox, which cannot read ~/.wheelhouse
+// (ruling R150): nothing here reads it. Each helper request carries the worktree's
+// folder as `cwd`, and the helper places the project from it; STOP, too, comes
+// from the helper.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,12 +21,13 @@ import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions }
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from './status.js';
+import { questionProblem } from '../cards/compose.js';
 import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
-import { projectOf } from '../hooks/kit.js';
 import { helperClient } from '../host/helper-client.js';
 import { REPORT_WORDS } from '../lib/build-loop.js';
 import { readConfig } from '../gate/guardrails.js';
+import { parseProvenance, withBlock } from '../lineage/provenance.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 
 // An error whose message is said to the session as it is.
@@ -133,17 +138,16 @@ function buildWhat(worktree, commands) {
 // A build-command question (design section 12.2): its options are the design's, never the
 // session's, and each command must be local git or one of the configuration's build commands,
 // as the helper reads it from the default branch, never the working copy.
-async function buildQuestion(found, { worktree, client, project }) {
+async function buildQuestion(found, { worktree, client }) {
   for (const flag of ['what', 'option', 'recommend', 'level', 'plan']) {
     if (found[flag] !== undefined) throw new CliError(`--${flag} is not given for a build-command question: Wheelhouse writes it`);
   }
   const commands = [...new Set((found.command ?? []).map((c) => c.trim()))];
   if (commands.length === 0) throw new CliError('Name each build command you need with --command "<command>"');
   if (commands.includes('')) throw new CliError('--command needs a command');
-  if (typeof project !== 'string' || project === '') throw new CliError("Wheelhouse doesn't know which project this worktree belongs to");
   let answer;
   try {
-    answer = await client.config({ project });
+    answer = await client.config({ cwd: worktree });
   } catch {
     answer = null;
   }
@@ -167,13 +171,16 @@ async function buildQuestion(found, { worktree, client, project }) {
 }
 
 // Appends a question to questions.jsonl and returns `{ id }`. Only a build-command question
-// needs `client` and `project`, to read the configuration.
-export async function ask({ worktree, argv, client, project }) {
+// needs `client`, to read the configuration; the helper places the project from the worktree's
+// folder. A question for the director, a build-command question too, that no card could carry
+// (by the composer's own rules: at most four options, none a button that puts a card off but a
+// build-command question's own Not now, words that fit the card) is refused, so it never waits unasked.
+export async function ask({ worktree, argv, client }) {
   const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command']);
   const kind = single(found, 'kind') ?? 'question';
   if (!QUESTION_KINDS.includes(kind)) throw new CliError(`--kind is ${QUESTION_KINDS.join(', ')}`);
   const why = needed(found, 'why');
-  const asked = kind === 'build-command' ? await buildQuestion(found, { worktree, client, project }) : plainQuestion(found, kind);
+  const asked = kind === 'build-command' ? await buildQuestion(found, { worktree, client }) : plainQuestion(found, kind);
 
   const brief = readBriefOrSay(worktree);
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
@@ -181,6 +188,8 @@ export async function ask({ worktree, argv, client, project }) {
   const id = nextQuestionId(p.questions, brief.work);
   const { what, ...rest } = asked;
   const question = { id, kind, what, why, ...rest };
+  const problem = kind === 'extra-plan' ? null : questionProblem({ ...question, work: brief.work });
+  if (problem !== null) throw new CliError(`This question can't be put to the director as a card, so it wasn't asked: ${problem}`);
   const kept = readCapped(p.questions, QUESTIONS_BYTES);
   // A file that is there but can't be read (a link, a folder) must not be replaced.
   if (kept === null && exists(p.questions)) throw new CliError("questions.jsonl can't be added to");
@@ -210,10 +219,11 @@ function readBriefOrSay(worktree) {
 
 // --- answer ---
 
-// The label the director chose, or null while the question has no signed answer.
-export async function answer({ client, project, questionId }) {
+// The label the director chose, or null while the question has no signed answer. The helper
+// places the project from the worktree's folder.
+export async function answer({ client, worktree, questionId }) {
   if (typeof questionId !== 'string' || !QUESTION_ID.test(questionId)) throw new CliError('Give the id of the question, as ask printed it');
-  const said = await client.state.answer({ project, questionId });
+  const said = await client.state.answer({ cwd: worktree, questionId });
   if (said?.ok !== true) throw new CliError(said?.refused ?? 'The host helper gave no answer');
   if (said.answer === null) return { answer: null };
   if (typeof said.answer !== 'string' || said.answer === '') throw new CliError('The host helper gave an answer this could not read');
@@ -284,6 +294,22 @@ export function report({ worktree }) {
   return { missing: inspect(worktree).missing };
 }
 
+// Stamps report.md with `block`, the one that says what built it (the helper's, the same block it
+// stamps in the pull request), in place of any it had. Returns whether report.md was written.
+export function stampReport({ worktree, block }) {
+  if (typeof block !== 'string' || parseProvenance(block) === null) throw new CliError('The helper gave a provenance block that can\'t be read');
+  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
+  const file = featurePaths(worktree).report;
+  const text = readCapped(file, REPORT_BYTES);
+  if (text === null) throw new CliError("report.md can't be read");
+  const stamped = withBlock(text, block);
+  if (stamped === text) return false;
+  writeWhole(file, stamped);
+  return true;
+}
+
+const NO_PROVENANCE = 'The report carries no provenance block.';
+
 // --- plan ---
 
 // Records the plan just written (ruling R87): a path inside the worktree, to a
@@ -316,8 +342,9 @@ function keptSession(file) {
 // takes a missing base for it) and keeps its number in pr.json, with the plan it was opened for
 // (ruling R88). A pull request kept already is not opened again until the foreman's merge marks
 // it merged: then the next slice's is opened. The report becomes the pull request's body, so
-// nothing is opened until the report passes the `report` check.
-export async function openPr({ client, project, worktree, argv }) {
+// nothing is opened until the report passes the `report` check. The helper places the project
+// from the worktree's folder.
+export async function openPr({ client, worktree, argv }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
@@ -329,7 +356,7 @@ export async function openPr({ client, project, worktree, argv }) {
   const checked = inspect(worktree);
   if (checked.missing.length > 0) throw new CliError(`The pull request is not opened until the report passes. ${checked.missing.join(' ')}`);
   const session = keptSession(p.session);
-  const opened = await client.openPr({ project, head, title, body: checked.body, ...(session ? { session } : {}) });
+  const opened = await client.openPr({ cwd: worktree, head, title, body: checked.body, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
   if (!Number.isSafeInteger(number) || number < 1) throw new CliError('The host opened a pull request but gave no number for it');
@@ -347,7 +374,7 @@ const COMMANDS = ['ask', 'answer', 'plan', 'report', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
-  cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), find = featureWorktree, projectOf: findProject = projectOf,
+  cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), find = featureWorktree,
 } = {}) {
   try {
     const [command, ...rest] = argv;
@@ -356,22 +383,12 @@ export async function main(argv, {
     if (found === null) throw new CliError("This folder isn't a feature session's worktree: run the command from there");
     const worktree = found.root;
     const helper = () => client ?? helperClient();
-    const project = () => {
-      const placed = findProject(worktree);
-      if (!placed) throw new CliError("Wheelhouse doesn't know which project this worktree belongs to");
-      return placed.project;
-    };
 
     if (command === 'ask') {
-      // The project is wanted only by a build-command question, which says so when it is unknown.
-      let placed = null;
-      try {
-        placed = findProject(worktree)?.project ?? null;
-      } catch { /* left unknown */ }
-      out(`${(await ask({ worktree, argv: rest, client: helper(), project: placed })).id}\n`);
+      out(`${(await ask({ worktree, argv: rest, client: helper() })).id}\n`);
     } else if (command === 'answer') {
       if (rest.length !== 1) throw new CliError('Give the id of the question: answer <questionId>');
-      const { answer: label } = await answer({ client: helper(), project: project(), questionId: rest[0] });
+      const { answer: label } = await answer({ client: helper(), worktree, questionId: rest[0] });
       out(label === null ? 'There is no answer yet.\n' : `${label}\n`);
     } else if (command === 'plan') {
       out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);
@@ -383,8 +400,25 @@ export async function main(argv, {
         return 1;
       }
       out('The report is whole.\n');
+      // The session's own block, and whether STOP is on, from the helper (rulings R147, R150):
+      // this command runs where the Wheelhouse home can't be read. The session is the one the
+      // hooks kept. A helper that gives no answer, or doesn't say STOP is off, gives no block,
+      // so nothing is stamped.
+      const session = keptSession(featurePaths(worktree).session);
+      let got = null;
+      try {
+        got = await helper().lineage.provenance({ cwd: worktree, ...(session ? { session } : {}) });
+      } catch { /* said below */ }
+      if (got?.ok === true && got.stop === true) {
+        out('STOP is on, so the report was not stamped with what built it.\n');
+        return 0;
+      }
+      const usable = got?.ok === true && got.stop === false && session !== null && typeof got.block === 'string';
+      const block = usable ? got.block : null;
+      if (block === null) out(`${NO_PROVENANCE}\n`);
+      else if (stampReport({ worktree, block })) out('It now says what built it.\n');
     } else {
-      const { number, already } = await openPr({ client: helper(), project: project(), worktree, argv: rest });
+      const { number, already } = await openPr({ client: helper(), worktree, argv: rest });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);
     }
     return 0;

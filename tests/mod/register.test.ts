@@ -94,11 +94,67 @@ test('a typed reply code is sent to the bridge with origin composer, and the mes
     // Ordinary messages, even ones that start with four letters of the code alphabet, and
     // options no signed record answers, send nothing.
     clear()
-    const ordinary = ['What do you think', 'Have a look', 'Then carry on', 'K7QD Maybe', 'K7QD', 'Please approve the pull request']
+    const ordinary = ['What do you think', 'Have a look', 'Then carry on', 'K7QD', 'k7qd Maybe', 'K7Q Maybe', 'K7QD1 Maybe', 'Please approve the pull request']
     for (const text of ordinary) await submit($, text, 'composer')
     expect(seen.runs).toHaveLength(0)
     expect(seen.toasts).toHaveLength(0)
     expect(seen.prompts.map((p: any) => p.text)).toEqual(ordinary)
+  }
+})
+
+test('a code in capitals and any short option is sent, and shown only when it made a record', async ($, on) => {
+  let line = '{"ok":false,"says":"That card doesn\'t offer Maybe"}\n'
+  const { seen, clear, start } = world(on, () => ({ stdout: line }))
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    for (const origin of ['composer', 'bridge']) {
+      // A refusal is not shown, and neither is a bridge that fails; the message passes on as it was.
+      clear()
+      line = '{"ok":false,"says":"That card doesn\'t offer Maybe"}\n'
+      const refused = await submit($, 'K7QD Maybe', origin)
+      expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin, text: 'K7QD Maybe', cwd: ROOT })
+      expect(seen.toasts).toHaveLength(0)
+      expect(seen.prompts.map((p: any) => p.text)).toEqual(['K7QD Maybe'])
+      expect(refused).toMatchObject({ text: 'K7QD Maybe' })
+
+      clear()
+      line = 'not json\n'
+      await submit($, 'ASAP fix the banner', origin)
+      expect(seen.runs).toHaveLength(1)
+      expect(seen.toasts).toHaveLength(0)
+      expect(seen.prompts.map((p: any) => p.text)).toEqual(['ASAP fix the banner'])
+
+      // A record made is shown.
+      clear()
+      line = '{"ok":true,"says":"Recorded: Answer: Comma"}\n'
+      await submit($, '  K7QD   Comma. ', origin)
+      expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin, text: '  K7QD   Comma. ', cwd: ROOT })
+      expect(seen.toasts).toEqual(['Recorded: Answer: Comma'])
+    }
+
+    // The first form keeps its toasts, a refusal included.
+    clear()
+    line = '{"ok":false,"says":"That code has been used"}\n'
+    await submit($, 'K7QD Approve', 'composer')
+    expect(seen.toasts).toEqual(['That code has been used'])
+
+    // An option past 80 characters, or with a control character, and a lowercase code, send nothing.
+    clear()
+    const unsent = [`K7QD ${'x'.repeat(81)}`, 'K7QD Com\u0007ma', 'K7QD Co\u200bmma', 'k7qd Comma', 'K7QD']
+    for (const text of unsent) await submit($, text, 'composer')
+    expect(seen.runs).toHaveLength(0)
+    expect(seen.toasts).toHaveLength(0)
+    expect(seen.prompts.map((p: any) => p.text)).toEqual(unsent)
+    clear()
+    line = '{"ok":false}\n'
+    await submit($, `K7QD ${'x'.repeat(80)}`, 'composer')
+    expect(seen.runs).toHaveLength(1)
+
+    // Other origins and hidden messages never reach the bridge.
+    clear()
+    await submit($, 'K7QD Comma', 'sdk')
+    await submit($, 'K7QD Comma', 'composer', { isMeta: true })
+    expect(seen.runs).toHaveLength(0)
   }
 })
 

@@ -50,6 +50,12 @@
 //   merge <work>    brings the pull request up to date, merges it, marks the
 //       merge in pr.json and writes the feature's status again, as its status
 //       hook would, so the watcher sees it move to the next slice or to done.
+//       When bringing it up to date made a new head, it stops there: the merge
+//       waits for CI on that commit, and the next merge-ready wakes the foreman.
+//       When all the gate lacks is a click of the director's (their approval of
+//       the head, or their push of an update that changes a CI file), it records
+//       a `gate-asks` event once for that click and commit, and waits: the
+//       watcher wakes the foreman once the click is on record (ruling R117).
 //   close <work>    records the report and closes the feature. Work that ended
 //       partial or blocked is put to the director (ruling R102), and it ends
 //       by saying to read the wake again: a slot or a dependency may be free.
@@ -108,6 +114,7 @@ import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
   openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
+import { questionProblem } from '../cards/compose.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
 import { report as reportCheck } from '../feature/cli.js';
 import {
@@ -698,19 +705,37 @@ function localDay(at) {
   return Number.isNaN(when.getTime()) ? null : `${when.getFullYear()}-${when.getMonth() + 1}-${when.getDate()}`;
 }
 
-// The Unattended card's question: its words, its options and the line that a Turn on
-// (dangerous) click confirms the setting event `settingId` by, on its own last line.
+// The Unattended card's question: the five parts, each with its words on its label's own line
+// as the composer writes them (the card-check hook refuses a card otherwise), the design's words
+// on the risk as they are, and the line that a Turn on (dangerous) click confirms the setting
+// event `settingId` by, on its own last line.
 function unattendedQuestion(card, settingId, computer) {
   const named = (name) => card.options.find((o) => o.name === name);
   return [
     `What this is: ${card.what} ${card.risk}`,
     `Why it's coming to you: ${card.why}`,
-    'Options:',
-    ...card.options.map((o) => `- ${o.label}: ${o.says}`),
+    `Options: ${card.options.map((o) => `${o.label}: ${o.says.replace(/[.!?]+$/, '')}`).join('; ')}`,
     `My recommendation: ${named(card.recommend).label}`,
     `While you decide: ${named('keep-asking').says}`,
     unattendedBuildsLine(settingId, computer),
   ].join('\n');
+}
+
+// The Unattended card as a card event holds it, for the front desk to ask as it is: its question,
+// its own options with what each says (the recommendation marked, as the composer marks it), and
+// no set line or reply code, since only a click on Turn on (dangerous) sets Unattended.
+export function unattendedCardData(card, settingId, computer) {
+  const recommended = card.options.find((o) => o.name === card.recommend);
+  return {
+    question: unattendedQuestion(card, settingId, computer),
+    header: 'Unattended',
+    options: card.options.map((o) => o.label),
+    descriptions: card.options.map((o) => (o === recommended ? `Recommended: ${o.says}` : o.says)),
+    kind: 'question',
+    level: 3,
+    line: null,
+    code: null,
+  };
 }
 
 // After a feature's third build-command question recorded in a day (the computer's own date),
@@ -738,8 +763,7 @@ async function offerUnattended(ctx, views, work, asked) {
       && e.data.question.includes(unattendedBuildsLine(id, computer)));
     if (offers.some((e) => carded(e.id))) return;
     const settingId = offers.at(-1)?.id ?? await ctx.write('setting', { key, value: 'unattended' });
-    const card = UNATTENDED_CARD({ guardedReady: false });
-    await ctx.write('card', { title: card.what, question: unattendedQuestion(card, settingId, computer), options: card.options.map((o) => o.label) });
+    await ctx.write('card', unattendedCardData(UNATTENDED_CARD({ guardedReady: false }), settingId, computer));
     ctx.say('Offered the director the Unattended card for build commands on this computer.');
   } catch (error) {
     ctx.say(`The Unattended card wasn't offered: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}. It is offered with the next build-command question.`);
@@ -805,6 +829,9 @@ async function ask(ctx, work, rest) {
   }
   const n = Math.max(FOREMAN_QUESTIONS, ...asked.map((q) => foremanNumber(q.question.data.id, work))) + 1;
   const id = `q-${work}-${n}`;
+  // A question no card could carry would wait for ever unasked: refused by the composer's own rules.
+  const problem = questionProblem({ id, work, ...body });
+  if (problem !== null) refuse(`This question can't be put to the director as a card, so it wasn't asked: ${problem}`);
   await ctx.write('question', { id, work, ...body });
   ctx.say(`Asked the director: ${id}.`);
 }
@@ -905,6 +932,34 @@ function writeFeatureStatus(ctx, views, work, worktree) {
   return next;
 }
 
+const FULL_COMMIT = /^[0-9a-f]{40}$/;
+
+// The director's CI push the update-branch refusal names, when that is all it lacks, or null.
+function ciPushNeeded(answer) {
+  const c = answer.ciPush;
+  return isPlain(c) && typeof c.branch === 'string' && c.branch !== '' && typeof c.sha === 'string' && FULL_COMMIT.test(c.sha) ? c : null;
+}
+
+// The director's approval the merge refusal names, when it is the only condition unmet (one
+// reason, and the need names this pull request and a full commit), or null: anything else unmet
+// is put to the director as before.
+function approvalNeeded(answer, pr) {
+  const needs = answer.needs;
+  if (!isPlain(needs) || Object.keys(needs).length !== 1 || !Array.isArray(answer.reasons) || answer.reasons.length !== 1) return null;
+  const a = needs.approval;
+  return isPlain(a) && a.pr === pr && typeof a.commit === 'string' && FULL_COMMIT.test(a.commit) ? a : null;
+}
+
+// The gate waits for one click of the director's (ruling R117): a `gate-asks` record says which,
+// once per pull request, click and commit, for the card that asks for it; the watcher wakes the
+// foreman when the click is on record. Nothing is asked here.
+async function gateAsks(ctx, data, what) {
+  const recorded = stateEvents(ctx.project).some((e) => e.kind === 'gate-asks' && isPlain(e.data)
+    && e.data.pr === data.pr && e.data.ask === data.ask && e.data.sha === data.sha);
+  if (!recorded) await ctx.write('gate-asks', data);
+  ctx.say(`Pull request #${data.pr} for ${data.work} waits for the director's click on #${data.pr} at ${short(data.sha)}: ${what}. Nothing to do.`);
+}
+
 async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
@@ -938,8 +993,23 @@ async function merge(ctx, work, rest) {
   const halt = ctx.halt(views);
   if (halt !== null && !halt.fixes.includes(pr)) refuse(`Pull request #${pr} for ${work} can't merge while ${halt.why}: only an incident's fix merges. Nothing to do until it is over`);
   const updated = await ctx.client.updateBranch(number);
+  const ciPush = updated?.ok === false ? ciPushNeeded(updated) : null;
+  if (ciPush !== null) {
+    await gateAsks(ctx, { work, pr, ask: 'ci-push', sha: ciPush.sha, branch: ciPush.branch }, `their push of ${ciPush.branch}, which changes a CI file`);
+    return;
+  }
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
+  // A new head needs CI on that exact commit before the gate lets it merge (design section 12).
+  if (updated.updated === true) {
+    ctx.say(`Brought pull request #${pr} for ${work} up to date at ${short(updated.head)}; the merge waits for CI on that commit, and the next merge-ready wakes the foreman.`);
+    return;
+  }
   const merged = await ctx.client.merge(number);
+  const approval = merged?.ok === false ? approvalNeeded(merged, pr) : null;
+  if (approval !== null) {
+    await gateAsks(ctx, { work, pr, ask: 'approval', sha: approval.commit }, 'their approval of that commit');
+    return;
+  }
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
   const phase = markMerged();
   ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.`);

@@ -19,6 +19,11 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
+import { prOnHost } from '../../helpers/pr-on-host.js';
+import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const HEAD = `abc1234${'0'.repeat(33)}`;
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -26,8 +31,12 @@ const at = (ms) => () => new Date(T0.getTime() + ms);
 const HOUR = 3600000;
 const FAKE_KEY = 'ghs_FAKEKEY0123456789abcdefSECRET';
 const LOCK_REASON = 'this computer no longer holds the lock';
-// These projects' remotes hold no pull request, so its changed files can't be read.
+// These projects' remotes hold no pull request, so its changed files can't be read, nor
+// whether it is up to date; a test that merges puts one there with prOnHost.
 const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
+// The mirror can't read the pull request in these tests, so whether it is up to date is not known.
+const UNCHECKED = 'whether the branch is up to date could not be checked';
+const openAt = (head) => async () => ({ headSha: head, mergeable: 'mergeable', state: 'open', body: BODY });
 const NONE_FOUND = { guardrailPaths: [], criticalAreas: [] };
 const unix = process.platform !== 'win32';
 const unixOnly = unix ? false : 'socket files exist only on macOS and Linux';
@@ -37,7 +46,7 @@ function fakeAdapter(overrides = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }),
+    prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     branchHead: async () => HEAD,
     hasCi: async () => true,
@@ -96,9 +105,9 @@ function record(kind, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
-function reviewAndApproval() {
-  record('review', { pr: 7, commit: HEAD, verdict: 'CLEAN' });
-  record('approval', { pr: 7, commit: HEAD });
+function reviewAndApproval(commit = HEAD) {
+  record('review', { pr: 7, commit, verdict: 'CLEAN' });
+  record('approval', { pr: 7, commit });
 }
 
 // An agent's folder: a clone of the project's remote, outside ~/.wheelhouse.
@@ -129,7 +138,7 @@ test('the helper answers on a socket, and on a named pipe on Windows', async () 
     await as(home, () => withHelper(fakeAdapter(), async (client, helper) => {
       assert.equal((await client.health()).ok, true);
       const state = await client.prState({ project: 'o__p', number: 7 });
-      assert.deepEqual(state, { ok: true, result: { headSha: HEAD, mergeable: 'mergeable', state: 'open' } });
+      assert.deepEqual(state, { ok: true, result: { headSha: HEAD, mergeable: 'mergeable', state: 'open', body: BODY } });
       if (unix) assert.equal(fs.statSync(helper.address).mode & 0o077, 0);
       else assert.match(helper.address, /^\\\\\.\\pipe\\wheelhouse-test-[0-9a-f]{8}-helper$/);
     }));
@@ -469,8 +478,9 @@ test('the folder\'s origin is irrelevant: the push goes to the project\'s reposi
 test('the lock and the mirror reach a remote only through the connection\'s environment', async () => {
   const p = await project();
   try {
+    const head = await prOnHost(p.remote.url);
     await as(p.home, async () => {
-      reviewAndApproval();
+      reviewAndApproval(head);
       // The clones name an address that exists only through the environment's insteadOf.
       const standIn = path.join(os.tmpdir(), `wh-nowhere-${crypto.randomBytes(4).toString('hex')}.git`);
       await g(stateDir('o__p'), 'remote', 'set-url', 'origin', standIn);
@@ -478,13 +488,13 @@ test('the lock and the mirror reach a remote only through the connection\'s envi
       const env = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${p.remote.url}.insteadOf`, GIT_CONFIG_VALUE_0: standIn };
       await g(stateDir('o__p'), 'branch', 'feature');
 
-      await withHelper(fakeAdapter(), async (client) => {
+      await withHelper(fakeAdapter({ prState: openAt(head) }), async (client) => {
         const refused = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(refused.reasons, [LOCK_REASON, UNREADABLE], 'without the environment the lock cannot be read');
+        assert.deepEqual(refused.reasons, ['the state could not be brought up to date', LOCK_REASON, UNCHECKED, UNREADABLE],'without the environment neither the lock nor the mirror can be read');
       });
-      const adapter = fakeAdapter();
+      const adapter = fakeAdapter({ prState: openAt(head) });
       await withHelper(adapter, async (client) => {
-        assert.deepEqual(await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false }), { ok: true, merged: true, sha: HEAD, ...NONE_FOUND });
+        assert.deepEqual(await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false }), { ok: true, merged: true, sha: head, ...NONE_FOUND });
         assert.deepEqual(await client.push({ project: 'o__p', dir: stateDir('o__p'), refspec: 'feature' }), { ok: true });
       }, { envFor: async () => env });
       assert.match(await remoteHeads(p.remote.url), /refs\/heads\/feature /);
@@ -508,13 +518,14 @@ test('merge is refused with every gate reason when conditions fail', async () =>
         'CI has not passed on abc1234',
         'no CLEAN review of abc1234',
         'no approval of abc1234',
+        UNCHECKED,
         UNREADABLE,
       ]);
       assert.equal(answer.refused, answer.reasons.join('; '));
 
       // A review is always required; with the changed files unreadable, so is the approval.
       const lighter = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false, reviewRequired: false, approvalRequired: false, touchesGuardrails: false });
-      assert.deepEqual(lighter.reasons, [LOCK_REASON, 'CI has not passed on abc1234', 'no CLEAN review of abc1234', 'no approval of abc1234', UNREADABLE]);
+      assert.deepEqual(lighter.reasons, [LOCK_REASON, 'CI has not passed on abc1234', 'no CLEAN review of abc1234', 'no approval of abc1234', UNCHECKED, UNREADABLE]);
       const guardrails = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false, reviewRequired: false, approvalRequired: false, touchesGuardrails: 'no' });
       assert.ok(guardrails.reasons.includes('no CLEAN review of abc1234'));
       assert.ok(guardrails.reasons.includes('no approval of abc1234'));
@@ -526,13 +537,14 @@ test('merge is refused with every gate reason when conditions fail', async () =>
 test('merge pins the head commit when the gate allows it', async () => {
   const p = await project();
   try {
-    const adapter = fakeAdapter();
+    const head = await prOnHost(p.remote.url);
+    const adapter = fakeAdapter({ prState: openAt(head) });
     await as(p.home, async () => {
-      reviewAndApproval();
+      reviewAndApproval(head);
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(answer, { ok: true, merged: true, sha: HEAD, ...NONE_FOUND });
-        assert.deepEqual(adapter.merges, [{ number: 7, sha: HEAD }]);
+        assert.deepEqual(answer, { ok: true, merged: true, sha: head, ...NONE_FOUND });
+        assert.deepEqual(adapter.merges, [{ number: 7, sha: head }]);
       });
     });
   } finally { p.cleanup(); }
@@ -547,7 +559,7 @@ test('merge is refused while the STOP file exists, whatever the caller says', as
       fs.writeFileSync(stopFile(), '');
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(answer.reasons, ['STOP is on', UNREADABLE]);
+        assert.deepEqual(answer.reasons, ['STOP is on', UNCHECKED, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       });
     });
@@ -558,7 +570,6 @@ test('merge is refused when the pull request is not open, or the host declines',
   const p = await project();
   try {
     await as(p.home, async () => {
-      reviewAndApproval();
       const closed = fakeAdapter({ prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'merged' }) });
       await withHelper(closed, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
@@ -566,7 +577,9 @@ test('merge is refused when the pull request is not open, or the host declines',
         assert.match(answer.refused, /not open/);
         assert.deepEqual(closed.merges, []);
       });
-      const declines = fakeAdapter({ merge: async () => ({ merged: false, reason: 'the head moved' }) });
+      const head = await prOnHost(p.remote.url);
+      reviewAndApproval(head);
+      const declines = fakeAdapter({ prState: openAt(head), merge: async () => ({ merged: false, reason: 'the head moved' }) });
       await withHelper(declines, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.deepEqual(answer, { ok: false, refused: 'the head moved', ...NONE_FOUND });
@@ -590,7 +603,7 @@ test('merge is refused when this computer has lost the lock', async () => {
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.equal(answer.ok, false);
-        assert.deepEqual(answer.reasons, [LOCK_REASON, UNREADABLE]);
+        assert.deepEqual(answer.reasons, [LOCK_REASON, UNCHECKED, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       });
     });
@@ -702,7 +715,8 @@ test('only keys are hidden: a GitLab address in an answer is kept', async () => 
   assert.deepEqual(new Set(secretsOf(env)), new Set([FAKE_KEY, header, header.split(' ').pop(), `oauth2:${FAKE_KEY}`]));
   try {
     await as(home, () => withHelper(fakeAdapter({ openPr: async () => ({ number: 3, url: 'https://gitlab.example.com/o/p/-/merge_requests/3' }) }), async (client) => {
-      const opened = await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '' });
+      writeSessionProvenance('o__p', 'sess-1');
+      const opened = await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '', session: 'sess-1' });
       assert.deepEqual(opened, { ok: true, result: { number: 3, url: 'https://gitlab.example.com/o/p/-/merge_requests/3' } });
     }, { envFor: async () => env }));
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -831,11 +845,12 @@ test('a folder that takes too long to read is refused', async () => {
 test('pushes and merges at once share the lock clone without tripping over each other', async () => {
   const p = await project();
   try {
+    const head = await prOnHost(p.remote.url);
     await as(p.home, async () => {
-      reviewAndApproval();
+      reviewAndApproval(head);
       const dir = stateDir('o__p');
       for (const b of ['f1', 'f2', 'f3']) await g(dir, 'branch', b);
-      await withHelper(fakeAdapter(), async (client) => {
+      await withHelper(fakeAdapter({ prState: openAt(head) }), async (client) => {
         const answers = await Promise.all([
           ...['f1', 'f2', 'f3'].map((b) => client.push({ project: 'o__p', dir, refspec: b })),
           ...[1, 2, 3].map(() => client.merge({ project: 'o__p', number: 7, stop: false, bypass: false })),
@@ -883,8 +898,8 @@ test('a push that times out is refused, saying so', async () => {
 test('the mirror drops its per-request refs, keeps the base, and tidies after the answer, behind it in the queue', async () => {
   const p = await project();
   try {
+    let prHead = null;
     await as(p.home, async () => {
-      reviewAndApproval();
       const dir = stateDir('o__p');
       const mirror = path.join(dir, '..', 'mirror.git');
       await g(dir, 'branch', 'feature');
@@ -898,11 +913,14 @@ test('the mirror drops its per-request refs, keeps the base, and tidies after th
         for (let i = 0; i < 100 && !collected(from); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
         return collected(from);
       };
-      await withHelper(fakeAdapter(), async (client) => {
+      await withHelper(fakeAdapter({ prState: async () => openAt(prHead)() }), async (client) => {
         let mark = calls.length;
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true });
         assert.equal(await waitForGc(mark), true, 'git gc --auto ran after the push');
         assert.equal(await refs(), '', 'no per-request ref is left after a push');
+        // A pull request to merge, now the host has a default branch.
+        prHead = await prOnHost(p.remote.url);
+        reviewAndApproval(prHead);
 
         // The base is the ref the next fetch negotiates from; the rest are made per request.
         const head = await g(dir, 'rev-parse', 'feature');

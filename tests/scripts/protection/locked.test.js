@@ -50,6 +50,7 @@ function fakeRun(onCall) {
       list: fs.existsSync(path.join(stage, 'wheelhouse', 'locked-projects.json')) ? JSON.parse(fs.readFileSync(path.join(stage, 'wheelhouse', 'locked-projects.json'), 'utf8')) : null,
       installed: fs.existsSync(path.join(stage, 'wheelhouse', 'installed.json')) ? JSON.parse(fs.readFileSync(path.join(stage, 'wheelhouse', 'installed.json'), 'utf8')) : null,
       hasScripts: fs.existsSync(path.join(stage, 'wheelhouse', 'scripts', 'hooks', 'kit.js')),
+      hasLineage: ['manifest.json', 'register.json'].every((name) => fs.existsSync(path.join(stage, 'wheelhouse', 'lineage', name))),
     } : null;
     calls.push({ file, args, command, staged, stage });
     return { code: 0, stdout: '', stderr: '', ...(onCall ? onCall(calls.at(-1)) : {}) };
@@ -83,6 +84,11 @@ test('managedSettings runs each hook by exec form, so paths with spaces need no 
   assert.ok(!JSON.stringify(s.hooks).includes('CLAUDE_PLUGIN_ROOT'));
   // Reading the plugin's own list when none is given gives the same.
   assert.deepEqual(managedSettings({ dir, nodePath: node, address: ADDRESS, domains: [] }).hooks, s.hooks);
+  // The lineage hold is in the managed list, as a guard on every tool.
+  const own = managedSettings({ dir, nodePath: node, address: ADDRESS, domains: [] });
+  const hold = own.hooks.PreToolUse.filter((g) => g.matcher === '*').flatMap((g) => g.hooks)
+    .find((h) => h.args[0] === `${dir}/wheelhouse/scripts/hooks/lineage-hold.js`);
+  assert.equal(hold?.onFailure, 'block');
 });
 
 test('managedSettings denies only what is safe in every project, and switches bypass mode off', () => {
@@ -156,6 +162,7 @@ test('installLocked stages under the Wheelhouse home, and asks once with every p
       const version = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version;
       assert.deepEqual(call.staged.installed, { version, at: '2026-10-18T01:02:03.000Z', pluginRoot: fs.realpathSync(ROOT) });
       assert.ok(call.staged.hasScripts);
+      assert.ok(call.staged.hasLineage, 'the manifest and the register go with the scripts');
       // Every project registered on the computer contributes its domains.
       assert.deepEqual(call.staged.settings.sandbox.network.allowedDomains, ['registry.npmjs.org', 'a.example.com', 'b.example.com']);
       const managedNode = `${dir}/wheelhouse/bin/node`;
@@ -176,6 +183,9 @@ test('installLocked stages under the Wheelhouse home, and asks once with every p
       const copyNode = at(`cp ${quoted(NODE)} ${bin}`);
       const verify = at(`${bin} --version`);
       const swapScripts = at(`mv ${quoted(`${dir}/wheelhouse/scripts.new`)} ${quoted(`${dir}/wheelhouse/scripts`)}`);
+      const copyLineage = at(`cp -R ${quoted(path.join(call.stage, 'wheelhouse', 'lineage'))} ${quoted(`${dir}/wheelhouse/lineage.new`)}`);
+      const swapLineage = at(`mv ${quoted(`${dir}/wheelhouse/lineage.new`)} ${quoted(`${dir}/wheelhouse/lineage`)}`);
+      assert.ok(copyLineage < verify && swapScripts < swapLineage, 'the lineage folder is copied before the check and swapped in with the scripts');
       const copySettings = at(quoted(`${dir}/managed-settings.json`));
       const chown = at('chown -R root:wheel');
       const chmod = at('chmod -R go-w');
@@ -183,7 +193,7 @@ test('installLocked stages under the Wheelhouse home, and asks once with every p
       assert.ok(copyNode < verify && verify < swapScripts && swapScripts < copySettings && copySettings < chown && chown < chmod && chmod < cleanup, c);
       assert.ok(c.indexOf('cp -R', 0) < verify, 'scripts are copied before the check');
       const tail = c.slice(cleanup);
-      for (const n of ['scripts', 'bin']) {
+      for (const n of ['scripts', 'lineage', 'bin']) {
         const put = `[ -d ${quoted(`${dir}/wheelhouse/${n}.old`)} ] && [ ! -d ${quoted(`${dir}/wheelhouse/${n}`)} ] && mv ${quoted(`${dir}/wheelhouse/${n}.old`)} ${quoted(`${dir}/wheelhouse/${n}`)}`;
         assert.ok(tail.includes(put), `the old ${n} is put back on failure`);
         assert.ok(tail.indexOf(put) < tail.indexOf('rm -rf'), 'and before anything is removed');

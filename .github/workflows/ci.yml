@@ -1,6 +1,7 @@
 # .github/workflows/ci.yml
 # Runs the tests on Linux and Windows, and on macOS once a pull request is out of
-# draft or on main, and validates the plugin.
+# draft or on main, validates the plugin, and checks the lineage manifest against
+# fresh copies of the upstream skills.
 name: CI
 
 on:
@@ -46,3 +47,15 @@ jobs:
           node-version: 22
       - run: npm install --global @anthropic-ai/claude-code@2.1.278
       - run: claude plugin validate .
+
+  # Fetches each upstream shallow at the manifest's commit and checks the fingerprints, the
+  # register's anchors and carried text, and the marketplace's pins.
+  lineage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: node scripts/lineage/manifest.js verify

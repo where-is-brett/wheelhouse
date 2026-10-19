@@ -26,6 +26,7 @@ import { approvalLine, runbookLine } from '../../../scripts/state/card-lines.js'
 import { listEvents } from '../../../scripts/state/events.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { matchingBody } from '../../helpers/provenance.js';
 
 const NOW = new Date('2026-10-18T12:00:00.000Z');
 const MIN = 60 * 1000;
@@ -835,7 +836,8 @@ test('under STOP, a failing restore check is said even when the gate would other
     await as(s.home, async () => { click(3, { sha: s.c1.slice(0, 12) }); });
     await viaHelper(s, adapter, async (client) => {
       const tip = await openedRestore(s, client, s.c1);
-      adapter.prState = async () => ({ headSha: tip, headRef: restoreBranch(s.c1), baseRef: 'develop', mergeable: 'yes', state: 'open' });
+      // A body whose provenance matches, so only the restore check and STOP stand in the way.
+      adapter.prState = async () => ({ headSha: tip, headRef: restoreBranch(s.c1), baseRef: 'develop', mergeable: 'yes', state: 'open', body: matchingBody() });
       await as(s.home, async () => {
         record('approval', { pr: 7, commit: tip });
         record('review', { pr: 7, commit: tip, verdict: 'CLEAN' });

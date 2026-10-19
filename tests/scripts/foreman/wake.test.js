@@ -286,6 +286,16 @@ test('wake read lists every pull request ready to merge, so a merge held by an i
   const raised = await read([ev('merge-ready', 'm', 'mr', { head: 'a'.repeat(40) }, { pr: 6 })]);
   assert.equal(raised.match(/Next: act merge m/g).length, 1);
   assert.match(raised, /^- merge-ready m: /m);
+
+  // The director's click the gate waited for (R117): the ready pull request is offered from the queue.
+  const clicked = await read([
+    ev('approval', 'm', 'ev-ok', { pr: 6, head: 'a'.repeat(40) }, { pr: 6 }),
+    ev('ci-push', 'x', 'ev-ci', { pr: 7, branch: 'feature/x', sha: 'd'.repeat(40) }, { pr: 7 }),
+  ]);
+  assert.match(clicked, /^- approval m: the director approved pull request #6 at aaaaaaaaaaaa\. When it is ready to merge, the queue below lists it$/m);
+  assert.match(clicked, /^- ci-push x: the director clicked to push feature\/x at dddddddddddd, which changes a CI file, for pull request #7\. When it is ready to merge, the queue below lists it$/m);
+  assert.match(clicked, /^- merge m: pull request #6 at aaaaaaaaaaaa is ready to merge\. Next: act merge m$/m);
+  assert.match(clicked, /^- merge x: pull request #7 at bbbbbbbbbbbb is ready to merge\. Next: act merge x$/m);
 }));
 
 test('wake read falls back to the views kept on disk when the helper gives none, and says so', () => withHome(async (home) => {

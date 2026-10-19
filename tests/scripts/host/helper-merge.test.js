@@ -19,10 +19,16 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { matchingBody } from '../../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
+// The mirror can't read the pull request, so whether it is up to date is not known.
+const UNCHECKED = 'whether the branch is up to date could not be checked';
 
 function write(dir, files) {
   for (const [name, text] of Object.entries(files)) {
@@ -80,7 +86,7 @@ function fakeAdapter(head, overrides = {}) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open' }),
+    prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     ...overrides,
@@ -195,7 +201,8 @@ test('/merge refuses when the fetched head differs from the head the host report
       before: () => reviewed(other),
       async after(answer) {
         assert.equal(answer.ok, false);
-        assert.deepEqual(answer.reasons, ['no approval of fffffff', UNREADABLE]);
+        // Nor can it be told whether the head is up to date.
+        assert.deepEqual(answer.reasons, ['no approval of fffffff', UNCHECKED, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       },
     }]);
@@ -209,18 +216,26 @@ test('/merge treats unreadable changes or configuration as touching the guardrai
   try {
     for (const pr of [bad, missing]) {
       const adapter = fakeAdapter(pr.head);
+      // With no pull request ref, whether the head is up to date can't be told either.
+      const behind = pr === missing ? [UNCHECKED] : [];
       await merging(pr, adapter, [
         {
           before: () => reviewed(pr.head),
           async after(answer) {
             assert.equal(answer.ok, false);
-            assert.deepEqual(answer.reasons, [`no approval of ${pr.head.slice(0, 7)}`, UNREADABLE]);
+            assert.deepEqual(answer.reasons, [`no approval of ${pr.head.slice(0, 7)}`, ...behind, UNREADABLE]);
             assert.deepEqual([answer.guardrailPaths, answer.criticalAreas], [[], []]);
             assert.deepEqual(adapter.merges, []);
           },
         },
-        // With the director's approval the merge goes ahead.
-        { before: () => approved(pr.head), async after(answer) { assert.equal(answer.ok, true); } },
+        // With the director's approval the merge goes ahead, once the head can be read.
+        {
+          before: () => approved(pr.head),
+          async after(answer) {
+            if (pr === missing) assert.deepEqual(answer.reasons, [UNCHECKED, UNREADABLE]);
+            else assert.equal(answer.ok, true);
+          },
+        },
       ]);
     }
   } finally { bad.cleanup(); missing.cleanup(); }

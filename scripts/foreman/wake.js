@@ -471,6 +471,12 @@ function eventLine(e, ctx) {
     }
     case 'lift-incident': return said(`incident ${d.incident} is over`, 'Pull requests ready to merge are listed in the queue below');
     case 'incident-fix': return said(`pull request #${d.pr} is the fix for incident ${d.incident}`, 'When it is ready to merge, the queue below lists it');
+    // The click a merge waited for (ruling R117): the merge goes ahead from the queue.
+    case 'approval': return said(`the director approved pull request #${d.pr} at ${short(d.head)}`, 'When it is ready to merge, the queue below lists it');
+    case 'ci-push': return said(
+      `the director clicked to push ${d.branch} at ${short(d.sha)}, which changes a CI file, for pull request #${d.pr}`,
+      'When it is ready to merge, the queue below lists it',
+    );
     case 'report': return said('it has ended, and its report is written', `Next: act close ${work}`);
     case 'stuck': {
       const still = `no progress for ${Math.round((Number(d.still) || 0) / 60000)} minutes, at phase ${d.phase ?? 'unknown'}`;

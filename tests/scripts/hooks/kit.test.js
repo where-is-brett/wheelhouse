@@ -290,8 +290,9 @@ test('hooks.json names a script that exists for every hook', () => {
       SessionStart: [{ matcher: 'startup|resume|compact|clear|fork', hooks: [cmd('session-start')] }],
       UserPromptSubmit: [{ hooks: [cmd('stop-word'), cmd('context-gauge'), cmd('board-context')] }],
       PreToolUse: [
-        { matcher: '*', hooks: [{ ...cmd('stop-guard'), onFailure: 'block' }] },
+        { matcher: '*', hooks: [{ ...cmd('stop-guard'), onFailure: 'block' }, { ...cmd('lineage-hold'), onFailure: 'block' }] },
         { matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Bash|PowerShell|Monitor|WebFetch|ListMcpResourcesTool|ReadMcpResourceTool|mcp__.*', hooks: [{ ...cmd('tool-guard'), onFailure: 'block' }] },
+        { matcher: 'AskUserQuestion', hooks: [cmd('card-check')] },
       ],
       PostToolUse: [{ matcher: 'AskUserQuestion', hooks: [cmd('prompt-record')] }, { matcher: '*', hooks: [cmd('feature-status')] }],
       SubagentStop: [{ matcher: '^wheelhouse:(builder|reviewer)$', hooks: [cmd('report-check')] }, { hooks: [cmd('feature-status')] }],

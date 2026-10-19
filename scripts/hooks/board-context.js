@@ -5,11 +5,19 @@
 // and the briefing on the first prompt after a gap of `briefingGapHours`.
 //
 // In a project's main folder only: never in a feature worktree, never for the foreman, never
-// outside a Wheelhouse project. On each prompt it reads when the director last wrote, decides,
-// builds the addition, and only then records the prompt's time and, when it added a briefing, that
-// the briefing was given, which unusual use it raised and whether it showed the weekly lines. It informs: a failure, or a build past
-// WAIT_MS, adds nothing and lets the prompt through (the prompt's time is still kept). It only
-// reads, so STOP doesn't hold it.
+// outside a Wheelhouse project. It records each session's role from its first prompt (sessionRole),
+// which is how a foreman started without WHEELHOUSE_ROLE is known; that first prompt gets one line
+// saying so (FOREMAN_LINE), and nothing else. On each prompt it reads when the
+// director last wrote, decides, builds the addition, and only then records the prompt's time and,
+// when it added a briefing, that the briefing was given, which unusual use it raised and whether it
+// showed the weekly lines. It informs: a failure, or a build past WAIT_MS, adds nothing and lets
+// the prompt through (the prompt's time is still kept). It only reads the state, so STOP doesn't
+// hold it.
+//
+// When cards wait that no visit has handed out, it adds one line before whatever else it adds, so
+// the line is read as an instruction and never as the data to show: how many to ask, and that
+// `cli.js cards` gives them (cardsLine). Under STOP the line names the one Lift STOP card, the only
+// card `cli.js cards` gives then.
 //
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
@@ -24,8 +32,16 @@ import { briefingParts } from '../briefing/text.js';
 import { readSeen, markSeen } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
+import { KNOWN, SETTINGS } from '../settings/catalogue.js';
 import { sourcesText } from '../sources/check.js';
+import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
 import { readProfileViews } from '../profile/store.js';
+import { sessionRole, recordRole } from '../lib/role.js';
+import { existingCard } from '../cards/visit.js';
+import { questionProblem } from '../cards/compose.js';
+import { answerLine } from '../state/card-lines.js';
+import { stopState } from '../lib/stop.js';
+import { CARD } from '../lib/front-desk.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 
 export const WAIT_MS = 2000;
@@ -40,6 +56,11 @@ export const HEADINGS = {
 export const NOT_CHECKED = 'The sources haven\'t been checked yet.';
 export const NONE_CHANGED = 'No source changed at the last check.';
 const COMMAND = /^\/wheelhouse:(board|briefing|settings|sources)(?:[ \t]+(.*))?$/i;
+// The line for a session whose first prompt made it the foreman, which the session start, seeing no
+// prompt yet, named the front desk.
+export const FOREMAN_LINE = 'This session is the foreman, not the front desk. Follow wheelhouse:foreman and set wheelhouse:front-desk aside.';
+// The line that tells the front desk to ask the cards waiting, after the briefing.
+export const cardsLine = (n) => `Cards to ask this visit: ${n}. Run \`cli.js cards\` and ask them in one AskUserQuestion call, after the briefing.`;
 const TABS = ['director', 'build'];
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -102,6 +123,64 @@ function fitLines(text, limit) {
   return { text: text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, ''), cut: true };
 }
 
+const LABELS = [...Object.values(SETTINGS), KNOWN].map((setting) => setting.label);
+
+// The titles the director finds work by (a feature's or a pull request's), which stay as written.
+function titlesOf(model) {
+  const out = new Set();
+  const records = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
+  for (const item of [
+    ...records(model?.build?.features), ...records(model?.build?.pullRequests),
+    ...Object.values(isRecord(model?.director?.inProgress) ? model.director.inProgress : {}).flatMap(records),
+  ]) {
+    for (const title of [item.title, item.work]) if (typeof title === 'string' && title !== '') out.add(title);
+  }
+  return [...out];
+}
+
+// The words every text it adds goes through: the starter glossary with the project's over it, the
+// explanations setting, the concepts the director knows, and what stays as written: the settings'
+// names and the titles of the work. What can't be read gives the defaults.
+function wordsOf(project, settings, model) {
+  const view = attempt(() => localViews(project, ['glossary'])?.glossary);
+  return {
+    protect: [...LABELS, ...attempt(() => titlesOf(model), [])],
+    glossary: attempt(() => glossaryOf(isRecord(view) ? view : {}), attempt(() => glossaryOf({}), {})),
+    explanations: settings?.explanations?.value,
+    known: attempt(() => knownConcepts(settings), []),
+  };
+}
+
+// The text `make(limit)` gives, within `room` once it is in plain words. The words are longer than the
+// labels they replace and a "Terms:" line follows them, so the text is cut to a limit that leaves room
+// for both, and the line is never the part cut.
+function inPlainWords(make, room, words) {
+  let limit = room;
+  for (let tries = 0; tries < 4; tries += 1) {
+    const fitted = fitLines(make(limit), limit);
+    const plain = plainWords(fitted.text, words.glossary, words);
+    if (plain.text.length <= room) return { text: plain.text, cut: fitted.cut };
+    limit = Math.max(1, limit - (plain.text.length - room));
+  }
+  const fitted = fitLines(make(limit), limit);
+  return { text: fitLines(plainWords(fitted.text, words.glossary, words).text, room).text, cut: true };
+}
+
+// How many cards `cli.js cards` would hand out now, from the views on disk: the waiting cards no
+// visit has handed out, and the open questions from the build that no waiting card asks yet and
+// that the composer can make a card of, which it makes cards of first. At most one call's worth.
+// Under STOP, the one Lift STOP card.
+function cardsToAsk(project) {
+  if (stopState().on) return 1;
+  const views = localViews(project, ['waiting', 'questions']) ?? {};
+  const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
+  const fresh = waiting.filter((card) => card.asked === null || card.asked === undefined).length;
+  const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
+    .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null
+      && questionProblem(entry.question?.data) === null).length;
+  return Math.min(CARD.questions, fresh + questions);
+}
+
 // What `start` gives within `ms`, or null when it throws or is late.
 async function within(start, ms) {
   let timer;
@@ -116,16 +195,17 @@ async function within(start, ms) {
 }
 
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
-async function build(want, { cwd, at, client, load, command, since, weeklySince, briefingModel }) {
+async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
-  const room = CONTEXT_CHARS - HEADINGS[want].length - 2;
+  const room = CONTEXT_CHARS - HEADINGS[want].length - 2 - reserve;
   let body;
   let raise = [];
   let weeklyShown = false;
+  let make;
   if (want === 'board') {
-    body = renderBoard(model, { tab: command?.tab ?? settings?.boardTab?.value, limit: room });
+    make = (limit) => renderBoard(model, { tab: command?.tab ?? settings?.boardTab?.value, limit });
   } else if (want === 'settings') {
     body = isRecord(settings) ? settingsText(settings) : '';
     if (body === '') throw new Error('No settings');
@@ -142,7 +222,7 @@ async function build(want, { cwd, at, client, load, command, since, weeklySince,
     raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, Math.max(0, parts.shownWatch - weekly)) : [];
     weeklyShown = weekly > 0 && parts.shownWatch >= weekly;
   }
-  const fitted = fitLines(body, room);
+  const fitted = inPlainWords(make ?? (() => body), room, wordsOf(project, settings, model));
   // A briefing cut for length here may have lost what it raised, so none of it counts as told.
   return { text: `${HEADINGS[want]}\n\n${fitted.text}`, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut };
 }
@@ -155,27 +235,34 @@ export async function decide(input, deps = {}) {
       briefingModel = realBriefingModel, markRaised = realMarkRaised,
     } = deps;
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
-    if (env?.WHEELHOUSE_ROLE === 'foreman' || featureSlug(input.cwd) !== null) return undefined;
     const found = projectOf(input.cwd, { dir });
     if (!found) return undefined;
+    const role = sessionRole({ sessionId: input.session_id, env, prompt: input.prompt, cwd: input.cwd });
+    const first = attempt(() => recordRole(input.session_id, role), false);
+    // A foreman known only from its first prompt was pointed at the front desk by the session start.
+    if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
+    if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
     const { project } = found;
     const at = clockOf(now);
     const seen = readSeen(project, { now: at });
     const command = commandOf(input.prompt);
     const want = command?.name ?? (gapPassed(project, seen.promptAt, at) ? 'briefing' : null);
+    const count = attempt(() => cardsToAsk(project), 0);
+    const cards = count > 0 ? cardsLine(count) : null;
+    const reserve = cards === null ? 0 : cards.length + 2;
     const built = want
-      ? await within(() => build(want, { cwd: input.cwd, at, client, load, command, since: seen.briefedAt, weeklySince: seen.weeklyAt, briefingModel }), waitMs)
+      ? await within(() => build(want, { project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, weeklySince: seen.weeklyAt, briefingModel, reserve }), waitMs)
       : null;
     // The director did write, whatever could be shown. A command other than the briefing's
     // leaves the time as it was, so a briefing that was due still comes with the next prompt.
     if (!command || command.name === 'briefing') attempt(() => markSeen(project, { promptAt: at }));
-    if (!built) return undefined;
-    if (want === 'briefing') {
+    if (built && want === 'briefing') {
       // The weekly lines count as given only when the text showed them.
       attempt(() => markSeen(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}) }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
-    return answer.context('UserPromptSubmit', built.text);
+    const text = [cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');
+    return text === '' ? undefined : answer.context('UserPromptSubmit', text);
   } catch {
     return undefined;
   }

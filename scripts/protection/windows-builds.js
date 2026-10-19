@@ -123,6 +123,9 @@ const UNATTENDED_RISK = 'Builders on this computer will run their tests and buil
   + 'A builder writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, '
   + 'change Wheelhouse\'s own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and STOP still hold.';
 const GUARDED_SAYS = GUARDED_LINE;
+// Use Guarded on the Unattended card, in fewer words, so the card with all three options keeps
+// within the card's length (CARD.chars) beside the design's words on the risk.
+const GUARDED_SHORT = 'They run at low integrity, so they can\'t change files outside the project.';
 const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'A builder asks you before it runs a build command, as now.' };
 
 // The card that turns Unattended on. Use Guarded is offered, and recommended, only where this
@@ -135,8 +138,8 @@ export function UNATTENDED_CARD({ guardedReady } = {}) {
     risk: UNATTENDED_RISK,
     options: [
       KEEP_ASKING,
-      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Build commands run unattended on this computer until you turn it off. For as long as it lasts, a builder can do whatever your account can.' },
-      ...(offered ? [{ name: 'guarded', label: 'Use Guarded', says: GUARDED_SAYS }] : []),
+      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Unattended until you turn it off: a builder can do whatever your account can.' },
+      ...(offered ? [{ name: 'guarded', label: 'Use Guarded', says: GUARDED_SHORT }] : []),
     ],
     recommend: offered ? 'guarded' : 'keep-asking',
   };

@@ -20,24 +20,22 @@ import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
+import { PUT_OFF } from '../lib/front-desk.js';
 import { settingKey, UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
 const APPROVE = new RegExp(`Approve pull request #([1-9][0-9]*) at commit ${SHA12}`, 'g');
-const ID = '[a-z0-9-]{1,40}';
-const APPROVE_WORK = new RegExp(`Approve (${ID}) \\((quick|small|feature|bug) lane\\) as written, ${SHA12}(, and show it to me before it merges)?`, 'g');
-const ANSWER = /Answer question (q-[a-z0-9-]+-[0-9]+)(?![a-z0-9-])/g;
+const APPROVE_WORK = new RegExp(`Approve (${ID}) \\((${LANES}) lane\\) as written, ${SHA12}(, and show it to me before it merges)?`, 'g');
+const ANSWER = new RegExp(`Answer question (${QUESTION_ID})(?![a-z0-9-])`, 'g');
 const AMEND = new RegExp(`Change the approved (${ID}) to this, ${SHA12}`, 'g');
 const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`, 'g');
 const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
-// Labels that ask for more, or put the card off: never an answer.
-const NOT_AN_ANSWER = ['Explain more', 'Not now'];
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 
 function ciEntry(project, branch, sha12, now) {
@@ -81,10 +79,10 @@ function only(pattern, text) {
   return all.length === 1 ? all[0] : null;
 }
 
-// The labels a reply code can answer with. The build loop's own labels (an answer, Change it,
-// End it, Merge the fix) earn records from a click; their lines aren't set lines yet, so no reply
-// code is made for their cards. Turn on (dangerous) earns a record from a click alone, by design.
-export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it'];
+// The deciding labels a reply code can answer with. A reply to an answer card may also use any
+// of the question's own options (scripts/mod/reply.js), which earned checks against the question.
+// Turn on (dangerous) earns a record from a click alone, by design.
+export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix'];
 
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {
@@ -94,7 +92,7 @@ function held(project, kind) {
 // The record a click on an answer card earns: the question must be one the state
 // holds and the label one of its options.
 function answerOf(project, question, label) {
-  if (NOT_AN_ANSWER.includes(label)) return null;
+  if (PUT_OFF.includes(label)) return null;
   const m = only(ANSWER, question);
   if (!m || !question.includes(answerLine(m[1]))) return null;
   const asked = held(project, 'question').filter((e) => e.data?.id === m[1]).at(-1);
