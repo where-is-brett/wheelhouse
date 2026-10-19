@@ -36,14 +36,15 @@ export function isConfiguredBuildCommand(command, buildCommands) {
 
 // The level in force on `computer`. `views` are the project's state views; `locked` is whether
 // the project is Locked (lockedByPath); `guardedReady` is whether this computer's self-test passed.
-// The accepted value counts only when its event was written on this computer. Unattended counts
+// The accepted value counts only when its event was written on this computer and its latest
+// confirmation was signed by this computer's key, naming this computer. Unattended counts
 // only from a click on its own card, and never in a Locked project; Guarded only once the
 // self-test passes. A plain event back to Ask, newer than the accepted value, is in force at once.
 export function buildsLevel({ views, computer, locked, guardedReady }) {
   const key = settingKey(computer);
   const settings = views?.settings;
   const entry = settings && Object.hasOwn(settings, key) ? settings[key] : null;
-  if (!entry || entry.computer !== computer) return 'ask';
+  if (!entry || entry.computer !== computer || entry.confirmedOn !== computer) return 'ask';
   const unconfirmed = Array.isArray(views.unconfirmed) ? views.unconfirmed : [];
   if (unconfirmed.some((u) => u?.kind === 'setting' && u.key === key && u.data?.value === 'ask')) return 'ask';
   if (entry.value === 'unattended') {
@@ -87,15 +88,19 @@ export function isBuildQuestion(q) {
 
 // The director's grants of build commands to the feature `work` on `computer`, one for each
 // verified answer (views.questions counts only signed clicks) to a build-command question
-// (isBuildQuestion), made on this computer. Allow this time is for one
+// (isBuildQuestion), made on this computer: signed by its key and naming it (views.js keeps
+// no computer for an answer whose signer is another). Allow this time is for one
 // run (scope `run`) until its question id is in `used`, the waker's record of the run grants
 // it has given; anything but a list or a set there counts every run grant as used. Allow for
-// this feature lasts the feature's life. Either ends when the feature closes, or with a report
-// at or after the click, and nothing is granted to a feature the views don't hold. The commands
-// are the question's; featureAllowRules gives a rule only for those still configured.
+// this feature lasts the feature's life. Either ends when the feature closes, with a report
+// at or after the click, or with a click from before the feature's current life began (work
+// closed and queued again keeps its question ids and answers), and nothing is granted to a
+// feature the views don't hold. The commands are the question's; featureAllowRules gives a
+// rule only for those still configured.
 export function buildGrants({ views, work, used, computer }) {
-  const feature = isPlain(views?.features) && Object.hasOwn(views.features, work) ? views.features[work]?.data : null;
-  if (!isPlain(feature) || feature.step === 'closed' || typeof computer !== 'string') return [];
+  const life = isPlain(views?.features) && Object.hasOwn(views.features, work) ? views.features[work] : null;
+  const feature = isPlain(life) ? life.data : null;
+  if (!isPlain(feature) || feature.step === 'closed' || typeof computer !== 'string' || typeof life.began !== 'string') return [];
   const report = isPlain(views.reports) && Object.hasOwn(views.reports, work) ? views.reports[work] : null;
   const ran = used instanceof Set ? used : Array.isArray(used) ? new Set(used) : null;
   const questions = isPlain(views.questions) ? views.questions : {};
@@ -107,7 +112,7 @@ export function buildGrants({ views, work, used, computer }) {
     if (!isPlain(answer) || answer.computer !== computer || typeof answer.at !== 'string') continue;
     const scope = SCOPES.get(answer.label);
     if (scope === undefined) continue;
-    if (typeof report?.at === 'string' && report.at >= answer.at) continue;
+    if (answer.at < life.began || (typeof report?.at === 'string' && report.at >= answer.at)) continue;
     if (scope === 'run' && (ran === null || ran.has(questionId))) continue;
     grants.push({ questionId, commands: [...data.commands], scope });
   }

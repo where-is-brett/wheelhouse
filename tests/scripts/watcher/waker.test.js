@@ -584,6 +584,22 @@ test('allow this time gives the rule for one run only', () => withHome(async () 
   assert.deepEqual(JSON.parse(fs.readFileSync(grantsUsedFile(P), 'utf8')), { used: ['q-login-page-1'] });
 }));
 
+test('allow this time is used up by a run at every level', () => withHome(async () => {
+  checkout();
+  for (const [n, level] of ['unattended', 'guarded', 'ask'].entries()) {
+    const fake = fakeRun();
+    const grant = { ...runGrant, questionId: `q-login-page-${n + 10}` };
+    const w = waker(fake, { platform: 'win32', windowsBuilds: () => ({ level, grants: [grant], guardedCommand: null }) });
+    await w.startFeature({ work: `feature-${n}`, worktree: worktree() });
+    assert.ok(JSON.parse(fs.readFileSync(grantsUsedFile(P), 'utf8')).used.includes(grant.questionId), level);
+  }
+  // A grant used up while Unattended was on gives no rule once the level is back to Ask.
+  const fake = fakeRun();
+  await waker(fake, { platform: 'win32', windowsBuilds: () => ({ level: 'ask', grants: [{ ...runGrant, questionId: 'q-login-page-10' }], guardedCommand: null }) })
+    .startFeature({ work: 'feature-3', worktree: worktree() });
+  assert.deepEqual(allowedOf(fake.calls[0]), []);
+}));
+
 test('a record of used grants that can\'t be read counts every run grant as used', () => withHome(async () => {
   checkout();
   const fake = fakeRun();

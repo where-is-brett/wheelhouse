@@ -809,9 +809,9 @@ export function makeWaker({
       const used = readGrantsUsed(project);
       const given = grants.filter((g) => g.scope !== 'run' || (used !== null && !used.includes(g.questionId)));
       allowed = featureAllowRules(config, { platform, level, grants: given, guardedCommand });
-      if (level !== 'unattended' && level !== 'guarded') {
-        runs = given.filter((g) => g.scope === 'run' && typeof g.questionId === 'string').map((g) => g.questionId);
-      }
+      // Used up at every level: a grant given while Unattended or Guarded is on is spent with
+      // this run, so it is not there for a later run once the level goes back to Ask.
+      runs = given.filter((g) => g.scope === 'run' && typeof g.questionId === 'string').map((g) => g.questionId);
     } else {
       allowed = featureAllowRules(config, { platform });
     }

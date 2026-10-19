@@ -25,7 +25,7 @@ import {
 import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
-import { settingKey } from '../protection/windows-builds.js';
+import { settingKey, UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -164,9 +164,10 @@ export async function earned({ project, question, label, client, now, left, stop
     return found.length === 1 ? { made: confirmationFor(found[0]) } : { made: confirmationFor(inProfile[0]), profile: true };
   }
   if (label === 'Turn on (dangerous)') {
-    // The Unattended card for build commands on Windows: its line names one setting event, written
-    // on this computer for this computer, and the confirmation carries the line, so the level
-    // counts Unattended from this card alone.
+    // The Unattended card for build commands on Windows: it says the design's words on the risk,
+    // its line names one setting event, written on this computer for this computer, and the
+    // confirmation carries the line, so the level counts Unattended from this card alone.
+    if (!question.includes(UNATTENDED_CARD().risk)) return null;
     const computer = computerId();
     const found = held(project, 'setting').filter((e) => e.computer === computer && e.data?.key === settingKey(computer)
       && e.data?.value === 'unattended' && question.includes(unattendedBuildsLine(e.id, computer)));

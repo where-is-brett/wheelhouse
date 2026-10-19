@@ -449,7 +449,7 @@ async function start(ctx, work, rest) {
   };
   let text;
   try {
-    text = renderBrief({ fields, pluginRoot: ctx.pluginRoot, windowsBuilds: windowsBuildsOf(ctx, views) });
+    text = renderBrief({ fields, pluginRoot: ctx.pluginRoot, windowsBuilds: windowsBuildsOf(ctx, views, config) });
   } catch (error) {
     refuse(`The brief can't be written: ${oneLine(error.message, 200)}`);
   }
@@ -668,19 +668,22 @@ async function question(ctx, work, rest) {
 // --- Build commands on Windows (design section 12.2) ---
 
 // The level of build commands on this computer, in the terms renderBrief takes: null off
-// Windows, else `{ level, guardedCommand }`. Guarded needs this computer's self-test, so it is
-// never read here yet; anything that fails reads Ask.
-function windowsBuildsOf(ctx, views) {
+// Windows, else `{ level, guardedCommand, shape }`. Guarded needs this computer's self-test, so it
+// is never read here yet; anything that fails reads Ask. At watcher Shape 2 the waker gives a
+// feature session no allow rules (ruling 4), so the brief tells it to ask for a click in the
+// session itself, whatever the level.
+function windowsBuildsOf(ctx, views, config) {
   if (ctx.platform !== 'win32') return null;
+  const shape = config?.watcherShape === 2 ? 2 : 1;
   try {
-    return { level: buildsHere(ctx, views).level, guardedCommand: null };
+    return { level: buildsHere(ctx, views).level, guardedCommand: null, shape };
   } catch {
-    return { level: 'ask', guardedCommand: null };
+    return { level: 'ask', guardedCommand: null, shape };
   }
 }
 
-// Whether the project is Locked, and buildsLevel for this computer and project. A project whose
-// Locked state can't be read is Locked.
+// Whether the project is Locked, and buildsLevel for this computer and project. An isLocked that
+// throws reads as Locked; lockedByPath itself answers false (not Locked) when it can't tell.
 function buildsHere(ctx, views) {
   let locked = true;
   try {

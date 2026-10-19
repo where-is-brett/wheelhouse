@@ -327,12 +327,44 @@ test('a Windows brief at guarded gives the runner\'s exact command', () => {
   assert.ok(odd.includes('`run {{cli}} npm test`'));
 });
 
-test('the brief says nothing new at unattended or off Windows', () => {
+test('the brief says nothing new off Windows', () => {
   const off = render('small');
   assert.equal(windows(null), off);
   assert.equal(windows(undefined), off);
-  assert.equal(windows({ level: 'unattended', guardedCommand: null }), off);
-  assert.equal(windows({ level: 'unattended', guardedCommand: RUNNER }), off);
   assert.ok(!off.includes('build-command') && !off.includes('Build commands on Windows'));
   assert.doesNotMatch(off, /<!--/);
+});
+
+// Unattended can be turned off mid-feature, and the waker reads the level at every run.
+const REFUSED_WORDS = ASK_WORDS.replace('Before your first build command', 'If a build command is refused');
+
+test('a Windows brief at unattended says to ask for build commands if one is refused', () => {
+  for (const lane of LANES) {
+    for (const guardedCommand of [null, RUNNER]) {
+      const text = windows({ level: 'unattended', guardedCommand }, lane);
+      assert.ok(text.includes(REFUSED_WORDS), lane);
+      assert.equal(text.split('Build commands on Windows').length, 2, 'one paragraph');
+      assert.ok(!text.includes('Before your first build command'), lane);
+      assert.ok(!text.includes('Run every build command through'), lane);
+      assert.match(text, /On \*\*Not now\*\* the feature waits/);
+      assert.doesNotMatch(text, /\{\{|\}\}|<!--/);
+    }
+  }
+});
+
+const SESSION_WORDS = 'Here a build command is allowed only by a click in this session itself, so no card can grant one. Before your first build command, ask once with the `ask` below, naming the commands and telling the director to open this session (login-page) and click Allow there when it asks; then end your turn. When woken, run them, and never ask again for a command you have asked about.';
+
+test('a Windows brief at watcher Shape 2 says to ask the director once to click Allow in the session, at every level', () => {
+  for (const level of ['ask', 'unattended', 'guarded', 'bogus']) {
+    const text = windows({ level, guardedCommand: RUNNER, shape: 2 });
+    assert.ok(text.includes(SESSION_WORDS), level);
+    assert.ok(!text.includes('--kind build-command'), `${level}: no card grants here`);
+    assert.ok(!text.includes('the grant has ended: ask again'), `${level}: never asks again`);
+    assert.ok(!text.includes('Run every build command through'), level);
+    assert.equal(text.split('Build commands on Windows').length, 2, 'one paragraph');
+    assert.doesNotMatch(text, /\{\{|\}\}|<!--/);
+  }
+  // Shape 1, or no shape given, keeps the card.
+  assert.ok(windows({ level: 'ask', guardedCommand: null, shape: 1 }).includes(ASK_WORDS));
+  assert.ok(!windows({ level: 'ask', guardedCommand: null, shape: 1 }).includes(SESSION_WORDS));
 });

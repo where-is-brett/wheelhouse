@@ -98,7 +98,7 @@ function configClient(config = { v: 1, criticalAreas: [], ciFiles: [], mcpServer
 const BUILD = ['--kind', 'build-command', '--command', 'npm test', '--command', 'git status', '--why', 'The tests need running'];
 const packageJson = (tree, scripts) => write(path.join(tree, 'package.json'), JSON.stringify({ name: 'x', scripts }));
 
-test('ask --kind build-command writes the three fixed options, recommending once', async () => {
+test('ask --kind build-command writes its own three options, recommending once', async () => {
   const tree = feature();
   packageJson(tree, { test: 'node --test tests/' });
   const { client, calls } = configClient();

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -474,11 +474,11 @@ test('an accepted setting keeps its until and the accepted value it replaced', a
     const s4 = ev('setting', 7, { key: 'quiet', value: 'never confirmed' });
     const v1 = build([s1, conf(2, s1)]);
     assert.deepEqual(v1.settings.quiet, {
-      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, line: null,
+      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, confirmedOn: s1.computer, line: null,
     });
     const v2 = build([s1, conf(2, s1), s2, conf(4, s2)]);
     assert.deepEqual(v2.settings.quiet, {
-      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, line: null,
+      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, confirmedOn: s2.computer, line: null,
     });
     const v3 = build([s1, conf(2, s1), s2, conf(4, s2), s3, conf(6, s3), s4]);
     assert.deepEqual(v3.settings.quiet.before, { value: false });
@@ -495,6 +495,11 @@ test('an accepted setting carries its event\'s computer and the card line of its
     assert.equal(build([s1, withLine(2, 'The card\'s own line'), conf(3, s1)]).settings.quiet.line, null);
     assert.equal(build([s1, withLine(2, 7)]).settings.quiet.line, null);
     assert.equal(build([s1, conf(2, s1)]).settings.quiet.computer, s1.computer);
+    // The computer that signed the latest confirmation, only where it is the one the confirmation names.
+    assert.equal(build([s1, conf(2, s1)]).settings.quiet.confirmedOn, s1.computer);
+    const elsewhere = sign({ ...conf(2, s1), computer: 'deadbeef' });
+    assert.equal(build([s1, elsewhere]).settings.quiet.value, true, 'still accepted');
+    assert.equal(build([s1, elsewhere]).settings.quiet.confirmedOn, null);
     // A level carries neither.
     const l1 = ev('level', 1, { key: 'ui', value: 2 });
     assert.deepEqual(Object.keys(build([l1, conf(2, l1)]).levels.ui).sort(), ['at', 'id', 'key', 'value']);

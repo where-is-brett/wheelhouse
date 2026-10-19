@@ -713,7 +713,7 @@ const buildLine = (n) => ({
 function unattendedOn(views, computer) {
   views.settings = {
     [settingKey(computer)]: {
-      key: settingKey(computer), id: 'e-on', at: '2026-10-19T08:00:00.000Z', value: 'unattended', before: null, computer, line: unattendedBuildsLine('e-on', computer),
+      key: settingKey(computer), id: 'e-on', at: '2026-10-19T08:00:00.000Z', value: 'unattended', before: null, computer, confirmedOn: computer, line: unattendedBuildsLine('e-on', computer),
     },
   };
   views.unconfirmed = [];
@@ -739,21 +739,27 @@ async function buildScene(n, { yesterday = [] } = {}) {
 const onWindows = { platform: 'win32', isLocked: () => false };
 
 test('start tells a Windows session how to run its build commands at the level this computer reads', async () => {
+  const BEFORE = 'Before your first build command, ask for every one you will need at once';
+  const REFUSED = 'If a build command is refused, ask for every one you will need at once';
+  const SESSION = 'Here a build command is allowed only by a click in this session itself';
   const cases = [
-    ['off Windows', { platform: 'linux', isLocked: () => false }, (v) => v, false],
-    ['at Ask', onWindows, (v) => v, true],
-    ['at Unattended', onWindows, (v, c) => unattendedOn(v, c), false],
-    ['at Unattended in a Locked project', { platform: 'win32', isLocked: () => true }, (v, c) => unattendedOn(v, c), true],
-    ['when Locked can\'t be read', { platform: 'win32', isLocked: () => { throw new Error('no'); } }, (v, c) => unattendedOn(v, c), true],
+    ['off Windows', { platform: 'linux', isLocked: () => false }, (v) => v, null],
+    ['at Ask', onWindows, (v) => v, BEFORE],
+    ['at Unattended', onWindows, (v, c) => unattendedOn(v, c), REFUSED],
+    ['at Unattended in a Locked project', { platform: 'win32', isLocked: () => true }, (v, c) => unattendedOn(v, c), BEFORE],
+    ['when Locked can\'t be read', { platform: 'win32', isLocked: () => { throw new Error('no'); } }, (v, c) => unattendedOn(v, c), BEFORE],
+    ['at watcher Shape 2', onWindows, (v) => v, SESSION, config({ watcherShape: 2 })],
+    ['at watcher Shape 2 at Unattended', onWindows, (v, c) => unattendedOn(v, c), SESSION, config({ watcherShape: 2 })],
+    ['at watcher Shape 2 off Windows', { platform: 'linux', isLocked: () => false }, (v) => v, null, config({ watcherShape: 2 })],
   ];
-  for (const [name, deps, setUp, asks] of cases) {
+  for (const [name, deps, setUp, words, cfg] of cases) {
     await withHome(async () => {
       const checkout = await project({ git: true });
-      const fake = fakeClient({ views: setUp(startViews(), computerId()) });
+      const fake = fakeClient({ views: setUp(startViews(), computerId()), ...(cfg ? { cfg } : {}) });
       const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, ...deps });
       assert.equal(r.code, 0, `${name}: ${r.err}`);
       const text = fs.readFileSync(featurePaths(path.join(checkout, '.claude', 'worktrees', 'add-export')).brief, 'utf8');
-      assert.equal(text.includes('Before your first build command, ask for every one you will need at once'), asks, name);
+      for (const w of [BEFORE, REFUSED, SESSION]) assert.equal(text.includes(w), w === words, `${name}: ${w}`);
       assert.ok(!text.includes('Run every build command through'), name);
     });
   }

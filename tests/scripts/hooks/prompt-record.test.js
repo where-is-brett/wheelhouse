@@ -9,7 +9,7 @@ import { makeEvent, eventPath, dataHash, confirmationFor } from '../../../script
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
-import { settingKey } from '../../../scripts/protection/windows-builds.js';
+import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -453,7 +453,7 @@ test('Turn on (dangerous) on the Unattended card records a confirmation carrying
     keepEvent(on);
     const line = unattendedBuildsLine(on.id, me);
     const c = fake();
-    await decide(input({ [`${line}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    await decide(input({ [`${UNATTENDED_CARD().risk}\n${line}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
     assert.deepEqual(kinds(c), ['confirmation']);
     const [rec] = c.calls.record;
     assert.deepEqual(rec.event.data, { ...confirmationFor(on).data, line });
@@ -491,6 +491,24 @@ test('Turn on (dangerous) records nothing without the line, for another computer
     assert.equal(c.calls.record.length, 0);
     assert.equal(c.calls.profileRecord.length, 0);
     assert.equal(c.calls.write.length, 6);
+  });
+});
+
+test('Turn on (dangerous) records nothing from a card without the design\'s words on the risk', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    const line = unattendedBuildsLine(on.id, me);
+    const c = fake();
+    await decide(input({ [`Let builders run their tests.\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    const cut = UNATTENDED_CARD().risk.slice(0, -40);
+    await decide(input({ [`${cut}\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 2);
+    // With them, as the foreman's card writes them, it confirms.
+    await decide(input({ [`What this is: ${UNATTENDED_CARD().what} ${UNATTENDED_CARD().risk}\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(c.calls.record.map((r) => r.event.kind), ['confirmation']);
   });
 });
 

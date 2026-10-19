@@ -8,6 +8,9 @@ import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
+// The computer whose key signed a verified record, when that is the computer the record names;
+// otherwise null. A record signed by one computer that names another was made on neither.
+const signedOn = (e) => (typeof e?.computer === 'string' && e.sig?.computer === e.computer ? e.computer : null);
 
 // The latest event per key, in the sorted order the caller supplies.
 function latestPerKey(events, keyOf) {
@@ -88,13 +91,25 @@ function buildLoopViews(sorted, enrolled) {
     work[id] = { work: { key: id, ...mark(w) }, since, approved: approval !== null, ...(approval ? { approval } : {}) };
   }
 
-  const features = latestPerKey(sorted.filter((e) => e.kind === 'feature'), (e) => e.data?.work);
+  const featureEvents = sorted.filter((e) => e.kind === 'feature');
+  const features = latestPerKey(featureEvents, (e) => e.data?.work);
+  // When each feature's current life began: its first event after its latest close. Work
+  // closed and queued again starts a new life, and what held for the one before ends with it.
+  const lives = {};
+  for (const e of featureEvents) {
+    const id = e.data?.work;
+    if (!isPlainKey(id)) continue;
+    if (lives[id] === undefined || lives[id].closed) lives[id] = { began: e.at, closed: false };
+    if (e.data.step === 'closed') lives[id].closed = true;
+  }
+  for (const [id, f] of Object.entries(features)) f.began = lives[id].began;
   // The latest report for each work: how its feature ended (merged, closed or blocked).
   const reports = latestPerKey(sorted.filter((e) => e.kind === 'report'), (e) => e.data?.work);
 
   // An answer counts for the question as it was shown: it names the hash of the question's data, and
   // one question recorded again with other words or options needs a fresh answer. It keeps the
-  // computer the click was made on, where a build-command grant holds.
+  // computer the click was made on, where a build-command grant holds: the computer that signed
+  // it, or null when that isn't the computer the answer names.
   const questions = {};
   for (const e of sorted) {
     if (e.kind === 'question' && isPlainKey(e.data?.id)) questions[e.data.id] = { question: { key: e.data.id, ...mark(e) }, answer: null };
@@ -103,7 +118,7 @@ function buildLoopViews(sorted, enrolled) {
     const q = questions[a.data.questionId];
     if (!q || typeof a.data.label !== 'string' || a.data.questionHash !== dataHash(q.question.data)) continue;
     if (Array.isArray(q.question.data.options) && q.question.data.options.some((o) => o?.label === a.data.label)) {
-      q.answer = { label: a.data.label, at: a.at, computer: a.computer };
+      q.answer = { label: a.data.label, at: a.at, computer: signedOn(a) };
     }
   }
 
@@ -185,10 +200,14 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
         const prior = out[e.data.key];
         if (typeof e.data.until === 'string') entry.until = e.data.until;
         entry.before = prior ? { value: prior.value, ...(prior.until === undefined ? {} : { until: prior.until }) } : null;
-        // The computer its event was written on, and the card line its latest confirmation
-        // carries, if any: build commands on Windows count Unattended only from its own line.
-        const line = lastConfirmation.get(e.id).data.line;
+        // The computer its event was written on, the computer that signed its latest confirmation
+        // (null when that isn't the computer the confirmation names), and the card line that
+        // confirmation carries, if any: build commands on Windows count a level only where the
+        // click was made, and Unattended only from its own line.
+        const last = lastConfirmation.get(e.id);
+        const line = last.data.line;
         entry.computer = e.computer;
+        entry.confirmedOn = signedOn(last);
         entry.line = typeof line === 'string' ? line : null;
       }
       out[e.data.key] = entry;

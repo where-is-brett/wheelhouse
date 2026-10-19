@@ -8,7 +8,7 @@ import {
 import { unattendedBuildsLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, confirmationFor, dataHash } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { makeSigningKey, enrol, readEnrolled, sign, verify } from '../../../scripts/state/signing.js';
 import { computerId } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -38,6 +38,24 @@ const confirm = (n, target, line) => {
   const { kind, data } = confirmationFor(target);
   return makeEvent({ kind, data: line === undefined ? data : { ...data, line }, now: at(n) });
 };
+// A second Windows computer, enrolled here with its own key. `as(fn)` runs fn with its home in
+// force, so what fn signs is signed with its key; `forge(event, computer)` is that event re-signed
+// with its key while naming `computer`.
+function secondComputer() {
+  const mine = process.env.WHEELHOUSE_HOME;
+  const theirs = path.join(tempFolder('wh-winbuilds-b-'), 'home');
+  const as = (fn) => {
+    process.env.WHEELHOUSE_HOME = theirs;
+    try {
+      return fn();
+    } finally {
+      process.env.WHEELHOUSE_HOME = mine;
+    }
+  };
+  const { computer, publicKey } = as(() => makeSigningKey());
+  enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+  return { computer, as, forge: (event, named) => as(() => sign({ ...event, computer: named })) };
+}
 const views = (events) => buildViews(events, readEnrolled(), { now: () => new Date('2026-10-19T09:00:00.000Z') });
 const level = (events, computer, extra = {}) => buildsLevel({ views: views(events), computer, locked: false, guardedReady: true, ...extra });
 
@@ -111,6 +129,35 @@ test('a level set on another computer reads as ask here', () => {
     assert.equal(level([forged, confirm(4, forged, unattendedBuildsLine(forged.id, me))], me), 'ask');
     const guarded = setting(3, me, 'guarded', { from: OTHER });
     assert.equal(level([guarded, confirm(4, guarded)], me), 'ask');
+  });
+});
+
+test('a confirmation signed by another computer\'s key reads as ask here, whatever computer it names', () => {
+  withHome((me) => {
+    const b = secondComputer();
+    assert.notEqual(b.computer, me);
+    // A plain setting naming this computer: anything pushing to the state branch can write one.
+    const on = setting(1, me, 'unattended');
+    const line = unattendedBuildsLine(on.id, me);
+    assert.equal(level([on, confirm(2, on, line)], me), 'unattended', 'this computer\'s own click');
+    // The second computer's key, naming this computer: a valid signature, but not this computer's.
+    const named = b.forge(confirm(2, on, line), me);
+    assert.equal(named.sig.computer, b.computer);
+    assert.equal(verify(named, readEnrolled()), true, 'the signature checks');
+    assert.equal(views([on, named]).settings[settingKey(me)].confirmedOn, null);
+    assert.equal(level([on, named], me), 'ask');
+    // The second computer's key, naming itself.
+    const own = b.as(() => confirm(2, on, line));
+    assert.equal(views([on, own]).settings[settingKey(me)].confirmedOn, b.computer);
+    assert.equal(level([on, own], me), 'ask');
+    assert.deepEqual(buildsShown({ views: views([on, named]), computer: me, locked: true }), { level: 'ask', lockedUnattended: false });
+    // Guarded the same.
+    const g = setting(3, me, 'guarded');
+    assert.equal(level([g, confirm(4, g)], me), 'guarded');
+    assert.equal(level([g, b.forge(confirm(4, g), me)], me), 'ask');
+    assert.equal(level([g, b.as(() => confirm(4, g))], me), 'ask');
+    // The latest confirmation is the one read: the other computer's, after this one's, gives ask.
+    assert.equal(level([on, confirm(2, on, line), b.forge(confirm(5, on, line), me)], me), 'ask');
   });
 });
 
@@ -256,6 +303,34 @@ test('allow for this feature lasts until the feature reports or closes', () => {
   });
 });
 
+test('allow for this feature ends when the work closes and is queued again, with no report after the click', () => {
+  withHome(() => {
+    const q = asked(2, 'q-login-page-1', ['npm run build']);
+    const life = [building(1), q, clicked(3, q, BUILD_QUESTION_LABELS.feature)];
+    // Closed with a report matching the one before it, so act close wrote none, then started afresh.
+    const closed = makeEvent({ kind: 'feature', data: { work: WORK, step: 'closed' }, now: at(4) });
+    const again = makeEvent({ kind: 'feature', data: { work: WORK, step: 'started' }, now: at(6) });
+    const v = views([...life, closed, again]);
+    assert.equal(v.features[WORK].began, T(6), 'the current life began when it started again');
+    assert.equal(v.questions['q-login-page-1'].answer.label, BUILD_QUESTION_LABELS.feature, 'the answer is still in the views');
+    assert.deepEqual(grantsOf([...life, closed, again]), []);
+    assert.deepEqual(grantsOf([...life, closed, again, building(7)]), [], 'nor once it builds');
+    // Allow this time from the life before is not this life's either.
+    const once = asked(2, 'q-login-page-2', ['npm test']);
+    assert.deepEqual(grantsOf([building(1), once, clicked(3, once, BUILD_QUESTION_LABELS.once), closed, again]), []);
+    // A click in the new life grants.
+    const q2 = asked(7, 'q-login-page-3', ['npm test']);
+    assert.deepEqual(grantsOf([...life, closed, again, q2, clicked(8, q2, BUILD_QUESTION_LABELS.feature)]),
+      [{ questionId: 'q-login-page-3', commands: ['npm test'], scope: 'feature' }]);
+    // A feature that never closed began with its first event.
+    assert.equal(views(life).features[WORK].began, T(1));
+    // Views with no time the feature began grant nothing.
+    const bare = views(life);
+    delete bare.features[WORK].began;
+    assert.deepEqual(buildGrants({ views: bare, work: WORK, used: [], computer: computerId() }), []);
+  });
+});
+
 test('an unsigned answer grants nothing', () => {
   withHome(() => {
     const q = asked(2, 'q-login-page-1', ['npm test']);
@@ -309,5 +384,23 @@ test('a grant holds only on the computer where the click was made', () => {
     assert.equal(grantsOf(events).length, 1);
     assert.deepEqual(grantsOf(events, { computer: OTHER }), []);
     assert.deepEqual(grantsOf(events, { computer: undefined }), []);
+  });
+});
+
+test('an answer signed by another computer\'s key grants nothing here, whatever computer it names', () => {
+  withHome((me) => {
+    const b = secondComputer();
+    const q = asked(2, 'q-login-page-1', ['npm test']);
+    for (const label of [BUILD_QUESTION_LABELS.once, BUILD_QUESTION_LABELS.feature]) {
+      const named = b.forge(clicked(3, q, label), me);
+      assert.equal(verify(named, readEnrolled()), true, 'the signature checks');
+      const events = [building(1), q, named];
+      assert.equal(views(events).questions['q-login-page-1'].answer.computer, null, label);
+      assert.deepEqual(grantsOf(events), [], label);
+      // Signed and named by the second computer: its grant, not this one's.
+      const own = [building(1), q, b.as(() => clicked(3, q, label))];
+      assert.equal(views(own).questions['q-login-page-1'].answer.computer, b.computer);
+      assert.deepEqual(grantsOf(own), [], label);
+    }
   });
 });
