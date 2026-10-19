@@ -7,7 +7,8 @@ import path from 'node:path';
 import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE } from '../../../scripts/hooks/session-start.js';
+import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE, FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
+import { recordRole } from '../../../scripts/lib/role.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
 
@@ -476,5 +477,32 @@ test('the session start leaves the watcher alone in Shape 2, and fails open when
     f.client.config = async () => shapeConfig(1);
     await run(f);
     assert.equal(watcherStarts(f).length, 0);
+  });
+});
+
+test('in the project\'s main folder the reload names the front desk\'s playbook, after STOP and damaged state', async () => {
+  await withHome(async () => {
+    assert.equal(FRONT_DESK_LINE, 'This is the front desk. Follow wheelhouse:front-desk.');
+    const lines = text(await run(fake(), { env: {} })).split('\n');
+    assert.equal(lines.filter((l) => l === FRONT_DESK_LINE).length, 1);
+    const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read'] } });
+    const stopped = text(await run(f, { env: {}, stopState: () => ({ on: true, by: 'prompt', at: 'now' }) })).split('\n');
+    assert.deepEqual(stopped.slice(0, 4), ['STOP is on (set by prompt at now)', 'Damaged state:', '- events/bad.json could not be read', FRONT_DESK_LINE]);
+  });
+});
+
+test('a feature worktree and the foreman are not pointed at the front desk\'s playbook', async () => {
+  await withHome(async (home) => {
+    const tree = path.join(home, 'tree');
+    const gitdir = path.join(home, 'main', '.git', 'worktrees', 'tree');
+    fs.mkdirSync(tree, { recursive: true });
+    fs.mkdirSync(gitdir, { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+    fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree })), /front desk/);
+    assert.doesNotMatch(text(await run(fake(), { env: { WHEELHOUSE_ROLE: 'foreman' } })), /front desk/);
+    // A foreman known from its first prompt, as the board-context hook recorded it, after a compaction.
+    recordRole('s-foreman', 'foreman');
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { session_id: 's-foreman' })), /front desk/);
   });
 });

@@ -11,6 +11,7 @@ import { receiverPort } from '../telemetry/main.js';
 import { recordSession } from '../usage/store.js';
 import { weeklyDue } from '../jobs/weekly.js';
 import { takeStartLock } from './start-lock.js';
+import { sessionRole } from './role.js';
 import { usageDir, wheelhouseHome } from './paths.js';
 
 export const BACKGROUND_MS = 1000;
@@ -50,8 +51,8 @@ function within(ms, promise, fallback) {
 
 function recordPart({ session, project, cwd, env, now }) {
   try {
-    const feature = env?.WHEELHOUSE_ROLE === 'foreman' ? null : featureSlug(cwd);
-    const role = env?.WHEELHOUSE_ROLE === 'foreman' ? 'foreman' : feature ? 'feature' : 'front-desk';
+    const role = sessionRole({ sessionId: session, env, cwd });
+    const feature = role === 'feature' ? featureSlug(cwd) : null;
     recordSession({ session, project, role, ...(feature ? { work: feature } : {}), at: now() });
   } catch { /* a session that can't be recorded is still a session */ }
 }

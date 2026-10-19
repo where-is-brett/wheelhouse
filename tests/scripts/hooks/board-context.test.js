@@ -6,7 +6,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, cardsLine } from '../../../scripts/hooks/board-context.js';
+import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
+import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { readSeen, markSeen } from '../../../scripts/briefing/seen.js';
 import { wasRaised } from '../../../scripts/usage/figures.js';
@@ -20,6 +22,9 @@ const HOOK = fileURLToPath(new URL('../../../scripts/hooks/board-context.js', im
 const at = (iso) => () => new Date(iso);
 const NOW = '2026-10-19T12:00:00.000Z';
 
+// A waiting card a visit has already handed out, as the views mark it: no "cards to ask" line for it.
+const ASKED = { at: '2026-10-18T09:05:00.000Z', label: null };
+
 const put = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
@@ -31,7 +36,7 @@ function register(home) {
   put(path.join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   writeProject(P, { folder: repo, remoteUrl: 'https://example.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {} });
   const views = path.join(wheelhouseHome(), 'projects', P, 'views');
-  put(path.join(views, 'waiting.json'), [{ id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Approve the sign-in page, see https://example.com/sign-in' } }]);
+  put(path.join(views, 'waiting.json'), [{ id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Approve the sign-in page, see https://example.com/sign-in' }, asked: ASKED }]);
   put(path.join(sourcesDir(), 'report.json'), { at: '2026-10-18T00:00:00.000Z', sources: [{ id: 'models', ok: true, changed: true }], newModels: [], newLinks: [], retiring: [], releases: [], advisories: [] });
   put(path.join(sourcesDir(), 'diff', 'models.txt'), '+ A new model is listed');
   return repo;
@@ -54,7 +59,7 @@ function setProfile(settings) {
 
 // A helper client that is up and holds no lock, so nothing waits on a real helper.
 const client = { health: async () => ({ ok: true }), lock: { read: async () => ({ ok: true, result: null }) } };
-const prompt = (cwd, text) => ({ cwd, session_id: 's1', hook_event_name: 'UserPromptSubmit', prompt: text });
+const prompt = (cwd, text, session = 's1') => ({ cwd, session_id: session, hook_event_name: 'UserPromptSubmit', prompt: text });
 const contextOf = (out) => out?.hookSpecificOutput?.additionalContext;
 const run = (repo, text, now, extra = {}) => decide(prompt(repo, text), { now: at(now), env: {}, client, ...extra });
 
@@ -102,7 +107,7 @@ test('the gap follows the briefingGapHours setting', async () => {
 test('the briefing keeps to the words its setting gives', async () => {
   await withProject(async ({ repo }) => {
     const views = path.join(wheelhouseHome(), 'projects', P, 'views');
-    put(path.join(views, 'waiting.json'), Array.from({ length: 40 }, (_, i) => ({ id: `c${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Question number ${i} about the page` } })));
+    put(path.join(views, 'waiting.json'), Array.from({ length: 40 }, (_, i) => ({ id: `c${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Question number ${i} about the page` }, asked: ASKED })));
     setProfile({ briefing: 'short' });
     const text = contextOf(await run(repo, 'Hello', NOW)).slice(HEADINGS.briefing.length);
     assert.ok(text.split(/\s+/).filter(Boolean).length <= 80, text);
@@ -221,7 +226,7 @@ test('a command with more lines after it is no command', async () => {
 });
 
 const LABELS = "The PR's CI is red on slice 2";
-const waitingOn = (title) => put(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'), [{ id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title } }]);
+const waitingOn = (title) => put(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'), [{ id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title }, asked: ASKED }]);
 
 test('the board and the briefing come through the glossary', async () => {
   await withProject(async ({ repo }) => {
@@ -282,7 +287,7 @@ test('the project\'s glossary is used, and the Terms line survives a long board'
     waitingOn(LABELS);
     assert.match(contextOf(await run(repo, '/wheelhouse:board', NOW)), /The proposed change's robot inspector is red on piece 2/);
 
-    put(path.join(views, 'waiting.json'), Array.from({ length: 200 }, (_, i) => ({ id: `c${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Question ${i}: ${LABELS}` } })));
+    put(path.join(views, 'waiting.json'), Array.from({ length: 200 }, (_, i) => ({ id: `c${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Question ${i}: ${LABELS}` }, asked: ASKED })));
     setProfile({ explanations: 'some-terms' });
     const long = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.ok(long.length <= CONTEXT_CHARS, long.length);
@@ -294,8 +299,9 @@ test('the project\'s glossary is used, and the Terms line survives a long board'
 test('a feature worktree and the foreman get nothing', async () => {
   await withProject(async ({ home, repo }) => {
     const tree = featureWorktree(home, repo);
-    for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await run(tree, text, NOW), undefined, text);
-    for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await run(repo, text, NOW, { env: { WHEELHOUSE_ROLE: 'foreman' } }), undefined, text);
+    const inSession = (cwd, text, session, extra = {}) => decide(prompt(cwd, text, session), { now: at(NOW), env: {}, client, ...extra });
+    for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await inSession(tree, text, 's-feature'), undefined, text);
+    for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await inSession(repo, text, 's-foreman', { env: { WHEELHOUSE_ROLE: 'foreman' } }), undefined, text);
     assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: null, briefedAt: null });
     // Outside any Wheelhouse project, nothing either.
     assert.equal(await run(tempFolder('wh-elsewhere-'), '/wheelhouse:board', NOW), undefined);
@@ -379,4 +385,58 @@ test('each command asks only for what the hook added', () => {
     assert.match(text, /as (?:it is|they are), with nothing added/, name);
     assert.match(text, /couldn't be read/, name);
   }
+});
+
+// The waiting view with `n` cards no visit has handed out yet (`asked` null, as the views write it).
+const unasked = (n) => Array.from({ length: n }, (_, i) => ({ id: `u${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Card ${i}` }, asked: null }));
+const viewFile = (name) => path.join(wheelhouseHome(), 'projects', P, 'views', `${name}.json`);
+
+test('cards no visit has asked bring the "cards to ask" line, after the briefing; asked cards bring none', async () => {
+  await withProject(async ({ repo }) => {
+    assert.equal(cardsLine(2), 'Cards to ask this visit: 2. Run `cli.js cards` and ask them in one AskUserQuestion call, after the briefing.');
+    put(viewFile('waiting'), [...unasked(2), { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }]);
+    // With the briefing: the briefing first, the line after it, outside the data to show.
+    const briefed = contextOf(await run(repo, 'Hello', NOW));
+    assert.ok(briefed.startsWith(`${HEADINGS.briefing}\n\n`), briefed);
+    assert.ok(briefed.endsWith(`\n\n${cardsLine(2)}`), briefed);
+    assert.ok(briefed.length <= CONTEXT_CHARS);
+    // Without a briefing, the line alone.
+    assert.equal(contextOf(await run(repo, 'And another thing', '2026-10-19T12:10:00.000Z')), cardsLine(2));
+    // Once a visit has handed them out, nothing.
+    put(viewFile('waiting'), unasked(2).map((c) => ({ ...c, asked: ASKED })));
+    assert.equal(await run(repo, 'And then?', '2026-10-19T12:20:00.000Z'), undefined);
+  });
+});
+
+test('the count is at most one call\'s worth, and counts a question from the build that no card asks yet', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    put(viewFile('waiting'), unasked(6));
+    assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(4));
+    put(viewFile('waiting'), [{ id: 'a1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Answer', line: 'Answer question q-export-1' }, asked: ASKED }]);
+    put(viewFile('questions'), {
+      'q-export-1': { question: { data: { id: 'q-export-1' } } },
+      'q-search-2': { question: { data: { id: 'q-search-2' } } },
+      'q-done-3': { question: { data: { id: 'q-done-3' } }, answer: { data: { label: 'Yes' } } },
+    });
+    assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(1));
+    // A board command shows the board, then the line.
+    const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
+    assert.ok(board.startsWith(HEADINGS.board) && board.endsWith(`\n\n${cardsLine(1)}`), board);
+  });
+});
+
+test('the role comes from the session\'s first prompt and is kept: the wake line first makes the foreman, later changes nothing', async () => {
+  await withProject(async ({ repo }) => {
+    put(viewFile('waiting'), unasked(1));
+    const send = (text, session, now = NOW) => decide(prompt(repo, text, session), { now: at(now), env: {}, client });
+    // A session whose first prompt is the foreman's wake line is the foreman: nothing is added, then or later.
+    assert.equal(await send(`${FOREMAN_PROMPT_LEAD} handle wake-1.json`, 's-foreman'), undefined);
+    assert.equal(await send('/wheelhouse:board', 's-foreman'), undefined);
+    assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-foreman'), 'utf8')), { role: 'foreman' });
+    // The front desk stays the front desk when a later prompt begins with those words.
+    assert.ok(contextOf(await send('Hello', 's-desk')).length > 0);
+    assert.equal(contextOf(await send(`${FOREMAN_PROMPT_LEAD} handle wake-1.json`, 's-desk', '2026-10-19T12:10:00.000Z')), cardsLine(1));
+    assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-desk'), 'utf8')), { role: 'front-desk' });
+  });
 });

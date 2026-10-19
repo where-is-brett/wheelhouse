@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startHelper } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
-import { decide as boardContext, HEADINGS } from '../../scripts/hooks/board-context.js';
+import { decide as boardContext, HEADINGS, cardsLine } from '../../scripts/hooks/board-context.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
 import { pendingDir } from '../../scripts/hooks/pending.js';
 import { runBridge, SAYS } from '../../scripts/mod/bridge.js';
@@ -160,7 +160,8 @@ async function prompt(c, text) {
 }
 
 // The briefing's own text, without the hook's heading, and its words.
-const bodyOf = (context) => context.slice(context.indexOf('\n\n') + 2);
+// The text shown, without its heading or the "cards to ask" line that follows it when cards wait unasked.
+const bodyOf = (context) => context.slice(context.indexOf('\n\n') + 2).replace(/\n\nCards to ask this visit: \d+\. [^\n]*$/, '');
 const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 const numbered = (text) => text.split('\n').filter((line) => /^\d+\. /.test(line));
 
@@ -536,6 +537,8 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     assert.ok(context.startsWith(`${HEADINGS.briefing}\n\n`), context);
     const body = bodyOf(context);
     assert.ok(wordsIn(body) <= BRIEFING_WORDS.standard, `${wordsIn(body)} words:\n${body}`);
+    // The cards waiting unasked are named after the briefing, never inside it.
+    assert.ok(context.endsWith(`\n\n${cardsLine(4)}`), context);
 
     const parts = body.split('\n\n');
     assert.deepEqual(parts.map((part) => part.split('\n')[0]), [

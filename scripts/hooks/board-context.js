@@ -5,11 +5,15 @@
 // and the briefing on the first prompt after a gap of `briefingGapHours`.
 //
 // In a project's main folder only: never in a feature worktree, never for the foreman, never
-// outside a Wheelhouse project. On each prompt it reads when the director last wrote, decides,
-// builds the addition, and only then records the prompt's time and, when it added a briefing, that
-// the briefing was given and which unusual use it raised. It informs: a failure, or a build past
-// WAIT_MS, adds nothing and lets the prompt through (the prompt's time is still kept). It only
-// reads, so STOP doesn't hold it.
+// outside a Wheelhouse project. It records each session's role from its first prompt (sessionRole),
+// which is how a foreman started without WHEELHOUSE_ROLE is known. On each prompt it reads when the
+// director last wrote, decides, builds the addition, and only then records the prompt's time and,
+// when it added a briefing, that the briefing was given and which unusual use it raised. It
+// informs: a failure, or a build past WAIT_MS, adds nothing and lets the prompt through (the
+// prompt's time is still kept). It only reads the state, so STOP doesn't hold it.
+//
+// When cards wait that no visit has handed out, it adds one line after whatever else it adds,
+// outside the data to show: how many to ask, and that `cli.js cards` gives them (cardsLine).
 //
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
@@ -28,6 +32,10 @@ import { KNOWN, SETTINGS } from '../settings/catalogue.js';
 import { sourcesText } from '../sources/check.js';
 import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
 import { readProfileViews } from '../profile/store.js';
+import { sessionRole, recordRole } from '../lib/role.js';
+import { existingCard } from '../cards/visit.js';
+import { answerLine } from '../state/card-lines.js';
+import { CARD } from '../lib/front-desk.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 
 export const WAIT_MS = 2000;
@@ -42,6 +50,8 @@ export const HEADINGS = {
 export const NOT_CHECKED = 'The sources haven\'t been checked yet.';
 export const NONE_CHANGED = 'No source changed at the last check.';
 const COMMAND = /^\/wheelhouse:(board|briefing|settings|sources)(?:[ \t]+(.*))?$/i;
+// The line that tells the front desk to ask the cards waiting, after the briefing.
+export const cardsLine = (n) => `Cards to ask this visit: ${n}. Run \`cli.js cards\` and ask them in one AskUserQuestion call, after the briefing.`;
 const TABS = ['director', 'build'];
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -147,6 +157,18 @@ function inPlainWords(make, room, words) {
   return { text: fitLines(plainWords(fitted.text, words.glossary, words).text, room).text, cut: true };
 }
 
+// How many cards `cli.js cards` would hand out now, from the views on disk: the waiting cards no
+// visit has handed out, and the open questions from the build that no waiting card asks yet,
+// which it makes cards of first. At most one call's worth.
+function cardsToAsk(project) {
+  const views = localViews(project, ['waiting', 'questions']) ?? {};
+  const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
+  const fresh = waiting.filter((card) => card.asked === null || card.asked === undefined).length;
+  const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
+    .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null).length;
+  return Math.min(CARD.questions, fresh + questions);
+}
+
 // What `start` gives within `ms`, or null when it throws or is late.
 async function within(start, ms) {
   let timer;
@@ -161,11 +183,11 @@ async function within(start, ms) {
 }
 
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
-async function build(want, { project, cwd, at, client, load, command, since, briefingModel }) {
+async function build(want, { project, cwd, at, client, load, command, since, briefingModel, reserve }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
-  const room = CONTEXT_CHARS - HEADINGS[want].length - 2;
+  const room = CONTEXT_CHARS - HEADINGS[want].length - 2 - reserve;
   let body;
   let raise = [];
   let make;
@@ -197,26 +219,31 @@ export async function decide(input, deps = {}) {
       briefingModel = realBriefingModel, markRaised = realMarkRaised,
     } = deps;
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
-    if (env?.WHEELHOUSE_ROLE === 'foreman' || featureSlug(input.cwd) !== null) return undefined;
     const found = projectOf(input.cwd, { dir });
     if (!found) return undefined;
+    const role = sessionRole({ sessionId: input.session_id, env, prompt: input.prompt, cwd: input.cwd });
+    attempt(() => recordRole(input.session_id, role));
+    if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
     const { project } = found;
     const at = clockOf(now);
     const seen = readSeen(project, { now: at });
     const command = commandOf(input.prompt);
     const want = command?.name ?? (gapPassed(project, seen.promptAt, at) ? 'briefing' : null);
+    const count = attempt(() => cardsToAsk(project), 0);
+    const cards = count > 0 ? cardsLine(count) : null;
+    const reserve = cards === null ? 0 : cards.length + 2;
     const built = want
-      ? await within(() => build(want, { project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, briefingModel }), waitMs)
+      ? await within(() => build(want, { project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, briefingModel, reserve }), waitMs)
       : null;
     // The director did write, whatever could be shown. A command other than the briefing's
     // leaves the time as it was, so a briefing that was due still comes with the next prompt.
     if (!command || command.name === 'briefing') attempt(() => markSeen(project, { promptAt: at }));
-    if (!built) return undefined;
-    if (want === 'briefing') {
+    if (built && want === 'briefing') {
       attempt(() => markSeen(project, { briefedAt: at }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
-    return answer.context('UserPromptSubmit', built.text);
+    const text = [built?.text, cards].filter((part) => typeof part === 'string').join('\n\n');
+    return text === '' ? undefined : answer.context('UserPromptSubmit', text);
   } catch {
     return undefined;
   }
