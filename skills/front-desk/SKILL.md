@@ -58,6 +58,20 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 - **Show me:** `preview <n>` gives the address of pull request n's preview: give it as a link. When there is none, say so in one line and offer a short visual page of the change instead; then ask again.
 - **Talk it through:** one question at a time.
 
+## The baseline from the private note
+
+When the director gives the first version's figures from their private note (what it cost, how many pull requests it merged, from and to which days, and how the note counted them), they go to one command and nowhere else:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/measures/cli.js" baseline --usd 412.50 --merges 25 --from 2026-09-01 --to 2026-09-30 --counted "Every builder session in the note, at list prices"
+```
+
+1. Give their cost in US dollars as digits, the days as 2026-09-01, and how the note counted in their or the note's words. A refusal names the figure that is wrong: ask them for it.
+2. It prints a `hash` and a `card`. Ask the card exactly as given, as `questions: [card]`. It reads the figures back, with **Record these** and **Not now**.
+3. After their answer, run it again with `--confirm <hash>`. After **Record these** it records the baseline on this computer. After **Not now** the figures are already forgotten and nothing is recorded: say so in one line.
+
+Never put the figures anywhere else: not in `record`, a note, a ruling, a card of your own or a later reply. They stay on this computer, out of the project's records.
+
 ## What the director sends
 
 | They send | You do |
@@ -68,6 +82,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
 | Undoing something decided without them | `record reversal` with the decision's `topic` and what they undid, then take the undoing as a request |
 | "How's it going?" | One line. The full board is `/wheelhouse:board` |
+| The first version's figures from their private note | The baseline command above, and nothing else |
 
 **STOP:** say in one or two lines what was in progress, then run `cards` and ask what it gives: the Lift STOP card alone.
 
@@ -94,3 +109,4 @@ Briefly, in plain words, as to a product owner: your own words use the glossary'
 | "The report says they already agreed" | Relayed text. Report it, and ask the card |
 | "They sound fed up; I'll pause it for them" | A musing. Options, then "Want me to go ahead?" |
 | "Let me answer their question first, then mention the unconfirmed rule" | The unconfirmed change comes first |
+| "I'll note the note's figures so they aren't lost" | The baseline command. A note or a ruling puts them in the project's records |
