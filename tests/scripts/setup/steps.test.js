@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STEPS, planHash, firstUnfinished } from '../../../scripts/setup/steps.js';
-import { admitFolder, runApply } from '../../../scripts/setup/engine.js';
+import { admitFolder, runApply, setupRoutes } from '../../../scripts/setup/engine.js';
+import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { setupLine, SETUP_TITLES, SETUP_LABEL, setLineOf } from '../../../scripts/state/card-lines.js';
 import { composeCard, DECIDING, HEADERS } from '../../../scripts/cards/compose.js';
 import { makeEvent } from '../../../scripts/state/events.js';
@@ -168,6 +169,32 @@ test('a folder outside ~/Projects whose own settings switch the plugin on is adm
     assert.throws(() => admitFolder(bare, { userHome: user }), /not under ~\/Projects/);
     fs.mkdirSync(path.join(shared, 'web'));
     assert.throws(() => admitFolder(path.join(shared, 'web'), { userHome: user }), /not under ~\/Projects/);
+  });
+});
+
+test('the user\'s home, with the plugin on for every folder, is never set up, nor any folder holding it', async () => {
+  // The home folder's own .claude/settings.json is Claude Code's user-scope settings: the plugin
+  // switched on there is on everywhere, not installed for the home folder as a product.
+  await withHome(async () => {
+    const user = fs.realpathSync.native(tempFolder('wh-home on '));
+    fs.mkdirSync(path.join(user, '.claude'));
+    fs.writeFileSync(path.join(user, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true } }));
+    const app = path.join(user, 'code', 'app');
+    fs.mkdirSync(app, { recursive: true });
+    for (const folder of [user, path.dirname(user)]) assert.throws(() => admitFolder(folder, { userHome: user }), /home folder/, folder);
+    const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: user });
+    await assert.rejects(routes['/setup/plan']({ folder: user, step: 1 }), /home folder/);
+    assert.deepEqual(journal.readJournal().runs, [], 'no run was started at home');
+    assert.throws(() => admitFolder(app, { userHome: user }), /not under ~\/Projects/);
+    // A run at home from before carries nothing on beneath it, for the routes or the hooks.
+    startRun({ folder: user, now: () => NOW });
+    assert.throws(() => admitFolder(app, { userHome: user }), /not under ~\/Projects/);
+    assert.equal(beingSetUp(app, { home: user }), null);
+    // A product folder under home with the plugin switched on in its own settings is admitted.
+    fs.mkdirSync(path.join(app, '.claude'));
+    fs.writeFileSync(path.join(app, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true } }));
+    assert.equal(admitFolder(app, { userHome: user }), app);
+    assert.equal(beingSetUp(app, { home: user })?.folder, app);
   });
 });
 

@@ -181,7 +181,9 @@ export function beingSetUp(cwd, { home = os.homedir() } = {}) {
     const run = named.filter((r) => sameFolder(r.folder, registered.record.folder)).at(-1);
     return run && firstUnfinished(run) !== null ? { folder: run.folder, run, journal: true } : null;
   }
-  const holding = named.filter((r) => isInsideFolder(r.folder, real));
+  // A run at the home folder or above it is never one setup started (the engine refuses it), and
+  // would hold every folder under home.
+  const holding = named.filter((r) => isInsideFolder(r.folder, real) && !isInsideFolder(r.folder, home));
   if (holding.length > 0) {
     const nearest = Math.max(...holding.map((r) => r.folder.length));
     const run = holding.filter((r) => r.folder.length === nearest).at(-1);

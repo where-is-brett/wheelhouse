@@ -11,6 +11,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { setupLine } from '../../../scripts/state/card-lines.js';
+import { CARD } from '../../../scripts/lib/front-desk.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { findRun, readJournal, markStep, reverseChange } from '../../../scripts/setup/journal.js';
@@ -496,5 +497,29 @@ test('from a registered project below a folder being set up, the routes do not c
     assert.ok((await client.setup.status({ folder: path.join(project, 'web') })).lines[0].startsWith(`Setup of ${runs.at(-1).folder}, `));
     // The parent's own folder still carries on its run.
     assert.ok((await client.setup.status({ folder })).lines[0].startsWith(`Setup of ${parent.folder}, `));
+  });
+});
+
+test('a card is cleaned before it is composed, so the card sent is within the composer\'s length', async () => {
+  // "[hidden]" is longer than the sign-in it stands for: cleaned after composing, a card at the
+  // limit would be sent past it.
+  await withSetup(async ({ client, home, folder }) => {
+    const what = (pad) => `Setup step 1, Install: the remote ssh://git@github.com/o/r.git is written.${' x'.repeat(pad)}`;
+    setWorld(home, { what: { 1: what(0) } });
+    const base = (await client.setup.plan({ folder, step: 1 })).card.question.length;
+    // Padding that brings the uncleaned card to the limit, and the cleaned one past it.
+    const pad = Math.floor((CARD.chars - (base - '[hidden]'.length + 'git'.length)) / 2);
+    setWorld(home, { what: { 1: what(pad) } });
+    const plan = await client.setup.plan({ folder, step: 1 });
+    if (plan.ok) assert.ok(plan.card.question.length <= CARD.chars, `${plan.card.question.length} characters`);
+    assert.equal(plan.ok, false, 'a card the composer would refuse once cleaned is refused');
+    assert.match(plan.refused, /characters/);
+    // One a little shorter is sent within the limit, and stored as sent.
+    setWorld(home, { what: { 1: what(pad - 4) } });
+    const shorter = await client.setup.plan({ folder, step: 1 });
+    assert.equal(shorter.ok, true, shorter.refused);
+    assert.ok(shorter.card.question.length <= CARD.chars);
+    const shown = JSON.parse(fs.readFileSync(path.join(home, 'setup', 'shown', `${readJournal().runs.at(-1).id}-1.json`), 'utf8'));
+    assert.equal(shown.card.question, shorter.card.question);
   });
 });

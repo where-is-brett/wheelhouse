@@ -382,6 +382,9 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
   keepSetupClicks(input.cwd, out, clock);
+  // An answer on a card a setup step asked goes only to setup/answers/, or nowhere when it was
+  // refused (ruling R53): it earns no record in the state and is not sent as a card-answer.
+  const setupAsked = new Set(out.filter((c) => askedFor({ cwd: input.cwd, card: c.card }) !== null).map((c) => c.question));
   let cards = [];
   try {
     cards = shownFor(project, input, at, stopState);
@@ -396,7 +399,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     }
   }
   for (const click of out) {
-    if (!click.signable) continue;
+    if (!click.signable || setupAsked.has(click.question)) continue;
     try {
       const got = await earned({ project, ...click, client: api, now: clock, left, stopState });
       if (got) queued.push(keepEarned(project, got, { now: clock, liftStop }));
@@ -407,6 +410,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const kept of queued) await sendKept(api, left, kept);
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
+    if (setupAsked.has(question)) continue;
     const body = { project, kind: 'card-answer', data: { question, label } };
     try {
       const result = await left(api.state.write(body));

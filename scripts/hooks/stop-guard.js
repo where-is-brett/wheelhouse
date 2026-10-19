@@ -88,7 +88,9 @@ function isFrontDeskRead(command, pluginRoots, platform) {
 // Setup's commands that only read (scripts/setup/cli.js), by their exact words: `status`,
 // `plan <step>` and `resume`, which asks for the status and then the plan of the first step
 // neither done nor running, and so reads no more than those two. The helper answers both under STOP, changing nothing
-// a step lists. `apply` changes what its card lists, so it stays refused, as does every other form.
+// a step lists: `plan` writes only setup's own records, including a step settled on answers the
+// director already gave (ruling R52). `apply` changes what its card lists, so it stays refused, as
+// does every other form.
 const SETUP_STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 function isSetupRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/setup/cli.js');

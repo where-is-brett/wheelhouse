@@ -38,7 +38,9 @@
 // Every route checks its folder (rulings R16, R34): a full path, placed by its real path, under the
 // user's own ~/Projects, in a registered project's folder, the folder of a setup run, or a folder
 // whose own Claude settings switch the Wheelhouse plugin on. The product's folder exists from
-// step 1, with the plugin installed there, so no step makes it.
+// step 1, with the plugin installed there, so no step makes it. The user's home folder, and any
+// folder holding it, is never one: its .claude/settings.json is Claude Code's user-scope settings,
+// where the plugin switched on is on everywhere, and a run there would hold every folder under home.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -62,6 +64,7 @@ export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url))
 export const OUTSIDE = 'the folder is not under ~/Projects, in a registered project or being set up, so setup does not act on it';
 export const NEEDS_CLICK = `this step needs the director's click on its card, from the last ${CLICK_FRESH_MS / 60000} minutes`;
 export const CHANGED = 'the list has changed since the card: ask for the plan again and show the new card';
+export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
 const APPLY_FIELDS = ['folder', 'step', 'hash'];
 const FULL_HASH = /^[0-9a-f]{64}$/;
@@ -88,16 +91,26 @@ function realOrNull(p) {
   }
 }
 
+// Whether a folder is the user's home folder or holds it, by real paths where they can be had.
+function atOrAboveHome(folder, userHome) {
+  const home = realOrNull(userHome) ?? path.resolve(userHome);
+  const real = realOrNull(folder) ?? path.resolve(folder);
+  return keyOf(real) === keyOf(home) || within(real, home);
+}
+
 // The run setup is doing for this real path: the latest run of the nearest folder that is it or
 // holds it (case and accents folded as the system does), as kit.js's beingSetUp places a session,
 // so a session in a folder inside the one being set up carries on that run; null when none does.
 // A run in a folder above a registered project's folder that holds the path is another product's
-// setup, never this one's (ruling R27), so it is passed over.
-function runFor(real) {
+// setup, never this one's (ruling R27), so it is passed over, as is a run at the user's home or
+// above it, which no route starts. (A run in a folder inside a registered project is carried on
+// here, though kit.js's beingSetUp counts only a run in the project's own folder; the playbook runs
+// in the project's own folder, so no such run is started.)
+function runFor(real, userHome) {
   const project = projectForFolder(real);
   const own = project === null ? null : realOrNull(project.record.folder);
   const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real))
-    && !(own !== null && within(r.folder, own)));
+    && !(own !== null && within(r.folder, own)) && !atOrAboveHome(r.folder, userHome));
   if (holding.length === 0) return null;
   const nearest = Math.max(...holding.map((r) => keyOf(r.folder).length));
   return holding.filter((r) => keyOf(r.folder).length === nearest).at(-1);
@@ -115,13 +128,14 @@ export function admitFolder(folder, { userHome = os.homedir() } = {}) {
     refuse('the folder was not found');
   }
   if (!fs.statSync(real).isDirectory()) refuse('the folder given is not a folder');
+  if (atOrAboveHome(real, userHome)) refuse(HOME_FOLDER);
   let projects = null;
   try {
     projects = fs.realpathSync.native(path.join(userHome, 'Projects'));
   } catch { /* no ~/Projects on this computer */ }
   if (projects !== null && within(projects, real)) return real;
   if (projectForFolder(real) !== null) return real;
-  if (runFor(real) !== null) return real;
+  if (runFor(real, userHome) !== null) return real;
   if (pluginOnIn(real)) return real;
   return refuse(OUTSIDE);
 }
@@ -255,8 +269,9 @@ export function setupRoutes({
       return { wait: got.wait, why: got.why };
     }
     if (got?.settled !== undefined) {
-      const record = got.settled?.record ?? {};
-      if (!record || typeof record !== 'object' || Array.isArray(record)) throw bad('a settling without its record');
+      const given = got.settled?.record;
+      if (given !== undefined && (given === null || typeof given !== 'object' || Array.isArray(given))) throw bad('a settling without its record');
+      const record = given ?? {};
       return { settled: { record } };
     }
     if (!got || !Array.isArray(got.changes)) throw bad('no list of changes');
@@ -271,19 +286,22 @@ export function setupRoutes({
 
   // Answers under STOP, as status does (ruling R19): it writes only setup's own records (the run
   // when the folder has none, the card's shownAt, the shown or asked card, and a settled step's
-  // answer and done mark), never anything a step lists.
+  // answer and done mark), never anything a step lists. A step may settle under STOP (ruling R52):
+  // its done mark records answers the director already gave, and changes nothing a step lists.
   async function plan(body) {
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
-    let run = runFor(folder);
+    let run = runFor(folder, userHome);
     showable(run, step.n);
     const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
     if (got.wait !== undefined) return { ok: true, wait: got.wait, why: got.why };
-    // The card as the director will see it, cleaned before it is stored, so the stored card is
-    // the one sent (the helper cleans what it sends again, which changes nothing).
+    // The card as the director will see it: its input cleaned before it is composed, so the
+    // composer judges the text that is sent (its length too), and the stored card is the one sent
+    // (the helper cleans what it sends again, which changes nothing). The set line holds no address.
     let card = null;
-    if (got.ask) card = cleanDeep(composeCard({ ...got.ask.card, kind: 'question' }).question, []);
-    else if (got.changes) card = cleanDeep(composeCard({ ...got.card, kind: 'setup', target: { step: step.n, hash: got.hash } }).question, []);
+    if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question' }).question;
+    else if (got.changes) card = composeCard({ ...cleanDeep(got.card, []), kind: 'setup', target: { step: step.n, hash: got.hash } }).question;
+    if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.
     if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now });
@@ -310,7 +328,7 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     if (typeof body.hash !== 'string' || !FULL_HASH.test(body.hash)) refuse('the hash must be the full hash of the list on the card');
-    const run = runFor(folder);
+    const run = runFor(folder, userHome);
     if (run === null) refuse('this step\'s card has not been shown: ask for its plan first');
     const startable = (current) => {
       if (isDone(current, step.n)) refuse(`${title(step.n)} is already done`);
@@ -381,7 +399,7 @@ export function setupRoutes({
 
   async function status(body) {
     const folder = admitFolder(body.folder, { userHome });
-    const run = runFor(folder);
+    const run = runFor(folder, userHome);
     const all = await steps();
     const running = (n) => runningIn(run, n);
     if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running) };

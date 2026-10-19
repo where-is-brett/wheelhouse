@@ -12,7 +12,7 @@ import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { clicksDir, noteShown } from '../../../scripts/setup/clicks.js';
+import { clicksDir, noteShown, noteAsked } from '../../../scripts/setup/clicks.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -1076,6 +1076,48 @@ test('setup cards carry no reply-code line', async () => {
         assert.deepEqual(kinds(c), [], shown.question);
       }
       assert.deepEqual(clicks().map((e) => e.data.step), [4]);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a registered project an answer on a setup-asked card goes only to setup/answers, and a refused typed answer nowhere', async () => {
+  // Ruling R53: it is not also sent to the state as a card-answer, nor kept pending.
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-asked-')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      const card = {
+        question: 'What this is: Setup step 4 asks what the product is called.', header: 'Question', multiSelect: false,
+        options: [{ label: 'Keep it', description: 'Recommended: Setup keeps the folder\'s name.' }, { label: 'Explain more', description: 'I explain it again.' }],
+      };
+      noteAsked({ runId: run.id, folder, step: 4, id: 'name', card, typed: true, now: () => NOW });
+      const answer = async (label) => {
+        const c = fake();
+        const answers = { [card.question]: label };
+        await decide({ ...input(answers), tool_input: { questions: [card], answers }, cwd: folder }, deps(c));
+        return c;
+      };
+      const answersDir = path.join(home, 'setup', 'answers');
+      const kept = () => (fs.existsSync(answersDir) ? fs.readdirSync(answersDir) : []).map((n) => JSON.parse(fs.readFileSync(path.join(answersDir, n), 'utf8')).data);
+      const none = { write: [], record: [], profileRecord: [], prState: [] };
+      assert.deepEqual((await answer('Café Menu')).calls, none);
+      assert.deepEqual(kept().map((d) => [d.label, d.text]), [[null, 'Café Menu']]);
+      assert.deepEqual((await answer('Keep it')).calls, none);
+      assert.equal(kept().length, 2);
+      // A typed answer holding a key is kept nowhere: not as an answer, a card-answer or pending.
+      const token = `ghp_${'a'.repeat(36)}`;
+      const c = fake({ refuse: true });
+      const answers = { [card.question]: token };
+      await decide({ ...input(answers), tool_input: { questions: [card], answers }, cwd: folder }, deps(c));
+      assert.deepEqual(c.calls, none);
+      assert.equal(kept().length, 2);
+      const holding = (dir) => fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isDirectory()
+        ? holding(path.join(dir, e.name)) : fs.readFileSync(path.join(dir, e.name), 'utf8').includes(token)));
+      assert.equal(holding(home), false);
+      // Explain more on it goes nowhere either.
+      assert.deepEqual((await answer('Explain more')).calls, none);
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
     }

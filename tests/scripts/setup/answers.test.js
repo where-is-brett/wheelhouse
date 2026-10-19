@@ -249,6 +249,14 @@ test('a settled step is marked done with its answer recorded, and needs no Go ah
     const lines = (await client.setup.status({ folder })).lines;
     assert.ok(lines.some((l) => /^Step 5, Rules found: done at /.test(l)), lines.join('\n'));
     assert.deepEqual(files(home, 'clicks'), []);
+    // A settling whose record is not an object is refused, and marks nothing.
+    for (const bad of [null, [1, 2], 'yes']) {
+      setWorld(home, { settle: [7], record: { 7: bad } });
+      const refused = await client.setup.plan({ folder, step: 7 });
+      assert.equal(refused.ok, false, JSON.stringify(bad));
+      assert.match(refused.refused, /settling without its record/);
+    }
+    assert.equal(findRun(folder).steps[7]?.doneAt, undefined);
   });
 });
 
