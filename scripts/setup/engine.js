@@ -1,0 +1,258 @@
+// scripts/setup/engine.js
+// What the helper's /setup/* routes do (scripts/host/helper.js). Setup's playbook only talks: every
+// change is made here, and only after the director's signed click on a card listing exactly what
+// will change, named by the hash of that list (design section 15, the plan's call 2).
+//
+//   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }
+//   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
+//   /setup/status { folder }              -> { ok, lines, next, ask }
+//
+// The helper works out each step's list itself, from the step's own plan, every time; it never
+// reads a list a caller sends, and a request that carries anything but the folder, the step and
+// the hash is refused. Apply goes ahead only when a fresh plan gives the hash the request names,
+// that list is the one this folder's card showed, and the director's click on it is signed by
+// this computer's enrolled key, names this step and this hash, is from the last CLICK_FRESH_MS
+// and hasn't been used. A long step runs in a detached child (scripts/setup/run-step.js), which
+// works the list out again and records its progress in the journal. Plan and status change
+// nothing a step lists: plan starts the folder's run when there is none and records when the card
+// was shown, which the timed runs read. Under STOP they answer; apply is refused.
+//
+// Every route checks its folder (ruling R16): a full path, placed by its real path, under the
+// user's own ~/Projects, in a registered project's folder, or the folder of a setup run. A step
+// making the folder (step 3 for a new product) widens this in its own task (Task 8).
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { wheelhouseHome } from '../lib/paths.js';
+import { projectForFolder } from '../lib/projects.js';
+import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
+import { SETUP_TITLES } from '../state/card-lines.js';
+import { composeCard } from '../cards/compose.js';
+import { readJournal, startRun, markStep, addChanges } from './journal.js';
+import { planHash, firstUnfinished } from './steps.js';
+import { noteShown, shownFor, freshClicks, useClick } from './clicks.js';
+
+export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
+export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
+
+export const OUTSIDE = 'the folder is not under ~/Projects, in a registered project or being set up, so setup does not act on it';
+export const NEEDS_CLICK = `this step needs the director's click on its card, from the last ${CLICK_FRESH_MS / 60000} minutes`;
+export const CHANGED = 'the list has changed since the card: ask for the plan again and show the new card';
+export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
+const APPLY_FIELDS = ['folder', 'step', 'hash'];
+const FULL_HASH = /^[0-9a-f]{64}$/;
+const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
+
+export class SetupRefusal extends Error {}
+const refuse = (message) => { throw new SetupRefusal(message); };
+
+const keyOf = (p) => {
+  const text = p.normalize('NFC');
+  return caseBlind ? text.toLowerCase() : text;
+};
+const within = (base, target) => {
+  const b = keyOf(base);
+  const t = keyOf(target);
+  return t.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
+};
+
+// The latest run whose folder is this real path (case and accents folded as the system does).
+function runFor(real) {
+  const runs = readJournal().runs.filter((r) => typeof r?.folder === 'string' && keyOf(r.folder) === keyOf(real));
+  return runs.length > 0 ? runs[runs.length - 1] : null;
+}
+
+// The folder's real path, when setup may act on it; otherwise a refusal naming why.
+export function admitFolder(folder, { userHome = os.homedir() } = {}) {
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) refuse('the folder must be a full path');
+  let real;
+  try {
+    real = fs.realpathSync.native(folder);
+  } catch {
+    refuse('the folder was not found');
+  }
+  if (!fs.statSync(real).isDirectory()) refuse('the folder given is not a folder');
+  let projects = null;
+  try {
+    projects = fs.realpathSync.native(path.join(userHome, 'Projects'));
+  } catch { /* no ~/Projects on this computer */ }
+  if (projects !== null && within(projects, real)) return real;
+  if (projectForFolder(real) !== null) return real;
+  if (runFor(real) !== null) return real;
+  return refuse(OUTSIDE);
+}
+
+// The steps a module gives, checked: each with its number, title, plan and apply.
+export async function loadSteps(modulePath) {
+  const steps = (await import(pathToFileURL(modulePath).href)).STEPS;
+  const good = Array.isArray(steps) && steps.every((s) => Number.isInteger(s?.n) && Object.hasOwn(SETUP_TITLES, s.n)
+    && typeof s.title === 'string' && typeof s.plan === 'function' && typeof s.apply === 'function');
+  if (!good) throw new Error('The setup steps could not be read');
+  return steps;
+}
+
+const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
+const isDone = (run, n) => typeof run?.steps?.[n]?.doneAt === 'string';
+
+// Running: clicked, not done, not failed, and not past the time a step may take.
+function runningSince(entry, now) {
+  if (!entry?.clickedAt || entry.doneAt || entry.failed) return null;
+  return now().getTime() - Date.parse(entry.clickedAt) < STEP_TIMEOUT_MS ? entry.clickedAt : null;
+}
+
+// Runs a step's apply on the list worked out for it, records each change in the journal (as the
+// step makes it, through ctx.record, or at the end), and marks the step done, or failed with why.
+// Used by the helper for a short step and by scripts/setup/run-step.js for a long one.
+export async function runApply({ step, runId, changes, ctx }) {
+  const recorded = new Set();
+  const record = (made) => {
+    const list = (Array.isArray(made) ? made : []).filter((c) => !recorded.has(c?.id)).map((c) => ({ ...c, step: step.n }));
+    if (list.length === 0) return;
+    addChanges(runId, list);
+    for (const c of list) recorded.add(c.id);
+  };
+  try {
+    record(await step.apply({ ...ctx, runId, record }, changes));
+    markStep(runId, step.n, 'doneAt', { now: ctx.now });
+    return { ok: true };
+  } catch (error) {
+    const reason = (error instanceof Error ? error.message : '') || 'the step did not finish';
+    try {
+      markStep(runId, step.n, 'failed', { now: ctx.now, reason });
+    } catch { /* the journal could not take it; the step reads as running until its time is up */ }
+    return { ok: false, reason };
+  }
+}
+
+// The first step neither done nor running, or null.
+function toAsk(run, steps, now) {
+  return [...steps].map((s) => s.n).sort((a, b) => a - b).find((n) => !isDone(run, n) && !runningSince(run?.steps?.[n], now)) ?? null;
+}
+
+// One line for each step of a run, then its changes, and what is next: `next`, the first step not
+// done (null when every step is), and `ask`, the first step neither done nor running, whose card
+// is asked next (a long step's later cards are asked while it runs; null when there is none).
+function statusLines(run, steps, now) {
+  const lines = [`Setup of ${run.folder}, started ${run.startedAt}.`];
+  for (const { n } of [...steps].sort((a, b) => a.n - b.n)) {
+    const entry = run.steps?.[n] ?? {};
+    const name = `Step ${n}, ${SETUP_TITLES[n]}`;
+    if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
+    else if (entry.failed) lines.push(`${name}: did not finish: ${entry.failed}`);
+    else if (entry.clickedAt) {
+      lines.push(runningSince(entry, now)
+        ? `${name}: running since ${entry.clickedAt}`
+        : `${name}: stuck: running since ${entry.clickedAt}, more than ${STEP_TIMEOUT_MS / 60000} minutes`);
+    } else if (entry.shownAt) lines.push(`${name}: card shown at ${entry.shownAt}, not clicked yet`);
+    else lines.push(`${name}: not started`);
+    for (const c of (run.changes ?? []).filter((x) => x.step === n)) {
+      lines.push(`  changed: ${c.kind} ${c.target}${Array.isArray(c.key) ? ` (${c.key.join('.')})` : ''}`);
+    }
+  }
+  const next = firstUnfinished(run, steps);
+  lines.push(next === null ? 'Every step is done.' : `Next: ${title(next)}.`);
+  return { lines, next, ask: toAsk(run, steps, now) };
+}
+
+// The routes' handlers, each taking the request's body and giving its answer. A refusal throws
+// SetupRefusal, which the helper sends as { ok: false, refused }.
+export function setupRoutes({
+  now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
+  stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn,
+} = {}) {
+  let loaded = null;
+  const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
+
+  async function stepOf(n) {
+    if (!Number.isInteger(n)) refuse(`the step must be a number from 1 to ${Object.keys(SETUP_TITLES).length}`);
+    const step = (await steps()).find((s) => s.n === n);
+    if (!step) refuse(`there is no setup step ${n}`);
+    return step;
+  }
+
+  const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform });
+
+  // A step's plan with its hash and its card, composed with the setup line.
+  async function planned(step, ctx) {
+    const got = await step.plan(ctx);
+    if (!got || !Array.isArray(got.changes)) throw new Error(`Step ${step.n}'s plan gave no list of changes`);
+    const hash = planHash(got.changes);
+    return { ...got, hash };
+  }
+
+  async function plan(body) {
+    const folder = admitFolder(body.folder, { userHome });
+    const step = await stepOf(body.step);
+    let run = runFor(folder);
+    if (isDone(run, step.n)) refuse(`${title(step.n)} is already done`);
+    const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
+    const { question } = composeCard({ ...got.card, kind: 'setup', target: { step: step.n, hash: got.hash } });
+    run ??= startRun({ folder, now });
+    noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, question: question.question, now });
+    markStep(run.id, step.n, 'shownAt', { now });
+    return { ok: true, changes: got.changes, hash: got.hash, card: question, director: typeof got.director === 'string' ? got.director : '' };
+  }
+
+  async function apply(body) {
+    if (stopped()) return stopRefusal;
+    if (Object.keys(body).some((k) => !APPLY_FIELDS.includes(k))) refuse(OWN_LIST);
+    const folder = admitFolder(body.folder, { userHome });
+    const step = await stepOf(body.step);
+    if (typeof body.hash !== 'string' || !FULL_HASH.test(body.hash)) refuse('the hash must be the full hash of the list on the card');
+    const run = runFor(folder);
+    if (run === null) refuse('this step\'s card has not been shown: ask for its plan first');
+    const entry = run.steps?.[step.n] ?? {};
+    if (entry.doneAt) refuse(`${title(step.n)} is already done`);
+    if (runningSince(entry, now)) refuse(`${title(step.n)} is already running`);
+    // The list as it is now, worked out by the helper: the request's hash must name it, and the
+    // card this folder was shown for the step must have shown it.
+    const ctx = ctxFor(run.folder, step.n, run.id);
+    const fresh = await planned(step, ctx);
+    if (fresh.hash !== body.hash || shownFor(run.id, step.n)?.hash !== fresh.hash) refuse(CHANGED);
+    if (freshClicks({ step: step.n, hash: fresh.hash, now }).length === 0) refuse(NEEDS_CLICK);
+    // STOP is read again at the last moment, before the click is used.
+    if (stopped()) return stopRefusal;
+    const click = freshClicks({ step: step.n, hash: fresh.hash, now }).find((e) => useClick(e, now));
+    if (!click) refuse(NEEDS_CLICK);
+    markStep(run.id, step.n, 'clickedAt', { now: () => new Date(click.at) });
+    if (step.long) {
+      // It may run until the helper stops counting it as running: STEP_TIMEOUT_MS from the click.
+      const left = Date.parse(click.at) + STEP_TIMEOUT_MS - now().getTime();
+      startChild({ step, run, hash: fresh.hash, left: Math.max(1, Math.min(STEP_TIMEOUT_MS, Math.floor(left))) });
+      return { ok: true, started: true };
+    }
+    const done = await runApply({ step, runId: run.id, changes: fresh.changes, ctx: { ...ctx, stopped } });
+    return done.ok ? { ok: true, started: true, done: true } : { ok: false, refused: `${title(step.n)} did not finish: ${done.reason}` };
+  }
+
+  // The long step's own process, detached and hidden, started in Wheelhouse's folder, so it runs
+  // on when the helper or Desktop goes. It works the list out again and checks it has this hash.
+  function startChild({ step, run, hash, left }) {
+    const failed = () => {
+      try {
+        markStep(run.id, step.n, 'failed', { now, reason: 'its process could not be started' });
+      } catch { /* status then says it is stuck once its time is up */ }
+    };
+    try {
+      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, String(left)], {
+        cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
+      });
+      child?.on?.('error', failed);
+      child?.unref?.();
+    } catch {
+      failed();
+    }
+  }
+
+  async function status(body) {
+    const folder = admitFolder(body.folder, { userHome });
+    const run = runFor(folder);
+    const all = await steps();
+    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, now) };
+    return { ok: true, ...statusLines(run, all, now) };
+  }
+
+  return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status };
+}

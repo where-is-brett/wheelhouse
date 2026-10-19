@@ -6,9 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
+import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { startRun } from '../../../scripts/setup/journal.js';
+import { clicksDir, noteShown } from '../../../scripts/setup/clicks.js';
+import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -725,5 +728,91 @@ test('an answer names the question as it stands now, when the question was recor
     // Comma is no longer an option of the question as it stands.
     await decide(input({ [answerLine('q-export-csv-1')]: 'Comma' }, { options: OPTIONS }), deps(c));
     assert.equal(c.calls.record.length, 1);
+  });
+});
+
+// --- Setup clicks: kept in <wheelhouseHome()>/setup/clicks/, signed, naming the list's full hash.
+
+const H = 'ab'.repeat(32);
+const setupCard = (step, hash) => `What this is: Setup step ${step}.\n${setupLine(step, hash)}\n${replyCodeLine(replyCode(setupLine(step, hash)))}`;
+const SETUP_BUTTONS = [...BUTTONS, { label: 'Go ahead' }];
+const clicks = () => {
+  try {
+    return fs.readdirSync(clicksDir()).map((name) => JSON.parse(fs.readFileSync(path.join(clicksDir(), name), 'utf8')));
+  } catch {
+    return [];
+  }
+};
+
+test('in a folder being set up, the helper starts and a setup click is recorded; no other click is', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup zoë ')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 3, hash: H, question: setupCard(3, H), now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 4, hash: H, question: setupCard(4, H), now: () => NOW });
+      // The session start starts the helper there, as in a project.
+      const spawned = [];
+      await sessionStart({ cwd: folder, session_id: 's1' }, {
+        client: { health: async () => ({ ok: spawned.length > 0 }) },
+        spawn: (...args) => { spawned.push(args); return { unref() {}, on() {} }; },
+        projectOf: () => null, pause: async () => {}, startWaitMs: 200, pluginRoot: '/plugin/root', stopState: () => ({ on: false }),
+      });
+      assert.equal(spawned.length, 1);
+
+      fs.writeFileSync(stopFile(), '{}');
+      const c = fake();
+      const here = (answers, options = SETUP_BUTTONS) => ({ ...input(answers, { options }), cwd: folder });
+      await decide(here({
+        [setupCard(3, H)]: 'Go ahead', [approvalLine(7, FULL)]: 'Approve', [`${LIFT_STOP}?`]: 'Lift STOP', [runbookLine(1)]: 'Do it',
+      }), { client: c, now: () => NOW, projectOf: () => null });
+      // Exactly one record: the setup click, signed by this computer, naming the step and the full hash.
+      const [only, ...rest] = clicks();
+      assert.deepEqual(rest, []);
+      assert.equal(only.kind, 'action');
+      assert.deepEqual(only.data, { action: 'setup', step: 3, hash: H, question: setupCard(3, H), label: 'Go ahead' });
+      assert.equal(only.at, NOW.toISOString());
+      assert.equal(verify(only, readEnrolled()), true);
+      // Nothing else is recorded there: no answer, no signed record, no question to the host, and STOP stays on.
+      assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      assert.equal(fs.existsSync(stopFile()), true);
+
+      // A put-off, a list this folder was never shown, a step not shown, a card reworded around the
+      // right set line, a card with two set lines, and a button the card did not offer record nothing.
+      await decide(here({ [setupCard(3, H)]: 'Not now' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(3, 'cd'.repeat(32))]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(6, H)]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(4, H).replace('Setup step 4.', 'Setup step 4: nothing changes.')]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [`${setupCard(3, H)}\n${approvalLine(7, FULL)}`]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(3, H)]: 'Go ahead' }, BUTTONS), { client: c, now: () => NOW, projectOf: () => null });
+      assert.equal(clicks().length, 1);
+      assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+
+      // From a session in another folder being set up, the card shown for this one records nothing.
+      const other = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-other-')));
+      startRun({ folder: other, now: () => NOW });
+      await decide({ ...input({ [setupCard(3, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: other }, { client: c, now: () => NOW, projectOf: () => null });
+      assert.equal(clicks().length, 1);
+      fs.rmSync(other, { recursive: true, force: true });
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a registered project a setup click is kept in setup/clicks, and the answer goes to the state as usual', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-p-')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 5, hash: H, question: setupCard(5, H), now: () => NOW });
+      const c = fake();
+      await decide({ ...input({ [setupCard(5, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: folder }, deps(c));
+      assert.deepEqual(clicks().map((e) => [e.data.step, e.data.hash]), [[5, H]]);
+      assert.equal(c.calls.record.filter((r) => r.event.kind === 'action').length, 0, 'the setup click is not sent to the state');
+      assert.deepEqual(c.calls.write.map((w) => w.data.label), ['Go ahead']);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
   });
 });

@@ -47,11 +47,13 @@
 //
 // Hooks never run git or anything else in a folder an agent controls.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { projectForFolder } from '../lib/projects.js';
+import { projectForFolder, isInsideFolder } from '../lib/projects.js';
 import { lockedProjects, managedDir } from '../protection/managed.js';
 import { wheelhouseHome } from '../lib/paths.js';
+import { readJournal } from '../setup/journal.js';
 
 export { managedDir, lockedProjects };
 
@@ -162,6 +164,62 @@ export function registeredByPath(cwd) {
   } catch {
     return null;
   }
+}
+
+const WHEELHOUSE_PLUGIN = /^wheelhouse@[^@\s]+$/;
+
+// Whether the folder's own Claude settings switch the Wheelhouse plugin on (installed for this
+// project, or for the director in it): `.claude/settings.local.json`, which wins where it names the
+// plugin, then `.claude/settings.json`. Small files only, read without waiting.
+function pluginOnIn(dir) {
+  const named = (name) => {
+    try {
+      const enabled = JSON.parse(readSmallText(path.join(dir, '.claude', name)) ?? 'null')?.enabledPlugins;
+      if (!enabled || typeof enabled !== 'object') return undefined;
+      const values = Object.entries(enabled).filter(([k]) => WHEELHOUSE_PLUGIN.test(k)).map(([, v]) => v);
+      return values.length === 0 ? undefined : values.includes(true);
+    } catch {
+      return undefined;
+    }
+  };
+  return (named('settings.local.json') ?? named('settings.json')) === true;
+}
+
+// The folder being set up that `cwd` lies in, or null. The hooks act only in a registered project,
+// and the folder setup is working on isn't one yet (the plan's builder check 3), so a folder in no
+// registered project counts as being set up when a setup run's folder holds it, or when its own
+// settings, or a folder's above it short of the home folder, switch the plugin on: setup installs
+// the plugin for the project's folder. `run` is the latest run there (the nearest folder's), or null.
+// A journal that can't be read leaves the folder counted as being set up, so the guards act, with
+// `journal: false`. Never throws: a folder that can't be placed is null, and callers that guard
+// treat that as they already do. Callers ask projectOf and registeredByPath first.
+export function beingSetUp(cwd, { home = os.homedir() } = {}) {
+  if (typeof cwd !== 'string' || cwd === '' || !path.isAbsolute(cwd)) return null;
+  let real;
+  try {
+    real = fs.realpathSync.native(cwd);
+    if (projectForFolder(real) !== null) return null;
+  } catch {
+    return null;
+  }
+  let runs;
+  try {
+    runs = readJournal().runs;
+  } catch {
+    return { folder: real, run: null, journal: false };
+  }
+  const holding = runs.filter((r) => typeof r?.folder === 'string' && isInsideFolder(r.folder, real));
+  if (holding.length > 0) {
+    const nearest = Math.max(...holding.map((r) => r.folder.length));
+    const run = holding.filter((r) => r.folder.length === nearest).at(-1);
+    return { folder: run.folder, run, journal: true };
+  }
+  const stop = path.resolve(home);
+  for (let dir = real; dir !== stop && !sameFolder(dir, stop); dir = path.dirname(dir)) {
+    if (pluginOnIn(dir)) return { folder: dir, run: null, journal: true };
+    if (path.dirname(dir) === dir) break;
+  }
+  return null;
 }
 
 // Exists, whatever it is: a folder or a symlink (even a dangling one) counts.

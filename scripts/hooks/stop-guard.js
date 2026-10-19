@@ -1,17 +1,19 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
 // only reading, reporting, the runbook, the foreman's reading and closing of a
-// wake, and the front desk's reading commands through. On SessionEnd it clears the
-// session's bypass marker and says nothing.
+// wake, and the front desk's and setup's reading commands through. On SessionEnd it clears the
+// session's bypass marker and says nothing. It acts in a registered project and in a folder
+// being set up (kit.js's beingSetUp), as in a project.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Readable } from 'node:stream';
 import fs from 'node:fs';
-import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir } from './kit.js';
+import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir, beingSetUp } from './kit.js';
 import { words } from './shell-words.js';
 import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
+import { SETUP_TITLES } from '../state/card-lines.js';
 
 export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite'];
 // They only halt work that is already running.
@@ -83,6 +85,17 @@ function isFrontDeskRead(command, pluginRoots, platform) {
   return false;
 }
 
+// Setup's commands that only read (scripts/setup/cli.js), by their exact words: `status`,
+// `plan <step>` and `resume`, which asks for the status and then the plan of the first step
+// neither done nor running, and so reads no more than those two. The helper answers both under STOP, changing nothing
+// a step lists. `apply` changes what its card lists, so it stays refused, as does every other form.
+const SETUP_STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
+function isSetupRead(command, pluginRoots, platform) {
+  const args = scriptArguments(command, pluginRoots, platform, 'scripts/setup/cli.js');
+  if (args === null) return false;
+  return (args.length === 1 && ['status', 'resume'].includes(args[0])) || (args.length === 2 && args[0] === 'plan' && SETUP_STEP.test(args[1]));
+}
+
 // A wake file as the foreman is told it: one word naming a .json file, never a flag.
 const WAKE_FILE = /^[^-].*\.json$/;
 
@@ -130,7 +143,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   const cwd = input.cwd;
   const found = find(cwd, { dir });
   const byPath = found ? false : registeredByPath(cwd);
-  const inProject = Boolean(found) || byPath === true;
+  const inProject = Boolean(found) || byPath === true || (byPath === false && beingSetUp(cwd) !== null);
   const sessionEnd = input.hook_event_name === 'SessionEnd';
   if (inProject) {
     if (sessionEnd) {
@@ -150,7 +163,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
     const roots = pluginRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;
     if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform) || isWakeRead(command, roots, platform)
-      || isFrontDeskRead(command, roots, platform)) return undefined;
+      || isFrontDeskRead(command, roots, platform) || isSetupRead(command, roots, platform)) return undefined;
   }
   return answer.deny(DENIED);
 }

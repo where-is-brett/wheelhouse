@@ -15,7 +15,9 @@
 // nothing). The checks and the push then run in the mirror, with the key.
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
 import { computerId, helperAddress, profileDir, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { stopState, setStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
@@ -48,6 +50,7 @@ import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
+import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -699,6 +702,9 @@ export async function startHelper({
   pluginRoot = OWN_ROOT,
   // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
   wheelhouseRepo = WHEELHOUSE_URL,
+  // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
+  // act in, and how a long step's own process is started (scripts/setup/engine.js).
+  setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -2172,7 +2178,11 @@ export async function startHelper({
     return { ok: true, protection: onOrNot, ci: checks };
   }
   const pass = (call) => async (body, ctx) => ({ ok: true, result: await call(await ctx.adapter(), body) });
+  // Setup's routes act on a folder, not a registered project, and check it themselves. Plan and
+  // status answer under STOP; apply is refused.
+  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn });
   const routes = {
+    ...setup,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -2333,6 +2343,15 @@ export async function startHelper({
         return send(res, 200, { ok: true });
       } catch {
         return send(res, 200, { ok: false, refused: 'STOP could not be recorded' });
+      }
+    }
+    if (url.pathname.startsWith('/setup/')) {
+      try {
+        onArrive(url.pathname);
+        return send(res, 200, await route(body));
+      } catch (error) {
+        const message = error instanceof SetupRefusal || error instanceof Error ? error.message : '';
+        return send(res, 200, { ok: false, refused: message || 'the request failed' });
       }
     }
     let ctx = null;

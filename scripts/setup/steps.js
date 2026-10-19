@@ -1,0 +1,70 @@
+// scripts/setup/steps.js
+// Setup's steps (design section 15), in the order setup runs them, numbered 1 to 10. The
+// project's files, pins and protection are step 7: they go up before protection is switched on,
+// and before Locked, whose hook refuses commands in a Locked project until its settings switch
+// the sandbox on, which would refuse the playbook's own command too.
+//
+//   Step = {
+//     n: number, title: string,
+//     plan(ctx) -> Promise<{ changes: PlannedChange[], card: CardInput, director: string }>,
+//     apply(ctx, changes) -> Promise<Change[]>,
+//     long?: boolean,        runs in a detached child (scripts/setup/run-step.js)
+//   }
+//   ctx = { folder, step, runId, now, userHome, platform }, and for apply also
+//         record(changes), to put changes in the journal as they are made, and stopped().
+//
+// `plan` changes nothing. Its list is what the card shows and what its hash names, so it must be
+// the same list each time for the same world: no ids, no times. `card` is the composer's input
+// (scripts/cards/compose.js) of kind `setup`, without its target: the engine gives it this step
+// and the list's hash, which make its set line. `director` is what the director does, in plain words.
+// `apply` gets the list the helper has just worked out again, never one a caller sent, and returns
+// the changes it made (scripts/setup/journal.js's Change), each with this step.
+//
+// Until each step's task (Tasks 7 to 13) fills it in, the step lists no changes (ruling R14).
+import crypto from 'node:crypto';
+import { canonicalJson } from '../lib/canonical.js';
+import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+
+// The SHA-256 of a list of changes in canonical JSON: what a setup card's line names.
+export function planHash(changes) {
+  return crypto.createHash('sha256').update(canonicalJson(changes)).digest('hex');
+}
+
+// The card of a step that changes nothing yet.
+function placeholderCard(n) {
+  return {
+    kind: 'setup',
+    level: 3,
+    what: `Setup step ${n}, ${SETUP_TITLES[n]}: this step has nothing to change on this computer yet.`,
+    why: 'Setup changes nothing without your click on the list of what it will change.',
+    options: [
+      { label: SETUP_LABEL, says: 'Setup marks this step done and moves on.' },
+      { label: 'Not now', says: 'Setup waits at this step; nothing changes.' },
+    ],
+    recommend: SETUP_LABEL,
+    because: 'the list is empty, so nothing changes',
+    meanwhile: 'Setup waits at this step; nothing changes.',
+  };
+}
+
+function placeholder(n) {
+  return {
+    n,
+    title: SETUP_TITLES[n],
+    async plan() {
+      return { changes: [], card: placeholderCard(n), director: 'One click' };
+    },
+    async apply() {
+      return [];
+    },
+  };
+}
+
+export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map(placeholder));
+
+// The lowest step of a run not yet done, or null when every step is; 1 when there is no run.
+// A step that ran after it (a long step's next cards are asked while it runs) doesn't count.
+export function firstUnfinished(run, steps = STEPS) {
+  const done = (n) => typeof run?.steps?.[n]?.doneAt === 'string';
+  return steps.map((s) => s.n).sort((a, b) => a - b).find((n) => !done(n)) ?? null;
+}

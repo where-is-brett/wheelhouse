@@ -16,7 +16,13 @@ import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
-import { helperAddress } from '../../../scripts/lib/paths.js';
+import { helperAddress, keysDir, computerId } from '../../../scripts/lib/paths.js';
+import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
+import { makeEvent } from '../../../scripts/state/events.js';
+import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
+import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
 
 const P = 'owner__name';
 
@@ -675,4 +681,120 @@ test('a lineage check that throws is passed over: the session starts and says no
 test('the guard floor is the build loop\'s Claude Code floor, named once', () => {
   assert.deepEqual(GUARD_FLOOR, CLAUDE_CODE_FLOOR.split('.').map(Number));
   assert.equal(OLD_CLAUDE_CODE, 'This Claude Code is older than 2.1.295, so a guard that fails does not stop a tool call: update Claude Code');
+});
+
+// --- A folder being set up: no project record yet, the plugin switched on in its own settings or a setup run there.
+
+const pluginOn = (folder) => {
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true } }));
+  return folder;
+};
+const setupStart = (f, cwd, extra = {}) => decide(
+  { cwd, session_id: 's1' },
+  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => null, stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, ...extra },
+);
+
+test('a fresh computer gets a signing key and enrols it once', async () => {
+  await withHome(async () => {
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-fresh zoë ')));
+    const f = fake();
+    const out = await setupStart(f, folder);
+    const keyFile = path.join(keysDir(), 'signing.pem');
+    const key = fs.readFileSync(keyFile, 'utf8');
+    assert.deepEqual(readEnrolled().map((e) => e.computer), [computerId()]);
+    assert.equal(text(out), 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.');
+    // The first click can be signed and checked.
+    const signed = makeEvent({ kind: 'action', data: { action: 'lift-stop', question: 'q', label: 'Lift STOP' } });
+    assert.equal(verify(signed, readEnrolled()), true);
+    // A second session start makes no new key and adds nothing.
+    await setupStart(fake(), folder);
+    assert.equal(fs.readFileSync(keyFile, 'utf8'), key);
+    assert.equal(readEnrolled().length, 1);
+  });
+  // A computer that already has a list: its own key is made, and the list is left as it is.
+  await withHome(async () => {
+    const other = { computer: 'aaaaaaaa', publicKey: 'b3RoZXI=', enrolledAt: '2026-10-01T00:00:00.000Z' };
+    enrol(other);
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-listed-')));
+    await setupStart(fake(), folder);
+    assert.ok(fs.existsSync(path.join(keysDir(), 'signing.pem')));
+    assert.deepEqual(readEnrolled(), [other]);
+  });
+  // A key made before, with no list yet (a start cut short): it is enrolled, not replaced.
+  await withHome(async () => {
+    const made = makeSigningKey();
+    const key = fs.readFileSync(path.join(keysDir(), 'signing.pem'), 'utf8');
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-half-')));
+    await setupStart(fake(), folder);
+    assert.equal(fs.readFileSync(path.join(keysDir(), 'signing.pem'), 'utf8'), key);
+    assert.deepEqual(readEnrolled().map((e) => [e.computer, e.publicKey]), [[made.computer, made.publicKey]]);
+  });
+  // Outside every project and setup, nothing is made.
+  await withHome(async () => {
+    await setupStart(fake(), fs.realpathSync.native(tempFolder('wh-stranger-')));
+    assert.equal(fs.existsSync(path.join(keysDir(), 'signing.pem')), false);
+    assert.deepEqual(readEnrolled(), []);
+  });
+});
+
+test('the next session start resumes at the first unfinished step', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-resume '));
+    const run = startRun({ folder, now: () => new Date('2026-10-19T03:00:00.000Z') });
+    const at = (m) => () => new Date(Date.parse('2026-10-19T03:00:00.000Z') + m * 60000);
+    markStep(run.id, 1, 'shownAt', { now: at(1) });
+    markStep(run.id, 1, 'clickedAt', { now: at(2) });
+    markStep(run.id, 1, 'doneAt', { now: at(3) });
+    // Step 2 (the long installs) is still running while step 3 finished.
+    markStep(run.id, 2, 'clickedAt', { now: at(4) });
+    markStep(run.id, 3, 'doneAt', { now: at(5) });
+    const f = fake();
+    const out = await setupStart(f, folder);
+    assert.equal(f.calls.spawn.length, 1, 'the helper is started as in a project');
+    assert.equal(text(out), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    // From a folder inside it too, and once step 2 is done the next is step 4: step 3 is not repeated.
+    markStep(run.id, 2, 'doneAt', { now: at(6) });
+    fs.mkdirSync(path.join(folder, 'web'));
+    const later = await setupStart(fake(), path.join(folder, 'web'));
+    assert.equal(text(later), 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.');
+    // STOP and a helper that could not start are said first.
+    const stopped = await setupStart(fake({ startsUp: false }), folder, { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' }) });
+    assert.deepEqual(text(stopped).split('\n'), [
+      'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
+      NO_HELPER,
+      'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.',
+    ]);
+  });
+});
+
+test('the guards act in a folder being set up', async () => {
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const withRun = fs.realpathSync.native(tempFolder('wh-guarded zoë '));
+    startRun({ folder: withRun });
+    const switchedOn = pluginOn(fs.realpathSync.native(tempFolder('wh-switched-')));
+    const stranger = fs.realpathSync.native(tempFolder('wh-stranger-'));
+    const bash = (cwd, command) => ({ ...call(cwd, 'Bash'), tool_input: { command } });
+    const denied = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny';
+    const tool = (input) => toolGuard(input, { dir: managed, home: os.homedir(), platform: 'darwin', pluginRoot: PLUGIN_ROOT });
+    const stop = (input) => stopGuard(input, { dir: managed, pluginRoot: PLUGIN_ROOT, platform: 'darwin' });
+    for (const folder of [withRun, switchedOn]) {
+      assert.ok(denied(await tool(bash(folder, 'gh pr merge 3'))), folder);
+      assert.ok(denied(await tool({ ...call(folder, 'Read'), tool_input: { file_path: path.join(folder, '.env') } })), folder);
+      assert.ok(denied(await tool({ ...call(folder, 'Write'), tool_input: { file_path: path.join(home, 'keys', 'signing.pem') } })), folder);
+    }
+    assert.equal(await tool(bash(stranger, 'gh pr merge 3')), undefined, 'a folder no one is setting up is left alone');
+    setStop({ by: 'prompt' });
+    const cli = `node ${PLUGIN_ROOT}/scripts/setup/cli.js`;
+    for (const folder of [withRun, switchedOn]) {
+      assert.ok(denied(await stop({ ...call(folder, 'Write'), tool_input: { file_path: path.join(folder, 'a.txt') } })), folder);
+      assert.ok(denied(await stop(bash(folder, 'npm install'))), folder);
+      for (const reading of ['status', 'plan 3', 'plan 10', 'resume']) assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
+      for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x']) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
+      assert.equal(await stop(call(folder, 'Read')), undefined);
+    }
+    assert.equal(await stop({ ...call(stranger, 'Write'), tool_input: { file_path: path.join(stranger, 'a.txt') } }), undefined);
+    liftStop();
+  });
 });

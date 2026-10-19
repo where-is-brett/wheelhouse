@@ -26,6 +26,20 @@ export function makeSigningKey() {
   };
 }
 
+// This computer's own key as an enrolment gives it, { computer, publicKey }, or null when there is
+// no usable key here.
+export function ownKey() {
+  try {
+    const privateKey = crypto.createPrivateKey(fs.readFileSync(keyFile()));
+    return {
+      computer: computerId(),
+      publicKey: crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).toString('base64'),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function withoutSig(record) {
   const { sig, ...rest } = record; // eslint-disable-line no-unused-vars
   return rest;

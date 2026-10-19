@@ -42,6 +42,7 @@ const INPUTS = {
   amend: { ...common, kind: 'amend', recommend: 'Change it', what: 'A change to the plan you approved for export-csv.', options: [says('Change it')], target: { work: 'export-csv', hash: DOC } },
   'lift-incident': { ...common, kind: 'lift-incident', recommend: 'End it', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, kind: 'incident-fix', recommend: 'Merge the fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
+  setup: { ...common, kind: 'setup', recommend: 'Go ahead', what: 'Setup step 6, Changes to this computer: transcripts are kept 30 days.', options: [says('Go ahead')], target: { step: 6, hash: DOC } },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 const cardOf = (kind) => composeCard(INPUTS[kind]).question;
@@ -171,6 +172,7 @@ test('the first part must name what each kind\'s set line names', () => {
     runbook: ['put the product back to an earlier release', 'cut the access'],
     'ci-push': ['ci-fix branch', 'main branch'],
     confirm: ['money is shown in dollars', 'money is shown in euros'],
+    setup: ['step 6,', 'step 16,'],
   };
   for (const [kind, [right, wrong]] of Object.entries(cases)) {
     const card = textOf(kind);

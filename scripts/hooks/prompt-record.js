@@ -9,10 +9,14 @@
 // profile goes to the profile; the answer itself still goes to the project.
 // A card carrying one set line and its reply code also gets a signed shown record,
 // so a later reply with that code (scripts/mod/reply.js) can count as the click.
+// A Go ahead on a setup card becomes a signed setup action kept in
+// <wheelhouseHome()>/setup/clicks/, where the helper reads it, since there may be no state to
+// record it in yet (Task 13 copies the clicks into the state). In a folder being set up (no
+// project record yet: kit.js's beingSetUp) that is the one click recorded, and nothing else is.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runAndExit, projectOf } from './kit.js';
+import { runAndExit, projectOf, beingSetUp } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
@@ -22,7 +26,8 @@ import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
+import { setLineOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES } from '../state/card-lines.js';
+import { keepClick, shownHash } from '../setup/clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -35,6 +40,7 @@ const ANSWER = new RegExp(`Answer question (${QUESTION_ID})(?![a-z0-9-])`, 'g');
 const AMEND = new RegExp(`Change the approved (${ID}) to this, ${SHA12}`, 'g');
 const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`, 'g');
 const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
+const SETUP = new RegExp(`Set up step ([0-9]{1,2}) as listed, ${SHA12}`, 'g');
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 
 function ciEntry(project, branch, sha12, now) {
@@ -194,6 +200,32 @@ export async function earned({ project, question, label, client, now, left, stop
   return null;
 }
 
+// The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, and
+// is the very card the helper composed for the list its twelve characters name, for the folder
+// this session is in, word for word, so a card reworded around the right set line earns nothing.
+// The record names that list's full hash, which the helper matches against the list it works out
+// again.
+function setupClickOf(cwd, question, label) {
+  if (label !== SETUP_LABEL) return null;
+  const m = only(SETUP, question);
+  if (!m) return null;
+  const step = Number(m[1]);
+  if (!Object.hasOwn(SETUP_TITLES, step) || setLineOf(question) !== setupLine(step, m[2])) return null;
+  const hash = shownHash({ cwd, step, h12: m[2], question });
+  return hash === null ? null : { kind: 'action', data: { action: 'setup', step, hash, question, label } };
+}
+
+// Signs each setup click and keeps it in setup/clicks/. One failing does not stop the rest.
+function keepSetupClicks(cwd, out, now) {
+  for (const click of out) {
+    if (!click.signable) continue;
+    try {
+      const made = setupClickOf(cwd, click.question, click.label);
+      if (made) keepClick(makeEvent({ ...made, now }));
+    } catch { /* not kept: the helper then refuses the step for want of a click, and the card is asked again */ }
+  }
+}
+
 // What was answered, and which answers came from a click on a button the card offered.
 function clicks(input) {
   const ti = input.tool_input ?? {};
@@ -274,7 +306,13 @@ function shownFor(project, input, at, stopState = defaultStopState) {
 export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS, liftStop = defaultLift, stopState } = {}) {
   if (input.tool_name !== 'AskUserQuestion') return undefined;
   const found = find(input.cwd, { dir });
-  if (!found) return undefined;
+  if (!found) {
+    if (beingSetUp(input.cwd) !== null) {
+      const at = now();
+      keepSetupClicks(input.cwd, clicks(input), () => at);
+    }
+    return undefined;
+  }
   const project = found.project;
   const api = client ?? helperClient({ timeout: budget });
   const end = Date.now() + budget;
@@ -288,6 +326,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const at = now();
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
+  keepSetupClicks(input.cwd, out, clock);
   let cards = [];
   try {
     cards = shownFor(project, input, at, stopState);
