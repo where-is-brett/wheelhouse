@@ -35,6 +35,26 @@ function board({ first = [], waiting = [], changed = [], health = [], features =
 const sourcesWith = (over = {}) => ({ at: at(18), sources: [], newModels: [], newLinks: [], retiring: [], releases: [], advisories: [], ...over });
 const usageWith = (over = {}) => ({ week: { tokens: null, usd: null, share: null }, unusual: [], missing: [], ...over });
 
+test('a blocked pull request is in what to watch with its reason, not in progress', () => {
+  // The reason is the report's first clause: the rest is the build's own account, which is the board's.
+  const model = board({
+    features: [{ work: 'export', title: 'Export the orders', lane: 'feature', step: 'building', slice: { n: 2, m: 3 }, pr: 17 }],
+    pullRequests: [
+      { pr: 17, work: 'export', review: 'none', findings: null, blocked: 'Checks red on #17: a flaky test; the subagent re-ran it twice.' },
+      { pr: 18, work: 'gift-cards', review: 'none', findings: null, blocked: '' },
+      { pr: 19, work: 'menu', review: 'none', findings: null, blocked: null },
+    ],
+    health: [{ level: 'watch', text: 'A security advisory for a library' }],
+  });
+  const b = briefingModel({ model, usage: usageWith(), sources: null, now: NOW, wasRaised: never });
+  assert.deepEqual(b.watch, [
+    'Pull request #17 for Export the orders is blocked: Checks red on #17',
+    'Pull request #18 for gift-cards is blocked, and its report gives no reason',
+    'A security advisory for a library',
+  ]);
+  assert.deepEqual(b.progress, ['Building Export the orders, slice 2 of 3', 'Pull request #19 for menu is waiting on CI or review']);
+});
+
 test('only what changed since the last briefing is in it', () => {
   const model = board({
     waiting: [{ n: 1, what: 'Choose the sign-up colour', since: at(10) }],

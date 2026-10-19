@@ -5,10 +5,12 @@
 //
 // What changed for users and the merges in progress count only when they are after `since`, the
 // last briefing (no since: all of them). What waits, what is building and the open pull requests
-// are shown whenever they stand. Unusual use is raised once: items already raised are left out,
-// and `raise` lists the ids this briefing includes, in the order they follow the weekly lines in
-// `watch`. The caller marks as raised (markRaised) only those its text showed,
-// `raise.slice(0, shownWatch - weekly)` from briefingParts, once the briefing has really been given.
+// are shown whenever they stand; a pull request whose work's latest report says blocked is in what
+// to watch, with the report's reason, rather than in progress. Unusual use is raised once: items
+// already raised are left out, and `raise` lists the ids this briefing includes, in the order they
+// follow the weekly lines in `watch`. The caller marks as raised (markRaised) only those its text
+// showed, `raise.slice(0, shownWatch - weekly)` from briefingParts, once the briefing has really
+// been given.
 //
 // The board's lines for Unattended build commands on Windows, and for Unattended off in a Locked
 // project, stand while they hold; the briefing repeats them once a week, the week starting on
@@ -91,6 +93,26 @@ function part(build, fallback) {
   }
 }
 
+const openPullRequests = (model) => records(model.build?.pullRequests).filter((x) => Number.isInteger(x.pr) && x.pr > 0);
+
+// "Pull request #12 for Search": the work by its feature's title, or by its id.
+function pullRequestName(p, features) {
+  const feature = features.find((f) => typeof p.work === 'string' && f.work === p.work);
+  const name = oneLine(feature?.title) || oneLine(p.work);
+  return `Pull request #${p.pr}${name ? ` for ${name}` : ''}`;
+}
+
+// The pull requests whose work's latest report says blocked (the board model's `blocked`), with why:
+// the report's first clause ("Checks red on #17"). The rest of the report is the build's own account
+// of what it tried, which the board's build tab gives.
+function blockedLines(model) {
+  const features = records(model.build?.features);
+  return openPullRequests(model).filter((p) => typeof p.blocked === 'string').map((p) => {
+    const why = oneLine(p.blocked).split(/[:;]\s|[.!?](?:\s|$)/)[0].trim();
+    return `${pullRequestName(p, features)} is blocked${why ? `: ${why}` : ', and its report gives no reason'}`;
+  });
+}
+
 function progressLines(model, isNew) {
   const out = [];
   const merged = records(model.director?.changed).filter((c) => isNew(c.at)).length;
@@ -106,10 +128,9 @@ function progressLines(model, isNew) {
     const slice = isRecord(f.slice) && Number.isInteger(f.slice.n) && Number.isInteger(f.slice.m) ? `, slice ${f.slice.n} of ${f.slice.m}` : '';
     out.push(`Building ${title}${slice}`);
   }
-  for (const p of records(model.build?.pullRequests).filter((x) => Number.isInteger(x.pr) && x.pr > 0)) {
-    const feature = features.find((f) => typeof p.work === 'string' && f.work === p.work);
-    const name = oneLine(feature?.title) || oneLine(p.work);
-    const which = `Pull request #${p.pr}${name ? ` for ${name}` : ''}`;
+  // A blocked pull request is in what to watch instead.
+  for (const p of openPullRequests(model).filter((x) => typeof x.blocked !== 'string')) {
+    const which = pullRequestName(p, features);
     if (p.review === 'none') out.push(`${which} is waiting on CI or review`);
     else if (p.review === 'findings') {
       const found = Number.isInteger(p.findings) && p.findings > 0 ? `${p.findings} ${p.findings === 1 ? 'problem' : 'problems'}` : 'problems';
@@ -209,10 +230,11 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   const fromSources = report ? part(() => sourceLines(report), []) : [];
   const damaged = part(() => list(board.missing).filter((line) => typeof line === 'string' && DAMAGED.test(line)), []);
   const dueReview = part(() => reviewLine(review), null);
+  const blocked = part(() => blockedLines({ build: isRecord(board.build) ? board.build : {} }), []);
   // The weekly lines and unusual use are news and the other health lines stand from one briefing
   // to the next, so the news comes first and is the last of `watch` to be cut for length; a review
-  // that is due follows it.
-  briefing.watch = [...weekly, ...unusual.map((u) => u.line), ...(dueReview === null ? [] : [dueReview]), ...health, ...fromSources, ...damaged];
+  // that is due follows it, then the pull requests that are blocked.
+  briefing.watch = [...weekly, ...unusual.map((u) => u.line), ...(dueReview === null ? [] : [dueReview]), ...blocked, ...health, ...fromSources, ...damaged];
   briefing.raise = unusual.map((u) => u.id);
   briefing.weekly = weekly.length;
   briefing.usage = part(() => usageLine(usage), null);
