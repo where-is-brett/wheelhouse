@@ -6,10 +6,11 @@
 // A tick sends { cmd: 'tick', session, cwd, idle, surface }. In the front desk's session its
 // answer holds the pane's model (scripts/mod/status.js), the glance and the status line; any
 // other session's answer, a session still in setup's included, holds only its role and `every`.
-// One tick runs at a time: a press's tick asked for while one runs follows it, once. Each prompt
-// an answer's `submit` holds (the courier's wake in the front desk's session, the watcher's lines
-// in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it handed, so the
-// next answer doesn't hold it again, and one that can't be handed on is not tried again.
+// One tick runs at a time: a tick a press or traffic asks for while one runs follows it, once.
+// Each prompt an answer's `submit` holds (the courier's wake in the front desk's session, the
+// watcher's lines in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it
+// handed, so the next answer doesn't hold it again, and one that can't be handed on is not tried
+// again.
 //
 // The pane has two views: the board, with each card's buttons (hooks/mod/cards.tsx), and the
 // settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both.
@@ -47,9 +48,10 @@ const OPENED = { plugin: 'wheelhouse', key: 'opened' } as const
 const VIEW = { plugin: 'wheelhouse', key: 'view' } as const
 const SETTINGS = { plugin: 'wheelhouse', key: 'settings' } as const
 
-// The module's own: the timer, whether a tick runs and whether a press asked for one meanwhile.
-// A reload starts them over, with the session.start that follows it. Whether the pane has been
-// opened is the session's, kept in its state, so a reload never opens a pane the director closed.
+// The module's own: the timer, whether a tick runs and whether a press or traffic asked for one
+// meanwhile. A reload starts them over, with the session.start that follows it. Whether the pane
+// has been opened is the session's, kept in its state, so a reload never opens a pane the
+// director closed.
 let timer: { every: number, cancel: () => void } | null = null
 let running = false
 let again = false
@@ -176,10 +178,10 @@ async function isOld($: EngineInterface) {
   return kept.value !== undefined && now - kept.value.readAt > STALE_TICKS * TICK_MS
 }
 
-// One tick, unless the last one is still running. Then a press's tick (`queued`) runs once that
-// one ends, however many presses asked; the timer's waits for its next fire. A tick that runs
-// long may leave the figures old: the status line and the title then stop showing them, and the
-// pane is drawn again, so its line saying how old they are comes without a tick's answer.
+// One tick, unless the last one is still running. Then a press's or traffic's tick (`queued`)
+// runs once that one ends, however many asked; the timer's waits for its next fire. A tick that
+// runs long may leave the figures old: the status line and the title then stop showing them, and
+// the pane is drawn again, so its line saying how old they are comes without a tick's answer.
 export async function tick($: EngineInterface, queued = false) {
   if (running) {
     if (queued) again = true
@@ -284,14 +286,21 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const kept = pane.value
   const model: PaneModel = isRecord(kept?.model) ? kept.model : {}
   const stale = staleLine(kept, last.value, now)
-  // Before the first picture, STOP heads the pane, as STOP needs only the session's folder; but
-  // not in a session the bridge has answered as another role's, setup's included, which has none.
+  // Before the first picture, STOP heads the pane, as STOP needs only the session's folder. Once a
+  // tick has given the session no pane (another role's, setup's included, or a front desk outside
+  // a project), a pane /wheelhouse opened before it says why, with no STOP, as /wheelhouse would.
   if (kept === undefined) {
-    const role = (await $.state.get(ROLE)).value
-    const top = role === undefined || role === FRONT_DESK ? await drawStop($, e, {}, pressing, live, after) : null
+    const why = noPane((await $.state.get(ROLE)).value, kept, last.value)
+    if (why !== null) {
+      return (
+        <Box flexDirection="column">
+          <Text>{why}</Text>
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="column">
-        {top}
+        {await drawStop($, e, {}, pressing, live, after)}
         <Text>{stale ?? FIRST_READING}</Text>
       </Box>
     )

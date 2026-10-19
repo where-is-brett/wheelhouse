@@ -497,6 +497,32 @@ test('a message whose first line has the lead is traffic, whatever names the for
   }
 })
 
+test('traffic that comes while a tick runs gets its own tick once that one ends, and only one', async ($, on) => {
+  let reply: Reply = frontDesk()
+  const { seen, clear, start, clock } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    reply = frontDesk()
+    await start($, surface)
+    clear()
+    // The timer's tick takes five seconds; two messages come meanwhile, each kept out.
+    reply = { hold: 5000, then: frontDesk() }
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(1)
+    reply = frontDesk()
+    expect(await submit($, TRAFFIC[0], 'peer')).toEqual({ drop: KEPT_OUT })
+    expect(await receive($, TRAFFIC[1], { kind: 'peer' })).toEqual({ consumed: KEPT_OUT })
+    await clock.settle()
+    expect(seen.ticks).toHaveLength(1)
+    // It ends, and one tick follows at once, not two, and not at the timer's next fire.
+    await clock.advance(5000)
+    expect(seen.ticks).toHaveLength(2)
+    await clock.advance(TICK_MS - 5000 - 1)
+    expect(seen.ticks).toHaveLength(2)
+    await clock.advance(1)
+    expect(seen.ticks).toHaveLength(3)
+  }
+})
+
 test('/digest answers with the bridge\'s briefing', async ($, on) => {
   const BRIEFING = 'Since you were last here\n\nThe banner change merged. 2 cards wait.'
   let answer: Reply = { ok: true, text: BRIEFING }

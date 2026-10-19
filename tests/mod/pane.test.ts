@@ -389,9 +389,10 @@ for (const surface of SURFACES) {
     expect(seen.closes).toEqual([])
     expect(seen.statuses).toEqual([])
     expect(panes.has(PANE_ID)).toBe(false)
-    // The pane, if mounted, has nothing to show but its first line.
+    // The pane, if mounted, shows only why there is no pane yet, and no buttons.
     const ui = await mount($, surface)
-    expect(await texts(ui)).toEqual(['Reading how the project stands…'])
+    expect(await texts(ui)).toEqual(['This project is still being set up: its pane opens once setup finishes'])
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
     await ui.unmount()
 
     // Setup finishes: the next tick answers the front desk, and the pane opens as at a front
@@ -532,19 +533,19 @@ test('the stale line comes by itself while a tick hangs', async ($, on) => {
     const read = clock.now()
     const ui = await mount($, surface)
     expect((await texts(ui))[0]).toBe('2 cards wait')
-    // The next tick never answers. Nothing is drawn again by the test: the pane redraws itself
-    // once the picture is more than three ticks old.
-    reply = { hold: 5 * TICK_MS, then: frontDesk('2 cards wait') }
+    // The next tick hangs for 48 seconds, within the most the mod waits for one (TICK_ASK_MS, 50
+    // seconds). Nothing is drawn again by the test: the pane redraws itself once the picture is
+    // more than three ticks old, at the timer's fire while that tick still runs.
+    reply = { hold: 48000, then: frontDesk('2 cards wait') }
     await clock.advance(3 * TICK_MS)
     expect((await texts(ui))[0]).toBe('2 cards wait')
     await clock.advance(TICK_MS)
     expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(read)}'s`)
-    // Its time follows the timer while the tick still hangs.
-    await clock.advance(TICK_MS)
-    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(read)}'s`)
+    // The tick's answer clears it.
     reply = frontDesk('2 cards wait')
-    await clock.advance(2 * TICK_MS)
+    await clock.advance(3000)
     expect((await texts(ui))[0]).toBe('2 cards wait')
+    await clock.advance(TICK_MS)
     await ui.unmount()
   }
 })
@@ -592,4 +593,26 @@ for (const surface of SURFACES) {
     await clock.advance(60000)
     await ui.unmount()
   })
+}
+
+// A pane /wheelhouse opened before the first answer, whose first answer gives the session no pane:
+// the pane says why, in place of its first line, and with no STOP. Each in a test of its own, so
+// the session's state holds no answer from an earlier one.
+for (const surface of SURFACES) {
+  for (const [answer, says] of [[{ ok: true, role: 'feature', every: 0 }, NOT_HERE], [{ ok: true, role: 'setup', every: TICK_MS }, SETTING_UP], [{ ok: true, role: 'front-desk', every: 0 }, NO_PROJECT]] as const) {
+    test(`a pane opened before the first answer says why once that answer gives it none (${surface}, ${answer.role}, every ${answer.every})`, async ($, on) => {
+      const { clock } = world(on, () => ({ hold: 20000, then: answer }))
+      await $.session.start({ cwd: ROOT, surface, isInteractive: true })
+      await clock.settle()
+      await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+      const ui = await mount($, surface)
+      expect(await texts(ui)).toEqual(['Reading how the project stands…'])
+      expect((await ui.find({ key: 'stop' }))?.type).toBe('Button')
+      await clock.advance(20000)
+      expect(await texts(ui)).toEqual([says])
+      expect(await ui.find({ key: 'stop' })).toBeUndefined()
+      await clock.advance(TICK_MS)
+      await ui.unmount()
+    })
+  }
 }
