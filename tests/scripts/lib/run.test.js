@@ -106,6 +106,13 @@ test('on Windows a timed-out command is killed with its children', async () => {
   assert.deepEqual(sent, []);
 });
 
+test('run gives stdout as bytes with encoding buffer', async () => {
+  const result = await run(process.execPath, ['-e', 'process.stdout.write(Buffer.from([0, 255, 104, 105]))'], { encoding: 'buffer' });
+  assert.equal(result.code, 0);
+  assert.ok(Buffer.isBuffer(result.stdout));
+  assert.deepEqual([...result.stdout], [0, 255, 104, 105]);
+});
+
 test('run ends a program when its signal is aborted, and says it was stopped', async () => {
   const started = Date.now();
   const stop = new AbortController();
