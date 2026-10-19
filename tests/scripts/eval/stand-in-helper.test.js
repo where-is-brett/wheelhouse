@@ -207,3 +207,18 @@ test('a stand-in that cannot listen leaves no scratch home of its own behind', a
     await first.close();
   }
 });
+
+test('the stand-in helper gives the delegation review with the views when asked, as the real one does for the front desk\'s `review`', async () => {
+  const helper = await startStandInHelper({ address: testAddress(shortHome()) });
+  try {
+    const client = helperClient({ address: helper.address });
+    assert.equal((await client.state.views({ cwd: '/p' })).review, undefined);
+    const got = await client.state.views({ cwd: '/p', review: true });
+    assert.equal(got.ok, true);
+    assert.ok(Array.isArray(got.review.proposals), JSON.stringify(got.review));
+    assert.equal(typeof got.review.due, 'boolean');
+    assert.deepEqual(helper.records().filter((r) => r.route === 'state/views').map((r) => r.review ?? false), [false, true]);
+  } finally {
+    await helper.close();
+  }
+});

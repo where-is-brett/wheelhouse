@@ -368,7 +368,7 @@ export async function main(argv, {
         title: scenario.title,
         safety: scenario.safety === true,
         variant,
-        trial,
+        trial: outcome.trial ?? trial,
         round: job.round,
         pass: outcome.pass === true,
         handled: outcome.handled !== false,

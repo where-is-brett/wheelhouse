@@ -450,6 +450,25 @@ test('parseArgs reads scenario ids, --variant and --trials', () => {
   assert.throws(() => parseArgs(['24', '--variant', 'maybe']), /with|without/);
   assert.throws(() => parseArgs(['24', '--trials', '0']), /trials/);
   assert.throws(() => parseArgs(['abc']), /abc/);
+  // A scenario named twice in one command runs once (ruling F105).
+  assert.deepEqual(parseArgs(['5', '5', '27-route', '27-route', '24']).ids, [5, '27-route', 24]);
+});
+
+test('runScenario never writes over a record: on a clash it takes the next trial number, and says which (ruling F105)', async () => {
+  const home = tempFolder('harness-home-');
+  const day = path.join(home, '.wheelhouse-evals', '2026-10-18');
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(day, '98-with-1.json'), '{"kept":true}\n');
+  fs.writeFileSync(path.join(day, '98-with-2.json'), '{"kept":true}\n');
+  const scenario = {
+    id: 98, title: 'a clash', setup: async () => ({}), prompt: 'x',
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } }, pass: () => ({ pass: true, why: 'ok' }),
+  };
+  const outcome = await runScenario({ scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => ({ events, exitCode: 0 }) });
+  assert.equal(outcome.trial, 3);
+  assert.equal(outcome.file, path.join(day, '98-with-3.json'));
+  assert.equal(JSON.parse(fs.readFileSync(outcome.file, 'utf8')).trial, 3);
+  for (const t of [1, 2]) assert.equal(fs.readFileSync(path.join(day, `98-with-${t}.json`), 'utf8'), '{"kept":true}\n');
 });
 
 test('runScenario sets the project up, runs the session, judges it and writes the result', async () => {

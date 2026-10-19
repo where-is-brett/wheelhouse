@@ -236,6 +236,16 @@ test('a first round never writes over a record saved that day: its trials follow
   assert.deepEqual(without, ['1 without 1'], 'a variant with nothing saved starts at 1');
 });
 
+test('the run record keeps the trial a run was saved under, when a clash moved it (ruling F105)', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const run = async ({ scenario, variant, trial }) => ({ pass: true, handled: true, why: 'moved', file: null, trial: trial + 5, usage: { input: 0, output: 0 }, line: `${scenario.id} ${variant}` });
+  await main(['1', '--variant', 'with'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run });
+  const runsDir = path.join(home, '.wheelhouse-evals', 'runs');
+  const [name] = fs.readdirSync(runsDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runsDir, name), 'utf8')).runs.map((r) => r.trial), [6]);
+});
+
 test('--again reruns what the last run marked, only the variant that marked it, after the trials already there', async () => {
   const root = twoSuites();
   const home = tempFolder('eval-home-');

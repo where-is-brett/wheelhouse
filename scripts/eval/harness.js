@@ -488,7 +488,7 @@ export function parseArgs(argv) {
   if (ways.length > 1) throw new Error(`Give one of scenario numbers, --all, --suite or --again, not ${ways.join(' and ')}`);
   if (again && chose) throw new Error('--again chooses its own variants and trials: give it no --variant or --trials');
   if (!ways.length) throw new Error('Name at least one scenario number, or --all, --suite <name> or --again, for example: npm run eval -- 24 --variant with');
-  return { ids, variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}) };
+  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}) };
 }
 
 // The local date, as the evaluations folder names a day's folder.
@@ -523,7 +523,8 @@ async function commitSetup(dir) {
 // session's sandbox lets a command reach, and its `readable` and `writable` go to the sandbox too
 // (runSession). A scenario's own `extraArgs` go to the session's command line, and its `offered`
 // tools are taken off the denied list (runSession). Resolves with the verdict, its reasons,
-// the record's file, whether the session was handled, its tokens and its one printed line.
+// the record's file, the trial it was saved under, whether the session was handled, its tokens
+// and its one printed line.
 export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
   let context = {};
@@ -624,10 +625,22 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
       events: session.events,
     };
-    const file = resultFile({ home, date, id: scenarioName(scenario), variant, trial });
+    // A record is never written over (ruling F105): when another run has saved this trial's record
+    // since, the next free trial number is taken, and the answer says which.
+    let saved = trial;
+    let file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(record, null, 2) + '\n');
-    return { pass, why, file, handled: shown, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
+    for (;;) {
+      try {
+        fs.writeFileSync(file, JSON.stringify({ ...record, trial: saved }, null, 2) + '\n', { flag: 'wx' });
+        break;
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        saved += 1;
+        file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
+      }
+    }
+    return { pass, why, file, trial: saved, handled: shown, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
   } finally {
     try {
       await context.close?.();
