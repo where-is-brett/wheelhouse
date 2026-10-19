@@ -34,7 +34,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { run } from '../../scripts/lib/run.js';
 import { resolveClaude, invocation, withoutHostVariables } from '../../scripts/lib/claude.js';
 import { parseStream, finalText } from '../../scripts/eval/harness.js';
 import { appendJsonl, probeLogDir } from '../lib/log.js';
@@ -350,14 +349,71 @@ function sessionArgs(options, extra = []) {
 
 const env = withoutHostVariables(process.env);
 
+// Runs a program like scripts/lib/run.js's `run`, but keeps the child in `live`
+// while it runs, so a stop signal ends it before the undo deletes its folder.
+function runLive(file, args, { cwd, input = '', timeoutMs, verbatim = false, limit = 8 * 1024 * 1024 } = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(file, args, { cwd, env, shell: false, windowsHide: true, windowsVerbatimArguments: verbatim, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      resolve({ code: -1, stdout: '', stderr: String(error.message) });
+      return;
+    }
+    live.add(child);
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      live.delete(child);
+      resolve({ stdout, stderr, ...result });
+    };
+    const timer = setTimeout(() => { stopChild(child); finish({ code: 1, timedOut: true }); }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(-limit); });
+    child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-limit); });
+    child.on('error', (error) => finish({ code: -1, stderr: `${stderr}${error.message}` }));
+    child.on('close', (code) => finish({ code: code ?? 1 }));
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+
+// The copies of Claude Code whose init event did not come without input: after
+// the first such read, the rest of the run goes straight to the prompt, rather
+// than waiting INIT_WAIT_MS each time. Recorded in the findings.
+const noInputInit = new Map();
+
 // Starts a session that is sent nothing, waits for its init event, and stops it
 // there. If no init event comes without input, tries once more with a prompt and
 // stops it at the init event, and says so (beforeModel false).
 async function readInit(binary, cwd, options) {
-  const first = await initFrom(binary, cwd, options, undefined);
-  if (first.init) return first;
+  let firstTry = noInputInit.get(binary.label)?.why ?? null;
+  if (!noInputInit.has(binary.label)) {
+    const first = await initFrom(binary, cwd, options, undefined);
+    if (first.init) return first;
+    firstTry = first.why;
+    noInputInit.set(binary.label, { why: first.why, stderr: first.stderr });
+  }
   const second = await initFrom(binary, cwd, options, 'Reply with the word ready.');
-  return { ...second, init: second.init ? { ...second.init, beforeModel: false } : null, firstTry: first.why };
+  return { ...second, init: second.init ? { ...second.init, beforeModel: false } : null, firstTry };
+}
+
+// The init event's plugins as names, whatever shape each entry has.
+export function pluginNames(plugins) {
+  if (!Array.isArray(plugins)) return null;
+  return plugins
+    .map((plugin) => (typeof plugin === 'string' ? plugin : (typeof plugin?.name === 'string' ? plugin.name : null)))
+    .filter((name) => name !== null);
+}
+
+// A list of names from the init event, or null when it is not a list.
+function names(list) {
+  return Array.isArray(list) ? list.filter((entry) => typeof entry === 'string') : null;
 }
 
 function initFrom(binary, cwd, options, prompt) {
@@ -396,10 +452,10 @@ function initFrom(binary, cwd, options, prompt) {
           const modelSpoke = before.includes('assistant') || before.includes('result');
           finish({
             init: {
-              skills: event.skills ?? null,
-              agents: event.agents ?? null,
-              slashCommands: event.slash_commands ?? null,
-              plugins: Array.isArray(event.plugins) ? event.plugins.map((plugin) => plugin.name) : null,
+              skills: names(event.skills),
+              agents: names(event.agents),
+              slashCommands: names(event.slash_commands),
+              plugins: pluginNames(event.plugins),
               pluginErrors: event.plugin_errors ?? [],
               version: event.claude_code_version ?? null,
               beforeModel: prompt === undefined && !modelSpoke,
@@ -445,7 +501,7 @@ async function turn(binary, cwd, prompt, options, extraAllowed = []) {
     '--allowedTools', 'Skill', 'Agent', 'Write', 'Read', ...extraAllowed,
   ]);
   const call = invocation(binary.resolved, [], args, prompt);
-  const result = await run(call.file, call.args, { cwd, baseEnv: env, input: call.input, timeoutMs: TURN_MS, windowsVerbatimArguments: call.verbatim, limit: 8 * 1024 * 1024 });
+  const result = await runLive(call.file, call.args, { cwd, input: call.input, timeoutMs: TURN_MS, verbatim: call.verbatim });
   const events = parseStream(result.stdout);
   const results = toolResults(events);
   const calls = [];
@@ -492,6 +548,13 @@ async function main() {
     return;
   }
 
+  if (!found.length) {
+    console.error('No copy of Claude Code was found (neither `claude` on the path nor the Desktop app\'s copy): nothing was changed.');
+    console.error('Install Claude Code, or pass --desktop-claude <path>.');
+    process.exitCode = 1;
+    return;
+  }
+
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const logDir = probeLogDir(CHECK);
   const logFile = path.join(logDir, `run-${stamp}.jsonl`);
@@ -499,7 +562,8 @@ async function main() {
   assertUnderTmp(outDir);
   const note = async (step, data) => {
     console.log(`[${step}] ${typeof data === 'string' ? data : JSON.stringify(data).slice(0, 600)}`);
-    await appendJsonl(logFile, { step, ...(typeof data === 'string' ? { text: data } : data) });
+    // The log never stops the run or the undo.
+    try { await appendJsonl(logFile, { step, ...(typeof data === 'string' ? { text: data } : data) }); } catch (error) { console.error(`(log not written: ${error.message})`); }
   };
 
   // 0. Copies of the user's files.
@@ -530,7 +594,7 @@ async function main() {
 
   const claudeCli = async (step, args, cwd) => {
     const call = invocation(found[0].resolved, [], args, undefined);
-    const result = await run(call.file, call.args, { cwd, baseEnv: env, timeoutMs: 300_000, windowsVerbatimArguments: call.verbatim });
+    const result = await runLive(call.file, call.args, { cwd, timeoutMs: 300_000, verbatim: call.verbatim });
     await note(step, { command: `claude ${args.join(' ')}`, code: result.code, stdout: result.stdout.slice(0, 4000), stderr: result.stderr.slice(0, 2000) });
     return result;
   };
@@ -593,7 +657,7 @@ async function main() {
   try {
     for (const binary of found) {
       const call = invocation(binary.resolved, [], ['--version'], undefined);
-      const version = await run(call.file, call.args, { baseEnv: env, timeoutMs: 60_000, windowsVerbatimArguments: call.verbatim });
+      const version = await runLive(call.file, call.args, { timeoutMs: 60_000, verbatim: call.verbatim });
       binary.version = version.stdout.trim();
       await note(`version ${binary.label}`, { file: binary.resolved.file, version: binary.version });
     }
@@ -720,23 +784,34 @@ async function main() {
     problems.push(`the run: ${error.message}`);
     await note('error', { message: String(error.stack ?? error) });
     console.error(`Stopped: ${error.message}`);
+  } finally {
+    // 4. The findings, in their own try, so the undo below always runs.
+    const findingsFile = path.join(outDir, 'findings.json');
+    let findings = null;
+    try {
+      fs.writeFileSync(path.join(outDir, 'trials.json'), JSON.stringify(trials, null, 2) + '\n', 'utf8');
+      findings = {
+        check: 50,
+        ranOn: new Date().toISOString(),
+        platform: process.platform,
+        claude: Object.fromEntries(found.map((binary) => [binary.label, binary.version ?? null])),
+        initWithoutInput: Object.fromEntries(found.map((binary) => [binary.label, noInputInit.has(binary.label)
+          ? { fellBack: true, why: noInputInit.get(binary.label).why }
+          : { fellBack: false }])),
+        ...summarise(trials),
+        complete: problems.length === 0,
+      };
+      fs.writeFileSync(findingsFile, JSON.stringify(findings, null, 2) + '\n', 'utf8');
+    } catch (error) {
+      problems.push(`the findings: ${error.message}`);
+      console.error(`The findings could not be made: ${error.message} (the trials are in ${path.join(outDir, 'trials.json')} if that was written)`);
+    }
+    await undo();
+    if (findings) {
+      console.log(`\nFindings (also in ${findingsFile}; every trial in trials.json beside it):`);
+      console.log(JSON.stringify({ ...findings, candidates: undefined }, null, 2));
+    }
   }
-
-  // 4. The findings.
-  const findings = {
-    check: 50,
-    ranOn: new Date().toISOString(),
-    platform: process.platform,
-    claude: Object.fromEntries(found.map((binary) => [binary.label, binary.version ?? null])),
-    ...summarise(trials),
-    complete: problems.length === 0,
-  };
-  const findingsFile = path.join(outDir, 'findings.json');
-  fs.writeFileSync(findingsFile, JSON.stringify(findings, null, 2) + '\n', 'utf8');
-  fs.writeFileSync(path.join(outDir, 'trials.json'), JSON.stringify(trials, null, 2) + '\n', 'utf8');
-  await undo();
-  console.log(`\nFindings (also in ${findingsFile}; every trial in trials.json beside it):`);
-  console.log(JSON.stringify({ ...findings, candidates: undefined }, null, 2));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { NAMES, MARKERS, summarise, holds, agree, choose } from '../../../probes/50-switch-off/findings.js';
-import { makeFixtures, parseOptions, findDesktopClaude } from '../../../probes/50-switch-off/run.js';
+import { makeFixtures, parseOptions, findDesktopClaude, pluginNames } from '../../../probes/50-switch-off/run.js';
 
 const runJs = fileURLToPath(new URL('../../../probes/50-switch-off/run.js', import.meta.url));
 const PLUGIN = `${NAMES.plugin}@wheelhouse-probe-switch`;
@@ -117,7 +117,48 @@ test('no trials: every answer is null or untried', () => {
   assert.equal(found.sameName, null);
   assert.equal(found.initBeforeModel, null);
   assert.equal(choose([], 'x').route, 'none');
-  assert.equal(found.route.skill.untried, true);
+  assert.deepEqual(found.route, { skill: null, agent: null, command: null, hook: null });
+  assert.equal(found.personal, null);
+  assert.deepEqual(found.typedRefused, { skill: null, command: null });
+});
+
+test('when the baseline shows nothing running, no kind gets a route: every answer is untried', () => {
+  const trials = expected().map((one) => (one.name === 'baseline'
+    ? { ...one, hooksRan: [], turns: { model: { markers: [] }, 'typed-skill': { markers: [] }, 'typed-command': { markers: [] } } }
+    : one));
+  const trialsWithFallbacks = [
+    ...trials,
+    ...['terminal', 'desktop'].map((binary) => trial('hook-skip-worktree', binary, { hooksRan: [], git: { statusClean: true, nothingStaged: true } })),
+    ...['terminal', 'desktop'].map((binary) => trial('personal-overrides', binary, { turns: { model: { markers: [] }, 'typed-personal': { markers: [] } } })),
+  ];
+  const found = summarise(trialsWithFallbacks);
+  assert.deepEqual(found.route, { skill: null, agent: null, command: null, hook: null });
+  assert.equal(found.personal, null);
+  assert.deepEqual(found.typedRefused, { skill: null, command: null });
+  assert.equal(found.controls.skillRuns, false);
+  assert.equal(found.controls.projectHookRuns, false);
+});
+
+test('each kind is gated on its own control', () => {
+  // The typed command never ran in the baseline; the skill did.
+  const trials = expected().map((one) => (one.name === 'baseline'
+    ? { ...one, turns: { ...one.turns, 'typed-command': { markers: [] } } }
+    : one));
+  const found = summarise(trials);
+  assert.equal(found.route.command, null);
+  assert.equal(found.route.skill.key, 'skillOverrides.<name>');
+  // The bare name reached the plugin's agent in the baseline: the agent deny shows nothing.
+  const pluginWins = expected().map((one) => (one.name === 'baseline'
+    ? { ...one, turns: { ...one.turns, model: { markers: [MARKERS.skill, MARKERS.personal, MARKERS.pluginAgentBare] } } }
+    : one));
+  assert.equal(summarise(pluginWins).route.agent, null);
+});
+
+test('init entries without a name are tolerated', () => {
+  assert.deepEqual(pluginNames([{ name: PLUGIN, path: '/x' }, { path: '/y' }, 'other@m', null, 3]), [PLUGIN, 'other@m']);
+  assert.equal(pluginNames(undefined), null);
+  const trials = expected().map((one) => (one.name === 'baseline' ? { ...one, init: { ...one.init, plugins: [undefined, PLUGIN] } } : one));
+  assert.equal(summarise(trials).controls.pluginLoads, true);
 });
 
 test('options: --go is needed for the trial, and unknown options are refused', () => {

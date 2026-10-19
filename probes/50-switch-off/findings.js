@@ -12,6 +12,10 @@
 //     git: { statusClean, nothingStaged } }
 // Markers are the files the scratch parts write into the project's `ran/`
 // folder when they run, without the `.txt`.
+//
+// A kind's route is null (untried) unless the baseline trial, with nothing
+// switched off, shows that part running: otherwise its not running under a
+// candidate route says nothing.
 
 export const LOCAL_FILE = '.claude/settings.local.json';
 export const PROJECT_FILE = '.claude/settings.json';
@@ -113,7 +117,7 @@ function listedAgent(init, name) {
 
 function listedPlugin(init, name) {
   if (!init) return null;
-  return (init.plugins ?? []).some((plugin) => plugin === name || plugin.startsWith(`${name}@`));
+  return (init.plugins ?? []).some((plugin) => typeof plugin === 'string' && (plugin === name || plugin.startsWith(`${name}@`)));
 }
 
 function hookRan(trial, marker) {
@@ -162,6 +166,7 @@ export function summarise(trials) {
     typedSkillRuns: baseline((one) => ran(one, 'typed-skill', MARKERS.skill)),
     typedCommandRuns: baseline((one) => ran(one, 'typed-command', MARKERS.command)),
     personalRuns: baseline((one) => ran(one, 'model', MARKERS.personal)),
+    projectAgentRuns: baseline((one) => ran(one, 'model', MARKERS.projectAgentBare)),
     projectHookRuns: baseline((one) => hookRan(one, MARKERS.projectHook)),
     pluginHookRuns: baseline((one) => hookRan(one, MARKERS.pluginHook)),
     pluginLoads: baseline((one) => listedPlugin(one.init, NAMES.plugin)),
@@ -222,13 +227,16 @@ export function summarise(trials) {
     ? 'edit: take the hook out of the main checkout\'s .claude/settings.json and mark it skip-worktree (see the note)'
     : 'none found: the note says what Task 3 does';
 
+  // A route is only an answer if the part ran in the baseline, with nothing
+  // switched off: otherwise "it did not run" says nothing. Untried is null.
+  const gated = (control, answer) => (control === true ? answer() : null);
   const route = {
-    skill: choose(candidates.skill, MOVE),
-    agent: choose(candidates.agent, MOVE),
-    command: choose(candidates.command, MOVE),
-    hook: choose(candidates.hook, hookInstead),
+    skill: gated(controls.skillRuns === true && controls.typedSkillRuns === true, () => choose(candidates.skill, MOVE)),
+    agent: gated(controls.projectAgentRuns, () => choose(candidates.agent, MOVE)),
+    command: gated(controls.typedCommandRuns, () => choose(candidates.command, MOVE)),
+    hook: gated(controls.projectHookRuns, () => choose(candidates.hook, hookInstead)),
   };
-  const personal = choose(candidates.personal, 'none found: the note says what Task 3 does');
+  const personal = gated(controls.personalRuns, () => choose(candidates.personal, 'none found: the note says what Task 3 does'));
 
   // Does the main checkout's local settings reach a session in a worktree of it?
   const inWorktree = {
@@ -267,7 +275,7 @@ export function summarise(trials) {
 
   return {
     route,
-    typedRefused: { skill: route.skill.typedRefused ?? null, command: route.command.typedRefused ?? null },
+    typedRefused: { skill: route.skill?.typedRefused ?? null, command: route.command?.typedRefused ?? null },
     personal,
     pluginOff: controls.pluginLoads === true ? holds(pluginOffMap) : null,
     sandboxOff: controls.sandboxBlocks === true ? holds(sandboxOffMap) : null,
