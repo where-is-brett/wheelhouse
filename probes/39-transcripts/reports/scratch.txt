@@ -1,0 +1,1142 @@
+Check 39, scratch run, 2026-10-19; Claude Code 2.1.302 (Claude Code); model the default
+send plain at 0.0 s
+  answered: success turns=1 "ok"
+send ask at 4.0 s
+  permission host asked about AskUserQuestion; answered allow with "Approve"
+  answered: success turns=2 "Approve"
+send background at 8.8 s
+  answered: success turns=1 "The background subagent finished and replied "sub-ok"."
+send replyCode at 20.3 s
+  answered: success turns=1 "I see "K7QD Approve", but nothing is waiting on an approval "
+stream session exited 0; events: assistant 10, result:success 5, system:init 5, system:background_tasks_changed 2, system:thinking_tokens 2, user 2, control_request 1, rate_limit_event 1, system:commands_changed 1, system:hook_response 1, system:hook_started 1, system:task_notification 1, system:task_started 1, system:task_updated 1
+relay by a second process: exit 0 in 7.1 s; same session id true; result "relayed"
+(Read again from the run's kept transcript with --reread.)
+
+== Every entry, in order (scratch session only)
+session #0 queue-operation keys=type,operation,timestamp,sessionId,content | sessionId
+session #1 queue-operation keys=type,operation,timestamp,sessionId | sessionId
+session #2 attachment:hook_success keys=parentUuid,isSidechain,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,hookName,toolUseID,hookEvent,content,stdout,stderr,exitCode,command,durationMs hookEvent=SessionStart content=""
+session #3 attachment:hook_additional_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,hookName,toolUseID,hookEvent hookEvent=SessionStart content=["probe39 context from the SessionStart hook"]
+session #4 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,permissionMode,promptSource,turnOrigin,turnPosition,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=string:plain text | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli first-prompt promptId text="Reply with the single word: ok."
+session #5 attachment:environment keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,snapshot
+session #6 attachment:model keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,identity,text
+session #7 attachment:deferred_tools_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedLines,removedNames,wireHiddenNames,readdedNames,pendingMcpServers,needsAuthMcpServers,failedMcpServers
+session #8 attachment:agent_listing_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedTypes,addedLines,builtInTypes,removedTypes,isInitial,showConcurrencyNote
+session #9 attachment:skill_listing keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,skillCount,isInitial,names
+session #10 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #11 attachment:hook_additional_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,hookName,toolUseID,hookEvent hookEvent=UserPromptSubmit content=["probe39 context from the UserPromptSubmit hook"]
+session #12 atis-latch keys=type,atis,sessionId | sessionId
+session #13 attachment:session_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,context
+session #14 attachment:date keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,date
+session #15 attachment:credential_org keys=parentUuid,isSidechain,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,organizationUuid
+session #16 attachment:remote_session_change keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,renderedBesideToolResult,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,url,commit,pr,sendUserFileHint,managedCommit,managedPr
+session #17 attachment:prompt_snapshot keys=parentUuid,isSidechain,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,systemPrompt,reminderFold,echoWireToolInputs,contextRendering
+session #18 api-request-shape keys=type,sessionId,shapeHash,timestamp,version,shape | sessionId
+session #19 api-request-blob keys=type,sessionId,hash | sessionId
+session #20 api-request-blob keys=type,sessionId,hash | sessionId
+session #21 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,keep,tail,cacheControl,requestDigest | sessionId
+session #22 last-prompt keys=type,lastPrompt,leafUuid,sessionId | sessionId
+session #23 atis-latch keys=type,atis,sessionId | sessionId
+session #24 assistant keys=parentUuid,isSidechain,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[text] model=yes in=2 cacheRead=12300 cacheCreate=6399 out=4
+session #25 attachment:prompt_snapshot keys=parentUuid,isSidechain,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,systemPrompt,tools,cliPrefix,reminderFold,systemTurns,toolChangeHeader,inlineTools,keptReminders,echoWireToolInputs,contextRendering
+session #26 last-prompt keys=type,lastPrompt,leafUuid,sessionId | sessionId
+session #27 atis-latch keys=type,atis,sessionId | sessionId
+session #28 queue-operation keys=type,operation,timestamp,sessionId,content | sessionId
+session #29 queue-operation keys=type,operation,timestamp,sessionId | sessionId
+session #30 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,permissionMode,promptSource,turnOrigin,turnPosition,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=string:plain text | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli promptId text="Use the AskUserQuestion tool once, with one question, "Approve the pro"
+session #31 attachment:deferred_tools_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedLines,removedNames,wireHiddenNames,readdedNames,pendingMcpServers,needsAuthMcpServers,failedMcpServers,surfacedNames,surfacedDefinitions
+session #32 attachment:mcp_instructions_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedBlocks,removedNames
+session #33 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #34 attachment:hook_additional_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,hookName,toolUseID,hookEvent hookEvent=UserPromptSubmit content=["probe39 context from the UserPromptSubmit hook"]
+session #35 api-request-blob keys=type,sessionId,hash | sessionId
+session #36 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,base,keep,tail,cacheControl,requestDigest | sessionId
+session #37 last-prompt keys=type,lastPrompt,leafUuid,sessionId | sessionId
+session #38 atis-latch keys=type,atis,sessionId | sessionId
+session #39 assistant keys=parentUuid,isSidechain,wireToolInputs,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[tool_use(AskUserQuestion)] model=yes in=2 cacheRead=14709 cacheCreate=8695 out=135
+session #40 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,sourceToolAssistantUUID,permissionDecision,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=tool_result(AskUserQuestion) | entrypoint=sdk-cli toolUseResult sourceToolAssistantUUID promptId toolUseResult keys=questions,answers permissionDecision={"decision":"accept","source":"user_temporary"} text="[tool_result] Your questions have been answered: "Approve the probe ca"
+session #41 attachment:deferred_tools_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedLines,removedNames,wireHiddenNames,readdedNames,pendingMcpServers,needsAuthMcpServers,failedMcpServers
+session #42 attachment:mcp_instructions_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedBlocks,removedNames
+session #43 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #44 api-request-blob keys=type,sessionId,hash | sessionId
+session #45 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,base,keep,tail,cacheControl,requestDigest | sessionId
+session #46 last-prompt keys=type,lastPrompt,leafUuid,sessionId | sessionId
+session #47 atis-latch keys=type,atis,sessionId | sessionId
+session #48 assistant keys=parentUuid,isSidechain,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[text] model=yes in=2 cacheRead=23404 cacheCreate=7935 out=5
+session #49 queue-operation keys=type,operation,timestamp,sessionId,content | sessionId
+session #50 queue-operation keys=type,operation,timestamp,sessionId | sessionId
+session #51 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,permissionMode,promptSource,turnOrigin,turnPosition,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=string:plain text | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli promptId text="Use the Agent tool once to start one general-purpose subagent with run"
+session #52 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #53 attachment:hook_additional_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,hookName,toolUseID,hookEvent hookEvent=UserPromptSubmit content=["probe39 context from the UserPromptSubmit hook"]
+session #54 api-request-blob keys=type,sessionId,hash | sessionId
+session #55 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,base,keep,tail,cacheControl,requestDigest | sessionId
+session #56 assistant keys=parentUuid,isSidechain,wireToolInputs,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[tool_use(Agent)] model=yes in=2 cacheRead=31339 cacheCreate=148 out=150
+session #57 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,sourceToolAssistantUUID,permissionDecision,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=tool_result(Agent) | entrypoint=sdk-cli toolUseResult sourceToolAssistantUUID promptId toolUseResult keys=isAsync,status,agentId,description,resolvedModel,prompt,outputFile,canReadOutputFile,canContinueAgent permissionDecision={"decision":"accept","source":"config"} text="[tool_result] [{"type":"text","text":"Async agent launched successfull"
+session #58 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #59 api-request-blob keys=type,sessionId,hash | sessionId
+session #60 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,base,keep,tail,cacheControl,requestDigest | sessionId
+session #61 assistant keys=parentUuid,isSidechain,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[text] model=yes in=2 cacheRead=31487 cacheCreate=595 out=3
+session #62 queue-operation keys=type,operation,timestamp,sessionId,content | sessionId
+session #63 queue-operation keys=type,operation,timestamp,sessionId | sessionId
+session #64 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,permissionMode,origin,promptSource,turnOrigin,turnPosition,queueSkipAttachments,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId origin={"kind":"task-notification","producer":"session-task","runId":"<id>"} sig=string:<task-notification> | origin={kind:task-notification} promptSource=system turnOrigin=task_notification origin+{producer,runId} entrypoint=sdk-cli promptId text="<task-notification> <task-id><agent id></task-id> <tool-use-id>"
+session #65 attachment:hook_additional_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,hookName,toolUseID,hookEvent hookEvent=UserPromptSubmit content=["probe39 context from the UserPromptSubmit hook"]
+session #66 api-request-blob keys=type,sessionId,hash | sessionId
+session #67 api-request-blob keys=type,sessionId,hash | sessionId
+session #68 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,base,keep,tail,cacheControl,requestDigest | sessionId
+session #69 assistant keys=parentUuid,isSidechain,thinkingDurationMs,thinkingDisplay,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[thinking] model=yes in=2 cacheRead=32082 cacheCreate=570 out=28
+session #70 assistant keys=parentUuid,isSidechain,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[text] model=yes in=2 cacheRead=32082 cacheCreate=570 out=28
+session #71 queue-operation keys=type,operation,timestamp,sessionId,content | sessionId
+session #72 queue-operation keys=type,operation,timestamp,sessionId | sessionId
+session #73 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,permissionMode,promptSource,turnOrigin,turnPosition,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=string:reply-code | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli promptId text="K7QD Approve"
+session #74 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #75 attachment:hook_additional_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,hookName,toolUseID,hookEvent hookEvent=UserPromptSubmit content=["probe39 context from the UserPromptSubmit hook"]
+session #76 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,base,keep,tail,cacheControl,requestDigest | sessionId
+session #77 assistant keys=parentUuid,isSidechain,thinkingDurationMs,thinkingDisplay,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[thinking] model=yes in=2 cacheRead=32652 cacheCreate=96 out=139
+session #78 assistant keys=parentUuid,isSidechain,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[text] model=yes in=2 cacheRead=32652 cacheCreate=96 out=139
+session #79 last-prompt keys=type,lastPrompt,leafUuid,sessionId | sessionId
+session #80 atis-latch keys=type,atis,sessionId | sessionId
+session #81 cost-state keys=type,sessionId,totalCostUSD,totalAPIDuration,totalAPIDurationWithoutRetries,totalToolDuration,totalLinesAdded,totalLinesRemoved,totalDuration,startTime,modelUsage,hasUnknownModelCost | sessionId
+session #82 queue-operation keys=type,operation,timestamp,sessionId,content | sessionId
+session #83 queue-operation keys=type,operation,timestamp,sessionId | sessionId
+session #84 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,permissionMode,promptSource,turnOrigin,turnPosition,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=string:Wheelhouse: | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli promptId text="Wheelhouse: read relay.md"
+session #85 attachment:deferred_tools_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedLines,removedNames,wireHiddenNames,readdedNames,pendingMcpServers,needsAuthMcpServers,failedMcpServers,removedByBlock
+session #86 attachment:mcp_instructions_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedBlocks,removedNames
+session #87 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #88 attachment:hook_additional_context keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,content,hookName,toolUseID,hookEvent hookEvent=UserPromptSubmit content=["probe39 context from the UserPromptSubmit hook"]
+session #89 api-request-blob keys=type,sessionId,hash | sessionId
+session #90 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,keep,tail,cacheControl,requestDigest | sessionId
+session #91 assistant keys=parentUuid,isSidechain,wireToolInputs,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[tool_use(Read)] model=yes in=2 cacheRead=32748 cacheCreate=741 out=114
+session #92 user keys=parentUuid,isSidechain,promptId,type,uuid,timestamp,sourceToolAssistantUUID,permissionDecision,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false promptId cwd sessionId sig=tool_result(Read) | entrypoint=sdk-cli toolUseResult sourceToolAssistantUUID promptId toolUseResult keys=type,file permissionDecision={"decision":"accept","source":"config","reasonType":"mode"} text="[tool_result] 1 Reply with the single word: relayed. Use no tools. 2 "
+session #93 attachment:deferred_tools_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedLines,removedNames,wireHiddenNames,readdedNames,pendingMcpServers,needsAuthMcpServers,failedMcpServers,surfacedNames,surfacedDefinitions
+session #94 attachment:mcp_instructions_delta keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,addedNames,addedBlocks,removedNames
+session #95 attachment:total_tokens_reminder keys=parentUuid,isSidechain,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false cwd sessionId attachment keys=type,text
+session #96 api-request-blob keys=type,sessionId,hash | sessionId
+session #97 api-request keys=type,sessionId,id,timestamp,version,querySource,shapeHash,params,base,keep,tail,cacheControl,requestDigest | sessionId
+session #98 last-prompt keys=type,lastPrompt,leafUuid,sessionId | sessionId
+session #99 mode keys=type,mode,sessionId | sessionId
+session #100 atis-latch keys=type,atis,sessionId | sessionId
+session #101 assistant keys=parentUuid,isSidechain,thinkingDurationMs,thinkingDisplay,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[thinking] model=yes in=2 cacheRead=33489 cacheCreate=3018 out=80
+session #102 assistant keys=parentUuid,isSidechain,apiBlockIndex,requestId,requestRef,requestedModel,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=false requestId cwd sessionId blocks=[text] model=yes in=2 cacheRead=33489 cacheCreate=3018 out=80
+session #103 last-prompt keys=type,lastPrompt,leafUuid,sessionId | sessionId
+session #104 cost-state keys=type,sessionId,totalCostUSD,totalAPIDuration,totalAPIDurationWithoutRetries,totalToolDuration,totalLinesAdded,totalLinesRemoved,totalDuration,startTime,modelUsage,hasUnknownModelCost | sessionId
+subagent <agent id> #0 user keys=parentUuid,isSidechain,promptId,agentId,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true promptId agentId cwd sessionId sig=string:plain text | isSidechain entrypoint=sdk-cli first-prompt promptId text="Reply with the single word: sub-ok. Use no tools."
+subagent <agent id> #1 attachment:deferred_tools_delta keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,addedNames,addedLines,removedNames,wireHiddenNames,readdedNames,surfacedNames,surfacedDefinitions
+subagent <agent id> #2 attachment:environment keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,snapshot
+subagent <agent id> #3 attachment:model keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,identity,text
+subagent <agent id> #4 attachment:skill_listing keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,content,skillCount,isInitial,names
+subagent <agent id> #5 attachment:session_context keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,context
+subagent <agent id> #6 attachment:date keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,rendered,renderedRole,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,date
+subagent <agent id> #7 attachment:credential_org keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,organizationUuid
+subagent <agent id> #8 attachment:remote_session_change keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,rendered,renderedRole,renderedBesideToolResult,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,url,commit,pr,sendUserFileHint,managedCommit,managedPr
+subagent <agent id> #9 attachment:prompt_snapshot keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,systemPrompt,reminderFold,echoWireToolInputs,contextRendering
+subagent <agent id> #10 api-request-shape keys=type,sessionId,agentId,shapeHash,timestamp,version,shape | agentId sessionId
+subagent <agent id> #11 api-request-blob keys=type,sessionId,agentId,hash | agentId sessionId
+subagent <agent id> #12 api-request-blob keys=type,sessionId,agentId,hash | agentId sessionId
+subagent <agent id> #13 api-request keys=type,sessionId,agentId,id,timestamp,version,querySource,shapeHash,params,keep,tail,cacheControl,requestDigest | agentId sessionId
+subagent <agent id> #14 assistant keys=parentUuid,isSidechain,agentId,apiBlockIndex,requestId,requestRef,requestedModel,attributionAgent,type,uuid,timestamp,advisorModel,effort,perTurnEffort,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId requestId cwd sessionId blocks=[text] model=yes in=2 cacheRead=6138 cacheCreate=13322 out=7
+subagent <agent id> #15 attachment:prompt_snapshot keys=parentUuid,isSidechain,agentId,type,uuid,timestamp,userType,entrypoint,cwd,sessionId,version,gitBranch | userType=external entrypoint=sdk-cli isSidechain=true agentId cwd sessionId attachment keys=type,systemPrompt,tools,cliPrefix,reminderFold,systemTurns,toolChangeHeader,inlineTools,keptReminders,echoWireToolInputs,contextRendering
+
+== Summary
+Files: 1 session files, 1 subagent files
+Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last line has no newline 0; entries with no type 0
+
+== Entry types (file kind:type, count)
+  12	session:assistant
+  12	session:queue-operation
+  10	session:api-request-blob
+  9	session:api-request
+  9	session:user
+  8	session:attachment:total_tokens_reminder
+  7	session:atis-latch
+  7	session:attachment:hook_additional_context
+  7	session:last-prompt
+  5	session:attachment:deferred_tools_delta
+  4	session:attachment:mcp_instructions_delta
+  2	session:attachment:prompt_snapshot
+  2	session:cost-state
+  2	subagent:api-request-blob
+  2	subagent:attachment:prompt_snapshot
+  1	session:api-request-shape
+  1	session:attachment:agent_listing_delta
+  1	session:attachment:credential_org
+  1	session:attachment:date
+  1	session:attachment:environment
+  1	session:attachment:hook_success
+  1	session:attachment:model
+  1	session:attachment:remote_session_change
+  1	session:attachment:session_context
+  1	session:attachment:skill_listing
+  1	session:mode
+  1	subagent:api-request
+  1	subagent:api-request-shape
+  1	subagent:assistant
+  1	subagent:attachment:credential_org
+  1	subagent:attachment:date
+  1	subagent:attachment:deferred_tools_delta
+  1	subagent:attachment:environment
+  1	subagent:attachment:model
+  1	subagent:attachment:remote_session_change
+  1	subagent:attachment:session_context
+  1	subagent:attachment:skill_listing
+  1	subagent:user
+
+== Files holding at least one entry of each type (file kind:type, files)
+  1	session:api-request
+  1	session:api-request-blob
+  1	session:api-request-shape
+  1	session:assistant
+  1	session:atis-latch
+  1	session:attachment:agent_listing_delta
+  1	session:attachment:credential_org
+  1	session:attachment:date
+  1	session:attachment:deferred_tools_delta
+  1	session:attachment:environment
+  1	session:attachment:hook_additional_context
+  1	session:attachment:hook_success
+  1	session:attachment:mcp_instructions_delta
+  1	session:attachment:model
+  1	session:attachment:prompt_snapshot
+  1	session:attachment:remote_session_change
+  1	session:attachment:session_context
+  1	session:attachment:skill_listing
+  1	session:attachment:total_tokens_reminder
+  1	session:cost-state
+  1	session:last-prompt
+  1	session:mode
+  1	session:queue-operation
+  1	session:user
+  1	subagent:api-request
+  1	subagent:api-request-blob
+  1	subagent:api-request-shape
+  1	subagent:assistant
+  1	subagent:attachment:credential_org
+  1	subagent:attachment:date
+  1	subagent:attachment:deferred_tools_delta
+  1	subagent:attachment:environment
+  1	subagent:attachment:model
+  1	subagent:attachment:prompt_snapshot
+  1	subagent:attachment:remote_session_change
+  1	subagent:attachment:session_context
+  1	subagent:attachment:skill_listing
+  1	subagent:user
+
+== Session file entrypoint (first entry that has one)
+  1	entrypoint=sdk-cli
+  1	subagent entrypoint=sdk-cli
+
+== User entries by signature (content shape and marker | flags)
+  2	session: string:plain text | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli promptId
+  1	session: string:<task-notification> | origin={kind:task-notification} promptSource=system turnOrigin=task_notification origin+{producer,runId} entrypoint=sdk-cli promptId
+  1	session: string:plain text | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli first-prompt promptId
+  1	session: string:reply-code | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli promptId
+  1	session: string:Wheelhouse: | promptSource=sdk turnOrigin=sdk entrypoint=sdk-cli promptId
+  1	session: tool_result(Agent) | entrypoint=sdk-cli toolUseResult sourceToolAssistantUUID promptId
+  1	session: tool_result(AskUserQuestion) | entrypoint=sdk-cli toolUseResult sourceToolAssistantUUID promptId
+  1	session: tool_result(Read) | entrypoint=sdk-cli toolUseResult sourceToolAssistantUUID promptId
+  1	subagent: string:plain text | isSidechain entrypoint=sdk-cli first-prompt promptId
+
+== Session prompts (not tool results, not meta) by Claude Code version, entrypoint, origin and promptSource
+  1	2.1.302 sdk-cli origin=none promptSource=sdk turnOrigin=sdk first-prompt starts plain text
+  1	2.1.302 sdk-cli origin=none promptSource=sdk turnOrigin=sdk starts Wheelhouse:
+  2	2.1.302 sdk-cli origin=none promptSource=sdk turnOrigin=sdk starts plain text
+  1	2.1.302 sdk-cli origin=none promptSource=sdk turnOrigin=sdk starts reply-code
+  1	2.1.302 sdk-cli origin={kind:task-notification} promptSource=system turnOrigin=task_notification starts <task-notification>
+
+== Known tags found anywhere in user text, and attachment text markers
+  8	attachment:total_tokens_reminder .text: <total_tokens
+  2	attachment:model .text: plain text
+  2	attachment:skill_listing .content: plain text
+  1	attachment:hook_success .content: empty
+  1	user text holds <task-notification> (origin={kind:task-notification} promptSource=system; starts <task-notification>)
+
+== Enumerated values (type field=value)
+  13	assistant entrypoint=sdk-cli
+  13	assistant message.role=assistant
+  13	assistant message.type=message
+  13	assistant userType=external
+  13	assistant version=2.1.302
+  10	api-request version=2.1.302
+  10	assistant message.stop_reason=end_turn
+  10	user entrypoint=sdk-cli
+  10	user message.role=user
+  10	user userType=external
+  10	user version=2.1.302
+  9	api-request-blob message.role=system
+  8	attachment:total_tokens_reminder attachment.type=total_tokens_reminder
+  8	attachment:total_tokens_reminder entrypoint=sdk-cli
+  8	attachment:total_tokens_reminder renderedRole=system
+  8	attachment:total_tokens_reminder userType=external
+  8	attachment:total_tokens_reminder version=2.1.302
+  7	attachment:hook_additional_context attachment.type=hook_additional_context
+  7	attachment:hook_additional_context entrypoint=sdk-cli
+  7	attachment:hook_additional_context renderedRole=system
+  7	attachment:hook_additional_context userType=external
+  7	attachment:hook_additional_context version=2.1.302
+  6	attachment:deferred_tools_delta attachment.type=deferred_tools_delta
+  6	attachment:deferred_tools_delta entrypoint=sdk-cli
+  6	attachment:deferred_tools_delta renderedRole=system
+  6	attachment:deferred_tools_delta userType=external
+  6	attachment:deferred_tools_delta version=2.1.302
+  6	attachment:hook_additional_context attachment.hookEvent=UserPromptSubmit
+  6	attachment:hook_additional_context attachment.hookName=UserPromptSubmit
+  6	queue-operation operation=dequeue
+  6	queue-operation operation=enqueue
+  6	user permissionMode=default
+  5	user promptSource=sdk
+  5	user turnOrigin=sdk
+  4	attachment:mcp_instructions_delta attachment.type=mcp_instructions_delta
+  4	attachment:mcp_instructions_delta entrypoint=sdk-cli
+  4	attachment:mcp_instructions_delta renderedRole=system
+  4	attachment:mcp_instructions_delta userType=external
+  4	attachment:mcp_instructions_delta version=2.1.302
+  4	attachment:prompt_snapshot attachment.type=prompt_snapshot
+  4	attachment:prompt_snapshot entrypoint=sdk-cli
+  4	attachment:prompt_snapshot userType=external
+  4	attachment:prompt_snapshot version=2.1.302
+  3	api-request-blob message.role=user
+  3	assistant message.stop_reason=tool_use
+  2	api-request-shape version=2.1.302
+  2	attachment:credential_org attachment.type=credential_org
+  2	attachment:credential_org entrypoint=sdk-cli
+  2	attachment:credential_org userType=external
+  2	attachment:credential_org version=2.1.302
+  2	attachment:date attachment.type=date
+  2	attachment:date entrypoint=sdk-cli
+  2	attachment:date renderedRole=system
+  2	attachment:date userType=external
+  2	attachment:date version=2.1.302
+  2	attachment:environment attachment.type=environment
+  2	attachment:environment entrypoint=sdk-cli
+  2	attachment:environment renderedRole=system
+  2	attachment:environment userType=external
+  2	attachment:environment version=2.1.302
+  2	attachment:model attachment.type=model
+  2	attachment:model entrypoint=sdk-cli
+  2	attachment:model renderedRole=system
+  2	attachment:model userType=external
+  2	attachment:model version=2.1.302
+  2	attachment:remote_session_change attachment.type=remote_session_change
+  2	attachment:remote_session_change entrypoint=sdk-cli
+  2	attachment:remote_session_change renderedRole=user
+  2	attachment:remote_session_change userType=external
+  2	attachment:remote_session_change version=2.1.302
+  2	attachment:session_context attachment.type=session_context
+  2	attachment:session_context entrypoint=sdk-cli
+  2	attachment:session_context renderedRole=user
+  2	attachment:session_context userType=external
+  2	attachment:session_context version=2.1.302
+  2	attachment:skill_listing attachment.type=skill_listing
+  2	attachment:skill_listing entrypoint=sdk-cli
+  2	attachment:skill_listing renderedRole=system
+  2	attachment:skill_listing userType=external
+  2	attachment:skill_listing version=2.1.302
+  1	attachment:agent_listing_delta attachment.type=agent_listing_delta
+  1	attachment:agent_listing_delta entrypoint=sdk-cli
+  1	attachment:agent_listing_delta renderedRole=system
+  1	attachment:agent_listing_delta userType=external
+  1	attachment:agent_listing_delta version=2.1.302
+  1	attachment:hook_additional_context attachment.hookEvent=SessionStart
+  1	attachment:hook_additional_context attachment.hookName=SessionStart
+  1	attachment:hook_success attachment.hookEvent=SessionStart
+  1	attachment:hook_success attachment.hookName=SessionStart:startup
+  1	attachment:hook_success attachment.type=hook_success
+  1	attachment:hook_success entrypoint=sdk-cli
+  1	attachment:hook_success userType=external
+  1	attachment:hook_success version=2.1.302
+  1	mode mode=normal
+  1	user origin.producer=<present>
+  1	user origin={kind:task-notification}
+  1	user promptSource=system
+  1	user toolUseResult.status=async_launched
+  1	user toolUseResult.type=text
+  1	user turnOrigin=task_notification
+
+== Assistant entries
+  entries 13; with message.usage 13; with message.model 13 (of them "<synthetic>" 0); requestId 13
+  usage.input_tokens 13; usage.cache_read_input_tokens 13; usage.cache_creation_input_tokens 13; usage.output_tokens 13
+  entries sharing a message.id with another entry 6 (input, cache read and cache creation the same on each 6; they differ 0)
+
+== cwd and sessionId presence (type field=yes|no)
+  13	assistant cwd=yes
+  12	api-request-blob cwd=no
+  12	queue-operation cwd=no
+  10	api-request cwd=no
+  10	user cwd=yes
+  8	attachment:total_tokens_reminder cwd=yes
+  7	atis-latch cwd=no
+  7	attachment:hook_additional_context cwd=yes
+  7	last-prompt cwd=no
+  6	attachment:deferred_tools_delta cwd=yes
+  4	attachment:mcp_instructions_delta cwd=yes
+  4	attachment:prompt_snapshot cwd=yes
+  2	api-request-shape cwd=no
+  2	attachment:credential_org cwd=yes
+  2	attachment:date cwd=yes
+  2	attachment:environment cwd=yes
+  2	attachment:model cwd=yes
+  2	attachment:remote_session_change cwd=yes
+  2	attachment:session_context cwd=yes
+  2	attachment:skill_listing cwd=yes
+  2	cost-state cwd=no
+  1	attachment:agent_listing_delta cwd=yes
+  1	attachment:hook_success cwd=yes
+  1	mode cwd=no
+  13	assistant sessionId=yes
+  12	api-request-blob sessionId=yes
+  12	queue-operation sessionId=yes
+  10	api-request sessionId=yes
+  10	user sessionId=yes
+  8	attachment:total_tokens_reminder sessionId=yes
+  7	atis-latch sessionId=yes
+  7	attachment:hook_additional_context sessionId=yes
+  7	last-prompt sessionId=yes
+  6	attachment:deferred_tools_delta sessionId=yes
+  4	attachment:mcp_instructions_delta sessionId=yes
+  4	attachment:prompt_snapshot sessionId=yes
+  2	api-request-shape sessionId=yes
+  2	attachment:credential_org sessionId=yes
+  2	attachment:date sessionId=yes
+  2	attachment:environment sessionId=yes
+  2	attachment:model sessionId=yes
+  2	attachment:remote_session_change sessionId=yes
+  2	attachment:session_context sessionId=yes
+  2	attachment:skill_listing sessionId=yes
+  2	cost-state sessionId=yes
+  1	attachment:agent_listing_delta sessionId=yes
+  1	attachment:hook_success sessionId=yes
+  1	mode sessionId=yes
+
+== Subagent files
+  entries 16; sessionId equals the parent session file's id 16; another sessionId 0
+  with agentId 16; agentId equals the file's agent-<id> 16; isSidechain true 12; files whose first entry has parentUuid null 1
+  entries without isSidechain true, by type: api-request-blob 2, api-request 1, api-request-shape 1
+  .meta.json files 1; their toolUseId found as a tool_use id in the parent session file 1
+  .meta.json keys: agentType 1, description 1, finished 1, launchedWithDefaults 1, requestNonInteractive 1, requestShape 1, spawnDepth 1, toolUseId 1
+
+== Field names by entry type (count of entries holding each key path)
+  -- api-request
+    10	cacheControl
+    10	cacheControl[]
+    10	cacheControl[].path
+    10	cacheControl[].path[]
+    10	cacheControl[].value
+    10	cacheControl[].value.type
+    10	id
+    10	keep
+    10	params
+    10	params.betas
+    10	params.betas[]
+    10	params.context_management
+    10	params.context_management.edits
+    10	params.context_management.edits[]
+    10	params.context_management.edits[].keep
+    10	params.context_management.edits[].type
+    10	params.max_tokens
+    10	params.model
+    10	params.output_config
+    10	params.output_config.effort
+    10	params.thinking
+    10	params.thinking.display
+    10	params.thinking.type
+    10	querySource
+    10	requestDigest
+    10	sessionId
+    10	shapeHash
+    10	tail
+    10	tail[]
+    10	timestamp
+    10	type
+    10	version
+    9	cacheControl[].value.scope
+    9	cacheControl[].value.ttl
+    7	base
+    1	agentId
+  -- api-request-blob
+    12	hash
+    12	message
+    12	message.content
+    12	message.role
+    12	sessionId
+    12	type
+    11	message.content[text]
+    11	message.content[text].text
+    11	message.content[text].type
+    3	message.content[tool_addition]
+    3	message.content[tool_addition].tool
+    3	message.content[tool_addition].tool.definition
+    3	message.content[tool_addition].tool.type
+    3	message.content[tool_addition].type
+    2	agentId
+    2	message.output_config
+    2	message.output_config.effort
+    1	message.content[tool_removal]
+    1	message.content[tool_removal].tool
+    1	message.content[tool_removal].tool.name
+    1	message.content[tool_removal].tool.type
+    1	message.content[tool_removal].type
+  -- api-request-shape
+    2	sessionId
+    2	shape
+    2	shape.system
+    2	shape.system[]
+    2	shape.system[].text
+    2	shape.system[].type
+    2	shape.tools
+    2	shape.tools[]
+    2	shape.tools[].defer_loading
+    2	shape.tools[].description
+    2	shape.tools[].eager_input_streaming
+    2	shape.tools[].input_schema
+    2	shape.tools[].input_schema.$schema
+    2	shape.tools[].input_schema.additionalProperties
+    2	shape.tools[].input_schema.properties
+    2	shape.tools[].input_schema.required
+    2	shape.tools[].input_schema.type
+    2	shape.tools[].model
+    2	shape.tools[].name
+    2	shape.tools[].type
+    2	shapeHash
+    2	timestamp
+    2	type
+    2	version
+    1	agentId
+  -- assistant
+    13	advisorModel
+    13	apiBlockIndex
+    13	cwd
+    13	effort
+    13	entrypoint
+    13	gitBranch
+    13	isSidechain
+    13	message
+    13	message.container
+    13	message.content
+    13	message.context_management
+    13	message.diagnostics
+    13	message.id
+    13	message.input_transformations
+    13	message.model
+    13	message.role
+    13	message.stop_details
+    13	message.stop_reason
+    13	message.stop_sequence
+    13	message.type
+    13	message.usage
+    13	message.usage.cache_creation
+    13	message.usage.cache_creation_input_tokens
+    13	message.usage.cache_creation.ephemeral_1h_input_tokens
+    13	message.usage.cache_creation.ephemeral_5m_input_tokens
+    13	message.usage.cache_read_input_tokens
+    13	message.usage.fallback_credit
+    13	message.usage.inference_geo
+    13	message.usage.input_tokens
+    13	message.usage.iterations
+    13	message.usage.iterations[]
+    13	message.usage.iterations[].cache_creation
+    13	message.usage.iterations[].cache_creation_input_tokens
+    13	message.usage.iterations[].cache_creation.ephemeral_1h_input_tokens
+    13	message.usage.iterations[].cache_creation.ephemeral_5m_input_tokens
+    13	message.usage.iterations[].cache_read_input_tokens
+    13	message.usage.iterations[].input_tokens
+    13	message.usage.iterations[].output_tokens
+    13	message.usage.iterations[].type
+    13	message.usage.output_tokens
+    13	message.usage.output_tokens_details
+    13	message.usage.output_tokens_details.thinking_tokens
+    13	message.usage.server_tool_use
+    13	message.usage.server_tool_use.web_fetch_requests
+    13	message.usage.server_tool_use.web_search_requests
+    13	message.usage.service_tier
+    13	message.usage.speed
+    13	parentUuid
+    13	perTurnEffort
+    13	requestedModel
+    13	requestId
+    13	requestRef
+    13	sessionId
+    13	timestamp
+    13	type
+    13	userType
+    13	uuid
+    13	version
+    7	message.content[text]
+    7	message.content[text].text
+    7	message.content[text].type
+    3	message.content[thinking]
+    3	message.content[thinking].signature
+    3	message.content[thinking].thinking
+    3	message.content[thinking].type
+    3	message.content[tool_use]
+    3	message.content[tool_use].caller
+    3	message.content[tool_use].caller.type
+    3	message.content[tool_use].id
+    3	message.content[tool_use].input
+    3	message.content[tool_use].name
+    3	message.content[tool_use].type
+    3	thinkingDisplay
+    3	thinkingDurationMs
+    3	wireToolInputs
+    1	agentId
+    1	attributionAgent
+    1	message.content[tool_use].input.questions
+    1	message.diagnostics.cache_miss_reason
+    1	message.diagnostics.cache_miss_reason.type
+  -- atis-latch
+    7	atis
+    7	sessionId
+    7	type
+  -- attachment:agent_listing_delta
+    1	attachment
+    1	attachment.addedLines
+    1	attachment.addedLines[]
+    1	attachment.addedTypes
+    1	attachment.addedTypes[]
+    1	attachment.builtInTypes
+    1	attachment.builtInTypes[]
+    1	attachment.isInitial
+    1	attachment.removedTypes
+    1	attachment.showConcurrencyNote
+    1	attachment.type
+    1	cwd
+    1	entrypoint
+    1	gitBranch
+    1	isSidechain
+    1	parentUuid
+    1	rendered
+    1	rendered[]
+    1	rendered[].content
+    1	renderedRole
+    1	sessionId
+    1	timestamp
+    1	type
+    1	userType
+    1	uuid
+    1	version
+  -- attachment:credential_org
+    2	attachment
+    2	attachment.organizationUuid
+    2	attachment.type
+    2	cwd
+    2	entrypoint
+    2	gitBranch
+    2	isSidechain
+    2	parentUuid
+    2	sessionId
+    2	timestamp
+    2	type
+    2	userType
+    2	uuid
+    2	version
+    1	agentId
+  -- attachment:date
+    2	attachment
+    2	attachment.date
+    2	attachment.type
+    2	cwd
+    2	entrypoint
+    2	gitBranch
+    2	isSidechain
+    2	parentUuid
+    2	rendered
+    2	rendered[]
+    2	rendered[].content
+    2	renderedRole
+    2	sessionId
+    2	timestamp
+    2	type
+    2	userType
+    2	uuid
+    2	version
+    1	agentId
+  -- attachment:deferred_tools_delta
+    6	attachment
+    6	attachment.addedLines
+    6	attachment.addedNames
+    6	attachment.readdedNames
+    6	attachment.removedNames
+    6	attachment.type
+    6	attachment.wireHiddenNames
+    6	cwd
+    6	entrypoint
+    6	gitBranch
+    6	isSidechain
+    6	parentUuid
+    6	rendered
+    6	rendered[]
+    6	rendered[].content
+    6	renderedRole
+    6	sessionId
+    6	timestamp
+    6	type
+    6	userType
+    6	uuid
+    6	version
+    5	attachment.addedNames[]
+    5	attachment.failedMcpServers
+    5	attachment.needsAuthMcpServers
+    5	attachment.pendingMcpServers
+    4	attachment.addedLines[]
+    4	attachment.needsAuthMcpServers[]
+    3	attachment.surfacedDefinitions
+    3	attachment.surfacedDefinitions[]
+    3	attachment.surfacedDefinitions[].listing
+    3	attachment.surfacedDefinitions[].name
+    3	attachment.surfacedNames
+    3	attachment.surfacedNames[]
+    2	attachment.pendingMcpServers[]
+    2	attachment.surfacedDefinitions[].definition
+    2	attachment.surfacedDefinitions[].definition.description
+    2	attachment.surfacedDefinitions[].definition.eager_input_streaming
+    2	attachment.surfacedDefinitions[].definition.input_schema
+    2	attachment.surfacedDefinitions[].definition.name
+    1	agentId
+    1	attachment.readdedNames[]
+    1	attachment.removedByBlock
+    1	attachment.removedByBlock[]
+    1	attachment.removedNames[]
+    1	attachment.surfacedDefinitions[].sameAs
+  -- attachment:environment
+    2	attachment
+    2	attachment.snapshot
+    2	attachment.type
+    2	cwd
+    2	entrypoint
+    2	gitBranch
+    2	isSidechain
+    2	parentUuid
+    2	rendered
+    2	rendered[]
+    2	rendered[].content
+    2	renderedRole
+    2	sessionId
+    2	timestamp
+    2	type
+    2	userType
+    2	uuid
+    2	version
+    1	agentId
+  -- attachment:hook_additional_context
+    7	attachment
+    7	attachment.content
+    7	attachment.content[]
+    7	attachment.hookEvent
+    7	attachment.hookName
+    7	attachment.toolUseID
+    7	attachment.type
+    7	cwd
+    7	entrypoint
+    7	gitBranch
+    7	isSidechain
+    7	parentUuid
+    7	rendered
+    7	rendered[]
+    7	rendered[].content
+    7	renderedRole
+    7	sessionId
+    7	timestamp
+    7	type
+    7	userType
+    7	uuid
+    7	version
+  -- attachment:hook_success
+    1	attachment
+    1	attachment.command
+    1	attachment.content
+    1	attachment.durationMs
+    1	attachment.exitCode
+    1	attachment.hookEvent
+    1	attachment.hookName
+    1	attachment.stderr
+    1	attachment.stdout
+    1	attachment.toolUseID
+    1	attachment.type
+    1	cwd
+    1	entrypoint
+    1	gitBranch
+    1	isSidechain
+    1	parentUuid
+    1	sessionId
+    1	timestamp
+    1	type
+    1	userType
+    1	uuid
+    1	version
+  -- attachment:mcp_instructions_delta
+    4	attachment
+    4	attachment.addedBlocks
+    4	attachment.addedNames
+    4	attachment.removedNames
+    4	attachment.type
+    4	cwd
+    4	entrypoint
+    4	gitBranch
+    4	isSidechain
+    4	parentUuid
+    4	rendered
+    4	rendered[]
+    4	rendered[].content
+    4	renderedRole
+    4	sessionId
+    4	timestamp
+    4	type
+    4	userType
+    4	uuid
+    4	version
+    3	attachment.addedBlocks[]
+    3	attachment.addedNames[]
+    1	attachment.removedNames[]
+  -- attachment:model
+    2	attachment
+    2	attachment.identity
+    2	attachment.identity.knowledgeCutoff
+    2	attachment.identity.marketingName
+    2	attachment.identity.modelId
+    2	attachment.text
+    2	attachment.type
+    2	cwd
+    2	entrypoint
+    2	gitBranch
+    2	isSidechain
+    2	parentUuid
+    2	rendered
+    2	rendered[]
+    2	rendered[].content
+    2	renderedRole
+    2	sessionId
+    2	timestamp
+    2	type
+    2	userType
+    2	uuid
+    2	version
+    1	agentId
+  -- attachment:prompt_snapshot
+    4	attachment
+    4	attachment.contextRendering
+    4	attachment.echoWireToolInputs
+    4	attachment.reminderFold
+    4	attachment.systemPrompt
+    4	attachment.systemPrompt[]
+    4	attachment.type
+    4	cwd
+    4	entrypoint
+    4	gitBranch
+    4	isSidechain
+    4	parentUuid
+    4	sessionId
+    4	timestamp
+    4	type
+    4	userType
+    4	uuid
+    4	version
+    2	agentId
+    2	attachment.cliPrefix
+    2	attachment.inlineTools
+    2	attachment.keptReminders
+    2	attachment.systemTurns
+    2	attachment.toolChangeHeader
+    2	attachment.tools
+    2	attachment.tools[]
+    2	attachment.tools[].description
+    2	attachment.tools[].name
+    2	attachment.tools[].schema
+    2	attachment.tools[].schema.description
+    2	attachment.tools[].schema.eager_input_streaming
+    2	attachment.tools[].schema.input_schema
+    2	attachment.tools[].schema.name
+  -- attachment:remote_session_change
+    2	attachment
+    2	attachment.commit
+    2	attachment.managedCommit
+    2	attachment.managedPr
+    2	attachment.pr
+    2	attachment.sendUserFileHint
+    2	attachment.type
+    2	attachment.url
+    2	cwd
+    2	entrypoint
+    2	gitBranch
+    2	isSidechain
+    2	parentUuid
+    2	rendered
+    2	rendered[]
+    2	rendered[].content
+    2	renderedBesideToolResult
+    2	renderedRole
+    2	sessionId
+    2	timestamp
+    2	type
+    2	userType
+    2	uuid
+    2	version
+    1	agentId
+  -- attachment:session_context
+    2	attachment
+    2	attachment.context
+    2	attachment.context.gitStatus
+    2	attachment.context.userEmail
+    2	attachment.type
+    2	cwd
+    2	entrypoint
+    2	gitBranch
+    2	isSidechain
+    2	parentUuid
+    2	rendered
+    2	rendered[]
+    2	rendered[].content
+    2	renderedRole
+    2	sessionId
+    2	timestamp
+    2	type
+    2	userType
+    2	uuid
+    2	version
+    1	agentId
+  -- attachment:skill_listing
+    2	attachment
+    2	attachment.content
+    2	attachment.isInitial
+    2	attachment.names
+    2	attachment.names[]
+    2	attachment.skillCount
+    2	attachment.type
+    2	cwd
+    2	entrypoint
+    2	gitBranch
+    2	isSidechain
+    2	parentUuid
+    2	rendered
+    2	rendered[]
+    2	rendered[].content
+    2	renderedRole
+    2	sessionId
+    2	timestamp
+    2	type
+    2	userType
+    2	uuid
+    2	version
+    1	agentId
+  -- attachment:total_tokens_reminder
+    8	attachment
+    8	attachment.text
+    8	attachment.type
+    8	cwd
+    8	entrypoint
+    8	gitBranch
+    8	isSidechain
+    8	parentUuid
+    8	rendered
+    8	rendered[]
+    8	rendered[].content
+    8	renderedRole
+    8	sessionId
+    8	timestamp
+    8	type
+    8	userType
+    8	uuid
+    8	version
+  -- cost-state
+    2	hasUnknownModelCost
+    2	modelUsage
+    2	sessionId
+    2	startTime
+    2	totalAPIDuration
+    2	totalAPIDurationWithoutRetries
+    2	totalCostUSD
+    2	totalDuration
+    2	totalLinesAdded
+    2	totalLinesRemoved
+    2	totalToolDuration
+    2	type
+  -- last-prompt
+    7	lastPrompt
+    7	leafUuid
+    7	sessionId
+    7	type
+  -- mode
+    1	mode
+    1	sessionId
+    1	type
+  -- queue-operation
+    12	operation
+    12	sessionId
+    12	timestamp
+    12	type
+    6	content
+  -- user
+    10	cwd
+    10	entrypoint
+    10	gitBranch
+    10	isSidechain
+    10	message
+    10	message.content
+    10	message.role
+    10	parentUuid
+    10	promptId
+    10	sessionId
+    10	timestamp
+    10	type
+    10	userType
+    10	uuid
+    10	version
+    6	permissionMode
+    6	promptSource
+    6	turnOrigin
+    6	turnPosition
+    6	turnPosition.promptIndex
+    6	turnPosition.turnIndex
+    3	message.content[tool_result]
+    3	message.content[tool_result].content
+    3	message.content[tool_result].tool_use_id
+    3	message.content[tool_result].type
+    3	permissionDecision
+    3	permissionDecision.decision
+    3	permissionDecision.source
+    3	sourceToolAssistantUUID
+    3	toolUseResult
+    1	agentId
+    1	message.content[tool_result].content[text]
+    1	message.content[tool_result].content[text].text
+    1	message.content[tool_result].content[text].type
+    1	origin
+    1	origin.kind
+    1	origin.producer
+    1	origin.runId
+    1	permissionDecision.reasonType
+    1	queueSkipAttachments
+    1	toolUseResult.agentId
+    1	toolUseResult.answers
+    1	toolUseResult.file
+    1	toolUseResult.isAsync
+    1	toolUseResult.questions
+    1	toolUseResult.status
+    1	toolUseResult.type
+
+== Keys not on the list of field paths (fields.js), hidden, per parent path (count of keys hidden)
+  92	attachment.tools[].schema.input_schema
+  74	shape.tools[].input_schema.properties
+  36	message.content[tool_addition].tool.definition
+  26	shape.tools[].input_schema.required
+  14	attachment.snapshot
+  14	attachment.surfacedDefinitions[].definition.input_schema
+  6	toolUseResult
+  5	message.content[tool_use].input
+  5	toolUseResult.file
+  3	wireToolInputs
+  2	modelUsage
+  1	message.content[tool_use].input.questions
+  1	toolUseResult.answers
+  1	toolUseResult.questions
+
+== Attachment key paths
+  8	attachment:total_tokens_reminder attachment.text
+  8	attachment:total_tokens_reminder attachment.type
+  7	attachment:hook_additional_context attachment.content
+  7	attachment:hook_additional_context attachment.content[]
+  7	attachment:hook_additional_context attachment.hookEvent
+  7	attachment:hook_additional_context attachment.hookName
+  7	attachment:hook_additional_context attachment.toolUseID
+  7	attachment:hook_additional_context attachment.type
+  6	attachment:deferred_tools_delta attachment.addedLines
+  6	attachment:deferred_tools_delta attachment.addedNames
+  6	attachment:deferred_tools_delta attachment.readdedNames
+  6	attachment:deferred_tools_delta attachment.removedNames
+  6	attachment:deferred_tools_delta attachment.type
+  6	attachment:deferred_tools_delta attachment.wireHiddenNames
+  5	attachment:deferred_tools_delta attachment.addedNames[]
+  5	attachment:deferred_tools_delta attachment.failedMcpServers
+  5	attachment:deferred_tools_delta attachment.needsAuthMcpServers
+  5	attachment:deferred_tools_delta attachment.pendingMcpServers
+  4	attachment:deferred_tools_delta attachment.addedLines[]
+  4	attachment:deferred_tools_delta attachment.needsAuthMcpServers[]
+  4	attachment:mcp_instructions_delta attachment.addedBlocks
+  4	attachment:mcp_instructions_delta attachment.addedNames
+  4	attachment:mcp_instructions_delta attachment.removedNames
+  4	attachment:mcp_instructions_delta attachment.type
+  4	attachment:prompt_snapshot attachment.contextRendering
+  4	attachment:prompt_snapshot attachment.echoWireToolInputs
+  4	attachment:prompt_snapshot attachment.reminderFold
+  4	attachment:prompt_snapshot attachment.systemPrompt
+  4	attachment:prompt_snapshot attachment.systemPrompt[]
+  4	attachment:prompt_snapshot attachment.type
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions[]
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions[].listing
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions[].name
+  3	attachment:deferred_tools_delta attachment.surfacedNames
+  3	attachment:deferred_tools_delta attachment.surfacedNames[]
+  3	attachment:mcp_instructions_delta attachment.addedBlocks[]
+  3	attachment:mcp_instructions_delta attachment.addedNames[]
+  2	attachment:credential_org attachment.organizationUuid
+  2	attachment:credential_org attachment.type
+  2	attachment:date attachment.date
+  2	attachment:date attachment.type
+  2	attachment:deferred_tools_delta attachment.pendingMcpServers[]
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.description
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.eager_input_streaming
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.input_schema
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.name
+  2	attachment:environment attachment.snapshot
+  2	attachment:environment attachment.type
+  2	attachment:model attachment.identity
+  2	attachment:model attachment.identity.knowledgeCutoff
+  2	attachment:model attachment.identity.marketingName
+  2	attachment:model attachment.identity.modelId
+  2	attachment:model attachment.text
+  2	attachment:model attachment.type
+  2	attachment:prompt_snapshot attachment.cliPrefix
+  2	attachment:prompt_snapshot attachment.inlineTools
+  2	attachment:prompt_snapshot attachment.keptReminders
+  2	attachment:prompt_snapshot attachment.systemTurns
+  2	attachment:prompt_snapshot attachment.toolChangeHeader
+  2	attachment:prompt_snapshot attachment.tools
+  2	attachment:prompt_snapshot attachment.tools[]
+  2	attachment:prompt_snapshot attachment.tools[].description
+  2	attachment:prompt_snapshot attachment.tools[].name
+  2	attachment:prompt_snapshot attachment.tools[].schema
+  2	attachment:prompt_snapshot attachment.tools[].schema.description
+  2	attachment:prompt_snapshot attachment.tools[].schema.eager_input_streaming
+  2	attachment:prompt_snapshot attachment.tools[].schema.input_schema
+  2	attachment:prompt_snapshot attachment.tools[].schema.name
+  2	attachment:remote_session_change attachment.commit
+  2	attachment:remote_session_change attachment.managedCommit
+  2	attachment:remote_session_change attachment.managedPr
+  2	attachment:remote_session_change attachment.pr
+  2	attachment:remote_session_change attachment.sendUserFileHint
+  2	attachment:remote_session_change attachment.type
+  2	attachment:remote_session_change attachment.url
+  2	attachment:session_context attachment.context
+  2	attachment:session_context attachment.context.gitStatus
+  2	attachment:session_context attachment.context.userEmail
+  2	attachment:session_context attachment.type
+  2	attachment:skill_listing attachment.content
+  2	attachment:skill_listing attachment.isInitial
+  2	attachment:skill_listing attachment.names
+  2	attachment:skill_listing attachment.names[]
+  2	attachment:skill_listing attachment.skillCount
+  2	attachment:skill_listing attachment.type
+  1	attachment:agent_listing_delta attachment.addedLines
+  1	attachment:agent_listing_delta attachment.addedLines[]
+  1	attachment:agent_listing_delta attachment.addedTypes
+  1	attachment:agent_listing_delta attachment.addedTypes[]
+  1	attachment:agent_listing_delta attachment.builtInTypes
+  1	attachment:agent_listing_delta attachment.builtInTypes[]
+  1	attachment:agent_listing_delta attachment.isInitial
+  1	attachment:agent_listing_delta attachment.removedTypes
+  1	attachment:agent_listing_delta attachment.showConcurrencyNote
+  1	attachment:agent_listing_delta attachment.type
+  1	attachment:deferred_tools_delta attachment.readdedNames[]
+  1	attachment:deferred_tools_delta attachment.removedByBlock
+  1	attachment:deferred_tools_delta attachment.removedByBlock[]
+  1	attachment:deferred_tools_delta attachment.removedNames[]
+  1	attachment:deferred_tools_delta attachment.surfacedDefinitions[].sameAs
+  1	attachment:hook_success attachment.command
+  1	attachment:hook_success attachment.content
+  1	attachment:hook_success attachment.durationMs
+  1	attachment:hook_success attachment.exitCode
+  1	attachment:hook_success attachment.hookEvent
+  1	attachment:hook_success attachment.hookName
+  1	attachment:hook_success attachment.stderr
+  1	attachment:hook_success attachment.stdout
+  1	attachment:hook_success attachment.toolUseID
+  1	attachment:hook_success attachment.type
+  1	attachment:mcp_instructions_delta attachment.removedNames[]

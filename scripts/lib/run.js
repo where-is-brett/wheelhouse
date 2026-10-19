@@ -24,9 +24,10 @@ export function withoutGitVars(env = process.env) {
 // program is ended the same way when the signal is aborted, and the result carries `stopped: true`. A variable in `env`
 // whose value is undefined or null is removed from the environment. With `limit` (bytes), only about the newest `limit`
 // bytes of each stream are kept while it runs. With `windowsVerbatimArguments` (Windows only), the
-// arguments are passed to the program as they are, without Node's quoting, for `cmd.exe /c`. Resolves with the exit code and the collected
+// arguments are passed to the program as they are, without Node's quoting, for `cmd.exe /c`. With `encoding: 'buffer'`,
+// stdout comes back as a Buffer of the bytes the program wrote. Resolves with the exit code and the collected
 // output; rejects only if the program cannot be started.
-export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, signal } = {}) {
+export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, encoding = 'utf8', signal } = {}) {
   return new Promise((resolve, reject) => {
     const merged = { ...baseEnv, ...env };
     for (const name of Object.keys(merged)) if (merged[name] === undefined || merged[name] === null) delete merged[name];
@@ -41,7 +42,7 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
     const out = [];
     const err = [];
     let settled = false;
-    const text = () => ({ stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') });
+    const text = () => ({ stdout: encoding === 'buffer' ? Buffer.concat(out) : Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') });
     let timer = null;
     // Ends the program and everything it started, and resolves with `ending` added to the result.
     const end = (ending) => {

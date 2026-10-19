@@ -58,6 +58,7 @@ import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
+import { baselineRoutes } from '../measures/baseline.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -1236,7 +1237,7 @@ export async function startHelper({
     }
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
@@ -1253,7 +1254,7 @@ export async function startHelper({
     const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.id === event.id);
     if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
     if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
@@ -1397,7 +1398,7 @@ export async function startHelper({
     if (definitionOf(data.key)?.home !== 'profile') refuse(`${data.key} is kept in each project, not in the profile`);
     await commitBackups();
     const event = makeEvent({ kind, data, now });
-    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile(), now });
     await freshViews(() => writeProfileViews({ now }));
     return profileWritten({ event, result });
   }
@@ -1425,7 +1426,7 @@ export async function startHelper({
       refuse('the confirmation names something that is not a profile event');
     }
     await commitBackups();
-    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile(), now });
     await freshViews(() => writeProfileViews({ now }));
     return profileWritten({ event, result });
   }
@@ -2463,8 +2464,14 @@ export async function startHelper({
   // setup's own records: it starts the folder's run when there is none, stamps the card's shownAt
   // and keeps the shown card in setup/shown/. It changes nothing a step lists.
   const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn });
+  // The baseline from the private note (scripts/measures/baseline.js): per computer, no project.
+  // Under STOP, in a project's folder the STOP guard refuses scripts/measures/cli.js, so the front
+  // desk can't reach it; a request that arrives all the same may get its card, but nothing is
+  // recorded until STOP is lifted.
+  const measures = baselineRoutes({ now, stopped, stopRefusal: STOP_REFUSAL });
   const routes = {
     ...setup,
+    ...measures,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -2661,10 +2668,11 @@ export async function startHelper({
         return send(res, 200, { ok: false, refused: 'STOP could not be recorded' });
       }
     }
-    if (url.pathname.startsWith('/setup/')) {
-      // Setup's routes have no project, so no project's secrets: their answers are cleaned as the
-      // other routes' are, without them. A refusal, and each line status gives (a step that did
-      // not finish says why, in an installer's own words), get the key-like scrub too.
+    if (url.pathname.startsWith('/setup/') || url.pathname.startsWith('/measures/')) {
+      // Setup's routes and the baseline's have no project, so no project's secrets: their answers
+      // are cleaned as the other routes' are, without them. A refusal, and each line status gives
+      // (a step that did not finish says why, in an installer's own words), get the key-like scrub
+      // too. Nothing here is logged: the baseline's figures go back only in the card.
       try {
         onArrive(url.pathname);
         const answer = cleanDeep(await route(body), []);

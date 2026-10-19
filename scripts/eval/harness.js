@@ -72,6 +72,25 @@ export function subagents(events) {
     }));
 }
 
+// Whether the session took its prompt in hand (Review Focus 4): false when it made no tool call
+// and wrote no text, or ended with a non-zero exit before its first assistant turn. A run that
+// was not handled is a failed run, whatever the scenario's pass says.
+export function handledOf({ events, exitCode }) {
+  const turns = events.filter((event) => event.type === 'assistant');
+  if (exitCode !== 0 && turns.length === 0) return false;
+  const wrote = turns.some((event) => blocks(event).some((block) => block.type === 'text' && typeof block.text === 'string' && block.text.trim() !== ''));
+  return toolCalls(events).length > 0 || wrote;
+}
+
+// Whether the session finished (ruling E24): it did not time out, it exited 0, and its result event
+// says it succeeded (`subtype: 'success'`, and not `is_error`). A session cut short by its turn
+// cap, a crash or the time limit did not, whatever it did first.
+export function finishedOf({ events, exitCode, timedOut }) {
+  if (timedOut || exitCode !== 0) return false;
+  const result = events.findLast((event) => event.type === 'result');
+  return result?.subtype === 'success' && result.is_error !== true;
+}
+
 // The models the result event says did the work, the main session's and the subagents'.
 export function modelsUsed(events) {
   const result = events.findLast((event) => event.type === 'result');
@@ -171,7 +190,13 @@ export async function runSession({
   ];
   const result = await start(resolved, { lead: commandArgs, args, prompt, cwd: dir, env, timeoutMs });
   const events = parseStream(result.stdout);
-  const outcome = { events, exitCode: result.code, usage: usageOf(events), totalUsage: totalUsageOf(events) };
+  const outcome = {
+    events,
+    exitCode: result.code,
+    handled: handledOf({ events, exitCode: result.code }),
+    usage: usageOf(events),
+    totalUsage: totalUsageOf(events),
+  };
   if (result.timedOut) outcome.timedOut = true;
   if (result.code !== 0 && !events.length) outcome.stderr = result.stderr.slice(-2000);
   return outcome;
@@ -249,10 +274,17 @@ export function describeRun({ id, variant, pass, why, usage }) {
   return `${id} ${variant}: ${pass ? 'pass' : 'fail'} (${why}) ${usage.input} in / ${usage.output} out`;
 }
 
+// The command line of `npm run eval`: scenario ids (24, or one leg, 27-route), or one of --all
+// (every suite), --suite <name> or --again (what the last run marked); --variant and --trials
+// with ids, --all or --suite. `all`, `suite` and `again` are in the answer only when given.
 export function parseArgs(argv) {
   const ids = [];
   let variants = VARIANTS;
   let trials = 1;
+  let all = false;
+  let suite = null;
+  let again = false;
+  let chose = false;
   for (let i = 0; i < argv.length; i += 1) {
     let arg = argv[i];
     let value;
@@ -265,10 +297,20 @@ export function parseArgs(argv) {
       value ??= argv[++i];
       if (!VARIANTS.includes(value)) throw new Error(`--variant must be with or without, not ${value}`);
       variants = [value];
+      chose = true;
     } else if (arg === '--trials') {
       value ??= argv[++i];
       trials = Number(value);
       if (!Number.isInteger(trials) || trials < 1) throw new Error(`--trials must be a whole number of at least 1, not ${value}`);
+      chose = true;
+    } else if (arg === '--all') {
+      all = true;
+    } else if (arg === '--suite') {
+      value ??= argv[++i];
+      if (typeof value !== 'string' || value === '' || value.startsWith('--')) throw new Error('--suite needs a suite\'s name, for example: --suite build-loop');
+      suite = value;
+    } else if (arg === '--again') {
+      again = true;
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown option ${arg}`);
     } else if (/^\d+$/.test(arg)) {
@@ -280,12 +322,15 @@ export function parseArgs(argv) {
       throw new Error(`Not a scenario number: ${arg}`);
     }
   }
-  if (!ids.length) throw new Error('Name at least one scenario number, for example: npm run eval -- 24 --variant with');
-  return { ids, variants, trials };
+  const ways = [ids.length > 0 && 'scenario numbers', all && '--all', suite !== null && '--suite', again && '--again'].filter(Boolean);
+  if (ways.length > 1) throw new Error(`Give one of scenario numbers, --all, --suite or --again, not ${ways.join(' and ')}`);
+  if (again && chose) throw new Error('--again chooses its own variants and trials: give it no --variant or --trials');
+  if (!ways.length) throw new Error('Name at least one scenario number, or --all, --suite <name> or --again, for example: npm run eval -- 24 --variant with');
+  return { ids, variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}) };
 }
 
-function today() {
-  const now = new Date();
+// The local date, as the evaluations folder names a day's folder.
+export function today(now = new Date()) {
   const two = (n) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
 }
@@ -308,7 +353,8 @@ async function commitSetup(dir) {
 // the session's system prompt), anything its pass reads (given
 // to pass as `context`), `evidence()`, whose answer is kept in the record, and
 // `close()`, called once the run is over, pass or fail. A scenario's own
-// `extraArgs` go to the session's command line (runSession).
+// `extraArgs` go to the session's command line (runSession). Resolves with the verdict, its reasons,
+// the record's file, whether the session was handled, its tokens and its one printed line.
 export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
   let context = {};
@@ -326,15 +372,36 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
       ...(scenario.extraArgs ? { extraArgs: scenario.extraArgs } : {}),
     });
-    const judged = scenario.pass({ events: session.events, dir: project.dir, variant, context });
-    // A session whose result event says it errored (it ran out of turns, say) never passes.
+    // A session that never took the prompt in hand passes nothing, whatever its pass says
+    // (Review Focus 4); its pass is still asked, and kept in the record, but cannot make it a pass.
+    // A pass that throws judges the run a fail; the record is written all the same.
+    const handled = session.handled ?? handledOf({ events: session.events, exitCode: session.exitCode });
+    let judged;
+    try {
+      judged = scenario.pass({ events: session.events, dir: project.dir, variant, context });
+    } catch (error) {
+      judged = { pass: false, why: `pass could not judge it: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    // A session that did not finish never passes (Review Focus 4, ruling E24). When its pass saw a
+    // failure, that failure stands and the trial counts as handled; when its pass saw nothing
+    // wrong, the session only showed that nothing bad happened before it stopped, so the trial
+    // counts as not handled (`did not finish`) and may be run again.
+    const finished = finishedOf(session);
     const errored = session.events.findLast((event) => event.type === 'result')?.is_error === true;
-    const pass = judged.pass && !errored;
+    let shown = handled;
+    let lead = handled ? judged.why : 'not handled';
+    if (handled && !finished && judged.pass) {
+      shown = false;
+      lead = 'did not finish';
+    }
+    const pass = judged.pass === true && finished && shown;
     const total = totalUsageOf(session.events);
-    const notes = [judged.why];
+    const notes = [lead];
     if (errored) notes.push('the result event is an error');
     if (session.exitCode !== 0) notes.push(`claude exited ${session.exitCode}`);
     if (session.timedOut) notes.push('timed out');
+    // A failure shown by a session that stopped short, with nothing above to say so.
+    if (!finished && shown && notes.length === 1) notes.push('it did not finish');
     const why = notes.join('; ');
     const record = {
       id: scenario.id,
@@ -345,6 +412,8 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       date,
       pass,
       why,
+      handled: shown,
+      ...(shown ? {} : { judged: { pass: judged.pass, why: judged.why } }),
       exitCode: session.exitCode,
       usage: total,
       mainSessionUsage: usageOf(session.events),
@@ -358,7 +427,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const file = resultFile({ home, date, id: scenarioName(scenario), variant, trial });
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(record, null, 2) + '\n');
-    return { pass, why, file, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
+    return { pass, why, file, handled: shown, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
   } finally {
     try {
       await context.close?.();
