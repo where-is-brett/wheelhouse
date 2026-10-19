@@ -7,6 +7,8 @@ import { test, expect, mock } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const ROOT = '/Users/someone/projects/shop'
+// Each session start in a test is a new session unless it says otherwise: the session's state is
+// the test's, kept across starts, as it is across a reload.
 const SESSION = '0b6a4e1c-4f3a-4d7e-9a51-2f3c8d9e1a77'
 const PANE_ID = 'wheelhouse'
 const TICK_MS = 15000
@@ -56,8 +58,10 @@ type Reply = object | { exitCode: number } | { hold: number, then: object }
 function world(on: any, answer: (request: any) => Reply) {
   const clock = mock.clock(on, { now: START })
   const panes = new Map<string, string>()
+  const current = { session: SESSION }
+  let sessions = 0
   const seen = { ticks: [] as any[], opens: [] as any[], closes: [] as string[], statuses: [] as (string | undefined)[], registered: [] as any[], toasts: [] as string[] }
-  on('session.id', () => ({ value: SESSION }))
+  on('session.id', () => ({ value: current.session }))
   on('session.root', () => ({ value: ROOT }))
   on('session.usage', () => ({ value: { startedAt: 0, context: CONTEXT, rateLimits: [], cost: undefined } }))
   on('command.register', ($: any, e: any) => { seen.registered.push(e); return { value: { command: e.name } } })
@@ -83,13 +87,17 @@ function world(on: any, answer: (request: any) => Reply) {
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
   on('command.run', () => ({ text: 'the engine ran it' }))
   const clear = () => { for (const list of Object.values(seen)) list.length = 0 }
-  // Starts the session and lets its first tick finish.
-  const start = async ($: any, surface: string) => {
+  // A new session's id.
+  const newSession = () => { sessions += 1; current.session = `${SESSION}-${sessions}` }
+  // Starts a new session (or, given `again`, the same one, as a reload does) and lets its first
+  // tick finish.
+  const start = async ($: any, surface: string, again = false) => {
     clear()
+    if (!again) newSession()
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
   }
-  return { seen, clear, start, clock, panes }
+  return { seen, clear, start, clock, panes, current, newSession }
 }
 
 // "03:01 UTC" for the clock's milliseconds, as the pane says a time.
@@ -100,7 +108,7 @@ const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: an
 
 test('the front desk\'s session opens the pane and sets the status line from the first tick', async ($, on) => {
   let reply: object = frontDesk('2 cards wait')
-  const { seen, clear, start, clock } = world(on, () => reply)
+  const { seen, clear, start, clock, current } = world(on, () => reply)
   for (const surface of SURFACES) {
     reply = frontDesk('2 cards wait')
     await start($, surface)
@@ -108,7 +116,7 @@ test('the front desk\'s session opens the pane and sets the status line from the
     expect(seen.ticks[0].argv[0]).toBe('node')
     expect(seen.ticks[0].argv[1]).toEndWith('/scripts/mod/bridge.js')
     expect(seen.ticks[0].timeoutMs).toBe(TICK_ASK_MS)
-    expect(seen.ticks[0].request).toEqual({ cmd: 'tick', session: SESSION, cwd: ROOT, idle: true, surface })
+    expect(seen.ticks[0].request).toEqual({ cmd: 'tick', session: current.session, cwd: ROOT, idle: true, surface })
     expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
     expect(seen.statuses).toEqual(['2 cards wait'])
 
@@ -118,7 +126,7 @@ test('the front desk\'s session opens the pane and sets the status line from the
     reply = frontDesk('1 card waits')
     await $.turn.start({ turnId: 't1', text: 'hello' })
     await clock.advance(TICK_MS)
-    expect(seen.ticks.map((t: any) => t.request)).toEqual([{ cmd: 'tick', session: SESSION, cwd: ROOT, idle: false, surface }])
+    expect(seen.ticks.map((t: any) => t.request)).toEqual([{ cmd: 'tick', session: current.session, cwd: ROOT, idle: false, surface }])
     expect(seen.opens).toEqual([{ id: PANE_ID, title: '1 card waits' }])
     expect(seen.statuses).toEqual(['1 card waits'])
 
@@ -187,7 +195,8 @@ test('a failed tick shows the last picture under a line saying it is old', async
     const ui = await mount($, surface)
     expect((await texts(ui)).some((t: string) => t.startsWith('Couldn\'t read'))).toBe(false)
 
-    // The bridge fails: the picture stays, under the line, and the status line is left as it was.
+    // The bridge fails: the picture stays, under the line. The status line is cleared and the
+    // pane's title holds no figures, so neither shows old figures as current.
     clear()
     reply = { exitCode: 1 }
     await clock.advance(TICK_MS)
@@ -200,35 +209,48 @@ test('a failed tick shows the last picture under a line saying it is old', async
     if (surface === SURFACES[0]) expect(drawn[0]).toBe('Couldn\'t read the latest at 03:01 UTC; showing 03:00 UTC\'s')
     expect(drawn.slice(1)).toContain('2 cards wait')
     expect(drawn.slice(1)).toContain(FIRST)
-    expect(seen.statuses).toEqual([])
-    expect(seen.opens).toEqual([])
+    expect(seen.statuses).toEqual([undefined])
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: 'Wheelhouse' }])
+    // /wheelhouse says the same.
+    const asked = await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    expect(asked).toMatchObject({ text: drawn[0] })
+    expect(seen.opens.at(-1)).toEqual({ id: PANE_ID, title: 'Wheelhouse' })
 
     // An answer that says it failed is a failed tick too, and the timer keeps its pace.
     clear()
     reply = { ok: false, says: 'Wheelhouse couldn\'t do that in time' }
     await clock.advance(TICK_MS)
     expect(seen.ticks).toHaveLength(1)
+    expect(seen.statuses).toEqual([undefined])
     await ui.redraw()
     expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(read)}'s`)
 
-    // The next answer clears the line.
+    // The next answer clears the line and sets the status line and the title again.
+    clear()
     reply = frontDesk('2 cards wait')
     await clock.advance(TICK_MS)
     const reread = clock.now()
     await ui.redraw()
     expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect(seen.statuses).toEqual(['2 cards wait'])
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
 
-    // A tick that never answers leaves the picture to grow old: past three ticks it says so.
+    // A tick that never answers leaves the picture to grow old: past three ticks the pane says
+    // so, and the status line and the title stop showing its figures.
     reply = { hold: 4 * TICK_MS, then: frontDesk('2 cards wait') }
     await clock.advance(TICK_MS)
     await ui.redraw()
     expect((await texts(ui))[0]).toBe('2 cards wait')
+    clear()
     await clock.advance(2 * TICK_MS)
     await ui.redraw()
     expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect(seen.statuses).toEqual([])
     await clock.advance(TICK_MS)
     await ui.redraw()
     expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(reread)}'s`)
+    expect(seen.statuses).toEqual([undefined])
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: 'Wheelhouse' }])
     reply = frontDesk('2 cards wait')
     await clock.advance(2 * TICK_MS)
     await ui.unmount()
@@ -251,6 +273,15 @@ test('a pane the director closed is not opened again by a tick', async ($, on) =
     expect(seen.ticks).toHaveLength(2)
     expect(seen.opens).toEqual([])
     expect(seen.statuses).toEqual(['1 card waits', '1 card waits'])
+
+    // A reload starts the module again, and session.start with it, in the same session: the
+    // closed pane stays closed.
+    await start($, surface, true)
+    expect(seen.ticks).toHaveLength(1)
+    expect(seen.opens).toEqual([])
+    expect(seen.statuses).toEqual(['1 card waits'])
+    await clock.advance(TICK_MS)
+    expect(seen.opens).toEqual([])
   }
 })
 
@@ -328,10 +359,11 @@ test('a session that turns out to be the foreman closes its pane', async ($, on)
 
 test('session start does not wait for the first tick', async ($, on) => {
   let reply: Reply = { hold: 60000, then: frontDesk('2 cards wait') }
-  const { seen, clear, clock } = world(on, () => reply)
+  const { seen, clear, clock, newSession } = world(on, () => reply)
   for (const surface of SURFACES) {
     clear()
     reply = { hold: 60000, then: frontDesk('2 cards wait') }
+    newSession()
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
     expect(seen.ticks).toHaveLength(1)
@@ -345,6 +377,7 @@ test('session start does not wait for the first tick', async ($, on) => {
   for (const surface of SURFACES) {
     clear()
     reply = { exitCode: 1 }
+    newSession()
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
     expect(seen.opens).toEqual([])

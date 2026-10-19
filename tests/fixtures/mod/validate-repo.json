@@ -35,7 +35,7 @@
       ],
       "notes": [
         "types ./types/index.d.ts declares on $: nothing (no EngineInterface member)",
-        "types ./types/index.d.ts declares state: wheelhouse.pane, wheelhouse.tick, wheelhouse.card, wheelhouse.busy, wheelhouse.surface, wheelhouse.role"
+        "types ./types/index.d.ts declares state: wheelhouse.pane, wheelhouse.tick, wheelhouse.card, wheelhouse.busy, wheelhouse.surface, wheelhouse.role, wheelhouse.opened"
       ],
       "gatingHooks": []
     },
@@ -63,9 +63,9 @@
         "./register.ts answers its own command: command.run{command=go}",
         "./register.ts answers its own command: command.run{command=wheelhouse}",
         "./register.ts gating hook with .catch: prompt.submit",
-        "./register.ts calls: $.clock.every (via startTimer), $.clock.now (via drawPane, runTick), $.command.register, $.process.run (via ask), $.session.id (via runTick, sendUsage), $.session.root, $.session.usage, $.state.get (via drawPane, openPane, runTick, show), $.state.set (via drawPane, runTick, show, startPane, turnEnded, turnStarted), $.ui.close (via show), $.ui.open (via openPane, show), $.ui.panes (via paneIsOpen), $.ui.resolve (via drawPane), $.ui.status (via show), $.ui.toast",
-        "./register.ts state writes: wheelhouse.busy, wheelhouse.card, wheelhouse.pane, wheelhouse.role, wheelhouse.surface, wheelhouse.tick",
-        "./register.ts state reads: wheelhouse.busy, wheelhouse.card, wheelhouse.pane, wheelhouse.role, wheelhouse.surface, wheelhouse.tick"
+        "./register.ts calls: $.clock.every (via startTimer), $.clock.now (via drawPane, isOld, openPane, runTick), $.command.register, $.process.run (via ask), $.session.id (via runTick, sendUsage, tick), $.session.root, $.session.usage, $.state.get (via drawPane, isOld, openPane, runTick, show, showOld), $.state.set (via drawPane, runTick, show, startPane, turnEnded, turnStarted), $.ui.close (via show), $.ui.open (via openPane, show, showOld), $.ui.panes (via paneIsOpen), $.ui.resolve (via drawPane), $.ui.status (via show, showOld), $.ui.toast",
+        "./register.ts state writes: wheelhouse.busy, wheelhouse.card, wheelhouse.opened, wheelhouse.pane, wheelhouse.role, wheelhouse.surface, wheelhouse.tick",
+        "./register.ts state reads: wheelhouse.busy, wheelhouse.card, wheelhouse.opened, wheelhouse.pane, wheelhouse.role, wheelhouse.surface, wheelhouse.tick"
       ],
       "gatingHooks": [
         {

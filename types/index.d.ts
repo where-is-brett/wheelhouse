@@ -52,6 +52,9 @@ declare module 'claude-code' {
       surface: string | null;
       // The role the last tick answered: 'front-desk', 'foreman' or 'feature'.
       role: string;
+      // The id of the session whose front-desk answer opened the pane: once opened, a tick or a
+      // reload only retitles it while it is open.
+      opened: string;
     };
   }
 }

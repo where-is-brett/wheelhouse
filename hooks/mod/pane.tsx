@@ -13,6 +13,8 @@ import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS } from './numbers'
 const FRONT_DESK = 'front-desk'
 const NOT_OPENED = 'Wheelhouse couldn\'t open its pane'
 const FIRST_READING = 'Reading how the project stands…'
+// The pane's title while what it shows is old: no figures, so none is taken for current.
+const PLAIN_TITLE = 'Wheelhouse'
 
 const PANE = { plugin: 'wheelhouse', key: 'pane' } as const
 const TICK = { plugin: 'wheelhouse', key: 'tick' } as const
@@ -20,13 +22,13 @@ const CARD = { plugin: 'wheelhouse', key: 'card' } as const
 const BUSY = { plugin: 'wheelhouse', key: 'busy' } as const
 const SURFACE = { plugin: 'wheelhouse', key: 'surface' } as const
 const ROLE = { plugin: 'wheelhouse', key: 'role' } as const
+const OPENED = { plugin: 'wheelhouse', key: 'opened' } as const
 
 // The module's own: the timer and whether a tick runs. A reload starts both over, with the
-// session.start that follows it.
+// session.start that follows it. Whether the pane has been opened is the session's, kept in its
+// state, so a reload never opens a pane the director closed.
 let timer: { every: number, cancel: () => void } | null = null
 let running = false
-// Whether the session's first front-desk answer is still to come: that one opens the pane.
-let opening = true
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -71,18 +73,27 @@ async function paneIsOpen($: EngineInterface) {
   return (await $.ui.panes()).some((pane) => pane.id === PANE_ID)
 }
 
-// What an answered tick shows. The front desk's first answer opens the pane; later ones retitle
-// it only while it is open, so a pane the director closed stays closed. A session whose role is
-// no longer the front desk's (a foreman known only from its first prompt) closes the pane and
-// clears the status line.
-async function show($: EngineInterface, answer: Answer, now: number) {
+// While what the pane shows is old, the status line this session set is cleared and the open
+// pane's title carries no figures, so neither shows old figures as current; the pane says how old.
+async function showOld($: EngineInterface, session: string) {
+  const [role, opened] = await Promise.all([$.state.get(ROLE), $.state.get(OPENED)])
+  if (role.value !== FRONT_DESK || opened.value !== session) return
+  $.ui.status(undefined)
+  if (await paneIsOpen($)) await $.ui.open({ id: PANE_ID, title: PLAIN_TITLE })
+}
+
+// What an answered tick shows. The session's first front-desk answer opens the pane; later ones,
+// a reload's included, retitle it only while it is open, so a pane the director closed stays
+// closed. A session whose role is no longer the front desk's (a foreman known only from its
+// first prompt) closes the pane and clears the status line.
+async function show($: EngineInterface, answer: Answer, session: string, now: number) {
   const before = (await $.state.get(ROLE)).value
   if (answer.role !== undefined) await $.state.set(ROLE, answer.role)
   if (answer.role === FRONT_DESK && answer.pane !== undefined) {
     await $.state.set(PANE, { model: answer.pane, readAt: now })
-    const title = answer.glance ?? 'Wheelhouse'
-    if (opening) {
-      opening = false
+    const title = answer.glance ?? PLAIN_TITLE
+    if ((await $.state.get(OPENED)).value !== session) {
+      await $.state.set(OPENED, session)
       await $.ui.open({ id: PANE_ID, title })
     } else if (await paneIsOpen($)) {
       await $.ui.open({ id: PANE_ID, title })
@@ -102,11 +113,12 @@ async function runTick($: EngineInterface) {
     const now = await $.clock.now()
     if (answer === null || !answer.ok) {
       await $.state.set(TICK, { at: now, failed: true })
+      await showOld($, session)
       return
     }
     every = answer.every
     await $.state.set(TICK, { at: now, failed: false })
-    await show($, answer, now)
+    await show($, answer, session, now)
   } catch {
     // A tick that can't finish shows nothing new; the next one tries again.
   } finally {
@@ -114,9 +126,23 @@ async function runTick($: EngineInterface) {
   }
 }
 
-// One tick, unless the last one is still running.
+// Whether the pane's model is older than STALE_TICKS ticks.
+async function isOld($: EngineInterface) {
+  const [kept, now] = await Promise.all([$.state.get(PANE), $.clock.now()])
+  return kept.value !== undefined && now - kept.value.readAt > STALE_TICKS * TICK_MS
+}
+
+// One tick, unless the last one is still running; a tick that runs that long may leave the
+// figures old, which the status line and the title then stop showing.
 export async function tick($: EngineInterface) {
-  if (running) return
+  if (running) {
+    try {
+      if (await isOld($)) await showOld($, await $.session.id())
+    } catch {
+      // The next time the timer fires asks again.
+    }
+    return
+  }
   running = true
   try {
     await runTick($)
@@ -125,11 +151,10 @@ export async function tick($: EngineInterface) {
   }
 }
 
-// The session's start: the pane opens with the first front-desk answer. The first tick isn't
-// waited for, so the session starts at once.
+// The session's start: the pane opens with the session's first front-desk answer. The first
+// tick isn't waited for, so the session starts at once.
 export async function startPane($: EngineInterface, e: SessionStartInput) {
   stopTimer()
-  opening = true
   try {
     await $.state.set(SURFACE, e.surface)
   } catch {
@@ -147,13 +172,16 @@ export async function turnEnded($: EngineInterface, e: TurnCompleteInput) {
   if (e.agentId === undefined) await $.state.set(BUSY, false)
 }
 
-// /wheelhouse: the director asked, so the pane opens at any width, titled with the glance.
+// /wheelhouse: the director asked, so the pane opens at any width, titled with the glance. While
+// what it shows is old, the title carries no figures and the answer says how old they are.
 export async function openPane($: EngineInterface): Promise<{ text: string }> {
   try {
-    const kept = (await $.state.get(PANE)).value
-    const glance = typeof kept?.model.glance === 'string' ? kept.model.glance : 'Wheelhouse'
-    await $.ui.open({ id: PANE_ID, title: glance })
-    return { text: glance }
+    const [pane, last, now] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.clock.now()])
+    const kept = pane.value
+    const glance = typeof kept?.model.glance === 'string' ? kept.model.glance : PLAIN_TITLE
+    const stale = staleLine(kept, last.value, now)
+    await $.ui.open({ id: PANE_ID, title: stale === null ? glance : PLAIN_TITLE })
+    return { text: stale ?? glance }
   } catch {
     $.ui.toast(NOT_OPENED)
     return { text: NOT_OPENED }
@@ -200,7 +228,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   return (
     <Box flexDirection="column">
       {stale !== null && <Text bold>{stale}</Text>}
-      <Text bold>{typeof model.glance === 'string' ? model.glance : 'Wheelhouse'}</Text>
+      <Text bold>{typeof model.glance === 'string' ? model.glance : PLAIN_TITLE}</Text>
       {typeof stopLine === 'string' && <Text>{stopLine}</Text>}
       {card !== undefined && <Text dimColor>{`Card ${at + 1} of ${cards.length}`}</Text>}
       {card !== undefined && <Text>{card.text as string}</Text>}
