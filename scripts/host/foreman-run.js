@@ -8,7 +8,7 @@
 // with the environment below. This file holds what the helper checks and gives that child.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { withoutHostVariables } from '../lib/claude.js';
+import { CLAUDE_SIGN_IN_NAMES, isClaudeSignIn, withoutHostVariables } from '../lib/claude.js';
 import { withoutGitVars } from '../lib/run.js';
 
 // The scripts /foreman/run runs, by the name the foreman's command line gives them.
@@ -34,23 +34,25 @@ const KEY_NAMES = new Set([
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY/i;
 const ROLE = 'WHEELHOUSE_ROLE';
 
-// Claude Code's sign-in variables that the sessions the watcher starts are given (sessionEnv,
-// scripts/watcher/waker.js), kept so a session the foreman starts can sign in as they can
-// (ruling R159). None is one of the host session's own (scripts/lib/claude.js): those, such as
-// CLAUDE_CODE_OAUTH_TOKEN, are dropped for every started session, so they are dropped here too.
-export const SIGN_IN_NAMES = Object.freeze(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK']);
+// Claude Code's sign-in variables (scripts/lib/claude.js), kept so a session the foreman starts
+// can sign in as a session the watcher starts can (rulings R159 and m3 of the final review):
+// to Anthropic, or through Bedrock or Vertex, with their credentials, profile, region and project.
+// Kept by name, though some name a secret and the switches start "CLAUDE". The host session's own
+// variables, such as CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_BASE_URL, are not among them, and stay out.
+export const SIGN_IN_NAMES = CLAUDE_SIGN_IN_NAMES;
 
 // The child's environment: the helper's own, less the host session's variables (as a session
 // started by the waker gets it), every GIT_* variable, every spelling of WHEELHOUSE_ROLE, and
-// every variable that holds or leads to a host's key or any other secret, but for the sign-in
-// variables above, spelt exactly. WHEELHOUSE_HOME and PATH stay, so the scripts find
+// every variable that holds or leads to a host's key or any other secret, but for Claude Code's
+// sign-in variables above, spelt exactly. WHEELHOUSE_HOME and PATH stay, so the scripts find
 // Wheelhouse's records and git.
 export function foremanEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(withoutGitVars(withoutHostVariables(env))).filter(([name]) => {
-    if (SIGN_IN_NAMES.includes(name)) return true;
+  const kept = Object.fromEntries(Object.entries(env).filter(([name]) => isClaudeSignIn(name)));
+  const rest = Object.entries(withoutGitVars(withoutHostVariables(env))).filter(([name]) => {
     const upper = name.toUpperCase();
     return upper !== ROLE && !KEY_NAMES.has(upper) && !SECRET_NAME.test(name);
-  }));
+  });
+  return { ...Object.fromEntries(rest), ...kept };
 }
 
 // Why a /foreman/run request can't be run, or null when it can: the script must be act or wake,

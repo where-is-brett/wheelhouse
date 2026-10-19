@@ -160,7 +160,7 @@ test('the foreman\'s command gets no key or secret, and none comes back in its o
     return { code: 0, stdout: `the key ${KEY}\n`, stderr: '' };
   };
   const planted = {
-    GH_TOKEN: 'ghp_x', GITHUB_TOKEN: 'ghp_y', GITLAB_TOKEN: 'glpat_z', MY_SERVICE_SECRET: 's', DB_PASSWORD: 'p', AWS_SECRET_ACCESS_KEY: 'k',
+    GH_TOKEN: 'ghp_x', GITHUB_TOKEN: 'ghp_y', GITLAB_TOKEN: 'glpat_z', MY_SERVICE_SECRET: 's', DB_PASSWORD: 'p', CLOUDFLARE_API_TOKEN: 'k',
     SSH_AUTH_SOCK: '/tmp/agent', GIT_DIR: '/x', GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic x', CLAUDECODE: '1', CLAUDE_CODE_SSE_PORT: '1', WHEELHOUSE_ROLE: 'feature',
   };
   const before = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
@@ -310,7 +310,27 @@ test('the foreman\'s child keeps Claude Code\'s sign-in, as started sessions get
     CLAUDE_CODE_OAUTH_TOKEN: 'host', anthropic_api_key: 'a spelling not kept',
   };
   assert.deepEqual(foremanEnv(env), { PATH: '/bin', ...signIn });
-  // Each one kept is one the waker gives the sessions it starts: none is the host session's own.
-  for (const name of SIGN_IN_NAMES) assert.equal(sessionEnv(env)[name], signIn[name], name);
+  // Each one kept that the host session doesn't set is one the waker gives the sessions it starts.
+  for (const name of SIGN_IN_NAMES.filter((n) => !/^claude/i.test(n))) assert.equal(sessionEnv(env)[name], signIn[name], name);
   assert.equal('CLAUDE_CODE_OAUTH_TOKEN' in sessionEnv(env), false, 'dropped for started sessions too');
+});
+
+test('the foreman\'s child keeps the sign-in Claude Code uses for Bedrock and Vertex, and still no host key or Wheelhouse secret (m3)', () => {
+  const cloud = {
+    CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_MANTLE: '1', CLAUDE_CODE_USE_VERTEX: '1',
+    AWS_ACCESS_KEY_ID: 'AKIA-stand-in', AWS_SECRET_ACCESS_KEY: 'secret-stand-in', AWS_SESSION_TOKEN: 'session-stand-in',
+    AWS_PROFILE: 'work', AWS_REGION: 'ap-southeast-2', AWS_DEFAULT_REGION: 'ap-southeast-2',
+    AWS_SHARED_CREDENTIALS_FILE: '/h/.aws/credentials', AWS_CONFIG_FILE: '/h/.aws/config', AWS_BEARER_TOKEN_BEDROCK: 'bearer-stand-in',
+    ANTHROPIC_BEDROCK_BASE_URL: 'https://bedrock.example.com', CLAUDE_CODE_SKIP_BEDROCK_AUTH: '1',
+    GOOGLE_APPLICATION_CREDENTIALS: '/h/adc.json', ANTHROPIC_VERTEX_PROJECT_ID: 'p', CLOUD_ML_REGION: 'global',
+    GOOGLE_CLOUD_PROJECT: 'p', VERTEX_REGION_CLAUDE_HAIKU_4_5: 'us-east5', CLAUDE_CODE_SKIP_VERTEX_AUTH: '1',
+  };
+  for (const name of Object.keys(cloud).filter((n) => !n.startsWith('VERTEX_REGION_'))) assert.ok(SIGN_IN_NAMES.includes(name), name);
+  const env = {
+    PATH: '/bin', ...cloud,
+    GH_TOKEN: 'ghp_x', GITHUB_TOKEN: 'ghp_y', GITLAB_TOKEN: 'glpat_z', SSH_AUTH_SOCK: '/tmp/agent', WHEELHOUSE_SIGNING_SECRET: 's',
+    MY_SERVICE_TOKEN: 't', CLAUDECODE: '1', CLAUDE_CODE_OAUTH_TOKEN: 'host', ANTHROPIC_BASE_URL: 'https://gateway.example.com',
+    aws_secret_access_key: 'a spelling not kept',
+  };
+  assert.deepEqual(foremanEnv(env), { PATH: '/bin', ...cloud });
 });
