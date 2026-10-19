@@ -15,15 +15,32 @@ const VARIANTS = ['with', 'without'];
 // left out on purpose: Claude Code 2.1.302 does not list it in --help, yet
 // stops a session with `error_max_turns` when it is given (tried on that
 // version), so its effect shows in the result event, not the help text.
-const NEEDED_FLAGS = ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources', '--strict-mcp-config', '--disallowedTools'];
+const NEEDED_FLAGS = ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources', '--strict-mcp-config', '--disallowedTools', '--settings'];
 
-// A session is kept away from the director's own. Started from inside a Claude Code session, it
-// would inherit that session's messaging socket, through which it could list and message the
-// director's other sessions, and the account's connectors (claude.ai MCP servers): so the socket is
-// not passed on, no MCP server is loaded but those a scenario names (--strict-mcp-config), and the
-// tools that reach other sessions or the account's routines are denied.
-const DENIED_TOOLS = ['ListAgents', 'SendMessage', 'RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList'];
-const NOT_PASSED_ON = { CLAUDE_CODE_MESSAGING_SOCKET: undefined, CLAUDE_CODE_MESSAGING_TOKEN: undefined };
+// A session is kept away from the director's own (ruling F90). Started from inside a Claude Code
+// session it would inherit that session's whole environment (its messaging socket, its ids, the
+// account's), the account's connectors would load, and Claude Code 2.1.302 gives every `claude -p`
+// session tools that list and message the other sessions on this computer, reach the account's
+// routines, or belong to the Desktop app, and three built-in plugins. So:
+// - its environment is built from an allowlist (SESSION_ENV: what the shell, the operating system
+//   and signing in need), plus what the run sets, never the rest of this process's;
+// - no MCP server is loaded but those a scenario names (--strict-mcp-config);
+// - DENIED_TOOLS are denied;
+// - its settings (--settings, SESSION_SETTINGS) turn the built-in plugins off, and deny reading or
+//   editing the real ~/.wheelhouse and listing the computer's processes.
+// Signing in needs none of the rest: a run with the allowlist alone signs in (tried on 2.1.302).
+export const SESSION_ENV = /^(?:PATH|Path|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_[A-Z]+|TERM|TZ|USERPROFILE|USERNAME|APPDATA|LOCALAPPDATA|HOMEDRIVE|HOMEPATH|SystemRoot|SYSTEMROOT|SystemDrive|windir|WINDIR|ComSpec|COMSPEC|PATHEXT|ProgramFiles|ProgramFiles\(x86\)|ProgramData|ProgramW6432|CommonProgramFiles|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|CLAUDE_CONFIG_DIR|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE)$/;
+export const DENIED_TOOLS = [
+  'ListAgents', 'SendMessage', 'RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList',
+  'Artifact', 'ArtifactComments', 'ArtifactData', 'DesignSync', 'PushNotification', 'ReportFindings', 'Workflow', 'ScheduleWakeup',
+];
+export const SESSION_SETTINGS = {
+  enabledPlugins: { 'cc-plugin-agents-md@builtin': false, 'cc-plugin-telemetry@builtin': false, 'cc-plugin-plugin-authoring@builtin': false },
+  permissions: { deny: ['Read(~/.wheelhouse/**)', 'Edit(~/.wheelhouse/**)', 'Bash(ps:*)', 'Bash(ps *)'] },
+};
+
+// This process's environment as a session gets it: the allowlist only.
+export const sessionEnv = (from = process.env) => Object.fromEntries(Object.entries(from).filter(([name]) => SESSION_ENV.test(name)));
 
 // ---------------------------------------------------------------- the stream
 
@@ -140,7 +157,7 @@ async function checkFlags({ commandArgs, flags, env, resolved }) {
 
 async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs }) {
   const call = invocation(resolved, lead, args, prompt);
-  return run(call.file, call.args, { cwd, env, input: call.input, timeoutMs, windowsVerbatimArguments: call.verbatim });
+  return run(call.file, call.args, { cwd, env, baseEnv: sessionEnv(), input: call.input, timeoutMs, windowsVerbatimArguments: call.verbatim });
 }
 
 // Runs `claude -p` in `dir` and parses what it prints. `command` and
@@ -169,6 +186,10 @@ export async function runSession({
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
   const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
   await checkFlags({ commandArgs, flags, env, resolved });
+  // The session's settings, in a file of its own outside the project (a JSON argument would not
+  // pass through claude.cmd on Windows), removed once the session is over.
+  const settingsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-settings-')), 'settings.json');
+  fs.writeFileSync(settingsFile, `${JSON.stringify(SESSION_SETTINGS, null, 2)}\n`);
   const args = [
     '--output-format', 'stream-json',
     '--verbose',
@@ -177,12 +198,18 @@ export async function runSession({
     '--setting-sources', settingSources,
     '--strict-mcp-config',
     '--disallowedTools', DENIED_TOOLS.join(','),
+    '--settings', settingsFile,
     ...pluginDirs.flatMap((pluginDir) => ['--plugin-dir', pluginDir]),
     ...(model ? ['--model', model] : []),
     ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
     ...(resume ? ['--resume', resume] : []),
   ];
-  const result = await start(resolved, { lead: commandArgs, args, prompt, cwd: dir, env: { ...NOT_PASSED_ON, ...env }, timeoutMs });
+  let result;
+  try {
+    result = await start(resolved, { lead: commandArgs, args, prompt, cwd: dir, env, timeoutMs });
+  } finally {
+    fs.rmSync(path.dirname(settingsFile), { recursive: true, force: true });
+  }
   const events = parseStream(result.stdout);
   const outcome = { events, exitCode: result.code, usage: usageOf(events), totalUsage: totalUsageOf(events) };
   if (result.timedOut) outcome.timedOut = true;

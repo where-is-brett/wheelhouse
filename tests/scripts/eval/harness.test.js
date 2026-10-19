@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  SESSION_ENV,
   parseStream,
   toolCalls,
   finalText,
@@ -104,10 +105,11 @@ function fakeClaude(folder, { helpFlags, exitCode = 0 } = {}) {
 import fs from 'node:fs';
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources', '--append-system-prompt', '--strict-mcp-config', '--disallowedTools']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
+  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources', '--append-system-prompt', '--strict-mcp-config', '--disallowedTools', '--settings']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
   process.exit(0);
 }
-fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), marker: process.env.EVAL_MARKER ?? null, socket: process.env.CLAUDE_CODE_MESSAGING_SOCKET ?? null }));
+const settingsAt = args.indexOf('--settings');
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), marker: process.env.EVAL_MARKER ?? null, env: process.env, settings: settingsAt === -1 ? null : JSON.parse(fs.readFileSync(args[settingsAt + 1], 'utf8')) }));
 process.stdout.write(fs.readFileSync(${JSON.stringify(fixture)}, 'utf8'));
 process.exit(${exitCode});
 `);
@@ -195,22 +197,39 @@ test('runSession appends to the system prompt when asked, and checks claude know
   }), /--append-system-prompt/);
 });
 
-test('runSession keeps the session away from the director\'s own: no MCP servers but those named, no tools that reach other sessions or routines, no messaging socket', async () => {
+test('runSession keeps the session away from the director\'s own: an environment from an allowlist, no MCP server, no tool that reaches other sessions, the account or the Desktop app, no built-in plugin, and no reading ~/.wheelhouse or the process list (F90)', async () => {
   const folder = tempFolder();
   const fake = fakeClaude(folder);
-  const was = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
-  process.env.CLAUDE_CODE_MESSAGING_SOCKET = '/tmp/the-desktop.sock';
+  const planted = {
+    CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/the-desktop.sock', CLAUDE_CODE_HOST_SESSION_ID: 'host', CLAUDE_CODE_SESSION_ID: 'mine',
+    CLAUDE_CODE_ENTRYPOINT: 'claude-desktop', CLAUDE_EFFORT: 'high', CLAUDE_CODE_USER_EMAIL: 'someone@example.com', SOME_SECRET: 'x',
+  };
+  const was = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, planted);
   try {
-    await runSession({ dir: tempFolder('harness-session-'), prompt: 'x', pluginDirs: [], permissionMode: 'acceptEdits', maxTurns: 1, command: fake.command, commandArgs: fake.commandArgs });
+    await runSession({ dir: tempFolder('harness-session-'), prompt: 'x', pluginDirs: [], permissionMode: 'acceptEdits', maxTurns: 1, env: { WHEELHOUSE_HOME: '/tmp/eval-home' }, command: fake.command, commandArgs: fake.commandArgs });
   } finally {
-    if (was === undefined) delete process.env.CLAUDE_CODE_MESSAGING_SOCKET;
-    else process.env.CLAUDE_CODE_MESSAGING_SOCKET = was;
+    for (const [k, v] of Object.entries(was)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   }
-  const { args, socket } = fake.record();
+  const { args, env, settings } = fake.record();
+  // The command line: no MCP server but those named, and the tools denied.
   assert.ok(args.includes('--strict-mcp-config'));
   const denied = args[args.indexOf('--disallowedTools') + 1].split(',');
-  for (const tool of ['ListAgents', 'SendMessage', 'RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList']) assert.ok(denied.includes(tool), tool);
-  assert.equal(socket, null, 'the messaging socket of the session that started it is not passed on');
+  for (const tool of ['ListAgents', 'SendMessage', 'RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList', 'Artifact', 'ArtifactComments', 'ArtifactData', 'DesignSync', 'PushNotification', 'ReportFindings', 'Workflow', 'ScheduleWakeup']) {
+    assert.ok(denied.includes(tool), tool);
+  }
+  // The settings: the built-in plugins off, ~/.wheelhouse and the process list denied.
+  for (const plugin of ['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', 'cc-plugin-plugin-authoring@builtin']) assert.equal(settings.enabledPlugins[plugin], false, plugin);
+  for (const rule of ['Read(~/.wheelhouse/**)', 'Edit(~/.wheelhouse/**)', 'Bash(ps:*)']) assert.ok(settings.permissions.deny.includes(rule), rule);
+  // The environment: only the allowlist and what the run sets.
+  for (const name of Object.keys(planted)) assert.equal(env[name], undefined, name);
+  assert.equal(env.WHEELHOUSE_HOME, '/tmp/eval-home');
+  assert.equal(env.PATH, process.env.PATH);
+  assert.equal(env.HOME, process.env.HOME);
+  assert.ok(Object.keys(env).every((name) => SESSION_ENV.test(name) || name === 'WHEELHOUSE_HOME' || /^__CF|^_$|^SHLVL$|^PWD$|^OLDPWD$/.test(name)), Object.keys(env).join(' '));
 });
 
 // --max-turns is not in `claude --help` (checked on 2.1.302) yet works, so the fake leaves it out of its help
