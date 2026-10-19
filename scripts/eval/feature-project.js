@@ -71,9 +71,10 @@ const PROJECT_FILES = {
 //   branchFiles         files committed on the feature branch before the session starts
 //   brief               'wheelhouse' for the rendered brief, or the plain text of a brief
 //   agents              null, or { name: text } for the scratch plugin's agents/<name>.md
+//   routing             the brief's models by role, { role: model } (none by default)
 // Resolves with the context runScenario takes: { env, pluginDirs, helper, home, main, evidence, close }.
 export async function setUpFeature(dir, {
-  work, lane, goal, done, plan, files = {}, branchFiles = {}, brief, agents = null,
+  work, lane, goal, done, plan, files = {}, branchFiles = {}, brief, agents = null, routing = {},
 }) {
   assertUnderTmp(dir);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-'));
@@ -112,7 +113,7 @@ export async function setUpFeature(dir, {
 
     // The brief and the recorded plan, in the git-ignored feature folder.
     const fields = {
-      v: 1, work, lane, version: 1, goal, done, appetite: { sessions: 1, tokens: 3000000 }, rulings: [], routing: {}, shownFirst: false,
+      v: 1, work, lane, version: 1, goal, done, appetite: { sessions: 1, tokens: 3000000 }, rulings: [], routing, shownFirst: false,
       ...(plan ? { plan: plan.path } : {}),
     };
     const text = brief === 'wheelhouse' ? renderBrief({ fields, pluginRoot: REPO_ROOT }) : brief;
@@ -153,10 +154,11 @@ function textOf(content) {
   return content.filter((part) => part?.type === 'text').map((part) => part.text).join('\n');
 }
 
-// Every tool call in the stream: { order, id, name, input, subagent, result },
+// Every tool call in the stream: { order, id, name, input, subagent, parent, result },
 // where `order` is the index of the event that holds it (calls and subagent
-// runs compare by it), `subagent` says a subagent made it and `result` is
-// { text, isError } or null.
+// runs compare by it), `subagent` says a subagent made it, `parent` is the id
+// of the dispatch whose subagent made it (null for the session's own) and
+// `result` is { text, isError } or null.
 export function callsOf(events) {
   const results = new Map();
   for (const event of events) {
@@ -171,7 +173,13 @@ export function callsOf(events) {
     for (const block of blocks(event)) {
       if (block.type !== 'tool_use') continue;
       calls.push({
-        order: index, id: block.id, name: block.name, input: block.input ?? {}, subagent: Boolean(event.parent_tool_use_id), result: results.get(block.id) ?? null,
+        order: index,
+        id: block.id,
+        name: block.name,
+        input: block.input ?? {},
+        subagent: Boolean(event.parent_tool_use_id),
+        parent: event.parent_tool_use_id ?? null,
+        result: results.get(block.id) ?? null,
       });
     }
   });

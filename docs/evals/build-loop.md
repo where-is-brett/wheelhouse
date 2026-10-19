@@ -6,12 +6,12 @@ These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-b
 
 **Run on** 19 October 2026, on macOS, with Claude Code 2.1.302 and Superpowers 7.0.0 loaded from its installed folder.
 
-**How to run them.** `npm run eval -- <ids> --variant with` and `--variant without` (add `--trials 3` for three). Each run is a real `claude -p` session that costs tokens, so it never runs in `npm test`. The record of each run, with every stream-json event, is written to `~/.wheelhouse-evals/<date>/<id>-<variant>-<trial>.json`.
+**How to run them.** `npm run eval -- <ids> --variant with` and `--variant without` (add `--trials 3` for three). Scenario 33 also needs `WHEELHOUSE_EVAL_ROUTING` in the shell: its routing table (section 33). Each run is a real `claude -p` session that costs tokens, so it never runs in `npm test`. The record of each run, with every stream-json event, is written to `~/.wheelhouse-evals/<date>/<id>-<variant>-<trial>.json`.
 
-**What a run is.** Each scenario (`tests/eval/build-loop/<id>-*.js`) makes a throwaway project under the temporary folder and removes it afterwards. For scenarios 20 to 23, `scripts/eval/feature-project.js` sets it up as a feature session's worktree, the way the foreman would:
+**What a run is.** Each scenario (`tests/eval/build-loop/<id>-*.js`) makes a throwaway project under the temporary folder and removes it afterwards. For scenarios 20 to 23, 27, 33 and 34, `scripts/eval/feature-project.js` sets it up as a feature session's worktree, the way the foreman would:
 
 - a main checkout on `main` in a folder of its own, and the session's folder a linked worktree of it on `feature/<work>`;
-- the plan, and the brief at `.wheelhouse/feature/brief.md`. **With Wheelhouse**, the brief is the one `scripts/feature/brief.js` renders: the override first, then the work, the lane's text, how to ask and how to finish. **Without**, it is the feature section alone: the goal, the done contract and where the plan is;
+- the plan (none for a bug), and the brief at `.wheelhouse/feature/brief.md`. **With Wheelhouse**, the brief is the one `scripts/feature/brief.js` renders: the override first, then the work, the lane's text, how to ask and how to finish. **Without**, it is the feature section alone: the goal, the done contract and where the plan is;
 - a stand-in host helper (`scripts/eval/stand-in-helper.js`), reached through `WHEELHOUSE_HOME` as the real one is. It answers the feature commands of `scripts/feature/cli.js` (`push`, `open-pr`, `answer`, and the provenance `report` asks for), records each request with the commit it would have pushed, and reaches no host. On Windows it takes the helper's named pipe, so a real helper must not be running there during a run;
 - where a scenario needs Wheelhouse's agents, a scratch plugin named `wheelhouse` holding only `agents/`, so that `wheelhouse:builder` and `wheelhouse:reviewer` resolve. The plugin's hooks are not loaded: they need a real Wheelhouse home. A scenario that needs a reviewer or builder to behave in a set way puts a stand-in in this plugin under the same name; the repository's `agents/` files are never changed for it;
 - allow rules for `git`, `node`, `npm` and Superpowers' own scripts in `.claude/settings.local.json` (`claude -p` ignores allow rules in a committed `.claude/settings.json`; check 25).
@@ -20,7 +20,7 @@ Every session gets the same prompt in both variants: read the brief and follow i
 
 **What counts as a run.** A run that failed, or passed, because of the scenario or the harness rather than the session's behaviour does not count; it is listed under "Runs that did not count" with what was changed.
 
-**Results, one trial each** (expected: pass with, fail without).
+**Results, one trial each unless the cell says** (expected: pass with, fail without).
 
 | # | Scenario | With | Without |
 |---|---|---|---|
@@ -30,14 +30,14 @@ Every session gets the same prompt in both variants: read the brief and follow i
 | 23 | Finishing a branch | pass | fail |
 | 25 | *(to come)* | | |
 | 26 | *(to come)* | | |
-| 27 | *(to come)* | | |
-| 33 | *(to come)* | | |
-| 34 | *(to come)* | | |
+| 27 | A bug session reproduces the bug before any fix | pass (3 of 3) | pass (3 of 3) |
+| 33 | The implementer's model comes from the routing table | pass | fail |
+| 34 | A per-task review by the read-only reviewer | pass | fail |
 | 35 | *(to come)* | | |
 
-No scenario failed with Wheelhouse, so no brief, override or agent text was changed. Every counted result is as expected and no pair is close, so each has one counted trial. A review of the scenarios tightened 22 (the session must pause after asking) and 23 (a finishing menu or closing question in the last words fails), and all four of their runs were judged again from their saved records, with the same results; for the two `with` runs the events alone were enough, since those records predate the evidence the harness now keeps. Scenario 20 was run again, as its first counted runs never reached the cap on one task.
+No scenario failed with Wheelhouse, so no brief, override or agent text was changed. Every counted result is as expected and no pair is close, so each has one counted trial, except 27: without Wheelhouse it passed too, so both its variants were run three times, and both passed every time (section 27 says what that does and does not show). A review of the scenarios tightened 22 (the session must pause after asking) and 23 (a finishing menu or closing question in the last words fails), and all four of their runs were judged again from their saved records, with the same results; for the two `with` runs the events alone were enough, since those records predate the evidence the harness now keeps. Scenario 20 was run again, as its first counted runs never reached the cap on one task.
 
-**Where a `without` fail is structural.** The plain brief never names `ask`, `open-pr` or `questions.jsonl`, so a `without` session cannot pass 20 or 23 whatever it does. Their judgements therefore name what the session did instead (for 20, a fourth fix round or rulings on the open findings; for 23, a merge, a menu or a question). A 23 fail with none of those is called structural only. A 20 fail with neither a fourth round nor rulings is called inconclusive on the cap when fewer than three rounds ran; at exactly three rounds, with no question and no rulings, it gives the plain reason ("no question in questions.jsonl; the task's loop ended after 3 fix rounds").
+**Where a `without` fail is structural.** The plain brief never names `ask`, `open-pr` or `questions.jsonl`, so a `without` session cannot pass 20 or 23 whatever it does. Their judgements therefore name what the session did instead (for 20, a fourth fix round or rulings on the open findings; for 23, a merge, a menu or a question). A 23 fail with none of those is called structural only. A 20 fail with neither a fourth round nor rulings is called inconclusive on the cap when fewer than three rounds ran; at exactly three rounds, with no question and no rulings, it gives the plain reason ("no question in questions.jsonl; the task's loop ended after 3 fix rounds"). The plain brief of 33 carries no routing table, so a `without` session can match the table only by chance; its judgement says what model it picked, which shows Superpowers' own choice. Neither 27 nor 34 is structural: the plain bug session can write its test first, and `wheelhouse:reviewer` is loaded in both variants of 34, so a plain session could choose it.
 
 ## 20. Fix round 4 under subagent-driven development
 
@@ -115,10 +115,47 @@ Both were judged again with the menu check from their saved records; the `with` 
 
 ## 26. *(to come)*
 
-## 27. *(to come)*
+## 27. A bug session reproduces the bug before any fix
 
-## 33. *(to come)*
+**Set-up.** Route 4 is decided at the front desk; this scenario starts where it leads, a bug session with the bug brief (`templates/brief/lanes/bug.md`, rendered by `scripts/feature/brief.js`), so the route itself is not checked here. The project has `formatDuration(seconds)`, which shows a video's length on its card, and two tests that pass. It pads the seconds only when they are 0, so the bug report reads: a 65-second clip shows as "1:5". The cause is plain and the fix is one step, so the bug lane's step 4 applies. No plan. Both variants load Superpowers, Matt Pocock's skills (the bug lane starts his `tdd` and `code-review`; `locateMattSkills` in `scripts/eval/harness.js` finds the copy Claude Code has) and Wheelhouse's agents; the `without` brief is the report and the done contract alone.
 
-## 34. *(to come)*
+**Pass.** From the order of the tool calls, the session's and its subagents': a write to a test file, then a test command that fails (an error result, or a failure in its output), both before the first write to a source file (a code file that is not a test, outside the session's own folders). A shell command that writes a file (a redirect, `tee`, `sed -i`, `cp` or `mv`) counts as a write.
+
+| Variant | Trial | Result | Why | Tokens in / out |
+|---|---|---|---|---|
+| with | 1 | pass | Started `systematic-debugging`, reproduced the bug from the command line, then started Matt's `tdd`: a test for 65 seconds, `node --test` failed, then the fix. Then Matt's `code-review` with two `wheelhouse:reviewer` runs, the report, `open-pr` (#1) and the signed review on its head (CLEAN) | 1,393,143 / 15,144 |
+| with | 2 | pass | The same path: the test, `npm test` failing, the fix; pull request #1 and its signed review | 1,840,202 / 16,473 |
+| with | 3 | pass | The same path again | 1,397,882 / 13,943 |
+| without | 1 | pass | Read the code, said "doing it test-first", added the test, `npm test` failed, then the fix. No skill started, nothing committed; it ended asking whether to commit | 258,027 / 1,651 |
+| without | 2 | pass | The same: the test, a failing run, the fix; no skill, no pull request | 304,537 / 1,665 |
+| without | 3 | pass | The same; it left the change uncommitted and offered to commit it | 250,822 / 1,955 |
+
+**What this shows, and what it does not.** Both variants passed every time, so this pass does not tell Wheelhouse's sessions from plain ones: a session given a plain bug and a test runner writes the failing test first unprompted. What the bug brief added shows in the `with` runs only, outside the pass: `systematic-debugging` started every time (never without), the quick lane's loop with Matt's `tdd` and `code-review`, reviews by `wheelhouse:reviewer`, and a pull request through the helper with its signed review, where the plain sessions left the fix uncommitted or asked what to do next. A bug whose cause is not plain from the report, where a session might reach for a fix first, would test the lane harder; it was not run.
+
+## 33. The implementer's model comes from the routing table
+
+**Set-up.** The feature lane, with `superpowers:subagent-driven-development`. A one-task plan the plan itself calls mechanical: `limits.js` with two constants and their test. No model is named in the repository: the routing table comes from the environment variable `WHEELHOUSE_EVAL_ROUTING` (a JSON object of role to model, naming at least `builder`), set in the shell for the run, and the scenario refuses to run without it. When the table names no `mechanical` model, the builder's is used for that role too, so the check does not hang on which of the two the session takes the task for. For the counted runs it named two different Claude Code models for the builder and the reviewer, neither of them the session's own, and the builder's not the least powerful, which Superpowers' own rule ("the least powerful model that can handle each role") would choose for a mechanical task. The `with` brief carries the table under "Models by role"; the `without` brief is the feature section alone, with no routing. Both variants load Wheelhouse's agents.
+
+**Pass.** Every implementer dispatch (`wheelhouse:builder`, or any other subagent sent to build a task) has the builder role's model in its `model` input; that model is not the session's own (from the init event), so the check cannot pass by leaving the field out; and the result event's `modelUsage` shows work by it. The judgement also counts the review dispatches that had the reviewer role's model. Without, the brief has no routing, so the session cannot know the table and can match it only by chance; its judgement says what it picked.
+
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with | pass | The implementer (`wheelhouse:builder`) was dispatched with the builder role's model, and that model did the work. The task's review, the whole-branch review and the signed review on the pull request's head each had the reviewer role's model; the tester, for which the table names none, had the session's own, as the brief says. Pull request #1 opened; a level-3 question about shipping without a feature flag | 2,162,507 / 30,862 |
+| without | fail | With no routing, it chose for itself as Superpowers says: it dispatched `wheelhouse:builder` (its own choice) with the least powerful model, and its one review with the most powerful. It ended on the finishing menu | 980,874 / 13,311 |
+
+## 34. A per-task review by the read-only reviewer
+
+**Set-up.** The feature lane, with `superpowers:subagent-driven-development`. A one-task plan: `initials(name)` for the avatar shown beside a comment. Both variants load Wheelhouse's agents, so `wheelhouse:reviewer` is there to be chosen in both; the `with` brief names it, the `without` brief (the feature section alone) names no reviewer.
+
+**Pass.** The first review after the first build (the task's review) is `wheelhouse:reviewer`, and no review, of the task or later, made a call that writes or runs a command (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Bash`), read from each tool call whose event names the review's dispatch as its parent. A subagent sent to fix after a review ("Final-review fix wave") is not a review; one sent to review a fix is.
+
+**Can the reviewer write?** No: `agents/reviewer.md` lists its tools as `Read, Grep, Glob`, and Claude Code gives an agent only the tools its list names, so a write or a command is impossible for it, not only discouraged (its text also says it cannot write, edit or run anything). A unit test pins that list. Superpowers' reviewers are general-purpose subagents, which have every tool.
+
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with | pass | The task's review and the re-review after fix round 1 were `wheelhouse:reviewer`; their calls were reads, searches and file lists only. The first review found real gaps (characters outside the basic plane, untested inputs), the builder fixed them, and the session then put two level-3 questions to the director (what the avatar shows for a one-word name, and for a blank one) and paused, so no whole-branch review or pull request came in this run | 2,179,592 / 26,303 |
+| without | fail | Every review was a general-purpose subagent: the task's review, the whole-branch review and the re-review of the fix wave. The task's review itself happened to make no write or command; the other two ran four shell commands between them (reading files, `git show`, a `node -e` probe). No review wrote a file. It ended on the finishing menu | 2,072,046 / 19,135 |
+
+The `without` run was judged again after a fault in the first reading: it counted the "Final-review fix wave" subagent (a fix, which wrote and committed) as a review and named its writes. The verdict is the same; the corrected reader is in `34-read-only-reviewer.js` and its unit test.
 
 ## 35. *(to come)*

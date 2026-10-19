@@ -187,6 +187,43 @@ export function locateSuperpowers({ home = os.homedir(), env = process.env } = {
   throw new Error(`No installed Superpowers folder found in ${file}`);
 }
 
+// Matt Pocock's skills' folder: an install Claude Code records in its list of
+// installed plugins, or else the newest copy synced from the organisation's
+// catalogue (plugins/synced/<catalogue>/<plugin>/, named in its plugin.json;
+// a folder whose name carries `~` is an older generation and is passed over).
+export function locateMattSkills({ home = os.homedir(), env = process.env } = {}) {
+  const plugins = path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'plugins');
+  try {
+    const installed = JSON.parse(fs.readFileSync(path.join(plugins, 'installed_plugins.json'), 'utf8'));
+    for (const [id, entries] of Object.entries(installed.plugins ?? {})) {
+      if (!id.startsWith('mattpocock-skills@') || !Array.isArray(entries)) continue;
+      const found = entries.find((entry) => entry.installPath && fs.existsSync(entry.installPath));
+      if (found) return found.installPath;
+    }
+  } catch { /* no list of installs; look for a synced copy */ }
+  const synced = path.join(plugins, 'synced');
+  const copies = [];
+  const list = (dir) => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory() && !entry.name.includes('~'));
+    } catch {
+      return [];
+    }
+  };
+  for (const catalogue of list(synced)) {
+    for (const plugin of list(path.join(synced, catalogue.name))) {
+      const dir = path.join(synced, catalogue.name, plugin.name);
+      try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), 'utf8'));
+        if (manifest.name === 'mattpocock-skills') copies.push({ dir, at: fs.statSync(dir).mtimeMs });
+      } catch { /* not a plugin */ }
+    }
+  }
+  if (copies.length === 0) throw new Error(`No copy of Matt Pocock's skills found in ${plugins}`);
+  copies.sort((a, b) => b.at - a.at);
+  return copies[0].dir;
+}
+
 // -------------------------------------------------------------- the scenarios
 
 export function resultFile({ home = os.homedir(), date, id, variant, trial }) {
