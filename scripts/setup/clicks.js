@@ -33,8 +33,10 @@
 // reaches nothing under scripts/setup/.
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerId } from '../lib/paths.js';
+import { computerId, stateDir } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
+import { eventPath } from '../state/events.js';
+import { helperClient } from '../host/helper-client.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import {
@@ -163,6 +165,46 @@ export function answersFor(runId) {
     if (fits) answers[`${step}.${questionId}`] = { label, text, at: e.at };
   }
   return answers;
+}
+
+// How long the helper may take to record one click in the project's state.
+const RECORD_WAIT_MS = 60 * 1000;
+
+// Copies the director's setup clicks and answers of a run into the project's state (ruling R45):
+// each kept here, naming this run, made on this computer and signed by its enrolled key, sent as
+// it is, oldest first, to the helper's /state/record, which writes it into the state clone and
+// pushes the state branch (writeEvent). One whose event file is in the state clone already is
+// skipped, so it reaches the state branch once however often this runs; it runs at the end of
+// every successful apply once the project has its state, since clicks keep coming after step 7.
+// `record({ project, event })` is the helper's route, for tests. Never throws: a click the helper
+// could not take is counted, and sent by a later run of this.
+export async function copySetupRecords(runId, project, { record } = {}) {
+  const counts = { copied: 0, skipped: 0, failed: 0 };
+  if (!RUN_ID.test(String(runId))) return counts;
+  const send = record ?? ((body) => helperClient({ timeout: RECORD_WAIT_MS }).state.record(body));
+  const enrolled = readEnrolled();
+  const me = computerId();
+  const dir = stateDir(project);
+  const ours = [...keptClicks(), ...keptIn(answersDir())].filter((e) => e.kind === 'action' && ['setup', 'setup-answer'].includes(e.data?.action)
+    && e.data.runId === runId && typeof e.at === 'string' && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  for (const event of ours) {
+    let there = false;
+    try {
+      there = fs.existsSync(path.join(dir, eventPath(event)));
+    } catch { /* not read: sent, and the helper refuses one it holds */ }
+    if (there) {
+      counts.skipped += 1;
+      continue;
+    }
+    let got = null;
+    try {
+      got = await send({ project, event });
+    } catch { /* counted below */ }
+    if (got?.ok === true) counts.copied += 1;
+    else counts.failed += 1;
+  }
+  return counts;
 }
 
 // Gives a used click back, when the step it was used for could not be started.

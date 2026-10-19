@@ -60,7 +60,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { wheelhouseHome } from '../lib/paths.js';
+import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
@@ -70,7 +70,7 @@ import { pluginOnIn } from '../lib/plugin-on.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
-import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor } from './clicks.js';
+import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
 import { stepDone, healthGreen, HEALTH_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
@@ -202,8 +202,11 @@ function runningSince(entry, now) {
 // `current`, a test of the step's journal entry, keeps the mark to this attempt: a newer attempt's
 // entry is never marked by an older one. The ctx carries `say(line)` too, a line for the director
 // while the step runs (ruling R40), kept on the step's entry and shown by status. Each change made is recorded whatever, since it was made.
+// Once the step is done, the run's clicks and answers are copied into the project's state, when the
+// folder is a project whose state is cloned (`copy`, copyRunRecords; ruling R45); a copy that fails
+// never fails the step, and the next step's copies what is left.
 // Used by the helper for a short step and by scripts/setup/run-step.js for a long one.
-export async function runApply({ step, runId, changes, ctx, current }) {
+export async function runApply({ step, runId, changes, ctx, current, copy = copyRunRecords }) {
   const recorded = new Set();
   const record = (made) => {
     const given = Array.isArray(made) ? made : (made === undefined || made === null ? [] : [made]);
@@ -224,7 +227,6 @@ export async function runApply({ step, runId, changes, ctx, current }) {
   try {
     record(await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes));
     markStep(runId, step.n, 'doneAt', { now: ctx.now, when: current });
-    return { ok: true };
   } catch (error) {
     const reason = (error instanceof Error ? error.message : '') || 'the step did not finish';
     try {
@@ -232,6 +234,18 @@ export async function runApply({ step, runId, changes, ctx, current }) {
     } catch { /* the journal could not take it; the step reads as running until its time is up */ }
     return { ok: false, reason };
   }
+  try {
+    await copy(runId, ctx.folder);
+  } catch { /* copied by a later step */ }
+  return { ok: true };
+}
+
+// Copies a run's clicks and answers into the state of the project whose folder it is set up in,
+// once that project's state is cloned (step 3 on); before then, nothing (ruling R45).
+export async function copyRunRecords(runId, folder) {
+  const found = projectForFolder(folder);
+  if (found === null || !fs.existsSync(path.join(stateDir(found.project), '.git'))) return null;
+  return copySetupRecords(runId, found.project);
 }
 
 // The first step neither done nor running (`running(n)`), or null.
