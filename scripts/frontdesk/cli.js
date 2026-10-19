@@ -42,6 +42,10 @@ const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'expla
 export const MEANWHILE = 'that feature waits; the others carry on';
 const INPUT_BYTES = 1024 * 1024;
 const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
+// Every run of line breaks, to put each answered line on one line.
+const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
+// The checks line of a level 4 question's card when the build didn't say what answering does to the checks (ruling F18).
+export const CHECKS_UNSAID = 'The build didn\'t say. Choose Explain more and I\'ll find out before you answer.';
 const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -76,9 +80,12 @@ function compose(input) {
 // --- cards ---
 
 // The answer card for a question the build recorded: its words, its own options with what each
-// says, and its own recommendation, all from the stored event (ruling F10).
-function answerCard(id, data, glossary) {
+// says, and its own recommendation, all from the stored event (ruling F10). The work is named by
+// its title, or by its id when it has none. A level 4 question's card says what answering does to
+// the checks, in the question's own words, or that the build didn't say (ruling F18).
+function answerCard(id, data, views, glossary) {
   if (!isPlain(data) || data.id !== id || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
+  const work = flat(views.work?.[data.work]?.work?.data?.title) || data.work;
   return composeCard({
     kind: 'answer',
     level: data.level,
@@ -86,8 +93,9 @@ function answerCard(id, data, glossary) {
     why: flat(data.why),
     options: data.options.map((o) => ({ label: o?.label, says: flat(o?.says) || o?.label })),
     recommend: data.recommendation,
-    because: `the session building ${data.work} recommends it`,
+    because: `the session building ${work} recommends it`,
     meanwhile: MEANWHILE,
+    ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: id },
     glossary,
   });
@@ -107,7 +115,7 @@ export async function cards({ client, cwd, now }) {
     if (!isPlain(entry) || entry.answer || existingCard(views, answerLine(id)) !== null) continue;
     let card;
     try {
-      ({ card } = answerCard(id, entry.question?.data, glossary));
+      ({ card } = answerCard(id, entry.question?.data, views, glossary));
     } catch (error) {
       problems.push(`Question ${id} couldn't be made a card: ${error.message}`);
       continue;
@@ -225,7 +233,7 @@ export async function record({ client, cwd, kind, input, makeId = () => crypto.r
 
 export async function similar({ client, cwd, text }) {
   const asked = typeof text === 'string' ? text.trim() : '';
-  if (asked === '') throw new CliError('Give the request\'s text on standard input');
+  if (asked === '') throw new CliError('Give the request\'s text on standard input; nothing was given');
   const { views } = await viewsOf(client, cwd);
   return { similar: similarTo(asked, views).map(({ score, ...item }) => ({ ...item, score: Math.round(score * 100) / 100 })) };
 }
@@ -277,10 +285,13 @@ export async function explain({ client, cwd, term }) {
 
 // --- The command line ---
 
-async function readStdin() {
+// Standard input as text. A terminal is refused at once, never waited on: the command is run with
+// its input piped in.
+export async function readInput(stream = process.stdin) {
+  if (stream.isTTY) throw new CliError('Give the input on standard input, piped in; nothing was given');
   const chunks = [];
   let size = 0;
-  for await (const chunk of process.stdin) {
+  for await (const chunk of stream) {
     size += chunk.length;
     if (size > INPUT_BYTES) throw new CliError('The input on standard input is too long');
     chunks.push(Buffer.from(chunk));
@@ -289,6 +300,7 @@ async function readStdin() {
 }
 
 function parsed(text) {
+  if (typeof text !== 'string' || text.trim() === '') throw new CliError('Give the input as JSON on standard input; nothing was given');
   try {
     return JSON.parse(text);
   } catch {
@@ -311,9 +323,9 @@ export async function main(argv, {
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
     const helper = client ?? helperClient();
     const here = path.resolve(cwd);
-    const stdin = async () => (input === undefined ? readStdin() : input);
+    const stdin = async () => (input === undefined ? readInput() : input);
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
-    const lines = (list) => out(`${list.map((l) => l.replace(BREAK, ' ')).join('\n')}\n`);
+    const lines = (list) => out(`${list.map((l) => l.replace(BREAKS, ' ')).join('\n')}\n`);
 
     if (command === 'cards') {
       only(rest, 0, 'cards takes no arguments');
@@ -340,7 +352,7 @@ export async function main(argv, {
     return 0;
   } catch (error) {
     const message = error instanceof CliError ? error.message : `That did not work: ${error instanceof Error ? error.message : 'unknown error'}`;
-    err(`${message.replace(/\s*[\r\n]+\s*/g, ' ')}\n`);
+    err(`${message.replace(BREAKS, ' ')}\n`);
     return 1;
   }
 }

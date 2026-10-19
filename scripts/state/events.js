@@ -96,7 +96,8 @@ function questionIdOf(id) {
 const PLAIN_SHAPES = {
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: [] },
+  // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['checks'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
@@ -148,6 +149,7 @@ function checkPlain(kind, data) {
       bad('needs options, each with a label and what it says');
     }
     if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
+    if (data.checks !== undefined && (!isText(data.checks) || /[\r\n\v\f\u0085\u2028\u2029]/.test(data.checks))) bad('has checks that are not one line of text');
   } else if (kind === 'report') {
     slug('work');
     if (!REPORT_OUTCOMES.includes(data.outcome)) bad('needs its outcome to be merged, closed or blocked');

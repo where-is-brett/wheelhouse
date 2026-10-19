@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { main, RECORD_KINDS, MEANWHILE } from '../../../scripts/frontdesk/cli.js';
+import { main, readInput, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/frontdesk/cli.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash, listEvents, PROTECTED_KINDS } from '../../../scripts/state/events.js';
@@ -174,6 +174,64 @@ test('cards turns an open feature question into one answer card, once', async ()
     assert.equal(helper.writes().filter((w) => w.kind === 'card').length, 1);
     assert.deepEqual(again.json, { questions: [], left: 0 });
   });
+});
+
+test('a level 4 question becomes a card too, with what it does to the checks or that the build didn\'t say', async () => {
+  await inHome(async () => {
+    const said = { ...QUESTION, level: 4, checks: 'The export check stops running on this page.' };
+    const unsaid = { ...QUESTION, id: 'q-export-csv-2', level: 4 };
+    const work = makeEvent({ kind: 'work', data: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [] }, now: () => T(1) });
+    const helper = fakeHelper({ events: [work, questionEvent(said), questionEvent(unsaid, 6)] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    const cards = helper.writes().filter((w) => w.kind === 'card').map((w) => w.data);
+    assert.deepEqual(cards.map((c) => [c.line, c.level]), [[answerLine('q-export-csv-1'), 4], [answerLine('q-export-csv-2'), 4]]);
+    assert.match(cards[0].question, /^What this does to the checks: The export check stops running on this page\.$/m);
+    assert.ok(cards[1].question.includes(`What this does to the checks: ${CHECKS_UNSAID}`));
+    assert.equal(CHECKS_UNSAID, 'The build didn\'t say. Choose Explain more and I\'ll find out before you answer.');
+    // The work is named by its title; a question for work with no title, by the work's id.
+    assert.match(cards[0].question, /^My recommendation: Tab, because the session building Export a report as a spreadsheet recommends it\.$/m);
+    const untitled = fakeHelper({ events: [questionEvent()] });
+    await run(untitled, ['cards']);
+    assert.match(untitled.writes()[0].data.question, /because the session building export-csv recommends it\.$/m);
+  });
+});
+
+test('every line break in a view\'s text is put on one line', async () => {
+  await inHome(async () => {
+    const glossary = makeEvent({ kind: 'glossary', data: { term: 'deploy', plain: 'one\ntwo\r\nthree\u2028four', example: 'a\rb' }, now: () => T(1) });
+    const ruling = makeEvent({ kind: 'ruling', data: { words: 'first\nsecond\r\nthird\u2028fourth' }, now: () => T(2) });
+    const helper = fakeHelper({ events: [glossary, ruling] });
+    const terms = (await run(helper, ['views', 'glossary'])).out.split('\n');
+    assert.ok(terms.includes('deploy: one two three four'), terms.join('|'));
+    const starter = Object.keys(JSON.parse(fs.readFileSync(new URL('../../../templates/glossary.json', import.meta.url), 'utf8')));
+    assert.equal(terms.length, starter.length + 2, 'one line for each term, and the final newline');
+    assert.deepEqual((await run(helper, ['explain', 'deploy'])).out, 'deploy: one two three four\nFor example: a b\n');
+    assert.equal((await run(helper, ['views', 'rulebook'])).out, 'first second third fourth (waiting for the director to confirm it)\n');
+  });
+});
+
+test('card, record and similar refuse at once when nothing is on standard input', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    for (const argv of [['card'], ['record', 'idea'], ['record', 'ruling'], ['similar']]) {
+      for (const input of ['', '  \n']) {
+        const out = await run(helper, argv, input);
+        assert.equal(out.code, 1, argv.join(' '));
+        assert.match(out.err, /^[^\n]*nothing was given[^\n]*\n$/, argv.join(' '));
+      }
+    }
+    assert.deepEqual(helper.calls, []);
+    // A terminal is never waited on.
+    await assert.rejects(readInput({ isTTY: true, [Symbol.asyncIterator]: () => { throw new Error('read'); } }), /nothing was given/);
+  });
+  // Run as a script with its input closed, it answers one line at once.
+  for (const argv of [['card'], ['record', 'idea'], ['similar']]) {
+    const done = spawnSync(process.execPath, [SCRIPT, ...argv], { input: '', encoding: 'utf8', timeout: 20000 });
+    assert.equal(done.status, 1, argv.join(' '));
+    assert.match(done.stderr, /^[^\n]*nothing was given[^\n]*\n$/, argv.join(' '));
+  }
 });
 
 test('cards says which questions it could not make a card of, and asks the rest', async () => {

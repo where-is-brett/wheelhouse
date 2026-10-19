@@ -193,16 +193,17 @@ export function frontDeskCommand(pluginRoot, { platform = process.platform } = {
 // shared file. The status line is added only when `node` and `pluginRoot` are given and the
 // director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
 // stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command is
-// allowed by its full path, in the permissions page's `Bash(<command> *)` form (a space, then
-// anything), so the director's session isn't asked each time it composes a card or records a
-// decision; the path names this computer's folders too.
+// allowed by its full path, so the director's session isn't asked each time it composes a card or
+// records a decision; the path names this computer's folders too.
 export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   if (node && pluginRoot && !ownStatusLine) {
     settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
   }
   const frontDesk = pluginRoot ? frontDeskCommand(pluginRoot, { platform }) : null;
-  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk} *)`] };
+  // In this file's `Bash(x:*)` form, the same as `Bash(x *)`. Written on Windows too, unlike the build
+  // commands' rules: it reaches only Wheelhouse's own cli.js, by its full path, never `node` itself.
+  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk}:*)`] };
   return settings;
 }
 

@@ -546,3 +546,17 @@ test('an asked record names the cards a visit handed out, one to four of them', 
     bad({ cards: ['c1'], label: 'Approve' });
   });
 });
+
+test('a question may say what answering it does to the checks, on one line', async () => {
+  await withHome(() => {
+    const question = {
+      id: 'q-export-csv-1', work: 'export-csv', what: 'Which check?', why: 'It changes a guardrail.',
+      options: [{ label: 'Keep it', says: 'The check stays.' }, { label: 'Drop it', says: 'The check goes.' }], recommendation: 'Keep it', level: 4,
+    };
+    makeEvent({ kind: 'question', data: question, now: at(1) });
+    assert.equal(makeEvent({ kind: 'question', data: { ...question, checks: 'One check stops running.' }, now: at(1) }).data.checks, 'One check stops running.');
+    for (const checks of ['', 'Two\nlines', 'Two\u2028lines', 3, null]) {
+      assert.throws(() => makeEvent({ kind: 'question', data: { ...question, checks }, now: at(1) }), /question event/, JSON.stringify(checks));
+    }
+  });
+});

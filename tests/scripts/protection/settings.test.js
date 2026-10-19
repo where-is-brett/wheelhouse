@@ -159,7 +159,8 @@ test('the local settings name the status line only when the director has none of
 test('the local settings allow the command by its full path', () => {
   const address = '/h/.wheelhouse/helper.sock';
   const root = '/plugins/Zoë wheel house';
-  const rule = `Bash(node "${root}/scripts/frontdesk/cli.js" *)`;
+  // The file's own rule form: `Bash(x:*)` is `Bash(x *)`.
+  const rule = `Bash(node "${root}/scripts/frontdesk/cli.js":*)`;
   assert.equal(frontDeskCommand(root, { platform: 'darwin' }), `node "${root}/scripts/frontdesk/cli.js"`);
   assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule] });
   // With the status line or without it, and beside the socket.
@@ -168,7 +169,7 @@ test('the local settings allow the command by its full path', () => {
   assert.deepEqual(full.sandbox, { network: { allowUnixSockets: [address] } });
   // On Windows the path is written with forward slashes after its drive letter, as node and Git Bash take it.
   assert.deepEqual(localSettings({ address, pluginRoot: 'C:\\Users\\Zoë\\wheelhouse', platform: 'win32' }).permissions,
-    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js" *)'] });
+    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)'] });
   // A folder a rule can't hold as it is gets no rule: the command is then asked about each time.
   for (const bad of ['/x"y', '/x*y', '/x(y', '/x)y', '/x\ny', 'relative/root', '/x`y', '/x$y']) {
     assert.equal(localSettings({ address, pluginRoot: bad, platform: 'linux' }).permissions, undefined, bad);
