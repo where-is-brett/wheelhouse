@@ -491,3 +491,18 @@ test('a Not now on the baseline card does not let another card on the same call 
     assert.deepEqual(helper.calls, [], 'and neither answer went to the project');
   });
 });
+
+test('outside a project or setup folder, a card holding a waiting figure passes, but a reworded baseline card does not', async () => {
+  await withHelper(async ({ client }) => {
+    const elsewhere = tempFolder('wh-desk ');
+    const { card } = JSON.parse((await run(ARGS, client)).out);
+    const now = () => T0;
+    const figure = { question: fiveParts('Hosting costs US$4127.35 a year; which plan?'), header: 'Question', options: [{ label: 'One' }, { label: 'Two' }], multiSelect: false };
+    assert.equal(await cardCheck(asking([figure], elsewhere), { now }), undefined);
+    const reworded = { ...card, question: card.question.replace("note's figures as the baseline", 'note’s figures as the baseline') };
+    assert.match((await cardCheck(asking([reworded], elsewhere), { now }))?.hookSpecificOutput?.permissionDecisionReason ?? '', /reads as the baseline card/);
+    // In a project the same figure card is refused.
+    const { folder } = registered();
+    assert.match((await cardCheck(asking([figure], folder), { now }))?.hookSpecificOutput?.permissionDecisionReason ?? '', /leave them out/);
+  });
+});

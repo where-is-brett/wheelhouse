@@ -188,6 +188,12 @@ test('--out refuses a link, dangling or not, and any path whose real folder is i
     assert.equal(fs.existsSync(path.join(repo, 'newdir')), false);
     // A plain file outside: written, and written again.
     const fine = outPath(path.join(dir, 'out', 'mine.txt'), { repo });
+    // On a system that ignores letter case, another spelling of the repository's path is the repository.
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      assert.throws(() => outPath(path.join(dir, 'REPO', 'x.txt'), { repo }), /outside the repository/);
+      assert.throws(() => outPath(path.join(dir, 'Repo', 'newdir', 'x.txt'), { repo }), /outside the repository/);
+      assert.throws(() => outPath(path.join(dir.toUpperCase(), 'repo', 'x.txt'), { repo }), /outside the repository/);
+    }
     writeOut(fine, 'one');
     writeOut(fine, 'two');
     assert.equal(fs.readFileSync(fine, 'utf8'), 'two');

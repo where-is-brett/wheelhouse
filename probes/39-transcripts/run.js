@@ -480,9 +480,10 @@ function recentSessionFiles(days) {
 }
 
 // Where --out may write: never inside the repository (the output describes
-// the director's own transcripts), compared by the folder's real path, links
-// followed; never through a link, dangling or not.
-export function outPath(outArg, { repo = repoDir, tmp = os.tmpdir() } = {}) {
+// the director's own transcripts), compared by the folder's real path as the
+// system spells it, links followed, and without regard to letter case where the
+// system ignores it (macOS, Windows); never through a link, dangling or not.
+export function outPath(outArg, { repo = repoDir, tmp = os.tmpdir(), platform = process.platform } = {}) {
   const outFile = outArg ? path.resolve(outArg) : path.join(tmp, `wheelhouse-probe-39-mine-${Date.now()}.txt`);
   let stat = null;
   try { stat = fs.lstatSync(outFile); } catch { /* not there yet */ }
@@ -496,9 +497,10 @@ export function outPath(outArg, { repo = repoDir, tmp = os.tmpdir() } = {}) {
     rest.unshift(path.basename(existing));
     existing = path.dirname(existing);
   }
-  const realOut = path.join(fs.realpathSync(existing), ...rest);
-  const realRepo = fs.realpathSync(repo);
-  if (realOut === realRepo || realOut.startsWith(realRepo + path.sep)) throw new Error('--out must be outside the repository');
+  const realOut = path.join(fs.realpathSync.native(existing), ...rest);
+  const realRepo = fs.realpathSync.native(repo);
+  const fold = (p) => (platform === 'darwin' || platform === 'win32' ? p.normalize('NFC').toLowerCase() : p);
+  if (fold(realOut) === fold(realRepo) || fold(realOut).startsWith(fold(realRepo) + path.sep)) throw new Error('--out must be outside the repository');
   fs.mkdirSync(path.dirname(realOut), { recursive: true });
   return realOut;
 }

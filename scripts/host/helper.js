@@ -2186,7 +2186,9 @@ export async function startHelper({
   // and keeps the shown card in setup/shown/. It changes nothing a step lists.
   const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn });
   // The baseline from the private note (scripts/measures/baseline.js): per computer, no project.
-  // It shows its card under STOP, and records nothing then.
+  // Under STOP, in a project's folder the STOP guard refuses scripts/measures/cli.js, so the front
+  // desk can't reach it; a request that arrives all the same may get its card, but nothing is
+  // recorded until STOP is lifted.
   const measures = baselineRoutes({ now, stopped, stopRefusal: STOP_REFUSAL });
   const routes = {
     ...setup,

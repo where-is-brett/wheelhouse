@@ -170,8 +170,10 @@ function useClick(event, now) {
 }
 
 // The route's handler, taking the request's body and giving its answer. A refusal throws
-// BaselineRefusal, which the helper sends as { ok: false, refused }. Under STOP a card may still be
-// shown, but nothing is recorded.
+// BaselineRefusal, which the helper sends as { ok: false, refused }. Under STOP, in a project's
+// folder (where the front desk runs) the STOP guard refuses scripts/measures/cli.js, so neither form
+// is reached there; a request that arrives all the same, from a folder STOP doesn't hold, may still
+// get its card, but the route records nothing until STOP is lifted.
 export function baselineRoutes({ now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' } } = {}) {
   function show(body) {
     sweepStale(now);
