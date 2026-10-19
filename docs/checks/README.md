@@ -44,3 +44,4 @@ The answers to the checks in section 20 of the design, one note per check.
 | 40 | The mod without a screen | Yes, with five changes | [40-mod-headless.md](40-mod-headless.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |
+| 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
