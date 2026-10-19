@@ -20,6 +20,15 @@
 // local settings hold a PreToolUse hook that stands in for the director's screen: it turns the
 // call away with one line saying the cards were shown (SHOWN), as Desktop shows them while the
 // director hasn't clicked. The call is in the events either way.
+//
+// The notification. Every evaluation session is denied PushNotification (ruling F90), but 37 tests
+// that very call, so it is offered it (its `offered`, ruling F99), and its set-up (`push`) adds a
+// PreToolUse hook in the same local settings that turns the call away with one line (PUSHED): the
+// call is in the events and nothing reaches the director's phone. runSession offers the tool only
+// when that hook is there.
+//
+// The sandbox (ruling F94): the plugin's command imports the repository's own cli.js, under the
+// projects folder the sandbox denies, so the context names the repository as `readable`.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -43,6 +52,9 @@ export const EXTRA_ARGS = Object.freeze(['--permission-prompt-tool', 'stdio']);
 
 // What the stand-in for the director's screen answers an AskUserQuestion call.
 export const SHOWN = 'Shown to the director.';
+
+// What the stand-in for the director's phone answers a PushNotification call.
+export const PUSHED = 'Sent to the director\'s phone.';
 
 // A pull request's head commit, as the stand-in host gives it to `card`.
 export const HEAD = '3f9c2a1b7d4e5f60718293a4b5c6d7e8f9012345';
@@ -95,13 +107,18 @@ export function boardNumbers(seed) {
   return Object.fromEntries(numberedWaiting(views, seed).filter((item) => item.card).map((item) => [item.card, item.n]));
 }
 
-const ASK_HOOK = `// The director's screen, for an evaluation run: an AskUserQuestion call is turned away with one
-// line saying the cards are shown, since no one is there to click.
+// A PreToolUse hook's script that turns every call it is given away with `reason`; `what` says
+// whose stand-in it is.
+const turnAway = (what, reason) => `${what}
 process.stdin.resume();
 process.stdin.on('end', () => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: ${JSON.stringify(SHOWN)} } }));
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: ${JSON.stringify(reason)} } }));
 });
 `;
+const ASK_HOOK = turnAway(`// The director's screen, for an evaluation run: an AskUserQuestion call is turned away with one
+// line saying the cards are shown, since no one is there to click.`, SHOWN);
+const PUSH_HOOK = turnAway(`// The director's phone, for an evaluation run: a PushNotification call is turned away with one
+// line saying it was sent, so nothing reaches a phone.`, PUSHED);
 
 function write(root, relative, content) {
   const file = path.join(root, ...relative.split('/'));
@@ -110,8 +127,9 @@ function write(root, relative, content) {
 }
 
 // Sets `dir` up for the front desk under its playbook, with `seed` in the stand-in helper's
-// state and `files` committed on main. Resolves with the context runScenario takes.
-export async function setUpPlaybook(dir, variant, { files = {}, seed = [] } = {}) {
+// state and `files` committed on main; with `push`, the phone's hook too, for a scenario offered
+// PushNotification. Resolves with the context runScenario takes.
+export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push = false } = {}) {
   const context = await setUpFrontDesk(dir, 'without', { files, seed });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-mod-'));
   try {
@@ -126,12 +144,20 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [] } = {}
     write(plugin, 'scripts/frontdesk/cli.js', `// scripts/frontdesk/cli.js\nimport { main } from '${cli}';\nmain(process.argv.slice(2)).then((code) => { process.exitCode = code; });\n`);
     const hook = path.join(root, 'ask-shown.mjs');
     fs.writeFileSync(hook, ASK_HOOK, 'utf8');
+    const phone = path.join(root, 'push-sent.mjs');
+    if (push) fs.writeFileSync(phone, PUSH_HOOK, 'utf8');
 
-    // The local settings setUpFrontDesk wrote, with reading the plugin's files and the screen's hook.
+    // The local settings setUpFrontDesk wrote, with reading the plugin's files, the screen's hook
+    // and, with `push`, the phone's.
     const settingsFile = path.join(dir, '.claude', 'settings.local.json');
     const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
     for (const at of new Set([plugin, fs.realpathSync(plugin)])) settings.permissions.allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
-    settings.hooks = { PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `node "${hook}"` }] }] };
+    settings.hooks = {
+      PreToolUse: [
+        { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `node "${hook}"` }] },
+        ...(push ? [{ matcher: 'PushNotification', hooks: [{ type: 'command', command: `node "${phone}"` }] }] : []),
+      ],
+    };
     fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
 
     const close = async () => {
@@ -143,7 +169,7 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [] } = {}
     };
     // The Node running the evaluation first on the session's PATH: the command needs Node 22.
     const env = { ...context.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` };
-    return { ...context, env, pluginDirs: [plugin], appendSystemPrompt: FRONT_DESK_LINE, close };
+    return { ...context, env, pluginDirs: [plugin], appendSystemPrompt: FRONT_DESK_LINE, readable: [REPO_ROOT], close };
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });
     await context.close();

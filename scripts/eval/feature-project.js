@@ -73,7 +73,11 @@ const PROJECT_FILES = {
 //   brief               'wheelhouse' for the rendered brief, or the plain text of a brief
 //   agents              null, or { name: text } for the scratch plugin's agents/<name>.md
 //   routing             the brief's models by role, { role: model } (none by default)
-// Resolves with the context runScenario takes: { env, pluginDirs, helper, home, main, evidence, close }.
+// Resolves with the context runScenario takes: { env, pluginDirs, helper, home, main, readable,
+// writable, evidence, close }. `readable` and `writable` are for the session's sandbox (ruling
+// F94): the repository, whose scripts/feature/cli.js the rendered brief's commands run from under
+// the projects folder the sandbox denies, and the main checkout's .git, where a linked worktree's
+// commits go, outside the project the sandbox lets a command write.
 export async function setUpFeature(dir, {
   work, lane, goal, done, plan, files = {}, branchFiles = {}, brief, agents = null, routing = {},
 }) {
@@ -135,7 +139,9 @@ export async function setUpFeature(dir, {
     helper = await startStandInHelper({ address, home });
     // What the run's record keeps beside the events: the helper's records and the feature files.
     const evidence = () => ({ helper: helper.records(), questions: questionsIn(dir), ledger: ledgerLines(dir) });
-    return { env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, evidence, close };
+    return {
+      env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: [REPO_ROOT], writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
+    };
   } catch (error) {
     await close();
     throw error;

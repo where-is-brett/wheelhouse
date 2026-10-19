@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { invocation, quoteForCmd, resolveClaude } from '../lib/claude.js';
 import { run } from '../lib/run.js';
+import { projectSettings } from '../protection/settings.js';
 import { makeScratchProject } from '../../probes/lib/scratch.js';
 
 const VARIANTS = ['with', 'without'];
@@ -27,7 +28,8 @@ const NEEDED_FLAGS = ['--print', '--output-format', '--verbose', '--permission-m
 // - no MCP server is loaded but those a scenario names (--strict-mcp-config);
 // - DENIED_TOOLS are denied;
 // - its settings (--settings, SESSION_SETTINGS) turn the built-in plugins off, and deny reading or
-//   editing the real ~/.wheelhouse and listing the computer's processes.
+//   editing the real ~/.wheelhouse and listing the computer's processes;
+// - its commands run in Claude Code's sandbox (sessionSettings, ruling F94).
 // Signing in needs none of the rest: a run with the allowlist alone signs in (tried on 2.1.302).
 export const SESSION_ENV = /^(?:PATH|Path|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_[A-Z]+|TERM|TZ|USERPROFILE|USERNAME|APPDATA|LOCALAPPDATA|HOMEDRIVE|HOMEPATH|SystemRoot|SYSTEMROOT|SystemDrive|windir|WINDIR|ComSpec|COMSPEC|PATHEXT|ProgramFiles|ProgramFiles\(x86\)|ProgramData|ProgramW6432|CommonProgramFiles|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|CLAUDE_CONFIG_DIR|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE)$/;
 export const DENIED_TOOLS = [
@@ -41,6 +43,95 @@ export const SESSION_SETTINGS = {
 
 // This process's environment as a session gets it: the allowlist only.
 export const sessionEnv = (from = process.env) => Object.fromEntries(Object.entries(from).filter(([name]) => SESSION_ENV.test(name)));
+
+// What the sandbox keeps a session from reading beyond a project's own list (ruling F94): the
+// director's conversations with Claude Code, and the folder their projects live in (setup's
+// ~/Projects). A run's set-up names what it must read in them (`readable`), such as the
+// repository's own scripts a feature brief's commands run.
+export const EVAL_DENY_READ = ['~/.claude/projects', '~/Projects'];
+
+// The only extra arguments a session takes (ruling F100): what gives a `claude -p` session
+// AskUserQuestion. Anything else could override or widen the isolation, so it is refused.
+export const TAKEN_EXTRA_ARGS = Object.freeze(['--permission-prompt-tool', 'stdio']);
+
+// The denied tools a scenario may be offered (ruling F99), each only with a PreToolUse hook in the
+// project's local settings that turns the call away, so the call shows in the events and nothing
+// reaches the director's phone.
+export const OFFERABLE_TOOLS = Object.freeze(['PushNotification']);
+
+// A socket's spellings: as given, and through the real path of its folder (the temporary folder
+// has two on macOS), so the sandbox knows it whichever way a command names it.
+function socketSpellings(socket) {
+  try {
+    return [...new Set([socket, path.join(fs.realpathSync(path.dirname(socket)), path.basename(socket))])];
+  } catch {
+    return [socket];
+  }
+}
+
+// Whether `file` is in the real Wheelhouse home, by either spelling.
+function inRealHome(file) {
+  const home = path.join(os.homedir(), '.wheelhouse');
+  return socketSpellings(file).some((spelt) => {
+    const relative = path.relative(home, spelt);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  });
+}
+
+// A session's settings (ruling F94): SESSION_SETTINGS, and the sandbox a project's own settings
+// give its sessions (projectSettings: on, no command outside it, no reading the real
+// ~/.wheelhouse or any credential, the npm registry only), with EVAL_DENY_READ added. Per run:
+// `socket`, the run's stand-in helper's socket, the one Unix socket a command may reach (none
+// without it; never one in the real Wheelhouse home); `readable`, paths read again inside what is
+// denied; `writable`, paths written outside the project. The sandbox doesn't run on native
+// Windows, where Claude Code runs commands outside it and these settings change nothing.
+export function sessionSettings({ socket = null, readable = [], writable = [] } = {}) {
+  if (socket !== null && (typeof socket !== 'string' || socket === '')) throw new Error('A session\'s socket is a path');
+  if (socket !== null && inRealHome(socket)) throw new Error(`A session never reaches a socket in the real Wheelhouse home: ${socket}`);
+  const { sandbox } = projectSettings({ webDomains: [] });
+  return {
+    ...structuredClone(SESSION_SETTINGS),
+    sandbox: {
+      ...sandbox,
+      filesystem: {
+        ...sandbox.filesystem,
+        denyRead: [...new Set([...sandbox.filesystem.denyRead, ...EVAL_DENY_READ])],
+        ...(readable.length > 0 ? { allowRead: [...readable] } : {}),
+        ...(writable.length > 0 ? { allowWrite: [...writable] } : {}),
+      },
+      network: { ...sandbox.network, allowUnixSockets: socket === null ? [] : socketSpellings(socket) },
+    },
+  };
+}
+
+// The extra arguments, when they are TAKEN_EXTRA_ARGS or none; anything else is refused.
+function vettedExtraArgs(extraArgs) {
+  if (Array.isArray(extraArgs) && extraArgs.length === 0) return [];
+  if (Array.isArray(extraArgs) && extraArgs.length === TAKEN_EXTRA_ARGS.length && extraArgs.every((arg, i) => arg === TAKEN_EXTRA_ARGS[i])) return [...extraArgs];
+  throw new Error(`An evaluation session takes no extra arguments but ${TAKEN_EXTRA_ARGS.join(' ')}, not ${JSON.stringify(extraArgs)}`);
+}
+
+// Whether the local settings of the project `dir` hold a PreToolUse hook for `tool`.
+function turnedAway(dir, tool) {
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8'));
+    const entries = Array.isArray(settings?.hooks?.PreToolUse) ? settings.hooks.PreToolUse : [];
+    return entries.some((entry) => typeof entry?.matcher === 'string' && entry.matcher.split('|').includes(tool)
+      && Array.isArray(entry.hooks) && entry.hooks.some((hook) => hook?.type === 'command' && typeof hook.command === 'string' && hook.command !== ''));
+  } catch {
+    return false;
+  }
+}
+
+// The tools a session is offered of DENIED_TOOLS: only OFFERABLE_TOOLS, each turned away in `dir`.
+function vettedOffer(offered, dir) {
+  if (!Array.isArray(offered)) throw new Error('The tools a session is offered are a list');
+  for (const tool of offered) {
+    if (!OFFERABLE_TOOLS.includes(tool)) throw new Error(`Of the denied tools, only ${OFFERABLE_TOOLS.join(', ')} can be offered, not ${JSON.stringify(tool)}`);
+    if (!turnedAway(dir, tool)) throw new Error(`${tool} is offered only with a PreToolUse hook in the project's local settings that turns the call away`);
+  }
+  return offered;
+}
 
 // ---------------------------------------------------------------- the stream
 
@@ -186,10 +277,11 @@ async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs })
 // `appendSystemPrompt`, when given, is added to the session's system prompt: one
 // line with no double quotes, so it passes through claude.cmd on Windows too.
 // `resume`, when given, is the id of the session this prompt continues (--resume).
-// `extraArgs` go on the command line after the rest, as given. They are not looked
-// for in --help: `--permission-prompt-tool`, which a scenario that asks cards
+// `extraArgs` go on the command line after the rest, as given: only TAKEN_EXTRA_ARGS, or none. They
+// are not looked for in --help: `--permission-prompt-tool`, which a scenario that asks cards
 // needs (it is what gives a `claude -p` session AskUserQuestion, on 2.1.302), is
-// not listed there as a flag of its own.
+// not listed there as a flag of its own. `socket`, `readable` and `writable` are the run's own
+// for the sandbox (sessionSettings); `offered` lists denied tools the session is given (vettedOffer).
 export async function runSession({
   dir,
   prompt,
@@ -202,10 +294,17 @@ export async function runSession({
   resume,
   settingSources = 'project,local',
   extraArgs = [],
+  socket = null,
+  readable = [],
+  writable = [],
+  offered = [],
   timeoutMs = 20 * 60 * 1000,
   command = 'claude',
   commandArgs = [],
 }) {
+  const extra = vettedExtraArgs(extraArgs);
+  const offer = vettedOffer(offered, dir);
+  const settings = sessionSettings({ socket, readable, writable });
   // With the default command, find claude (on Windows, its .exe or .cmd); a command given is used as it is.
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
   const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
@@ -213,7 +312,7 @@ export async function runSession({
   // The session's settings, in a file of its own outside the project (a JSON argument would not
   // pass through claude.cmd on Windows), removed once the session is over.
   const settingsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-settings-')), 'settings.json');
-  fs.writeFileSync(settingsFile, `${JSON.stringify(SESSION_SETTINGS, null, 2)}\n`);
+  fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
   const args = [
     '--output-format', 'stream-json',
     '--verbose',
@@ -221,13 +320,13 @@ export async function runSession({
     '--max-turns', String(maxTurns),
     '--setting-sources', settingSources,
     '--strict-mcp-config',
-    '--disallowedTools', DENIED_TOOLS.join(','),
+    '--disallowedTools', DENIED_TOOLS.filter((tool) => !offer.includes(tool)).join(','),
     '--settings', settingsFile,
     ...pluginDirs.flatMap((pluginDir) => ['--plugin-dir', pluginDir]),
     ...(model ? ['--model', model] : []),
     ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
     ...(resume ? ['--resume', resume] : []),
-    ...extraArgs,
+    ...extra,
   ];
   let result;
   try {
@@ -403,8 +502,10 @@ async function commitSetup(dir) {
 // `pluginDirs` (loaded after the variant's own), `appendSystemPrompt` (added to
 // the session's system prompt), anything its pass reads (given
 // to pass as `context`), `evidence()`, whose answer is kept in the record, and
-// `close()`, called once the run is over, pass or fail. A scenario's own
-// `extraArgs` go to the session's command line (runSession). Resolves with the verdict, its reasons,
+// `close()`, called once the run is over, pass or fail; its `helper.address` is the one socket the
+// session's sandbox lets a command reach, and its `readable` and `writable` go to the sandbox too
+// (runSession). A scenario's own `extraArgs` go to the session's command line, and its `offered`
+// tools are taken off the denied list (runSession). Resolves with the verdict, its reasons,
 // the record's file, whether the session was handled, its tokens and its one printed line.
 export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
@@ -430,6 +531,10 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         ...(context.env ? { env: context.env } : {}),
         ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
         ...(scenario.extraArgs ? { extraArgs: scenario.extraArgs } : {}),
+        ...(scenario.offered ? { offered: scenario.offered } : {}),
+        ...(typeof context.helper?.address === 'string' ? { socket: context.helper.address } : {}),
+        ...(context.readable ? { readable: context.readable } : {}),
+        ...(context.writable ? { writable: context.writable } : {}),
         ...(resume === null ? {} : { resume }),
       });
       turns.push({ prompt, ...ran });

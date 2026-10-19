@@ -2,11 +2,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempFolder as madeFolder } from '../../helpers/homes.js';
+import { projectSettings } from '../../../scripts/protection/settings.js';
 import {
+  DENIED_TOOLS,
   SESSION_ENV,
+  SESSION_SETTINGS,
   parseStream,
   toolCalls,
   finalText,
@@ -231,6 +235,72 @@ test('runSession keeps the session away from the director\'s own: an environment
   assert.ok(Object.keys(env).every((name) => SESSION_ENV.test(name) || name === 'WHEELHOUSE_HOME' || /^__CF|^_$|^SHLVL$|^PWD$|^OLDPWD$/.test(name)), Object.keys(env).join(' '));
 });
 
+// A plain run of the fake, with `options` on top; resolves with what the fake saw.
+async function sawWith(options, { dir = tempFolder('harness-session-') } = {}) {
+  const fake = fakeClaude(tempFolder());
+  await runSession({ dir, prompt: 'x', pluginDirs: [], permissionMode: 'acceptEdits', maxTurns: 1, command: fake.command, commandArgs: fake.commandArgs, ...options });
+  return fake.record();
+}
+
+test('runSession runs the session in Claude Code\'s sandbox as a project\'s own settings have it, reaching only the run\'s stand-in socket, and reading none of the director\'s state, transcripts, projects or credentials (F94)', async () => {
+  const socket = path.join(tempFolder('harness-socket-'), 'helper.sock');
+  const { settings } = await sawWith({ socket, readable: ['/plugin/root'], writable: ['/main/.git'] });
+  const { sandbox } = projectSettings({ webDomains: [] });
+  assert.equal(settings.sandbox.enabled, true);
+  assert.equal(settings.sandbox.allowUnsandboxedCommands, false);
+  for (const denied of [...sandbox.filesystem.denyRead, '~/.wheelhouse', '~/.ssh', '~/.claude/projects', '~/Projects']) {
+    assert.ok(settings.sandbox.filesystem.denyRead.includes(denied), denied);
+  }
+  for (const denied of sandbox.filesystem.denyWrite) assert.ok(settings.sandbox.filesystem.denyWrite.includes(denied), denied);
+  assert.deepEqual(settings.sandbox.network.allowedDomains, ['registry.npmjs.org']);
+  // The run's own socket, by both its spellings where the temporary folder has two, and nothing else.
+  const spellings = [...new Set([socket, path.join(fs.realpathSync(path.dirname(socket)), 'helper.sock')])];
+  assert.deepEqual(settings.sandbox.network.allowUnixSockets, spellings);
+  assert.equal(settings.sandbox.network.allowAllUnixSockets, undefined);
+  assert.deepEqual(settings.sandbox.filesystem.allowRead, ['/plugin/root']);
+  assert.deepEqual(settings.sandbox.filesystem.allowWrite, ['/main/.git']);
+  // Still F90's settings beside it.
+  assert.ok(settings.permissions.deny.includes('Read(~/.wheelhouse/**)'));
+  assert.equal(settings.enabledPlugins['cc-plugin-telemetry@builtin'], false);
+
+  // Per run: another run's socket is that run's alone, and a run with none reaches none.
+  const other = path.join(tempFolder('harness-socket-'), 'helper.sock');
+  assert.ok(!(await sawWith({ socket: other })).settings.sandbox.network.allowUnixSockets.some((s) => spellings.includes(s)));
+  const none = (await sawWith({})).settings;
+  assert.deepEqual(none.sandbox.network.allowUnixSockets, []);
+  assert.equal(none.sandbox.filesystem.allowRead, undefined);
+  assert.equal(none.sandbox.filesystem.allowWrite, undefined);
+  assert.equal(SESSION_SETTINGS.sandbox, undefined, 'the static settings name no socket');
+
+  // Never the real helper's socket, nor anything else in the real Wheelhouse home.
+  for (const real of [path.join(os.homedir(), '.wheelhouse', 'helper.sock'), path.join(os.homedir(), '.wheelhouse', 'x', 'y.sock')]) {
+    await assert.rejects(sawWith({ socket: real }), /real Wheelhouse home/);
+  }
+});
+
+test('runSession takes no extra arguments but --permission-prompt-tool stdio, so none can widen or override the isolation (F100)', async () => {
+  assert.deepEqual((await sawWith({ extraArgs: [] })).args.includes('--permission-prompt-tool'), false);
+  for (const extraArgs of [
+    ['--settings', '/elsewhere.json'], ['--permission-prompt-tool', 'mcp__x__y'], ['--allowedTools', 'Bash'],
+    ['--permission-prompt-tool', 'stdio', '--mcp-config', '{}'], ['--dangerously-skip-permissions'], ['stdio', '--permission-prompt-tool'], '--permission-prompt-tool stdio',
+  ]) {
+    await assert.rejects(sawWith({ extraArgs }), /no extra arguments but --permission-prompt-tool stdio/, JSON.stringify(extraArgs));
+  }
+});
+
+test('runSession offers PushNotification only when asked and only when the project\'s local settings turn the call away; every other tool stays denied (F99)', async () => {
+  const deniedOf = (seen) => seen.args[seen.args.indexOf('--disallowedTools') + 1].split(',');
+  assert.ok(deniedOf(await sawWith({})).includes('PushNotification'), 'denied unless offered');
+  const dir = tempFolder('harness-session-');
+  await assert.rejects(sawWith({ offered: ['PushNotification'] }, { dir }), /PushNotification is offered only with a PreToolUse hook/);
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'PushNotification', hooks: [{ type: 'command', command: 'node "/x/turn-away.mjs"' }] }] } }));
+  const denied = deniedOf(await sawWith({ offered: ['PushNotification'] }, { dir }));
+  assert.ok(!denied.includes('PushNotification'));
+  assert.deepEqual(denied, DENIED_TOOLS.filter((t) => t !== 'PushNotification'));
+  await assert.rejects(sawWith({ offered: ['ListAgents'] }, { dir }), /only PushNotification can be offered/);
+});
+
 test('runSession puts extra arguments last, as given, without looking for them in --help', async () => {
   const folder = tempFolder();
   const fake = fakeClaude(folder);
@@ -404,6 +474,8 @@ test('runScenario sets the project up, runs the session, judges it and writes th
   assert.equal(sessionSaw.permissionMode, 'acceptEdits');
   assert.equal(sessionSaw.appendSystemPrompt, 'You are the without desk.');
   assert.equal(sessionSaw.extraArgs, undefined, 'a scenario with no extra arguments adds none');
+  assert.equal(sessionSaw.socket, undefined, 'a set-up with no stand-in names no socket');
+  assert.equal(sessionSaw.offered, undefined, 'a scenario that offers nothing offers nothing');
   assert.equal(outcome.pass, true);
   const total = totalUsageOf(events);
   assert.equal(outcome.line, `99 without: pass (variant without) ${total.input} in / ${total.output} out`);
@@ -470,10 +542,14 @@ test('runScenario passes a context from setup, and the scenario\'s extra argumen
   const scenario = {
     id: 96,
     title: 'a stand-in',
-    setup: async () => ({ env: { EXTRA: 'yes' }, pluginDirs: ['/p/extra'], records: ['r'], evidence: () => ({ seen: 1 }), close: async () => { closed += 1; } }),
+    setup: async () => ({
+      env: { EXTRA: 'yes' }, pluginDirs: ['/p/extra'], records: ['r'], evidence: () => ({ seen: 1 }), close: async () => { closed += 1; },
+      helper: { address: '/tmp/run/helper.sock' }, readable: ['/plugin/root'], writable: ['/main/.git'],
+    }),
     prompt: 'x',
     variants: { with: { pluginDirs: ['/p/with'] }, without: { pluginDirs: [] } },
     extraArgs: ['--permission-prompt-tool', 'stdio'],
+    offered: ['PushNotification'],
     pass: ({ context }) => { passSaw = context; return { pass: true, why: 'ok' }; },
   };
   await runScenario({
@@ -487,6 +563,10 @@ test('runScenario passes a context from setup, and the scenario\'s extra argumen
   assert.deepEqual(sessionSaw.pluginDirs, ['/p/with', '/p/extra']);
   assert.deepEqual(sessionSaw.env, { EXTRA: 'yes' });
   assert.deepEqual(sessionSaw.extraArgs, ['--permission-prompt-tool', 'stdio'], 'the scenario\'s own extra arguments');
+  assert.equal(sessionSaw.socket, '/tmp/run/helper.sock', 'the run\'s stand-in socket, for the sandbox (F94)');
+  assert.deepEqual(sessionSaw.readable, ['/plugin/root']);
+  assert.deepEqual(sessionSaw.writable, ['/main/.git']);
+  assert.deepEqual(sessionSaw.offered, ['PushNotification'], 'the scenario\'s own offer (F99)');
   assert.deepEqual(passSaw.records, ['r']);
   assert.equal(closed, 1);
   const written = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', '2026-10-18', '96-with-1.json'), 'utf8'));

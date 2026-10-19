@@ -2,7 +2,11 @@
 // The judgements of scenarios 20 to 23 and the readers they share, on made-up streams.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { callsOf, commitCalls, mergeCalls, reportBlock, reviewerRuns, rulingLines, subagentRuns } from '../../../scripts/eval/feature-project.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { REPO_ROOT, callsOf, commitCalls, mergeCalls, reportBlock, reviewerRuns, rulingLines, setUpFeature, subagentRuns } from '../../../scripts/eval/feature-project.js';
+import { makeScratchProject } from '../../../probes/lib/scratch.js';
 import { judge as judge20, highestLedgerRound } from '../../eval/build-loop/20-fix-rounds.js';
 import { judge as judge21 } from '../../eval/build-loop/21-re-review.js';
 import { judge as judge22 } from '../../eval/build-loop/22-question-not-ruling.js';
@@ -122,4 +126,18 @@ test('a subagent resumed with SendMessage is a run of its own, with its words fr
   const runs = reviewerRuns(subagentRuns(stream));
   assert.equal(runs.length, 2);
   assert.equal(reportBlock(runs[1].text).commit, HEAD);
+});
+
+test('a feature\'s set-up names what its sandbox must read and write: the repository its brief\'s commands run, and the main checkout\'s git folder its commits go to (F94)', async () => {
+  const project = await makeScratchProject({ name: 'feature-sandbox' });
+  const context = await setUpFeature(project.dir, { work: 'x', lane: 'small', goal: 'g', done: ['d'], brief: 'wheelhouse' });
+  try {
+    assert.deepEqual(context.readable, [REPO_ROOT]);
+    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: project.dir, encoding: 'utf8' }).trim();
+    assert.deepEqual(context.writable, [fs.realpathSync(common)]);
+    assert.equal(fs.realpathSync(common), fs.realpathSync(path.join(context.main, '.git')));
+  } finally {
+    await context.close();
+    await project.cleanup();
+  }
 });
