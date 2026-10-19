@@ -26,8 +26,9 @@
 //     One process runs at a time for each session: a wake that falls due while
 //     its session runs waits, and goes when the process has ended. Several that
 //     waited together go as one wake listing them all (`merged`).
-//   Shape 2. The watcher starts nothing. It prints one line on stdout for each
-//   wake, which the plugin monitor delivers to the long-lived foreman session:
+//   Shape 2. The watcher starts nothing. It prints one line for each wake,
+//   through `print` (stdout unless another printer is given), which the mod in
+//   the long-lived foreman session hands it as a prompt (scripts/mod/watch.js):
 //     WAKE foreman <file> | WAKE feature <work> <file> | START feature <work> <worktree>
 //
 // Every started session gets the watcher's environment less the variables a

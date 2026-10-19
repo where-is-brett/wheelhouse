@@ -12,7 +12,7 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
-import { TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
+import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
@@ -508,11 +508,13 @@ test('a feature session or a Shape 1 foreman is told to stop ticking', () => wit
   assert.deepEqual(await handle(tickOf(feature), live()), { ok: true, role: 'feature', every: 0 });
 
   fs.writeFileSync(path.join(feature, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  // The default branch's configuration says Shape 1.
+  const shape1 = () => ({ ...fakeClient(), config: async () => ({ ok: true, config: { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] } }) });
   // A foreman by the environment the session was started with.
-  assert.deepEqual(await handle(tickOf(feature), live({ env: { WHEELHOUSE_ROLE: 'foreman' } })), { ok: true, role: 'foreman', every: 0 });
+  assert.deepEqual(await handle(tickOf(feature), live({ env: { WHEELHOUSE_ROLE: 'foreman' }, client: shape1() })), { ok: true, role: 'foreman', every: 0 });
   // A foreman known from its first prompt, recorded by the board-context hook.
   assert.equal(recordRole('sess-foreman', 'foreman'), true);
-  assert.deepEqual(await handle(tickOf(feature, { session: 'sess-foreman' }), live()), { ok: true, role: 'foreman', every: 0 });
+  assert.deepEqual(await handle(tickOf(feature, { session: 'sess-foreman' }), live({ client: shape1() })), { ok: true, role: 'foreman', every: 0 });
   // Nothing has been written for the project: no pane is made for them.
   assert.equal(readPaneStatus(P), null);
 
@@ -520,6 +522,51 @@ test('a feature session or a Shape 1 foreman is told to stop ticking', () => wit
   const elsewhere = tempFolder('wh-bridge-outside-');
   assert.deepEqual(await handle(tickOf(elsewhere), live()), { ok: true, role: 'front-desk', every: 0 });
   assert.deepEqual(await handle({ cmd: 'tick', session: 'sess-1' }, live()), { ok: true, role: 'front-desk', every: 0 });
+}));
+
+test('a Shape 2 foreman\'s tick runs the watcher\'s loop and hands back its prompts', () => withHome(async (home) => {
+  const repo = registered(home);
+  const asked = [];
+  const client = fakeClient();
+  const prompts = ['Wheelhouse foreman: WAKE foreman /w/a.json', 'Wheelhouse foreman: WAKE feature login-page /w/b.json'];
+  const watching = (answer) => async (args) => { asked.push(args); return answer; };
+  const foreman = (answer) => live({ env: { WHEELHOUSE_ROLE: 'foreman' }, client, watchTick: watching(answer) });
+
+  const answer = await handle(tickOf(repo), foreman({ watcher: 'running', submit: prompts }));
+  assert.deepEqual(answer, { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: prompts });
+  assert.equal(FOREMAN_TICK_MS, 30000);
+  assert.equal(asked[0].project, P);
+  assert.equal(asked[0].role, 'foreman');
+  assert.equal(asked[0].client, client);
+  assert.deepEqual(JSON.parse(lineOf(answer)).submit, prompts);
+  // A foreman has no pane: nothing is written for it.
+  assert.equal(readPaneStatus(P), null);
+
+  // While the shape hasn't been read, or a loop failed, it keeps ticking and submits nothing.
+  for (const watcher of [null, 'failed']) {
+    assert.deepEqual(await handle(tickOf(repo), foreman({ watcher, submit: [] })), { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: [] });
+  }
+  // Shape 1: its watcher wakes it, so the mod stops ticking.
+  assert.deepEqual(await handle(tickOf(repo), foreman({ watcher: 'not-needed', submit: [] })), { ok: true, role: 'foreman', every: 0 });
+}));
+
+test('the front desk\'s tick says in the pane whether the watcher runs', () => withHome(async (home) => {
+  const repo = registered(home);
+  const asked = [];
+  const answer = await handle(tickOf(repo), live({ watchTick: async (args) => { asked.push(args); return { watcher: 'started', submit: [] }; } }));
+  assert.equal(answer.pane.watcher, 'started');
+  assert.equal(readPaneStatus(P).watcher, 'started');
+  assert.equal('submit' in answer, false, 'the front desk\'s submit is the courier\'s');
+  assert.equal(asked[0].project, P);
+  assert.equal(asked[0].role, 'front-desk');
+
+  // A watch that throws is a failure in the pane, never a lost tick.
+  const failing = await handle(tickOf(repo), live({ watchTick: async () => { throw new Error('x'); } }));
+  assert.equal(failing.ok, true);
+  assert.equal(failing.pane.watcher, 'failed');
+
+  // With the real watch, a configuration that can't be read yet names nothing and starts nothing.
+  assert.equal((await handle(tickOf(repo), live())).pane.watcher, null);
 }));
 
 test('the answer line carries only its own fields', () => {

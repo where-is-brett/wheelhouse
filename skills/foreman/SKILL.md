@@ -44,6 +44,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 - **A refusal is never retried.** If it says "Nothing to do", do nothing. Otherwise, `act ask`.
 - **A `Hold:` line** means STOP or an incident. Start nothing and give no go-ahead; the lines already say what waits. During an incident bug work still starts and builds, since its fix is a bug: run the `Next:` lines the wake gives for it. Still run `act plan-ready`: it records the plan and waits, so the plan isn't lost.
 - **Shape 2:** when `act start` prints `START feature W <worktree>`, end your reply with that line, word for word.
+- **Shape 2, the mod's prompts:** a prompt `Wheelhouse foreman: WAKE foreman <file>`, `Wheelhouse foreman: WAKE feature <work> <file>` or `Wheelhouse foreman: START feature <work> <worktree>` is the watcher's line as a monitor would have given it. Handle it as this playbook already says.
 - **You talk to no one:** not the front desk, the director or a feature session. Questions go through `act ask`.
 
 ## Red flags: stop

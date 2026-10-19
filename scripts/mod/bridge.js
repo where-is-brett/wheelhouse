@@ -12,7 +12,8 @@
 // director's press on the pane; `sdk`, `peer` and every other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
-//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now
+//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now, or
+//                                                   a Shape 2 foreman's wakes from one watcher loop
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
@@ -39,9 +40,10 @@ import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as d
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
 import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
-import { TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
+import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
+import { watchTick as defaultWatchTick } from './watch.js';
 
 // The whole run for most requests, from reading the request to the answer.
 export const BRIDGE_MS = 5000;
@@ -94,6 +96,7 @@ const DEFAULTS = {
   digestText: defaultDigest,
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
+  watchTick: defaultWatchTick,
   env: process.env,
 };
 
@@ -275,17 +278,41 @@ async function helperAnswers(d) {
   }
 }
 
+// The watcher's half of a tick (watch.js), which never holds up the rest: anything that throws
+// is a failure.
+function watching(found, role, client, d) {
+  return Promise.resolve()
+    .then(() => d.watchTick({ project: found.project, role, client, now: d.now }))
+    .catch(() => ({ watcher: 'failed', submit: [] }));
+}
+
+// A foreman's tick. In Shape 2 it runs one loop of the watcher and hands back its wake lines as
+// the foreman's prompts, every FOREMAN_TICK_MS, including while the shape is still being read or
+// a loop failed. A Shape 1 foreman is woken by its watcher, so it is told to stop ticking. The
+// loop has the whole of WATCH_BRIDGE_MS, so its helper is one with no shorter limit of its own.
+async function foremanTick(found, d) {
+  const watched = await watching(found, 'foreman', d.client ?? helperClient(), d);
+  if (watched?.watcher === 'not-needed') return { ok: true, role: 'foreman', every: 0 };
+  return { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: strings(watched?.submit) ? watched.submit : [] };
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
-// has a pane: its model is kept as status.json before the answer goes. A feature session, a
-// foreman (until the watcher's half is added) and a folder outside a project get an `every` of
-// 0, which tells the mod to stop ticking. In the terminal, when Wheelhouse's own status line is
-// set, `status` is left out so the glance isn't shown twice.
+// has a pane: its model is kept as status.json before the answer goes, with whether the
+// watcher runs (a Shape 1 watcher that has stopped is started again here). A Shape 2 foreman's
+// tick runs the watcher's loop. A feature session, a Shape 1 foreman and a folder outside a
+// project get an `every` of 0, which tells the mod to stop ticking. In the terminal, when
+// Wheelhouse's own status line is set, `status` is left out so the glance isn't shown twice.
 async function tick(req, d) {
   const role = roleOf(req, d);
   const found = siteOf(req.cwd, d);
+  if (found !== null && role === 'foreman') return foremanTick(found, d);
   if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
+  // The watch runs beside the pane, so the two share the time the tick has.
+  const watched = watching(found, role, clientOf(d), d);
   // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
   const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d) });
+  const watcher = (await watched)?.watcher;
+  pane.watcher = typeof watcher === 'string' ? watcher : null;
   try {
     d.writePaneStatus(found.project, pane);
   } catch {
