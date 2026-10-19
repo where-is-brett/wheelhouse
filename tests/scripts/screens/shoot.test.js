@@ -217,14 +217,15 @@ test('only Chrome is stopped at its picture: Edge photographs its own error page
   for (const other of ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', '/bin/firefox', '', null]) assert.equal(stopsAtPicture(other), false, String(other));
 });
 
-test('Edge is not stopped at its picture: it counts only when Edge exits 0 by itself', async () => {
-  const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-  const lingering = lingeringRun();
-  const result = await shoot({ browser: edge, url: URL_, size: SIZE, run: lingering, fetch: ok200(), tmp: tempFolder('wh-shoot-'), timeoutMs: 600 });
-  assert.deepEqual(result, { ok: false, why: 'the browser timed out' });
-  assert.equal(lingering.runs[0].options.signal, undefined);
-  const exits = await shoot({ browser: edge, url: URL_, size: SIZE, run: fakeRun(), fetch: ok200(), tmp: tempFolder('wh-shoot-') });
-  assert.deepEqual(exits, { ok: true, hash: pixelHash(PNG) });
+test('only a Chrome picture counts so far: Edge answers no picture, whatever its exit code', async () => {
+  for (const edge of ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge']) {
+    // Edge exiting 0 with a whole picture, and Edge staying open after one.
+    for (const run of [fakeRun(), fakeRun({ code: 1 }), lingeringRun()]) {
+      const result = await shoot({ browser: edge, url: URL_, size: SIZE, run, fetch: ok200(), tmp: tempFolder('wh-shoot-'), timeoutMs: 600 });
+      assert.deepEqual(result, { ok: false, why: "only Chrome's pictures are trusted so far" }, edge);
+      assert.equal(run.runs.length, 0, 'Edge is not run');
+    }
+  }
 });
 
 test('a picture from a browser that says the page failed to load never counts', async () => {

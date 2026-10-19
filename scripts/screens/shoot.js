@@ -70,10 +70,11 @@ export function browserArgs({ url, size, profile, out }) {
   ];
 }
 
-// Whether `browser` is stopped once its picture is whole. Chrome and Edge on macOS stay running after
-// writing the picture (check 34). Chrome writes none when the page fails to load, so a whole picture
-// from it is the page; Edge photographs its own error page, so its picture counts only when it exits
-// 0 by itself.
+// Whether `browser` is Chrome (or Chromium): the one browser whose pictures are trusted so far, and
+// the one stopped once its picture is whole. Chrome and Edge on macOS stay running after writing the
+// picture (check 34). Chrome writes none when the page fails to load; Edge photographs its own error
+// page and says nothing, so until check 34's Windows run shows how Edge reports a failed load there,
+// `shoot` takes no picture from it.
 export function stopsAtPicture(browser) {
   return typeof browser === 'string' && /chrom/i.test(browser.split(/[\\/]/).at(-1));
 }
@@ -131,11 +132,14 @@ async function readStatus(url, fetch, timeoutMs) {
 }
 
 // Photographs `url` at `size` with `browser`. Resolves to { ok: true, hash } with the picture's pixel
-// hash, or { ok: false, why }; it never throws. A picture counts when the browser exits 0 after
-// writing it, or when it was stopped because the file held a whole PNG (Chrome only, `stopsAtPicture`),
-// and never when the browser says the page did not load.
+// hash, or { ok: false, why }; it never throws. Only Chrome is used so far (`stopsAtPicture`). Its
+// picture counts when it exits 0 after writing it, or when it was stopped because the file held a
+// whole PNG, and never when it says the page did not load. A whole picture is the page as the browser
+// drew it: an error status the browser alone was given (a 500 body, a protection page) still gives a
+// picture, and only the status read beforehand covers it.
 export async function shoot({ browser, url, size, run = runProgram, fetch = globalThis.fetch, tmp = os.tmpdir(), timeoutMs = SCREEN_TIMEOUT_MS } = {}) {
   if (!browser) return { ok: false, why: 'no browser' };
+  if (!stopsAtPicture(browser)) return { ok: false, why: "only Chrome's pictures are trusted so far" };
   let address;
   try { address = new URL(url); } catch { return { ok: false, why: 'not an address' }; }
   if (address.protocol !== 'https:') return { ok: false, why: 'not an https address' };

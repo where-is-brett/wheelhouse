@@ -9,8 +9,8 @@
 // of the real method. Written for Node.js 22 or later, no installs, on macOS and Windows.
 //   node run.js [--browser <path>] [--stop-at-picture]
 //     --browser           the Chrome or Edge program to use (default: the first one `findBrowser` finds)
-//     --stop-at-picture   stop the browser once its picture is whole even where `shoot` would not
-//                         (Edge), to see its pictures without waiting for each run's time limit
+//     --stop-at-picture   stop the browser once its picture is whole even where `runBrowser` would
+//                         not (Edge), to see its pictures without waiting for each run's time limit
 // Prints a JSON summary.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -123,8 +123,42 @@ function option(args, name) {
   return at >= 0 ? args[at + 1] : undefined;
 }
 
+// The newest version-named folder (152.0.4191.53) among `names`, or null.
+function newestVersion(names) {
+  const versions = names.filter((name) => /^\d+(\.\d+){3}$/.test(name));
+  const parts = (v) => v.split('.').map(Number);
+  versions.sort((a, b) => { const [x, y] = [parts(a), parts(b)]; const i = x.findIndex((n, at) => n !== y[at]); return i < 0 ? 0 : x[i] - y[i]; });
+  return versions.at(-1) ?? null;
+}
+
+// The browser's version, without opening a window. On Windows, `chrome.exe --version` and
+// `msedge.exe --version` print nothing and start the browser in the person's own profile, so the
+// version is read from the version-named folder beside the program in `Application\`; elsewhere it is
+// what `--version` prints. Null when it can't be read.
+export async function browserVersion({ browser, platform = process.platform, readdir = fs.readdirSync, run: runProgram = run } = {}) {
+  if (platform === 'win32') {
+    try {
+      const version = newestVersion(readdir(path.win32.dirname(browser)));
+      return version ? `${path.win32.basename(browser)} ${version}` : null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return (await runProgram(browser, ['--version'], { timeoutMs: SCREEN_TIMEOUT_MS })).stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function main(args) {
-  const browser = option(args, '--browser') ?? findBrowser();
+  const named = option(args, '--browser');
+  if (args.includes('--browser') && (!named || named.startsWith('--'))) {
+    console.error('--browser needs the path of a Chrome or Edge program after it.');
+    process.exitCode = 1;
+    return;
+  }
+  const browser = named ?? findBrowser();
   if (!browser) { console.error('No Chrome or Edge found; name one with --browser <path>.'); process.exitCode = 1; return; }
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-check34-'));
   const stopAtPicture = args.includes('--stop-at-picture') || stopsAtPicture(browser);
@@ -133,8 +167,7 @@ export async function main(args) {
   const started = performance.now();
   let served = null;
   try {
-    const version = await run(browser, ['--version'], { timeoutMs: SCREEN_TIMEOUT_MS });
-    report.browserVersion = version.stdout.trim();
+    report.browserVersion = await browserVersion({ browser });
     served = await startServer();
     const closed = await closedPort();
     const address = {
