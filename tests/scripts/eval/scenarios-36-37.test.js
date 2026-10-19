@@ -51,7 +51,7 @@ test('the cards are composed by cli.js card, numbered as the scenarios need, and
   const numbers = boardNumbers(four.seed);
   assert.deepEqual(CARDS_37.map((c) => numbers[c.id]), [1, 2, 3, 4]);
   assert.equal(four.seed.filter((e) => e.kind === 'asked').length, 2, 'cards 3 and 4 are new');
-  assert.equal(await wakePrompt(numbers), 'Wheelhouse courier: 2 new cards (3 and 4). Ask any new cards now, once, then send Claude\'s notification in one line.');
+  assert.equal(await wakePrompt(numbers), 'Wheelhouse courier: 2 new cards (3 and 4). Send Claude\'s notification in one line, then ask any new cards now, once.');
   assert.throws(() => scenario37.prompt, /made by its setup/);
 });
 
@@ -88,24 +88,32 @@ test('36 passes an explanation with an everyday example, then card 2 alone, as i
   assert.match(none.why, /not asked again/);
 });
 
-test('37 passes one call holding cards 3 and 4, one plain one-line notification, and no words', async () => {
+test('37 passes one plain one-line notification, then one call holding cards 3 and 4, and at most one short closing line', async () => {
   const cards = await cardsOf(CARDS_37);
   const fresh = cards.filter((c) => NEW_CARDS.includes(c.id)).map((c) => asQuestion(c));
   const judge = (stream, { asked = NEW_CARDS, forbidden = [] } = {}) => judge37({ calls: mainCalls(stream), texts: textBlocks(stream), forbidden, asked, cards });
   const notify = (message) => ['PushNotification', { message, status: 'proactive' }];
+  const ask = (questions = fresh) => ['AskUserQuestion', { questions }];
 
-  const good = judge(events(['Bash', { command: 'node "/p/cli.js" cards' }], ['AskUserQuestion', { questions: fresh }], notify('2 cards are waiting for you.'), ['say', '​']));
-  assert.equal(good.pass, true, good.why);
+  for (const closing of [[], [['say', '\u200b']], [['say', 'Two cards are waiting for you.']], [['say', 'Cards 3 and 4 are on your screen.']]]) {
+    const got = judge(events(notify('2 cards are waiting for you.'), ['Bash', { command: 'node "/p/cli.js" cards' }], ask(), ...closing));
+    assert.equal(got.pass, true, got.why);
+  }
 
-  assert.match(judge(events(['AskUserQuestion', { questions: fresh }], notify('2 cards are waiting.'), ['say', 'Two cards are on your screen.'])).why, /text to the director/);
-  assert.match(judge(events(['AskUserQuestion', { questions: fresh }], notify('2 cards are waiting.'), ['narrate', 'Here\'s your briefing.'])).why, /a briefing/);
-  assert.match(judge(events(['AskUserQuestion', { questions: [fresh[0]] }], ['AskUserQuestion', { questions: [fresh[1]] }], notify('2 cards.'))).why, /called 2 times/);
-  assert.match(judge(events(['AskUserQuestion', { questions: [fresh[0]] }], notify('2 cards.'))).why, /did not hold cards 3 and 4|both new cards/);
-  const old = asQuestion(cards[0]);
-  assert.match(judge(events(['AskUserQuestion', { questions: [...fresh, old] }], notify('3 cards.'))).why, /not the new cards/);
-  assert.match(judge(events(['AskUserQuestion', { questions: fresh }], notify('Approve #14 and pick Monday or Friday for the sales summary.'))).why, /names a card's words/);
-  assert.match(judge(events(['AskUserQuestion', { questions: fresh }], notify('2 cards\nare waiting.'))).why, /not one line/);
-  assert.match(judge(events(['AskUserQuestion', { questions: fresh }])).why, /no PushNotification call/);
-  assert.match(judge(events(['AskUserQuestion', { questions: fresh }], notify('2 cards.')), { asked: [...NEW_CARDS, CARDS_37[0].id] }).why, /asked before/);
-  assert.match(judge(events(['AskUserQuestion', { questions: fresh }], notify('2 cards.')), { forbidden: ['card-answer'] }).why, /never earns: card-answer/);
+  assert.match(judge(events(ask(), notify('2 cards are waiting.'))).why, /notification came after the cards/);
+  assert.match(judge(events(['say', 'Sending the notification first.'], notify('2 cards.'), ask())).why, /before the calls ended/);
+  assert.match(judge(events(notify('2 cards.'), ['narrate', 'Notified them.'], ask())).why, /before the calls ended/);
+  assert.match(judge(events(notify('2 cards.'), ask(), ['say', 'Two cards wait.'], ['say', 'Answer when ready.'])).why, /more than one closing line/);
+  assert.match(judge(events(notify('2 cards.'), ask(), ['say', 'Two cards wait: the gift voucher change and the weekly email.'])).why, /closing line names a card's words/);
+  assert.match(judge(events(notify('2 cards.'), ask(), ['say', 'Five cards are waiting for you.'])).why, /number the wake didn't \(5\)/);
+  assert.match(judge(events(notify('2 cards.'), ask(), ['say', `Cards ${'are waiting '.repeat(13)}`])).why, /longer than 25 words/);
+  assert.match(judge(events(notify('2 cards.'), ask(), ['say', 'Here is your briefing.'])).why, /a briefing/);
+  assert.match(judge(events(notify('2 cards.'), ask([fresh[0]]), ask([fresh[1]]))).why, /called 2 times/);
+  assert.match(judge(events(notify('2 cards.'), ask([fresh[0]]))).why, /did not hold cards 3 and 4|both new cards/);
+  assert.match(judge(events(notify('3 cards.'), ask([...fresh, asQuestion(cards[0])]))).why, /not the new cards/);
+  assert.match(judge(events(notify('Approve #14 and pick Monday or Friday for the sales summary.'), ask())).why, /notification names a card's words/);
+  assert.match(judge(events(notify('2 cards\nare waiting.'), ask())).why, /not one line/);
+  assert.match(judge(events(ask())).why, /no PushNotification call/);
+  assert.match(judge(events(notify('2 cards.'), ask()), { asked: [...NEW_CARDS, CARDS_37[0].id] }).why, /asked before/);
+  assert.match(judge(events(notify('2 cards.'), ask()), { forbidden: ['card-answer'] }).why, /never earns: card-answer/);
 });

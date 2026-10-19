@@ -497,7 +497,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   // A turn is running: the new card waits.
   assert.equal('submit' in await handle(tickOf(repo, { idle: false }), live({ now: later(1) })), false);
   const woken = await handle(tickOf(repo, { idle: true }), live({ now: later(2) }));
-  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Ask any new cards now, once, then send Claude\'s notification in one line.']);
+  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Send Claude\'s notification in one line, then ask any new cards now, once.']);
   assert.deepEqual(JSON.parse(lineOf(woken)).submit, woken.submit);
   assert.ok(!woken.submit[0].includes('words'));
   // Once handed back, it isn't handed back again.
@@ -520,14 +520,14 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   assert.equal('submit' in late, false);
   assert.ok(!late.pane.missing.includes('The courier couldn\'t run this time'));
   const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
-  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3). Ask any new cards now, once, then send Claude\'s notification in one line.']);
+  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3). Send Claude\'s notification in one line, then ask any new cards now, once.']);
 
   // A second front desk opening now marks nothing and wakes for nothing.
   waiting('c-old', 'c-new', 'c-third', 'c-fourth');
   const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
   assert.equal('submit' in second, false);
   const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));
-  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Ask any new cards now, once, then send Claude\'s notification in one line.']);
+  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Send Claude\'s notification in one line, then ask any new cards now, once.']);
 }));
 
 test('the model is written to status.json before the tick answers', () => withHome(async (home) => {

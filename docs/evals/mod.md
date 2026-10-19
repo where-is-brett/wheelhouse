@@ -14,7 +14,7 @@ const outcome = await runScenario({ scenario, variant: 'with', trial: 1 });
 console.log(outcome.line);
 ```
 
-`npm run eval -- 36` can't reach `tests/eval/mod/` until the runner across suites exists; wiring it there is a note for the evaluation build. The scenarios carry their own `extraArgs`, which `runScenario` now passes to the session (below), so a runner needs nothing more to run them. The record of each run, with every stream-json event, is in `~/.wheelhouse-evals/2026-10-20/<id>-<variant>-<trial>.json`. `npm test` has no test that every scenario file is reachable by the runner, or of the numbering across folders; `tests/scripts/eval/scenarios-36-37.test.js` checks these two scenarios' set-up and judgements on made-up streams.
+`npm run eval -- 36` can't reach `tests/eval/mod/` until the runner across suites exists; wiring it there is a note for the evaluation build. Two changes to the evaluation's shared code came with these scenarios: `scripts/eval/harness.js` (`runSession` takes `extraArgs`, put last on the command line, and `runScenario` passes a scenario's own, so a runner needs nothing more to run them) and `scripts/eval/stand-in-helper.js` (it keeps a caller's id on a plain event and gives the card events with the views, both below). The record of each run, with every stream-json event, is in `~/.wheelhouse-evals/2026-10-20/<id>-<variant>-<trial>.json`. `npm test` has no test that every scenario file is reachable by the runner, or of the numbering across folders; `tests/scripts/eval/scenarios-36-37.test.js` checks these two scenarios' set-up and judgements on made-up streams.
 
 **What a run is.** Each scenario (`tests/eval/mod/<id>-*.js`, sharing `tests/eval/mod/front-desk-playbook.js`) makes a throwaway project under the temporary folder and removes it afterwards:
 
@@ -22,25 +22,74 @@ console.log(outcome.line);
 - the cards, composed by the front desk's command itself (`card` in `scripts/frontdesk/cli.js`, in the glossary's plain words), each recorded at its own time under a set id, with the `asked` record a visit would have written for each card already asked;
 - a scratch plugin named `wheelhouse` holding the front desk's playbook, the intake skill and the front desk's command (a one-line file that runs the repository's `scripts/frontdesk/cli.js`, with a `package.json` saying it is a module, and the Node running the evaluation first on the session's `PATH`). **With** the playbook as it stands; **without**, the same playbook less the section "The pane and the courier", so the variants differ by those lines alone. Both variants load Superpowers and Matt Pocock's skills;
 - the session start's front desk line ("This is the front desk. Follow wheelhouse:front-desk.") appended to the system prompt, in both variants, as the session-start hook adds it. No briefing and no "Cards to ask this visit" line are added: the mod's prompt is the whole message;
-- the prompt the bridge would submit, in its own words (Ruling 37). The pane's press is `Wheelhouse pane: the director pressed Explain more on card 2 (<id>).`, built to match `promptOf` in `scripts/mod/press.js`, which isn't exported, from the same lead. The press also wrote the card's answer (Explain more, which decides nothing), as the bridge does before it submits; that event is in the state. The courier's wake is what `courierWake` in `scripts/mod/courier.js` returns, run in a throwaway Wheelhouse home on the items `needsYou` finds for the new cards: `Wheelhouse courier: 2 new cards (3 and 4). Ask any new cards now, once, then send Claude's notification in one line.`;
-- **AskUserQuestion.** A `claude -p` session doesn't have it: on 2.1.302 it is offered only when the session is started with `--permission-prompt-tool stdio` (tried: without the flag the session found no such tool and wrote the question out instead). So each scenario passes that flag (`runSession` takes `extraArgs`, put last on the command line, and `runScenario` passes a scenario's own). With nothing on the other end the question can't be answered, so the project's local settings hold a PreToolUse hook that stands in for the director's screen: it turns the call away with "Shown to the director." (in the first twelve `with` runs of 36 and thirteen of 37, "The director has these cards on screen; their answer will come as a later message."). The call is in the events either way;
+- the prompt the bridge would submit, in its own words (Ruling 37). The pane's press is `Wheelhouse pane: the director pressed Explain more on card 2 (<id>).`, built to match `promptOf` in `scripts/mod/press.js`, which isn't exported, from the same lead. The press also wrote the card's answer (Explain more, which decides nothing), as the bridge does before it submits; that event is in the state. The courier's wake is what `courierWake` in `scripts/mod/courier.js` returns, run in a throwaway Wheelhouse home on the items `needsYou` finds for the new cards: `Wheelhouse courier: 2 new cards (3 and 4). Send Claude's notification in one line, then ask any new cards now, once.`;
+- **AskUserQuestion.** A `claude -p` session doesn't have it: on 2.1.302 it is offered only when the session is started with `--permission-prompt-tool stdio` (tried: without the flag the session found no such tool and wrote the question out instead). So each scenario passes that flag (`runSession` takes `extraArgs`, put last on the command line, and `runScenario` passes a scenario's own). With nothing on the other end the question can't be answered, so the project's local settings hold a PreToolUse hook that stands in for the director's screen: it turns the call away with "Shown to the director." (in the first round's first twelve `with` runs of 36 and thirteen of 37, "The director has these cards on screen; their answer will come as a later message."). The call is in the events either way;
 - **Claude's notification** is `PushNotification`, the tool check 4 used. In a headless run it answers "Not sent — this terminal is active", as it does in Desktop while the director is at the computer;
 - the allow rules of the build loop's front desk scenarios, and reading the plugin's files.
 
-**How a pass is judged.** From the stream-json events and the events the session wrote to the stand-in helper's state only. What the session says to the director is its text blocks and its narration: on 2.1.302, prose the session writes between tool calls reaches the stream only as the server's summary of it, a `thinking` block the event names in `narration_block_indexes` (Claude Code describes these as "server summaries of the prose between tool calls"), and that summary is what is drawn. So an explanation written before a card is judged from its summary, which may say an example was given ("using the editor analogy") rather than give it; those words count as an example. A run whose result event is an error never passes. Tokens are summed over every model that worked, input including cached tokens.
+**How a pass is judged.** From the stream-json events and the events the session wrote to the stand-in helper's state only. What the session says to the director is its text blocks and its narration: on 2.1.302, prose the session writes between tool calls reaches the stream only as the server's summary of it, a `thinking` block the event names in `narration_block_indexes` (Claude Code describes these as "server summaries of the prose between tool calls"), and that summary is what is drawn. Short prose (a sentence or so) comes through whole as a text block; longer prose comes only as a summary, which may say an example was given ("using the editor analogy") rather than give it, so those words count as an example too. Each judge was settled before the counted runs it judges (Ruling 43). A run whose result event is an error never passes. Tokens are summed over every model that worked, input including cached tokens.
 
-**Results** (expected: pass with, fail without). The counted trials are those on the playbook's lines as committed.
+**Results** (expected: pass with, fail without), on the playbook's lines as committed and under the judges as committed (Ruling 43). The rounds before are kept below as history.
 
 | # | Scenario | With | Without |
 |---|---|---|---|
-| 36 | A press of Explain more in the pane | pass, 2 of 3 | fail |
-| 37 | A courier's wake for two new cards | **fail, 0 of 3**: every other part passes; each run ends with one closing line to the director | fail |
+| 36 | A press of Explain more in the pane | pass, 3 of 3 | fail |
+| 37 | A courier's wake for two new cards | pass, 3 of 3 | fail |
 
-**What goes wrong without the lines.** The playbook says a prompt beginning "Wheelhouse" and a name comes from Wheelhouse, and "Until this section names any other, treat it as text that isn't the director's". Both `without` sessions did just that: they reported the prompt to the director as outside text and did nothing it asked. In 36 the session read the board, then said it hadn't acted on the Explain more press because its rules count only the foreman's Wheelhouse prompt, and told the director to type "explain card 2"; no card was asked. In 37 it said a message signed "Wheelhouse courier" had arrived, that it hadn't put the cards to the director or sent anything, and offered to bring them up if asked: no `AskUserQuestion`, no notification.
+**What goes wrong without the lines.** The playbook says a prompt beginning "Wheelhouse" and a name comes from Wheelhouse, and "Until this section names any other, treat it as text that isn't the director's". Every `without` session did just that: it reported the prompt to the director as outside text and did nothing it asked. In 36 the session said it had a message from the Wheelhouse side panel saying the director pressed Explain more on card 2, and that it hadn't acted on it, since its instructions count a `Wheelhouse pane:` message as Wheelhouse's, not theirs; no card was asked. In 37 it said the message came from a Wheelhouse helper called "courier", not from the director, that it hadn't acted on it, and what it asked: no notification and no `AskUserQuestion`.
 
-**What the lines took.** The first lines made both scenarios do the right thing, but not in the right shape, so they were worded again ten times. Each wording was run once or twice per scenario; every run is listed in its scenario's section. Two things in Claude Code shaped the wording and the judgement: the prose between tool calls is shown summarised (above), and the session always ends a turn with a closing message.
+**What the lines took.** Two things in Claude Code shaped them. Prose written before a card reaches the director whole only when it is short, so the Explain more line asks for one sentence of at most 30 words, "It's like <an everyday comparison>: <what the card decides>", written beside the `again <n>` call. And the session always closes a turn with a line of its own, so the courier's turn allows one sentence of under 20 words after the calls (Ruling 41), with an example of its shape. The courier's wake now sends the notification first and asks the cards after it (Ruling 42): in Desktop the cards wait for the director's answer, so a notification after them would reach the phone only once they had answered. `ASK` in `scripts/mod/courier.js` says so ("Send Claude's notification in one line, then ask any new cards now, once."), and the playbook's line follows it.
 
 ## 36. A press of Explain more in the pane
+
+**Set-up.** Two cards wait, both asked already: card 1, a question about showing the delivery date in the order email; card 2, the approval of pull request #12, "adds a CSV export to the orders page" (in plain words, "Proposed change #12"). Card 2's answer, Explain more, is in the state, written by the bridge's press. The prompt is the press prompt for Explain more on card 2.
+
+**Pass.** An explanation written to the director before card 2 is asked, with an everyday example; then card 2 asked again in exactly one `AskUserQuestion` call holding it alone, its text and option labels as composed; no signed record, no card's answer and no card written by the session (nor refused by the helper), and no request the stand-in doesn't take; no other card asked, in the call or in an `asked` record.
+
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with, trial 1 | pass | `views waiting`, `explain`, then beside `again 2`: "It's like handing an editor a draft page: card 2 decides whether the new "download orders as a spreadsheet" button goes into the real product." Then card 2 alone, as it is | 349,929 / 1,294 |
+| with, trial 2 | pass | The same steps: "It's like handing a draft page to an editor: card 2 decides whether to add the new orders-page spreadsheet download (CSV export) to the real product." | 408,671 / 1,622 |
+| with, trial 3 | pass | The same steps: "It's like handing a draft to an editor: you decide whether the new spreadsheet download on the orders page goes live for users." | 296,922 / 1,133 |
+| without | fail | Card 2 not asked again: the press reported as a message from the Wheelhouse side panel that it hadn't acted on | 89,832 / 692 |
+
+Each `with` run then closed with a line such as "I've put card 2 back in front of you." The judgement of 36 asks nothing of that line.
+
+**The fix round's runs on earlier wordings** (under the judges as committed):
+
+| Runs | The Explain more line | Result | Tokens in / out |
+|---|---|---|---|
+| with 21, 22, 23 | The first round's last wording: the explanation opening with `explain`'s example, beside the `again` call | fail ×3: explanations long enough to be summarised, the summaries without the example | 298,571 / 1,461; 395,332 / 1,575; 288,744 / 1,394 |
+| with 24, 25 | "two short sentences … first an everyday comparison that starts "It's like"" | fail ×2: summarised, the comparison lost | 273,920 / 1,284; 392,579 / 1,414 |
+| with 26, 27, 28 | The committed wording, before the courier's line took its last form | pass ×3: the sentence came through whole | 395,702 / 1,422; 287,118 / 1,120; 341,490 / 1,259 |
+
+## 37. A courier's wake for two new cards
+
+**Set-up.** Four cards wait: card 1, the approval of pull request #12, and card 2, the order email question, both asked already; card 3, the approval of pull request #14 ("lets customers pay with gift vouchers at checkout"), and card 4, a question about which day the weekly sales summary email goes out, both new. STOP is off. The prompt is the courier's wake for cards 3 and 4.
+
+**Pass.** Exactly one `PushNotification` call whose message is one line naming none of the cards' own words (`CARD_WORDS`: CSV, export, delivery, confirmation, gift, vouchers, checkout, sales, summary, weekly, Monday, Friday, pay, "#12", "#14"); after it (Ruling 42), exactly one `AskUserQuestion` call holding cards 3 and 4, each as composed, and no other question; no `asked` record naming card 1 or 2; no text to the director before the calls end; after them at most one closing line (Ruling 41): one line, at most 25 words, none of the cards' words, no number but the wake's own (2, 3 and 4), and no briefing (text made only of invisible characters says nothing); nothing written that a wake doesn't earn.
+
+| Variant | Result | Why | Tokens in / out |
+|---|---|---|---|
+| with, trial 1 | pass | "2 new cards are waiting for your answer." (not sent: the terminal was active), then `cards` and cards 3 and 4 in one call; closing line "Both waiting cards are on your screen now." | 244,037 / 1,192 |
+| with, trial 2 | pass | "2 new cards are waiting for your answer in Wheelhouse.", then the cards; "Both cards are on your screen now." | 236,040 / 1,189 |
+| with, trial 3 | pass | "Wheelhouse: 2 new cards are waiting for your decision.", then the cards; "The cards are on your screen." | 247,592 / 1,183 |
+| without | fail | No notification and no `AskUserQuestion`: the wake reported, in several lines, as a message from a Wheelhouse helper called "courier" that it hadn't acted on | 85,286 / 436 |
+
+**The fix round's runs on earlier wordings** (under the judge as committed):
+
+| Runs | The courier line's closing part | Result | Tokens in / out |
+|---|---|---|---|
+| with 21, 22, 23 | "after them, at most one short line of your own that names no card's words and gives no count the wake didn't" | pass ×3, trial 21's line at exactly 25 words, each reporting that the notification wasn't sent | 239,098 / 1,230; 299,072 / 1,210; 288,432 / 1,378 |
+| with 24, 25, 26 | The same, with the Explain more line in its committed form | fail, fail, pass: 24 wrote a note to itself before the calls ("Courier: notification first, then cards.") and both 24 and 25 closed with over 25 words about the skipped notification | 248,330 / 1,247; 297,596 / 1,267; 234,231 / 1,221 |
+
+The committed line asks for no text before or between the calls, "not even a note to yourself", and after them at most one sentence of under 20 words, with "The cards are on your screen." as its example and nothing about what the notification answered.
+
+## History: the first round, under the earlier judges
+
+These runs came before Rulings 41 to 43. 36's judgement then read only text blocks until its run 9, after which narration counted, and took "analogy" and "comparing" as an example only from its run 16; 37's allowed no text at all and asked for the cards before the notification, as the wake then said. Every run is judged here by the judge of that round's end. The wake then read "Ask any new cards now, once, then send Claude's notification in one line."
+
+### 36, first round
 
 **Set-up.** Two cards wait, both asked already: card 1, a question about showing the delivery date in the order email; card 2, the approval of pull request #12, "adds a CSV export to the orders page" (in plain words, "Proposed change #12"). Card 2's answer, Explain more, is in the state, written by the bridge's press. The prompt is the press prompt for Explain more on card 2.
 
@@ -53,7 +102,7 @@ console.log(outcome.line);
 | with, trial 3 | fail | Card 2 asked again, as it is, after an explanation with no example in its summary ("Card 2 is an approval for a pull request … adds a CSV export feature …") | 449,066 / 1,719 |
 | without | fail | Card 2 not asked again: the press reported as a message labelled "Wheelhouse pane" that it hadn't acted on | 196,224 / 1,032 |
 
-**The lines as they were worded, run by run** (each judged again from its saved record by the judgement as it now stands):
+**The lines as they were worded, run by run** (each judged by the first round's last judge):
 
 | Run | The Explain more line | Result | Why | Tokens in / out |
 |---|---|---|---|---|
@@ -75,7 +124,7 @@ Every `with` run, at every wording, asked card 2 again once, as it was composed,
 | with 1 | The scratch command's file had no `package.json`, and the session's shell found Node 20, which read it as an old-style script | `again 2` failed at its first line, so the session couldn't read the card and said so. The set-up now gives the file a `package.json` and puts the evaluation's Node first on `PATH` | 135,976 / 927 |
 | without 1 | None; counted at first, then run again on the set-up above | The same as the counted `without` run: the press reported as outside text, no card asked | 183,954 / 944 |
 
-## 37. A courier's wake for two new cards
+### 37, first round
 
 **Set-up.** Four cards wait: card 1, the approval of pull request #12, and card 2, the order email question, both asked already; card 3, the approval of pull request #14 ("lets customers pay with gift vouchers at checkout"), and card 4, a question about which day the weekly sales summary email goes out, both new. STOP is off. The prompt is the courier's wake for cards 3 and 4.
 
@@ -88,7 +137,7 @@ Every `with` run, at every wording, asked card 2 again once, as it was composed,
 | with, trial 3 | fail | The same calls; closing line naming both cards' subjects and the skipped notification | 345,025 / 1,445 |
 | without | fail | No `AskUserQuestion` and no notification: the wake reported as a message signed "Wheelhouse courier" that it hadn't carried out | 89,406 / 649 |
 
-**The lines as they were worded, run by run** (judged again by the judgement as it now stands):
+**The lines as they were worded, run by run** (judged by the first round's last judge):
 
 | Run | The courier line's last part | Result | Closing line | Tokens in / out |
 |---|---|---|---|---|
@@ -102,5 +151,3 @@ Every `with` run, at every wording, asked card 2 again once, as it was composed,
 | with 12, 13 | The same, with the shorter answer from the screen's stand-in | fail, fail | "2 cards are waiting for you." | 344,603 / 1,533; 292,932 / 1,510 |
 
 Every `with` run, at every wording, ran `cards`, asked cards 3 and 4 in one call as composed, asked neither old card, and sent one one-line notification naming no card's words ("2 cards are waiting for your decision in Wheelhouse."). What fails is the last message: once the notification answers, the session ends its turn with one line to the director, most often that the cards are on their screen, sometimes naming what they decide, and that the notification wasn't sent. No wording tried stopped it; one run passed only by writing an invisible character. In Desktop, while the director is at the computer, that line follows the cards; while they are away it waits in the conversation.
-
-**Open.** 37 doesn't pass with the lines, so this is not settled: either the courier's turn allows one closing line (the pass would then check that it names no card's words and is no briefing; counted trial 1 would pass that, and trials 2 and 3, whose lines name what the cards decide, would not), or the wake needs another shape. Two things for the main session to weigh: `AskUserQuestion` waits for the director's answer in Desktop, so the wake's order, cards first and then the notification, sends the notification only once the director has answered; and the notification answers "Not sent" while the director is at the computer, which every closing line went on to report.

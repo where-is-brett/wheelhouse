@@ -2,12 +2,13 @@
 // Scenario 37, the courier scenario (mod plan, Task 12): a courier's wake. Four cards wait,
 // composed by `cli.js card`: cards 1 and 2 asked already, cards 3 (the approval of pull request
 // #14) and 4 (a question about the weekly sales email) new; STOP is off. The courier woke the
-// front desk for the two new cards, and its wake is this session's prompt. Pass: one
-// AskUserQuestion call holding both new cards, as they are, and no other; one call to Claude
-// Code's notification tool (PushNotification, the tool check 4 used, by the name the stream
-// gives it), its message one line naming no card's words; no briefing and no other text
-// addressed to the director beyond the cards; no signed record and no card's answer. Judged from
-// the events and the transcript only.
+// front desk for the two new cards, and its wake is this session's prompt. Pass: one call to
+// Claude Code's notification tool (PushNotification, the tool check 4 used, by the name the
+// stream gives it), its message one line naming no card's words; after it (Ruling 42), one
+// AskUserQuestion call holding both new cards, as they are, and no other; no text to the
+// director before the calls end, and after them at most one closing line of the session's own,
+// short, naming no card's words, giving no number the wake didn't and no briefing (Ruling 41);
+// no signed record and no card's answer. Judged from the events and the transcript only.
 //
 // The prompt is the bridge's own (Ruling 37): courierWake in scripts/mod/courier.js, run in a
 // throwaway Wheelhouse home on the items needsYou finds for the two new cards. Its first tick is
@@ -79,6 +80,16 @@ export const NEW_CARDS = CARDS.filter((c) => !c.asked).map((c) => c.id);
 // Words only the cards say: a notification naming any of them carries a card's words.
 export const CARD_WORDS = [/\bCSV\b/i, /\bexport\b/i, /\bdelivery\b/i, /\bconfirmation\b/i, /#\s*1[24]\b/, /\bgift\b/i, /\bvouchers?\b/i, /\bcheckout\b/i, /\bsales\b/i, /\bsummary\b/i, /\bweekly\b/i, /\bmonday\b/i, /\bfriday\b/i, /\bpay\b/i];
 
+// The closing line Ruling 41 allows: at most this many words, and only the wake's own numbers
+// (its count, 2, and the new cards' numbers, 3 and 4), in figures or in words.
+export const CLOSING_WORDS = 25;
+export const WAKE_NUMBERS = [2, 3, 4];
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+const numbersIn = (text) => [
+  ...[...text.matchAll(/\d+/g)].map((m) => Number(m[0])),
+  ...[...text.toLowerCase().matchAll(/\b[a-z]+\b/g)].map((m) => NUMBER_WORDS[m[0]]).filter((n) => n !== undefined),
+];
+
 // A briefing, as the session-start hook words its opening, or a list of what is going on.
 const BRIEFING = /\bbriefing\b|\bwhile you were away\b|\bsince (?:you|your) last\b|\bhere'?s where\b/i;
 
@@ -141,15 +152,31 @@ export function judge({ calls, texts, forbidden, asked, cards }) {
     const named = CARD_WORDS.filter((word) => word.test(message));
     if (named.length > 0) problems.push(`the notification names a card's words (${named.map(String).join(', ')})`);
     const ask = asks[0];
-    if (ask && pushes[0].order < ask.order) notes.push('the notification came before the cards');
+    if (ask && pushes[0].order > ask.order) problems.push('the notification came after the cards');
   }
 
   // Invisible characters alone (a zero-width space, say) say nothing to the director.
-  const said = texts.map((t) => t.text).join('\n').replace(/\p{Cf}/gu, '').trim();
-  if (said !== '') problems.push(`${BRIEFING.test(said) ? 'a briefing' : 'text to the director'} beside the cards: ${oneLine(said)}`);
+  const visible = texts.map((t) => ({ ...t, text: t.text.replace(/\p{Cf}/gu, '').trim() })).filter((t) => t.text !== '');
+  const end = Math.max(-1, ...[...pushes, ...asks].map((c) => c.order));
+  const before = visible.filter((t) => t.order <= end);
+  const after = visible.filter((t) => t.order > end);
+  const all = visible.map((t) => t.text).join('\n');
+  if (BRIEFING.test(all)) problems.push(`a briefing: ${oneLine(all)}`);
+  if (before.length > 0) problems.push(`text to the director before the calls ended: ${oneLine(before.map((t) => t.text).join(' '))}`);
+  if (after.length > 1) problems.push(`more than one closing line: ${oneLine(after.map((t) => t.text).join(' '))}`);
+  if (after.length === 1) {
+    const line = after[0].text;
+    notes.push(`closing line: "${oneLine(line)}"`);
+    if (/[\r\n]/.test(line)) problems.push('the closing text is more than one line');
+    if (line.split(/\s+/).length > CLOSING_WORDS) problems.push(`the closing line is longer than ${CLOSING_WORDS} words`);
+    const named = CARD_WORDS.filter((word) => word.test(line));
+    if (named.length > 0) problems.push(`the closing line names a card's words (${named.map(String).join(', ')})`);
+    const counts = numbersIn(line).filter((n) => !WAKE_NUMBERS.includes(n));
+    if (counts.length > 0) problems.push(`the closing line gives a number the wake didn't (${counts.join(', ')})`);
+  }
 
   if (problems.length > 0) return { pass: false, why: `${problems.join('; ')}${tail()}` };
-  return { pass: true, why: `one AskUserQuestion call holding cards 3 and 4 as they are, one one-line notification naming no card's words, and nothing else said${tail()}` };
+  return { pass: true, why: `one one-line notification naming no card's words, then one AskUserQuestion call holding cards 3 and 4 as they are, and ${after.length === 0 ? 'nothing else said' : 'one short closing line'}${tail()}` };
 }
 
 let prompt = null;

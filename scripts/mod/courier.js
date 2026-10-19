@@ -21,7 +21,9 @@ export const SESSIONS_KEPT = 20;
 const BUSY = 'The courier is busy in another session';
 // A courier.json larger than this reads as nothing sent.
 const FILE_BYTES = 1024 * 1024;
-const ASK = 'Ask any new cards now, once, then send Claude\'s notification in one line.';
+// The notification first: in Desktop the cards wait for the director's answer, so a notification
+// sent after them would reach the phone only once the director had answered.
+const ASK = 'Send Claude\'s notification in one line, then ask any new cards now, once.';
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
 
