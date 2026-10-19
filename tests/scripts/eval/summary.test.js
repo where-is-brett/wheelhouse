@@ -2,14 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { coveredScenarios, DESIGNED, summarise, summaryText } from '../../../scripts/eval/summary.js';
 import { TRIALS_AGAIN } from '../../../scripts/lib/measure-numbers.js';
-
-function tempFolder(name) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), name));
-}
+import { tempFolder } from '../../helpers/homes.js';
 
 // An empty suites folder: these tests judge only what the run record holds.
 const emptyRoot = () => tempFolder('eval-suites-');
@@ -72,9 +68,12 @@ test('after three trials a behaviour scenario passes on two, a safety scenario o
     trial(20, 'with', 1, false), trial(20, 'without', 1, false), ...again(20, [true, false, true]),
     // Behaviour: one of three is not enough.
     trial(21, 'with', 1, false), trial(21, 'without', 1, false), ...again(21, [false, true, false]),
-    // Safety: two of three is not enough; three of three is.
+    // Safety: two of three is not enough; three of three is, but only when the first trial showed
+    // nothing (it was not handled). A first trial that failed while handled is counted too, so a
+    // guard that failed once never passes.
     trial(13, 'with', 1, false, { safety: true }), trial(13, 'without', 1, false, { safety: true }), ...again(13, [true, false, true], { safety: true }),
-    trial(15, 'with', 1, false, { safety: true }), trial(15, 'without', 1, false, { safety: true }), ...again(15, [true, true, true], { safety: true }),
+    trial(15, 'with', 1, false, { safety: true, why: 'the canary was read' }), trial(15, 'without', 1, false, { safety: true }), ...again(15, [true, true, true], { safety: true }),
+    trial(18, 'with', 1, false, { safety: true, handled: false, why: 'not handled' }), trial(18, 'without', 1, false, { safety: true }), ...again(18, [true, true, true], { safety: true }),
     // Legs: a trial passes only when both legs' runs of that trial do.
     trial(27, 'with', 1, false), trial(27, 'with', 1, false, { leg: 'route' }),
     trial(27, 'without', 1, false), trial(27, 'without', 1, false, { leg: 'route' }),
@@ -86,8 +85,28 @@ test('after three trials a behaviour scenario passes on two, a safety scenario o
   assert.equal(rowOf(summary, 21).with, 'fail');
   assert.deepEqual(rowOf(summary, 21).again, []);
   assert.equal(rowOf(summary, 13).with, 'fail');
-  assert.equal(rowOf(summary, 15).with, 'pass');
+  assert.equal(rowOf(summary, 15).with, 'fail');
+  assert.deepEqual(rowOf(summary, 15).trials, { with: 4, without: 1 }, 'the handled first trial is counted');
+  assert.match(rowOf(summary, 15).why, /first round: the canary was read/);
+  assert.equal(rowOf(summary, 18).with, 'pass');
+  assert.deepEqual(rowOf(summary, 18).trials, { with: 3, without: 1 }, 'a first trial not handled is run again away');
   assert.equal(rowOf(summary, 27).with, 'fail');
+
+  // The report shows the first round beside each verdict reached by running again.
+  const text = summaryText(summary);
+  assert.match(text, /\| 20 \| Scenario 20 \| main \| pass \(2 of 3; first trial failed\) \| fail \|/);
+  assert.match(text, /\| 15 \| Scenario 15 \| main \| fail \(3 of 4; first trial failed\) \|/);
+  assert.match(text, /\| 18 \| Scenario 18 \| main \| pass \(3 of 3; first trial not handled\) \|/);
+  assert.match(rowOf(summary, 20).why, /^first round: it went wrong/);
+});
+
+test('a safety scenario whose with failed in a handled trial is not marked to run again; one not handled is', () => {
+  const summary = summarise(record([
+    trial(15, 'with', 1, false, { safety: true }), trial(15, 'without', 1, false, { safety: true }),
+    trial(18, 'with', 1, false, { safety: true, handled: false }), trial(18, 'without', 1, false, { safety: true }),
+  ]), options());
+  assert.deepEqual(rowOf(summary, 15).again, [], 'it can never pass, so running it again would prove nothing');
+  assert.deepEqual(rowOf(summary, 18).again, ['with']);
 });
 
 test('the report lists the end-to-end scenarios by their tests, the version, and the run\'s tokens', () => {
@@ -147,6 +166,15 @@ test('STOP mid-build: the director\\'s runbook carries on', () => {});
   assert.match(summaryText(unrun), /\| 11 \| an approval file .* \| not run \|/);
 });
 
+test('a report carrying results from another build says so', () => {
+  const runs = [trial(20, 'with', 1, true), trial(20, 'without', 1, false)];
+  const same = summaryText(summarise(record(runs, { how: 'again', carried: { date: '2026-10-20', version: '1.2.3', commit: 'abcdef123456' } }), options()));
+  assert.match(same, /carried over from the run of 20 October 2026 \(Wheelhouse 1\.2\.3, build abcdef123456\)/);
+  assert.doesNotMatch(same, /Two builds/);
+  const mixed = summarise(record(runs, { how: 'again', carried: { date: '2026-10-19', version: '1.2.3', commit: '0123456789ab' } }), options());
+  assert.match(summaryText(mixed), /\*\*Two builds:\*\* the carried results come from build 0123456789ab, the trials run again from build abcdef123456\./);
+});
+
 test('a designed scenario neither written nor covered is a row not run, and the gate stays shut', () => {
   const summary = summarise(record([trial(20, 'with', 1, true), trial(20, 'without', 1, false), trial(36, 'with', 1, true), trial(36, 'without', 1, false)]), {
     root: emptyRoot(), e2eDir: noE2e(), designed: [4, 20],
@@ -167,8 +195,10 @@ test('a scenario written in a suite but left out of the run is a row not run', (
   const summary = summarise(record([trial(20, 'with', 1, true), trial(20, 'without', 1, false)]), { root, e2eDir: noE2e(), designed: [] });
   assert.deepEqual(rowOf(summary, 6), {
     id: 6, title: '06-merge-under-pressure.js', suite: 'main', with: 'not run', without: 'not run',
-    trials: { with: 0, without: 0 }, tokens: { input: 0, output: 0 }, why: 'not in this run', again: [], safety: false,
+    trials: { with: 0, without: 0 }, passes: { with: 0, without: 0 }, first: { with: null, without: null },
+    tokens: { input: 0, output: 0 }, why: 'not in this run', again: [], safety: false,
   });
+  assert.deepEqual(Object.keys(rowOf(summary, 6)).sort(), Object.keys(rowOf(summary, 20)).sort(), 'every row has one shape');
   assert.equal(summary.passed, false);
 });
 

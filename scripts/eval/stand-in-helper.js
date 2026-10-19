@@ -220,16 +220,22 @@ export async function startStandInHelper({ address, answers = {}, state = {}, ho
     res.end(text);
   });
 
-  if (process.platform !== 'win32') {
-    fs.mkdirSync(path.dirname(address), { recursive: true });
-    fs.rmSync(address, { force: true });
+  try {
+    if (process.platform !== 'win32') {
+      fs.mkdirSync(path.dirname(address), { recursive: true });
+      fs.rmSync(address, { force: true });
+    }
+    await new Promise((resolve, reject) => {
+      server.once('error', (error) => reject(error.code === 'EADDRINUSE'
+        ? new Error(`Something already answers on ${address}: stop the real helper before an evaluation run`)
+        : error));
+      server.listen(address, resolve);
+    });
+  } catch (error) {
+    // It could not start: its own scratch home goes with it.
+    if (ownHome) fs.rmSync(ownHome, { recursive: true, force: true });
+    throw error;
   }
-  await new Promise((resolve, reject) => {
-    server.once('error', (error) => reject(error.code === 'EADDRINUSE'
-      ? new Error(`Something already answers on ${address}: stop the real helper before an evaluation run`)
-      : error));
-    server.listen(address, resolve);
-  });
 
   return {
     address,

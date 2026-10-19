@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, runScenario, scenarioName, today } from './harness.js';
-import { E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, shownPath, summarise, summaryText } from './summary.js';
+import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, shownPath, summarise, summaryText } from './summary.js';
 import { TRIALS_AGAIN } from '../lib/measure-numbers.js';
 import { run as runProgram } from '../lib/run.js';
 
@@ -132,7 +132,7 @@ function numbersIn(root, suite = null) {
 // skipped test is no pass.
 export function parseTap(text) {
   const results = [];
-  for (const line of text.split('\n')) {
+  for (const line of text.split(/\r?\n/)) {
     const match = /^(not )?ok \d+ - ((?:\\.|[^\\])*?)(?: # (SKIP|TODO)\b.*)?$/.exec(line);
     if (!match) continue;
     const test = match[2].replace(/\\(.)/g, (_, c) => ({ n: '\n', t: '\t', r: '\r' }[c] ?? c));
@@ -178,7 +178,9 @@ async function buildCommit() {
 const runsDir = (home) => path.join(home, '.wheelhouse-evals', 'runs');
 const stampOf = (at) => at.toISOString().replace(/[:.]/g, '-');
 
-// The newest run record in the home folder's evaluations, or null: { file, record }.
+// The run record --again reads: the newest whose run was --all or --again, else the newest of
+// any kind; or null. { file, record, newer }: `newer` is the newest record of another kind made
+// after it (a check of one scenario between --all and --again, say), or null.
 export function latestRunRecord(home = os.homedir()) {
   let names = [];
   try {
@@ -187,8 +189,20 @@ export function latestRunRecord(home = os.homedir()) {
     return null;
   }
   if (!names.length) return null;
-  const file = path.join(runsDir(home), names.at(-1));
-  return { file, record: JSON.parse(fs.readFileSync(file, 'utf8')) };
+  const read = (name) => {
+    const file = path.join(runsDir(home), name);
+    try {
+      return { file, record: JSON.parse(fs.readFileSync(file, 'utf8')) };
+    } catch {
+      return null;
+    }
+  };
+  const records = names.map(read).filter(Boolean);
+  if (!records.length) return null;
+  const whole = records.findLast((r) => r.record.how === 'all' || r.record.how === 'again');
+  const chosen = whole ?? records.at(-1);
+  const newer = records.at(-1) === chosen ? null : records.at(-1).file;
+  return { ...chosen, newer };
 }
 
 // The highest trial already numbered for `name` in `variant`: in the run record's trials, and in
@@ -212,7 +226,8 @@ function lastTrial(home, date, name, variant, runs) {
 
 // Runs what `argv` asks for. `root` holds the suites, `home` the evaluations folder, `run` runs one
 // trial (runScenario), `endToEnd` runs the end-to-end test files (runEndToEnd), `e2eDir` holds
-// them; `now`, `print`, `version` (the plugin's) and `commit` (the build's) are for tests.
+// them; `now`, `print`, `version` (the plugin's), `commit` (the build's) and `designed` (the
+// scenarios every report must account for) are for tests.
 // Resolves with the exit code: after --all or --again, 0 only when the gate is passed; otherwise
 // 0 only when every run passed.
 export async function main(argv, {
@@ -225,6 +240,7 @@ export async function main(argv, {
   print = console.log,
   version = pluginVersion(),
   commit,
+  designed = DESIGNED,
 } = {}) {
   const args = parseArgs(argv);
   const startedAt = now();
@@ -241,10 +257,13 @@ export async function main(argv, {
     if (!last) throw new Error('No run to run again: run npm run eval -- --all first');
     from = last.file;
     print(`Running again what ${last.file} marked`);
-    const marked = summarise(last.record, { root, e2eDir }).rows.filter((row) => row.again.length);
+    if (last.newer) print(`  (a newer run record, ${last.newer}, is not a whole run, so it was passed over)`);
+    const before = summarise(last.record, { root, e2eDir, designed });
+    const marked = before.rows.filter((row) => row.again.length);
     if (!marked.length) {
-      print('Nothing in it is marked to run again.');
-      return 0;
+      print('Nothing in it is marked to run again. Its report:');
+      print(summaryText(before));
+      return before.passed ? 0 : 1;
     }
     carried = last.record.runs ?? [];
     carriedFrom = { date: last.record.date ?? null, version: last.record.version ?? null, commit: last.record.commit ?? null };
@@ -351,7 +370,7 @@ export async function main(argv, {
   print(`  run record: ${recordFile}`);
 
   if (args.all || args.again) {
-    const summary = summarise(record, { root, e2eDir });
+    const summary = summarise(record, { root, e2eDir, designed });
     const text = summaryText(summary);
     const reportFile = recordFile.replace(/\.json$/, '.md');
     fs.writeFileSync(reportFile, text);

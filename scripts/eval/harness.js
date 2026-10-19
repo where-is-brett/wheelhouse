@@ -357,13 +357,13 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     });
     // A session that never took the prompt in hand passes nothing, whatever its pass says
     // (Review Focus 4); its pass is still asked, and kept in the record, but cannot make it a pass.
+    // A pass that throws judges the run a fail; the record is written all the same.
     const handled = session.handled ?? handledOf({ events: session.events, exitCode: session.exitCode });
     let judged;
     try {
       judged = scenario.pass({ events: session.events, dir: project.dir, variant, context });
     } catch (error) {
-      if (handled) throw error;
-      judged = { pass: false, why: `pass could not judge it: ${error.message}` };
+      judged = { pass: false, why: `pass could not judge it: ${error instanceof Error ? error.message : String(error)}` };
     }
     // A session whose result event says it errored (it ran out of turns, say) never passes.
     const errored = session.events.findLast((event) => event.type === 'result')?.is_error === true;

@@ -2,20 +2,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   findScenario, findScenarioFiles, loadScenario, loadScenarios, main, parseTap,
 } from '../../../scripts/eval/run.js';
 import { parseArgs, runScenario, runSession, scenarioName, today } from '../../../scripts/eval/harness.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 const evalRoot = fileURLToPath(new URL('../../eval/', import.meta.url));
 const streamFixture = fileURLToPath(new URL('../../fixtures/eval/stream.jsonl', import.meta.url));
-
-function tempFolder(name) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), name));
-}
 
 // A scenario module as a suite holds one: it passes whatever happened, so only the runner decides.
 function scenarioSource(id, { leg, safety, title = `Scenario ${id}${leg ? ` ${leg}` : ''}` } = {}) {
@@ -257,6 +253,66 @@ test('--again reruns what the last run marked, only the variant that marked it, 
   assert.equal(code, 1, 'most of the designed set is not written in these suites');
 });
 
+test('a whole fixture run whose with runs and end-to-end tests all pass opens the gate', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const e2eDir = e2eFolder();
+  const printed = [];
+  const code = await main(['--all'], {
+    root, home, e2eDir, now: firstNow, version: '1.2.3', commit: 'abcdef123456', designed: [1, 2, 3, 5, 27],
+    print: (line) => printed.push(line),
+    run: standInRun([], (name, variant) => variant === 'with'),
+    endToEnd: async (files) => [{ file: files[0], test: 'scenario five holds', pass: true }],
+  });
+  assert.equal(code, 0);
+  assert.ok(printed.some((line) => /The gate is passed/.test(line)));
+});
+
+test('--again reads the last whole run, passing over a newer run of one scenario, and says so', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const e2eDir = e2eFolder();
+  const options = {
+    root, home, e2eDir, version: '0', commit: null, print: quiet, designed: [],
+    endToEnd: async (files) => [{ file: files[0], test: 'scenario five holds', pass: true }],
+  };
+  await main(['--all'], { ...options, now: firstNow, run: standInRun([], (name, variant) => (name === '1' ? false : variant === 'with')) });
+  // A check of one scenario afterwards writes a record of its own.
+  await main(['2', '--variant', 'with'], { ...options, now: () => new Date('2026-10-20T01:03:03.000Z'), run: standInRun([]) });
+  const calls = [];
+  const printed = [];
+  await main(['--again'], { ...options, now: () => new Date('2026-10-20T01:04:03.000Z'), print: (line) => printed.push(line), run: standInRun(calls) });
+  const runsDir = path.join(home, '.wheelhouse-evals', 'runs');
+  const [whole, single] = fs.readdirSync(runsDir).filter((name) => name.endsWith('.json')).sort();
+  assert.ok(printed.includes(`Running again what ${path.join(runsDir, whole)} marked`));
+  assert.ok(printed.some((line) => line.includes(path.join(runsDir, single)) && /passed over/.test(line)));
+  assert.deepEqual(calls, ['1 with 2', '1 with 3', '1 with 4']);
+});
+
+test('--again with nothing marked still prints the report, and exits by the gate', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const e2eDir = e2eFolder();
+  const options = {
+    root, home, e2eDir, now: firstNow, version: '0', commit: null, designed: [],
+    endToEnd: async (files) => [{ file: files[0], test: 'scenario five holds', pass: true }],
+  };
+  await main(['--all'], { ...options, print: quiet, run: standInRun([], (name, variant) => variant === 'with') });
+  const printed = [];
+  const calls = [];
+  const code = await main(['--again'], { ...options, print: (line) => printed.push(line), run: standInRun(calls) });
+  assert.deepEqual(calls, []);
+  assert.equal(code, 0);
+  assert.ok(printed.some((line) => /The gate is passed/.test(line)), 'the report is printed');
+
+  // A safety scenario whose with failed in a handled trial is not run again, and keeps the gate shut.
+  const shut = tempFolder('eval-home-');
+  await main(['--all'], { ...options, home: shut, print: quiet, run: standInRun([], (name, variant) => variant === 'with' && name !== '3') });
+  const again = [];
+  assert.equal(await main(['--again'], { ...options, home: shut, print: (line) => again.push(line), run: standInRun([]) }), 1);
+  assert.ok(again.some((line) => /The gate is not passed/.test(line)));
+});
+
 test('--again with no run before it says so', async () => {
   await assert.rejects(main(['--again'], { root: twoSuites(), home: tempFolder('eval-home-'), print: quiet, run: standInRun([]) }), /No run to run again/);
 });
@@ -316,7 +372,7 @@ test('a session that made no tool call is a failed run whatever pass says', asyn
   assert.equal(third.pass, true);
 });
 
-test('parseTap reads each top-level test\'s name and result, and a skipped test is no pass', () => {
+test('parseTap reads each top-level test\'s name and result, Windows line ends too, and a skipped test is no pass', () => {
   const tap = [
     'TAP version 13',
     'ok 1 - the director\'s \\# one',
@@ -328,7 +384,7 @@ test('parseTap reads each top-level test\'s name and result, and a skipped test 
     'ok 3 - skipped # SKIP not here',
     'ok 4 - a back\\\\slash',
     '1..4',
-  ].join('\n');
+  ].join('\r\n');
   assert.deepEqual(parseTap(tap), [
     { test: 'the director\'s # one', pass: true },
     { test: '"two" fails', pass: false },

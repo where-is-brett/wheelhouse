@@ -454,3 +454,25 @@ test('runScenario closes the context even when the session fails to start', asyn
   }), /no claude/);
   assert.equal(closed, 1);
 });
+
+test('runScenario judges a run a fail when its pass throws, and still writes its record and counts its tokens', async () => {
+  const home = tempFolder('harness-home-');
+  const scenario = {
+    id: 93,
+    title: 'a stand-in',
+    setup: async () => {},
+    prompt: 'x',
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+    pass: () => { throw new Error('no such file'); },
+  };
+  const outcome = await runScenario({
+    scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => ({ events, exitCode: 0, usage: usageOf(events) }),
+  });
+  assert.equal(outcome.pass, false);
+  assert.equal(outcome.handled, true);
+  assert.match(outcome.line, /^93 with: fail \(pass could not judge it: no such file\)/);
+  assert.deepEqual(outcome.usage, totalUsageOf(events));
+  const written = JSON.parse(fs.readFileSync(outcome.file, 'utf8'));
+  assert.equal(written.handled, true);
+  assert.equal(written.events.length, events.length);
+});

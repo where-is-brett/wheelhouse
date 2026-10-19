@@ -146,3 +146,26 @@ test('without a home given, the stand-in keeps the baseline\'s files in a scratc
     }
   });
 });
+
+test('a stand-in that cannot listen leaves no scratch home of its own behind', async () => {
+  const home = shortHome();
+  const first = await startStandInHelper({ address: testAddress(home), home });
+  // The stand-in makes its own home under the temporary folder; point that at an empty one.
+  const scratch = tempFolder('stand-in-tmp-');
+  // On Windows the pipe already taken stops it. On a Unix socket the stand-in removes a stale
+  // socket file first, so a folder in the way at the address stops it there.
+  const blocked = process.platform === 'win32' ? first.address : path.join(tempFolder('stand-in-blocked-'), 'helper.sock');
+  if (process.platform !== 'win32') fs.mkdirSync(blocked);
+  const names = ['TMPDIR', 'TMP', 'TEMP'];
+  const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) process.env[name] = scratch;
+    await assert.rejects(startStandInHelper({ address: blocked }));
+    assert.deepEqual(fs.readdirSync(scratch), []);
+  } finally {
+    for (const name of names) {
+      if (before[name] === undefined) delete process.env[name]; else process.env[name] = before[name];
+    }
+    await first.close();
+  }
+});
