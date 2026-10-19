@@ -291,7 +291,9 @@ test('asked what waits, the front desk names each waiting card in one line by it
   const row = playbook.split('\n').find((line) => line.startsWith('| "Anything waiting on me?"'));
   assert.ok(row, 'a row for what waits');
   assert.match(row, /`views waiting`/);
-  assert.match(row, /each waiting card in one line with its number on the board, in a few words of your own rather than the card's text or its options/);
+  // Ruling F104: the line may read as `views waiting` lists the card; it is not asking it again.
+  assert.match(row, /name each waiting card in one line, as it lists it \(its number on the board, its question and its choice\)/);
+  assert.doesNotMatch(row, /words of your own/);
   assert.match(row, /`again <n>`/);
   assert.match(row, /Never put a card already asked to them again unless they ask for that card/);
 });

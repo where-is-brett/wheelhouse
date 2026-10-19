@@ -474,11 +474,11 @@ const sentences = (text) => String(text).split(/(?<=[.!?])\s+|\n+/).map((x) => x
 
 // Whether `text` offers the director a look before the change is built: a sentence naming a
 // preview, a mock-up, a prototype, showing them or letting them see it (not users seeing it, nor
-// "if you see it as …", the director judging it), as an offer (a question, "I can", "I'll", "want
+// "if you see it as …", the director judging it; "you see it as it will look" is a look), as an offer (a question, "I can", "I'll", "want
 // me") or as what comes first ("before"), and not a sentence saying there is none (no, not,
 // without, n't).
 export function previewOffered(text) {
-  return sentences(text).some((one) => /\b(?:preview|mock-?ups?|prototype|sample page|show you|you see it(?! as\b)|let you see)\b/i.test(one)
+  return sentences(text).some((one) => /\b(?:preview|mock-?ups?|prototype|sample page|show you|(?<!\bif )you see it|you see it(?! as\b)|let you see)\b/i.test(one)
     && (/\?$|\b(?:I can|I could|I'll|I will|want me|shall I|should I|before)\b/i.test(one))
     && !/\b(?:no|not|without|never)\b|n't\b/i.test(one));
 }

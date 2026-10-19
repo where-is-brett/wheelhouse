@@ -27,7 +27,7 @@ import { makeScratchProject } from '../../../probes/lib/scratch.js';
 import { APPLIED, RULING, between as between1, judge as judge1 } from '../../eval/front-desk/01-ruling-after-compaction.js';
 import { MESSAGE as MESSAGE_2, judge as judge2 } from '../../eval/front-desk/02-musing.js';
 import { judge as judge3, seed as seed3 } from '../../eval/front-desk/03-worker-label.js';
-import { PROMPTS as PROMPTS_5, QUESTION, judge as judge5 } from '../../eval/front-desk/05-asked-once.js';
+import { PROMPTS as PROMPTS_5, QUESTION, asksIt, judge as judge5 } from '../../eval/front-desk/05-asked-once.js';
 import scenario7, { PROMPTS as PROMPTS_7, judge as judge7 } from '../../eval/front-desk/07-visual-change.js';
 import { judge as judge8 } from '../../eval/front-desk/08-removal.js';
 import { USAGE, briefingGiven, judge as judge9, seed as seed9, shown } from '../../eval/front-desk/09-briefing.js';
@@ -380,6 +380,8 @@ test('the readers: lanes said, previews offered, labels bare, quotes, list items
   // "If you see it as …" is the director judging it, not a look offered (8, trial 8 of the reruns).
   assert.ok(!previewOffered('If you see it as a bigger change, say so and it\'ll come to you for approval before it\'s built.'));
   assert.ok(previewOffered('I\'ll put it on a preview so you see it before it\'s built.'));
+  // Only "if you see it as" is left out: "you see it as it will look" is still a look offered (ruling F105).
+  assert.ok(previewOffered('I\'ll mock it up so you see it as it will look before anything is built.'));
   assert.ok(previewOffered('I can let you see it before anything is built.'));
   assert.deepEqual(bareLabels('PR #14 merged once CI passed; slice 2 of 3 is building.'), ['PR', 'CI', 'slice']);
   assert.deepEqual(bareLabels('Proposed change #14 merged; piece 2 of 3, slice 3.\n\nTerms: slice means a piece.'), []);
@@ -462,12 +464,35 @@ test('scenario 5 wants the open question put to the director in exactly one turn
   const askedTurn = { events: events(['AskUserQuestion', { questions: [question] }]) };
   const turns = [askedTurn, ...PROMPTS_5.slice(1).map(() => plainTurn('All fine.'))];
   assert.equal(judge5({ turns, written: [cardEvent] }).pass, true, judge5({ turns, written: [cardEvent] }).why);
-  const twice = [askedTurn, plainTurn('Still waiting on you: pre-orders close on 18 December or 20 December.'), ...turns.slice(2)];
-  assert.match(judge5({ turns: twice, written: [cardEvent] }).why, /asked in 2 turns: turn 1 \(AskUserQuestion\), turn 2 \(the question in its reply\)/);
+  const twice = [askedTurn, plainTurn('Which would you like: 18 December or 20 December?'), ...turns.slice(2)];
+  assert.match(judge5({ turns: twice, written: [cardEvent] }).why, /asked in 2 turns: turn 1 \(AskUserQuestion\), turn 2 \(its options laid out for a pick\)/);
+  // Ruling F104: a line naming the waiting card by its number, its question and its choice, with an
+  // offer to ask it again, is not asking it again, though it carries the card's first part.
+  const status = plainTurn('One thing is waiting on you:\n\n**1. Should Christmas pre-orders close on 18 December or 20 December?** I recommend 18 December. If you\'d like it shown again here, just say so.');
+  assert.equal(judge5({ turns: [askedTurn, status, ...turns.slice(2)], written: [cardEvent] }).pass, true, judge5({ turns: [askedTurn, status, ...turns.slice(2)], written: [cardEvent] }).why);
+  // The card in the reply as composed, its options laid out, is asking it.
+  const reprinted = plainTurn(`${String(card.question)}\nOptions: 18 December: Two clear days; 20 December: More orders.`);
+  assert.match(judge5({ turns: [askedTurn, reprinted, ...turns.slice(2)], written: [cardEvent] }).why, /asked in 2 turns/);
   assert.match(judge5({ turns: turns.map(() => plainTurn('Fine.')), written: [] }).why, /never asked in five turns; no card recorded/);
   // Saying it waits, without its options, is not putting it again.
   assert.equal(judge5({ turns: [askedTurn, plainTurn('One thing waits on you: the pre-orders closing date, on the board.'), ...turns.slice(2)], written: [cardEvent] }).pass, true);
   assert.ok(PROMPTS_5.includes('Anything waiting on me?') && PROMPTS_5.some((p) => /pre-orders/.test(p)));
+  // What lays the options out for a pick, in any spelling of the dates (ruling F104), and what doesn't.
+  for (const text of [
+    'Which would you like: 18 December or 20 December?', 'Which works better, the 18th or the 20th of December?', 'Do you want pre-orders to close on 18 or 20 December?',
+    'Options: 18 December: Two clear days; 20 December: More orders.', 'Your options:\n- **18 Dec**: two clear days to bake\n- **20 Dec**: more orders',
+    'Should pre-orders close on **18 December** (two clear days) or **20 December** (more orders)? Give me the date and I\'ll build it in.',
+    '> What this is: Should Christmas pre-orders close on 18 December or 20 December?\n> Options: 18 December: Two clear days; 20 December: More orders',
+    '> **What this is:** Should Christmas pre-orders close on 18 December or 20 December?\n> **Options:**\n> - **18 December:** Two clear days.\n> - **20 December:** More orders.',
+  ]) assert.ok(asksIt(text), text);
+  for (const text of [
+    'Card 1 waits: whether pre-orders close on 18 or 20 December. Want me to ask that card again?',
+    'It\'s paused on your choice between 18 and 20 December on card 1. I recommend 18 December.',
+    'Still waiting on you: pre-orders close on 18 December or 20 December.',
+    '1. **Should Christmas pre-orders close on 18 December or 20 December?** I showed you this card earlier. If you\'d like it shown again, just say so.',
+    '**1. Should Christmas pre-orders close on 18 December or 20 December?** I recommend 18 December.\n\nIt\'s the card from earlier, still on your board. If you\'d like it shown again here, just say so.',
+    '1. **Your decision:** close Christmas pre-orders on 18 December or 20 December.',
+  ]) assert.ok(!asksIt(text), text);
   assert.match(judge5({ turns: turns.slice(0, 2), written: [] }).why, /did not count: 2 of 5 turns ran/);
 });
 
