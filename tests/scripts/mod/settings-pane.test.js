@@ -84,11 +84,11 @@ test('every everyday setting is a row in the design\'s order, with its current c
   });
   const rows = settingsRows({ effective, now, timeZone: SYDNEY });
   assert.deepEqual(rows.map((r) => r.key), [
-    'autonomy', 'showFirst', 'presence', 'milestones', 'efficiency', 'budget', 'pace', 'briefing', 'explanations',
+    'autonomy', 'showFirst', 'presence', 'milestones', 'efficiency', 'budget', 'pace', 'briefing', 'briefingGapHours', 'explanations',
     'notifications', 'boardTab', 'hours', 'phase', 'protection',
   ]);
   assert.deepEqual(rows.map((r) => r.label), [
-    'Autonomy', 'Show before build', 'Presence', 'Feature milestones', 'Token efficiency', 'Budget', 'Pace', 'Briefing', 'Explanations',
+    'Autonomy', 'Show before build', 'Presence', 'Feature milestones', 'Token efficiency', 'Budget', 'Pace', 'Briefing', 'Briefing gap', 'Explanations',
     'Notifications', 'Board tab', 'Working hours', 'Product phase', 'Protection',
   ]);
 
@@ -226,26 +226,54 @@ test('Away until 18:00 is not offered at 18:00, and a press on it then records n
   assert.deepEqual(choiceOf('presence', 'away-evening', { now: at('2026-10-18T14:30:00.000Z'), timeZone: SYDNEY }), { value: 'away', until: '2026-10-19T07:00:00.000Z' });
 }));
 
-test('until 09:00 tomorrow is worked out at the press, after midnight too', () => withKey(async () => {
-  // 23:50 in Sydney on the 19th: tomorrow is the 20th.
-  const late = { now: at('2026-10-19T12:50:00.000Z'), timeZone: SYDNEY };
+test('until 09:00 is the next 09:00 to come, worked out at the press, after midnight too', () => withKey(async () => {
+  const sydney = (iso) => ({ now: at(iso), timeZone: SYDNEY });
+  const until = (iso, id = 'away-morning', zone = sydney(iso)) => choiceOf('presence', id, zone)?.until;
+  // 09:00 on the 20th in Sydney is 22:00 UTC on the 19th; 09:00 on the 21st is 22:00 UTC on the 20th.
+  // 23:50 on the 19th: the next 09:00 is tomorrow's.
+  const late = sydney('2026-10-19T12:50:00.000Z');
   assert.deepEqual(choiceOf('presence', 'away-morning', late), { value: 'away', until: '2026-10-19T22:00:00.000Z' });
   assert.deepEqual(choiceOf('presence', 'dnd-morning', late), { value: 'dnd', until: '2026-10-19T22:00:00.000Z' });
-  // Twenty minutes later it is the 20th, and tomorrow is the 21st: a choice drawn before midnight
-  // carries nothing, so the press works the time out again.
-  const after = { now: at('2026-10-19T13:10:00.000Z'), timeZone: SYDNEY };
-  assert.deepEqual(choiceOf('presence', 'away-morning', after), { value: 'away', until: '2026-10-20T22:00:00.000Z' });
+  // 00:10 on the 20th: 09:00 that morning is still to come. A row drawn before midnight carries no
+  // time, so the press works it out again.
+  const after = sydney('2026-10-19T13:10:00.000Z');
+  assert.deepEqual(choiceOf('presence', 'away-morning', after), { value: 'away', until: '2026-10-19T22:00:00.000Z' });
   assert.equal(JSON.stringify(settingsRows({ effective: {}, now: late.now, timeZone: SYDNEY })).includes('2026-10-19T22:00'), false);
+  // 08:59 on the 20th it is this morning; at 09:00 it is the next day's; 10:00 likewise.
+  assert.equal(until('2026-10-19T21:59:00.000Z'), '2026-10-19T22:00:00.000Z');
+  assert.equal(until('2026-10-19T22:00:00.000Z'), '2026-10-20T22:00:00.000Z');
+  assert.equal(until('2026-10-19T23:00:00.000Z'), '2026-10-20T22:00:00.000Z');
 
+  // The label says "tomorrow" only when the 09:00 is on another day; the ids stay.
+  const labels = (iso) => rowOf(settingsRows({ effective: {}, ...sydney(iso) }), 'presence').choices.filter((c) => c.id.endsWith('-morning')).map((c) => [c.id, c.label]);
+  assert.deepEqual(labels('2026-10-19T12:50:00.000Z'), [['away-morning', 'Away until 09:00 tomorrow'], ['dnd-morning', 'Do not disturb until 09:00 tomorrow']]);
+  assert.deepEqual(labels('2026-10-19T13:10:00.000Z'), [['away-morning', 'Away until 09:00'], ['dnd-morning', 'Do not disturb until 09:00']]);
+  assert.deepEqual(labels('2026-10-19T21:59:00.000Z'), [['away-morning', 'Away until 09:00'], ['dnd-morning', 'Do not disturb until 09:00']]);
+  assert.deepEqual(labels('2026-10-19T22:00:00.000Z'), [['away-morning', 'Away until 09:00 tomorrow'], ['dnd-morning', 'Do not disturb until 09:00 tomorrow']]);
+
+  // The press says it as the label does.
   const client = fake();
-  const said = await press(client, 'presence', 'dnd-morning', after);
-  assert.deepEqual(said, { made: true, says: 'Presence is now do not disturb until 09:00 tomorrow, for all your projects' });
-  assert.deepEqual(client.calls.profileWrite, [{ kind: 'setting', data: { key: 'presence', value: 'dnd', until: '2026-10-20T22:00:00.000Z' } }]);
+  assert.deepEqual(await press(client, 'presence', 'dnd-morning', after), { made: true, says: 'Presence is now do not disturb until 09:00, for all your projects' });
+  assert.deepEqual(client.calls.profileWrite, [{ kind: 'setting', data: { key: 'presence', value: 'dnd', until: '2026-10-19T22:00:00.000Z' } }]);
+  const next = fake();
+  assert.equal((await press(next, 'presence', 'away-morning', sydney('2026-10-19T23:00:00.000Z'))).says, 'Presence is now away until 09:00 tomorrow, for all your projects');
+  assert.equal(next.calls.profileWrite[0].data.until, '2026-10-20T22:00:00.000Z');
 
-  // In UTC, just after midnight.
-  assert.deepEqual(choiceOf('presence', 'away-morning', { now: at('2026-10-20T00:05:00.000Z'), timeZone: 'UTC' }), { value: 'away', until: '2026-10-21T09:00:00.000Z' });
-  // New York ends daylight time on 1 November 2026, so 09:00 on the 1st is 14:00 UTC.
-  assert.deepEqual(choiceOf('presence', 'away-morning', { now: at('2026-11-01T00:00:00.000Z'), timeZone: 'America/New_York' }), { value: 'away', until: '2026-11-01T14:00:00.000Z' });
+  // In UTC, just after midnight, it is this morning.
+  assert.deepEqual(choiceOf('presence', 'away-morning', { now: at('2026-10-20T00:05:00.000Z'), timeZone: 'UTC' }), { value: 'away', until: '2026-10-20T09:00:00.000Z' });
+  assert.deepEqual(choiceOf('presence', 'away-morning', { now: at('2026-10-20T09:00:00.000Z'), timeZone: 'UTC' }), { value: 'away', until: '2026-10-21T09:00:00.000Z' });
+  // New York ends daylight time at 06:00 UTC on 1 November 2026, so 09:00 that day is 14:00 UTC.
+  const york = (iso) => ({ now: at(iso), timeZone: 'America/New_York' });
+  assert.equal(until('', 'away-morning', york('2026-10-31T20:00:00.000Z')), '2026-11-01T14:00:00.000Z');
+  assert.equal(until('', 'away-morning', york('2026-11-01T00:00:00.000Z')), '2026-11-01T14:00:00.000Z');
+  // Before the change (01:00 EDT) and after it (01:30 EST) it is still this morning.
+  assert.equal(until('', 'away-morning', york('2026-11-01T05:00:00.000Z')), '2026-11-01T14:00:00.000Z');
+  assert.equal(until('', 'away-morning', york('2026-11-01T06:30:00.000Z')), '2026-11-01T14:00:00.000Z');
+  // 08:59 EST, then 09:00 EST: the next one is on the 2nd, also 14:00 UTC.
+  assert.equal(until('', 'away-morning', york('2026-11-01T13:59:00.000Z')), '2026-11-01T14:00:00.000Z');
+  assert.equal(until('', 'away-morning', york('2026-11-01T14:00:00.000Z')), '2026-11-02T14:00:00.000Z');
+  // The day before the change, 09:00 is 13:00 UTC; a press at 10:00 EDT ends at 09:00 EST on the 1st.
+  assert.equal(until('', 'away-morning', york('2026-10-31T14:00:00.000Z')), '2026-11-01T14:00:00.000Z');
   // Two hours is two hours.
   assert.deepEqual(choiceOf('presence', 'away-hours', late), { value: 'away', until: '2026-10-19T14:50:00.000Z' });
   assert.deepEqual(choiceOf('presence', 'here', late), { value: 'here' });
@@ -302,7 +330,7 @@ test('protection, notifications and working hours offer no choice and say where 
   });
   for (const locked of [true, false, undefined]) {
     const rows = settingsRows({ effective, now, timeZone: SYDNEY, locked });
-    for (const key of ['protection', 'notifications', 'hours']) {
+    for (const key of ['protection', 'notifications', 'hours', 'briefingGapHours']) {
       const row = rowOf(rows, key);
       assert.deepEqual([row.choices, row.here, row.why], [[], false, 'Changed by asking the front desk'], key);
     }
@@ -312,10 +340,12 @@ test('protection, notifications and working hours offer no choice and say where 
   assert.equal(rowOf(rows, 'notifications').current, 'claude, ntfy, quiet from 22:00 to 07:00');
   assert.equal(rowOf(rows, 'notifications').from, 'yours');
   assert.equal(rowOf(rows, 'hours').current, 'no set hours');
+  assert.equal(rowOf(rows, 'briefingGapHours').current, '2 hours');
+  assert.equal(rowOf(rows, 'briefingGapHours').from, 'the default');
   // None of them can be pressed.
   return withKey(async () => {
     const client = fake();
-    for (const key of ['protection', 'notifications', 'hours']) assert.equal((await press(client, key, 'x')).made, false);
+    for (const key of ['protection', 'notifications', 'hours', 'briefingGapHours']) assert.equal((await press(client, key, '2')).made, false);
     assert.equal(nothingSent(client), 0);
   });
 });
@@ -419,4 +449,49 @@ test('settings answers the rows from the views, in the bridge\'s zone, with the 
   // The default zone is the bridge's own.
   const own = await handle({ cmd: 'settings', cwd: '/work' }, { now: deps().now, projectOf: () => ({ project: P }) });
   assert.equal(own.ok, true);
+}));
+
+test('a read-back event with another value or end time is not signed', () => withKey(async () => {
+  // The helper answers the id of a setting that isn't the one pressed.
+  const other = (data) => {
+    const calls = { record: [] };
+    return {
+      calls,
+      state: {
+        write: async () => {
+          const event = makeEvent({ kind: 'setting', data, now: at('2026-10-19T05:00:00.000Z') });
+          keepEvent(stateDir(P), event);
+          return { ok: true, id: event.id, pushed: true };
+        },
+        record: async (b) => { calls.record.push(b); return { ok: true }; },
+      },
+    };
+  };
+  for (const data of [{ key: 'pace', value: 1 }, { key: 'autonomy', value: 'cautious' }]) {
+    const client = other(data);
+    assert.deepEqual(await press(client, 'pace', '2'), { made: false, says: 'Pace was set but not confirmed, so it waits for your Confirm' });
+    assert.equal(client.calls.record.length, 0);
+    assert.deepEqual(pendingFiles(), []);
+  }
+  // An end time that differs: the setting pressed has none, the one read back has one.
+  const timed = other({ key: 'pace', value: 2, until: '2026-10-19T09:00:00.000Z' });
+  assert.equal((await press(timed, 'pace', '2')).made, false);
+  assert.equal(timed.calls.record.length, 0);
+}));
+
+test('a write that times out is said apart from one that was refused', () => withKey(async () => {
+  const late = 'The helper didn\'t answer in time; if the change lands, it waits for your Confirm';
+  // The helper client's own answer when the helper is slow.
+  const slow = { state: { write: async () => ({ ok: false, refused: 'the host helper did not answer in time' }) } };
+  assert.deepEqual(await press(slow, 'pace', '2'), { made: false, says: late });
+  // The press's own budget runs out first.
+  const never = { state: { write: () => new Promise(() => {}) } };
+  assert.deepEqual(await pressSetting({ project: P, key: 'pace', choice: '2', client: never, now: at('2026-10-19T05:00:00.000Z'), timeZone: SYDNEY, budget: 30 }), { made: false, says: late });
+  // A write that throws has no answer either.
+  const throwing = { state: { write: async () => { throw new Error('boom'); } } };
+  assert.equal((await press(throwing, 'pace', '2')).says, late);
+  // Refusals are said as refusals.
+  assert.equal((await press(fake({ down: true }), 'pace', '2')).says, 'That setting couldn\'t be changed now: the helper didn\'t take it');
+  assert.equal((await press(fake({ stop: true }), 'pace', '2')).says, 'Settings change once STOP is lifted');
+  assert.deepEqual(pendingFiles(), []);
 }));

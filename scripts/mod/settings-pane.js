@@ -8,7 +8,8 @@
 //
 // A choice carries no time. "Away until 18:00" and "until 09:00 tomorrow" are worked out at the
 // press, in the bridge's own time zone, so a row drawn before 18:00, or before midnight, can't
-// carry an old time. The setting's `before` is the value in force when the confirmation lands,
+// carry an old time. The morning choices end at the next 09:00 to come: this morning's between
+// midnight and 09:00, and then their label drops "tomorrow". The setting's `before` is the value in force when the confirmation lands,
 // which the views work out from the confirmed events, so a change made in the chat meanwhile is
 // the one handed back to.
 //
@@ -29,6 +30,8 @@ export const ADVANCED = 'Advanced settings: ask the front desk';
 const ASK = 'Changed by asking the front desk';
 const BUDGET_WHY = 'The other budget levels come with the budget design';
 const STOP_REFUSED = 'STOP is on';
+// What the helper client answers when the helper doesn't answer in time.
+const HELPER_LATE = 'the host helper did not answer in time';
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -36,6 +39,7 @@ export const SAYS = {
   notOffered: 'That choice isn\'t offered now',
   stopOn: 'Settings change once STOP is lifted',
   notTaken: 'That setting couldn\'t be changed now: the helper didn\'t take it',
+  late: 'The helper didn\'t answer in time; if the change lands, it waits for your Confirm',
   failed: 'That setting couldn\'t be changed this time',
 };
 
@@ -68,6 +72,7 @@ const PANE = {
   budget: { label: 'Budget', kind: 'none', why: BUDGET_WHY },
   pace: { label: 'Pace', kind: 'levels' },
   briefing: { label: 'Briefing', kind: 'levels' },
+  briefingGapHours: { label: 'Briefing gap', kind: 'none', why: ASK },
   explanations: { label: 'Explanations', kind: 'levels' },
   notifications: { label: 'Notifications', kind: 'none', why: ASK },
   boardTab: { label: 'Board tab', kind: 'levels' },
@@ -152,8 +157,8 @@ const PRESENCE = [
   { id: 'here', label: 'Here' },
   { id: 'away-hours', label: `Away for ${AWAY.hours} hours` },
   { id: 'away-evening', label: `Away until ${AWAY.evening}` },
-  { id: 'away-morning', label: `Away until ${AWAY.morning} tomorrow` },
-  { id: 'dnd-morning', label: `Do not disturb until ${AWAY.morning} tomorrow` },
+  { id: 'away-morning', label: `Away until ${AWAY.morning}`, morning: true },
+  { id: 'dnd-morning', label: `Do not disturb until ${AWAY.morning}`, morning: true },
   { id: 'dnd-open', label: 'Do not disturb until I change it' },
 ];
 
@@ -162,8 +167,19 @@ function eveningAfter(nowMs, timeZone) {
   const until = instantAt(wallAt(nowMs, timeZone), clockOf(AWAY.evening), timeZone);
   return until > nowMs ? until : null;
 }
-// The next morning edge, on the calendar day after today.
-const tomorrowMorning = (nowMs, timeZone) => instantAt(nextDay(wallAt(nowMs, timeZone)), clockOf(AWAY.morning), timeZone);
+// The next morning edge to come: today's while it is still ahead (between midnight and then),
+// else the next day's.
+function nextMorning(nowMs, timeZone) {
+  const today = wallAt(nowMs, timeZone);
+  const edge = instantAt(today, clockOf(AWAY.morning), timeZone);
+  return edge > nowMs ? edge : instantAt(nextDay(today), clockOf(AWAY.morning), timeZone);
+}
+
+// A choice's label now: a morning choice says "tomorrow" only when its edge is on another day.
+function labelNow(choice, nowMs, timeZone) {
+  if (!choice.morning || !Number.isFinite(nowMs)) return choice.morning ? `${choice.label} tomorrow` : choice.label;
+  return daysBetween(nowMs, nextMorning(nowMs, timeZone), timeZone) === 0 ? choice.label : `${choice.label} tomorrow`;
+}
 
 function presenceChoice(id, nowMs, timeZone) {
   const clockOk = Number.isFinite(nowMs);
@@ -176,8 +192,8 @@ function presenceChoice(id, nowMs, timeZone) {
       const until = clockOk ? eveningAfter(nowMs, timeZone) : null;
       return until === null ? null : { value: 'away', until: iso(until) };
     }
-    case 'away-morning': return clockOk ? { value: 'away', until: iso(tomorrowMorning(nowMs, timeZone)) } : null;
-    case 'dnd-morning': return clockOk ? { value: 'dnd', until: iso(tomorrowMorning(nowMs, timeZone)) } : null;
+    case 'away-morning': return clockOk ? { value: 'away', until: iso(nextMorning(nowMs, timeZone)) } : null;
+    case 'dnd-morning': return clockOk ? { value: 'dnd', until: iso(nextMorning(nowMs, timeZone)) } : null;
     default: return null;
   }
 }
@@ -229,7 +245,7 @@ function rowOf(key, { effective, nowMs, timeZone, locked }) {
   if (typeof held.until === 'string') out.until = held.until;
   if (spec.kind === 'presence') {
     const chosen = presenceChosen(held, nowMs, timeZone);
-    const choices = presenceOffered(nowMs, timeZone).map((c) => ({ id: c.id, label: c.label, chosen: c.id === chosen }));
+    const choices = presenceOffered(nowMs, timeZone).map((c) => ({ id: c.id, label: labelNow(c, nowMs, timeZone), chosen: c.id === chosen }));
     return { ...out, current: sayPresence(held, nowMs, timeZone), choices, here: true };
   }
   if (spec.kind === 'levels') {
@@ -261,8 +277,10 @@ export function choiceOf(key, id, { now = () => new Date(), timeZone } = {}) {
 }
 
 // The label a choice has in its row, for the press to say.
-function labelOf(key, id, value) {
-  return PANE[key].kind === 'presence' ? PRESENCE.find((c) => c.id === id)?.label ?? say(value) : wordOf(key, value);
+function labelOf(key, id, value, { nowMs, timeZone }) {
+  if (PANE[key].kind !== 'presence') return wordOf(key, value);
+  const found = PRESENCE.find((c) => c.id === id);
+  return found ? labelNow(found, nowMs, timeZone) : say(value);
 }
 
 // The settings in force for a project, from the views as the last sync left them. Settings that
@@ -286,10 +304,13 @@ export function effectiveFor({ project, now }) {
 }
 
 // The setting event the helper made, read back from the clone it kept it in.
-function eventOf(home, project, id, key) {
+// It must be the setting that was pressed: the key, the value and the end time all equal, so an
+// answer naming some other event signs nothing.
+function eventOf(home, project, id, data) {
   if (typeof id !== 'string') return null;
   const dir = home === 'profile' ? profileDir() : stateDir(project);
-  return listEvents(dir, { report: () => {} }).find((e) => e.id === id && e.kind === 'setting' && e.data?.key === key) ?? null;
+  return listEvents(dir, { report: () => {} }).find((e) => e.id === id && e.kind === 'setting'
+    && e.data?.key === data.key && e.data.value === data.value && e.data.until === data.until) ?? null;
 }
 
 // pressSetting({ project, key, choice, client, now, timeZone, budget })
@@ -328,11 +349,15 @@ async function press({ project, key, choice, client, now, timeZone, budget }) {
   } catch {
     // Nothing was taken.
   }
-  if (wrote?.ok !== true) return no(wrote?.refused === STOP_REFUSED ? SAYS.stopOn : SAYS.notTaken);
+  if (wrote?.ok !== true) {
+    // A write that timed out (or whose answer never came) may still land, so it isn't said to be refused.
+    if (wrote === null || wrote.refused === HELPER_LATE) return no(SAYS.late);
+    return no(wrote.refused === STOP_REFUSED ? SAYS.stopOn : SAYS.notTaken);
+  }
 
   const label = PANE[key].label;
   const waits = no(`${label} was set but not confirmed, so it waits for your Confirm`);
-  const event = eventOf(home, project, wrote.id, key);
+  const event = eventOf(home, project, wrote.id, data);
   if (event === null) return waits;
   let record;
   try {
@@ -347,5 +372,5 @@ async function press({ project, key, choice, client, now, timeZone, budget }) {
     // Kept in pending/ for the next session start to send.
   }
   const where = home === 'profile' ? 'for all your projects' : 'for this project';
-  return { made: true, says: `${label} is now ${lower(labelOf(key, choice, picked.value))}, ${where}${sent ? '' : ' (kept until the helper takes it)'}` };
+  return { made: true, says: `${label} is now ${lower(labelOf(key, choice, picked.value, { nowMs: instantOf(clock), timeZone }))}, ${where}${sent ? '' : ' (kept until the helper takes it)'}` };
 }
