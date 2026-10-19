@@ -220,6 +220,22 @@ test('a scenario named by its number runs every leg, and a leg id runs that leg 
   assert.deepEqual(calls, ['27 with 1', '27-route with 1', '27-route without 1', '27-route without 2']);
 });
 
+test('a first round never writes over a record saved that day: its trials follow the last one there, the same for every leg', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const day = path.join(home, '.wheelhouse-evals', today(firstNow()));
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(day, '1-with-1.json'), '{"kept":true}\n');
+  fs.writeFileSync(path.join(day, '27-route-with-3.json'), '{"kept":true}\n');
+  const calls = [];
+  await main(['1', '27', '--variant', 'with', '--trials', '2'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run: standInRun(calls) });
+  assert.deepEqual(calls, ['1 with 2', '1 with 3', '27 with 4', '27 with 5', '27-route with 4', '27-route with 5']);
+  assert.equal(fs.readFileSync(path.join(day, '1-with-1.json'), 'utf8'), '{"kept":true}\n');
+  const without = [];
+  await main(['1', '--variant', 'without'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run: standInRun(without) });
+  assert.deepEqual(without, ['1 without 1'], 'a variant with nothing saved starts at 1');
+});
+
 test('--again reruns what the last run marked, only the variant that marked it, after the trials already there', async () => {
   const root = twoSuites();
   const home = tempFolder('eval-home-');

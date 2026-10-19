@@ -296,10 +296,16 @@ export async function main(argv, {
       if (!suites.includes(args.suite)) throw new Error(`No suite ${args.suite}: the suites are ${suites.join(', ')}`);
       ids = numbersIn(root, args.suite);
     }
-    const trials = Array.from({ length: args.trials }, (_, i) => i + 1);
+    // A record saved that day is never written over: the trials follow the last one there, with
+    // the same numbers for every leg, so a trial is judged across its legs.
     for (const id of ids) {
-      for (const entry of await loadEntries(id, { root })) {
-        for (const variant of args.variants) jobs.push({ ...entry, variant, trials, round: 'first' });
+      const entries = await loadEntries(id, { root });
+      const trialsOf = Object.fromEntries(args.variants.map((variant) => {
+        const after = Math.max(...entries.map((entry) => lastTrial(home, date, scenarioName(entry.scenario), variant, [])));
+        return [variant, Array.from({ length: args.trials }, (_, i) => after + 1 + i)];
+      }));
+      for (const entry of entries) {
+        for (const variant of args.variants) jobs.push({ ...entry, variant, trials: trialsOf[variant], round: 'first' });
       }
     }
   }
