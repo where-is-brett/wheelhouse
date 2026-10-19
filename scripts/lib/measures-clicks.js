@@ -10,9 +10,9 @@
 //                  `baseline` { hash, question, label }, whose question is the set line alone
 //   clicks-used/   one empty marker per click the helper has used, named by the click's id
 // The pending figures and the shown record count as gone BASELINE_WAIT_MS after they were written.
-// It also says what reads as the baseline card (baselineWording, looksLikeBaseline), for the card
-// check, the prompt record, the composer and the state's own refusal, so none of them depends on
-// one sentence of the card being copied exactly.
+// It also says what reads as the baseline card (baselineWording, looksLikeBaseline) and what holds
+// the figures waiting (holdsFigures), for the card check, the prompt record, the composer and the
+// state's own refusal, so none of them depends on one sentence of the card being copied exactly.
 // It lives apart from scripts/measures/ so the prompt record, which the mod's bridge imports,
 // reaches only what it needs (scripts/mod/validate.js, bridgeImports).
 import crypto from 'node:crypto';
@@ -55,32 +55,62 @@ export function plainText(text) {
 
 const MARKS = [BASELINE_WORDS, ...Object.values(BASELINE_PHRASES)].map(plainText);
 
-// Whether a card reads as the baseline card by its fixed words: its header, its set line's words
-// or any of its other fixed phrases, however their quotes, spaces or case are written.
-export function baselineWording(text, header) {
-  if (typeof header === 'string' && plainText(header) === plainText(BASELINE_HEADER)) return true;
+// Whether text holds any of the baseline card's fixed words (its set line's or its other fixed
+// phrases), however their quotes, spaces or case are written. Its header alone is not one.
+export function baselineWording(text) {
   const plain = plainText(text);
   return MARKS.some((mark) => plain.includes(mark));
 }
 
-// Whether text holds the private note's figures: those waiting for the click (any age, with
-// `any`), and the account of how the note counted of the baseline recorded. A figure counts
-// written as US$1234.50, $1,234.50 or USD 1234.50.
-export function holdsFigures(text, { now = () => new Date(), any = false } = {}) {
-  const plain = plainText(text).replace(/,/g, '');
-  const pending = readPending({ now, any });
-  const counted = [pending?.figures?.counted, recordedCounted()].map(plainText).filter((c) => c.length >= COUNTED_MARK_CHARS);
-  if (counted.some((c) => plain.includes(c.replace(/,/g, '')))) return true;
-  const { usd, merges } = pending?.figures ?? {};
-  if (typeof usd !== 'number' || !Number.isFinite(usd) || !Number.isInteger(merges) || merges < 1) return false;
-  const forms = (n) => [n.toFixed(2), ...(Number.isInteger(n) ? [String(n)] : [])];
-  const money = [usd, usd / merges].flatMap(forms);
-  return money.some((m) => new RegExp(`(?:\\$|usd)\\s?${m.replace('.', '\\.')}(?![0-9])`).test(plain));
+// Whether a header is the baseline card's, however its case or spaces are written.
+const baselineHeader = (header) => typeof header === 'string' && plainText(header) === plainText(BASELINE_HEADER);
+
+// The money forms a figure counts in: its cents form always (1200.00, 30.00, 4127.35); its whole
+// form (1200) only from 1000 up, since a smaller whole sum is too common to mark anything by.
+// Each counts after a currency marker ($, US$, USD), and a figure that isn't whole counts in its
+// cents form with no marker too. None matches inside a longer number: $30 is not in $30.50 or
+// $300, nor $1,200 in $1,200.99.
+function moneyIn(plain, n) {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return false;
+  const cents = n.toFixed(2);
+  const forms = [cents, ...(Number.isInteger(n) && n >= 1000 ? [String(n)] : [])];
+  const tail = '(?![0-9]|\\.[0-9])';
+  const marked = forms.some((form) => new RegExp(`(?:\\$|usd)\\s?${form.replace('.', '\\.')}${tail}`).test(plain));
+  const bare = !Number.isInteger(n) && new RegExp(`(?<![0-9.])${cents.replace('.', '\\.')}${tail}`).test(plain);
+  return marked || bare;
 }
 
-// Whether a card or a record reads as the baseline card: by its fixed words, or by the figures.
-export function looksLikeBaseline(text, header, options) {
-  return baselineWording(text, header) || holdsFigures(text, options);
+// Whether text holds the private note's figures waiting for the director's click, while they are
+// in date at `now` (BASELINE_WAIT_MS): the account of how the note counted, when it is long enough
+// to mark anything by, or the cost or the cost per merge written as money (moneyIn). Content
+// matching is a net for a careless relay while a card is in flight, not a lasting ban: once the
+// figures are recorded, cleared or out of date, nothing matches.
+export function holdsFigures(text, { now = () => new Date() } = {}) {
+  const pending = readPending({ now });
+  if (pending === null) return false;
+  const plain = plainText(text).replace(/,/g, '');
+  const counted = plainText(pending.figures.counted).replace(/,/g, '');
+  if (counted.length >= COUNTED_MARK_CHARS && plain.includes(counted)) return true;
+  const { usd, merges } = pending.figures;
+  if (!Number.isInteger(merges) || merges < 1) return false;
+  return moneyIn(plain, usd) || moneyIn(plain, usd / merges);
+}
+
+// Whether a card or a record reads as the baseline card: by its fixed words; or by the baseline
+// header together with the figures waiting, or with the recorded baseline's account of how the
+// note counted. The header alone, or the recorded account alone, is not enough.
+export function looksLikeBaseline(text, header, { now = () => new Date() } = {}) {
+  if (baselineWording(text)) return true;
+  if (!baselineHeader(header)) return false;
+  if (holdsFigures(text, { now })) return true;
+  const recorded = plainText(recordedCounted()).replace(/,/g, '');
+  return recorded.length >= COUNTED_MARK_CHARS && plainText(text).replace(/,/g, '').includes(recorded);
+}
+
+// Whether a card or a record carries the private note's figures in any way the net catches: it
+// reads as the baseline card, or it holds the figures waiting for the click.
+export function carriesFigures(text, header, { now = () => new Date() } = {}) {
+  return looksLikeBaseline(text, header, { now }) || holdsFigures(text, { now });
 }
 
 // The account of how the note counted of the baseline recorded, or null.

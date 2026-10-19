@@ -1061,7 +1061,7 @@ export async function startHelper({
     }
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
@@ -1078,7 +1078,7 @@ export async function startHelper({
     const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.id === event.id);
     if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
     if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
+    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
@@ -1221,7 +1221,7 @@ export async function startHelper({
     if (definitionOf(data.key)?.home !== 'profile') refuse(`${data.key} is kept in each project, not in the profile`);
     await commitBackups();
     const event = makeEvent({ kind, data, now });
-    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile(), now });
     await freshViews(() => writeProfileViews({ now }));
     return profileWritten({ event, result });
   }
@@ -1249,7 +1249,7 @@ export async function startHelper({
       refuse('the confirmation names something that is not a profile event');
     }
     await commitBackups();
-    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile() });
+    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile(), now });
     await freshViews(() => writeProfileViews({ now }));
     return profileWritten({ event, result });
   }

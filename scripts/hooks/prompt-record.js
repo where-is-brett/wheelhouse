@@ -32,7 +32,7 @@ import {
 } from '../state/card-lines.js';
 import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine } from '../state/card-lines.js';
 import { keepClick, shownHash } from '../lib/setup-clicks.js';
-import { keepClick as keepBaselineClick, shownBaseline, dropPending, looksLikeBaseline } from '../lib/measures-clicks.js';
+import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -51,10 +51,10 @@ const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with
 const BASELINE_TEXT = BASELINE_WORDS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const BASELINE = new RegExp(`${BASELINE_TEXT}, ${SHA12}`, 'g');
 
-// Whether a question reads as the baseline card, by its header, any of its fixed words however
-// written, or the figures waiting for the click: the private note's figures never go to a
-// project's state, whatever else the card says or however it was reworded.
-const carriesBaseline = (question, header, now) => looksLikeBaseline(question, header, { now });
+// Whether a question reads as the baseline card (any of its fixed words however written, or its
+// header with the figures) or holds the figures waiting for the click: the private note's figures
+// never go to a project's state, however the card was reworded.
+const carriesBaseline = (question, header, now) => carriesFigures(question, header, { now });
 
 function ciEntry(project, branch, sha12, now) {
   try {

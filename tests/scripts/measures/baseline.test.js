@@ -16,9 +16,9 @@ import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { decide as cardCheck } from '../../../scripts/hooks/card-check.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { BASELINE_WAIT_MS } from '../../../scripts/lib/setup-numbers.js';
-import { readPending } from '../../../scripts/lib/measures-clicks.js';
+import { readPending, holdsFigures } from '../../../scripts/lib/measures-clicks.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { makeEvent, writeEvent, listEvents } from '../../../scripts/state/events.js';
+import { makeEvent, writeEvent, listEvents, carriesBaseline } from '../../../scripts/state/events.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
@@ -254,10 +254,13 @@ test('the figures reach no state event', async () => {
       makeEvent({ kind: 'card-answer', data: { question: card.question, label: 'Record these' }, now: () => T0 }),
       makeEvent({ kind: 'note', data: { text: card.question }, now: () => T0 }),
       makeEvent({ kind: 'note', data: { text: 'Record the private note\u2019s  FIGURES as the baseline' }, now: () => T0 }),
-      makeEvent({ kind: 'note', data: { text: `The note: ${COUNTED.toUpperCase()}` }, now: () => T0 }),
+      makeEvent({ kind: 'note', data: { header: 'Baseline', text: `The note: ${COUNTED.toUpperCase()}` }, now: () => T0 }),
     ]) {
-      await assert.rejects(writeEvent({ project: P, event, push: false }), /baseline/);
+      await assert.rejects(writeEvent({ project: P, event, push: false, now: () => T0 }), /baseline/);
     }
+    // The recorded baseline's account of how the note counted, on its own, is not refused: the net
+    // is for a card in flight, not a lasting ban on those words.
+    assert.equal(carriesBaseline(makeEvent({ kind: 'note', data: { text: `The note: ${COUNTED}` }, now: () => T0 }), { now: () => T0 }), false);
     assert.equal(git(state, ['rev-parse', 'HEAD']), head);
   });
 });
@@ -297,14 +300,14 @@ test('a reworded, stripped or look-alike baseline card is refused, and its figur
     for (const [name, variant] of Object.entries(variants)) {
       const got = await cardCheck(asking([variant], folder), { now: () => T0 });
       assert.ok(denied(got), name);
-      assert.match(got.hookSpecificOutput.permissionDecisionReason, /baseline card/, name);
+      assert.match(got.hookSpecificOutput.permissionDecisionReason, /baseline card|private note/, name);
       // Were it asked all the same, nothing of it goes to the project, and no click is kept.
       const helper = spy();
       await decide(answered([[variant, 'Record these']], folder), { client: helper, now: () => T0 });
       assert.deepEqual(helper.calls, [], name);
       // And the state refuses it, should it ever be sent.
       const event = makeEvent({ kind: 'card-answer', data: { question: variant.question, label: 'Record these' }, now: () => T0 });
-      await assert.rejects(writeEvent({ project: 'o__p', event, push: false }), /baseline/, name);
+      await assert.rejects(writeEvent({ project: 'o__p', event, push: false, now: () => T0 }), /baseline/, name);
     }
     assert.equal(fs.existsSync(path.join(process.env.WHEELHOUSE_HOME, 'measures', 'clicks')), false);
   });
@@ -326,7 +329,8 @@ test('the baseline card\'s words are refused on any other card', async () => {
     const ordinary = { question: five('The export colour. How the note counted: by hand.'), header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }] };
     const reason = async (q) => (await cardCheck(asking([q], folder), { now: () => T0 }))?.hookSpecificOutput?.permissionDecisionReason;
     assert.match(await reason(ordinary), /baseline card/);
-    assert.match(await reason({ ...ordinary, question: five('The export colour.'), header: 'Baseline' }), /baseline card/);
+    // A card merely headed Baseline is not the baseline card.
+    assert.equal(await reason({ ...ordinary, question: five('Which test run should be the baseline for speed?'), header: 'Baseline' }), undefined);
     assert.equal(await reason({ ...ordinary, question: five('The export colour.') }), undefined);
   });
 });
@@ -363,5 +367,53 @@ test('figures changed on disk after the card was shown are not recorded', async 
     assert.equal(got.code, 1);
     assert.match(got.err, /not the figures waiting/);
     assert.equal(readBaseline(), null);
+  });
+});
+
+test('the net catches the figures only while they wait, and only as the figures', async () => {
+  await withHelper(async ({ client }) => {
+    const { folder } = registered();
+    const shown = await run(['baseline', '--usd', '1200', '--merges', '40', '--from', '2026-08-03', '--to', '2026-09-28', '--counted', 'merged PRs only'], client);
+    assert.equal(shown.code, 0, shown.err);
+    const { card } = JSON.parse(shown.out);
+    const later = () => new Date(T0.getTime() + BASELINE_WAIT_MS + 1000);
+    const waiting = () => T0;
+    const note = (text, header) => makeEvent({ kind: 'note', data: { text, ...(header ? { header } : {}) }, now: () => T0 });
+
+    // A whole sum under 1000 counts only in its cents form, and never inside a longer number.
+    for (const text of ['The plan costs $30 a month', 'Raise the price to $30.50', 'It costs $300', 'Budget $1,200.99 for hosting', 'Spend 1200 or 30 on it']) {
+      assert.equal(holdsFigures(text, { now: waiting }), false, text);
+      assert.equal(carriesBaseline(note(text), { now: waiting }), false, text);
+    }
+    // While they wait, the figures as money, and the account of how the note counted, are caught.
+    for (const text of ['Budget $1,200 for hosting', 'It is US$1200.00', 'Each was $30.00', 'merged PRs only, as before']) {
+      assert.equal(holdsFigures(text, { now: waiting }), true, text);
+      assert.equal(carriesBaseline(note(text), { now: waiting }), true, text);
+      await assert.rejects(writeEvent({ project: 'o__p', event: note(text), push: false, now: waiting }), /baseline/, text);
+      // Once they are out of date, nothing is refused.
+      assert.equal(holdsFigures(text, { now: later }), false, text);
+      assert.equal(carriesBaseline(note(text), { now: later }), false, text);
+    }
+
+    // The card check: an ordinary card holding a waiting figure is told to leave it out; headed
+    // Baseline with a figure, it reads as the baseline card; headed Baseline alone it passes.
+    const five = (what) => `What this is: ${what}\nWhy it's coming to you: It is yours.\nOptions: Blue: blue; Green: green\nMy recommendation: Blue, because it matches.\nWhile you decide: Nothing changes.`;
+    const ordinary = { header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }] };
+    const reason = async (q, now = waiting) => (await cardCheck(asking([q], folder), { now }))?.hookSpecificOutput?.permissionDecisionReason;
+    assert.match(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.') }), /private note.*leave them out/);
+    assert.match(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.'), header: 'Baseline' }), /reads as the baseline card/);
+    assert.equal(await reason({ ...ordinary, question: five('Which run is the baseline?'), header: 'Baseline' }), undefined);
+    assert.equal(await reason({ ...ordinary, question: five('The plan costs $30 a month.') }), undefined);
+    assert.equal(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.') }, later), undefined);
+    assert.equal(await cardCheck(asking([card], folder), { now: waiting }), undefined, 'the composed card itself passes');
+  });
+});
+
+test('a figure that isn\'t whole is caught bare too, but not inside a longer number', async () => {
+  await withHelper(async ({ client }) => {
+    assert.equal((await run(ARGS, client)).code, 0);
+    const now = () => T0;
+    for (const text of ['the total 4127.35 then', 'about 4,127.35', 'each 111.55']) assert.equal(holdsFigures(text, { now }), true, text);
+    for (const text of ['14127.35', '4127.356', '4127.3', '1111.55', '111.555']) assert.equal(holdsFigures(text, { now }), false, text);
   });
 });

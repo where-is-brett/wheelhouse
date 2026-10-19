@@ -71,10 +71,11 @@ export function setupLine(step, hash) {
 
 // The label whose click on the baseline card records the private note's figures (scripts/measures/).
 export const BASELINE_LABEL = 'Record these';
-// The words the baseline card's set line starts with, and its header. A card carrying either holds
-// the private note's figures, which stay in <wheelhouseHome()>/measures/: the card check refuses
-// any but the card the helper composed, the prompt record keeps such a card out of the state, and
-// the state refuses an event carrying them (scripts/lib/measures-clicks.js, baselineWording).
+// The words the baseline card's set line starts with, and its header. A card carrying the words, or
+// the header with the figures, holds the private note's figures, which stay in
+// <wheelhouseHome()>/measures/: the card check refuses any but the card the helper composed, the
+// prompt record keeps such a card out of the state, and the state refuses an event carrying them
+// (scripts/lib/measures-clicks.js, looksLikeBaseline).
 export const BASELINE_WORDS = 'Record the private note\'s figures as the baseline';
 export const BASELINE_HEADER = 'Baseline';
 

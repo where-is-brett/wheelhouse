@@ -9,7 +9,7 @@ import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, BASELINE_LABEL, baselineLine } from './card-lines.js';
-import { looksLikeBaseline } from '../lib/measures-clicks.js';
+import { carriesFigures } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 
@@ -364,21 +364,22 @@ function stringsIn(value, out = []) {
 }
 
 // Whether an event carries the baseline card, its click or the private note's figures: they stay
-// in <wheelhouseHome()>/measures/ and never enter the state or the profile. A card or record reads
-// as the baseline card by any of its fixed words or its header, however they are written, or by
-// the figures waiting for the director's click (scripts/lib/measures-clicks.js).
-export function carriesBaseline(event) {
+// in <wheelhouseHome()>/measures/ and never enter the state or the profile. A record reads as the
+// baseline card by any of its fixed words however written, or by its header with the figures; it
+// holds the figures while they wait, in date at `now`, for the director's click
+// (scripts/lib/measures-clicks.js).
+export function carriesBaseline(event, { now = () => new Date() } = {}) {
   const data = event?.data;
   if (event?.kind === 'action' && data?.action === 'baseline') return true;
   if (data?.kind === 'baseline') return true;
-  return looksLikeBaseline(stringsIn(data).join('\n'), data?.header, { any: true });
+  return carriesFigures(stringsIn(data).join('\n'), data?.header, { now });
 }
 
 // `dir` and `branch` name another clone of events, such as the profile's; by default
 // the project's state clone and its state branch. An event carrying the baseline card is refused.
-export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
+export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH, now = () => new Date() }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
-  if (carriesBaseline(event)) throw new Error('An event carrying the baseline card is kept on this computer only, never in the state');
+  if (carriesBaseline(event, { now })) throw new Error('An event carrying the baseline card is kept on this computer only, never in the state');
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }

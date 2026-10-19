@@ -62,7 +62,7 @@ function buttonsOf(card) {
   // The Unattended card, with or without Use Guarded: nothing on it is answered from the pane.
   if (text.includes(UNATTENDED_CARD().risk)) return { buttons: [], note: CANT_ANSWER };
   // A setup card or the baseline card: nothing on it is answered from the pane either.
-  if (isSetupCard(card) || card.kind === 'baseline' || baselineWording(text, card.header)) return { buttons: [], note: CANT_ANSWER };
+  if (isSetupCard(card) || card.kind === 'baseline' || baselineWording(text)) return { buttons: [], note: CANT_ANSWER };
 
   // A card with no set line asks a question the front desk takes up: every option is a turn.
   if (kind === 'question' && lines.length === 0) return { buttons: offers.map((label) => button(label, 'turn')), note: null };

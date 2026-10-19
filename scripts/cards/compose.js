@@ -292,7 +292,7 @@ export function composeCard(input) {
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
   // The baseline card's own words belong to it alone: on another card they would read as the
   // private note's figures, and the card check and the prompt record would treat it as one.
-  if (kind !== 'baseline' && baselineWording(text, HEADERS[kind])) fail(kind, 'text', 'must not use the baseline card\'s words');
+  if (kind !== 'baseline' && baselineWording(text)) fail(kind, 'text', 'must not use the baseline card\'s words');
 
   const question = {
     question: text,
