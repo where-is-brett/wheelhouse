@@ -132,6 +132,16 @@ export function claudeCodeSettings({ floor } = {}) {
   return { autoUpdatesChannel: 'stable', minimumVersion: floor };
 }
 
+// Claude Code's own switch-off for the attribution it adds to commits and pull requests
+// (https://code.claude.com/docs/en/settings-reference, "attribution"): empty strings hide the
+// commit trailer and the pull request line, and sessionUrl false drops the session link.
+// includeCoAuthoredBy is the older, deprecated key that earlier versions still read. Why:
+// the Global Constraints allow no Co-Authored-By line and no model name in commits.
+export const ATTRIBUTION_OFF = {
+  attribution: { commit: '', pr: '', sessionUrl: false },
+  includeCoAuthoredBy: false,
+};
+
 // `release` is { ref } when the project follows a Wheelhouse release; without it the
 // marketplace entry carries no ref. Build commands' allow rules are not here: see featureAllowRules.
 export function projectSettings(config, { release = null } = {}) {
@@ -160,6 +170,7 @@ export function projectSettings(config, { release = null } = {}) {
     autoCompactWindow: 300000,
     disableAllHooks: false,
     enableAllProjectMcpServers: false,
+    ...structuredClone(ATTRIBUTION_OFF),
   };
 }
 

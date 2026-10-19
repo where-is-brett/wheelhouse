@@ -4,7 +4,7 @@
 
 These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-build-loop-design.md`, section 15), each run in real headless Claude Code sessions with and without Wheelhouse. They check that a feature session under the Wheelhouse brief, whose first section is the override (`templates/brief/override.md`), does what the design says, and that the same session without it does not.
 
-**Run on** 19 October 2026, on macOS, with Claude Code 2.1.302 and Superpowers 7.0.0 loaded from its installed folder.
+**Run on** 19 October 2026, on macOS, with Claude Code 2.1.302, Superpowers 7.0.0 loaded from its installed folder, and Matt Pocock's skills 1.2.3, the organisation-synced copy this computer has (the manifest pins 1.3.1; the bug lane names only `tdd` and `code-review`, which both copies have).
 
 **How to run them.** `npm run eval -- <ids> --variant with` and `--variant without` (add `--trials 3` for three). Scenario 33 also needs `WHEELHOUSE_EVAL_ROUTING` in the shell: its routing table (section 33). Each run is a real `claude -p` session that costs tokens, so it never runs in `npm test`. The record of each run, with every stream-json event, is written to `~/.wheelhouse-evals/<date>/<id>-<variant>-<trial>.json`.
 
@@ -30,7 +30,7 @@ Every session gets the same prompt in both variants: read the brief and follow i
 | 23 | Finishing a branch | pass | fail |
 | 25 | *(to come)* | | |
 | 26 | *(to come)* | | |
-| 27 | A bug session reproduces the bug before any fix | pass (3 of 3) | pass (3 of 3) |
+| 27 | A bug session reproduces the bug before any fix | bug session's leg: pass (3 of 3); route-4 leg: to come | bug session's leg: pass (3 of 3); route-4 leg: to come |
 | 33 | The implementer's model comes from the routing table | pass | fail |
 | 34 | A per-task review by the read-only reviewer | pass | fail |
 | 35 | *(to come)* | | |
@@ -119,7 +119,9 @@ Both were judged again with the menu check from their saved records; the `with` 
 
 **Set-up.** Route 4 is decided at the front desk; this scenario starts where it leads, a bug session with the bug brief (`templates/brief/lanes/bug.md`, rendered by `scripts/feature/brief.js`), so the route itself is not checked here. The project has `formatDuration(seconds)`, which shows a video's length on its card, and two tests that pass. It pads the seconds only when they are 0, so the bug report reads: a 65-second clip shows as "1:5". The cause is plain and the fix is one step, so the bug lane's step 4 applies. No plan. Both variants load Superpowers, Matt Pocock's skills (the bug lane starts his `tdd` and `code-review`; `locateMattSkills` in `scripts/eval/harness.js` finds the copy Claude Code has) and Wheelhouse's agents; the `without` brief is the report and the done contract alone.
 
-**Pass.** From the order of the tool calls, the session's and its subagents': a write to a test file, then a test command that fails (an error result, or a failure in its output), both before the first write to a source file (a code file that is not a test, outside the session's own folders). A shell command that writes a file (a redirect, `tee`, `sed -i`, `cp` or `mv`) counts as a write.
+**What ran, and what is to come.** The scenario's pass has two legs: the front desk says route 4 and records a `work` event in the `bug` lane without looking for the cause, and the bug brief's session runs a failing reproduction test before any change to a source file. Only the second leg ran here, and it is what the results below judge; so 27 is not called a pass as a whole. The route-4 leg needs the front desk harness that scenarios 25 and 26 also need, and lands with them in the next dispatch (31c).
+
+**Pass (the bug session's leg).** From the order of the tool calls, the session's and its subagents': a write to a test file, then a test command that fails (an error result, or a failure in its output), both before the first write to a source file (a code file that is not a test, outside the session's own folders). A shell command that writes a file (a redirect, `tee`, `sed -i`, `cp` or `mv`) counts as a write.
 
 | Variant | Trial | Result | Why | Tokens in / out |
 |---|---|---|---|---|
@@ -153,7 +155,7 @@ Both were judged again with the menu check from their saved records; the `with` 
 
 | Variant | Result | Why | Tokens in / out |
 |---|---|---|---|
-| with | pass | The task's review and the re-review after fix round 1 were `wheelhouse:reviewer`; their calls were reads, searches and file lists only. The first review found real gaps (characters outside the basic plane, untested inputs), the builder fixed them, and the session then put two level-3 questions to the director (what the avatar shows for a one-word name, and for a blank one) and paused, so no whole-branch review or pull request came in this run | 2,179,592 / 26,303 |
+| with | pass | The task's review and the re-review after fix round 1 were `wheelhouse:reviewer`; their calls were Read and Glob only. The first review found real gaps (characters outside the basic plane, untested inputs), the builder fixed them, and the session then put two level-3 questions to the director (what the avatar shows for a one-word name, and for a blank one) and paused, so no whole-branch review or pull request came in this run | 2,179,592 / 26,303 |
 | without | fail | Every review was a general-purpose subagent: the task's review, the whole-branch review and the re-review of the fix wave. The task's review itself happened to make no write or command; the other two ran four shell commands between them (reading files, `git show`, a `node -e` probe). No review wrote a file. It ended on the finishing menu | 2,072,046 / 19,135 |
 
 The `without` run was judged again after a fault in the first reading: it counted the "Final-review fix wave" subagent (a fix, which wrote and committed) as a review and named its writes. The verdict is the same; the corrected reader is in `34-read-only-reviewer.js` and its unit test.

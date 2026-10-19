@@ -19,6 +19,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { renderBrief } from '../feature/brief.js';
+import { ATTRIBUTION_OFF } from '../protection/settings.js';
 import { helperAddress } from '../lib/paths.js';
 import { locateSuperpowers } from './harness.js';
 import { startStandInHelper } from './stand-in-helper.js';
@@ -119,7 +120,7 @@ export async function setUpFeature(dir, {
     const text = brief === 'wheelhouse' ? renderBrief({ fields, pluginRoot: REPO_ROOT }) : brief;
     write(dir, `${FEATURE}/brief.md`, text);
     if (plan && brief === 'wheelhouse') write(dir, `${FEATURE}/plan.json`, `${JSON.stringify({ plan: plan.path })}\n`);
-    write(dir, '.claude/settings.local.json', `${JSON.stringify({ permissions: { allow: allowRules() } }, null, 2)}\n`);
+    write(dir, '.claude/settings.local.json', `${JSON.stringify({ permissions: { allow: allowRules() }, ...ATTRIBUTION_OFF }, null, 2)}\n`);
 
     // The scratch plugin, holding agents only.
     const pluginDirs = [];
