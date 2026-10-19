@@ -285,3 +285,13 @@ test('under a courier\'s wake with no AskUserQuestion, the cards are said to be 
   assert.ok(courier, 'the courier\'s rule');
   assert.match(courier, /When `AskUserQuestion` can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the board\./);
 });
+
+test('asked what waits, the front desk names each waiting card in one line by its board number and offers to ask one again, never putting an asked card again unasked (ruling F103; scenario 5)', () => {
+  // The plan's call 4: "Not now" keeps a card waiting, and the director asks for it again by its number on the board; design 5.3: each card asked once.
+  const row = playbook.split('\n').find((line) => line.startsWith('| "Anything waiting on me?"'));
+  assert.ok(row, 'a row for what waits');
+  assert.match(row, /`views waiting`/);
+  assert.match(row, /each waiting card in one line with its number on the board, in a few words of your own rather than the card's text or its options/);
+  assert.match(row, /`again <n>`/);
+  assert.match(row, /Never put a card already asked to them again unless they ask for that card/);
+});

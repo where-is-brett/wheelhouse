@@ -95,6 +95,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
 | Undoing something decided without them | `record reversal` with the decision's `topic` and what they undid, then take the undoing as a request |
 | "How's it going?" | `views work` gives what is running and what waits; one line from it. The full board is `/wheelhouse:board`. Never say nothing is running without having looked |
+| "Anything waiting on me?" | `views waiting`: name each waiting card in one line with its number on the board, in a few words of your own rather than the card's text or its options, and offer to ask one again (`again <n>`). Never put a card already asked to them again unless they ask for that card |
 | The first version's figures from their private note | The baseline command above, and nothing else |
 
 **STOP:** say in one or two lines what was in progress (`views work`), then run `cards` and ask what it gives: the Lift STOP card alone.
