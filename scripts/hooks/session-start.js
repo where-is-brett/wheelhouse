@@ -6,7 +6,8 @@
 // manifest (holding edits and commands on a mismatch, and recording the hold
 // in the state once) and records the session's provenance, and adds a short
 // reload as context. The reload names things; it never pastes whole files
-// (design section 19.1, point 5).
+// (design section 19.1, point 5). In the project's main folder it also keeps
+// `.wheelhouse/` in the main checkout's local git exclusions, as the foreman does.
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
 // five of them waiting for the helper to start, the rest for the records, the
@@ -42,6 +43,7 @@ import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
+import { ensureIgnored } from '../feature/files.js';
 import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
@@ -389,6 +391,16 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs,
   return lines.length === 0 ? undefined : answer.context('SessionStart', lines.join('\n'));
 }
 
+// In the project's main folder, `.wheelhouse/` in the main checkout's local exclusions, as the
+// foreman keeps it (ensureIgnored), so the front desk's input file (FRONT_DESK_INPUT) never shows
+// to git, even before the foreman first wakes (ruling F87). Best effort: a failure says nothing.
+function keepOutOfGit(found) {
+  try {
+    const folder = found.record?.folder ?? readProject(found.project)?.folder;
+    if (typeof folder === 'string') ensureIgnored(folder, { mainCheckout: folder });
+  } catch { /* the session carries on without it */ }
+}
+
 export async function decide(input, deps = {}) {
   const {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
@@ -469,9 +481,10 @@ export async function decide(input, deps = {}) {
       builds = buildsShown({ views, computer: computerId(), locked, guardedReady: ready }).level;
     } catch { /* shown as Ask */ }
   }
+  const frontDesk = setupLine === null && featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
+  if (frontDesk) keepOutOfGit(found);
   const text = reload({
-    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds,
-    frontDesk: setupLine === null && featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
+    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk,
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

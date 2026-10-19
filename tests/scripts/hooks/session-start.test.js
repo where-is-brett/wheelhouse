@@ -693,6 +693,45 @@ test('a feature worktree and the foreman are not pointed at the front desk\'s pl
   });
 });
 
+test('in the main folder the session start keeps .wheelhouse/ out of git, once, and leaves other folders alone (F87)', async () => {
+  await withHome(async (home) => {
+    const main = path.join(home, 'main');
+    fs.mkdirSync(main, { recursive: true });
+    spawnSync('git', ['init', '--quiet', main]);
+    const exclude = path.join(main, '.git', 'info', 'exclude');
+    const listed = () => (fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8').split('\n').filter((l) => l.trim() === '.wheelhouse/').length : 0);
+    const inMain = { projectOf: () => ({ project: P, record: { folder: main } }), env: {} };
+    assert.equal(listed(), 0);
+    assert.match(text(await run(fake(), inMain, { cwd: main })), /This is the front desk/);
+    assert.equal(listed(), 1, 'added to the main checkout\'s local exclusions');
+    await run(fake(), inMain, { cwd: main });
+    assert.equal(listed(), 1, 'a second start does not add it again');
+
+    // A feature worktree's session, and a folder that isn't a project, change nothing.
+    const other = path.join(home, 'other');
+    fs.mkdirSync(other, { recursive: true });
+    spawnSync('git', ['init', '--quiet', other]);
+    const otherExclude = path.join(other, '.git', 'info', 'exclude');
+    const before = fs.readFileSync(otherExclude, 'utf8');
+    const tree = path.join(home, 'tree');
+    const gitdir = path.join(other, '.git', 'worktrees', 'tree');
+    fs.mkdirSync(tree, { recursive: true });
+    fs.mkdirSync(gitdir, { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+    fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    await run(fake(), { projectOf: () => ({ project: P, record: { folder: other } }), env: {} }, { cwd: tree });
+    assert.equal(await run(fake(), { projectOf: () => null, env: {} }, { cwd: other }), undefined);
+    assert.equal(fs.readFileSync(otherExclude, 'utf8'), before);
+
+    // A local exclusions file that can't be written changes nothing else the session start does.
+    fs.rmSync(otherExclude);
+    fs.mkdirSync(otherExclude);
+    const out = text(await run(fake(), { projectOf: () => ({ project: P, record: { folder: other } }), env: {} }, { cwd: other }));
+    assert.match(out, /This is the front desk/);
+    assert.ok(fs.statSync(otherExclude).isDirectory());
+  });
+});
+
 // --- Lineage: the installed upstream skills against Wheelhouse's manifest ---
 
 const LINEAGE_LINE = (paths) => `Lineage: the installed superpowers files differ from Wheelhouse's manifest (${paths}). Edits and commands are held until a session starts with matching files. Raise this with the director as a card.`;
