@@ -1,20 +1,23 @@
 // tests/scripts/setup/git.test.js
-// How setup runs git (rulings R109, R110, R111): git's global and system config shut out, hooks
+// How setup runs git (rulings R109 to R112): git's global and system config shut out, hooks
 // pointed at the null file, no file-system monitor, no automatic maintenance, no going into
-// submodules, inert core programs and https the only transport, by environment; and any setting of
-// the repository's own config on the refusal list refused, by name, before every call. One test for
-// each way a program could be planted: a hook in the global config, in the repository's config
-// (directly or by an include), or in its hooks folder; a clean or smudge filter; a credential
+// submodules, inert core programs, certificates checked, no lazy fetch and https the only transport,
+// by environment, and a project's folder as git's working tree; and any setting of the repository's
+// own config not on the allowed list refused, by name, before every call. One test for each way a
+// program could be planted or git sent elsewhere: a hook in the global config, in the repository's
+// config (directly or by an include), or in its hooks folder; a clean or smudge filter; a credential
 // helper; a URL rewrite; an ext:: transport; an alternate's refs command; a garbage-collection hook;
-// a bundle address; a hook in a submodule's own config. Each first shows plain git runs it, where it
-// runs a program, so the test proves something on this git.
+// a bundle address; a hook in a submodule's own config; a resolve address with certificate checks
+// off or a planted certificate; a working tree elsewhere; signing and a cookie file. Each first
+// shows plain git doing it, where that can be shown without leaving this computer, so the test
+// proves something on this git.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  setupGit, setupGitEnv, isolated, reaching, localPath, refuseCommandSettings, commandSettingLine, runsOrSends, NULL_FILE,
+  setupGit, setupGitEnv, isolated, reaching, localPath, refuseUnlistedSettings, unlistedSettingsLine, allowedSetting, NULL_FILE,
 } from '../../../scripts/setup/git.js';
 import { directorGitEnv } from '../../../scripts/setup/host.js';
 import { run } from '../../../scripts/lib/run.js';
@@ -32,6 +35,10 @@ async function repository() {
   await plain(['update-ref', 'refs/heads/main', commit], bare);
   return { root, bare, commit, mark: path.join(root, 'hook-ran'), plain };
 }
+// run, with the look at the repository's settings answered as finding nothing: what the fence and the
+// transports do alone.
+const LOOK = 'config --includes --name-only --list -z';
+const lookless = (file, args, options) => (args.join(' ') === LOOK ? Promise.resolve({ code: 0, stdout: '', stderr: '' }) : run(file, args, options));
 const hookCommand = (mark) => `echo ran >> "${mark}"`;
 const ran = (mark) => fs.existsSync(mark);
 
@@ -63,21 +70,21 @@ test('a hook declared in the repository\'s own config, directly or by an include
   await r.plain(['config', 'hook.planted.event', 'reference-transaction'], r.bare);
   await r.plain(['config', 'hook.planted.command', hookCommand(r.mark)], r.bare);
   const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: r.bare });
-  await assert.rejects(git(['update-ref', 'refs/x/setup', r.commit]), { message: commandSettingLine(['hook.planted.event', 'hook.planted.command']) });
+  await assert.rejects(git(['update-ref', 'refs/x/setup', r.commit]), { message: unlistedSettingsLine(['hook.planted.event', 'hook.planted.command']) });
   assert.equal(ran(r.mark), false);
   assert.equal((await r.plain(['rev-parse', '-q', '--verify', 'refs/x/setup'], r.bare)).code !== 0, true, 'the call never ran');
   // By an include in the repository's config.
   await r.plain(['config', '--unset-all', 'hook.planted.event'], r.bare);
   await r.plain(['config', '--unset-all', 'hook.planted.command'], r.bare);
-  await refuseCommandSettings({ cwd: r.bare });
+  await refuseUnlistedSettings({ cwd: r.bare });
   const included = path.join(r.root, 'included');
   fs.writeFileSync(included, `[hook "hidden"]\n\tevent = pre-push\n\tcommand = ${hookCommand(r.mark)}\n`);
   await r.plain(['config', 'include.path', included], r.bare);
-  await assert.rejects(git(['fetch', '-q', r.bare, '+refs/heads/main:refs/fetched/x']), /would run a program or send elsewhere \(hook\.hidden\.event, hook\.hidden\.command\)/);
+  await assert.rejects(git(['fetch', '-q', r.bare, '+refs/heads/main:refs/fetched/x']), /setup doesn't allow \(hook\.hidden\.event, hook\.hidden\.command\)/);
   assert.equal(ran(r.mark), false);
   // A config git can't read is refused too, never passed over.
   fs.appendFileSync(path.join(r.bare, 'config'), '[broken\n');
-  await assert.rejects(refuseCommandSettings({ cwd: r.bare }), /could not be read/);
+  await assert.rejects(refuseUnlistedSettings({ cwd: r.bare }), /could not be read/);
 });
 
 test('a hook in the repository\'s hooks folder never runs in setup\'s git', async () => {
@@ -99,6 +106,8 @@ test('setup\'s environment passes only the sign-in and the fence, and the direct
   assert.equal(env.GIT_CONFIG_GLOBAL, NULL_FILE);
   assert.equal(env.GIT_TERMINAL_PROMPT, '0');
   assert.equal(env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.equal(env.GIT_NO_LAZY_FETCH, '1');
+  assert.equal(env.GIT_WORK_TREE, undefined, 'a working tree only where setup names the folder');
   const pairs = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
   assert.deepEqual(pairs.slice(0, 2), [['credential.helper', ''], ['credential.helper', pairs[1][1]]]);
   assert.match(pairs[1][1], /^!".*gh" auth git-credential$/);
@@ -106,13 +115,14 @@ test('setup\'s environment passes only the sign-in and the fence, and the direct
     ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'], ['maintenance.auto', 'false'],
     ['submodule.recurse', 'false'], ['fetch.recurseSubmodules', 'false'], ['push.recurseSubmodules', 'no'],
     ['core.sshCommand', 'false'], ['core.askPass', 'false'], ['core.editor', 'false'], ['core.pager', 'cat'],
+    ['http.sslVerify', 'true'],
   ]);
   assert.equal(env.PATH, '/opt/git/bin:/usr/bin');
   assert.deepEqual(directorGitEnv({ host: 'github', gitPath: '/opt/git/bin/git', env: { PATH: '/usr/bin' }, platform: 'darwin' }), env);
   // Applied twice it is the same; with no sign-in, only the fence.
   assert.deepEqual(isolated(env), env);
   const bare = setupGitEnv({ env: {}, platform: 'darwin' });
-  assert.equal(bare.GIT_CONFIG_COUNT, '10');
+  assert.equal(bare.GIT_CONFIG_COUNT, '11');
   assert.equal(bare.GIT_CONFIG_KEY_0, 'core.hooksPath');
   // A local path is allowed only for a call reaching a path setup named, and survives the fence;
   // anything else setup passes is put back to https.
@@ -150,9 +160,9 @@ test('a clean filter in the repository\'s config is refused by name before git a
   await t.plain(['reset', '-q']);
   fs.rmSync(t.mark);
   const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work });
-  await assert.rejects(git(['add', 'a.txt']), { message: commandSettingLine(['filter.planted.clean']) });
+  await assert.rejects(git(['add', 'a.txt']), { message: unlistedSettingsLine(['filter.planted.clean']) });
   assert.equal(ran(t.mark), false);
-  assert.match(commandSettingLine(['filter.planted.clean']), /setup can't go on here with your sign-in/);
+  assert.match(unlistedSettingsLine(['filter.planted.clean']), /setup can't go on while it is there/);
 });
 
 test('a smudge filter in the repository\'s config is refused by name before a checkout (ruling R110)', async () => {
@@ -167,7 +177,7 @@ test('a smudge filter in the repository\'s config is refused by name before a ch
   fs.rmSync(t.mark);
   fs.rmSync(path.join(t.work, 'a.txt'));
   const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work });
-  await assert.rejects(git(['checkout', '-q', '-f', '--', 'a.txt']), { message: commandSettingLine(['filter.planted.smudge']) });
+  await assert.rejects(git(['checkout', '-q', '-f', '--', 'a.txt']), { message: unlistedSettingsLine(['filter.planted.smudge']) });
   assert.equal(ran(t.mark), false);
   assert.equal(fs.existsSync(path.join(t.work, 'a.txt')), false, 'nothing was checked out');
 });
@@ -180,31 +190,43 @@ test('a credential helper and a URL rewrite in the repository\'s config are refu
     let calls = 0;
     const counted = async (file, args, options) => { calls += 1; return run(file, args, options); };
     const git = setupGit({ run: counted, env: setupGitEnv({ host: 'github' }), cwd: t.work });
-    await assert.rejects(git(['ls-remote', 'https://github.com/where-is-brett/nothing.git']), { message: commandSettingLine([name]) }, key);
+    await assert.rejects(git(['ls-remote', 'https://github.com/where-is-brett/nothing.git']), { message: unlistedSettingsLine([name]) }, key);
     assert.equal(calls, 1, `${key}: only the look ran`);
   }
 });
 
-test('the settings refused are exactly the ones that run a program or send elsewhere (rulings R110, R111)', () => {
+test('only the settings on the allowed list pass, sections and keys in any case and a subsection any name (ruling R112)', () => {
+  const allowed = [
+    'core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates', 'core.ignorecase', 'core.precomposeunicode',
+    'core.symlinks', 'core.autocrlf', 'core.eol', 'core.safecrlf', 'core.quotepath', 'core.hookspath',
+    'remote.origin.url', 'remote.origin.fetch', 'remote.My.Fork.url', 'branch.main.remote', 'branch.main.merge', 'branch.main.rebase',
+    'branch.feature/a.b.description', 'user.name', 'user.email', 'init.defaultbranch', 'pull.rebase', 'pull.ff', 'merge.ff', 'fetch.prune',
+    'push.default', 'color.ui', 'color.diff.meta', 'advice.detachedhead', 'extensions.objectformat', 'extensions.worktreeconfig',
+    'extensions.refstorage', 'include.path', 'includeif.gitdir:~/work/.path',
+    // As written by hand: git matches sections and keys in any case.
+    'CORE.FileMode', 'Remote.Origin.URL', 'Branch.Main.Merge',
+  ];
   const refused = [
+    // Re-review 4: where git connects, what it trusts, where it works and writes, signing.
+    'http.curloptresolve', 'http.sslverify', 'http.sslcainfo', 'http.sslcapath', 'http.pinnedpubkey', 'http.https://github.com.sslverify',
+    'http.https://github.com.curloptresolve', 'http.cookiefile', 'http.savecookies', 'http.postbuffer', 'core.worktree', 'push.gpgsign',
+    'commit.gpgsign', 'tag.gpgsign', 'log.showsignature', 'user.signingkey', 'extensions.partialclone', 'remote.origin.promisor',
+    'remote.origin.partialclonefilter', 'remote.origin.pushurl', 'remote.pushdefault', 'branch.main.pushremote', 'branch.main.mergeoptions',
+    // Rulings R110 and R111's refusal list.
     'hook.x.event', 'filter.lfs.clean', 'filter.x.smudge', 'filter.x.process', 'diff.external', 'diff.x.command', 'diff.x.textconv', 'merge.x.driver',
     'core.sshcommand', 'core.fsmonitor', 'core.editor', 'core.pager', 'core.askpass', 'core.gitproxy', 'credential.helper', 'credential.https://h.helper',
     'gpg.program', 'gpg.ssh.program', 'gpg.ssh.defaultkeycommand', 'sequence.editor', 'url.https://x/.insteadof', 'url.https://x/.pushinsteadof',
     'remote.origin.uploadpack', 'remote.origin.receivepack', 'remote.origin.proxy', 'remote.origin.vcs', 'http.proxy', 'http.https://h.proxy',
-    // Ruling R111's sweep.
     'core.alternaterefscommand', 'core.alternaterefsprefixes', 'gc.recentobjectshook', 'fetch.bundleuri', 'bundle.version', 'bundle.b1.uri',
     'protocol.allow', 'protocol.ext.allow', 'protocol.file.allow',
+    // Kept before, now off the list: not one of the listed settings, though harmless or out of reach.
+    'diff.renames', 'protocol.version', 'gc.auto', 'gc.pruneexpire', 'fetch.bundlecreationtoken', 'submodule.m.url', 'submodule.m.update',
+    'maintenance.auto', 'pager.log', 'mergetool.x.cmd', 'difftool.x.cmd', 'interactive.difffilter', 'alias.co',
+    // A listed key in the wrong place: no subsection where one is needed, an empty one, or one where none is.
+    'remote.url', 'remote..url', 'branch.remote', 'core.x.filemode', 'user.x.name', 'include.x.path', 'includeif.path', 'core.', '.filemode', '',
   ];
-  const kept = [
-    'core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates', 'core.ignorecase', 'core.precomposeunicode', 'core.autocrlf',
-    'remote.origin.url', 'remote.origin.fetch', 'branch.main.remote', 'branch.main.merge', 'user.name', 'diff.renames', 'merge.ff', 'http.postbuffer',
-    'extensions.worktreeconfig', 'include.path',
-    // Settings of commands setup never runs, or that run no program.
-    'protocol.version', 'gc.auto', 'gc.pruneexpire', 'fetch.prune', 'fetch.bundlecreationtoken', 'submodule.m.url', 'submodule.m.update',
-    'core.hookspath', 'maintenance.auto', 'pager.log', 'mergetool.x.cmd', 'difftool.x.cmd', 'interactive.difffilter', 'alias.co',
-  ];
-  for (const key of refused) assert.equal(runsOrSends(key), true, key);
-  for (const key of kept) assert.equal(runsOrSends(key), false, key);
+  for (const key of allowed) assert.equal(allowedSetting(key), true, key);
+  for (const key of refused) assert.equal(allowedSetting(key), false, key);
 });
 
 test('an ext:: origin allowed by an included config runs for plain git, and in setup\'s git is refused by name and can\'t run (ruling R111)', async () => {
@@ -218,7 +240,7 @@ test('an ext:: origin allowed by an included config runs for plain git, and in s
   assert.equal(ran(t.mark), true, 'plain git runs the ext:: command');
   fs.rmSync(t.mark);
   const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work });
-  await assert.rejects(git(['fetch', '-q', 'origin', 'main']), { message: commandSettingLine(['protocol.ext.allow']) });
+  await assert.rejects(git(['fetch', '-q', 'origin', 'main']), { message: unlistedSettingsLine(['protocol.ext.allow']) });
   assert.equal(ran(t.mark), false);
   // The transports alone stop it too, with the look left out: https only, or https and a local path.
   for (const env of [setupGitEnv({ host: 'github' }), reaching(setupGitEnv({ host: 'github' }), t.root)]) {
@@ -240,7 +262,7 @@ test('an alternate\'s refs command runs on a plain fetch, and is refused by name
   fs.rmSync(t.mark);
   const git = setupGit({ env: reaching(setupGitEnv({ host: 'github' }), r.bare), cwd: t.work });
   await assert.rejects(git(['fetch', '-q', r.bare, '+refs/heads/main:refs/remotes/y/main']),
-    { message: commandSettingLine(['core.alternaterefscommand', 'core.alternaterefsprefixes']) });
+    { message: unlistedSettingsLine(['core.alternaterefscommand', 'core.alternaterefsprefixes']) });
   assert.equal(ran(t.mark), false);
 });
 
@@ -269,7 +291,8 @@ test('a garbage-collection hook runs in a plain commit\'s automatic maintenance,
   await oldLooseObjects(t, 'setup');
   const identity = ['-c', 'user.name=T', '-c', 'user.email=t@invalid'];
   const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work });
-  await assert.rejects(git([...identity, 'commit', '-q', '--allow-empty', '-m', 'setup']), { message: commandSettingLine(['gc.recentobjectshook']) });
+  await assert.rejects(git([...identity, 'commit', '-q', '--allow-empty', '-m', 'setup']),
+    { message: unlistedSettingsLine(['gc.auto', 'gc.pruneexpire', 'gc.autodetach', 'gc.recentobjectshook', 'maintenance.autodetach']) });
   // The fence alone, with the look left out: no automatic maintenance, so the hook never runs.
   const got = await run('git', [...identity, 'commit', '-q', '--allow-empty', '-m', 'fenced'], { cwd: t.work, env: isolated(setupGitEnv({ host: 'github' })), baseEnv: {} });
   assert.equal(got.code, 0);
@@ -288,7 +311,7 @@ test('a bundle address is fetched from by a plain fetch, and is refused by name 
   let calls = 0;
   const counted = async (file, args, options) => { calls += 1; return run(file, args, options); };
   const git = setupGit({ run: counted, env: reaching(setupGitEnv({ host: 'github' }), r.bare), cwd: t.work });
-  await assert.rejects(git(['fetch', '-q', r.bare, '+refs/heads/main:refs/remotes/y/main']), { message: commandSettingLine(['fetch.bundleuri']) });
+  await assert.rejects(git(['fetch', '-q', r.bare, '+refs/heads/main:refs/remotes/y/main']), { message: unlistedSettingsLine(['fetch.bundleuri', 'fetch.bundlecreationtoken']) });
   assert.equal(calls, 1, 'only the look ran');
 });
 
@@ -326,7 +349,7 @@ async function withSubmodule() {
   return { project, superBare, mark };
 }
 
-test('a hook in a submodule\'s own config runs when a fetch goes into the submodule, and setup\'s git never goes there (ruling R111)', async () => {
+test('a hook in a submodule\'s own config runs when a fetch goes into the submodule; setup\'s git refuses the submodule\'s settings, and never goes there anyway (rulings R111, R112)', async () => {
   // Plain git, with every outside config shut out and hooks and the monitor off as before R111.
   const control = await withSubmodule();
   const before = {
@@ -336,8 +359,113 @@ test('a hook in a submodule\'s own config runs when a fetch goes into the submod
   await run('git', ['fetch', '-q', control.superBare, '+refs/heads/main:refs/remotes/origin/main'], { cwd: control.project, env: before, baseEnv: {} });
   assert.equal(ran(control.mark), true, 'git ran the submodule\'s hook: its own git there carries none of the parent\'s settings');
   const s = await withSubmodule();
-  const git = setupGit({ env: reaching(setupGitEnv({ host: 'github' }), s.superBare), cwd: s.project });
+  const env = reaching(setupGitEnv({ host: 'github' }), s.superBare);
+  await assert.rejects(setupGit({ env, cwd: s.project })(['fetch', '-q', s.superBare, '+refs/heads/main:refs/remotes/origin/main']),
+    { message: unlistedSettingsLine(['submodule.m.url', 'submodule.m.active']) });
+  // With the look left out, the fence alone keeps git out of the submodule.
+  const git = setupGit({ run: lookless, env, cwd: s.project, workTree: s.project });
   assert.equal((await git(['fetch', '-q', s.superBare, '+refs/heads/main:refs/remotes/origin/main'])).code, 0);
   assert.equal((await git(['checkout', '-q', '-f', '-B', 'main', 'refs/remotes/origin/main'])).code, 0);
   assert.equal(ran(s.mark), false);
+});
+
+// A setting's name as `git config --name-only` gives it: the section and the key in lower case.
+const listedName = (key) => key.replace(/^[^.]+/, (x) => x.toLowerCase()).replace(/[^.]+$/, (x) => x.toLowerCase());
+// run, counting its calls.
+function counting() {
+  const counted = async (file, args, options) => { counted.calls += 1; return run(file, args, options); };
+  counted.calls = 0;
+  return counted;
+}
+
+test('a resolve address with certificate checks off sends plain git\'s https to another server; setup\'s git refuses each by name, and checks certificates anyway (ruling R112)', async () => {
+  const t = await workTree();
+  // A local port that refuses at once: nothing leaves this computer.
+  const url = 'https://github.com:9/where-is-brett/nothing.git';
+  await t.plain(['config', 'http.curloptResolve', 'github.com:9:127.0.0.1']);
+  await t.plain(['config', 'http.sslVerify', 'false']);
+  const trace = path.join(t.root, 'trace');
+  await t.plain(['ls-remote', url], { GIT_TRACE_CURL: trace });
+  assert.match(fs.readFileSync(trace, 'utf8'), /Trying 127\.0\.0\.1:9/, 'plain git connects to the address the repository names for github.com');
+  const counted = counting();
+  const git = setupGit({ run: counted, env: setupGitEnv({ host: 'github' }), cwd: t.work });
+  await assert.rejects(git(['ls-remote', url]), { message: unlistedSettingsLine(['http.curloptresolve', 'http.sslverify']) });
+  assert.equal(counted.calls, 1, 'only the look ran');
+  // The fence: whatever the repository's own http.sslVerify says, setup's git checks certificates.
+  const seen = await run('git', ['config', '--get', 'http.sslVerify'], { cwd: t.work, env: isolated(setupGitEnv({ host: 'github' })), baseEnv: {} });
+  assert.equal(seen.stdout.trim(), 'true');
+  // A planted certificate or key in place of the checks off, or either for github.com alone: each refused by name.
+  for (const [key, value] of [
+    ['http.sslCAInfo', path.join(t.root, 'ca.pem')], ['http.sslCAPath', t.root], ['http.pinnedPubkey', 'sha256//x'],
+    ['http.https://github.com.sslVerify', 'false'], ['http.https://github.com.curloptResolve', 'github.com:443:127.0.0.1'],
+  ]) {
+    const u = await workTree();
+    await u.plain(['config', key, value]);
+    const c = counting();
+    await assert.rejects(setupGit({ run: c, env: setupGitEnv({ host: 'github' }), cwd: u.work })(['ls-remote', url]), { message: unlistedSettingsLine([listedName(key)]) }, key);
+    assert.equal(c.calls, 1, `${key}: only the look ran`);
+  }
+});
+
+test('a working tree named in the repository\'s config takes plain git\'s checkout elsewhere; setup\'s git refuses it by name, and works in the folder it names anyway (ruling R112)', async () => {
+  const t = await workTree();
+  const other = path.join(t.root, 'other');
+  fs.mkdirSync(other);
+  await t.plain(['config', 'core.worktree', other]);
+  await t.plain(['checkout', '-q', '-f', '-B', 'main', 'HEAD']);
+  assert.equal(fs.existsSync(path.join(other, 'a.txt')), true, 'plain git writes the files into the other folder');
+  fs.rmSync(path.join(other, 'a.txt'));
+  fs.rmSync(path.join(t.work, 'a.txt'));
+  const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work, workTree: t.work });
+  await assert.rejects(git(['checkout', '-q', '-f', '-B', 'main', 'HEAD']), { message: unlistedSettingsLine(['core.worktree']) });
+  assert.equal(fs.existsSync(path.join(other, 'a.txt')) || fs.existsSync(path.join(t.work, 'a.txt')), false, 'nothing was checked out');
+  // With the look left out, the folder setup names is git's working tree whatever core.worktree says.
+  const inFolder = setupGit({ run: lookless, env: setupGitEnv({ host: 'github' }), cwd: t.work, workTree: t.work });
+  assert.equal((await inFolder(['checkout', '-q', '-f', '-B', 'main', 'HEAD'])).code, 0);
+  assert.equal(fs.existsSync(path.join(t.work, 'a.txt')), true);
+  assert.equal(fs.existsSync(path.join(other, 'a.txt')), false);
+});
+
+test('the folder setup names goes to git as its working tree on every call but git init, and nowhere else (ruling R112)', async () => {
+  const calls = [];
+  const recorded = async (file, args, options) => { calls.push({ args, env: options.env }); return { code: 0, stdout: '', stderr: '' }; };
+  const git = setupGit({ run: recorded, env: setupGitEnv({ host: 'github' }), cwd: '/a folder', workTree: '/a folder' });
+  await git(['init', '-q', '-b', 'main']);
+  await git(['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'x']);
+  const own = calls.filter((c) => c.args.join(' ') !== LOOK);
+  assert.deepEqual(own.map((c) => c.env.GIT_WORK_TREE), [undefined, '/a folder']);
+  assert.equal(own.every((c) => c.env.GIT_NO_LAZY_FETCH === '1'), true);
+  // The look never carries the call's settings or working tree.
+  for (const c of calls.filter((x) => x.args.join(' ') === LOOK)) assert.equal(c.env.GIT_WORK_TREE, undefined);
+  calls.length = 0;
+  await setupGit({ run: recorded, env: setupGitEnv({ host: 'github' }), cwd: '/a scratch' })(['fetch', '-q', 'https://github.com/o/r.git']);
+  assert.equal(calls.at(-1).env.GIT_WORK_TREE, undefined);
+});
+
+test('signing and a cookie file in the repository\'s config are refused by name before anything runs (ruling R112)', async () => {
+  for (const settings of [[['push.gpgSign', 'true']], [['commit.gpgSign', 'true']], [['http.cookieFile', 'cookies.txt'], ['http.saveCookies', 'true']]]) {
+    const t = await workTree();
+    for (const [key, value] of settings) await t.plain(['config', key, value]);
+    const c = counting();
+    const git = setupGit({ run: c, env: setupGitEnv({ host: 'github' }), cwd: t.work, workTree: t.work });
+    await assert.rejects(git(['-c', 'user.name=T', '-c', 'user.email=t@invalid', 'commit', '-q', '--allow-empty', '-m', 'setup']),
+      { message: unlistedSettingsLine(settings.map(([key]) => listedName(key))) }, settings[0][0]);
+    assert.equal(c.calls, 1, `${settings[0][0]}: only the look ran`);
+    assert.equal((await t.plain(['rev-list', '--count', 'HEAD'])).stdout.trim(), '1', 'no commit was made');
+  }
+});
+
+test('a husky-style hooks folder and pull.rebase are allowed, and the hooks folder\'s hook still never runs in setup\'s git (ruling R112)', async () => {
+  const t = await workTree();
+  const hooks = path.join(t.work, '.husky', '_');
+  fs.mkdirSync(hooks, { recursive: true });
+  fs.writeFileSync(path.join(hooks, 'pre-commit'), `#!/bin/sh\n${hookCommand(t.mark)}\n`, { mode: 0o755 });
+  await t.plain(['config', 'core.hooksPath', '.husky/_']);
+  await t.plain(['config', 'pull.rebase', 'true']);
+  await t.plain(['commit', '-q', '--allow-empty', '-m', 'control']);
+  assert.equal(ran(t.mark), true, 'plain git runs the hooks folder\'s hook');
+  fs.rmSync(t.mark);
+  const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work, workTree: t.work });
+  assert.equal((await git(['-c', 'user.name=T', '-c', 'user.email=t@invalid', 'commit', '-q', '--allow-empty', '-m', 'setup'])).code, 0);
+  assert.equal(ran(t.mark), false);
 });

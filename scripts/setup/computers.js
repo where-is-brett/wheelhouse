@@ -81,7 +81,7 @@ const beforeOf = (text) => (text === null || text.length <= BEFORE_CHARS ? text
 // repository setup makes under <wheelhouseHome()>/setup/ and removes afterwards (ruling R106): the
 // helper's profile clone, its hooks, its config and its refs are never touched, and every call
 // has hooks and the file-system monitor switched off, git's global and system config shut out, and
-// a setting in the scratch's own config that would run a program refused (scripts/setup/git.js).
+// a setting in the scratch's own config not on setup's allowed list refused (scripts/setup/git.js).
 // `listed` is the change step 3's card named. Gives { published, at, commit? }.
 export async function publishEnrolment({ profile, listed = null, gitPath = 'git', env = {}, run = realRun, record = () => {}, now = () => new Date() }) {
   const own = keyHere();

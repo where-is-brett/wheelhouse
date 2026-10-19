@@ -521,7 +521,7 @@ test('a hook declared in the product folder\'s git config stops step 3, named, b
     };
     const step = stepFor(w, { run });
     const planned = await answerAll(step, ctxFor(folder), choose());
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /would run a program or send elsewhere \(hook\.planted\.event, hook\.planted\.command\)/);
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /setup doesn't allow \(hook\.planted\.event, hook\.planted\.command\)/);
     assert.equal(fs.existsSync(mark), false);
     assert.equal((await realRun('git', ['config', '--get', 'remote.origin.url'], { cwd: folder })).code !== 0, true, 'nothing was done in the folder');
     // Every git call step 3 made shut out git's global and system config, with hooks off.

@@ -94,7 +94,7 @@ import { protectionStatus as realProtectionStatus } from '../host/protection.js'
 import { projectPath } from '../host/gitlab-key.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
-import { isolated, refuseCommandSettings, reaching } from './git.js';
+import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA } from './questions.js';
 import { newId, readJournal } from './journal.js';
@@ -389,14 +389,16 @@ export async function commitAuthor({ host, run = realRun }) {
 // shut out, hooks pointed at the null file, and a hook the folder's own config declares refused
 // before every call (ruling R109, scripts/setup/git.js): `out(args)` its trimmed output or null,
 // `raw(args)` its output as it is or null, `ok(args)` whether it went through, `must(args, doing)`
-// its output or a throw naming only what was being done. A setting that would run a program throws, naming it.
+// its output or a throw naming only what was being done. A setting of the folder's repository not on
+// setup's allowed list throws, naming it (ruling R112), and the folder is git's working tree whatever
+// that config says.
 // https is its only transport, with a local path too only when `remoteUrl`, the project's address
 // as setup recorded it, is one (ruling R111).
 function gitIn({ run, gitPath, host, platform, folder, remoteUrl }) {
   const env = reaching(directorGitEnv({ host, gitPath, platform }), remoteUrl);
   const call = async (args) => {
-    await refuseCommandSettings({ run, gitPath, cwd: folder });
-    return quietly(run, gitPath, args, { cwd: folder, env: isolated(env), baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+    await refuseUnlistedSettings({ run, gitPath, cwd: folder });
+    return quietly(run, gitPath, args, { cwd: folder, env: { ...isolated(env), GIT_WORK_TREE: folder }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   };
   return {
     env,

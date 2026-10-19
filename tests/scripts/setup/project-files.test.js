@@ -495,7 +495,7 @@ test('a hook declared in the project folder\'s git config stops step 7, named, b
     await g(w.folder, 'config', 'hook.planted.command', `echo ran >> "${mark}"`);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, false);
-    assert.match(done.reason, /would run a program or send elsewhere \(hook\.planted\.event, hook\.planted\.command\)/);
+    assert.match(done.reason, /setup doesn't allow \(hook\.planted\.event, hook\.planted\.command\)/);
     assert.equal(fs.existsSync(mark), false);
     assert.equal(await g(w.bare, 'rev-list', '--count', 'main'), '1', 'nothing pushed');
     // Every git call setup made ran with the global and system config shut out and hooks off.
@@ -520,7 +520,7 @@ test('a clean filter in the project folder\'s git config stops step 7, named, be
     await g(w.folder, 'config', 'filter.planted.clean', `sh -c 'echo ran >> "${mark}"; cat'`);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, false);
-    assert.match(done.reason, /would run a program or send elsewhere \(filter\.planted\.clean\)/);
+    assert.match(done.reason, /setup doesn't allow \(filter\.planted\.clean\)/);
     assert.equal(fs.existsSync(mark), false);
     assert.equal(await g(w.bare, 'rev-list', '--count', 'main'), '1', 'nothing pushed');
   });

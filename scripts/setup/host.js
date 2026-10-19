@@ -107,7 +107,7 @@ import {
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
 import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
-import { setupGit, setupGitEnv, refuseCommandSettings, reaching } from './git.js';
+import { setupGit, setupGitEnv, refuseUnlistedSettings, reaching } from './git.js';
 
 // The Wheelhouse organisation's GitHub App: null fields until the organisation is made and the app
 // registered (Card 1).
@@ -623,10 +623,10 @@ function outsideAny() {
 }
 
 // Refuses, as every setup git call does, when a clone of Wheelhouse's own that git is about to run
-// in (scripts/state/, scripts/profile/) holds a setting that would run a program or send
-// elsewhere (rulings R109, R110).
+// in (scripts/state/, scripts/profile/) holds a setting not on setup's allowed list (rulings R109
+// to R112).
 async function refuseSettingsIn({ dir, run, gitPath }) {
-  if (fs.existsSync(path.join(dir, '.git'))) await refuseCommandSettings({ run, gitPath, cwd: dir });
+  if (fs.existsSync(path.join(dir, '.git'))) await refuseUnlistedSettings({ run, gitPath, cwd: dir });
 }
 
 // A repository on the host as the director's sign-in sees it: { repo, id, defaultBranch }, or null
@@ -679,7 +679,7 @@ export const madeBySetup = (target) => readJournal().runs.flatMap((r) => r?.chan
 // setup adds the remote. Safe to repeat from any point: a retry finishes what an earlier attempt
 // left, and records nothing again.
 async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder });
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
   const must = async (args, why) => {
     const done = await git(args);
     if (done.code !== 0) throw new Error(why);
@@ -788,7 +788,7 @@ export function joinMissLine({ host, wanted, found }) {
 // (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
 // left as it is. Fetched by its https address, never by the one the folder's origin names (R111).
 export async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, run, record }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder });
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
   const must = async (args, why) => {
     const done = await git(args);
     if (done.code !== 0) throw new Error(why);

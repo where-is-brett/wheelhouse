@@ -257,8 +257,8 @@ function subcommand(args) {
 }
 
 // Runs git for the trial branch with the director's own sign-in, in `dir`, with git's global and
-// system config shut out and a setting of its config that would run a program refused (rulings R109,
-// R110, scripts/setup/git.js);
+// system config shut out and a setting of its config not on setup's allowed list refused (rulings
+// R109 to R112, scripts/setup/git.js);
 // its output, or a throw naming only the subcommand (or the hook).
 async function gitIn(run, { gitPath, env, dir }, args) {
   const got = await setupGit({ run, gitPath, env, cwd: dir })(args);
