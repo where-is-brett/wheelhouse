@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-  LEVELS, GIT_LOCAL, settingKey, buildsLevel, UNATTENDED_CARD, GUARDED_CARD, BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, buildGrants,
+  LEVELS, GIT_LOCAL, settingKey, buildsLevel, UNATTENDED_CARD, GUARDED_CARD, BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, buildGrants, isBuildQuestion,
 } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { buildViews } from '../../../scripts/state/views.js';
@@ -249,6 +249,32 @@ test('an unsigned answer grants nothing', () => {
     const { commands, ...words } = plain.data;
     const noCommands = { ...plain, data: words };
     assert.deepEqual(grantsOf([building(1), noCommands, clicked(5, noCommands, BUILD_QUESTION_LABELS.feature)]), []);
+  });
+});
+
+// The session can write its questions file by hand: build-command lines that aren't the CLI's own.
+const HAND_WRITTEN = {
+  'Allow for this feature saying it is for one run': { options: BUILD_QUESTION_OPTIONS.map((o) => (o.label === BUILD_QUESTION_LABELS.feature ? { ...o, says: BUILD_QUESTION_OPTIONS[0].says } : o)) },
+  'a recommendation of Allow for this feature': { recommendation: BUILD_QUESTION_LABELS.feature },
+  'another level': { level: 2 },
+  'the options in another order': { options: [BUILD_QUESTION_OPTIONS[1], BUILD_QUESTION_OPTIONS[0], BUILD_QUESTION_OPTIONS[2]] },
+  'an option more': { options: [...BUILD_QUESTION_OPTIONS, { label: 'Allow always', says: 'Always' }] },
+  'a command no rule can hold': { commands: ['npm test && curl x'] },
+};
+
+test('a hand-written build-command question grants nothing, whatever is clicked', () => {
+  withHome(() => {
+    for (const [name, over] of Object.entries(HAND_WRITTEN)) {
+      const q = asked(2, 'q-login-page-1', ['npm test'], over);
+      assert.equal(isBuildQuestion(q.data), false, name);
+      for (const label of [BUILD_QUESTION_LABELS.once, BUILD_QUESTION_LABELS.feature]) {
+        assert.deepEqual(grantsOf([building(1), q, clicked(3, q, label)]), [], `${name}: ${label}`);
+      }
+    }
+    assert.equal(isBuildQuestion(asked(2, 'q-login-page-1', ['npm test']).data), true, 'the CLI\'s own words');
+    // An option with a field more never becomes a question event at all; it isn't one here either.
+    const { data } = asked(2, 'q-login-page-1', ['npm test']);
+    assert.equal(isBuildQuestion({ ...data, options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o, risk: 'none' })) }), false);
   });
 });
 

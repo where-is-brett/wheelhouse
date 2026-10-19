@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LANES, SLUG } from '../lib/build-loop.js';
+import { isBuildQuestion } from '../protection/windows-builds.js';
 
 export const FEATURE_DIR = '.wheelhouse/feature';
 
@@ -212,7 +213,8 @@ function validQuestion(q) {
     && isText(q.recommendation)
     && [1, 2, 3, 4].includes(q.level)
     && (q.kind === 'extra-plan' ? isText(q.plan) : q.plan === undefined || typeof q.plan === 'string')
-    && (q.kind === 'build-command' ? Array.isArray(q.commands) && q.commands.length > 0 && q.commands.every(isText) : q.commands === undefined);
+    // A build-command line must be the CLI's own, so one written by hand never reaches the director.
+    && (q.kind === 'build-command' ? isBuildQuestion(q) : q.commands === undefined);
 }
 
 // The questions in `file`, one JSON object per line. Lines that are not a valid

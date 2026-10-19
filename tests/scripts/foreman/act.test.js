@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { main, FOREMAN_QUESTIONS, extraPlanId } from '../../../scripts/foreman/act.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
+import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { branchOf } from '../../../scripts/hooks/session-start.js';
 import { words } from '../../../scripts/hooks/shell-words.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
@@ -682,10 +683,11 @@ test('question records a build-command question with the commands it asks for', 
   views.work.mine = workView('mine', { lane: 'feature', visible: true, doc: { path: 'docs/specs/mine.md', hash: HASH } });
   const build = {
     id: 'q-mine-1', kind: 'build-command', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
-    options: [{ label: 'Allow this time', says: 'a' }, { label: 'Allow for this feature', says: 'b' }, { label: 'Not now', says: 'c' }],
-    recommendation: 'Allow this time', level: 3, commands: ['npm test'],
+    options: BUILD_QUESTION_OPTIONS, recommendation: 'Allow this time', level: 3, commands: ['npm test'],
   };
-  const wt = worktree(checkout, 'mine', { questions: [build] });
+  // A line the session wrote by hand, recommending the feature-long grant.
+  const forged = { ...build, id: 'q-mine-2', recommendation: 'Allow for this feature' };
+  const wt = worktree(checkout, 'mine', { questions: [build, forged] });
   views.features.mine = featureView('mine', { step: 'building', worktree: wt });
   const fake = fakeClient({ views });
   const r = await act(['question', 'mine', 'q-mine-1'], { client: fake.client });
@@ -693,6 +695,8 @@ test('question records a build-command question with the commands it asks for', 
   const { kind, ...asked } = build;
   assert.deepEqual(fake.writes.map((w) => [w.kind, w.data]), [['question', { ...asked, work: 'mine' }]]);
   refusedInOneLine(await act(['extra-plan', 'mine', 'q-mine-1'], { client: fake.client }));
+  refusedInOneLine(await act(['question', 'mine', 'q-mine-2'], { client: fake.client }));
+  assert.equal(fake.writes.length, 1, 'the hand-written line never reaches state');
 }));
 
 test('extra-plan queues the plan as work of its own, with the parent\'s lane, visibility and document', () => withHome(async () => {

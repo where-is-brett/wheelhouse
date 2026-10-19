@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { observe, plainWorktreePath, INTERVALS, LOOKBACK_MS } from '../../../scripts/watcher/sources.js';
 import { step, diff } from '../../../scripts/watcher/core.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
@@ -45,7 +46,7 @@ const status = (work, over = {}) => ({
 const question = (id, kind = 'question') => ({
   id, kind, what: 'Which?', why: 'It matters', options: [{ label: 'A', says: 'a' }], recommendation: 'A', level: 2,
   ...(kind === 'extra-plan' ? { plan: 'docs/plans/x.md' } : {}),
-  ...(kind === 'build-command' ? { commands: ['npm test'] } : {}),
+  ...(kind === 'build-command' ? { options: BUILD_QUESTION_OPTIONS, recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'] } : {}),
 });
 
 function record(kind, data, ms) {

@@ -56,9 +56,23 @@ export function buildsLevel({ views, computer, locked, guardedReady }) {
 const SCOPES = new Map([[BUILD_QUESTION_LABELS.once, 'run'], [BUILD_QUESTION_LABELS.feature, 'feature']]);
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
+// Whether a question is a build-command question as the feature CLI writes it: commands an allow
+// rule can hold, and the design's options, word for word and in order, recommending Allow this
+// time at level 3. The session can write its questions file by hand, so a line with other words,
+// another recommendation or another level is no build-command question, and no click on it grants.
+export function isBuildQuestion(q) {
+  return isPlain(q)
+    && Array.isArray(q.commands) && q.commands.length > 0 && q.commands.every(isBuildCommand)
+    && Array.isArray(q.options) && q.options.length === BUILD_QUESTION_OPTIONS.length
+    && q.options.every((o, i) => isPlain(o) && Object.keys(o).length === 2
+      && o.label === BUILD_QUESTION_OPTIONS[i].label && o.says === BUILD_QUESTION_OPTIONS[i].says)
+    && q.recommendation === BUILD_QUESTION_LABELS.once
+    && q.level === 3;
+}
+
 // The director's grants of build commands to the feature `work` on `computer`, one for each
-// verified answer (views.questions counts only signed clicks) to a build-command question, a
-// question whose data carries `commands`, made on this computer. Allow this time is for one
+// verified answer (views.questions counts only signed clicks) to a build-command question
+// (isBuildQuestion), made on this computer. Allow this time is for one
 // run (scope `run`) until its question id is in `used`, the waker's record of the run grants
 // it has given; anything but a list or a set there counts every run grant as used. Allow for
 // this feature lasts the feature's life. Either ends when the feature closes, or with a report
@@ -74,7 +88,7 @@ export function buildGrants({ views, work, used, computer }) {
   for (const [questionId, entry] of Object.entries(questions)) {
     const data = entry?.question?.data;
     const answer = entry?.answer;
-    if (!isPlain(data) || data.work !== work || !Array.isArray(data.commands) || !data.commands.every(isBuildCommand)) continue;
+    if (!isBuildQuestion(data) || data.work !== work) continue;
     if (!isPlain(answer) || answer.computer !== computer || typeof answer.at !== 'string') continue;
     const scope = SCOPES.get(answer.label);
     if (scope === undefined) continue;
