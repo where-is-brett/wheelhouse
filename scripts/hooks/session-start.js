@@ -2,7 +2,9 @@
 // At the start of every session in a Wheelhouse project: starts the host helper
 // when it is not answering, sends any records a hook kept, syncs the state,
 // starts the watcher when the project's shape is 1 and it isn't running
-// (ruling R62), and adds a short reload as context. The reload names things;
+// (ruling R62), checks the installed upstream skills against Wheelhouse's
+// manifest (holding edits and commands on a mismatch) and records the
+// session's provenance, and adds a short reload as context. The reload names things;
 // it never pastes whole files (design section 19.1, point 5).
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
@@ -23,6 +25,9 @@ import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { startBackground } from '../lib/background.js';
 import { projectConfig } from '../watcher/main.js';
+import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
+import { readProject } from '../lib/projects.js';
+import { checkLineage, warningLines, writeProvenance } from '../lineage/check.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -38,9 +43,9 @@ export const NOT_SYNCED = 'State was not synced with the host this time';
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
-// tool call. Claude Code reads that field from 2.1.295; an older one lets the call through.
-export const GUARD_FLOOR = [2, 1, 295];
-export const OLD_CLAUDE_CODE = 'This Claude Code is older than 2.1.295, so a guard that fails does not stop a tool call: update Claude Code';
+// tool call. Claude Code reads that field from CLAUDE_CODE_FLOOR; an older one lets the call through.
+export const GUARD_FLOOR = CLAUDE_CODE_FLOOR.split('.').map(Number);
+export const OLD_CLAUDE_CODE = `This Claude Code is older than ${CLAUDE_CODE_FLOOR}, so a guard that fails does not stop a tool call: update Claude Code`;
 
 // Claude Code's version as the newest transcript entry that carries one gives it, as three
 // numbers, or null when it is not known.
@@ -214,6 +219,25 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
   return null;
 }
 
+// The lineage check (scripts/lineage/check.js) for the project's folder: writes the hold file on
+// a mismatch and removes it on a match, and records this session's provenance. Gives the
+// warning lines. It informs, so anything that goes wrong is passed over.
+function lineageCheck(found, input, version, { check, root, claudeHome, now }) {
+  try {
+    const folder = found.record?.folder ?? readProject(found.project)?.folder;
+    const result = check({ project: found.project, projectDir: folder, root, claudeHome, now });
+    try {
+      writeProvenance({
+        project: found.project, sessionId: input.session_id, root, upstreams: result.upstreams, ok: result.ok,
+        claudeCode: version === null ? null : version.join('.'), transcript: input.transcript_path,
+      });
+    } catch { /* the session carries on without it */ }
+    return result.ok ? [] : warningLines(result.mismatches);
+  } catch {
+    return [];
+  }
+}
+
 // In a Shape 1 project, starts the watcher when it isn't running, as the
 // foreman's start script does (ruling R62). A watcher found running needs no
 // configuration asked for. It informs, so anything that goes wrong is passed over.
@@ -226,9 +250,10 @@ async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   } catch { /* the session carries on without it */ }
 }
 
-export function reload({ views, stop, notes, feature, stateRoot, windows }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows }) {
   const lines = [];
   if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
+  lines.push(...lineage);
   const damaged = Array.isArray(views?.damaged) ? views.damaged.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))) : [];
   lines.push(...section('Damaged state:', damaged));
   lines.push(...notes);
@@ -255,7 +280,7 @@ export async function decide(input, deps = {}) {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS, totalMs = TOTAL_MS, pause = sleep,
-    background = startBackground,
+    background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome,
   } = deps;
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
@@ -269,6 +294,7 @@ export async function decide(input, deps = {}) {
 
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
+  const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now });
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the sync below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
@@ -291,7 +317,7 @@ export async function decide(input, deps = {}) {
 
   const stateRoot = stateDir(project);
   const text = reload({
-    views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot,
+    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot,
     windows: platform === 'win32' && firstForSession(project, input.session_id, now),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);

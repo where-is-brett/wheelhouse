@@ -2,11 +2,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import {
-  MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, fetchUpstream, locateInstalled, readManifest, writeManifest,
+  MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, writeManifest,
 } from '../../../scripts/lineage/manifest.js';
 import { fingerprintFile, fingerprintTree } from '../../../scripts/lineage/fingerprint.js';
 import { g } from '../../helpers/git-fixture.js';
@@ -141,6 +142,34 @@ test('readManifest reads lineage/manifest.json and refuses anything that is not 
   assert.throws(() => readManifest(root), /isn't in the form/);
   write(root, { [MANIFEST_PATH]: JSON.stringify({ ...manifest, upstreams: [{ ...manifest.upstreams[0], folders: [{ path: 3 }] }] }) });
   assert.throws(() => readManifest(root), /isn't in the form/);
+  // A null hash would pass whatever is installed, even nothing, so it is refused.
+  for (const list of ['folders', 'files']) {
+    const upstream = { ...manifest.upstreams[0], [list]: [{ path: 'LICENSE', hash: null }] };
+    write(root, { [MANIFEST_PATH]: JSON.stringify({ ...manifest, upstreams: [upstream] }) });
+    assert.throws(() => readManifest(root), /isn't in the form/, list);
+  }
+});
+
+test('checkInstalled finds the install for the project it is given, through the record in the Claude folder it is given', () => {
+  const { dir, manifest } = tiny();
+  const claudeHome = tempFolder('wh-claude-');
+  const project = tempFolder('wh-project-');
+  write(claudeHome, {
+    'plugins/installed_plugins.json': JSON.stringify({
+      version: 2,
+      plugins: { 'kit@wheelhouse': [{ scope: 'project', projectPath: project, installPath: dir, version: '1', gitCommitSha: TINY.sha }] },
+    }),
+  });
+  assert.deepEqual(checkInstalled({ manifest, projectDir: project, claudeHome }), { ok: true, mismatches: [] });
+  assert.deepEqual(checkInstalled({ manifest, projectDir: tempFolder('wh-other-'), claudeHome }).mismatches, [{ upstream: 'kit', path: '*', want: TINY.sha, got: null }]);
+  const seen = [];
+  checkInstalled({ manifest, projectDir: project, claudeHome, locate: (upstream, where) => { seen.push([upstream.name, where]); return null; } });
+  assert.deepEqual(seen, [['kit', { projectDir: project, claudeHome }]]);
+});
+
+test('the Claude folder is CLAUDE_CONFIG_DIR when it is set, else .claude in the home folder', () => {
+  assert.equal(claudeHome({ CLAUDE_CONFIG_DIR: '/elsewhere/claude' }), '/elsewhere/claude');
+  assert.equal(claudeHome({}), path.join(os.homedir(), '.claude'));
 });
 
 test('the manifest in the repository lists Superpowers and Matt\'s skills at check 24\'s commits', () => {

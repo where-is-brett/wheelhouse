@@ -30,7 +30,7 @@ const ODD_SPACE = /[^\S \t]/u;
 
 // The words after the script when `command` is `node <pluginRoot>/<script> …` with no shell
 // syntax at all and the script in a real plugin root; null for anything else.
-function scriptArguments(command, pluginRoots, platform, script) {
+export function scriptArguments(command, pluginRoots, platform, script) {
   if (typeof command !== 'string' || CONTROL.test(command) || ODD_SPACE.test(command)) return null;
   const windows = platform === 'win32';
   const parts = words(command, windows);
@@ -82,8 +82,9 @@ function sandboxOn(cwd) {
   return (read('settings.local.json') ?? read('settings.json')) === true;
 }
 
-// The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed.
-function runbookRoots(dir, self, pluginRoot) {
+// The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed:
+// the folders a plugin command may be run from.
+export function pluginRoots(dir, self, pluginRoot) {
   const roots = [pluginRoot];
   try {
     const managed = dir ?? managedDir();
@@ -118,7 +119,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   if (!inProject && byPath !== null) return undefined;
   if (READ_TOOLS.includes(input.tool_name) || HALT_TOOLS.includes(input.tool_name)) return undefined;
   if (input.tool_name === 'Bash') {
-    const roots = runbookRoots(dir, self, pluginRoot);
+    const roots = pluginRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;
     if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform) || isWakeRead(command, roots, platform)) return undefined;
   }

@@ -49,7 +49,7 @@ const repoRoot = () => path.resolve(path.dirname(fileURLToPath(import.meta.url))
 // --- Reading ---
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-const isHashed = (list) => Array.isArray(list) && list.every((item) => isObject(item) && typeof item.path === 'string' && (typeof item.hash === 'string' || item.hash === null));
+const isHashed = (list) => Array.isArray(list) && list.every((item) => isObject(item) && typeof item.path === 'string' && typeof item.hash === 'string');
 
 // The manifest in `root`'s lineage folder; throws when it is missing or is not a manifest.
 export function readManifest(root = repoRoot()) {
@@ -76,12 +76,17 @@ export function readManifest(root = repoRoot()) {
 const sameFolder = (a, b) => typeof a === 'string' && typeof b === 'string'
   && path.resolve(a.replace(/\\/g, '/')).toLowerCase() === path.resolve(b.replace(/\\/g, '/')).toLowerCase();
 
+// The user's Claude folder: CLAUDE_CONFIG_DIR when it is set, else ~/.claude.
+export function claudeHome(env = process.env) {
+  return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+}
+
 // The project-scope install of `upstream` for `projectDir`, from Claude Code's record of
 // installs: { dir, sha }, or null when there is none (or the record can't be read).
-export function locateInstalled(upstream, { projectDir, claudeHome = path.join(os.homedir(), '.claude') } = {}) {
+export function locateInstalled(upstream, { projectDir, claudeHome: home = claudeHome() } = {}) {
   let record;
   try {
-    record = JSON.parse(fs.readFileSync(path.join(claudeHome, 'plugins', 'installed_plugins.json'), 'utf8'));
+    record = JSON.parse(fs.readFileSync(path.join(home, 'plugins', 'installed_plugins.json'), 'utf8'));
   } catch {
     return null;
   }
@@ -104,13 +109,14 @@ function hashAt(dir, relative, hasher) {
   }
 }
 
-// Compares what is installed with the manifest. `locate(upstream)` gives { dir, sha } or
-// null. Each mismatch names the upstream, the path (`*` for a missing install, `@commit`
-// for a different commit) and the hash or commit wanted and found (null when absent).
-export function checkInstalled({ manifest, locate = locateInstalled }) {
+// Compares what is installed for the project in `projectDir` with the manifest.
+// `locate(upstream, { projectDir, claudeHome })` gives { dir, sha } or null. Each mismatch
+// names the upstream, the path (`*` for a missing install, `@commit` for a different
+// commit) and the hash or commit wanted and found (null when absent).
+export function checkInstalled({ manifest, projectDir, claudeHome: home, locate = locateInstalled }) {
   const mismatches = [];
   for (const upstream of manifest.upstreams) {
-    const installed = locate(upstream);
+    const installed = locate(upstream, { projectDir, claudeHome: home });
     if (!installed) {
       mismatches.push({ upstream: upstream.name, path: '*', want: upstream.sha, got: null });
       continue;
