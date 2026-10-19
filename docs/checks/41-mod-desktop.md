@@ -2,7 +2,7 @@
 
 # Check 41: the mod in Desktop
 
-**Answer:** Deferred — the sitting needs the director at the Mac and is held until they are back (about 08:00 on 20 October 2026); Windows follows when the director is next at that computer. Board-and-usage check 33 (the mod's first piece in Desktop) is folded into the same sitting and is likewise still to come.
+**Answer:** Deferred — the sitting needs the director at the Mac and is held until they are back (about 08:00 on 20 October 2026); Windows follows when the director is next at that computer. Board-and-usage check 33 (the mod's first piece in Desktop) is folded into the same sitting and is likewise Deferred (held for the director's sitting).
 
 ## Question
 
@@ -39,14 +39,14 @@ Not yet tried in Desktop. The preparation ran on 20 October 2026 on macOS 27.0.1
 | 41-1 | director | say whether the pane and the status line are there (**I see both**, **Only the pane**, **Neither**) | both drawn beside the test session |
 | 41-2 | director | **Approve** on card 1, the session idle | an approval of pull request 7 at its head commit, signed and verifying; nothing waiting in the helper's queue; card 1 gone from the pane |
 | 41-3 | director | **Not now** on the settings card | a card answer, no confirmation; the card still drawn with the same buttons |
-| 41-4 | director | **Explain more** on the separator card, then **Comma** on the same card while the turn it started is still running | an answer action for that question, labelled Comma, signed and verifying, whose time falls inside that turn. If it is lost, `HIDE_WHILE_BUSY` is turned on in `hooks/mod/pane.tsx` with its test, and this note says so |
+| 41-4 | director | **Explain more** on the separator card, then **Comma** on the same card while the turn it started is still running | an answer action for that question, labelled Comma, signed and verifying, whose time falls inside that turn. If it is lost, `HIDE_WHILE_BUSY` is turned on in `hooks/mod/pane.tsx` with its test, and this note says so. Also noted: how Desktop draws the Explain more sentence, and any longer text the session writes before a card |
 | 41-5 | director | **Settings**, then **2** on the Pace row, then **Board** | a setting of pace 2 and a confirmation of it, signed and verifying; pace 2 in force for this project |
 | 41-6 | director | **STOP**, then **Lift STOP** in the pane | STOP set by the mod, then a signed `lift-stop`; the pane draws STOP off |
 | 41-7 | director, then agent | lock the screen for three minutes; the agent adds a fifth card at once; on their return, a card asks whether the phone heard | `courier.json`'s `lastWakeAt` inside the three minutes and after the card was recorded; one wake for the card; the session's entry moving on every 15 seconds while locked (the timer runs with the window hidden); the director says a notification came |
 | 41-8 | agent | send the test session two lines led `Wheelhouse:`, one with `SendMessage` and one with the app's `send_message` | neither reaches the conversation (no user row in the transcript). Either way, the origin kind and first line each hook saw are recorded |
 | 41-9 | director | type `/digest` | the briefing shown as the command's output with no model turn after it; the time of the last briefing moved on |
 
-**The agent's own press as a bridge run.** The plan has the agent run the bridge with `origin: 'pane'` from its own Bash. The sitting runs it in the test session's sandboxed Bash instead (in step 33-1, a press of **Confirm** on the settings card): the agent's own session runs outside any sandbox, where the bridge can read the signing key and would sign a pane press (check 32: only the sandbox keeps an agent's run from signing). Pass: the run answers `ok: false` and no confirmation is recorded.
+**The agent's own press as a bridge run.** The plan has the agent run the bridge with `origin: 'pane'` from its own Bash. The sitting runs it in the test session's sandboxed Bash instead (in step 33-1, a press of **Confirm** on the settings card): the agent's own session runs outside any sandbox, where the bridge can read the signing key and would sign a pane press (check 32: only the sandbox keeps an agent's run from signing). Pass: the run answers `ok: false` and no confirmation is recorded. Which refusal it was is recorded too: "This isn't a Wheelhouse project" shows the sandbox hides the scratch home, and with it the signing key, so the bridge never found the project; it doesn't show that a found project's key was refused.
 
 **The sources.** The records with their signatures checked, `courier.json`, the session's transcript (whose user rows carry an origin), the observer mod's own log, and the director's answers on the cards.
 
@@ -54,7 +54,7 @@ Not yet tried in Desktop. The preparation ran on 20 October 2026 on macOS 27.0.1
 
 None from Desktop yet. What follows was found by reading the code and by agent runs during the preparation, not by the sitting.
 
-- **The bridge's tick on the scratch project draws the expected pane.** A front desk's tick, run by the agent through the bridge (and its files put back afterwards, so it counts as no session): role front desk, a tick every 15 seconds, the glance and status line `Wheelhouse · 6 waiting`, STOP off, the watcher not needed (Shape 2), one health line (agents act with the director's full GitHub or GitLab access, from the quick connection), and the six cards with the buttons the table above names. The pane draws one card at a time with **Back** and **Next**, and the settings view behind **Settings**.
+- **The bridge's tick on the scratch project draws the expected pane.** A front desk's tick on the copy made at fa9a5af, run again by the agent on 20 October 2026 through the bridge (and its files put back afterwards, so it counts as no session): role `front-desk`, a tick every 15000 ms, the glance and status line `Wheelhouse · 6 waiting`, STOP off, nothing submitted, the watcher not needed (Shape 2), one health line (agents act with the director's full GitHub or GitLab access, from the quick connection), and the six cards with their buttons: the approval, **Approve**, **Not now**, **Explain more** and **Show me**; each setting's confirmation, **Confirm**, **Not now**, **Explain more** and **Show me**; the feature's question, its two options (**Comma**, **Tab**) and **Explain more**; the product question, **Blue**, **Green** and **Explain more**, each of them starting a front-desk turn. The pane draws one card at a time with **Back** and **Next**, and the settings view behind **Settings**.
 - **Another session's `SendMessage` probably won't be kept out.** The engine's types name a `SendMessage` delivery's origin `peer-send-message`, "framed as a notification", and say the app's `send_message` arrives labelled with the sender's title. The traffic rule in `hooks/mod/messages.ts` keeps out only origins `sdk` and `peer` whose first line is led `Wheelhouse…`. So the line is likely to reach the conversation, and its first line may not be the `Wheelhouse:` line itself. By Ruling 49 the rule changes only on the sitting's evidence: step 41-8 records the origin kind and the first line on each event.
 - **The courier's STOP wake needed Claude's notification let through STOP.** The STOP guard refused `PushNotification`, so the courier's at-once wake for "STOP is on" could not reach the phone. By Ruling 48 it now passes STOP, matched by its exact name (commit eda68a7, with its tests); the lineage hold still refuses it. Whether it asks for permission in a real session is for the sitting to see.
 - **A card made by `cli.js card` never wakes the courier, by design.** `card` records the card as asked, since it has just been put to the director in the chat, and the courier wakes only for cards no one has asked yet. So the locked-screen card in step 41-7 is composed with the same composer but recorded unasked, as the end-to-end tests do.
@@ -67,7 +67,8 @@ Not known until the sitting, and each seen in its first steps:
 - whether a plugin loaded from a mods folder brings its command hooks as well as its mod (check 9's probe was a mod alone). The reply codes need the prompt record, a command hook; without it check 33's code steps can't pass this way, and loading the whole plugin needs check 31's local install and its own card;
 - that the session start's command hook doesn't run for a plugin loaded mid-session (no helper start, no lineage check): harmless here, with the stand-in helper already running, but it differs from real use;
 - whether Desktop asks to trust a folder in the temporary folder, and whether the hot-reloading question shows while the session is idle;
-- whether the pane's times read in the computer's own time zone.
+- whether the pane's times read in the computer's own time zone;
+- how Desktop draws the Explain more sentence, and longer text before a card (a headless stream carries longer prose between tool calls only as a summary, `docs/evals/mod.md`), seen in step 41-4.
 
 ## What it means for the design
 
@@ -84,7 +85,7 @@ The rest waits for the sitting. Which design lines depend on which answer:
 
 ## Needs the director
 
-Yes, when they are back at the Mac: one opening card, then one short card per step (about 15 minutes of their time with check 33, and 2 or 3 minutes while the session opens). Then Windows, with that visit's other checks.
+Yes, when they are back at the Mac: one opening card, then one short card per step: about 20 minutes in all, 15 of the director's (check 33's 5 among them), plus 2 or 3 while the session opens. Then Windows, with that visit's other checks.
 
 > **Trying Wheelhouse's pane in Claude Desktop**
 >

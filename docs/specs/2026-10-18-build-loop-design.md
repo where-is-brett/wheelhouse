@@ -337,7 +337,7 @@ Both files are guardrails of Wheelhouse's repository: changing them is a level-4
 
 - its source and exact commit;
 - a fingerprint (SHA-256) of each whole skill folder we use, its scripts and prompts included, plus Superpowers' session-start hook and each upstream's licence file;
-- for Claude Code, the lowest version the design checks were run on.
+- for Claude Code, the lowest Claude Code Wheelhouse runs on.
 
 Line endings are evened out to LF before fingerprinting, so Windows and macOS computers agree. Models stay in the routing table (main design, section 8); the manifest points there.
 

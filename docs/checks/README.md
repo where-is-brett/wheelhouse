@@ -45,7 +45,8 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 34 | Screenshots from a hidden browser | Partly | [34-screens.md](34-screens.md) |
 | 39 | What the transcripts show about a message and a turn | Yes, with two gaps | [39-transcripts.md](39-transcripts.md) |
 | 40 | The mod without a screen | Yes, with five changes | [40-mod-headless.md](40-mod-headless.md) |
-| 41 | The mod in Desktop | Deferred | [41-mod-desktop.md](41-mod-desktop.md) |
+| 33 | The mod's first piece in Desktop | Deferred (held for the director's sitting, with check 41) | [41-mod-desktop.md](41-mod-desktop.md) |
+| 41 | The mod in Desktop | Deferred (held for the director's sitting) | [41-mod-desktop.md](41-mod-desktop.md) |
 | 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |
