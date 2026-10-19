@@ -343,8 +343,7 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
   1	attachment:hook_success userType=external
   1	attachment:hook_success version=2.1.302
   1	mode mode=normal
-  1	user origin.kind=task-notification
-  1	user origin.producer=session-task
+  1	user origin.producer=<present>
   1	user origin={kind:task-notification}
   1	user promptSource=system
   1	user toolUseResult.status=async_launched
@@ -490,7 +489,6 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     2	shape.tools[].input_schema.$schema
     2	shape.tools[].input_schema.additionalProperties
     2	shape.tools[].input_schema.properties
-    2	shape.tools[].input_schema.properties.<key>
     2	shape.tools[].input_schema.required
     2	shape.tools[].input_schema.type
     2	shape.tools[].model
@@ -535,6 +533,8 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     13	message.usage.iterations[]
     13	message.usage.iterations[].cache_creation
     13	message.usage.iterations[].cache_creation_input_tokens
+    13	message.usage.iterations[].cache_creation.ephemeral_1h_input_tokens
+    13	message.usage.iterations[].cache_creation.ephemeral_5m_input_tokens
     13	message.usage.iterations[].cache_read_input_tokens
     13	message.usage.iterations[].input_tokens
     13	message.usage.iterations[].output_tokens
@@ -575,8 +575,6 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     3	thinkingDisplay
     3	thinkingDurationMs
     3	wireToolInputs
-    3	wireToolInputs.<key>
-    2	message.content[tool_use].input.<key>
     1	agentId
     1	attributionAgent
     1	message.content[tool_use].input.questions
@@ -699,7 +697,6 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
   -- attachment:environment
     2	attachment
     2	attachment.snapshot
-    2	attachment.snapshot.<key>
     2	attachment.type
     2	cwd
     2	entrypoint
@@ -939,7 +936,6 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
   -- cost-state
     2	hasUnknownModelCost
     2	modelUsage
-    2	modelUsage.<key>
     2	sessionId
     2	startTime
     2	totalAPIDuration
@@ -998,13 +994,14 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     3	toolUseResult
     1	agentId
     1	message.content[tool_result].content[text]
+    1	message.content[tool_result].content[text].text
+    1	message.content[tool_result].content[text].type
     1	origin
     1	origin.kind
     1	origin.producer
     1	origin.runId
     1	permissionDecision.reasonType
     1	queueSkipAttachments
-    1	toolUseResult.<key>
     1	toolUseResult.agentId
     1	toolUseResult.answers
     1	toolUseResult.file
@@ -1013,128 +1010,133 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     1	toolUseResult.status
     1	toolUseResult.type
 
+== Keys not on the list of field paths (fields.js), hidden, per parent path (count of keys hidden)
+  92	attachment.tools[].schema.input_schema
+  74	shape.tools[].input_schema.properties
+  36	message.content[tool_addition].tool.definition
+  26	shape.tools[].input_schema.required
+  14	attachment.snapshot
+  14	attachment.surfacedDefinitions[].definition.input_schema
+  6	toolUseResult
+  5	message.content[tool_use].input
+  5	toolUseResult.file
+  3	wireToolInputs
+  2	modelUsage
+  1	message.content[tool_use].input.questions
+  1	toolUseResult.answers
+  1	toolUseResult.questions
+
 == Attachment key paths
-  8	attachment:total_tokens_reminder text
-  8	attachment:total_tokens_reminder type
-  7	attachment:hook_additional_context content
-  7	attachment:hook_additional_context content[]
-  7	attachment:hook_additional_context hookEvent
-  7	attachment:hook_additional_context hookName
-  7	attachment:hook_additional_context toolUseID
-  7	attachment:hook_additional_context type
-  6	attachment:deferred_tools_delta addedLines
-  6	attachment:deferred_tools_delta addedNames
-  6	attachment:deferred_tools_delta readdedNames
-  6	attachment:deferred_tools_delta removedNames
-  6	attachment:deferred_tools_delta type
-  6	attachment:deferred_tools_delta wireHiddenNames
-  5	attachment:deferred_tools_delta addedNames[]
-  5	attachment:deferred_tools_delta failedMcpServers
-  5	attachment:deferred_tools_delta needsAuthMcpServers
-  5	attachment:deferred_tools_delta pendingMcpServers
-  4	attachment:deferred_tools_delta addedLines[]
-  4	attachment:deferred_tools_delta needsAuthMcpServers[]
-  4	attachment:mcp_instructions_delta addedBlocks
-  4	attachment:mcp_instructions_delta addedNames
-  4	attachment:mcp_instructions_delta removedNames
-  4	attachment:mcp_instructions_delta type
-  4	attachment:prompt_snapshot contextRendering
-  4	attachment:prompt_snapshot echoWireToolInputs
-  4	attachment:prompt_snapshot reminderFold
-  4	attachment:prompt_snapshot systemPrompt
-  4	attachment:prompt_snapshot systemPrompt[]
-  4	attachment:prompt_snapshot type
-  3	attachment:deferred_tools_delta surfacedDefinitions
-  3	attachment:deferred_tools_delta surfacedDefinitions[]
-  3	attachment:deferred_tools_delta surfacedDefinitions[].listing
-  3	attachment:deferred_tools_delta surfacedDefinitions[].name
-  3	attachment:deferred_tools_delta surfacedNames
-  3	attachment:deferred_tools_delta surfacedNames[]
-  3	attachment:mcp_instructions_delta addedBlocks[]
-  3	attachment:mcp_instructions_delta addedNames[]
-  2	attachment:credential_org organizationUuid
-  2	attachment:credential_org type
-  2	attachment:date date
-  2	attachment:date type
-  2	attachment:deferred_tools_delta pendingMcpServers[]
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.description
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.eager_input_streaming
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.properties
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.properties.<key>
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.required
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.type
-  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.name
-  2	attachment:environment snapshot
-  2	attachment:environment snapshot.<key>
-  2	attachment:environment type
-  2	attachment:model identity
-  2	attachment:model identity.knowledgeCutoff
-  2	attachment:model identity.marketingName
-  2	attachment:model identity.modelId
-  2	attachment:model text
-  2	attachment:model type
-  2	attachment:prompt_snapshot cliPrefix
-  2	attachment:prompt_snapshot inlineTools
-  2	attachment:prompt_snapshot keptReminders
-  2	attachment:prompt_snapshot systemTurns
-  2	attachment:prompt_snapshot toolChangeHeader
-  2	attachment:prompt_snapshot tools
-  2	attachment:prompt_snapshot tools[]
-  2	attachment:prompt_snapshot tools[].description
-  2	attachment:prompt_snapshot tools[].name
-  2	attachment:prompt_snapshot tools[].schema
-  2	attachment:prompt_snapshot tools[].schema.description
-  2	attachment:prompt_snapshot tools[].schema.eager_input_streaming
-  2	attachment:prompt_snapshot tools[].schema.input_schema
-  2	attachment:prompt_snapshot tools[].schema.input_schema.$schema
-  2	attachment:prompt_snapshot tools[].schema.input_schema.additionalProperties
-  2	attachment:prompt_snapshot tools[].schema.input_schema.properties
-  2	attachment:prompt_snapshot tools[].schema.input_schema.properties.<key>
-  2	attachment:prompt_snapshot tools[].schema.input_schema.required
-  2	attachment:prompt_snapshot tools[].schema.input_schema.type
-  2	attachment:prompt_snapshot tools[].schema.name
-  2	attachment:remote_session_change commit
-  2	attachment:remote_session_change managedCommit
-  2	attachment:remote_session_change managedPr
-  2	attachment:remote_session_change pr
-  2	attachment:remote_session_change sendUserFileHint
-  2	attachment:remote_session_change type
-  2	attachment:remote_session_change url
-  2	attachment:session_context context
-  2	attachment:session_context context.gitStatus
-  2	attachment:session_context context.userEmail
-  2	attachment:session_context type
-  2	attachment:skill_listing content
-  2	attachment:skill_listing isInitial
-  2	attachment:skill_listing names
-  2	attachment:skill_listing names[]
-  2	attachment:skill_listing skillCount
-  2	attachment:skill_listing type
-  1	attachment:agent_listing_delta addedLines
-  1	attachment:agent_listing_delta addedLines[]
-  1	attachment:agent_listing_delta addedTypes
-  1	attachment:agent_listing_delta addedTypes[]
-  1	attachment:agent_listing_delta builtInTypes
-  1	attachment:agent_listing_delta builtInTypes[]
-  1	attachment:agent_listing_delta isInitial
-  1	attachment:agent_listing_delta removedTypes
-  1	attachment:agent_listing_delta showConcurrencyNote
-  1	attachment:agent_listing_delta type
-  1	attachment:deferred_tools_delta readdedNames[]
-  1	attachment:deferred_tools_delta removedByBlock
-  1	attachment:deferred_tools_delta removedByBlock[]
-  1	attachment:deferred_tools_delta removedNames[]
-  1	attachment:deferred_tools_delta surfacedDefinitions[].sameAs
-  1	attachment:hook_success command
-  1	attachment:hook_success content
-  1	attachment:hook_success durationMs
-  1	attachment:hook_success exitCode
-  1	attachment:hook_success hookEvent
-  1	attachment:hook_success hookName
-  1	attachment:hook_success stderr
-  1	attachment:hook_success stdout
-  1	attachment:hook_success toolUseID
-  1	attachment:hook_success type
-  1	attachment:mcp_instructions_delta removedNames[]
+  8	attachment:total_tokens_reminder attachment.text
+  8	attachment:total_tokens_reminder attachment.type
+  7	attachment:hook_additional_context attachment.content
+  7	attachment:hook_additional_context attachment.content[]
+  7	attachment:hook_additional_context attachment.hookEvent
+  7	attachment:hook_additional_context attachment.hookName
+  7	attachment:hook_additional_context attachment.toolUseID
+  7	attachment:hook_additional_context attachment.type
+  6	attachment:deferred_tools_delta attachment.addedLines
+  6	attachment:deferred_tools_delta attachment.addedNames
+  6	attachment:deferred_tools_delta attachment.readdedNames
+  6	attachment:deferred_tools_delta attachment.removedNames
+  6	attachment:deferred_tools_delta attachment.type
+  6	attachment:deferred_tools_delta attachment.wireHiddenNames
+  5	attachment:deferred_tools_delta attachment.addedNames[]
+  5	attachment:deferred_tools_delta attachment.failedMcpServers
+  5	attachment:deferred_tools_delta attachment.needsAuthMcpServers
+  5	attachment:deferred_tools_delta attachment.pendingMcpServers
+  4	attachment:deferred_tools_delta attachment.addedLines[]
+  4	attachment:deferred_tools_delta attachment.needsAuthMcpServers[]
+  4	attachment:mcp_instructions_delta attachment.addedBlocks
+  4	attachment:mcp_instructions_delta attachment.addedNames
+  4	attachment:mcp_instructions_delta attachment.removedNames
+  4	attachment:mcp_instructions_delta attachment.type
+  4	attachment:prompt_snapshot attachment.contextRendering
+  4	attachment:prompt_snapshot attachment.echoWireToolInputs
+  4	attachment:prompt_snapshot attachment.reminderFold
+  4	attachment:prompt_snapshot attachment.systemPrompt
+  4	attachment:prompt_snapshot attachment.systemPrompt[]
+  4	attachment:prompt_snapshot attachment.type
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions[]
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions[].listing
+  3	attachment:deferred_tools_delta attachment.surfacedDefinitions[].name
+  3	attachment:deferred_tools_delta attachment.surfacedNames
+  3	attachment:deferred_tools_delta attachment.surfacedNames[]
+  3	attachment:mcp_instructions_delta attachment.addedBlocks[]
+  3	attachment:mcp_instructions_delta attachment.addedNames[]
+  2	attachment:credential_org attachment.organizationUuid
+  2	attachment:credential_org attachment.type
+  2	attachment:date attachment.date
+  2	attachment:date attachment.type
+  2	attachment:deferred_tools_delta attachment.pendingMcpServers[]
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.description
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.eager_input_streaming
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.input_schema
+  2	attachment:deferred_tools_delta attachment.surfacedDefinitions[].definition.name
+  2	attachment:environment attachment.snapshot
+  2	attachment:environment attachment.type
+  2	attachment:model attachment.identity
+  2	attachment:model attachment.identity.knowledgeCutoff
+  2	attachment:model attachment.identity.marketingName
+  2	attachment:model attachment.identity.modelId
+  2	attachment:model attachment.text
+  2	attachment:model attachment.type
+  2	attachment:prompt_snapshot attachment.cliPrefix
+  2	attachment:prompt_snapshot attachment.inlineTools
+  2	attachment:prompt_snapshot attachment.keptReminders
+  2	attachment:prompt_snapshot attachment.systemTurns
+  2	attachment:prompt_snapshot attachment.toolChangeHeader
+  2	attachment:prompt_snapshot attachment.tools
+  2	attachment:prompt_snapshot attachment.tools[]
+  2	attachment:prompt_snapshot attachment.tools[].description
+  2	attachment:prompt_snapshot attachment.tools[].name
+  2	attachment:prompt_snapshot attachment.tools[].schema
+  2	attachment:prompt_snapshot attachment.tools[].schema.description
+  2	attachment:prompt_snapshot attachment.tools[].schema.eager_input_streaming
+  2	attachment:prompt_snapshot attachment.tools[].schema.input_schema
+  2	attachment:prompt_snapshot attachment.tools[].schema.name
+  2	attachment:remote_session_change attachment.commit
+  2	attachment:remote_session_change attachment.managedCommit
+  2	attachment:remote_session_change attachment.managedPr
+  2	attachment:remote_session_change attachment.pr
+  2	attachment:remote_session_change attachment.sendUserFileHint
+  2	attachment:remote_session_change attachment.type
+  2	attachment:remote_session_change attachment.url
+  2	attachment:session_context attachment.context
+  2	attachment:session_context attachment.context.gitStatus
+  2	attachment:session_context attachment.context.userEmail
+  2	attachment:session_context attachment.type
+  2	attachment:skill_listing attachment.content
+  2	attachment:skill_listing attachment.isInitial
+  2	attachment:skill_listing attachment.names
+  2	attachment:skill_listing attachment.names[]
+  2	attachment:skill_listing attachment.skillCount
+  2	attachment:skill_listing attachment.type
+  1	attachment:agent_listing_delta attachment.addedLines
+  1	attachment:agent_listing_delta attachment.addedLines[]
+  1	attachment:agent_listing_delta attachment.addedTypes
+  1	attachment:agent_listing_delta attachment.addedTypes[]
+  1	attachment:agent_listing_delta attachment.builtInTypes
+  1	attachment:agent_listing_delta attachment.builtInTypes[]
+  1	attachment:agent_listing_delta attachment.isInitial
+  1	attachment:agent_listing_delta attachment.removedTypes
+  1	attachment:agent_listing_delta attachment.showConcurrencyNote
+  1	attachment:agent_listing_delta attachment.type
+  1	attachment:deferred_tools_delta attachment.readdedNames[]
+  1	attachment:deferred_tools_delta attachment.removedByBlock
+  1	attachment:deferred_tools_delta attachment.removedByBlock[]
+  1	attachment:deferred_tools_delta attachment.removedNames[]
+  1	attachment:deferred_tools_delta attachment.surfacedDefinitions[].sameAs
+  1	attachment:hook_success attachment.command
+  1	attachment:hook_success attachment.content
+  1	attachment:hook_success attachment.durationMs
+  1	attachment:hook_success attachment.exitCode
+  1	attachment:hook_success attachment.hookEvent
+  1	attachment:hook_success attachment.hookName
+  1	attachment:hook_success attachment.stderr
+  1	attachment:hook_success attachment.stdout
+  1	attachment:hook_success attachment.toolUseID
+  1	attachment:hook_success attachment.type
+  1	attachment:mcp_instructions_delta attachment.removedNames[]

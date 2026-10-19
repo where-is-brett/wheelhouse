@@ -33,9 +33,10 @@
 //   node probes/39-transcripts/run.js --mine [--days 7] [--out <file>]
 //     Reads the transcripts under ~/.claude/projects/ changed in the last
 //     `days` days (sessions and subagent files), and prints ONLY entry types,
-//     field names (key paths), kinds of marker (known prefixes, the names of
-//     leading tags, enumerated values such as `entrypoint` and `origin.kind`)
-//     and counts. Never message text, `cwd` values, paths, session ids, model
+//     field names (key paths), kinds of marker (known prefixes, enumerated
+//     values such as `entrypoint` and `origin.kind`) and counts, each through
+//     the allowlists in fields.js: anything not listed prints as <key> or
+//     <value>, and hidden keys are counted per parent path. Never message text, `cwd` values, paths, session ids, model
 //     names, project or folder names. The output is written under the
 //     temporary folder (or to --out, which must be outside the repository)
 //     and is never committed.
@@ -47,7 +48,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { withoutHostVariables } from '../../scripts/lib/claude.js';
 import { probeLogDir } from '../lib/log.js';
-import { assertUnderTmp, makeScratchProject } from '../lib/scratch.js';
+import { makeScratchProject } from '../lib/scratch.js';
+import { BLOCK_TYPES, FIELD_PATHS, PRESENCE_ONLY, TOOL_NAMES, VALUES } from './fields.js';
 
 const probeDir = path.dirname(fileURLToPath(import.meta.url));
 const repoDir = path.resolve(probeDir, '..', '..');
@@ -94,30 +96,31 @@ export const REPLY_CODE = /^[A-Z0-9]{4} (Approve|Confirm|Lift STOP|Do it|Push it
 
 // ------------------------------------------------------------ the guard
 //
-// What the --mine pass may print is decided here, and nowhere else: a key is
-// printed only when it is a plain field name and not shaped like an id; a map
-// keyed by ids or by the person's own data (file names, question text, model
-// or server names) shows its children as `<key>`; a value is printed only for
-// the fields below, and only when it is a short kind word, never an id.
+// What the --mine pass may print is decided here and in fields.js, and fails
+// closed (ruling E7): a key prints only when its whole path is on the list of
+// Claude Code's own field paths (fields.js), otherwise it prints as <key>,
+// nothing below it is read, and it is counted per parent path; a value prints
+// only when it is on that field's list of values, otherwise as <value>; a few
+// fields print only that they are there.
 
-// Fields whose values are kinds (short enumerated words), which may be printed.
+// Fields whose values (or presence) the summary reports.
 const ENUM_FIELDS = new Set([
-  'type', 'subtype', 'attachment.type', 'userType', 'entrypoint', 'origin', 'origin.kind', 'permissionMode',
+  'subtype', 'attachment.type', 'userType', 'entrypoint', 'origin', 'permissionMode',
   'level', 'operation', 'message.role', 'message.type', 'message.stop_reason', 'toolUseResult.status',
-  'toolUseResult.type', 'hookEvent', 'attachment.hookEvent', 'attachment.hookName', 'version', 'mode', 'promptSource',
-  'source', 'turnOrigin', 'turnOrigin.kind', 'origin.producer', 'origin.fromMode',
-  'origin.handback', 'sessionKind', 'turnCompanion', 'turnCompanion.kind', 'toolDenialKind',
-  'attachment.origin.kind', 'attachment.commandMode', 'renderedInHumanTurn', 'renderedRole',
+  'toolUseResult.type', 'attachment.hookEvent', 'attachment.hookName', 'version', 'mode', 'promptSource',
+  'source', 'turnOrigin', 'origin.producer', 'origin.fromMode', 'origin.subkind',
+  'origin.handback', 'sessionKind', 'turnCompanion', 'toolDenialKind',
+  'attachment.origin', 'attachment.commandMode', 'renderedRole',
 ]);
-// A kind word: starts with a letter, short, no run of three digits (so no id or hash).
-const KIND_WORD = /^[A-Za-z][A-Za-z0-9_:.-]{0,31}$/;
 const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,4}$/;
-// A key that is a field name; anything else (a question's text, a file name) is shown as <key>.
+// A key that is a field name, for the scratch run's own listing.
 const FIELD_NAME = /^[A-Za-z_$][A-Za-z0-9_$]{0,40}$/;
-const MAX_DEPTH = 4;
+const MAX_DEPTH = 6;
 
 // Shaped like an id: an API id (toolu_, srvtoolu_, msg_, req_, call_), a UUID,
-// a long hex string, or anything holding a run of three or more digits.
+// a long hex string, or anything holding a run of three or more digits. Used
+// for the scratch run's listing and the kept report; the --mine pass does not
+// rely on it.
 export function isIdShaped(text) {
   const t = String(text);
   return /^(toolu|srvtoolu|msg|req|call)_/i.test(t)
@@ -126,58 +129,41 @@ export function isIdShaped(text) {
     || /\d{3,}/.test(t);
 }
 
-// A tool's name as it may be printed: an MCP tool (whose name holds a server
-// name) is only `mcp tool`.
+// A tool's name as it may be printed: one of Claude Code's own tools, else
+// `mcp tool` or `other tool`.
 export function safeToolName(name) {
-  if (typeof name !== 'string') return '<tool>';
-  if (/^mcp__/.test(name)) return 'mcp tool';
-  return KIND_WORD.test(name) && !isIdShaped(name) ? name : '<tool>';
+  if (typeof name === 'string' && TOOL_NAMES.has(name)) return name;
+  return typeof name === 'string' && /^mcp__/.test(name) ? 'mcp tool' : 'other tool';
 }
 
+// A key for the scratch run's own listing (its own data): by shape.
 export function safeKey(key) {
   return FIELD_NAME.test(key) && !isIdShaped(key) ? key : '<key>';
 }
 
-// Paths whose children are keyed by ids or by the person's own data: every
-// child is shown as `<key>`, and what lies under it is not read.
-const MAP_PATHS = /(^|\.)(wireToolInputs|modelUsage|answers|annotations|trackedFileBackups|perToolHashes|_meta|env|metadata|hookSpecificOutput|mcpServers|plugins|skills|files|backups|attributions|fileStates|readFileState|properties|headers|remotes|visibility_cache|reasonCounts)$/;
-// Paths shown one level down only, through a short list of known field names:
-// a tool's input and a tool's own result hold whatever the tool was given or gave.
-const SHALLOW_PATHS = /(^|\.)(input|toolUseResult|structuredPatch|snapshot)$/;
-const SHALLOW_CHILDREN = new Set(['answers', 'questions', 'status', 'type', 'agentId', 'isAsync', 'interrupted', 'stdout', 'stderr', 'file', 'filePath', 'content', 'success', 'commandName']);
-
-// Every key path in a value. Arrays become `[]`; the blocks of a message's
-// content are told apart by their type (`message.content[text].text`).
-export function keyPaths(value, prefix = '', out = new Set(), depth = 0) {
+// Every listed key path in a value. Arrays become `[]`; the blocks of a
+// message's content are told apart by their type (`message.content[text].text`)
+// when the type is a known one. A key whose path is not listed is counted in
+// `hidden` under its parent path and not read further.
+export function keyPaths(value, prefix = '', out = new Set(), hidden = new Map(), depth = 0) {
   if (depth > MAX_DEPTH || value === null || typeof value !== 'object') return out;
+  const parent = prefix || '(top)';
   if (Array.isArray(value)) {
     for (const item of value.slice(0, 50)) {
       const blockType = item && typeof item === 'object' && !Array.isArray(item) ? item.type : undefined;
-      const tag = /content$/.test(prefix) && typeof blockType === 'string' && KIND_WORD.test(blockType) && !isIdShaped(blockType)
-        ? `[${blockType}]` : '[]';
+      const tag = /content$/.test(prefix) && BLOCK_TYPES.has(blockType) ? `[${blockType}]` : '[]';
       const p = `${prefix}${tag}`;
+      if (!FIELD_PATHS.has(p)) { bump(hidden, parent); continue; }
       out.add(p);
-      keyPaths(item, p, out, depth + 1);
+      keyPaths(item, p, out, hidden, depth + 1);
     }
-    return out;
-  }
-  // An object with very many keys below the top is a map of some kind, whatever its name.
-  if (depth > 0 && Object.keys(value).length > 40) {
-    out.add(`${prefix}.<key>`);
     return out;
   }
   for (const [key, inner] of Object.entries(value)) {
-    const p = prefix ? `${prefix}.${safeKey(key)}` : safeKey(key);
+    const p = prefix ? `${prefix}.${key}` : key;
+    if (!FIELD_PATHS.has(p)) { bump(hidden, parent); continue; }
     out.add(p);
-    if (MAP_PATHS.test(p)) {
-      if (inner && typeof inner === 'object' && !Array.isArray(inner) && Object.keys(inner).length) out.add(`${p}.<key>`);
-    } else if (SHALLOW_PATHS.test(p)) {
-      if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
-        for (const k of Object.keys(inner)) out.add(`${p}.${SHALLOW_CHILDREN.has(k) ? k : '<key>'}`);
-      }
-    } else {
-      keyPaths(inner, p, out, depth + 1);
-    }
+    keyPaths(inner, p, out, hidden, depth + 1);
   }
   return out;
 }
@@ -198,20 +184,21 @@ export function embeddedTags(text) {
   return KNOWN_PREFIXES.filter((p) => p.startsWith('<') && t.includes(p));
 }
 
-// A value as it may be printed: a boolean, a version number for `version`, a
-// kind word that is not shaped like an id (an MCP tool's name reduced), or
-// only what sort of value it is.
-export function enumValue(v, field = '') {
+// A value as it may be printed: a boolean; a version number for `version`; a
+// value on that field's list (fields.js); for an object with a `kind`, that
+// kind by the same rule; else only what sort of value it is. A field on the
+// presence-only list prints `<present>`.
+export function enumValue(v, field) {
   if (v === undefined) return undefined;
+  if (PRESENCE_ONLY.has(field)) return '<present>';
   if (typeof v === 'boolean') return String(v);
+  if (v === null) return '<null>';
   if (typeof v === 'string') {
     if (field === 'version') return VERSION.test(v) ? v : '<value>';
-    const reduced = v.replace(/mcp__[A-Za-z0-9_-]+/g, 'mcp tool');
-    if (reduced !== v) return /^[A-Za-z]+:mcp tool$/.test(reduced) || reduced === 'mcp tool' ? reduced : '<value>';
-    return KIND_WORD.test(v) && !isIdShaped(v) ? v : '<value>';
+    return VALUES[field]?.includes(v) ? v : '<value>';
   }
-  if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.kind === 'string') return `{kind:${enumValue(v.kind)}}`;
-  return `<${Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v}>`;
+  if (typeof v === 'object' && !Array.isArray(v) && 'kind' in v) return `{kind:${enumValue(v.kind, `${field}.kind`)}}`;
+  return `<${Array.isArray(v) ? 'array' : typeof v}>`;
 }
 
 // One user entry's signature: where it came from, as far as its fields and
@@ -232,14 +219,14 @@ export function userSignature(entry, toolNames, { firstPrompt = false } = {}) {
   }
   const flags = [];
   for (const field of ['isMeta', 'isCompactSummary', 'isVisibleInTranscriptOnly', 'isSidechain']) if (entry[field] === true) flags.push(field);
-  if (entry.origin !== undefined) flags.push(`origin=${enumValue(entry.origin)}`);
-  if (entry.promptSource !== undefined) flags.push(`promptSource=${enumValue(entry.promptSource)}`);
-  if (entry.turnOrigin !== undefined) flags.push(`turnOrigin=${enumValue(entry.turnOrigin)}`);
+  if (entry.origin !== undefined) flags.push(`origin=${enumValue(entry.origin, 'origin')}`);
+  if (entry.promptSource !== undefined) flags.push(`promptSource=${enumValue(entry.promptSource, 'promptSource')}`);
+  if (entry.turnOrigin !== undefined) flags.push(`turnOrigin=${enumValue(entry.turnOrigin, 'turnOrigin')}`);
   if (entry.origin && typeof entry.origin === 'object') {
-    const extra = [...new Set(Object.keys(entry.origin).filter((k) => k !== 'kind').map(safeKey))].sort();
+    const extra = [...new Set(Object.keys(entry.origin).filter((k) => k !== 'kind').map((k) => (FIELD_PATHS.has(`origin.${k}`) ? k : '<key>')))].sort();
     if (extra.length) flags.push(`origin+{${extra.join(',')}}`);
   }
-  if (entry.entrypoint !== undefined) flags.push(`entrypoint=${enumValue(entry.entrypoint)}`);
+  if (entry.entrypoint !== undefined) flags.push(`entrypoint=${enumValue(entry.entrypoint, 'entrypoint')}`);
   if (firstPrompt) flags.push('first-prompt');
   if (entry.toolUseResult !== undefined) flags.push('toolUseResult');
   if (entry.sourceToolUseID !== undefined) flags.push('sourceToolUseID');
@@ -258,15 +245,15 @@ export function newTally() {
     embedded: new Map(), attachmentKeys: new Map(), systemSubtypes: new Map(),
     cwd: new Map(), sessionId: new Map(),
     assistant: { entries: 0, withUsage: 0, withModel: 0, withInput: 0, withCacheRead: 0, withCacheCreation: 0, withOutput: 0, withRequestId: 0, sharedMessageId: 0, sharedSameUsage: 0, sharedDifferentUsage: 0, syntheticModel: 0 },
-    entrypointByFile: new Map(), promptsByVersion: new Map(), filesWithType: new Map(),
+    entrypointByFile: new Map(), promptsByVersion: new Map(), filesWithType: new Map(), hidden: new Map(),
     subagent: { entries: 0, sessionIdIsParent: 0, sessionIdOther: 0, withAgentId: 0, agentIdMatchesFile: 0, sidechain: 0, metaFiles: 0, metaToolUseIdInParent: 0, metaKeys: new Map(), notSidechainTypes: new Map(), firstParentUuidNull: 0 },
   };
 }
 
 function keyOfType(entry) {
-  const t = typeof entry.type === 'string' ? entry.type : '<no type>';
-  if (t === 'system' && entry.subtype) return `system:${enumValue(entry.subtype)}`;
-  if (t === 'attachment' && entry.attachment?.type) return `attachment:${enumValue(entry.attachment.type)}`;
+  const t = typeof entry.type === 'string' ? enumValue(entry.type, 'type') : '<no type>';
+  if (t === 'system' && entry.subtype) return `system:${enumValue(entry.subtype, 'subtype')}`;
+  if (t === 'attachment' && entry.attachment?.type) return `attachment:${enumValue(entry.attachment.type, 'attachment.type')}`;
   return t;
 }
 
@@ -297,11 +284,11 @@ export function tallyFile(tally, file, { kind, parentSessionId = null, agentFile
     bump(tally.types, `${kind}:${type}`);
     let keys = tally.keysByType.get(type);
     if (!keys) { keys = new Map(); tally.keysByType.set(type, keys); }
-    for (const p of keyPaths(entry)) bump(keys, p);
+    for (const p of keyPaths(entry, '', new Set(), tally.hidden)) bump(keys, p);
     for (const field of ENUM_FIELDS) {
       const v = field.split('.').reduce((o, k) => (o == null ? undefined : o[k]), entry);
       const e = enumValue(v, field);
-      if (e !== undefined && field !== 'type') bump(tally.enums, `${type} ${field}=${e}`);
+      if (e !== undefined) bump(tally.enums, `${type} ${field}=${e}`);
     }
     if (Array.isArray(entry.message?.content)) {
       for (const block of entry.message.content) {
@@ -313,7 +300,7 @@ export function tallyFile(tally, file, { kind, parentSessionId = null, agentFile
     }
     bump(tally.cwd, `${type} cwd=${'cwd' in entry ? 'yes' : 'no'}`);
     bump(tally.sessionId, `${type} sessionId=${'sessionId' in entry ? 'yes' : 'no'}`);
-    if (entry.entrypoint && !firstEntrypoint) firstEntrypoint = enumValue(entry.entrypoint);
+    if (entry.entrypoint && !firstEntrypoint) firstEntrypoint = enumValue(entry.entrypoint, 'entrypoint');
     let signature = null;
     if (entry.type === 'user') {
       // The file's first user entry that is a prompt (text, not a tool result or meta).
@@ -325,19 +312,19 @@ export function tallyFile(tally, file, { kind, parentSessionId = null, agentFile
       if (isPrompt && kind === 'session') {
         const firstText = typeof entry.message?.content === 'string' ? entry.message.content
           : (entry.message?.content ?? []).find((b) => b?.type === 'text')?.text;
-        bump(tally.promptsByVersion, `${enumValue(entry.version, 'version') ?? 'no version'} ${enumValue(entry.entrypoint) ?? 'no entrypoint'} origin=${entry.origin ? enumValue(entry.origin) : 'none'} promptSource=${entry.promptSource ? enumValue(entry.promptSource) : 'none'} turnOrigin=${entry.turnOrigin ? enumValue(entry.turnOrigin) : 'none'}${firstPrompt ? ' first-prompt' : ''} starts ${textMarker(firstText)}`);
+        bump(tally.promptsByVersion, `${enumValue(entry.version, 'version') ?? 'no version'} ${enumValue(entry.entrypoint, 'entrypoint') ?? 'no entrypoint'} origin=${entry.origin ? enumValue(entry.origin, 'origin') : 'none'} promptSource=${entry.promptSource ? enumValue(entry.promptSource, 'promptSource') : 'none'} turnOrigin=${entry.turnOrigin ? enumValue(entry.turnOrigin, 'turnOrigin') : 'none'}${firstPrompt ? ' first-prompt' : ''} starts ${textMarker(firstText)}`);
       }
       bump(tally.userSignatures, `${kind}: ${signature}`);
       const texts = typeof entry.message?.content === 'string' ? [entry.message.content]
         : Array.isArray(entry.message?.content) ? entry.message.content.filter((b) => b?.type === 'text').map((b) => b.text) : [];
-      const from = [entry.isMeta === true ? 'isMeta' : '', entry.origin ? `origin=${enumValue(entry.origin)}` : '', entry.promptSource ? `promptSource=${enumValue(entry.promptSource)}` : '']
+      const from = [entry.isMeta === true ? 'isMeta' : '', entry.origin ? `origin=${enumValue(entry.origin, 'origin')}` : '', entry.promptSource ? `promptSource=${enumValue(entry.promptSource, 'promptSource')}` : '']
         .filter(Boolean).join(' ') || 'no origin fields';
       for (const t of texts) for (const tag of embeddedTags(t)) bump(tally.embedded, `user text holds ${tag} (${from}; starts ${textMarker(t)})`);
     }
     if (entry.type === 'attachment' && entry.attachment && typeof entry.attachment === 'object') {
-      const a = `attachment:${enumValue(entry.attachment.type)}`;
-      for (const p of keyPaths(entry.attachment)) bump(tally.attachmentKeys, `${a} ${p}`);
-      const via = entry.attachment.origin ? ` origin=${enumValue(entry.attachment.origin)}` : '';
+      const a = `attachment:${enumValue(entry.attachment.type, 'attachment.type')}`;
+      for (const p of keyPaths(entry.attachment, 'attachment')) bump(tally.attachmentKeys, `${a} ${p}`);
+      const via = entry.attachment.origin ? ` origin=${enumValue(entry.attachment.origin, 'attachment.origin')}` : '';
       for (const p of ['content', 'prompt', 'text']) {
         if (typeof entry.attachment[p] === 'string') bump(tally.embedded, `${a}${via} .${p}: ${textMarker(entry.attachment[p])}`);
       }
@@ -460,6 +447,8 @@ export function summarise(tally) {
     line(`  -- ${type}`);
     for (const [k, n] of sorted(keys)) line(`    ${n}\t${k}`);
   }
+  line('\n== Keys not on the list of field paths (fields.js), hidden, per parent path (count of keys hidden)');
+  for (const [k, n] of sorted(tally.hidden)) line(`  ${n}\t${k}`);
   line('\n== Attachment key paths');
   for (const [k, n] of sorted(tally.attachmentKeys)) line(`  ${n}\t${k}`);
   return out.join('\n');
@@ -489,27 +478,44 @@ function recentSessionFiles(days) {
   return found;
 }
 
+// Where --out may write: never inside the repository (the output describes
+// the director's own transcripts), compared by the folder's real path, links
+// followed; never through a link, dangling or not.
+export function outPath(outArg, { repo = repoDir, tmp = os.tmpdir() } = {}) {
+  const outFile = outArg ? path.resolve(outArg) : path.join(tmp, `wheelhouse-probe-39-mine-${Date.now()}.txt`);
+  let stat = null;
+  try { stat = fs.lstatSync(outFile); } catch { /* not there yet */ }
+  if (stat?.isSymbolicLink()) throw new Error('--out must not be a link');
+  if (stat && !stat.isFile()) throw new Error('--out must be a file');
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  const realOut = path.join(fs.realpathSync(path.dirname(outFile)), path.basename(outFile));
+  const realRepo = fs.realpathSync(repo);
+  if (realOut === realRepo || realOut.startsWith(realRepo + path.sep)) throw new Error('--out must be outside the repository');
+  return realOut;
+}
+
+// Writes a new file, or replaces a plain file; never follows a link made in between.
+export function writeOut(file, text) {
+  let stat = null;
+  try { stat = fs.lstatSync(file); } catch { /* not there */ }
+  if (stat?.isSymbolicLink()) throw new Error('--out must not be a link');
+  if (stat) fs.unlinkSync(file);
+  fs.writeFileSync(file, text, { encoding: 'utf8', flag: 'wx' });
+}
+
 function mine(argv) {
   const d = argv.indexOf('--days');
   const days = d >= 0 && Number(argv[d + 1]) > 0 ? Number(argv[d + 1]) : 7;
   const o = argv.indexOf('--out');
-  const outArg = o >= 0 ? argv[o + 1] : null;
-  if (o >= 0 && !outArg) throw new Error('--out needs a file');
-  const outFile = outArg ? path.resolve(outArg) : path.join(os.tmpdir(), `wheelhouse-probe-39-mine-${Date.now()}.txt`);
-  // Never inside the repository: the output describes the director's own
-  // transcripts. The folder is compared by its real path, links followed.
-  fs.mkdirSync(path.dirname(outFile), { recursive: true });
-  if (fs.existsSync(outFile) && fs.lstatSync(outFile).isSymbolicLink()) throw new Error('--out must not be a link');
-  const realOut = path.join(fs.realpathSync(path.dirname(outFile)), path.basename(outFile));
-  const realRepo = fs.realpathSync(repoDir);
-  if (realOut === realRepo || realOut.startsWith(realRepo + path.sep)) throw new Error('--out must be outside the repository');
+  if (o >= 0 && !argv[o + 1]) throw new Error('--out needs a file');
+  const realOut = outPath(o >= 0 ? argv[o + 1] : null);
   const tally = newTally();
   const files = recentSessionFiles(days);
   for (const file of files) tallySession(tally, file);
   const text = [`Check 39, --mine: transcripts changed in the last ${days} days, read ${new Date().toISOString().slice(0, 10)}.`,
     'Types, field names, kinds of marker and counts only.', '', summarise(tally)].join('\n');
-  fs.writeFileSync(realOut, `${text}\n`, 'utf8');
-  console.log(`Read ${files.length} session files. Written to ${outFile}`);
+  writeOut(realOut, `${text}\n`);
+  console.log(`Read ${files.length} session files. Written to ${realOut}`);
 }
 
 // ------------------------------------------------------------ the scratch run
@@ -617,7 +623,7 @@ function describeEntry(entry, type, signature) {
   const keys = Object.keys(entry).filter((k) => !['message', 'toolUseResult', 'attachment', 'snapshot'].includes(k)).map(safeKey);
   const marks = [];
   for (const f of ['userType', 'entrypoint', 'isMeta', 'isSidechain', 'isCompactSummary', 'isVisibleInTranscriptOnly', 'promptId', 'agentId', 'requestId', 'cwd', 'sessionId']) {
-    if (f in entry) marks.push(['isMeta', 'isSidechain', 'isCompactSummary', 'isVisibleInTranscriptOnly', 'userType', 'entrypoint'].includes(f) ? `${f}=${enumValue(entry[f])}` : f);
+    if (f in entry) marks.push(['isMeta', 'isSidechain', 'isCompactSummary', 'isVisibleInTranscriptOnly', 'userType', 'entrypoint'].includes(f) ? `${f}=${enumValue(entry[f], f)}` : f);
   }
   if (entry.origin !== undefined) marks.push(`origin=${JSON.stringify(entry.origin)}`);
   let detail = '';
@@ -639,7 +645,7 @@ function describeEntry(entry, type, signature) {
     // Only a hook's own output is shown; other attachments (the skill list, the
     // environment) describe this computer.
     const own = /^hook_/.test(String(a.type)) ? ` content=${JSON.stringify(a.content).slice(0, 80)}` : '';
-    detail = ` attachment keys=${Object.keys(a).map(safeKey).join(',')}${a.hookEvent ? ` hookEvent=${enumValue(a.hookEvent)}` : ''}${own}`;
+    detail = ` attachment keys=${Object.keys(a).map(safeKey).join(',')}${a.hookEvent ? ` hookEvent=${enumValue(a.hookEvent, 'attachment.hookEvent')}` : ''}${own}`;
   }
   if (entry.type === 'system') detail = ` content="${String(entry.content ?? '').slice(0, 60)}"`;
   return `${type} keys=${keys.join(',')}${marks.length ? ` | ${marks.join(' ')}` : ''}${detail}`;
