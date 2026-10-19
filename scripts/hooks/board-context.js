@@ -6,7 +6,8 @@
 //
 // In a project's main folder only: never in a feature worktree, never for the foreman, never
 // outside a Wheelhouse project. It records each session's role from its first prompt (sessionRole),
-// which is how a foreman started without WHEELHOUSE_ROLE is known. On each prompt it reads when the
+// which is how a foreman started without WHEELHOUSE_ROLE is known; that first prompt gets one line
+// saying so (FOREMAN_LINE), and nothing else. On each prompt it reads when the
 // director last wrote, decides, builds the addition, and only then records the prompt's time and,
 // when it added a briefing, that the briefing was given and which unusual use it raised. It
 // informs: a failure, or a build past WAIT_MS, adds nothing and lets the prompt through (the
@@ -50,6 +51,9 @@ export const HEADINGS = {
 export const NOT_CHECKED = 'The sources haven\'t been checked yet.';
 export const NONE_CHANGED = 'No source changed at the last check.';
 const COMMAND = /^\/wheelhouse:(board|briefing|settings|sources)(?:[ \t]+(.*))?$/i;
+// The line for a session whose first prompt made it the foreman, which the session start, seeing no
+// prompt yet, named the front desk.
+export const FOREMAN_LINE = 'This session is the foreman, not the front desk. Follow wheelhouse:foreman and set wheelhouse:front-desk aside.';
 // The line that tells the front desk to ask the cards waiting, after the briefing.
 export const cardsLine = (n) => `Cards to ask this visit: ${n}. Run \`cli.js cards\` and ask them in one AskUserQuestion call, after the briefing.`;
 const TABS = ['director', 'build'];
@@ -222,7 +226,9 @@ export async function decide(input, deps = {}) {
     const found = projectOf(input.cwd, { dir });
     if (!found) return undefined;
     const role = sessionRole({ sessionId: input.session_id, env, prompt: input.prompt, cwd: input.cwd });
-    attempt(() => recordRole(input.session_id, role));
+    const first = attempt(() => recordRole(input.session_id, role), false);
+    // A foreman known only from its first prompt was pointed at the front desk by the session start.
+    if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
     const { project } = found;
     const at = clockOf(now);

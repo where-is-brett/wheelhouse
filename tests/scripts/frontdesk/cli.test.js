@@ -324,13 +324,15 @@ test('record ruling keeps the words exactly and gives back its confirm card', as
   });
 });
 
-test('record work, amendment and incident write the build loop\'s kinds', async () => {
+test('record work, amendment, incident and note write the build loop\'s kinds', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
     const records = {
       work: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [] },
       amendment: { work: 'export-csv', change: 'Add a total row', hash: DOC },
       incident: { id: 'bad-total', what: 'Totals are wrong on the invoice page' },
+      // The no-blame account once an incident is over (intake, route 1).
+      note: { incident: 'bad-total', text: 'A rounding change reached the invoice page; the fix and a check are in.' },
     };
     for (const [kind, data] of Object.entries(records)) {
       const out = await run(helper, ['record', kind], JSON.stringify(data));
@@ -338,7 +340,7 @@ test('record work, amendment and incident write the build loop\'s kinds', async 
       assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind, data });
       assert.equal(out.json.id, helper.held.at(-1).id);
     }
-    assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'amendment', 'incident']);
+    assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'amendment', 'incident', 'note']);
     for (const kind of ['idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal']) assert.ok(RECORD_KINDS.includes(kind), kind);
   });
 });

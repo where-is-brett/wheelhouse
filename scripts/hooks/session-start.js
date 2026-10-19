@@ -297,7 +297,7 @@ export async function decide(input, deps = {}) {
   const text = reload({
     views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot,
     windows: platform === 'win32' && firstForSession(project, input.session_id, now),
-    frontDesk: sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
+    frontDesk: featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

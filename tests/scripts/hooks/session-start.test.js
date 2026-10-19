@@ -500,6 +500,9 @@ test('a feature worktree and the foreman are not pointed at the front desk\'s pl
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
     assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree })), /front desk/);
+    // Nor when a front-desk role was recorded for the session earlier: the worktree decides.
+    recordRole('s-moved', 'front-desk');
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree, session_id: 's-moved' })), /front desk/);
     assert.doesNotMatch(text(await run(fake(), { env: { WHEELHOUSE_ROLE: 'foreman' } })), /front desk/);
     // A foreman known from its first prompt, as the board-context hook recorded it, after a compaction.
     recordRole('s-foreman', 'foreman');

@@ -31,10 +31,11 @@ import { answerLine } from '../state/card-lines.js';
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-// The kinds `record` writes: the front desk's own, and the build loop's three that its intake writes.
+// The kinds `record` writes: the front desk's own, and the build loop's that its intake writes
+// (work, amendment, incident, and the no-blame note when an incident ends).
 export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
-  'work', 'amendment', 'incident',
+  'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings']);
 const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'explain'];

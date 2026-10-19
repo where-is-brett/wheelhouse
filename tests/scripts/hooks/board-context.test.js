@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS, cardsLine } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -430,9 +430,14 @@ test('the role comes from the session\'s first prompt and is kept: the wake line
   await withProject(async ({ repo }) => {
     put(viewFile('waiting'), unasked(1));
     const send = (text, session, now = NOW) => decide(prompt(repo, text, session), { now: at(now), env: {}, client });
-    // A session whose first prompt is the foreman's wake line is the foreman: nothing is added, then or later.
-    assert.equal(await send(`${FOREMAN_PROMPT_LEAD} handle wake-1.json`, 's-foreman'), undefined);
+    // A session whose first prompt is the foreman's wake line is the foreman. The session start named it
+    // the front desk, so that first prompt gets one line saying it is the foreman; later ones get nothing.
+    assert.equal(FOREMAN_LINE, 'This session is the foreman, not the front desk. Follow wheelhouse:foreman and set wheelhouse:front-desk aside.');
+    assert.equal(contextOf(await send(`${FOREMAN_PROMPT_LEAD} handle wake-1.json`, 's-foreman')), FOREMAN_LINE);
     assert.equal(await send('/wheelhouse:board', 's-foreman'), undefined);
+    assert.equal(await send(`${FOREMAN_PROMPT_LEAD} handle wake-2.json`, 's-foreman'), undefined);
+    // A foreman with WHEELHOUSE_ROLE was never named the front desk, so it gets no line.
+    assert.equal(await decide(prompt(repo, `${FOREMAN_PROMPT_LEAD} handle wake-3.json`, 's-env'), { now: at(NOW), env: { WHEELHOUSE_ROLE: 'foreman' }, client }), undefined);
     assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-foreman'), 'utf8')), { role: 'foreman' });
     // The front desk stays the front desk when a later prompt begins with those words.
     assert.ok(contextOf(await send('Hello', 's-desk')).length > 0);
