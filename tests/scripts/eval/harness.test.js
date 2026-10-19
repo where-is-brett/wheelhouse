@@ -195,6 +195,22 @@ test('runSession appends to the system prompt when asked, and checks claude know
   }), /--append-system-prompt/);
 });
 
+test('runSession puts extra arguments last, as given, without looking for them in --help', async () => {
+  const folder = tempFolder();
+  const fake = fakeClaude(folder);
+  await runSession({
+    dir: tempFolder('harness-session-'),
+    prompt: 'x',
+    pluginDirs: [],
+    permissionMode: 'dontAsk',
+    maxTurns: 1,
+    extraArgs: ['--permission-prompt-tool', 'stdio'],
+    command: fake.command,
+    commandArgs: fake.commandArgs,
+  });
+  assert.deepEqual(fake.record().args.slice(-2), ['--permission-prompt-tool', 'stdio']);
+});
+
 // --max-turns is not in `claude --help` (checked on 2.1.302) yet works, so the fake leaves it out of its help
 // and runSession must not refuse for it.
 test('runSession refuses to run when this claude does not know a flag it needs', async () => {
@@ -351,6 +367,7 @@ test('runScenario sets the project up, runs the session, judges it and writes th
   assert.equal(sessionSaw.maxTurns, 5);
   assert.equal(sessionSaw.permissionMode, 'acceptEdits');
   assert.equal(sessionSaw.appendSystemPrompt, 'You are the without desk.');
+  assert.equal(sessionSaw.extraArgs, undefined, 'a scenario with no extra arguments adds none');
   assert.equal(outcome.pass, true);
   const total = totalUsageOf(events);
   assert.equal(outcome.line, `99 without: pass (variant without) ${total.input} in / ${total.output} out`);
@@ -409,7 +426,7 @@ test('runScenario never passes a session whose result event is an error', async 
   assert.match(outcome.line, /result event is an error/);
 });
 
-test('runScenario passes a context from setup to the session and to pass, and closes it afterwards', async () => {
+test('runScenario passes a context from setup, and the scenario\'s extra arguments, to the session, the context to pass, and closes it afterwards', async () => {
   const home = tempFolder('harness-home-');
   let sessionSaw;
   let passSaw;
@@ -420,6 +437,7 @@ test('runScenario passes a context from setup to the session and to pass, and cl
     setup: async () => ({ env: { EXTRA: 'yes' }, pluginDirs: ['/p/extra'], records: ['r'], evidence: () => ({ seen: 1 }), close: async () => { closed += 1; } }),
     prompt: 'x',
     variants: { with: { pluginDirs: ['/p/with'] }, without: { pluginDirs: [] } },
+    extraArgs: ['--permission-prompt-tool', 'stdio'],
     pass: ({ context }) => { passSaw = context; return { pass: true, why: 'ok' }; },
   };
   await runScenario({
@@ -432,6 +450,7 @@ test('runScenario passes a context from setup to the session and to pass, and cl
   });
   assert.deepEqual(sessionSaw.pluginDirs, ['/p/with', '/p/extra']);
   assert.deepEqual(sessionSaw.env, { EXTRA: 'yes' });
+  assert.deepEqual(sessionSaw.extraArgs, ['--permission-prompt-tool', 'stdio'], 'the scenario\'s own extra arguments');
   assert.deepEqual(passSaw.records, ['r']);
   assert.equal(closed, 1);
   const written = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', '2026-10-18', '96-with-1.json'), 'utf8'));
