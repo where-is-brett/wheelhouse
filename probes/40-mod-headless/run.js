@@ -36,7 +36,7 @@ const logDir = probeLogDir(CHECK);
 const resultsFile = path.join(logDir, 'results.jsonl');
 const claudeBin = execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
 const CI_VERSION = '2.1.278';
-const CI_SCAN = ['2.1.280', '2.1.284', '2.1.288', '2.1.292', '2.1.296', '2.1.299', '2.1.302'];
+const CI_SCAN = ['2.1.278', '2.1.280', '2.1.284', '2.1.288', '2.1.292', '2.1.296', '2.1.299', '2.1.302'];
 
 const asked = process.argv.slice(2);
 const wants = (part) => asked.length === 0 || asked.includes(part);
@@ -334,7 +334,8 @@ try {
         shown(`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test <scratch copy of the probe>   (${CI_VERSION}, HOME set to an empty folder)`, testWithVariable),
       ].join('\n'));
       // The releases between, as a table: does `plugin test` run with an empty HOME and no
-      // variable, and what does `plugin validate --json` on the repository root list?
+      // variable, and what does `plugin validate --json` on the repository root list? Each
+      // release's report is saved as validate-repo-<version>.json.
       const table = [];
       for (const v of CI_SCAN) {
         const run = (args, extra = {}) => spawnSync('npx', ['--yes', `@anthropic-ai/claude-code@${v}`, ...args], { cwd: scratch, env: { ...env, ...extra }, encoding: 'utf8', timeout: 240000, maxBuffer: 32 * 1024 * 1024 });
@@ -342,8 +343,12 @@ try {
         const root = run(['plugin', 'validate', '--json', repoDir]);
         let listed = 'no report';
         try { const d = JSON.parse(root.stdout); listed = `${d.contents.length} contents, target type ${d.manifest.type}`; } catch { /* keep the default */ }
-        const first = (t.stdout + t.stderr).split('\n').map((l) => l.trim()).find((l) => l && !/^npm /.test(l)) ?? '';
-        table.push(`${v} | plugin test, empty HOME: ${first} | validate --json on the repository root: ${listed}`);
+        saveReport(`validate-repo-${v}.json`, root.stdout);
+        const passed = /(\d+) pass\b/.exec(t.stdout)?.[1];
+        const failed = /(\d+) fail\b/.exec(t.stdout)?.[1];
+        const first = (t.stdout + t.stderr).split('\n').map((l) => l.trim()).find((l) => l && !/^npm /.test(l) && !/^probe\.test\.ts:?$/.test(l)) ?? '';
+        const outcome = passed !== undefined ? `${passed} pass, ${failed ?? '?'} fail` : first;
+        table.push(`${v} | plugin test, empty HOME, no variable: exit ${t.status}, ${outcome} | validate --json on the repository root: exit ${root.status}, ${listed}`);
       }
       saveReport('ci-versions.txt', table.join('\n'));
       const contents = (r) => { try { return JSON.parse(r.stdout).contents.map((c) => ({ type: c.type, notes: c.notes })); } catch { return null; } };

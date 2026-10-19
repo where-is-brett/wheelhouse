@@ -1,7 +1,8 @@
-2.1.280 | plugin test, empty HOME: claude plugin test: hooks modules are not turned on in this build yet (early access); set CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 to run a plugin's tests | validate --json on the repository root: 0 contents, target type marketplace
-2.1.284 | plugin test, empty HOME: claude plugin test: hooks modules are not turned on in this build yet (early access); set CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 to run a plugin's tests | validate --json on the repository root: 0 contents, target type marketplace
-2.1.288 | plugin test, empty HOME: probe.test.ts: | validate --json on the repository root: 0 contents, target type marketplace
-2.1.292 | plugin test, empty HOME: probe.test.ts: | validate --json on the repository root: 3 contents, target type marketplace
-2.1.296 | plugin test, empty HOME: probe.test.ts: | validate --json on the repository root: 3 contents, target type marketplace
-2.1.299 | plugin test, empty HOME: probe.test.ts: | validate --json on the repository root: 3 contents, target type marketplace
-2.1.302 | plugin test, empty HOME: probe.test.ts: | validate --json on the repository root: 3 contents, target type marketplace
+2.1.278 | plugin test, empty HOME, no variable: exit 1, error: unknown command 'test' | validate --json on the repository root: exit 0, 0 contents, target type marketplace
+2.1.280 | plugin test, empty HOME, no variable: exit 1, claude plugin test: hooks modules are not turned on in this build yet (early access); set CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 to run a plugin's tests | validate --json on the repository root: exit 0, 0 contents, target type marketplace
+2.1.284 | plugin test, empty HOME, no variable: exit 1, claude plugin test: hooks modules are not turned on in this build yet (early access); set CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 to run a plugin's tests | validate --json on the repository root: exit 0, 0 contents, target type marketplace
+2.1.288 | plugin test, empty HOME, no variable: exit 0, 2 pass, 0 fail | validate --json on the repository root: exit 0, 0 contents, target type marketplace
+2.1.292 | plugin test, empty HOME, no variable: exit 0, 2 pass, 0 fail | validate --json on the repository root: exit 0, 3 contents, target type marketplace
+2.1.296 | plugin test, empty HOME, no variable: exit 0, 2 pass, 0 fail | validate --json on the repository root: exit 0, 3 contents, target type marketplace
+2.1.299 | plugin test, empty HOME, no variable: exit 0, 2 pass, 0 fail | validate --json on the repository root: exit 0, 3 contents, target type marketplace
+2.1.302 | plugin test, empty HOME, no variable: exit 0, 2 pass, 0 fail | validate --json on the repository root: exit 0, 3 contents, target type marketplace
