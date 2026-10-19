@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBrowser, browserArgs, shoot, stopsAtPicture } from '../../../scripts/screens/shoot.js';
+import { findBrowser, browserArgs, shoot, stopsAtPicture, removeProfile, PROFILE_LEFT_MS } from '../../../scripts/screens/shoot.js';
 import { pixelHash } from '../../../scripts/screens/png.js';
 import { SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../../../scripts/lib/front-desk.js';
 import { encodePng, solid } from '../../fixtures/screens/encode.js';
@@ -128,6 +128,36 @@ test('the browser profile folder is removed after each run', async () => {
     assert.equal(fs.existsSync(profile), false);
   }
   assert.deepEqual(fs.readdirSync(tmp), []);
+});
+
+test('removing a profile says whether it is gone', async () => {
+  const tmp = tempFolder('wh-shoot-');
+  const profile = path.join(tmp, 'wh-screen-x');
+  fs.mkdirSync(path.join(profile, 'Default'), { recursive: true });
+  fs.writeFileSync(path.join(profile, 'Default', 'Cookies'), 'x');
+  assert.equal(await removeProfile(profile), true);
+  assert.equal(fs.existsSync(profile), false);
+  // Already gone is gone.
+  assert.equal(await removeProfile(profile), true);
+});
+
+test('profile folders an earlier run left behind over an hour ago are cleared out, and nothing else', async () => {
+  const tmp = tempFolder('wh-shoot-');
+  const aged = (name, ms, folder = true) => {
+    const place = path.join(tmp, name);
+    if (folder) fs.mkdirSync(place); else fs.writeFileSync(place, '');
+    const when = new Date(Date.now() - ms);
+    fs.utimesSync(place, when, when);
+    return place;
+  };
+  const left = aged('wh-screen-left', PROFILE_LEFT_MS + 60 * 1000);
+  const young = aged('wh-screen-young', PROFILE_LEFT_MS - 60 * 1000);
+  const other = aged('someone-else', 2 * PROFILE_LEFT_MS);
+  const file = aged('wh-screen-file', 2 * PROFILE_LEFT_MS, false);
+  const result = await shoot({ browser: '/bin/chrome', url: URL_, size: SIZE, run: fakeRun(), fetch: ok200(), tmp });
+  assert.equal(result.ok, true);
+  assert.deepEqual([left, young, other, file].map((place) => fs.existsSync(place)), [false, true, true, true]);
+  assert.equal(PROFILE_LEFT_MS, 60 * 60 * 1000);
 });
 
 test('a run that fails, times out or leaves no usable picture gives no hash', async () => {

@@ -44,10 +44,21 @@ test('summarise: matches, the late page against its final content, failures and 
   assert.deepEqual(s.pages.failsDrop['1280x800'].ended, ['timed out', 'timed out']);
   assert.deepEqual(s.pages.failsDrop['1280x800'].saysLoadFailed, [true, true]);
   assert.deepEqual(s.pages.still['1280x800'].saysLoadFailed, [false, false]);
+  // Every profile was gone straight after its removal.
+  assert.equal(s.profilesLeft, 0);
   // A run with no picture runs to the limit; the time is that of the slowest run with one.
   assert.equal(s.slowestPictureMs, 1100);
   assert.equal(s.slowestFitsTimeout, true);
   assert.equal(summarise(runs, 1000).slowestFitsTimeout, false);
+});
+
+test('summarise counts the profiles still there straight after their removal', () => {
+  const runs = {
+    still: { '1280x800': [shot('a', 900, { profileGone: false }), shot('a', 900, { profileGone: true })] },
+    clock: { '390x844': [shot('b', 900, { profileGone: false }), shot('c', 900, { profileGone: false })] },
+  };
+  assert.equal(summarise(runs).profilesLeft, 3);
+  assert.deepEqual(summarise(runs).pages.still['1280x800'].profileGone, [false, true]);
 });
 
 test('summarise: a late page that stayed blank does not show the drawn content', () => {

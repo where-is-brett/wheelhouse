@@ -5,8 +5,9 @@
 // pages, not a project's code), photographs each twice at both screen sizes, each run in a fresh
 // profile folder under a new scratch folder in the temporary folder, and removes the folder at the
 // end. It runs the browser as `shoot` does (`runBrowser`: the arguments of `browserArgs`, and Chrome
-// stopped once its picture is whole) and reads the pictures with `pixelHash`, so what it finds is true
-// of the real method. Written for Node.js 22 or later, no installs, on macOS and Windows.
+// stopped once its picture is whole), removes each profile as `shoot` does (`removeProfile`, counted
+// in `profilesLeft`) and reads the pictures with `pixelHash`, so what it finds is true of the real
+// method. Written for Node.js 22 or later, no installs, on macOS and Windows.
 //   node run.js [--browser <path>] [--stop-at-picture]
 //     --browser           the Chrome or Edge program to use (default: the first one `findBrowser` finds)
 //     --stop-at-picture   stop the browser once its picture is whole even where `runBrowser` would
@@ -20,7 +21,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../scripts/lib/run.js';
 import { SCREEN_SIZES, SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../../scripts/lib/front-desk.js';
-import { findBrowser, runBrowser, stopsAtPicture } from '../../scripts/screens/shoot.js';
+import { findBrowser, runBrowser, stopsAtPicture, removeProfile } from '../../scripts/screens/shoot.js';
 import { pixelHash } from '../../scripts/screens/png.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -87,9 +88,10 @@ async function photograph({ browser, url, size, scratch, stopAtPicture }) {
     try { entry.hash = pixelHash(png); } catch (error) { entry.hashError = error.message; }
   }
   if (!entry.png) entry.stderr = result.stderr.trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 300);
-  // A stopped browser's helpers may still be writing to the profile for a moment; whatever is left
-  // goes with the scratch folder at the end.
-  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10 }); } catch { /* removed at the end */ }
+  // Removed as `shoot` removes its own, so the summary shows whether that leaves profiles behind (a
+  // stopped browser's helpers may still hold files in it for a moment). Whatever is left goes with
+  // the scratch folder at the end.
+  entry.profileGone = await removeProfile(profile);
   return entry;
 }
 
@@ -103,7 +105,7 @@ export function summarise(runs, timeoutMs = SCREEN_TIMEOUT_MS) {
     for (const [size, shots] of Object.entries(sizes)) {
       shots.filter((s) => s.png).forEach((s) => pictureMs.push(s.ms));
       const [a, b] = shots;
-      pages[name][size] = { hashes: shots.map((s) => s.hash ?? null), matched: Boolean(a.hash && b && b.hash === a.hash), ms: shots.map((s) => s.ms), ended: shots.map((s) => s.ended), pictures: shots.map((s) => s.png), saysLoadFailed: shots.map((s) => s.saysLoadFailed === true) };
+      pages[name][size] = { hashes: shots.map((s) => s.hash ?? null), matched: Boolean(a.hash && b && b.hash === a.hash), ms: shots.map((s) => s.ms), ended: shots.map((s) => s.ended), pictures: shots.map((s) => s.png), saysLoadFailed: shots.map((s) => s.saysLoadFailed === true), profileGone: shots.map((s) => s.profileGone) };
     }
   }
   const sizesOf = (name) => Object.keys(runs[name] ?? {});
@@ -115,6 +117,8 @@ export function summarise(runs, timeoutMs = SCREEN_TIMEOUT_MS) {
     slowestPictureMs: pictureMs.length ? Math.max(...pictureMs) : null,
     timeoutMs,
     slowestFitsTimeout: pictureMs.length ? Math.max(...pictureMs) < timeoutMs : null,
+    // How many profile folders were still there straight after their removal.
+    profilesLeft: Object.values(runs).flatMap((sizes) => Object.values(sizes).flat()).filter((s) => s.profileGone === false).length,
   };
 }
 

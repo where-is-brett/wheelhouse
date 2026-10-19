@@ -17,6 +17,12 @@ const MOST_REDIRECTS = 5;
 const PICTURE_POLL_MS = 100;
 // What Chrome's headless mode writes to stderr when the page failed to load or timed out.
 const LOAD_FAILED = /Page load (failed|timed out)/;
+// The start of every profile folder's name in the temporary folder.
+const PROFILE_PREFIX = 'wh-screen-';
+// How many times removing a profile folder is tried again while a file in it is still held.
+const PROFILE_RETRIES = 3;
+// A profile folder older than this is one an earlier run left behind, and is cleared out.
+export const PROFILE_LEFT_MS = 60 * 60 * 1000;
 
 // A variable from `env`, whatever the case of its name (Windows names them in any case).
 function variable(env, name) {
@@ -103,6 +109,30 @@ export async function runBrowser({ browser, url, size, profile, out, stopAtPictu
   }
 }
 
+// Removes a browser profile folder, trying again while a stopped browser's helpers still hold a file
+// in it (Windows). Resolves with whether the folder is gone; never rejects. The probe for check 34
+// uses it too, to see whether profiles are left behind.
+export async function removeProfile(profile) {
+  try {
+    await fs.promises.rm(profile, { recursive: true, force: true, maxRetries: PROFILE_RETRIES });
+  } catch { /* whether it is gone is looked at below */ }
+  return !fs.existsSync(profile);
+}
+
+// Clears out of `tmp` the profile folders earlier runs left behind more than PROFILE_LEFT_MS ago.
+// A folder in use is far younger: one run is limited to SCREEN_TIMEOUT_MS.
+async function sweepProfiles(tmp) {
+  let names;
+  try { names = await fs.promises.readdir(tmp); } catch { return; }
+  for (const name of names.filter((n) => n.startsWith(PROFILE_PREFIX))) {
+    const folder = path.join(tmp, name);
+    try {
+      const found = await fs.promises.lstat(folder);
+      if (found.isDirectory() && Date.now() - found.mtimeMs > PROFILE_LEFT_MS) await removeProfile(folder);
+    } catch { /* gone already */ }
+  }
+}
+
 // Reads the page's status before any browser runs, following redirects only while they stay on the
 // page's own origin. Resolves to { ok: true, url } with the address that answered 2xx (not 204 or 205), or
 // { ok: false, why }.
@@ -148,9 +178,10 @@ export async function shoot({ browser, url, size, run = runProgram, fetch = glob
   const status = await readStatus(address, fetch, timeoutMs);
   if (!status.ok) return status;
 
+  await sweepProfiles(tmp);
   let profile;
   try {
-    profile = await fs.promises.mkdtemp(path.join(tmp, 'wh-screen-'));
+    profile = await fs.promises.mkdtemp(path.join(tmp, PROFILE_PREFIX));
     const out = path.join(profile, 'screen.png');
     const result = await runBrowser({ browser, url: status.url, size, profile, out, run, timeoutMs });
     // Chrome's own word that the page did not load: whatever picture there is, it is not the page.
@@ -164,6 +195,6 @@ export async function shoot({ browser, url, size, run = runProgram, fetch = glob
   } catch (error) {
     return { ok: false, why: `the browser did not run: ${error.message}` };
   } finally {
-    if (profile) await fs.promises.rm(profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    if (profile) await removeProfile(profile);
   }
 }
