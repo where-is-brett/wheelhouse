@@ -213,7 +213,7 @@ test('/go answers with the bridge\'s words', async ($, on) => {
       { name: 'digest', description: 'Show the briefing, with no Claude turn' },
     ])
 
-    for (const kind of ['composer', 'bridge']) {
+    for (const kind of ['composer', 'bridge'] as const) {
       clear()
       const result = await $.command.run({ command: 'go', args: '', origin: { kind }, presentation: PRESENTATION })
       expect(seen.runs).toHaveLength(1)

@@ -23,7 +23,10 @@ const STOPPING = { plugin: 'wheelhouse', key: 'stopping' } as const
 export const RECORDING = 'Recording…'
 // Drawn in place of every button while a turn runs, when pane.tsx's HIDE_WHILE_BUSY is on.
 export const WAIT = 'Wait for Claude to finish, or type stop'
-const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
+// A toast for a prompt that couldn't be handed on: to the front desk, or a Shape 2 foreman's
+// watcher lines to the foreman.
+export const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
+export const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
 const LIFT = 'lift-stop'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -53,19 +56,20 @@ export async function releaseAll($: EngineInterface) {
   await $.state.set(STOPPING, false)
 }
 
-// Hands the front desk each prompt, in order, once. A prompt that can't be handed is a toast,
-// and the ones after it aren't handed either, so they never arrive out of order. True when every
-// prompt was handed over.
-export async function submitAll($: EngineInterface, prompts: readonly string[]): Promise<boolean> {
+// Hands the session each prompt, in order, once. Each prompt stands alone: one the engine drops,
+// or a call that rejects, isn't handed, and the ones after it still are. However many aren't, the
+// toast `notHanded` says so once. True when every prompt was handed over.
+export async function submitAll($: EngineInterface, prompts: readonly string[], notHanded: string = NOT_HANDED): Promise<boolean> {
+  let handed = true
   for (const text of prompts) {
     try {
-      await $.prompt.submit({ text })
+      if ((await $.prompt.submit({ text })).drop !== undefined) handed = false
     } catch {
-      $.ui.toast(NOT_HANDED)
-      return false
+      handed = false
     }
   }
-  return true
+  if (!handed) $.ui.toast(notHanded)
+  return handed
 }
 
 // A press once taken: said at once, sent with the session's folder, the bridge's words said (or

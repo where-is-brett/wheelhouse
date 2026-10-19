@@ -14,7 +14,7 @@
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
 //   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
 //                                                   courier's wake, or a Shape 2 foreman's wakes from
-//                                                   one watcher loop
+//                                                   one watcher loop, or nothing while setup runs
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
@@ -33,7 +33,7 @@ import { pressCard as defaultPress } from './press.js';
 import { settingsRows as defaultRows, pressSetting as defaultSetting, effectiveFor as defaultEffective, ADVANCED } from './settings-pane.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
-import { projectOf as defaultProjectOf, readSmallText } from '../hooks/kit.js';
+import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
 import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
@@ -60,6 +60,8 @@ export const MAX_REQUEST_BYTES = 64 * 1024;
 const DIRECTOR = ['composer', 'bridge'];
 // The director's press on the pane.
 const PANE = 'pane';
+// The role a tick answers for a session in a folder setup is working on.
+export const SETUP_ROLE = 'setup';
 
 export const SAYS = {
   unreadable: 'Wheelhouse couldn\'t read that request',
@@ -103,6 +105,7 @@ const DEFAULTS = {
   setStop: defaultSetStop,
   liftStop: defaultLiftStop,
   sessionRole: defaultSessionRole,
+  beingSetUp: defaultBeingSetUp,
   digestText: defaultDigest,
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
@@ -340,17 +343,32 @@ async function courier(found, pane, req, d) {
   }
 }
 
+// Whether the session's folder is one setup is working on (kit.js's beingSetUp: a registered
+// project whose setup run is unfinished, or a folder with no project record yet that a run holds
+// or whose settings switch the plugin on). A lookup that throws counts as no setup.
+function settingUp(cwd, d) {
+  try {
+    return d.beingSetUp(cwd) !== null;
+  } catch {
+    return false;
+  }
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
 // has a pane: its model is kept as status.json before the answer goes, with whether the
 // watcher runs (a Shape 1 watcher that has stopped is started again here), and the courier's
 // wake, when it has one, is the answer's `submit`. A Shape 2 foreman's tick runs the watcher's
-// loop. A feature session, a Shape 1 foreman and a folder outside a project get an `every` of 0,
-// which tells the mod to stop ticking. In the terminal, when Wheelhouse's own status line is set,
-// `status` is left out so the glance isn't shown twice.
+// loop. A session that would be the front desk in a folder setup is working on is setup's: it
+// gets the role `setup` and TICK_MS, and nothing is drawn, run or handed on for it, so once setup
+// finishes its next tick is the front desk's and the pane comes. A feature session, a Shape 1
+// foreman and a folder outside a project get an `every` of 0, which tells the mod to stop
+// ticking. In the terminal, when Wheelhouse's own status line is set, `status` is left out so the
+// glance isn't shown twice.
 async function tick(req, d) {
   const role = roleOf(req, d);
   const found = siteOf(req.cwd, d);
   if (found !== null && role === 'foreman') return foremanTick(found, d);
+  if (role === 'front-desk' && settingUp(req.cwd, d)) return { ok: true, role: SETUP_ROLE, every: TICK_MS };
   if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
   const started = d.elapsedClock();
   // The watch runs beside the pane, so the two share the time the tick has.

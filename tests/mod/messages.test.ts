@@ -49,6 +49,8 @@ const model = () => ({
 const frontDesk = (submit: string[] = []) => ({ ok: true, role: 'front-desk', every: TICK_MS, pane: model(), glance: '2 cards wait', status: '2 cards wait', submit })
 const foreman = (submit: readonly string[] = []) => ({ ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit })
 const feature = () => ({ ok: true, role: 'feature', every: 0 })
+// A session in a folder setup is working on (ruling 38).
+const setup = () => ({ ok: true, role: 'setup', every: TICK_MS })
 
 type Reply = object | { exitCode: number } | 'no-start' | { hold: number, then: object }
 
@@ -60,6 +62,7 @@ function world(on: any, tick: () => Reply, bridge: (request: any) => Reply = () 
   const panes = new Map<string, string>()
   const current = { session: SESSION }
   let sessions = 0
+  const control = { refuse: new Set<string>(), drop: new Set<string>() }
   const seen = {
     ticks: [] as any[], runs: [] as any[], prompts: [] as any[], receives: [] as any[],
     toasts: [] as string[], registered: [] as any[], commands: [] as any[],
@@ -94,7 +97,14 @@ function world(on: any, tick: () => Reply, bridge: (request: any) => Reply = () 
     if (got.stdout !== undefined) return { value: { ...RUN_RESULT, stdout: got.stdout } }
     return { value: { ...RUN_RESULT, stdout: `${JSON.stringify(got)}\n` } }
   })
-  on('prompt.submit', ($: any, e: any) => { seen.prompts.push(e); return { text: e.text, origin: e.origin } })
+  // A prompt whose text `control.refuse` holds is one the session can't take (the call rejects);
+  // one `control.drop` holds is one the engine drops.
+  on('prompt.submit', ($: any, e: any) => {
+    if (control.refuse.has(e.text)) throw new Error('the session took no prompt')
+    if (control.drop.has(e.text)) return { drop: 'a Stop stands' }
+    seen.prompts.push(e)
+    return { text: e.text, origin: e.origin }
+  })
   on('session.receive', ($: any, e: any) => { seen.receives.push(e); return { text: e.text } })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
@@ -109,7 +119,7 @@ function world(on: any, tick: () => Reply, bridge: (request: any) => Reply = () 
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
   }
-  return { seen, clear, start, clock }
+  return { seen, clear, start, clock, control }
 }
 
 const submit = ($: any, text: string, kind: string, extra: object = {}) =>
@@ -218,11 +228,11 @@ test('an app-started foreman\'s first prompt reaches the session after a first t
   }
 })
 
-test('the same message reaches a feature session or the foreman unchanged', async ($, on) => {
+test('the same message reaches a feature session, the foreman or a session still in setup unchanged', async ($, on) => {
   let reply: object = feature()
   const { seen, clear, start, clock } = world(on, () => reply)
   for (const surface of SURFACES) {
-    for (const answer of [feature(), foreman(), { ok: true, role: 'foreman', every: 0, submit: [] }]) {
+    for (const answer of [feature(), foreman(), { ok: true, role: 'foreman', every: 0, submit: [] }, setup()]) {
       reply = answer
       await start($, surface)
       expect(seen.ticks).toHaveLength(1)
@@ -249,6 +259,20 @@ test('the same message reaches a feature session or the foreman unchanged', asyn
     clear()
     expect(await submit($, TRAFFIC[0], 'peer')).toMatchObject({ text: TRAFFIC[0] })
     expect(seen.prompts.map((p: any) => p.text)).toEqual([TRAFFIC[0]])
+
+    // And one whose folder goes into setup, until setup finishes and it is the front desk again.
+    reply = frontDesk()
+    await start($, surface)
+    reply = setup()
+    await clock.advance(TICK_MS)
+    clear()
+    expect(await submit($, TRAFFIC[1], 'peer')).toMatchObject({ text: TRAFFIC[1] })
+    expect(await receive($, TRAFFIC[1], { kind: 'sdk' })).toEqual({ text: TRAFFIC[1] })
+    reply = frontDesk()
+    await clock.advance(TICK_MS)
+    clear()
+    expect(await submit($, TRAFFIC[1], 'peer')).toEqual({ drop: KEPT_OUT })
+    await clock.settle()
   }
 })
 
@@ -400,6 +424,102 @@ test('a Shape 2 foreman\'s tick submits each wake line in order', async ($, on) 
     await clock.advance(FOREMAN_TICK_MS * 3)
     expect(seen.ticks).toHaveLength(1)
     expect(seen.prompts).toHaveLength(0)
+  }
+})
+
+// What a toast says when a tick's prompt can't be handed on: the courier's wake goes to the front
+// desk, a Shape 2 foreman's watcher lines to the foreman.
+const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
+const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
+
+test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by role, and the rest are handed on', async ($, on) => {
+  const LINES = ['Wheelhouse watcher: CI failed on pull request #4', 'Wheelhouse watcher: pull request #5 merged', 'Wheelhouse watcher: review asked on #6'] as const
+  const WAKE = 'Wheelhouse courier: 2 cards wait, and the build stopped.'
+  let reply: object = foreman()
+  const { seen, clear, start, clock, control } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    // A foreman's: the line the session can't take, or the engine drops, is one toast naming the
+    // foreman, and each line after it is still handed on, in order.
+    for (const refused of [control.refuse, control.drop]) {
+      reply = foreman(LINES)
+      refused.add(LINES[1])
+      await start($, surface)
+      expect(seen.prompts.map((p: any) => p.text)).toEqual([LINES[0], LINES[2]])
+      expect(seen.toasts).toEqual([NOT_HANDED_FOREMAN])
+      refused.clear()
+      // Two that can't be: still one toast.
+      reply = foreman(LINES)
+      control.refuse.add(LINES[0])
+      control.drop.add(LINES[2])
+      clear()
+      await clock.advance(30000)
+      expect(seen.prompts.map((p: any) => p.text)).toEqual([LINES[1]])
+      expect(seen.toasts).toEqual([NOT_HANDED_FOREMAN])
+      control.refuse.clear()
+      control.drop.clear()
+    }
+
+    // The front desk's: the courier's wake names the front desk.
+    for (const refused of [control.refuse, control.drop]) {
+      reply = frontDesk([WAKE])
+      refused.add(WAKE)
+      await start($, surface)
+      expect(seen.prompts).toHaveLength(0)
+      expect(seen.toasts).toEqual([NOT_HANDED])
+      refused.clear()
+    }
+  }
+})
+
+test('a message whose first line has the lead is traffic, whatever names the foreman after it', async ($, on) => {
+  // Ruling 34 spares only a first line that starts with the foreman's lead.
+  const LATER = [
+    'Wheelhouse courier: card 3 waits. Wheelhouse foreman: CI failed on pull request #4',
+    'Wheelhouse builder: slice 2 of 3 finished\nWheelhouse foreman: CI failed on pull request #4',
+    'Wheelhouse: the banner change is ready (Wheelhouse foreman: told)',
+  ]
+  const { seen, clear, start, clock } = world(on, () => frontDesk())
+  for (const surface of SURFACES) {
+    await start($, surface)
+    for (const text of LATER) {
+      for (const kind of ['sdk', 'peer']) {
+        clear()
+        expect(await submit($, text, kind)).toEqual({ drop: KEPT_OUT })
+        await clock.settle()
+        expect(seen.prompts).toHaveLength(0)
+        expect(seen.ticks).toHaveLength(1)
+      }
+      clear()
+      expect(await receive($, text, { kind: 'peer' })).toEqual({ consumed: KEPT_OUT })
+      await clock.settle()
+      expect(seen.receives).toHaveLength(0)
+    }
+  }
+})
+
+test('traffic that comes while a tick runs gets its own tick once that one ends, and only one', async ($, on) => {
+  let reply: Reply = frontDesk()
+  const { seen, clear, start, clock } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    reply = frontDesk()
+    await start($, surface)
+    clear()
+    // The timer's tick takes five seconds; two messages come meanwhile, each kept out.
+    reply = { hold: 5000, then: frontDesk() }
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(1)
+    reply = frontDesk()
+    expect(await submit($, TRAFFIC[0], 'peer')).toEqual({ drop: KEPT_OUT })
+    expect(await receive($, TRAFFIC[1], { kind: 'peer' })).toEqual({ consumed: KEPT_OUT })
+    await clock.settle()
+    expect(seen.ticks).toHaveLength(1)
+    // It ends, and one tick follows at once, not two, and not at the timer's next fire.
+    await clock.advance(5000)
+    expect(seen.ticks).toHaveLength(2)
+    await clock.advance(TICK_MS - 5000 - 1)
+    expect(seen.ticks).toHaveLength(2)
+    await clock.advance(1)
+    expect(seen.ticks).toHaveLength(3)
   }
 })
 

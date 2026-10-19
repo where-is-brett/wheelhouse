@@ -154,6 +154,10 @@ async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs })
 // do not load beside the ones the scenario names with `pluginDirs`.
 // `appendSystemPrompt`, when given, is added to the session's system prompt: one
 // line with no double quotes, so it passes through claude.cmd on Windows too.
+// `extraArgs` go on the command line after the rest, as given. They are not looked
+// for in --help: `--permission-prompt-tool`, which a scenario that asks cards
+// needs (it is what gives a `claude -p` session AskUserQuestion, on 2.1.302), is
+// not listed there as a flag of its own.
 export async function runSession({
   dir,
   prompt,
@@ -164,6 +168,7 @@ export async function runSession({
   env,
   appendSystemPrompt,
   settingSources = 'project,local',
+  extraArgs = [],
   timeoutMs = 20 * 60 * 1000,
   command = 'claude',
   commandArgs = [],
@@ -181,6 +186,7 @@ export async function runSession({
     ...pluginDirs.flatMap((pluginDir) => ['--plugin-dir', pluginDir]),
     ...(model ? ['--model', model] : []),
     ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
+    ...extraArgs,
   ];
   const result = await start(resolved, { lead: commandArgs, args, prompt, cwd: dir, env, timeoutMs });
   const events = parseStream(result.stdout);
@@ -346,7 +352,8 @@ async function commitSetup(dir) {
 // `pluginDirs` (loaded after the variant's own), `appendSystemPrompt` (added to
 // the session's system prompt), anything its pass reads (given
 // to pass as `context`), `evidence()`, whose answer is kept in the record, and
-// `close()`, called once the run is over, pass or fail. Resolves with the verdict, its reasons,
+// `close()`, called once the run is over, pass or fail. A scenario's own
+// `extraArgs` go to the session's command line (runSession). Resolves with the verdict, its reasons,
 // the record's file, whether the session was handled, its tokens and its one printed line.
 export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
@@ -363,6 +370,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       maxTurns: scenario.maxTurns ?? 30,
       ...(context.env ? { env: context.env } : {}),
       ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
+      ...(scenario.extraArgs ? { extraArgs: scenario.extraArgs } : {}),
     });
     // A session that never took the prompt in hand passes nothing, whatever its pass says
     // (Review Focus 4); its pass is still asked, and kept in the record, but cannot make it a pass.

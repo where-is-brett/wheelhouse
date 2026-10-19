@@ -2,8 +2,10 @@
 // A stand-in for the host helper, for evaluation runs only: there is no real
 // host in an evaluation. It answers the few requests a feature session's
 // commands make (scripts/feature/cli.js: push, open-pr, answer and the
-// provenance asked for by report) and the front desk's stand-in command makes
-// (scripts/eval/front-desk-command.js: writing a plain event and reading the views),
+// provenance asked for by report) and the front desk's commands make (the stand-in
+// scripts/eval/front-desk-command.js, and scripts/frontdesk/cli.js itself in the mod's
+// scenarios: writing a plain event, under the caller's id when it gives one, and reading the
+// views with the card events),
 // on the same kind of socket the real helper uses, records each one, and
 // answers as a helper with a host behind it would. Its state is a list of
 // events in memory, not a state branch.
@@ -63,6 +65,8 @@ const DEFAULT_BRANCHES = ['main', 'master'];
 
 // The computer a stand-in event names: eight hex characters, as a real one's.
 const STAND_IN_COMPUTER = '0e7a1000';
+// An id a caller may give with a record, as the real helper takes one: a random UUID in lower case.
+const EVENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 // A plain event as the helper makes one: its id, time and computer are made here.
 export function plainEvent(kind, data, at = new Date()) {
@@ -160,29 +164,42 @@ export async function startStandInHelper({ address, answers = {}, state = {}, ho
       record({ route: 'state/answer', questionId: body.questionId ?? null, answer });
       return { ok: true, answer };
     },
-    // The front desk's record: { project | cwd, kind, data }. A plain kind only, as the real
-    // helper takes; the command checked the event's shape before sending it.
+    // The front desk's record: { project | cwd, kind, data, id? }. A plain kind only, as the real
+    // helper takes; the command checked the event's shape before sending it. The caller's id is
+    // kept when it gives one the state doesn't hold, as the real helper keeps it.
     'POST /state/write': (body) => {
       const { kind, data } = body;
       if (!PLAIN_KINDS.includes(kind) || data === null || typeof data !== 'object' || Array.isArray(data)) {
         record({ route: 'state/write', kind: kind ?? null, data: data ?? null, refused: true });
         return { ok: false, refused: PLAIN_KINDS.includes(kind) ? 'the event\'s data must be an object' : 'that kind of event is not known here' };
       }
-      const event = plainEvent(kind, data);
       // As the real helper's writeEvent: the baseline never enters the state. Its data is not
-      // recorded, since it may hold the figures.
-      if (inHome(() => carriesBaseline(event))) {
+      // recorded, since it may hold the figures. A given id is checked first, as the real helper does.
+      const made = plainEvent(kind, data);
+      const baseline = inHome(() => carriesBaseline(made));
+      const given = body.id;
+      if (given !== undefined && (typeof given !== 'string' || !EVENT_ID.test(given) || events.some((e) => e.id === given))) {
+        record({ route: 'state/write', kind, ...(baseline ? { carriesBaseline: true } : { data }), refused: true });
+        return { ok: false, refused: 'the id is not one the state can take' };
+      }
+      if (baseline) {
         record({ route: 'state/write', kind, refused: true, carriesBaseline: true });
         return { ok: false, refused: CARRIES_BASELINE };
       }
+      const event = given === undefined ? made : { ...made, id: given };
       events.push(event);
       record({ route: 'state/write', kind, data, id: event.id });
       return { ok: true, id: event.id, pushed: true };
     },
-    // The front desk's reading: { project | cwd } -> the views.
-    'POST /state/views': () => {
-      record({ route: 'state/views' });
-      return { ok: true, views: standInViews(events, approved) };
+    // The front desk's reading: { project | cwd, cards? } -> the views, and with `cards: true` the
+    // card events too, as the real helper gives them for the board's numbers. STOP is off.
+    'POST /state/views': (body) => {
+      record({ route: 'state/views', ...(body.cards === true ? { cards: true } : {}) });
+      return {
+        ok: true,
+        views: standInViews(events, approved),
+        ...(body.cards === true ? { cards: events.filter((e) => e.kind === 'card').map((e) => structuredClone(e)) } : {}),
+      };
     },
     // measures/cli.js baseline: the figures -> the card reading them back; or { confirm: hash } ->
     // recorded, only after the director's click on that card. The record names the form asked for

@@ -11,13 +11,16 @@ import { hookMain } from '../../../scripts/hooks/kit.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { approvalLine, replyCode, replyCodeLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { withHome } from '../../helpers/homes.js';
 
 const HOOK = fileURLToPath(new URL('../../../scripts/hooks/card-check.js', import.meta.url));
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
 const NOW = new Date('2026-10-18T05:00:00.000Z');
-const RULING = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
+// Made in a home of its own: an event names its computer, which is kept in the home, so made with
+// none it would be kept in the real ~/.wheelhouse.
+const RULING = withHome(() => makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW }));
 
 const common = {
   why: 'It changes what users see, which is yours to decide at level 3.',

@@ -15,13 +15,16 @@ import {
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
+import { withHome as inOwnHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
 const NOW = new Date('2026-10-18T05:00:00.000Z');
 const P = 'owner__name';
 
-const RULING = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
+// Made in a home of its own: an event names its computer, which is kept in the home, so made with
+// none it would be kept in the real ~/.wheelhouse.
+const RULING = inOwnHome(() => makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW }));
 const OWN = [
   { label: 'Comma', says: 'Commas between values; opens in any spreadsheet.' },
   { label: 'Tab', says: 'Tabs between values; safe for text with commas.' },
@@ -106,7 +109,7 @@ test("each kind's card carries the five parts in order, its set line and its rep
     // The card keeps the option it recommended, so the delegation review can tell a choice made as recommended.
     assert.equal(card.recommend, INPUTS[kind].recommend, kind);
     // The state accepts the card data as composed.
-    assert.doesNotThrow(() => makeEvent({ kind: 'card', data: card, now: () => NOW }), kind);
+    assert.doesNotThrow(() => inOwnHome(() => makeEvent({ kind: 'card', data: card, now: () => NOW })), kind);
   }
 });
 
@@ -190,7 +193,7 @@ test('decision cards offer the deciding label, Not now, Explain more and Show me
 });
 
 test('a confirm card for a proposal offers Keep as is in place of Show me; any other confirm card keeps its four', () => {
-  const proposal = (kind, data) => makeEvent({ kind, data, now: () => NOW });
+  const proposal = (kind, data) => inOwnHome(() => makeEvent({ kind, data, now: () => NOW }));
   const learnt = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it three times' });
   const level = proposal('level', { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose it five times' });
   for (const event of [learnt, level]) {

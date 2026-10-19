@@ -16,6 +16,8 @@ import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
+// A setup card's note: setup asks it in its own chat, and that is where it is answered.
+export const SETUP_ANSWER = 'This card can\'t be answered here: answer it in the chat where setup asked it.';
 const ANSWER_LINE = /^Answer question /;
 const SETUP_LINE = /^Set up step /;
 const EXPLAIN = 'Explain more';
@@ -61,8 +63,10 @@ function buttonsOf(card) {
 
   // The Unattended card, with or without Use Guarded: nothing on it is answered from the pane.
   if (text.includes(UNATTENDED_CARD().risk)) return { buttons: [], note: CANT_ANSWER };
-  // A setup card or the baseline card: nothing on it is answered from the pane either.
-  if (isSetupCard(card) || card.kind === 'baseline' || baselineWording(text)) return { buttons: [], note: CANT_ANSWER };
+  // A setup card: nothing on it is answered from the pane either, only in setup's chat.
+  if (isSetupCard(card)) return { buttons: [], note: SETUP_ANSWER };
+  // The baseline card: nor is anything on it, only by the click on the card the helper composed.
+  if (card.kind === 'baseline' || baselineWording(text)) return { buttons: [], note: CANT_ANSWER };
 
   // A card with no set line asks a question the front desk takes up: every option is a turn.
   if (kind === 'question' && lines.length === 0) return { buttons: offers.map((label) => button(label, 'turn')), note: null };

@@ -161,7 +161,7 @@ test('each card says whether the front desk has asked it, and an asked card neve
   assert.deepEqual(model.cards.map((c) => [c.id, c.asked]), [[made.id, true], [putOff.id, true], [fresh.id, false]]);
   const got = await courierOn(model);
   assert.deepEqual(got.sent, [`card:${fresh.id}`]);
-  assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Ask any new cards now, once, then send Claude's notification in one line.`);
+  assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Send Claude's notification in one line, then ask any new cards now, once.`);
   // The asked cards stay unwoken on later ticks too.
   assert.deepEqual(await courierOn(model, { now: () => new Date(NOW.getTime() + 3600 * 1000) }), { submit: null, sent: [] });
 }));

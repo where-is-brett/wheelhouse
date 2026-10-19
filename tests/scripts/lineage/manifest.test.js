@@ -56,7 +56,7 @@ test('the manifest names each upstream folder and file with its fingerprint, and
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
     models: MODELS,
   });
-  assert.equal(CLAUDE_CODE_FLOOR, '2.1.295');
+  assert.equal(CLAUDE_CODE_FLOOR, '2.1.299');
   assert.equal(MODELS, 'the routing table in .claude/wheelhouse.json');
 });
 
@@ -175,7 +175,7 @@ test('the Claude folder is CLAUDE_CONFIG_DIR when it is set, else .claude in the
 test('the manifest in the repository lists Superpowers and Matt\'s skills at check 24\'s commits', () => {
   const manifest = readManifest();
   assert.equal(manifest.wheelhouse.version, JSON.parse(fs.readFileSync(new URL('../../../.claude-plugin/plugin.json', import.meta.url), 'utf8')).version);
-  assert.deepEqual(manifest.claudeCode, { floor: '2.1.295' });
+  assert.deepEqual(manifest.claudeCode, { floor: '2.1.299' });
   assert.equal(manifest.models, MODELS);
   assert.deepEqual(manifest.upstreams.map(({ name, plugin, repo, ref, sha }) => ({ name, plugin, repo, ref, sha })), [
     { name: 'superpowers', plugin: 'superpowers', repo: 'https://github.com/obra/superpowers.git', ref: 'v7.0.0', sha: 'bb92a77741419a4ab5f06e711a283343f1ada0c3' },

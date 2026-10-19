@@ -5,17 +5,19 @@
 //
 // A tick sends { cmd: 'tick', session, cwd, idle, surface }. In the front desk's session its
 // answer holds the pane's model (scripts/mod/status.js), the glance and the status line; any
-// other session's answer holds only its role and `every`. One tick runs at a time. Each prompt
-// an answer's `submit` holds (the courier's wake in the front desk's session, the watcher's lines
-// in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it handed, so the
-// next answer doesn't hold it again, and one that can't be handed on is not tried again.
+// other session's answer, a session still in setup's included, holds only its role and `every`.
+// One tick runs at a time: a tick a press or traffic asks for while one runs follows it, once.
+// Each prompt an answer's `submit` holds (the courier's wake in the front desk's session, the
+// watcher's lines in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it
+// handed, so the next answer doesn't hold it again, and one that can't be handed on is not tried
+// again.
 //
 // The pane has two views: the board, with each card's buttons (hooks/mod/cards.tsx), and the
 // settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both.
 import type { EngineInterface, RenderInput, SessionStartInput, TurnStartInput, TurnCompleteInput } from 'claude-code'
 import { ask, type Answer, type PaneModel } from './ask'
 import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS } from './numbers'
-import { drawCard, drawStop, pressingNow, releaseAll, submitAll } from './cards'
+import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED, NOT_HANDED_FOREMAN } from './cards'
 import { drawSettings, forgetAsks, showSettings } from './settings'
 
 // Whether every button, STOP included, is held back while a turn runs. Buttons stay live during a
@@ -25,10 +27,16 @@ import { drawSettings, forgetAsks, showSettings } from './settings'
 export const HIDE_WHILE_BUSY: boolean = false
 
 const FRONT_DESK = 'front-desk'
+const FOREMAN = 'foreman'
+const SETUP = 'setup'
 const NOT_OPENED = 'Wheelhouse couldn\'t open its pane'
 const FIRST_READING = 'Reading how the project stands…'
 // The pane's title while what it shows is old: no figures, so none is taken for current.
 const PLAIN_TITLE = 'Wheelhouse'
+// What /wheelhouse says, and opens nothing, where the last answered tick gave the session no pane.
+const NOT_HERE = 'Wheelhouse\'s pane belongs to the project\'s front desk: type /wheelhouse there'
+const SETTING_UP = 'This project is still being set up: its pane opens once setup finishes'
+const NO_PROJECT = 'This folder isn\'t a Wheelhouse project, so it has no pane'
 
 const PANE = { plugin: 'wheelhouse', key: 'pane' } as const
 const TICK = { plugin: 'wheelhouse', key: 'tick' } as const
@@ -36,15 +44,18 @@ const CARD = { plugin: 'wheelhouse', key: 'card' } as const
 const BUSY = { plugin: 'wheelhouse', key: 'busy' } as const
 const SURFACE = { plugin: 'wheelhouse', key: 'surface' } as const
 const ROLE = { plugin: 'wheelhouse', key: 'role' } as const
+const PICTURED = { plugin: 'wheelhouse', key: 'pictured' } as const
 const OPENED = { plugin: 'wheelhouse', key: 'opened' } as const
 const VIEW = { plugin: 'wheelhouse', key: 'view' } as const
 const SETTINGS = { plugin: 'wheelhouse', key: 'settings' } as const
 
-// The module's own: the timer and whether a tick runs. A reload starts both over, with the
-// session.start that follows it. Whether the pane has been opened is the session's, kept in its
-// state, so a reload never opens a pane the director closed.
+// The module's own: the timer, whether a tick runs and whether a press or traffic asked for one
+// meanwhile. A reload starts them over, with the session.start that follows it. Whether the pane
+// has been opened is the session's, kept in its state, so a reload never opens a pane the
+// director closed.
 let timer: { every: number, cancel: () => void } | null = null
 let running = false
+let again = false
 // The ticks' prompts being handed on. A prompt waits behind a running turn, so they are handed
 // on apart from the tick, which goes on ticking, and each tick's after the last tick's.
 let handing: Promise<unknown> = Promise.resolve()
@@ -54,11 +65,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
 const records = (value: unknown): Record<string, unknown>[] => (Array.isArray(value) ? value.filter(isRecord) : [])
 
-// "03:01 UTC" for `$.clock.now()`'s milliseconds.
+// "14:01" for `$.clock.now()`'s milliseconds, in the computer's own time zone: the mod's Date
+// carries it, as node's does for the bridge.
 function timeOf(ms: number): string {
   const d = new Date(ms)
   const two = (n: number) => String(n).padStart(2, '0')
-  return `${two(d.getUTCHours())}:${two(d.getUTCMinutes())} UTC`
+  return `${two(d.getHours())}:${two(d.getMinutes())}`
 }
 
 function stopTimer() {
@@ -104,12 +116,19 @@ async function showOld($: EngineInterface, session: string) {
 // What an answered tick shows. The session's first front-desk answer opens the pane; later ones,
 // a reload's included, retitle it only while it is open, so a pane the director closed stays
 // closed. A session whose role is no longer the front desk's (a foreman known only from its
-// first prompt) closes the pane and clears the status line.
+// first prompt, or a project whose folder setup is working on again) closes the pane and clears
+// the status line; when the pane was open it forgets that it opened it, so a front-desk answer
+// after it (setup finished) opens the pane again, while a pane the director closed stays closed.
+// The picture, and whether the answer held one, are kept before the role, so /wheelhouse never
+// reads a front-desk role with no picture as a folder outside a project.
 async function show($: EngineInterface, answer: Answer, session: string, now: number) {
   const before = (await $.state.get(ROLE)).value
-  if (answer.role !== undefined) await $.state.set(ROLE, answer.role)
+  if (answer.role === FRONT_DESK && answer.pane !== undefined) await $.state.set(PANE, { model: answer.pane, readAt: now })
+  if (answer.role !== undefined) {
+    await $.state.set(PICTURED, answer.pane !== undefined)
+    await $.state.set(ROLE, answer.role)
+  }
   if (answer.role === FRONT_DESK && answer.pane !== undefined) {
-    await $.state.set(PANE, { model: answer.pane, readAt: now })
     const title = answer.glance ?? PLAIN_TITLE
     if ((await $.state.get(OPENED)).value !== session) {
       await $.state.set(OPENED, session)
@@ -119,7 +138,11 @@ async function show($: EngineInterface, answer: Answer, session: string, now: nu
     }
     $.ui.status(answer.status)
   } else if (answer.role !== undefined && answer.role !== FRONT_DESK && before === FRONT_DESK) {
-    if (await paneIsOpen($)) await $.ui.close({ id: PANE_ID })
+    // Only a pane the mod itself closes is forgotten: one the director closed stays closed.
+    if (await paneIsOpen($)) {
+      await $.ui.close({ id: PANE_ID })
+      await $.state.set(OPENED, null)
+    }
     $.ui.status(undefined)
   }
 }
@@ -137,7 +160,8 @@ async function runTick($: EngineInterface) {
     }
     every = answer.every
     const prompts = answer.submit ?? []
-    if (prompts.length > 0) handing = handing.then(() => submitAll($, prompts)).catch(() => undefined)
+    const notHanded = answer.role === FOREMAN ? NOT_HANDED_FOREMAN : NOT_HANDED
+    if (prompts.length > 0) handing = handing.then(() => submitAll($, prompts, notHanded)).catch(() => undefined)
     await $.state.set(TICK, { at: now, failed: false })
     await show($, answer, session, now)
   } catch {
@@ -158,12 +182,18 @@ async function isOld($: EngineInterface) {
   return kept.value !== undefined && now - kept.value.readAt > STALE_TICKS * TICK_MS
 }
 
-// One tick, unless the last one is still running; a tick that runs that long may leave the
-// figures old, which the status line and the title then stop showing.
-export async function tick($: EngineInterface) {
+// One tick, unless the last one is still running. Then a press's or traffic's tick (`queued`)
+// runs once that one ends, however many asked; the timer's waits for its next fire. A tick that
+// runs long may leave the figures old: the status line and the title then stop showing them, and
+// the pane is drawn again, so its line saying how old they are comes without a tick's answer.
+export async function tick($: EngineInterface, queued = false) {
   if (running) {
+    if (queued) again = true
     try {
-      if (await isOld($)) await showOld($, await $.session.id())
+      if (await isOld($)) {
+        await showOld($, await $.session.id())
+        $.ui.invalidate('ui.render')
+      }
     } catch {
       // The next time the timer fires asks again.
     }
@@ -175,12 +205,17 @@ export async function tick($: EngineInterface) {
   } finally {
     running = false
   }
+  if (again) {
+    again = false
+    await tick($)
+  }
 }
 
 // The session's start: the pane opens with the session's first front-desk answer. The first
 // tick isn't waited for, so the session starts at once.
 export async function startPane($: EngineInterface, e: SessionStartInput) {
   stopTimer()
+  again = false
   try {
     await $.state.set(SURFACE, e.surface)
   } catch {
@@ -204,12 +239,26 @@ export async function turnEnded($: EngineInterface, e: TurnCompleteInput) {
   if (e.agentId === undefined) await $.state.set(BUSY, false)
 }
 
+// Why the session has no pane, from the last answered tick, or null when it has one or no tick
+// has answered yet: another role's session, a folder setup is working on, or a front desk outside
+// a project (its answer held no picture). A tick that failed since leaves the reason as it was.
+async function noPane($: EngineInterface, kept: unknown): Promise<string | null> {
+  const [role, pictured] = await Promise.all([$.state.get(ROLE), $.state.get(PICTURED)])
+  if (role.value === undefined) return null
+  if (role.value === SETUP) return SETTING_UP
+  if (role.value !== FRONT_DESK) return NOT_HERE
+  return kept === undefined && pictured.value === false ? NO_PROJECT : null
+}
+
 // /wheelhouse: the director asked, so the pane opens at any width, titled with the glance. While
-// what it shows is old, the title carries no figures and the answer says how old they are.
+// what it shows is old, the title carries no figures and the answer says how old they are. A
+// session the bridge gave no pane opens none, and the answer says why.
 export async function openPane($: EngineInterface): Promise<{ text: string }> {
   try {
     const [pane, last, now] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.clock.now()])
     const kept = pane.value
+    const why = await noPane($, kept)
+    if (why !== null) return { text: why }
     const glance = typeof kept?.model.glance === 'string' ? kept.model.glance : PLAIN_TITLE
     const stale = staleLine(kept, last.value, now)
     await $.ui.open({ id: PANE_ID, title: stale === null ? glance : PLAIN_TITLE })
@@ -238,13 +287,25 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const [pane, last, shown, now, view, pressing] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.state.get(CARD), $.clock.now(), $.state.get(VIEW), pressingNow($)])
   // Busy is read only while it holds the buttons back, so a turn's start and end redraw nothing else.
   const live = !HIDE_WHILE_BUSY || (await $.state.get(BUSY)).value !== true
-  const after = () => tick($)
+  const after = () => tick($, true)
   const kept = pane.value
   const model: PaneModel = isRecord(kept?.model) ? kept.model : {}
   const stale = staleLine(kept, last.value, now)
+  // Before the first picture, STOP heads the pane, as STOP needs only the session's folder. Once a
+  // tick has given the session no pane (another role's, setup's included, or a front desk outside
+  // a project), a pane /wheelhouse opened before it says why, with no STOP, as /wheelhouse would.
   if (kept === undefined) {
+    const why = await noPane($, kept)
+    if (why !== null) {
+      return (
+        <Box flexDirection="column">
+          <Text>{why}</Text>
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="column">
+        {await drawStop($, e, {}, pressing, live, after)}
         <Text>{stale ?? FIRST_READING}</Text>
       </Box>
     )

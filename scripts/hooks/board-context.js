@@ -133,13 +133,13 @@ function gapHours(project, at) {
   }, BRIEFING_GAP_HOURS);
 }
 
-// Whether the gap since the last prompt has passed. No last prompt (or one after now) counts as a gap;
-// with a clock that can't be read, none can be measured.
-function gapPassed(project, promptAt, at) {
+// Whether the gap since `since` (a time, or null) has passed. None (or one after now) counts as a
+// gap; with a clock that can't be read, none can be measured.
+function gapPassed(project, since, at) {
   const nowMs = at.getTime();
   if (!Number.isFinite(nowMs)) return false;
-  if (promptAt === null) return true;
-  return nowMs - Date.parse(promptAt) >= gapHours(project, at) * HOUR_MS;
+  if (since === null) return true;
+  return nowMs - Date.parse(since) >= gapHours(project, at) * HOUR_MS;
 }
 
 // The text within `limit`, its last lines cut and counted ("and N more") when it is longer.
@@ -345,7 +345,9 @@ export async function decide(input, deps = {}) {
     const seen = readSeen(project, { now: at });
     const visits = attempt(() => readVisits(project, { now: at }), { visitAt: null, boardAsks: [] });
     const command = commandOf(input.prompt);
-    const due = gapPassed(project, seen.promptAt, at);
+    // The gap runs from the director's last prompt or the last briefing given, whichever is later,
+    // so a briefing /digest gave counts as given: a prompt soon after it brings none.
+    const due = gapPassed(project, [seen.promptAt, seen.briefedAt].filter((t) => typeof t === 'string').sort().at(-1) ?? null, at);
     const want = command?.name ?? (due ? 'briefing' : null);
     // A visit begins with the first prompt of any kind after a gap since the last one seen: the last
     // message, the last board command or the visit's own start.
