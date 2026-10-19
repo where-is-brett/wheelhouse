@@ -248,12 +248,6 @@ async function within(start, ms) {
 
 const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 
-// The text's first `limit` words, with the white space between them as it was.
-function firstWords(text, limit) {
-  const kept = text.trim().split(/(\s+)/).slice(0, 2 * limit - 1);
-  return kept.join('').trimEnd();
-}
-
 // The briefing in plain words within `room` characters and the words its length setting gives, the
 // unusual items it showed and whether it showed the weekly lines (neither when it was cut for
 // characters, which may have lost them). The words are counted as the director is shown them: in
@@ -275,18 +269,14 @@ export function briefingIn({ project, model, usage, sources, settings, since, we
   };
   let given = cutTo(limit);
   if (!given.fits) {
-    let [low, high] = [1, limit - 1];
-    given = null;
+    // Cut to one word, the briefing is one word with no term in it, so a cut that fits is found.
+    let [low, high] = [2, limit - 1];
+    given = cutTo(1);
     while (low <= high) {
       const middle = Math.floor((low + high) / 2);
       const tried = cutTo(middle);
       if (tried.fits) [given, low] = [tried, middle + 1];
       else high = middle - 1;
-    }
-    // Only a glossary whose meanings run longer than the whole briefing leaves nothing that fits.
-    if (given === null) {
-      const least = cutTo(1);
-      given = { parts: least.parts, fitted: { text: firstWords(least.fitted.text, limit), cut: true } };
     }
   }
   const { parts, fitted } = given;

@@ -235,6 +235,17 @@ test('the briefing in plain words keeps to its words, its Terms line counted', a
   });
 });
 
+test('a glossary meaning longer than the whole briefing is cut with its lines, leaving it within its words and nothing marked shown', async () => {
+  await withProject(async () => {
+    const views = path.join(wheelhouseHome(), 'projects', P, 'views');
+    put(path.join(views, 'glossary.json'), { ci: { key: 'ci', id: 'g1', at: '2026-10-01T00:00:00.000Z', data: { term: 'CI', plain: 'checks '.repeat(120).trim() } } });
+    const briefing = { ...EMPTY, progress: ['CI is red', 'CI is red again'], watch: ['Unusual use: a lot'], raise: ['u1'] };
+    const given = briefed(briefing, { briefing: { value: 'short' }, explanations: { value: 'some-terms' } });
+    assert.ok(wordsIn(given.text) <= BRIEFING_WORDS.short, given.text);
+    assert.deepEqual(given.raise, []);
+  });
+});
+
 test('what the cut for plain words takes out of what to watch is neither raised nor given', async () => {
   await withProject(async () => {
     const weekly = 'Build commands run unattended on this Windows computer, with no sandbox.';
