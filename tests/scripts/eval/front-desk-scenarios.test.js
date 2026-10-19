@@ -340,6 +340,28 @@ test('runScenario fails a session over several turns when a later turn was not h
   assert.match(short.why, /^did not finish/);
 });
 
+test('a /compact turn that compacted is handled, though it writes nothing; one that did not compact is not', async () => {
+  const home = tempFolder('harness-home-');
+  const scenario = {
+    id: 91, title: 'a compaction', setup: async () => ({}), prompts: ['one', '/compact', 'three'],
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } }, pass: () => ({ pass: true, why: 'ok' }),
+  };
+  const init = { type: 'system', subtype: 'init', session_id: 'sess' };
+  const done = { type: 'result', subtype: 'success', result: '', usage: {} };
+  const worked = [init, { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Done.' }] } }, done];
+  const boundary = { type: 'system', subtype: 'compact_boundary' };
+  const run = (compact) => runScenario({
+    scenario, variant: 'with', trial: compact.length + 1, home, date: '2026-10-20',
+    runner: async ({ prompt }) => ({ events: prompt === '/compact' ? [init, ...compact, done] : worked, exitCode: 0 }),
+  });
+  const compacted = await run([boundary]);
+  assert.equal(compacted.handled, true);
+  assert.equal(compacted.pass, true, compacted.why);
+  const not = await run([]);
+  assert.equal(not.handled, false);
+  assert.match(not.why, /^not handled/);
+});
+
 // --- The readers ---
 
 test('the readers: lanes said, previews offered, labels bare, quotes, list items and what was written', () => {
@@ -355,6 +377,9 @@ test('the readers: lanes said, previews offered, labels bare, quotes, list items
   assert.ok(!previewOffered('It shows in the preview once built.'));
   // Users seeing a change is no look offered to the director (a reader narrowed after scenario 7's fourth trial).
   assert.ok(!previewOffered('Customers will see it, so it gets a short brief that you approve before anything is built.'));
+  // "If you see it as …" is the director judging it, not a look offered (8, trial 8 of the reruns).
+  assert.ok(!previewOffered('If you see it as a bigger change, say so and it\'ll come to you for approval before it\'s built.'));
+  assert.ok(previewOffered('I\'ll put it on a preview so you see it before it\'s built.'));
   assert.ok(previewOffered('I can let you see it before anything is built.'));
   assert.deepEqual(bareLabels('PR #14 merged once CI passed; slice 2 of 3 is building.'), ['PR', 'CI', 'slice']);
   assert.deepEqual(bareLabels('Proposed change #14 merged; piece 2 of 3, slice 3.\n\nTerms: slice means a piece.'), []);

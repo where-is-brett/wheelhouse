@@ -235,14 +235,18 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
       record({ route: 'state/write', kind, data, id: event.id });
       return { ok: true, id: event.id, pushed: true };
     },
-    // The front desk's reading: { project | cwd, cards? } -> the views, and with `cards: true` the
-    // card events too, as the real helper gives them for the board's numbers. STOP is never on here.
+    // The front desk's reading: { project | cwd, cards?, answers? } -> the views, with `cards: true`
+    // the card events too, as the real helper gives them for the board's numbers, and with
+    // `answers: true` the card-answer events, for `views work` to tell the director's Not now.
+    // STOP is never on here.
     'POST /state/views': (body) => {
-      record({ route: 'state/views', ...(body.cards === true ? { cards: true } : {}) });
+      record({ route: 'state/views', ...(body.cards === true ? { cards: true } : {}), ...(body.answers === true ? { answers: true } : {}) });
+      const ofKind = (kind) => events.filter((e) => e.kind === kind).map((e) => structuredClone(e));
       return {
         ok: true,
         views: views(),
-        ...(body.cards === true ? { cards: events.filter((e) => e.kind === 'card').map((e) => structuredClone(e)) } : {}),
+        ...(body.cards === true ? { cards: ofKind('card') } : {}),
+        ...(body.answers === true ? { answers: ofKind('card-answer') } : {}),
       };
     },
     // The director's profile: no settings of their own.

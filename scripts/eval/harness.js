@@ -566,9 +566,11 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const several = prompts.length > 1;
     // A session that never took the prompt in hand passes nothing, whatever its pass says
     // (Review Focus 4); its pass is still asked, and kept in the record, but cannot make it a pass.
-    // Over several turns, every turn that ran must have taken its prompt in hand.
+    // Over several turns, every turn that ran must have taken its prompt in hand. A `/compact` turn
+    // writes nothing and calls no tool by its nature: it took its prompt in hand when it compacted.
     // A pass that throws judges the run a fail; the record is written all the same.
-    const handled = turns.every((t) => t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode }));
+    const compactedTurn = (t) => /^\/compact\b/.test(t.prompt) && t.events.some((e) => e.type === 'system' && e.subtype === 'compact_boundary');
+    const handled = turns.every((t) => compactedTurn(t) || (t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode })));
     let judged;
     try {
       judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}) });

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
+import { plainEvent, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { CARRIES_BASELINE } from '../../../scripts/lib/measures-clicks.js';
@@ -69,6 +69,20 @@ test('the stand-in helper keeps a caller\'s id on a plain event, and gives the c
     const withCards = await client.state.views({ cwd: '/p', cards: true });
     assert.deepEqual(withCards.cards.map((e) => [e.id, e.kind]), [[id, 'card']]);
     assert.deepEqual(helper.events().map((e) => e.kind), ['card', 'asked']);
+  } finally {
+    await helper.close();
+  }
+});
+
+test('the stand-in helper gives the card answers with the views when asked, as the real one does for `views work`', async () => {
+  const answer = plainEvent('card-answer', { card: '0b7f3c1e-5d2a-4c8b-9e6f-1a2b3c4d5e6f', label: 'Not now' }, new Date('2026-10-20T08:00:00.000Z'));
+  const helper = await startStandInHelper({ address: testAddress(shortHome()), state: { events: [answer] } });
+  try {
+    const client = helperClient({ address: helper.address });
+    assert.equal((await client.state.views({ cwd: '/p' })).answers, undefined);
+    const got = await client.state.views({ cwd: '/p', answers: true });
+    assert.deepEqual(got.answers.map((e) => [e.id, e.kind]), [[answer.id, 'card-answer']]);
+    assert.deepEqual(helper.records().filter((r) => r.route === 'state/views').map((r) => r.answers ?? false), [false, true]);
   } finally {
     await helper.close();
   }
