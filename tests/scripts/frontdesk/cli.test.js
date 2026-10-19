@@ -52,15 +52,16 @@ async function inHome(fn) {
 // The helper as the front desk sees it: every call is kept; writes make the event as /state/write
 // does (a signed kind is refused) and the views are built from what is held. Under `stop` (true, or
 // a function read on each request) every write is refused and the views say STOP is on, as the
-// helper does under STOP. A pull request is open at `head`, unless `pr` answers for it.
-function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {} } = {}) {
+// helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
+// made at `writeAt(n)`, the nth write's time.
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
   let tick = 100;
   const views = () => buildViews(held, readEnrolled(), { now: () => NOW });
   const writeAs = (kind, data, id) => {
-    const made = makeEvent({ kind, data, now: () => T((tick += 1)) });
+    const made = makeEvent({ kind, data, now: () => writeAt((tick += 1)) });
     const event = id === undefined ? made : { ...made, id };
     held.push(event);
     return { ok: true, id: event.id, pushed: true };
@@ -369,36 +370,48 @@ test('no gate card when the click is on record, the pull request has moved on, o
   });
 });
 
-test('R121: a gate-asks older than the click window with no fresh click puts its card back on this visit, once', async () => {
+test('R121: a CI push card whose click lapsed before the push comes back once; other gate cards keep to the usual rules', async () => {
   await inHome(async () => {
+    // An approval card asked long ago, with the gate still waiting: not asked again (ruling F77).
     const waiting = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 4);
-    const handedOut = (when) => makeEvent({ kind: 'asked', data: { cards: [waiting.id] }, now: when });
-    // Asked long ago, and the gate still waits: asked again, from the card as it was made.
-    const stale = fakeHelper({ events: [EXPORT, waiting, handedOut(() => T(8)), gateAsks(APPROVE_ASK, ago(CLICK_MS + MINUTE))] });
-    const again = await run(stale, ['cards']);
-    assert.equal(again.code, 0, again.err);
-    assert.deepEqual(again.json.questions.map((q) => q.question), [waiting.data.question]);
-    assert.equal(cardWrites(stale).length, 0, 'not composed twice');
-    assert.deepEqual(stale.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [waiting.id] } }]);
-    // Within the window nothing is asked again: neither the gate-asks nor the last asking is old enough.
-    for (const events of [[handedOut(() => T(8)), gateAsks(APPROVE_ASK, ago(CLICK_MS - MINUTE))], [handedOut(ago(MINUTE)), gateAsks(APPROVE_ASK)]]) {
-      const fresh = fakeHelper({ events: [EXPORT, waiting, ...events] });
-      const none = await run(fresh, ['cards']);
-      assert.deepEqual(none.json, { questions: [], left: 0 });
-    }
-    // A CI push clicked once, whose click is older than the window, is asked again too: the card
-    // was decided by that click, so it comes back as it was made.
+    const handedOut = makeEvent({ kind: 'asked', data: { cards: [waiting.id] }, now: () => T(8) });
+    const stale = fakeHelper({ events: [EXPORT, waiting, handedOut, gateAsks(APPROVE_ASK, ago(CLICK_MS + MINUTE))] });
+    assert.deepEqual((await run(stale, ['cards'])).json, { questions: [], left: 0 });
+    assert.deepEqual(stale.writes(), []);
+    // Not now on a gate card keeps it off the next visit's cards; it stays on the board.
+    const putOff = fakeHelper({ events: [EXPORT, gateAsks(APPROVE_ASK, ago(CLICK_MS + MINUTE))] });
+    assert.equal((await run(putOff, ['cards'])).json.questions.length, 1);
+    const made = putOff.held.find((e) => e.kind === 'card').id;
+    await putOff.client.state.write({ cwd: CWD, kind: 'card-answer', data: { card: made, label: 'Not now' } });
+    assert.deepEqual((await run(putOff, ['cards'])).json, { questions: [], left: 0 });
+    assert.deepEqual(putOff.views().waiting.map((c) => c.id), [made]);
+
+    // A CI push clicked once, whose click lapsed while the pull request is still at the head the
+    // update was made from: the push didn't happen, so the card comes back as it was made.
     const push = cardEvent({
       kind: 'ci-push', level: 3, what: `The branch ${BRANCH} needs the latest changes.`, why: 'It changes a checks file.',
       options: [says('Push it')], recommend: 'Push it', because: 'the merge waits for it', meanwhile: 'The merge waits.', target: { branch: BRANCH, sha: MERGE },
     }, 4);
     const clicked = makeEvent({ kind: 'action', data: { action: 'ci-push', branch: BRANCH, sha: MERGE, question: push.data.question, label: 'Push it' }, now: ago(CLICK_MS + MINUTE) });
-    const lapsed = fakeHelper({ events: [EXPORT, push, gateAsks(PUSH_ASK, ago(CLICK_MS + 2 * MINUTE)), clicked] });
+    const events = [EXPORT, push, gateAsks({ ...PUSH_ASK, from: FULL }, ago(CLICK_MS + 2 * MINUTE)), clicked];
+    // Its records are written as the visit happens, after the click.
+    const lapsed = fakeHelper({ events, head: FULL, writeAt: (n) => new Date(NOW.getTime() + n) });
     assert.equal(lapsed.views().waiting.length, 0, 'the click decided the card');
     const back = await run(lapsed, ['cards']);
     assert.equal(back.code, 0, back.err);
     assert.deepEqual(back.json.questions.map((q) => q.question), [push.data.question]);
-    assert.equal(cardWrites(lapsed).length, 0);
+    assert.equal(cardWrites(lapsed).length, 0, 'not composed twice');
+    assert.deepEqual(lapsed.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [push.id] } }]);
+    // Once for that click: the next visit doesn't ask it again.
+    assert.deepEqual((await run(lapsed, ['cards'])).json, { questions: [], left: 0 });
+    // Once the head has moved past the head the update was made from (pushed, then built on), no card.
+    for (const head of [MERGE, LATER]) {
+      const moved = fakeHelper({ events, head });
+      assert.deepEqual((await run(moved, ['cards'])).json, { questions: [], left: 0 }, head);
+    }
+    // A gate-asks that doesn't name the head the update was made from is never asked again.
+    const unnamed = fakeHelper({ events: [EXPORT, push, gateAsks(PUSH_ASK, ago(CLICK_MS + 2 * MINUTE)), clicked], head: FULL });
+    assert.deepEqual((await run(unnamed, ['cards'])).json, { questions: [], left: 0 });
   });
 });
 
@@ -424,13 +437,21 @@ test('a lineage hold becomes one question card naming the kits and the first pat
     assert.ok(card.question.length <= CARD.chars);
     assert.deepEqual(cardProblems(card.question), []);
     assert.deepEqual(out.json.questions.map((q) => q.question), [card.question]);
-    // Made once: the next visit has a card for that hold already, even once it is answered.
+    // Made once: the next visit makes no second card for that hold.
     await run(helper, ['cards']);
     assert.equal(cardWrites(helper).length, 1);
     // The manifest that couldn't be read is said so.
     const unread = fakeHelper({ events: [makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [{ upstream: null, path: 'lineage/manifest.json' }] }, now: () => T(3) })] });
     await run(unread, ['cards']);
     const [manifest] = cardWrites(unread);
+    // Paths too long for the card are left out: each kit is named with how many of its files differ.
+    const long = (n) => `skills/${String(n).repeat(180)}/SKILL.md`;
+    const wide = fakeHelper({ events: [makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [1, 2, 3, 4, 5, 6].map((n) => ({ upstream: 'superpowers', path: long(n) })) }, now: () => T(3) })] });
+    const shown = await run(wide, ['cards']);
+    assert.equal(shown.json.problems, undefined);
+    const [short] = cardWrites(wide);
+    assert.ok(short.question.split('\n')[0].includes('superpowers (6 files)'), short.question);
+    assert.ok(!short.question.includes(long(1)));
     assert.match(manifest.question.split('\n')[0], /can't be read/);
     assert.deepEqual(cardProblems(manifest.question), []);
   });

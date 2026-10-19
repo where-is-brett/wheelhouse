@@ -1342,10 +1342,16 @@ test('a merge that waits only for the director\'s click records what it waits fo
   assert.equal(p.code, 0, p.err);
   assert.equal(p.out, ciWaiting);
   assert.deepEqual(pushing.calls.map(([name]) => name), ['prState', 'updateBranch']);
-  assert.deepEqual(asks(pushing.writes).map((w) => w.data), [{ work: 'mine', pr: 12, ask: 'ci-push', sha: merge, branch: 'feature/mine' }]);
+  // It names the head the update was made from, as the host gave it, so the front desk can tell whether it was pushed (ruling F78).
+  assert.deepEqual(asks(pushing.writes).map((w) => w.data), [{ work: 'mine', pr: 12, ask: 'ci-push', sha: merge, branch: 'feature/mine', from: head }]);
   const pushAgain = fakeClient({ views, answers: { updateBranch: ci } });
   assert.equal((await act(['merge', 'mine'], { client: pushAgain.client })).out, ciWaiting);
   assert.deepEqual(pushAgain.writes, []);
+  // A head the host gave in no full form is not named.
+  const otherMerge = 'd'.repeat(40);
+  const unread = fakeClient({ views, answers: { updateBranch: { ...ci, ciPush: { branch: 'feature/mine', sha: otherMerge } }, prState: { ok: true, result: { state: 'open', headSha: 'b'.repeat(12) } } } });
+  await act(['merge', 'mine'], { client: unread.client });
+  assert.deepEqual(asks(unread.writes).map((w) => w.data), [{ work: 'mine', pr: 12, ask: 'ci-push', sha: otherMerge, branch: 'feature/mine' }]);
   // The approval asked for earlier is another click: a new head's approval is recorded too.
   const later = 'f'.repeat(40);
   const next = fakeClient({ views, answers: { updateBranch: { ok: true, updated: false, head: later }, merge: { ...approval, needs: { approval: { pr: 12, commit: later } } } } });

@@ -205,8 +205,8 @@ function inPlainWords(make, room, words) {
 // that the composer can make a card of, which it makes cards of first; then the cards the build
 // loop's records call for (scripts/cards/build-loop.js): each click the merge gate waits for whose
 // card is to be made or asked again, and each lineage hold with no card. Whether a pull request
-// has moved on is the host's to say, which `cli.js cards` asks and this doesn't, so for a while
-// this may count a gate card that `cards` then doesn't make. At most one call's worth. Under STOP,
+// has moved on is the host's to say, which `cli.js cards` asks and this doesn't, so until the
+// gate's next record this may count a gate card that `cards` then doesn't give. At most one call's worth. Under STOP,
 // the one Lift STOP card.
 function cardsToAsk(project, at) {
   if (stopState().on) return 1;

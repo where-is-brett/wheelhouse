@@ -228,21 +228,25 @@ function gateCard(entry, views, words) {
 }
 
 // A lineage hold's card, naming the first paths that differ, or only how many when they make the
-// card too long.
+// card too long. When neither composes, the first refusal is the one given.
 function holdCard(hold, words) {
   try {
     return composePlain(holdInput(hold), words);
-  } catch {
-    return composePlain(holdInput(hold, { short: true }), words);
+  } catch (error) {
+    try {
+      return composePlain(holdInput(hold, { short: true }), words);
+    } catch {
+      throw error;
+    }
   }
 }
 
 // Whether the pull request a gate-asks names still waits for its click, as the host says (see
-// stillWaits). A read that fails says it does: asking is the safe side.
-async function gateStillWaits(client, cwd, entry) {
+// stillWaits; `again` for a card asked again). A read that fails says it does: asking is the safe side.
+async function gateStillWaits(client, cwd, entry, again) {
   try {
     const got = await client.prState({ cwd, number: entry.data.pr });
-    return got?.ok === true ? stillWaits(entry, got.result) : true;
+    return got?.ok === true ? stillWaits(entry, got.result, { again }) : true;
   } catch {
     return true;
   }
@@ -250,7 +254,8 @@ async function gateStillWaits(client, cwd, entry) {
 
 // The cards the build loop's records call for (rulings F71, F72): for each click the merge gate
 // waits for, its approval or CI push card, made once, unless the host says the pull request has
-// moved on, and asked again when R121 says so (gateAsksDue); and a question card for each lineage
+// moved on, and a CI push card asked again when its click lapsed before the push (gateAsksDue,
+// R121); and a question card for each lineage
 // hold, made once. Resolves with { made, again }: how many cards were recorded, and the ids of the
 // cards to put back on this visit. What couldn't be made goes into `problems`.
 async function buildLoopCards({ client, cwd, views, words, now, problems }) {
@@ -258,7 +263,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
   const again = new Set();
   for (const due of gateAsksDue(views, now)) {
     const { pr } = due.entry.data;
-    if (!(await gateStillWaits(client, cwd, due.entry))) continue;
+    if (!(await gateStillWaits(client, cwd, due.entry, due.again !== undefined))) continue;
     if (due.again !== undefined) {
       again.add(due.again);
       continue;

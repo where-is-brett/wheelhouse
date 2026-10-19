@@ -117,8 +117,10 @@ const PLAIN_SHAPES = {
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
   asked: { must: ['cards'], may: [] },
   // The click the merge gate waits for (ruling R117): the director's approval of a pull request's
-  // head, or their CI push of the update merge `sha` to `branch`. Recorded by the foreman's merge.
-  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch'] },
+  // head, or their CI push of the update merge `sha` to `branch`, made from the head `from` when the
+  // host gave it (ruling F78), so a pushed update can be told from one not yet pushed. Recorded by
+  // the foreman's merge.
+  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch', 'from'] },
   // A session start held the project's edits and commands because the installed upstream skills
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card.
@@ -220,6 +222,9 @@ function checkPlain(kind, data) {
     if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
     if (data.ask === 'ci-push' && !isText(data.branch)) bad('needs the branch the CI push is for');
     if (data.ask !== 'ci-push' && data.branch !== undefined) bad('has a branch it should not');
+    if (data.from !== undefined && (data.ask !== 'ci-push' || typeof data.from !== 'string' || !/^[0-9a-f]{40}$/.test(data.from))) {
+      bad('has a from that is not the full head a CI push\'s update was made from');
+    }
   } else if (kind === 'lineage-hold') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
     const one = (m) => isPlain(m) && Object.keys(m).length === 2 && isText(m.path)

@@ -450,10 +450,20 @@ test('the count takes in the cards the build loop\'s records call for: the gate\
     });
     put(viewFile('lineageHolds'), [hold('h1'), hold('h2', 'c2')]);
     assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(2));
-    // Its card asked long ago and the gate-asks older than the window: asked again (ruling R121).
+    // An approval card asked long ago isn't asked again; a CI push card whose click lapsed is, once
+    // for that click (rulings R121, F77, F78).
+    const push = (over) => entry(9, {
+      at: '2026-10-19T11:00:00.000Z', data: { work: 'export-csv', pr: 9, ask: 'ci-push', sha: 'b'.repeat(40), branch: 'wh/x', from: 'a'.repeat(40) },
+      card: 'c9', askedAt: '2026-10-19T11:01:00.000Z', clickedAt: '2026-10-19T11:02:00.000Z', ...over,
+    });
     put(viewFile('gateAsks'), { 9: entry(9, { at: '2026-10-19T11:00:00.000Z', card: 'c9', askedAt: '2026-10-19T11:01:00.000Z' }) });
     put(viewFile('lineageHolds'), []);
+    assert.equal(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z'), undefined);
+    put(viewFile('gateAsks'), { 9: push({}) });
     assert.equal(contextOf(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z')), cardsLine(1));
+    put(viewFile('gateAsks'), { 9: push({ askedAt: '2026-10-19T11:03:00.000Z' }) });
+    assert.equal(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z'), undefined);
+    put(viewFile('gateAsks'), { 9: push({}) });
     // Finished work asks nothing more.
     put(viewFile('reports'), { 'export-csv': { data: { work: 'export-csv', outcome: 'merged' } } });
     assert.equal(await run(repo, 'And then?', '2026-10-19T12:02:00.000Z'), undefined);

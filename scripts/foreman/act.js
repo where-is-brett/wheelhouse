@@ -1056,7 +1056,10 @@ async function merge(ctx, work, rest) {
   const updated = await ctx.client.updateBranch(number);
   const ciPush = updated?.ok === false ? ciPushNeeded(updated) : null;
   if (ciPush !== null) {
-    await gateAsks(ctx, { work, pr, ask: 'ci-push', sha: ciPush.sha, branch: ciPush.branch }, `their push of ${ciPush.branch}, which changes a CI file`);
+    // The head the update was made from, as the host gave it just now, so the front desk can tell
+    // a pushed update from one not yet pushed (ruling F78).
+    const from = typeof state?.result?.headSha === 'string' && FULL_COMMIT.test(state.result.headSha) ? { from: state.result.headSha } : {};
+    await gateAsks(ctx, { work, pr, ask: 'ci-push', sha: ciPush.sha, branch: ciPush.branch, ...from }, `their push of ${ciPush.branch}, which changes a CI file`);
     return;
   }
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);

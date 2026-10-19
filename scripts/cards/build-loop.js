@@ -19,13 +19,22 @@ function clicked(entry, nowMs) {
   return entry.data.ask === 'approval' || nowMs - Date.parse(entry.clickedAt) <= CLICK_MS;
 }
 
+// Whether a CI push card is asked again (ruling R121, as rulings F77 and F78 read it): the director
+// clicked it, the click has lapsed (clicked has said it isn't fresh), and the card hasn't been asked
+// since that click, so it comes back once for each lapsed click. Only for a gate-asks that names the
+// head the update was made from (`from`), so the host can say whether the push happened
+// (stillWaits). An approval click never lapses, and a card with no click keeps to the usual rules:
+// asked once, and put off by Not now.
+function lapsedPush(entry) {
+  const { ask, from } = entry.data;
+  if (ask !== 'ci-push' || typeof from !== 'string' || typeof entry.clickedAt !== 'string') return false;
+  return typeof entry.askedAt !== 'string' || Date.parse(entry.askedAt) <= Date.parse(entry.clickedAt);
+}
+
 // What each click the merge gate waits for needs on this visit, from the views' `gateAsks`:
 // { entry, make: true } when no card carries its line yet, or { entry, again: <card id> } when its
-// card is asked again. None for work that has finished or a click on record. Ruling R121, on this
-// side: a card is asked again when no fresh click on it exists and the gate-asks is older than the
-// click window, as its last asking is, so the card comes back at most once a window, as the gate
-// would record its gate-asks again at most once a window. The pull request itself isn't read here:
-// whether it is still at that commit is the host's to say (`cli.js cards` asks it).
+// card is asked again (lapsedPush). None for work that has finished or a click on record. The pull
+// request itself isn't read here: whether it still waits is the host's to say (`cli.js cards` asks it).
 export function gateAsksDue(views, now) {
   const nowMs = msOf(now);
   const reports = isRecord(views?.reports) ? views.reports : {};
@@ -34,8 +43,7 @@ export function gateAsksDue(views, now) {
   return entries.flatMap((entry) => {
     if (FINISHED.includes(reports[entry.data.work]?.data?.outcome) || clicked(entry, nowMs)) return [];
     if (typeof entry.card !== 'string') return [{ entry, make: true }];
-    const last = Math.max(...[entry.at, entry.askedAt, entry.clickedAt].filter((t) => typeof t === 'string').map(Date.parse));
-    return nowMs - last > CLICK_MS ? [{ entry, again: entry.card }] : [];
+    return lapsedPush(entry) ? [{ entry, again: entry.card }] : [];
   });
 }
 
@@ -47,13 +55,16 @@ export function holdsDue(views) {
 
 // Whether the pull request, as the host gives it ({ headSha, state }), still waits for the click: it
 // is open, and for an approval its head is the commit asked about; for a CI push its head is not
-// yet the update the push is for (once pushed, it is). An answer that says nothing either way is
-// taken as waiting: asking is the safe side.
-export function stillWaits(entry, pr) {
+// yet the update the push is for (once pushed, it is). A CI push card asked `again` waits only while
+// the head is still the one the update was made from: past it, the push happened, or the branch has
+// moved on and a new update will be asked for. An answer that says nothing either way is taken as
+// waiting: asking is the safe side.
+export function stillWaits(entry, pr, { again = false } = {}) {
   if (!isRecord(pr)) return true;
   if (pr.state === 'merged' || pr.state === 'closed') return false;
   if (typeof pr.headSha !== 'string' || !/^[0-9a-f]{40}$/.test(pr.headSha)) return true;
-  return entry.data.ask === 'approval' ? pr.headSha === entry.data.sha : pr.headSha !== entry.data.sha;
+  if (entry.data.ask === 'approval') return pr.headSha === entry.data.sha;
+  return again ? pr.headSha === entry.data.from : pr.headSha !== entry.data.sha;
 }
 
 // The composer's input for the card a gate-asks entry asks for, naming the work by `name`.
