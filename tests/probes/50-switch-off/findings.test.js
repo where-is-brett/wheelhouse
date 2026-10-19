@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { NAMES, MARKERS, summarise, holds, agree, choose } from '../../../probes/50-switch-off/findings.js';
-import { makeFixtures, parseOptions, findDesktopClaude, pluginNames } from '../../../probes/50-switch-off/run.js';
+import { makeFixtures, parseOptions, findDesktopClaude, pluginNames, MODEL_PROMPT, runLive, live } from '../../../probes/50-switch-off/run.js';
 
 const runJs = fileURLToPath(new URL('../../../probes/50-switch-off/run.js', import.meta.url));
 const PLUGIN = `${NAMES.plugin}@wheelhouse-probe-switch`;
@@ -20,7 +20,7 @@ function trial(name, binary, fields) {
   return { name, binary, where: 'main', init: init(), hooksRan: [MARKERS.projectHook, MARKERS.pluginHook], turns: {}, git: null, ...fields };
 }
 
-const allOn = [MARKERS.skill, MARKERS.personal, MARKERS.projectAgentBare, MARKERS.pluginAgentScoped];
+const allOn = [MARKERS.skill, MARKERS.personal, MARKERS.command, MARKERS.projectAgentBare, MARKERS.pluginAgentScoped];
 
 // What the documentation expects, for both copies of Claude Code.
 function expected() {
@@ -60,9 +60,11 @@ test('holds and agree read both copies of Claude Code together', () => {
 
 test('with the documented behaviour, each kind gets its local-settings route', () => {
   const found = summarise(expected());
-  assert.deepEqual(found.route.skill, { file: '.claude/settings.local.json', key: 'skillOverrides.<name>', value: 'off', typedRefused: true });
-  assert.deepEqual(found.route.command, { file: '.claude/settings.local.json', key: 'skillOverrides.<name>', value: 'off', typedRefused: true });
-  assert.deepEqual(found.route.agent, { file: '.claude/settings.local.json', key: 'permissions.deny', add: 'Agent(<name>)', typedRefused: null });
+  assert.deepEqual(found.route.skill, { route: 'setting', file: '.claude/settings.local.json', key: 'skillOverrides.<name>', value: 'off', typedRefused: true });
+  assert.deepEqual(found.route.command, { route: 'setting', file: '.claude/settings.local.json', key: 'skillOverrides.<name>', value: 'off', typedRefused: true });
+  assert.deepEqual(found.route.agent, {
+    route: 'setting', file: '.claude/settings.local.json', key: 'permissions.deny', add: 'Agent(<name>)', typedRefused: null, blocksSameNamedPluginAgent: false,
+  });
   assert.equal(found.route.hook.route, 'none', 'disableAllHooks stops the plugin\'s hooks too, so it is no route');
   assert.equal(found.candidates.hook[0].pluginHooksStopToo, true);
   assert.deepEqual(found.typedRefused, { skill: true, command: true });
@@ -75,26 +77,65 @@ test('with the documented behaviour, each kind gets its local-settings route', (
   assert.equal(found.candidates.agent[0].scopedPluginAgentStillRuns, true);
 });
 
-test('a skill deny that leaves the typed command running is used only when nothing better holds', () => {
+test('a skill deny that leaves the typed /<name> running is used only when nothing better holds', () => {
   const trials = expected().filter((one) => one.name !== 'skill-overrides');
   const found = summarise(trials);
-  assert.deepEqual(found.route.skill, { file: '.claude/settings.local.json', key: 'permissions.deny', add: 'Skill(<name>)', typedRefused: false });
-  assert.equal(found.route.command.route, 'none');
+  assert.deepEqual(found.route.skill, { route: 'setting', file: '.claude/settings.local.json', key: 'permissions.deny', add: 'Skill(<name>)', typedRefused: false });
+  assert.deepEqual(found.route.command, { route: 'setting', file: '.claude/settings.local.json', key: 'permissions.deny', add: 'Skill(<name>)', typedRefused: false });
+  assert.deepEqual(found.typedRefused, { skill: false, command: false });
 });
 
-test('when nothing holds, the route is none with the move as what to do instead', () => {
+test('a command is judged on Claude using it as well as on the typed /<name>', () => {
+  // skillOverrides refuses the typed command, but Claude still ran it: that candidate fails.
+  const trials = expected().map((one) => (one.name === 'skill-overrides'
+    ? { ...one, turns: { ...one.turns, model: { markers: [...one.turns.model.markers, MARKERS.command] } } }
+    : one));
+  const found = summarise(trials);
+  assert.equal(found.candidates.command[0].holds, false);
+  assert.equal(found.candidates.command[0].keptFromClaude, false);
+  assert.equal(found.candidates.command[0].typedRefused, true);
+  assert.equal(found.route.command.add, 'Skill(<name>)');
+  // The skill's own route is not changed by it.
+  assert.equal(found.route.skill.key, 'skillOverrides.<name>');
+});
+
+test('Claude is asked to use the command too, in its own step', () => {
+  assert.match(MODEL_PROMPT, new RegExp(`Skill tool with the skill "${NAMES.command}"`));
+  assert.match(MODEL_PROMPT, /five steps/);
+  // The agent steps keep the prompts their markers are named for.
+  assert.match(MODEL_PROMPT, /"step3"/);
+  assert.match(MODEL_PROMPT, /"step4"/);
+});
+
+test('when nothing holds, a skill, agent or command route is the move', () => {
   const trials = expected().map((one) => (one.name === 'agent-deny'
     ? { ...one, turns: { model: { markers: [MARKERS.projectAgentBare] } } }
     : one));
   const found = summarise(trials);
-  assert.equal(found.route.agent.route, 'none');
-  assert.match(found.route.agent.instead, /^move/);
+  assert.deepEqual(found.route.agent, { route: 'move' });
+  assert.equal(found.route.hook.route, 'none');
+  assert.equal(typeof found.route.hook.instead, 'string');
+});
+
+test('an agent deny that also stops the plugin\'s agent of the same name says so', () => {
+  const blocks = expected().map((one) => (one.name === 'agent-deny' ? { ...one, turns: { model: { markers: [MARKERS.skill] } } } : one));
+  const found = summarise(blocks);
+  assert.equal(found.route.agent.route, 'setting');
+  assert.equal(found.route.agent.blocksSameNamedPluginAgent, true);
+  // One copy blocking it is enough to say it does.
+  const oneCopy = expected().map((one) => (one.name === 'agent-deny' && one.binary === 'desktop' ? { ...one, turns: { model: { markers: [MARKERS.skill] } } } : one));
+  assert.equal(summarise(oneCopy).route.agent.blocksSameNamedPluginAgent, true);
+  // Untried when the plugin's agent never ran by its scoped name in the baseline.
+  const neverRan = expected().map((one) => (one.name === 'baseline'
+    ? { ...one, turns: { ...one.turns, model: { markers: allOn.filter((m) => m !== MARKERS.pluginAgentScoped) } } }
+    : one));
+  assert.equal(summarise(neverRan).route.agent.blocksSameNamedPluginAgent, null);
 });
 
 test('a hook switch that leaves plugin hooks running is a route', () => {
   const trials = expected().map((one) => (one.name === 'hooks-off' ? { ...one, hooksRan: [MARKERS.pluginHook] } : one));
   const found = summarise(trials);
-  assert.deepEqual(found.route.hook, { file: '.claude/settings.local.json', key: 'disableAllHooks', value: true, typedRefused: null });
+  assert.deepEqual(found.route.hook, { route: 'setting', file: '.claude/settings.local.json', key: 'disableAllHooks', value: true, typedRefused: null });
 });
 
 test('the copies disagreeing is reported, not averaged', () => {
@@ -116,7 +157,8 @@ test('no trials: every answer is null or untried', () => {
   assert.equal(found.sandboxOff, null);
   assert.equal(found.sameName, null);
   assert.equal(found.initBeforeModel, null);
-  assert.equal(choose([], 'x').route, 'none');
+  assert.deepEqual(choose([], { route: 'none', instead: 'x' }), { route: 'none', instead: 'x', untried: true });
+  assert.deepEqual(choose([], { route: 'move' }), { route: 'move', untried: true });
   assert.deepEqual(found.route, { skill: null, agent: null, command: null, hook: null });
   assert.equal(found.personal, null);
   assert.deepEqual(found.typedRefused, { skill: null, command: null });
@@ -147,9 +189,14 @@ test('each kind is gated on its own control', () => {
   const found = summarise(trials);
   assert.equal(found.route.command, null);
   assert.equal(found.route.skill.key, 'skillOverrides.<name>');
+  // Claude never used the command in the baseline: no command route either.
+  const commandUnused = expected().map((one) => (one.name === 'baseline'
+    ? { ...one, turns: { ...one.turns, model: { markers: allOn.filter((m) => m !== MARKERS.command) } } }
+    : one));
+  assert.equal(summarise(commandUnused).route.command, null);
   // The bare name reached the plugin's agent in the baseline: the agent deny shows nothing.
   const pluginWins = expected().map((one) => (one.name === 'baseline'
-    ? { ...one, turns: { ...one.turns, model: { markers: [MARKERS.skill, MARKERS.personal, MARKERS.pluginAgentBare] } } }
+    ? { ...one, turns: { ...one.turns, model: { markers: [MARKERS.skill, MARKERS.personal, MARKERS.command, MARKERS.pluginAgentBare] } } }
     : one));
   assert.equal(summarise(pluginWins).route.agent, null);
 });
@@ -231,4 +278,22 @@ test('without --go it prints the plan, changes nothing and exits 0', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /nothing below has been done/);
   assert.match(result.stdout, /Nothing was changed/);
+});
+
+test('a session that times out is stopped, then killed, and stays listed until it has exited', async () => {
+  // Ignores SIGTERM, so only the kill after the grace ends it.
+  const stubborn = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);";
+  const result = await runLive(process.execPath, ['-e', stubborn], { timeoutMs: 400, graceMs: 400 });
+  assert.equal(result.timedOut, true);
+  if (process.platform !== 'win32') assert.equal(live.size, 1, 'still listed while it runs');
+  const until = Date.now() + 10_000;
+  while (live.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(live.size, 0, 'killed after the grace');
+});
+
+test('a session with no timeout given gets the default one, not none', async () => {
+  const result = await runLive(process.execPath, ['-e', 'setTimeout(() => {}, 300)'], {});
+  assert.equal(result.timedOut, undefined);
+  assert.equal(result.code, 0);
+  await assert.rejects(runLive(process.execPath, ['-e', ''], { timeoutMs: Number.NaN }), /timeoutMs/);
 });

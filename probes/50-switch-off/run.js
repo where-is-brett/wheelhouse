@@ -45,6 +45,8 @@ const MARKETPLACE_NAME = 'wheelhouse-probe-switch';
 const PLUGIN_ID = `${NAMES.plugin}@${MARKETPLACE_NAME}`;
 const INIT_WAIT_MS = 90_000;
 const TURN_MS = 6 * 60_000;
+// How long a stopped session has to end after SIGTERM before it is killed.
+const KILL_GRACE_MS = 5_000;
 const GIT_IDENTITY = ['-c', 'user.name=Wheelhouse probe', '-c', 'user.email=probe@wheelhouse.invalid', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false'];
 
 // ------------------------------------------------------------------ options
@@ -226,8 +228,8 @@ function listFiles(dir, base = dir) {
 // What each trial writes, and what it asks. `local` is the whole of the
 // project's .claude/settings.local.json (null: no file); `project` is merged
 // into the committed .claude/settings.json for the trial and put back after.
-// `asks`: model (one turn asking Claude to use the skills and dispatch
-// `builder`), typed-skill / typed-command / typed-personal (the prompt is
+// `asks`: model (one turn asking Claude to use the skills and the command, and
+// dispatch `builder`), typed-skill / typed-command / typed-personal (the prompt is
 // `/<name>`, as the director would type it), sandbox (one Bash command writing
 // outside the project).
 const MODEL = 'model';
@@ -252,13 +254,15 @@ export const TRIALS = [
   { name: 'hook-skip-worktree', local: null, asks: [], move: 'hook' },
 ];
 
-const MODEL_PROMPT = [
+// The agent steps keep their numbers: each agent writes a marker named for its prompt.
+export const MODEL_PROMPT = [
   'This is an automated check in a scratch folder; nothing here matters outside it.',
-  'Do these four steps in order. If a step is refused or fails, note it and go on to the next. Do nothing else.',
+  'Do these five steps in order. If a step is refused or fails, note it and go on to the next. Do nothing else.',
   `1. Call the Skill tool with the skill "${NAMES.skill}".`,
   `2. Call the Skill tool with the skill "${NAMES.personal}".`,
   `3. Call the Agent tool with subagent_type "${NAMES.agent}" and the prompt "step3".`,
   `4. Call the Agent tool with subagent_type "${NAMES.plugin}:${NAMES.agent}" and the prompt "step4".`,
+  `5. Call the Skill tool with the skill "${NAMES.command}".`,
   'Then reply with one line per step: the step number and what happened.',
 ].join('\n');
 
@@ -332,15 +336,38 @@ function readJson(file) {
 
 // --------------------------------------------------------------- sessions
 
-const live = new Set();
+// The sessions still running. A child leaves this set only once it has exited,
+// so a stop signal can end every one before the undo deletes its folder.
+export const live = new Set();
 
-function stopChild(child) {
-  if (!child || child.exitCode !== null) return;
+const exited = (child) => child.exitCode !== null || child.signalCode !== null;
+
+function track(child) {
+  live.add(child);
+  const leave = () => live.delete(child);
+  child.once('exit', leave);
+  child.once('error', () => { if (child.pid === undefined || exited(child)) leave(); });
+}
+
+// Ends a session: on Windows with `taskkill /T /F`, which takes its children
+// too (as scripts/lib/run.js does); elsewhere SIGTERM, then SIGKILL if it is
+// still running after `graceMs`.
+function stopChild(child, graceMs = KILL_GRACE_MS) {
+  if (!child || exited(child)) return;
   if (process.platform === 'win32' && Number.isInteger(child.pid)) {
     spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref();
-  } else {
-    child.kill('SIGTERM');
+    return;
   }
+  child.kill('SIGTERM');
+  const timer = setTimeout(() => { if (!exited(child)) child.kill('SIGKILL'); }, graceMs);
+  timer.unref();
+  child.once('exit', () => clearTimeout(timer));
+}
+
+// Waits until every session in `live` has exited, or `ms` has passed.
+async function allExited(ms) {
+  const until = Date.now() + ms;
+  while (live.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
 function sessionArgs(options, extra = []) {
@@ -350,8 +377,12 @@ function sessionArgs(options, extra = []) {
 const env = withoutHostVariables(process.env);
 
 // Runs a program like scripts/lib/run.js's `run`, but keeps the child in `live`
-// while it runs, so a stop signal ends it before the undo deletes its folder.
-function runLive(file, args, { cwd, input = '', timeoutMs, verbatim = false, limit = 8 * 1024 * 1024 } = {}) {
+// until it has exited, so a stop signal ends it before the undo deletes its
+// folder. A program still running after `timeoutMs` (TURN_MS unless given) is
+// stopped, and killed `graceMs` later if it is still there; the result, with
+// `timedOut: true`, comes at the timeout.
+export function runLive(file, args, { cwd, input = '', timeoutMs = TURN_MS, graceMs = KILL_GRACE_MS, verbatim = false, limit = 8 * 1024 * 1024 } = {}) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return Promise.reject(new Error(`runLive: timeoutMs must be a number of milliseconds above 0, not ${timeoutMs}`));
   return new Promise((resolve) => {
     let child;
     try {
@@ -360,7 +391,7 @@ function runLive(file, args, { cwd, input = '', timeoutMs, verbatim = false, lim
       resolve({ code: -1, stdout: '', stderr: String(error.message) });
       return;
     }
-    live.add(child);
+    track(child);
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -368,10 +399,9 @@ function runLive(file, args, { cwd, input = '', timeoutMs, verbatim = false, lim
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      live.delete(child);
       resolve({ stdout, stderr, ...result });
     };
-    const timer = setTimeout(() => { stopChild(child); finish({ code: 1, timedOut: true }); }, timeoutMs);
+    const timer = setTimeout(() => { stopChild(child, graceMs); finish({ code: 1, timedOut: true }); }, timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(-limit); });
@@ -424,7 +454,7 @@ function initFrom(binary, cwd, options, prompt) {
   const started = Date.now();
   return new Promise((resolve) => {
     const child = spawn(call.file, call.args, { cwd, env, shell: false, windowsHide: true, windowsVerbatimArguments: call.verbatim, stdio: ['pipe', 'pipe', 'pipe'] });
-    live.add(child);
+    track(child);
     let buffer = '';
     let stderr = '';
     const before = [];
@@ -433,8 +463,8 @@ function initFrom(binary, cwd, options, prompt) {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      // Stopped here, with SIGKILL after the grace; it leaves `live` once it has exited.
       stopChild(child);
-      live.delete(child);
       resolve({ ms: Date.now() - started, before, stderr: stderr.slice(-2000), ...result });
     };
     const timer = setTimeout(() => finish({ init: null, why: `no init event in ${INIT_WAIT_MS / 1000} s` }), INIT_WAIT_MS);
@@ -648,6 +678,7 @@ async function main() {
       console.error(`\n${signal}: stopping, then undoing what this run added.`);
       stopping = true;
       for (const child of live) stopChild(child);
+      await allExited(KILL_GRACE_MS + 2_000);
       try { await undo(); } catch (error) { console.error(`The undo failed: ${error.message}`); }
       process.exit(signal === 'SIGTERM' ? 143 : 130);
     });
