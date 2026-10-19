@@ -13,7 +13,8 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { setupLine } from '../../../scripts/state/card-lines.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { findRun, readJournal } from '../../../scripts/setup/journal.js';
+import { findRun, readJournal, markStep } from '../../../scripts/setup/journal.js';
+import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { keepClick, clicksDir } from '../../../scripts/setup/clicks.js';
 import { planHash } from '../../../scripts/setup/steps.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
@@ -38,8 +39,8 @@ async function startOne(home, user, extra = {}) {
 }
 
 // A Wheelhouse home with this computer's key enrolled, a user's home with a space and an accent
-// in its name, and a folder under its Projects with both too.
-async function withSetup(fn) {
+// in its name, and a folder under its Projects with both too. `extra` goes to the helper.
+async function withSetup(fn, extra = {}) {
   const home = shortHome();
   const user = tempFolder('wh-user zoë ');
   const folder = path.join(user, 'Projects', NAME);
@@ -47,7 +48,7 @@ async function withSetup(fn) {
   await as(home, async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    const { helper, client } = await startOne(home, user);
+    const { helper, client } = await startOne(home, user, extra);
     let closed = false;
     const close = async () => { if (!closed) { closed = true; await helper.close(); } };
     try {
@@ -170,10 +171,13 @@ test('an apply with a list of the caller\'s own is refused', async () => {
 });
 
 test('a long step runs on and reports its progress in status', async () => {
+  // The step's own process reads the wall clock, so here the helper does too. Its second change is
+  // in the user's home the helper was given, which the process must plan with as well, or the
+  // list it works out would not be the one clicked.
   await withSetup(async ({ client, home, user, folder, close }) => {
-    setWorld(home, { 2: [KEY(1), { file: path.join('.claude', 'y.json'), key: ['b'], value: 'two' }] });
+    setWorld(home, { 2: [KEY(1), { file: 'y.json', key: ['b'], value: 'two', home: true }] });
     const card = await client.setup.plan({ folder, step: 2 });
-    click(2, card.hash);
+    click(2, card.hash, { at: new Date(Date.now() - MINUTE) });
     const started = await client.setup.apply({ folder, step: 2, hash: card.hash });
     assert.deepEqual(started, { ok: true, started: true });
     // While it runs: its first change is in the journal, and status says it is running.
@@ -186,7 +190,7 @@ test('a long step runs on and reports its progress in status', async () => {
     assert.ok(lines.some((l) => l.includes('x.json')), lines.join('\n'));
     assert.ok(!lines.some((l) => l.includes('y.json')), lines.join('\n'));
     // A second click can't start it again while it runs.
-    click(2, card.hash);
+    click(2, card.hash, { at: new Date(Date.now() - MINUTE) });
     assert.match((await client.setup.apply({ folder, step: 2, hash: card.hash })).refused, /running/);
     // The helper goes; the step runs on in its own process and finishes.
     await close();
@@ -194,6 +198,7 @@ test('a long step runs on and reports its progress in status', async () => {
     for (let i = 0; i < 1500 && !runOf(folder).steps[2]?.doneAt; i += 1) await sleep(20);
     assert.ok(runOf(folder).steps[2].doneAt, 'the step finished');
     assert.equal(runOf(folder).changes.length, 2);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(user, 'y.json'), 'utf8')), { b: 'two' });
     const next = await startOne(home, user);
     try {
       const status = await next.client.setup.status({ folder });
@@ -204,6 +209,69 @@ test('a long step runs on and reports its progress in status', async () => {
     } finally {
       await next.helper.close();
     }
+  }, { now: () => new Date() });
+});
+
+test('two applies in flight together, on two Go aheads on one card, start the step once', async () => {
+  // A short step, applied in the helper, and a long one, started in its own process.
+  for (const [step, long] of [[1, false], [2, true]]) {
+    const spawned = [];
+    const spawn = (...args) => { spawned.push(args); return { on() {}, unref() {} }; };
+    await withSetup(async ({ client, home, folder }) => {
+      setWorld(home, { [step]: [KEY(1)], planMs: 150 });
+      const card = await client.setup.plan({ folder, step });
+      click(step, card.hash);
+      click(step, card.hash, { at: new Date(T0.getTime() - 2 * MINUTE) });
+      const answers = await Promise.all([1, 2].map(() => client.setup.apply({ folder, step, hash: card.hash })));
+      assert.equal(answers.filter((a) => a.ok === true).length, 1, JSON.stringify(answers));
+      assert.match(answers.find((a) => a.ok !== true).refused, /already (running|done)/);
+      if (long) assert.equal(spawned.length, 1);
+      else assert.equal(runOf(folder).changes.length, 1);
+      // The other click was not used: it can start the step again once this attempt has failed.
+      assert.equal(fs.readdirSync(path.join(home, 'setup', 'clicks-used')).length, 1);
+    }, { spawn });
+  }
+});
+
+test('from a folder inside the one being set up, the routes carry on its run', async () => {
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { 1: [KEY(1)] });
+    const card = await client.setup.plan({ folder, step: 1 });
+    click(1, card.hash);
+    assert.equal((await client.setup.apply({ folder, step: 1, hash: card.hash })).ok, true);
+    const inside = path.join(folder, 'web', 'src');
+    fs.mkdirSync(inside, { recursive: true });
+    const status = await client.setup.status({ folder: inside });
+    assert.equal(status.ok, true);
+    assert.equal(status.next, 2);
+    assert.ok(status.lines[0].startsWith(`Setup of ${fs.realpathSync.native(folder)}, `), status.lines[0]);
+    assert.match((await client.setup.plan({ folder: inside, step: 1 })).refused, /already done/);
+    assert.equal((await client.setup.plan({ folder: inside, step: 2 })).ok, true);
+    assert.equal(readJournal().runs.length, 1, 'no second run was started');
+  });
+});
+
+test('a click used for a step that could not be recorded as started can be used again', async () => {
+  await withSetup(async ({ home, user, folder }) => {
+    setWorld(home, { 1: [KEY(1)] });
+    // The routes as the helper has them, with a journal that can't take the click's time once.
+    let failing = true;
+    const mark = (...args) => {
+      if (args[2] === 'clickedAt' && failing) {
+        failing = false;
+        throw new Error('the journal could not be written');
+      }
+      return markStep(...args);
+    };
+    const routes = setupRoutes({ now: () => T0, stepsModule: STEPS_MODULE, userHome: user, mark });
+    const card = await routes['/setup/plan']({ folder, step: 1 });
+    click(1, card.hash);
+    await assert.rejects(routes['/setup/apply']({ folder, step: 1, hash: card.hash }),
+      /could not be recorded as started, so it did not start and the click can be used again: the journal could not be written/);
+    assert.equal(written(folder), null);
+    // The same click, not a new one, now starts it.
+    assert.deepEqual(await routes['/setup/apply']({ folder, step: 1, hash: card.hash }), { ok: true, started: true, done: true });
+    assert.deepEqual(written(folder), { wheelhouse: { a: 1 } });
   });
 });
 

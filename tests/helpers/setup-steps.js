@@ -1,7 +1,9 @@
 // tests/helpers/setup-steps.js
 // Steps for the setup engine's tests, standing in for Tasks 7 to 13. Each step reads what it
-// would change from <WHEELHOUSE_HOME>/test-world.json ({ "<step>": [{ file, key, value }] }), so
-// a test can change the list between the card and the click. Apply writes each listed key with
+// would change from <WHEELHOUSE_HOME>/test-world.json ({ "<step>": [{ file, key, value, home? }],
+// "planMs": n }), so a test can change the list between the card and the click. A file is in the
+// folder being set up, or with `home` in the user's home the step is given; `planMs` makes
+// each plan take that long, so a test can have two requests planning at once. Apply writes each listed key with
 // the journal's key edit. Step 2 is long: it records its first change, then waits for
 // <WHEELHOUSE_HOME>/release-2 before it makes the rest, so a test can read its progress.
 import fs from 'node:fs';
@@ -47,9 +49,10 @@ function step(n, { long = false } = {}) {
     title: SETUP_TITLES[n],
     ...(long ? { long: true } : {}),
     async plan(ctx) {
-      const listed = world()[n] ?? [];
+      const { [n]: listed = [], planMs = 0 } = world();
+      if (planMs > 0) await new Promise((resolve) => { setTimeout(resolve, planMs); });
       return {
-        changes: listed.map((k) => ({ kind: 'json-key', target: path.join(ctx.folder, k.file), key: k.key, after: k.value })),
+        changes: listed.map((k) => ({ kind: 'json-key', target: path.join(k.home ? ctx.userHome : ctx.folder, k.file), key: k.key, after: k.value })),
         card: card(n),
         director: 'One click',
       };

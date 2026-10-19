@@ -123,6 +123,20 @@ test('the folder check admits ~/Projects folders, registered projects and setup 
   });
 });
 
+const MINUTE = 60 * 1000;
+const at = (ms) => new Date(NOW.getTime() + ms);
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+async function until(check) {
+  for (let i = 0; i < 1500 && !check(); i += 1) await sleep(10);
+  assert.ok(check(), 'it happened in time');
+}
+
+// A long step's process for `step` in `folder`, for the click at `clicked`, with its deadline
+// STEP_TIMEOUT_MS later; `home` is the user home it plans with.
+const childArgs = ({ folder, step = '1', hash, runId, clicked = NOW, home = folder }) => [
+  TEST_STEPS, folder, step, hash, runId, clicked.toISOString(), at(clicked.getTime() - NOW.getTime() + 20 * MINUTE).toISOString(), home,
+];
+
 test('a long step\'s own process acts only on a step the helper marked clicked, and only on the list the click named', async () => {
   await withHome(async (home) => {
     const folder = fs.realpathSync.native(tempFolder('wh-child Zoë '));
@@ -130,17 +144,27 @@ test('a long step\'s own process acts only on a step the helper marked clicked, 
     fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 1: [{ file: 'x.json', key: ['a'], value: 1 }] }));
     const hash = planHash([{ kind: 'json-key', target: path.join(folder, 'x.json'), key: ['a'], after: 1 }]);
     const run = startRun({ folder, now: () => NOW });
-    const args = (h = hash) => [TEST_STEPS, folder, '1', h, run.id, '60000'];
+    const args = (h = hash) => childArgs({ folder, hash: h, runId: run.id });
     const written = () => fs.existsSync(path.join(folder, 'x.json'));
     // Started by hand, with no click the helper checked: nothing is applied or recorded.
     assert.equal(await runStep(args(), { now: () => NOW }), 1);
     assert.equal(written(), false);
     assert.deepEqual(findRun(folder).steps, {});
-    // Another folder or run than the one named: nothing.
+    // Another folder or run than the one named, another click, a deadline later than the click
+    // allows or none, or no full user home: nothing.
     markStep(run.id, 1, 'clickedAt', { now: () => NOW });
-    assert.equal(await runStep([TEST_STEPS, path.dirname(folder), '1', hash, run.id, '60000'], { now: () => NOW }), 1);
-    for (const left of ['0', '-1', 'x', String(20 * 60 * 1000 + 1)]) assert.equal(await runStep([...args().slice(0, 5), left], { now: () => NOW }), 1, left);
+    const good = args();
+    const bad = [
+      [TEST_STEPS, path.dirname(folder), ...good.slice(2)],
+      [...good.slice(0, 4), 'run-0000000000', ...good.slice(5)],
+      [...good.slice(0, 5), at(1).toISOString(), ...good.slice(6)],
+      [...good.slice(0, 6), at(20 * MINUTE + 1).toISOString(), good[7]],
+      [...good.slice(0, 6), 'x', good[7]],
+      [...good.slice(0, 7), 'relative/home'],
+    ];
+    for (const given of bad) assert.equal(await runStep(given, { now: () => NOW }), 1, given.join(' '));
     assert.equal(written(), false);
+    assert.equal(findRun(folder).steps[1].failed, undefined);
     // A list that is not the one the click named is refused, and the step says why.
     assert.equal(await runStep(args('cd'.repeat(32)), { now: () => NOW }), 1);
     assert.equal(written(), false);
@@ -153,4 +177,71 @@ test('a long step\'s own process acts only on a step the helper marked clicked, 
     assert.equal(await runStep(args(), { now: () => NOW }), 1);
     assert.equal(findRun(folder).changes.length, 1);
   });
+});
+
+// Step 2 of the test steps is long: it makes its first change, then waits for <home>/release-2.
+function longWorld(home, folder) {
+  fs.mkdirSync(home, { recursive: true });
+  const listed = [{ file: 'x.json', key: ['a'], value: 1 }, { file: 'y.json', key: ['b'], value: 2 }];
+  fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 2: listed }));
+  return planHash(listed.map((k) => ({ kind: 'json-key', target: path.join(folder, k.file), key: k.key, after: k.value })));
+}
+
+test('a long step\'s process past its deadline by the wall clock stops, after a sleep too, and marks nothing after', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-sleep '));
+    const hash = longWorld(home, folder);
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    const exited = [];
+    let clock = at(MINUTE);
+    const options = { now: () => clock, exit: (code) => exited.push(code), tickMs: 5 };
+    // Started past its deadline (the helper already counts it stopped): it does nothing at all.
+    clock = at(20 * MINUTE);
+    assert.equal(await runStep(childArgs({ folder, step: '2', hash, runId: run.id }), options), 1);
+    assert.equal(fs.existsSync(path.join(folder, 'x.json')), false);
+    assert.deepEqual(findRun(folder).steps[2], { clickedAt: NOW.toISOString() });
+    // Started in time, it makes its first change; then the computer sleeps past the deadline. One
+    // timer would not count the sleep; the next tick reads the wall clock, marks the step failed
+    // and ends the process.
+    clock = at(MINUTE);
+    const running = runStep(childArgs({ folder, step: '2', hash, runId: run.id }), options);
+    await until(() => findRun(folder).changes.length === 1);
+    assert.deepEqual(exited, []);
+    clock = at(3 * 60 * MINUTE);
+    await until(() => exited.length === 1);
+    assert.deepEqual(exited, [1]);
+    assert.match(findRun(folder).steps[2].failed, /still running 20 minutes after the click/);
+    // Even if it got as far as finishing, it marks nothing more.
+    fs.writeFileSync(path.join(home, 'release-2'), '');
+    assert.equal(await running, 1);
+    assert.equal(findRun(folder).steps[2].doneAt, undefined);
+  });
+});
+
+test('a long step\'s process from an older click never marks the newer attempt done or failed', async () => {
+  // The old process either finishes, or wakes past its own deadline, after a newer click started
+  // the step again (the helper had counted the old attempt stuck).
+  for (const ending of ['finishes', 'wakes past its deadline']) {
+    await withHome(async (home) => {
+      const folder = fs.realpathSync.native(tempFolder('wh-stale '));
+      const hash = longWorld(home, folder);
+      const run = startRun({ folder, now: () => NOW });
+      markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+      const exited = [];
+      let clock = at(MINUTE);
+      const running = runStep(childArgs({ folder, step: '2', hash, runId: run.id }), { now: () => clock, exit: (code) => exited.push(code), tickMs: 5 });
+      await until(() => findRun(folder).changes.length === 1);
+      markStep(run.id, 2, 'clickedAt', { now: () => at(25 * MINUTE) });
+      const newer = { clickedAt: at(25 * MINUTE).toISOString() };
+      if (ending === 'wakes past its deadline') {
+        clock = at(26 * MINUTE);
+        await until(() => exited.length === 1);
+        assert.deepEqual(findRun(folder).steps[2], newer, ending);
+      }
+      fs.writeFileSync(path.join(home, 'release-2'), '');
+      assert.equal(await running, ending === 'finishes' ? 0 : 1, ending);
+      assert.deepEqual(findRun(folder).steps[2], newer, ending);
+    });
+  }
 });

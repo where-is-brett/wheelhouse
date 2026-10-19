@@ -32,7 +32,7 @@ import { SETUP_TITLES } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { readJournal, startRun, markStep, addChanges } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
-import { noteShown, shownFor, freshClicks, useClick } from './clicks.js';
+import { noteShown, shownFor, freshClicks, useClick, releaseClick } from './clicks.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
 export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
@@ -58,11 +58,17 @@ const within = (base, target) => {
   return t.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
 };
 
-// The latest run whose folder is this real path (case and accents folded as the system does).
+// The run setup is doing for this real path: the latest run of the nearest folder that is it or
+// holds it (case and accents folded as the system does), as kit.js's beingSetUp places a session,
+// so a session in a folder inside the one being set up carries on that run; null when none does.
 function runFor(real) {
-  const runs = readJournal().runs.filter((r) => typeof r?.folder === 'string' && keyOf(r.folder) === keyOf(real));
-  return runs.length > 0 ? runs[runs.length - 1] : null;
+  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real)));
+  if (holding.length === 0) return null;
+  const nearest = Math.max(...holding.map((r) => keyOf(r.folder).length));
+  return holding.filter((r) => keyOf(r.folder).length === nearest).at(-1);
 }
+
+const runById = (id) => readJournal().runs.find((r) => r?.id === id) ?? null;
 
 // The folder's real path, when setup may act on it; otherwise a refusal naming why.
 export function admitFolder(folder, { userHome = os.homedir() } = {}) {
@@ -104,8 +110,10 @@ function runningSince(entry, now) {
 
 // Runs a step's apply on the list worked out for it, records each change in the journal (as the
 // step makes it, through ctx.record, or at the end), and marks the step done, or failed with why.
+// `current`, a test of the step's journal entry, keeps the mark to this attempt: a newer attempt's
+// entry is never marked by an older one. Each change made is recorded whatever, since it was made.
 // Used by the helper for a short step and by scripts/setup/run-step.js for a long one.
-export async function runApply({ step, runId, changes, ctx }) {
+export async function runApply({ step, runId, changes, ctx, current }) {
   const recorded = new Set();
   const record = (made) => {
     const list = (Array.isArray(made) ? made : []).filter((c) => !recorded.has(c?.id)).map((c) => ({ ...c, step: step.n }));
@@ -115,12 +123,12 @@ export async function runApply({ step, runId, changes, ctx }) {
   };
   try {
     record(await step.apply({ ...ctx, runId, record }, changes));
-    markStep(runId, step.n, 'doneAt', { now: ctx.now });
+    markStep(runId, step.n, 'doneAt', { now: ctx.now, when: current });
     return { ok: true };
   } catch (error) {
     const reason = (error instanceof Error ? error.message : '') || 'the step did not finish';
     try {
-      markStep(runId, step.n, 'failed', { now: ctx.now, reason });
+      markStep(runId, step.n, 'failed', { now: ctx.now, reason, when: current });
     } catch { /* the journal could not take it; the step reads as running until its time is up */ }
     return { ok: false, reason };
   }
@@ -157,10 +165,11 @@ function statusLines(run, steps, now) {
 }
 
 // The routes' handlers, each taking the request's body and giving its answer. A refusal throws
-// SetupRefusal, which the helper sends as { ok: false, refused }.
+// SetupRefusal, which the helper sends as { ok: false, refused }. `mark` records a step's time in
+// the journal (journal.js's markStep; a test can make it fail).
 export function setupRoutes({
   now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
-  stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn,
+  stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -190,8 +199,8 @@ export function setupRoutes({
     const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
     const { question } = composeCard({ ...got.card, kind: 'setup', target: { step: step.n, hash: got.hash } });
     run ??= startRun({ folder, now });
-    noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, question: question.question, now });
-    markStep(run.id, step.n, 'shownAt', { now });
+    noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card: question, now });
+    mark(run.id, step.n, 'shownAt', { now });
     return { ok: true, changes: got.changes, hash: got.hash, card: question, director: typeof got.director === 'string' ? got.director : '' };
   }
 
@@ -203,40 +212,54 @@ export function setupRoutes({
     if (typeof body.hash !== 'string' || !FULL_HASH.test(body.hash)) refuse('the hash must be the full hash of the list on the card');
     const run = runFor(folder);
     if (run === null) refuse('this step\'s card has not been shown: ask for its plan first');
-    const entry = run.steps?.[step.n] ?? {};
-    if (entry.doneAt) refuse(`${title(step.n)} is already done`);
-    if (runningSince(entry, now)) refuse(`${title(step.n)} is already running`);
+    const startable = (entry) => {
+      if (entry?.doneAt) refuse(`${title(step.n)} is already done`);
+      if (runningSince(entry, now)) refuse(`${title(step.n)} is already running`);
+    };
+    startable(run.steps?.[step.n]);
     // The list as it is now, worked out by the helper: the request's hash must name it, and the
     // card this folder was shown for the step must have shown it.
     const ctx = ctxFor(run.folder, step.n, run.id);
     const fresh = await planned(step, ctx);
+    // Nothing is awaited from here until the step is marked clicked, so of two requests in flight
+    // together (two Go aheads on one card) only one starts the step: the journal is read again
+    // here, and the other finds the step running, or done.
+    startable(runById(run.id)?.steps?.[step.n]);
     if (fresh.hash !== body.hash || shownFor(run.id, step.n)?.hash !== fresh.hash) refuse(CHANGED);
-    if (freshClicks({ step: step.n, hash: fresh.hash, now }).length === 0) refuse(NEEDS_CLICK);
     // STOP is read again at the last moment, before the click is used.
     if (stopped()) return stopRefusal;
     const click = freshClicks({ step: step.n, hash: fresh.hash, now }).find((e) => useClick(e, now));
     if (!click) refuse(NEEDS_CLICK);
-    markStep(run.id, step.n, 'clickedAt', { now: () => new Date(click.at) });
+    const clickedAt = new Date(click.at).toISOString();
+    try {
+      mark(run.id, step.n, 'clickedAt', { now: () => new Date(clickedAt) });
+    } catch (error) {
+      releaseClick(click);
+      refuse(`${title(step.n)} could not be recorded as started, so it did not start and the click can be used again: ${error instanceof Error ? error.message : 'the journal could not be written'}`);
+    }
+    // This attempt: its click still the step's, and not finished.
+    const current = (entry) => entry?.clickedAt === clickedAt && !entry.doneAt && !entry.failed;
     if (step.long) {
       // It may run until the helper stops counting it as running: STEP_TIMEOUT_MS from the click.
-      const left = Date.parse(click.at) + STEP_TIMEOUT_MS - now().getTime();
-      startChild({ step, run, hash: fresh.hash, left: Math.max(1, Math.min(STEP_TIMEOUT_MS, Math.floor(left))) });
+      startChild({ step, run, hash: fresh.hash, clickedAt, deadline: new Date(Date.parse(clickedAt) + STEP_TIMEOUT_MS).toISOString() });
       return { ok: true, started: true };
     }
-    const done = await runApply({ step, runId: run.id, changes: fresh.changes, ctx: { ...ctx, stopped } });
+    const done = await runApply({ step, runId: run.id, changes: fresh.changes, ctx: { ...ctx, stopped }, current });
     return done.ok ? { ok: true, started: true, done: true } : { ok: false, refused: `${title(step.n)} did not finish: ${done.reason}` };
   }
 
   // The long step's own process, detached and hidden, started in Wheelhouse's folder, so it runs
-  // on when the helper or Desktop goes. It works the list out again and checks it has this hash.
-  function startChild({ step, run, hash, left }) {
+  // on when the helper or Desktop goes. It works the list out again, with this helper's user home,
+  // and checks it has this hash; it acts for this click only, and stops at the deadline by the wall
+  // clock, which is when this helper stops counting it as running.
+  function startChild({ step, run, hash, clickedAt, deadline }) {
     const failed = () => {
       try {
-        markStep(run.id, step.n, 'failed', { now, reason: 'its process could not be started' });
+        mark(run.id, step.n, 'failed', { now, reason: 'its process could not be started', when: (e) => e?.clickedAt === clickedAt && !e.doneAt });
       } catch { /* status then says it is stuck once its time is up */ }
     };
     try {
-      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, String(left)], {
+      const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome], {
         cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
       });
       child?.on?.('error', failed);

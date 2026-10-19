@@ -202,16 +202,17 @@ export async function earned({ project, question, label, client, now, left, stop
 
 // The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, and
 // is the very card the helper composed for the list its twelve characters name, for the folder
-// this session is in, word for word, so a card reworded around the right set line earns nothing.
+// this session is in, word for word (its text, header and options), so a card reworded around the
+// right set line earns nothing.
 // The record names that list's full hash, which the helper matches against the list it works out
 // again.
-function setupClickOf(cwd, question, label) {
+function setupClickOf(cwd, { question, label, card }) {
   if (label !== SETUP_LABEL) return null;
   const m = only(SETUP, question);
   if (!m) return null;
   const step = Number(m[1]);
   if (!Object.hasOwn(SETUP_TITLES, step) || setLineOf(question) !== setupLine(step, m[2])) return null;
-  const hash = shownHash({ cwd, step, h12: m[2], question });
+  const hash = shownHash({ cwd, step, h12: m[2], card });
   return hash === null ? null : { kind: 'action', data: { action: 'setup', step, hash, question, label } };
 }
 
@@ -220,7 +221,7 @@ function keepSetupClicks(cwd, out, now) {
   for (const click of out) {
     if (!click.signable) continue;
     try {
-      const made = setupClickOf(cwd, click.question, click.label);
+      const made = setupClickOf(cwd, click);
       if (made) keepClick(makeEvent({ ...made, now }));
     } catch { /* not kept: the helper then refuses the step for want of a click, and the card is asked again */ }
   }
@@ -246,6 +247,7 @@ function clicks(input) {
       question,
       label: many ? raw.join(', ') : raw,
       signable: offered && q.multiSelect !== true && agrees,
+      card: q,
     });
   }
   return out;

@@ -6,12 +6,14 @@
 //   clicks/        each click as the prompt record signed it: an `action` event `setup`
 //                  { step, hash, question, label }
 //   clicks-used/   one empty marker per click the helper has used, named by the click's id
-//   shown/         the card each run's step last showed: { runId, folder, step, hash, question,
-//                  at }, written by the helper when it works out a step's plan and composes its
-//                  card; `question` is the card's whole text
+//   shown/         the card each run's step last showed: { runId, folder, step, hash, card, at },
+//                  written by the helper when it works out a step's plan and composes its card;
+//                  `card` is what the director reads: { question, header, options: [{ label,
+//                  description }] }
 // The prompt record reads `shown/` to turn the twelve characters on a card into the full hash
-// the click names, and counts a click only on the card's text exactly as the helper composed it,
-// so the words the director read are the helper's for that list. The helper reads `clicks/`
+// the click names, and counts a click only on the card exactly as the helper composed it (its
+// text, header and each option's label and description), so the words the director read are the
+// helper's for that list. The helper reads `clicks/`
 // before it applies a step.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -78,13 +80,22 @@ export function keepClick(event) {
   return file;
 }
 
-// Records the card a run's step showed: the list's full hash and the card's text, for the folder.
-export function noteShown({ runId, folder, step, hash, question, now = () => new Date() }) {
-  if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !HASH.test(String(hash)) || typeof folder !== 'string'
-    || typeof question !== 'string' || question === '') {
-    throw new Error('A shown card needs its run, folder, step, the full hash of its list and its text');
+// What a card shows the director, in one form: its text, header, and each option's label and
+// description; null when it isn't a card.
+function shownCard(card) {
+  if (!card || typeof card !== 'object' || typeof card.question !== 'string' || card.question === '' || !Array.isArray(card.options)) return null;
+  const text = (x) => (typeof x === 'string' ? x : null);
+  if (card.options.some((o) => typeof o?.label !== 'string')) return null;
+  return { question: card.question, header: text(card.header), options: card.options.map((o) => ({ label: o.label, description: text(o.description) })) };
+}
+
+// Records the card a run's step showed: the list's full hash and the card, for the folder.
+export function noteShown({ runId, folder, step, hash, card, now = () => new Date() }) {
+  const shown = shownCard(card);
+  if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !HASH.test(String(hash)) || typeof folder !== 'string' || shown === null) {
+    throw new Error('A shown card needs its run, folder, step, the full hash of its list and the card');
   }
-  const record = { runId, folder, step, hash, question, at: now().toISOString() };
+  const record = { runId, folder, step, hash, card: shown, at: now().toISOString() };
   writeWhole(path.join(shownDir(), `${runId}-${step}.json`), `${JSON.stringify(record)}\n`);
 }
 
@@ -92,7 +103,7 @@ function readShown(file) {
   try {
     const r = JSON.parse(fs.readFileSync(file, 'utf8'));
     return r && RUN_ID.test(String(r.runId)) && Number.isInteger(r.step) && HASH.test(String(r.hash)) && typeof r.folder === 'string'
-      && typeof r.question === 'string' ? r : null;
+      && shownCard(r.card) !== null ? r : null;
   } catch {
     return null;
   }
@@ -106,9 +117,12 @@ export function shownFor(runId, step) {
 }
 
 // The full hash of the one list shown for `step` in a folder holding `cwd` whose hash starts with
-// `h12`, on a card whose text is `question` exactly; null when there is none, or two different ones.
-export function shownHash({ cwd, step, h12, question }) {
-  if (typeof cwd !== 'string' || !/^[0-9a-f]{12}$/.test(String(h12)) || typeof question !== 'string') return null;
+// `h12`, on a card the director saw exactly as shown (`card`, the question AskUserQuestion was
+// given); null when there is none, or two different ones.
+export function shownHash({ cwd, step, h12, card }) {
+  const asked = shownCard(card);
+  if (typeof cwd !== 'string' || !/^[0-9a-f]{12}$/.test(String(h12)) || asked === null) return null;
+  const same = JSON.stringify(asked);
   let names;
   try {
     names = fs.readdirSync(shownDir()).filter((n) => n.endsWith('.json'));
@@ -116,7 +130,7 @@ export function shownHash({ cwd, step, h12, question }) {
     return null;
   }
   const found = new Set(names.map((n) => readShown(path.join(shownDir(), n)))
-    .filter((r) => r !== null && r.step === step && r.hash.startsWith(h12) && r.question === question && holds(r.folder, cwd))
+    .filter((r) => r !== null && r.step === step && r.hash.startsWith(h12) && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd))
     .map((r) => r.hash));
   return found.size === 1 ? [...found][0] : null;
 }
@@ -154,6 +168,14 @@ export function freshClicks({ step, hash, now = () => new Date() }) {
       && e.computer === me && e.sig?.computer === me && EVENT_ID.test(String(e.id))
       && age <= CLICK_FRESH_MS && age >= -SKEW_MS && !used(e) && verify(e, enrolled);
   }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
+
+// Gives a used click back, when the step it was used for could not be started.
+export function releaseClick(event) {
+  if (!EVENT_ID.test(String(event?.id))) return;
+  try {
+    fs.rmSync(path.join(usedDir(), event.id), { force: true });
+  } catch { /* it stays used, and the director clicks again */ }
 }
 
 // Uses a click, once: a marker named by its id, made exclusively. True when this call used it.

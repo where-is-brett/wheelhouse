@@ -198,21 +198,25 @@ export function findRun(folder) {
 
 // Records a step's time (field shownAt, clickedAt or doneAt), or that it failed (field
 // failed, with `reason`). Recording again replaces the time. A later click or finish
-// clears an earlier failure.
-export function markStep(runId, step, field, { now = () => new Date(), reason } = {}) {
+// clears an earlier failure. With `when`, a test of the step's entry as it stands, read under the
+// lock, nothing is recorded unless it passes: a long step's process records only for its own
+// attempt. True when it was recorded.
+export function markStep(runId, step, field, { now = () => new Date(), reason, when } = {}) {
   if (!Number.isInteger(step) || step < 1) throw new Error('A step is a number from 1');
   if (!STEP_FIELDS.includes(field)) throw new Error(`The field to record is one of ${STEP_FIELDS.join(', ')}`);
   if (field === 'failed' && (typeof reason !== 'string' || reason === '')) throw new Error('A failed step needs a reason');
   const at = stamp(now);
-  update((journal) => {
+  return update((journal) => {
     const run = runIn(journal, runId);
     const entry = run.steps[step] ?? {};
+    if (typeof when === 'function' && !when(structuredClone(entry))) return false;
     if (field === 'failed') entry.failed = reason;
     else {
       entry[field] = at;
       if (field !== 'shownAt') delete entry.failed;
     }
     run.steps[step] = entry;
+    return true;
   });
 }
 

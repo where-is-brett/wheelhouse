@@ -749,8 +749,8 @@ test('in a folder being set up, the helper starts and a setup click is recorded;
     const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup zoë ')));
     try {
       const run = startRun({ folder, now: () => NOW });
-      noteShown({ runId: run.id, folder, step: 3, hash: H, question: setupCard(3, H), now: () => NOW });
-      noteShown({ runId: run.id, folder, step: 4, hash: H, question: setupCard(4, H), now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 3, hash: H, card: { question: setupCard(3, H), options: SETUP_BUTTONS }, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
       // The session start starts the helper there, as in a project.
       const spawned = [];
       await sessionStart({ cwd: folder, session_id: 's1' }, {
@@ -778,21 +778,30 @@ test('in a folder being set up, the helper starts and a setup click is recorded;
       assert.equal(fs.existsSync(stopFile()), true);
 
       // A put-off, a list this folder was never shown, a step not shown, a card reworded around the
-      // right set line, a card with two set lines, and a button the card did not offer record nothing.
+      // right set line (its text, an option's description, or a header added), a card with two set
+      // lines, and a button the card did not offer record nothing.
       await decide(here({ [setupCard(3, H)]: 'Not now' }), { client: c, now: () => NOW, projectOf: () => null });
       await decide(here({ [setupCard(3, 'cd'.repeat(32))]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
       await decide(here({ [setupCard(6, H)]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
       await decide(here({ [setupCard(4, H).replace('Setup step 4.', 'Setup step 4: nothing changes.')]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      const reworded = SETUP_BUTTONS.map((o) => (o.label === 'Go ahead' ? { ...o, description: 'Setup changes nothing on this computer.' } : o));
+      await decide(here({ [setupCard(4, H)]: 'Go ahead' }, reworded), { client: c, now: () => NOW, projectOf: () => null });
+      const headed = here({ [setupCard(4, H)]: 'Go ahead' });
+      headed.tool_input.questions[0].header = 'Nothing';
+      await decide(headed, { client: c, now: () => NOW, projectOf: () => null });
       await decide(here({ [`${setupCard(3, H)}\n${approvalLine(7, FULL)}`]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
       await decide(here({ [setupCard(3, H)]: 'Go ahead' }, BUTTONS), { client: c, now: () => NOW, projectOf: () => null });
       assert.equal(clicks().length, 1);
       assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      // Step 4's card exactly as shown is recorded.
+      await decide(here({ [setupCard(4, H)]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      assert.deepEqual(clicks().map((e) => e.data.step).sort(), [3, 4]);
 
       // From a session in another folder being set up, the card shown for this one records nothing.
       const other = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-other-')));
       startRun({ folder: other, now: () => NOW });
       await decide({ ...input({ [setupCard(3, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: other }, { client: c, now: () => NOW, projectOf: () => null });
-      assert.equal(clicks().length, 1);
+      assert.equal(clicks().length, 2);
       fs.rmSync(other, { recursive: true, force: true });
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
@@ -805,7 +814,7 @@ test('in a registered project a setup click is kept in setup/clicks, and the ans
     const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-p-')));
     try {
       const run = startRun({ folder, now: () => NOW });
-      noteShown({ runId: run.id, folder, step: 5, hash: H, question: setupCard(5, H), now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 5, hash: H, card: { question: setupCard(5, H), options: SETUP_BUTTONS }, now: () => NOW });
       const c = fake();
       await decide({ ...input({ [setupCard(5, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: folder }, deps(c));
       assert.deepEqual(clicks().map((e) => [e.data.step, e.data.hash]), [[5, H]]);
