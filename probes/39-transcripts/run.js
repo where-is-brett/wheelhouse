@@ -26,6 +26,10 @@
 //     No model is named: the default answers, unless WHEELHOUSE_PROBE_MODEL is
 //     set (an alias, never written into the repository). A few cheap turns.
 //
+//   node probes/39-transcripts/run.js --reread
+//     Writes the scratch report again from the last scratch run's transcript,
+//     which Claude Code keeps, with no new session.
+//
 //   node probes/39-transcripts/run.js --mine [--days 7] [--out <file>]
 //     Reads the transcripts under ~/.claude/projects/ changed in the last
 //     `days` days (sessions and subagent files), and prints ONLY entry types,
@@ -71,6 +75,12 @@ export const KNOWN_PREFIXES = [
   '<user-prompt-submit-hook>',
   '<teammate-message',
   '<channel',
+  '<scheduled-task',
+  '<agent-message',
+  '<cross-session-message',
+  '<pasted_content',
+  '<ci-monitor-event',
+  '<total_tokens',
   'Wheelhouse foreman:',
   'Wheelhouse:',
   '[Request interrupted by user',
@@ -82,19 +92,59 @@ export const KNOWN_PREFIXES = [
 // A message that is only a reply code and one of the signed options (design, section 17.1).
 export const REPLY_CODE = /^[A-Z0-9]{4} (Approve|Confirm|Lift STOP|Do it|Push it)$/;
 
+// ------------------------------------------------------------ the guard
+//
+// What the --mine pass may print is decided here, and nowhere else: a key is
+// printed only when it is a plain field name and not shaped like an id; a map
+// keyed by ids or by the person's own data (file names, question text, model
+// or server names) shows its children as `<key>`; a value is printed only for
+// the fields below, and only when it is a short kind word, never an id.
+
 // Fields whose values are kinds (short enumerated words), which may be printed.
 const ENUM_FIELDS = new Set([
   'type', 'subtype', 'attachment.type', 'userType', 'entrypoint', 'origin', 'origin.kind', 'permissionMode',
   'level', 'operation', 'message.role', 'message.type', 'message.stop_reason', 'toolUseResult.status',
   'toolUseResult.type', 'hookEvent', 'attachment.hookEvent', 'attachment.hookName', 'version', 'mode', 'promptSource',
-  'message.content[].type', 'source', 'turnOrigin', 'turnOrigin.kind', 'origin.producer', 'origin.fromMode',
+  'source', 'turnOrigin', 'turnOrigin.kind', 'origin.producer', 'origin.fromMode',
   'origin.handback', 'sessionKind', 'turnCompanion', 'turnCompanion.kind', 'toolDenialKind',
   'attachment.origin.kind', 'attachment.commandMode', 'renderedInHumanTurn', 'renderedRole',
 ]);
-const ENUM_VALUE = /^[A-Za-z0-9_:.-]{1,40}$/;
+// A kind word: starts with a letter, short, no run of three digits (so no id or hash).
+const KIND_WORD = /^[A-Za-z][A-Za-z0-9_:.-]{0,31}$/;
+const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,4}$/;
 // A key that is a field name; anything else (a question's text, a file name) is shown as <key>.
 const FIELD_NAME = /^[A-Za-z_$][A-Za-z0-9_$]{0,40}$/;
 const MAX_DEPTH = 4;
+
+// Shaped like an id: an API id (toolu_, srvtoolu_, msg_, req_, call_), a UUID,
+// a long hex string, or anything holding a run of three or more digits.
+export function isIdShaped(text) {
+  const t = String(text);
+  return /^(toolu|srvtoolu|msg|req|call)_/i.test(t)
+    || /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i.test(t)
+    || /[0-9a-f]{12,}/i.test(t)
+    || /\d{3,}/.test(t);
+}
+
+// A tool's name as it may be printed: an MCP tool (whose name holds a server
+// name) is only `mcp tool`.
+export function safeToolName(name) {
+  if (typeof name !== 'string') return '<tool>';
+  if (/^mcp__/.test(name)) return 'mcp tool';
+  return KIND_WORD.test(name) && !isIdShaped(name) ? name : '<tool>';
+}
+
+export function safeKey(key) {
+  return FIELD_NAME.test(key) && !isIdShaped(key) ? key : '<key>';
+}
+
+// Paths whose children are keyed by ids or by the person's own data: every
+// child is shown as `<key>`, and what lies under it is not read.
+const MAP_PATHS = /(^|\.)(wireToolInputs|modelUsage|answers|annotations|trackedFileBackups|perToolHashes|_meta|env|metadata|hookSpecificOutput|mcpServers|plugins|skills|files|backups|attributions|fileStates|readFileState|properties|headers|remotes|visibility_cache|reasonCounts)$/;
+// Paths shown one level down only, through a short list of known field names:
+// a tool's input and a tool's own result hold whatever the tool was given or gave.
+const SHALLOW_PATHS = /(^|\.)(input|toolUseResult|structuredPatch|snapshot)$/;
+const SHALLOW_CHILDREN = new Set(['answers', 'questions', 'status', 'type', 'agentId', 'isAsync', 'interrupted', 'stdout', 'stderr', 'file', 'filePath', 'content', 'success', 'commandName']);
 
 // Every key path in a value. Arrays become `[]`; the blocks of a message's
 // content are told apart by their type (`message.content[text].text`).
@@ -102,23 +152,31 @@ export function keyPaths(value, prefix = '', out = new Set(), depth = 0) {
   if (depth > MAX_DEPTH || value === null || typeof value !== 'object') return out;
   if (Array.isArray(value)) {
     for (const item of value.slice(0, 50)) {
-      const tag = item && typeof item === 'object' && !Array.isArray(item) && typeof item.type === 'string' && ENUM_VALUE.test(item.type) && /content$/.test(prefix)
-        ? `[${item.type}]` : '[]';
+      const blockType = item && typeof item === 'object' && !Array.isArray(item) ? item.type : undefined;
+      const tag = /content$/.test(prefix) && typeof blockType === 'string' && KIND_WORD.test(blockType) && !isIdShaped(blockType)
+        ? `[${blockType}]` : '[]';
       const p = `${prefix}${tag}`;
       out.add(p);
       keyPaths(item, p, out, depth + 1);
     }
     return out;
   }
+  // An object with very many keys below the top is a map of some kind, whatever its name.
+  if (depth > 0 && Object.keys(value).length > 40) {
+    out.add(`${prefix}.<key>`);
+    return out;
+  }
   for (const [key, inner] of Object.entries(value)) {
-    const name = FIELD_NAME.test(key) ? key : '<key>';
-    const p = prefix ? `${prefix}.${name}` : name;
+    const p = prefix ? `${prefix}.${safeKey(key)}` : safeKey(key);
     out.add(p);
-    // A tool's input and a tool's own result are shown one level down only.
-    const shallow = /(^|\.)(input|toolUseResult|structuredPatch|trackedFileBackups|snapshot)$/.test(p);
-    if (!shallow) keyPaths(inner, p, out, depth + 1);
-    else if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
-      for (const k of Object.keys(inner)) out.add(`${p}.${FIELD_NAME.test(k) ? k : '<key>'}`);
+    if (MAP_PATHS.test(p)) {
+      if (inner && typeof inner === 'object' && !Array.isArray(inner) && Object.keys(inner).length) out.add(`${p}.<key>`);
+    } else if (SHALLOW_PATHS.test(p)) {
+      if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+        for (const k of Object.keys(inner)) out.add(`${p}.${SHALLOW_CHILDREN.has(k) ? k : '<key>'}`);
+      }
+    } else {
+      keyPaths(inner, p, out, depth + 1);
     }
   }
   return out;
@@ -130,8 +188,7 @@ export function textMarker(text) {
   const t = String(text ?? '').trimStart();
   for (const prefix of KNOWN_PREFIXES) if (t.startsWith(prefix)) return prefix;
   if (REPLY_CODE.test(t.trim())) return 'reply-code';
-  const tag = /^<([a-z][a-z0-9_-]{0,40})[\s>]/.exec(t);
-  if (tag) return `<${tag[1]}> (other tag)`;
+  if (/^<[A-Za-z][A-Za-z0-9_-]*[\s>]/.test(t)) return 'other tag';
   return t === '' ? 'empty' : 'plain text';
 }
 
@@ -141,11 +198,20 @@ export function embeddedTags(text) {
   return KNOWN_PREFIXES.filter((p) => p.startsWith('<') && t.includes(p));
 }
 
-function enumValue(v) {
+// A value as it may be printed: a boolean, a version number for `version`, a
+// kind word that is not shaped like an id (an MCP tool's name reduced), or
+// only what sort of value it is.
+export function enumValue(v, field = '') {
+  if (v === undefined) return undefined;
   if (typeof v === 'boolean') return String(v);
-  if (typeof v === 'string' && ENUM_VALUE.test(v)) return v;
-  if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.kind === 'string' && ENUM_VALUE.test(v.kind)) return `{kind:${v.kind}}`;
-  return v === undefined ? undefined : `<${Array.isArray(v) ? 'array' : typeof v}>`;
+  if (typeof v === 'string') {
+    if (field === 'version') return VERSION.test(v) ? v : '<value>';
+    const reduced = v.replace(/mcp__[A-Za-z0-9_-]+/g, 'mcp tool');
+    if (reduced !== v) return /^[A-Za-z]+:mcp tool$/.test(reduced) || reduced === 'mcp tool' ? reduced : '<value>';
+    return KIND_WORD.test(v) && !isIdShaped(v) ? v : '<value>';
+  }
+  if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.kind === 'string') return `{kind:${enumValue(v.kind)}}`;
+  return `<${Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v}>`;
 }
 
 // One user entry's signature: where it came from, as far as its fields and
@@ -170,7 +236,7 @@ export function userSignature(entry, toolNames, { firstPrompt = false } = {}) {
   if (entry.promptSource !== undefined) flags.push(`promptSource=${enumValue(entry.promptSource)}`);
   if (entry.turnOrigin !== undefined) flags.push(`turnOrigin=${enumValue(entry.turnOrigin)}`);
   if (entry.origin && typeof entry.origin === 'object') {
-    const extra = Object.keys(entry.origin).filter((k) => k !== 'kind' && FIELD_NAME.test(k)).sort();
+    const extra = [...new Set(Object.keys(entry.origin).filter((k) => k !== 'kind').map(safeKey))].sort();
     if (extra.length) flags.push(`origin+{${extra.join(',')}}`);
   }
   if (entry.entrypoint !== undefined) flags.push(`entrypoint=${enumValue(entry.entrypoint)}`);
@@ -234,13 +300,13 @@ export function tallyFile(tally, file, { kind, parentSessionId = null, agentFile
     for (const p of keyPaths(entry)) bump(keys, p);
     for (const field of ENUM_FIELDS) {
       const v = field.split('.').reduce((o, k) => (o == null ? undefined : o[k]), entry);
-      const e = enumValue(v);
+      const e = enumValue(v, field);
       if (e !== undefined && field !== 'type') bump(tally.enums, `${type} ${field}=${e}`);
     }
     if (Array.isArray(entry.message?.content)) {
       for (const block of entry.message.content) {
         if (block?.type === 'tool_use') {
-          toolNames.set(block.id, typeof block.name === 'string' && ENUM_VALUE.test(block.name) ? block.name : '<tool>');
+          toolNames.set(block.id, safeToolName(block.name));
           toolUseIds?.add(block.id);
         }
       }
@@ -259,7 +325,7 @@ export function tallyFile(tally, file, { kind, parentSessionId = null, agentFile
       if (isPrompt && kind === 'session') {
         const firstText = typeof entry.message?.content === 'string' ? entry.message.content
           : (entry.message?.content ?? []).find((b) => b?.type === 'text')?.text;
-        bump(tally.promptsByVersion, `${enumValue(entry.version) ?? 'no version'} ${enumValue(entry.entrypoint) ?? 'no entrypoint'} origin=${entry.origin ? enumValue(entry.origin) : 'none'} promptSource=${entry.promptSource ? enumValue(entry.promptSource) : 'none'} turnOrigin=${entry.turnOrigin ? enumValue(entry.turnOrigin) : 'none'}${firstPrompt ? ' first-prompt' : ''} starts ${textMarker(firstText)}`);
+        bump(tally.promptsByVersion, `${enumValue(entry.version, 'version') ?? 'no version'} ${enumValue(entry.entrypoint) ?? 'no entrypoint'} origin=${entry.origin ? enumValue(entry.origin) : 'none'} promptSource=${entry.promptSource ? enumValue(entry.promptSource) : 'none'} turnOrigin=${entry.turnOrigin ? enumValue(entry.turnOrigin) : 'none'}${firstPrompt ? ' first-prompt' : ''} starts ${textMarker(firstText)}`);
       }
       bump(tally.userSignatures, `${kind}: ${signature}`);
       const texts = typeof entry.message?.content === 'string' ? [entry.message.content]
@@ -323,11 +389,15 @@ export function tallyFile(tally, file, { kind, parentSessionId = null, agentFile
   if (kind === 'subagent') bump(tally.entrypointByFile, `subagent entrypoint=${firstEntrypoint ?? 'none'}`);
 }
 
+// The fields a subagent's .meta.json is known to hold; any other is shown as <key>.
+const META_KEYS = new Set(['agentType', 'description', 'toolUseId', 'spawnDepth', 'requestNonInteractive', 'requestShape',
+  'model', 'effort', 'cwd', 'parentAgentId', 'finished', 'launchedWithDefaults']);
+
 function tallyMeta(tally, metaFile, parentToolUseIds) {
   let meta;
   try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf8')); } catch { bump(tally.subagent.metaKeys, '<unparseable>'); return; }
   tally.subagent.metaFiles += 1;
-  for (const k of Object.keys(meta)) bump(tally.subagent.metaKeys, FIELD_NAME.test(k) ? k : '<key>');
+  for (const k of Object.keys(meta)) bump(tally.subagent.metaKeys, META_KEYS.has(k) ? k : '<key>');
   if (meta.toolUseId && parentToolUseIds.has(meta.toolUseId)) tally.subagent.metaToolUseIdInParent += 1;
 }
 
@@ -420,21 +490,25 @@ function recentSessionFiles(days) {
 }
 
 function mine(argv) {
-  const days = Number(argv[argv.indexOf('--days') + 1]) > 0 && argv.includes('--days') ? Number(argv[argv.indexOf('--days') + 1]) : 7;
-  const outArg = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : null;
+  const d = argv.indexOf('--days');
+  const days = d >= 0 && Number(argv[d + 1]) > 0 ? Number(argv[d + 1]) : 7;
+  const o = argv.indexOf('--out');
+  const outArg = o >= 0 ? argv[o + 1] : null;
+  if (o >= 0 && !outArg) throw new Error('--out needs a file');
   const outFile = outArg ? path.resolve(outArg) : path.join(os.tmpdir(), `wheelhouse-probe-39-mine-${Date.now()}.txt`);
-  // Never inside the repository: the output describes the director's own transcripts.
+  // Never inside the repository: the output describes the director's own
+  // transcripts. The folder is compared by its real path, links followed.
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  if (fs.existsSync(outFile) && fs.lstatSync(outFile).isSymbolicLink()) throw new Error('--out must not be a link');
+  const realOut = path.join(fs.realpathSync(path.dirname(outFile)), path.basename(outFile));
   const realRepo = fs.realpathSync(repoDir);
-  for (const root of [repoDir, realRepo]) {
-    if (outFile === root || outFile.startsWith(root + path.sep)) throw new Error('--out must be outside the repository');
-  }
+  if (realOut === realRepo || realOut.startsWith(realRepo + path.sep)) throw new Error('--out must be outside the repository');
   const tally = newTally();
   const files = recentSessionFiles(days);
   for (const file of files) tallySession(tally, file);
   const text = [`Check 39, --mine: transcripts changed in the last ${days} days, read ${new Date().toISOString().slice(0, 10)}.`,
     'Types, field names, kinds of marker and counts only.', '', summarise(tally)].join('\n');
-  fs.mkdirSync(path.dirname(outFile), { recursive: true });
-  fs.writeFileSync(outFile, `${text}\n`, 'utf8');
+  fs.writeFileSync(realOut, `${text}\n`, 'utf8');
   console.log(`Read ${files.length} session files. Written to ${outFile}`);
 }
 
@@ -540,7 +614,7 @@ function findTranscript(sessionId) {
 }
 
 function describeEntry(entry, type, signature) {
-  const keys = Object.keys(entry).filter((k) => !['message', 'toolUseResult', 'attachment', 'snapshot'].includes(k));
+  const keys = Object.keys(entry).filter((k) => !['message', 'toolUseResult', 'attachment', 'snapshot'].includes(k)).map(safeKey);
   const marks = [];
   for (const f of ['userType', 'entrypoint', 'isMeta', 'isSidechain', 'isCompactSummary', 'isVisibleInTranscriptOnly', 'promptId', 'agentId', 'requestId', 'cwd', 'sessionId']) {
     if (f in entry) marks.push(['isMeta', 'isSidechain', 'isCompactSummary', 'isVisibleInTranscriptOnly', 'userType', 'entrypoint'].includes(f) ? `${f}=${enumValue(entry[f])}` : f);
@@ -549,14 +623,14 @@ function describeEntry(entry, type, signature) {
   let detail = '';
   if (entry.type === 'assistant') {
     const u = entry.message?.usage ?? {};
-    const blocks = (entry.message?.content ?? []).map((b) => (b.type === 'tool_use' ? `tool_use(${b.name})` : b.type)).join(',');
+    const blocks = (entry.message?.content ?? []).map((b) => (b.type === 'tool_use' ? `tool_use(${safeToolName(b.name)})` : b.type)).join(',');
     detail = ` blocks=[${blocks}] model=${entry.message?.model ? 'yes' : 'no'} in=${u.input_tokens} cacheRead=${u.cache_read_input_tokens} cacheCreate=${u.cache_creation_input_tokens} out=${u.output_tokens}`;
   }
   if (entry.type === 'user') {
     const c = entry.message?.content;
     const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (b.type === 'text' ? b.text : b.type === 'tool_result' ? `[tool_result] ${typeof b.content === 'string' ? b.content : JSON.stringify(b.content)}` : `[${b.type}]`)).join(' ') : '';
     const result = entry.toolUseResult && typeof entry.toolUseResult === 'object' && !Array.isArray(entry.toolUseResult)
-      ? ` toolUseResult keys=${Object.keys(entry.toolUseResult).join(',')}` : '';
+      ? ` toolUseResult keys=${Object.keys(entry.toolUseResult).map(safeKey).join(',')}` : '';
     const decision = entry.permissionDecision ? ` permissionDecision=${JSON.stringify(entry.permissionDecision)}` : '';
     detail = ` sig=${signature}${result}${decision} text="${text.replace(/\s+/g, ' ').slice(0, 70)}"`;
   }
@@ -565,10 +639,84 @@ function describeEntry(entry, type, signature) {
     // Only a hook's own output is shown; other attachments (the skill list, the
     // environment) describe this computer.
     const own = /^hook_/.test(String(a.type)) ? ` content=${JSON.stringify(a.content).slice(0, 80)}` : '';
-    detail = ` attachment keys=${Object.keys(a).join(',')}${a.hookEvent ? ` hookEvent=${a.hookEvent}` : ''}${own}`;
+    detail = ` attachment keys=${Object.keys(a).map(safeKey).join(',')}${a.hookEvent ? ` hookEvent=${enumValue(a.hookEvent)}` : ''}${own}`;
   }
   if (entry.type === 'system') detail = ` content="${String(entry.content ?? '').slice(0, 60)}"`;
   return `${type} keys=${keys.join(',')}${marks.length ? ` | ${marks.join(' ')}` : ''}${detail}`;
+}
+
+// The kept copy of a scratch report: folders, the home folder, ids and model
+// names masked.
+export function maskReport(text, { scratchDirs = [], home = os.homedir() } = {}) {
+  let out = text;
+  const pairs = [];
+  for (const dir of scratchDirs) {
+    pairs.push([dir, '<scratch>']);
+    try { pairs.push([fs.realpathSync(dir), '<scratch>']); } catch { /* gone already */ }
+  }
+  pairs.push([fs.realpathSync(os.tmpdir()), '<tmp>'], [os.tmpdir(), '<tmp>'], [repoDir, '<repo>'], [home, '<home>']);
+  pairs.sort((a, b) => b[0].length - a[0].length);
+  for (const [from, to] of pairs) out = out.split(from).join(to);
+  return out.replace(/\/Users\/[^/\s"]+/g, '<home>').replace(UUID, '<uuid>').replace(/\ba[0-9a-f]{16}\b/g, '<agent id>')
+    .replace(/"runId":"[^"]+"/g, '"runId":"<id>"').replace(/\b(toolu|srvtoolu|msg|req)_[A-Za-z0-9]+/g, '$1_<id>')
+    .replace(/claude-[a-z0-9-]+-\d[\w-]*/gi, '<model>');
+}
+
+// Lists every entry of the scratch session and the summary, then writes the
+// full log and the masked copy.
+function report({ transcript, lines, log, logDir, stamp, scratchDirs }) {
+  log('\n== Every entry, in order (scratch session only)');
+  const tally = newTally();
+  tallySession(tally, transcript, {
+    perEntry: (label) => ({ index, entry, type, signature, malformed }) => {
+      log(malformed ? `${label} #${index} MALFORMED` : `${label} #${index} ${describeEntry(entry, type, signature)}`);
+    },
+  });
+  log('\n== Summary');
+  log(summarise(tally));
+  const full = lines.join('\n');
+  fs.writeFileSync(path.join(logDir, `scratch-${stamp}.txt`), `${full}\n`, 'utf8');
+  fs.mkdirSync(path.join(probeDir, 'reports'), { recursive: true });
+  fs.writeFileSync(path.join(probeDir, 'reports', 'scratch.txt'), `${maskReport(full, { scratchDirs })}\n`, 'utf8');
+  console.log(`\nFull report: ${path.join(logDir, `scratch-${stamp}.txt`)}; masked copy: probes/39-transcripts/reports/scratch.txt`);
+}
+
+// --reread: the report again from the last scratch run's transcript (kept by
+// Claude Code after the throwaway folder went), with no new session. The run's
+// own lines (what was sent and answered) come from that run's full log.
+function reread() {
+  const logDir = probeLogDir('39-transcripts');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const candidates = [];
+  for (const project of fs.existsSync(projectsRoot) ? fs.readdirSync(projectsRoot) : []) {
+    if (!project.includes('wheelhouse-probe-39-transcripts-')) continue;
+    for (const name of fs.readdirSync(path.join(projectsRoot, project))) {
+      if (/^[0-9a-f-]{36}\.jsonl$/.test(name)) {
+        const file = path.join(projectsRoot, project, name);
+        candidates.push({ file, at: fs.statSync(file).mtimeMs });
+      }
+    }
+  }
+  candidates.sort((a, b) => b.at - a.at);
+  if (!candidates.length) throw new Error('No transcript of a scratch run is left to read again.');
+  const transcript = candidates[0].file;
+  const logs = fs.readdirSync(logDir).filter((n) => /^scratch-.*\.txt$/.test(n))
+    .map((n) => ({ n, at: fs.statSync(path.join(logDir, n)).mtimeMs })).sort((a, b) => b.at - a.at);
+  const head = [];
+  if (logs.length) {
+    for (const lineText of fs.readFileSync(path.join(logDir, logs[0].n), 'utf8').split('\n')) {
+      if (lineText.startsWith('== Every entry') || lineText === '') break;
+      if (!lineText.startsWith('(Read again')) head.push(lineText);
+    }
+  }
+  const lines = [...head, '(Read again from the run\'s kept transcript with --reread.)'];
+  const log = (text) => { lines.push(text); };
+  let cwd = null;
+  for (const lineText of fs.readFileSync(transcript, 'utf8').split('\n')) {
+    try { cwd = JSON.parse(lineText).cwd ?? null; } catch { /* next */ }
+    if (cwd) break;
+  }
+  report({ transcript, lines, log, logDir, stamp, scratchDirs: cwd ? [cwd] : [] });
 }
 
 async function scratch(argv) {
@@ -590,40 +738,21 @@ async function scratch(argv) {
     files: { 'relay.md': 'Reply with the single word: relayed. Use no tools.\n' },
   });
   const sessionId = crypto.randomUUID();
-  let transcript = null;
   try {
     await streamSession({ cwd: project.dir, sessionId, log });
     relay({ cwd: project.dir, sessionId, log });
     await sleep(2000);
-    transcript = findTranscript(sessionId);
+    const transcript = findTranscript(sessionId);
     if (!transcript) { log('No transcript found for the session.'); return; }
-    log('\n== Every entry, in order (scratch session only)');
-    const tally = newTally();
-    tallySession(tally, transcript, {
-      perEntry: (label) => ({ index, entry, type, signature, malformed }) => {
-        log(malformed ? `${label} #${index} MALFORMED` : `${label} #${index} ${describeEntry(entry, type, signature)}`);
-      },
-    });
-    log('\n== Summary');
-    log(summarise(tally));
+    report({ transcript, lines, log, logDir, stamp, scratchDirs: [project.dir] });
   } finally {
-    const full = lines.join('\n');
-    fs.writeFileSync(path.join(logDir, `scratch-${stamp}.txt`), `${full}\n`, 'utf8');
-    // The kept copy: ids, folders and the home folder masked.
-    const realTmp = fs.realpathSync(os.tmpdir());
-    let masked = full.split(fs.realpathSync(project.dir)).join('<scratch>').split(project.dir).join('<scratch>');
-    masked = masked.split(realTmp).join('<tmp>').split(os.homedir()).join('<home>').split(repoDir).join('<repo>');
-    masked = masked.replace(/\/Users\/[^/\s"]+/g, '<home>').replace(UUID, '<uuid>').replace(/\ba[0-9a-f]{16}\b/g, '<agent id>').replace(/"runId":"[^"]+"/g, '"runId":"<id>"')
-      .replace(/"(msg|req|toolu)_[A-Za-z0-9]+"/g, '"$1_<id>"').replace(/claude-[a-z0-9-]+-\d[\w-]*/gi, '<model>');
-    fs.mkdirSync(path.join(probeDir, 'reports'), { recursive: true });
-    fs.writeFileSync(path.join(probeDir, 'reports', 'scratch.txt'), `${masked}\n`, 'utf8');
     if (!argv.includes('--keep')) await project.cleanup();
-    log(`\nFull report: ${path.join(logDir, `scratch-${stamp}.txt`)}; masked copy: probes/39-transcripts/reports/scratch.txt`);
   }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   if (argv.includes('--mine')) mine(argv);
+  else if (argv.includes('--reread')) reread();
   else await scratch(argv);
 }

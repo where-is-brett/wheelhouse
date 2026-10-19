@@ -10,6 +10,7 @@ send replyCode at 20.3 s
   answered: success turns=1 "I see "K7QD Approve", but nothing is waiting on an approval "
 stream session exited 0; events: assistant 10, result:success 5, system:init 5, system:background_tasks_changed 2, system:thinking_tokens 2, user 2, control_request 1, rate_limit_event 1, system:commands_changed 1, system:hook_response 1, system:hook_started 1, system:task_notification 1, system:task_started 1, system:task_updated 1
 relay by a second process: exit 0 in 7.1 s; same session id true; result "relayed"
+(Read again from the run's kept transcript with --reread.)
 
 == Every entry, in order (scratch session only)
 session #0 queue-operation keys=type,operation,timestamp,sessionId,content | sessionId
@@ -241,7 +242,7 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
   1	2.1.302 sdk-cli origin={kind:task-notification} promptSource=system turnOrigin=task_notification starts <task-notification>
 
 == Known tags found anywhere in user text, and attachment text markers
-  8	attachment:total_tokens_reminder .text: <total_tokens> (other tag)
+  8	attachment:total_tokens_reminder .text: <total_tokens
   2	attachment:model .text: plain text
   2	attachment:skill_listing .content: plain text
   1	attachment:hook_success .content: empty
@@ -489,6 +490,7 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     2	shape.tools[].input_schema.$schema
     2	shape.tools[].input_schema.additionalProperties
     2	shape.tools[].input_schema.properties
+    2	shape.tools[].input_schema.properties.<key>
     2	shape.tools[].input_schema.required
     2	shape.tools[].input_schema.type
     2	shape.tools[].model
@@ -573,30 +575,13 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     3	thinkingDisplay
     3	thinkingDurationMs
     3	wireToolInputs
+    3	wireToolInputs.<key>
+    2	message.content[tool_use].input.<key>
     1	agentId
     1	attributionAgent
-    1	message.content[tool_use].input.description
-    1	message.content[tool_use].input.file_path
-    1	message.content[tool_use].input.prompt
     1	message.content[tool_use].input.questions
-    1	message.content[tool_use].input.run_in_background
-    1	message.content[tool_use].input.subagent_type
     1	message.diagnostics.cache_miss_reason
     1	message.diagnostics.cache_miss_reason.type
-    1	wireToolInputs.toolu_012diwpr3kKfuz2JapQ1QCrx
-    1	wireToolInputs.toolu_012diwpr3kKfuz2JapQ1QCrx.questions
-    1	wireToolInputs.toolu_012diwpr3kKfuz2JapQ1QCrx.questions[]
-    1	wireToolInputs.toolu_012diwpr3kKfuz2JapQ1QCrx.questions[].header
-    1	wireToolInputs.toolu_012diwpr3kKfuz2JapQ1QCrx.questions[].multiSelect
-    1	wireToolInputs.toolu_012diwpr3kKfuz2JapQ1QCrx.questions[].options
-    1	wireToolInputs.toolu_012diwpr3kKfuz2JapQ1QCrx.questions[].question
-    1	wireToolInputs.toolu_01C3AzidpWTzq47Xy7doFjHw
-    1	wireToolInputs.toolu_01C3AzidpWTzq47Xy7doFjHw.file_path
-    1	wireToolInputs.toolu_01LszeRL28hD18oHD6KHkKWn
-    1	wireToolInputs.toolu_01LszeRL28hD18oHD6KHkKWn.description
-    1	wireToolInputs.toolu_01LszeRL28hD18oHD6KHkKWn.prompt
-    1	wireToolInputs.toolu_01LszeRL28hD18oHD6KHkKWn.run_in_background
-    1	wireToolInputs.toolu_01LszeRL28hD18oHD6KHkKWn.subagent_type
   -- atis-latch
     7	atis
     7	sessionId
@@ -714,13 +699,7 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
   -- attachment:environment
     2	attachment
     2	attachment.snapshot
-    2	attachment.snapshot.additionalWorkingDirectories
-    2	attachment.snapshot.isGitRepo
-    2	attachment.snapshot.isWorktree
-    2	attachment.snapshot.osVersion
-    2	attachment.snapshot.platform
-    2	attachment.snapshot.shell
-    2	attachment.snapshot.workingDirectory
+    2	attachment.snapshot.<key>
     2	attachment.type
     2	cwd
     2	entrypoint
@@ -961,13 +940,6 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     2	hasUnknownModelCost
     2	modelUsage
     2	modelUsage.<key>
-    2	modelUsage.<key>.cacheCreationInputTokens
-    2	modelUsage.<key>.cacheReadInputTokens
-    2	modelUsage.<key>.costUSD
-    2	modelUsage.<key>.inputTokens
-    2	modelUsage.<key>.outputTokens
-    2	modelUsage.<key>.thinkingTokens
-    2	modelUsage.<key>.webSearchRequests
     2	sessionId
     2	startTime
     2	totalAPIDuration
@@ -1032,17 +1004,12 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
     1	origin.runId
     1	permissionDecision.reasonType
     1	queueSkipAttachments
+    1	toolUseResult.<key>
     1	toolUseResult.agentId
     1	toolUseResult.answers
-    1	toolUseResult.canContinueAgent
-    1	toolUseResult.canReadOutputFile
-    1	toolUseResult.description
     1	toolUseResult.file
     1	toolUseResult.isAsync
-    1	toolUseResult.outputFile
-    1	toolUseResult.prompt
     1	toolUseResult.questions
-    1	toolUseResult.resolvedModel
     1	toolUseResult.status
     1	toolUseResult.type
 
@@ -1095,17 +1062,12 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
   2	attachment:deferred_tools_delta surfacedDefinitions[].definition.eager_input_streaming
   2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema
   2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.properties
+  2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.properties.<key>
   2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.required
   2	attachment:deferred_tools_delta surfacedDefinitions[].definition.input_schema.type
   2	attachment:deferred_tools_delta surfacedDefinitions[].definition.name
   2	attachment:environment snapshot
-  2	attachment:environment snapshot.additionalWorkingDirectories
-  2	attachment:environment snapshot.isGitRepo
-  2	attachment:environment snapshot.isWorktree
-  2	attachment:environment snapshot.osVersion
-  2	attachment:environment snapshot.platform
-  2	attachment:environment snapshot.shell
-  2	attachment:environment snapshot.workingDirectory
+  2	attachment:environment snapshot.<key>
   2	attachment:environment type
   2	attachment:model identity
   2	attachment:model identity.knowledgeCutoff
@@ -1129,6 +1091,7 @@ Lines: 121 entries; malformed 0; blank lines inside a file 0; files whose last l
   2	attachment:prompt_snapshot tools[].schema.input_schema.$schema
   2	attachment:prompt_snapshot tools[].schema.input_schema.additionalProperties
   2	attachment:prompt_snapshot tools[].schema.input_schema.properties
+  2	attachment:prompt_snapshot tools[].schema.input_schema.properties.<key>
   2	attachment:prompt_snapshot tools[].schema.input_schema.required
   2	attachment:prompt_snapshot tools[].schema.input_schema.type
   2	attachment:prompt_snapshot tools[].schema.name
