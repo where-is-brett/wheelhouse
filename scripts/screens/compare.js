@@ -13,13 +13,10 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
 import { shoot as shootPage } from './shoot.js';
+import { isPage } from './pages.js';
 
 const COMMIT = /^[0-9a-f]{7,64}$/i;
 const HASH = /^[0-9a-f]{64}$/;
-// A page is a path on the preview: one leading slash, no backslash, no spaces or control characters.
-const PAGE = /^\/(?![/\\])[^\s\\]*$/;
-// A `.` or `..` path segment, plain or percent-encoded, in any case.
-const DOTS = /^(?:\.|%2e){1,2}$/i;
 
 const isHash = (shot) => shot?.ok === true && typeof shot.hash === 'string' && HASH.test(shot.hash);
 
@@ -77,13 +74,6 @@ function writeCache(file, saved) {
 function keepShot(file, address, key, hash) {
   const saved = readCache(file);
   writeCache(file, { address, shots: { ...(saved.address === address ? saved.shots : {}), [key]: hash } });
-}
-
-// Whether `page` is a plain path: one leading slash, and no `.` or `..` segment before any query
-// or fragment.
-export function isPage(page) {
-  if (typeof page !== 'string' || !PAGE.test(page)) return false;
-  return !page.split(/[?#]/, 1)[0].split('/').some((segment) => DOTS.test(segment));
 }
 
 // `page` joined onto the preview's address (keeping any path the preview has), or null when the page

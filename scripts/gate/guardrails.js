@@ -36,7 +36,7 @@
 // (design section 12.3). List public pages only, never one behind a sign-in: a sign-in screen
 // looks the same at every commit. No pages, the default, and an approval never carries over.
 import { matchGlob } from './glob.js';
-import { isPage } from '../screens/compare.js';
+import { isPage } from '../screens/pages.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
 // CLAUDE.md, and .mcp.json (it names the connectors agents get).

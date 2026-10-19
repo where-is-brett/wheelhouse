@@ -7,6 +7,7 @@
 // lines and the mappings.
 import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
+import { publicHttps } from '../screens/pages.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
 
@@ -70,17 +71,10 @@ function refusalOf(output, fallback) {
   return fallback;
 }
 
-// A preview's address as the host gave it, or null unless it is an https address: the helper's
-// browser opens only the host's preview deployment, never a page on this computer.
-function httpsOnly(address) {
-  if (typeof address !== 'string') return null;
-  try {
-    const url = new URL(address);
-    return url.protocol === 'https:' && url.hostname !== '' ? url.href : null;
-  } catch {
-    return null;
-  }
-}
+// A preview's address as the host gave it, or null unless it is an https address on a public host
+// (scripts/screens/pages.js): the helper's browser opens only the host's preview deployment, never
+// a page on this computer or its local network.
+const httpsOnly = publicHttps;
 
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 

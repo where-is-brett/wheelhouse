@@ -647,7 +647,9 @@ test('a deployment the host has since superseded is no preview', async () => {
 
 test('only an https address counts as a preview, a failed read is thrown, and the commit must be whole', async () => {
   const statuses = JSON.parse(gh('deployment-statuses.json'));
-  for (const environmentUrl of ['http://product.example.app', '', 'javascript:alert(1)', 'file:///etc/passwd', null]) {
+  // Nor is an address on this computer or its local network (ruling F68).
+  const local = ['https://localhost:3000/', 'https://shop.localhost/', 'https://127.0.0.1/', 'https://10.1.2.3/', 'https://172.20.0.5/', 'https://192.168.0.2/', 'https://169.254.169.254/', 'https://0.0.0.0/', 'https://[::1]/', 'https://[fd00::5]/', 'https://[fe80::1]/', 'https://[::]/'];
+  for (const environmentUrl of ['http://product.example.app', '', 'javascript:alert(1)', 'file:///etc/passwd', null, ...local]) {
     const plain = adapter('github', { stdout: '[{"id":7}]' }, { stdout: JSON.stringify([{ ...statuses[0], environment_url: environmentUrl }]) });
     assert.equal(await plain.a.previewUrl(SHA), null, String(environmentUrl));
     const deployments = JSON.parse(gl('deployments.json'));

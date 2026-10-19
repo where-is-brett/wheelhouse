@@ -139,8 +139,10 @@ test('a run that fails, times out or leaves no usable picture gives no hash', as
   }
 });
 
-test('only an https address is photographed, refused before any fetch', async () => {
-  for (const url of ['http://preview.example.app/', 'file:///Users/director/shop/index.html', '/pricing', 'not an address', 'javascript:alert(1)', undefined]) {
+test('only an https address on a public host is photographed, refused before any fetch', async () => {
+  // An address on this computer or its local network is refused too (ruling F68).
+  const local = ['https://localhost/', 'https://shop.localhost/', 'https://127.0.0.1/', 'https://10.0.0.1/', 'https://172.16.0.1/', 'https://192.168.1.1/', 'https://169.254.169.254/', 'https://0.0.0.0/', 'https://[::1]/', 'https://[fc00::1]/', 'https://[fe80::1]/', 'https://[::ffff:127.0.0.1]/'];
+  for (const url of ['http://preview.example.app/', 'file:///Users/director/shop/index.html', '/pricing', 'not an address', 'javascript:alert(1)', undefined, ...local]) {
     const run = fakeRun();
     const fetch = ok200();
     const result = await shoot({ browser: '/bin/chrome', url, size: SIZE, run, fetch, tmp: tempFolder('wh-shoot-') });

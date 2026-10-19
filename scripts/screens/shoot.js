@@ -1,14 +1,15 @@
 // scripts/screens/shoot.js
 // Photographing one page of a preview in a hidden browser. The browser only ever opens the host's
-// preview deployment (an https address), never a project's own files, and each run has a fresh
-// profile folder that is removed afterwards. A page that fails to load, or loads with an error
-// status, gives no picture.
+// preview deployment (an https address on a public host), never a project's own files or a page on
+// this computer or its local network, and each run has a fresh profile folder that is removed
+// afterwards. A page that fails to load, or loads with an error status, gives no picture.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run as runProgram } from '../lib/run.js';
 import { SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../lib/front-desk.js';
 import { pixelHash } from './png.js';
+import { publicHttps } from './pages.js';
 
 // How many redirects on the preview's own host are followed before giving up.
 const MOST_REDIRECTS = 5;
@@ -140,12 +141,11 @@ async function readStatus(url, fetch, timeoutMs) {
 export async function shoot({ browser, url, size, run = runProgram, fetch = globalThis.fetch, tmp = os.tmpdir(), timeoutMs = SCREEN_TIMEOUT_MS } = {}) {
   if (!browser) return { ok: false, why: 'no browser' };
   if (!stopsAtPicture(browser)) return { ok: false, why: "only Chrome's pictures are trusted so far" };
-  let address;
-  try { address = new URL(url); } catch { return { ok: false, why: 'not an address' }; }
-  if (address.protocol !== 'https:') return { ok: false, why: 'not an https address' };
+  const address = publicHttps(url);
+  if (address === null) return { ok: false, why: 'not an https address on a public host' };
   if (!Number.isInteger(size?.width) || !Number.isInteger(size?.height) || size.width < 1 || size.height < 1) return { ok: false, why: 'not a size' };
 
-  const status = await readStatus(address.href, fetch, timeoutMs);
+  const status = await readStatus(address, fetch, timeoutMs);
   if (!status.ok) return status;
 
   let profile;
