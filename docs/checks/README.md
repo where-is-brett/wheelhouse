@@ -41,3 +41,4 @@ The answers to the checks in section 20 of the design, one note per check.
 | 36 | Switching telemetry on for Desktop sessions | Partly | [36-telemetry.md](36-telemetry.md) |
 | 37 | The pasted install line in Desktop | Partly | [37-install-line.md](37-install-line.md) |
 | 38 | `gh` and `glab` without an installer | Partly | [38-host-tools.md](38-host-tools.md) |
+| 34 | Screenshots from a hidden browser | Partly | [34-screens.md](34-screens.md) |
