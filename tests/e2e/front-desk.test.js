@@ -16,14 +16,12 @@
 // a feature session), and the gate's asks (act merge). The watcher runs as runWatcher runs it, its
 // waker in Shape 2, which starts nothing and prints its wakes. Pictures of a preview are taken by a
 // stand-in for scripts/screens/shoot.js, in a browser whose path is Chrome's (ruling F61).
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
 import { main as cli } from '../../scripts/frontdesk/cli.js';
 import { decide as boardContext, cardsLine, HEADINGS } from '../../scripts/hooks/board-context.js';
 import { decide as cardCheck } from '../../scripts/hooks/card-check.js';
@@ -44,6 +42,7 @@ import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { writeFiles } from '../helpers/lineage.js';
 import { matchingBody } from '../helpers/provenance.js';
+import { sandboxed as wallSandboxed } from '../helpers/sandbox-wall.js';
 
 const P = 'o__p';
 const T0 = Date.parse('2026-10-19T09:00:00.000Z');
@@ -66,68 +65,9 @@ const short = (sha) => sha.slice(0, 7);
 
 // --- The sandbox ---
 
-// What the project's sandbox does to the front desk's commands (scripts/protection/settings.js:
-// denyRead and denyWrite on ~/.wheelhouse): every file call into the Wheelhouse home fails with
-// EPERM. Only calls made inside `sandboxed` are held, so the helper answering them in this same
-// process, whose requests arrive in the server's own context, is not.
-const walls = new AsyncLocalStorage();
-const denied = [];
-const TWO_PATHS = ['copyFileSync', 'cpSync', 'linkSync', 'renameSync', 'symlinkSync'];
-const HELD_CALLS = [
-  'accessSync', 'appendFileSync', 'chmodSync', 'copyFileSync', 'cpSync', 'existsSync', 'linkSync', 'lstatSync', 'mkdirSync',
-  'mkdtempSync', 'openSync', 'opendirSync', 'readFileSync', 'readdirSync', 'readlinkSync', 'realpathSync', 'renameSync',
-  'rmSync', 'rmdirSync', 'statSync', 'symlinkSync', 'unlinkSync', 'utimesSync', 'writeFileSync',
-];
-
-function walledOff(p) {
-  const held = walls.getStore();
-  if (!held) return false;
-  let text = null;
-  if (typeof p === 'string') text = p;
-  else if (Buffer.isBuffer(p)) text = p.toString();
-  else if (p instanceof URL) text = fileURLToPath(p);
-  if (text === null) return false;
-  const full = path.resolve(text);
-  return held.some((wall) => full === wall || full.startsWith(`${wall}${path.sep}`));
-}
-
-const originals = new Map();
-for (const call of HELD_CALLS) {
-  const original = fs[call];
-  if (typeof original !== 'function') continue;
-  originals.set(call, original);
-  const wrapped = function held(...args) {
-    for (const p of TWO_PATHS.includes(call) ? args.slice(0, 2) : args.slice(0, 1)) {
-      if (!walledOff(p)) continue;
-      denied.push(`${call} ${String(p)}`);
-      if (call === 'existsSync') return false;
-      throw Object.assign(new Error(`EPERM: operation not permitted, ${call} '${String(p)}'`), { code: 'EPERM', syscall: call, path: String(p) });
-    }
-    return original.apply(this, args);
-  };
-  if (call === 'realpathSync') {
-    wrapped.native = function heldNative(p, ...rest) {
-      if (walledOff(p)) {
-        denied.push(`realpathSync.native ${String(p)}`);
-        throw Object.assign(new Error(`EPERM: operation not permitted, realpath '${String(p)}'`), { code: 'EPERM' });
-      }
-      return original.native.call(this, p, ...rest);
-    };
-  }
-  fs[call] = wrapped;
-}
-after(() => {
-  for (const [call, original] of originals) fs[call] = original;
-});
-
-// Runs fn as a sandboxed command of the computer `world` runs, then checks it touched nothing in
-// the Wheelhouse home.
-async function sandboxed(world, fn) {
-  const before = denied.length;
-  const result = await walls.run(world.walls, fn);
-  assert.deepEqual(denied.slice(before), [], 'a sandboxed command reached into the Wheelhouse home');
-  return result;
-}
+// The front desk's command runs inside the sandbox stand-in (tests/helpers/sandbox-wall.js),
+// which shuts the Wheelhouse home to it.
+const sandboxed = (world, fn) => wallSandboxed(world.walls, fn);
 
 // --- The host ---
 
