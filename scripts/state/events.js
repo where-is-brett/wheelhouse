@@ -8,14 +8,15 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
+import { CODE_ALPHABET } from './card-lines.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
-  'setting', 'dispatch', 'merge', 'note',
+  'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'gate-asks',
 ];
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action'];
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
@@ -184,10 +185,24 @@ function checkReview(data) {
   for (const k of ['check', 'claudeCode', 'model']) if (data[k] !== undefined && typeof data[k] !== 'string') bad(`has a ${k} that is not text`);
 }
 
+// What a shown record must carry: the reply code, the question put to the director
+// and the labels of the options offered (two to six).
+function checkShown(data) {
+  const bad = (why) => { throw new Error(`A shown event ${why}`); };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) bad('needs data');
+  if (typeof data.code !== 'string' || data.code.length !== 4 || [...data.code].some((c) => !CODE_ALPHABET.includes(c))) {
+    bad('needs a code of four letters or digits from the code alphabet');
+  }
+  if (typeof data.question !== 'string' || data.question === '') bad('needs the question');
+  if (!Array.isArray(data.options) || data.options.length < 2 || data.options.length > 6) bad('needs two to six options');
+  if (data.options.some((o) => typeof o !== 'string' || o === '')) bad('has an option that is not text');
+}
+
 export function makeEvent({ kind, data, now = () => new Date() }) {
   if (!KINDS.has(kind)) throw new Error('Unknown event kind');
   if (kind === 'action') checkAction(data);
   if (kind === 'review') checkReview(data);
+  if (kind === 'shown') checkShown(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,
@@ -230,17 +245,17 @@ export function eventPath(event) {
 }
 
 // Pushes, pulling and retrying when the remote moved on. Never throws.
-async function pushWithRetry(dir, push, env) {
+async function pushWithRetry(dir, push, env, branch = STATE_BRANCH) {
   let result = { ok: false };
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      result = await push(dir, STATE_BRANCH);
+      result = await push(dir, branch);
     } catch {
       return { ok: false };
     }
     if (result.ok) return { ok: true };
     if (result.rejected !== 'non-fast-forward' || attempt === MAX_RETRIES) break;
-    const pulled = await git(dir, ['pull', '--rebase', 'origin', STATE_BRANCH], env);
+    const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
     if (pulled.code !== 0) {
       await git(dir, ['rebase', '--abort'], env);
       break;
@@ -268,12 +283,13 @@ function removeEmpty(folders) {
   }
 }
 
-export async function writeEvent({ project, event, push, env }) {
+// `dir` and `branch` name another clone of events, such as the profile's; by default
+// the project's state clone and its state branch.
+export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }
-  const dir = stateDir(project);
   const relative = eventPath(event);
   const file = path.join(dir, relative);
   const made = madeFolders(path.dirname(file));
@@ -306,20 +322,20 @@ export async function writeEvent({ project, event, push, env }) {
     removeEmpty(made);
     throw new Error(`The event file ${path.basename(file)} could not be committed`);
   }
-  const pushed = await pushWithRetry(dir, push, env);
+  const pushed = await pushWithRetry(dir, push, env, branch);
   return pushed.refused
     ? { path: file, pushed: false, refused: pushed.refused }
     : { path: file, pushed: pushed.ok };
 }
 
 // Pulls, then pushes anything not yet pushed. Resolves with whether the pull
-// went through and how many commits the remote still lacks.
-export async function syncState({ project, push, env }) {
-  const dir = stateDir(project);
-  const pulled = await git(dir, ['pull', '--rebase', 'origin', STATE_BRANCH], env);
+// went through and how many commits the remote still lacks. `dir` and `branch`
+// as for writeEvent.
+export async function syncState({ project, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
+  const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
   if (pulled.code !== 0) await git(dir, ['rebase', '--abort'], env);
-  await pushWithRetry(dir, push, env);
-  const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${STATE_BRANCH}..HEAD`], env);
+  await pushWithRetry(dir, push, env, branch);
+  const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], env);
   const count = Number.parseInt(ahead.stdout.trim(), 10);
   // A count that cannot be read is taken as "something is still unpushed".
   return { pulled: pulled.code === 0, unpushed: ahead.code === 0 && Number.isInteger(count) ? count : 1 };

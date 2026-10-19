@@ -1,4 +1,5 @@
 {
+  "modules": ["./register.ts"],
   "hooks": {
     "SessionStart": [
       { "matcher": "startup|resume|compact|clear|fork", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/session-start.js\"", "timeout": 10 }] }
@@ -6,7 +7,8 @@
     "UserPromptSubmit": [
       { "hooks": [
         { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/stop-word.js\"", "timeout": 10 },
-        { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/context-gauge.js\"", "timeout": 10 }
+        { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/context-gauge.js\"", "timeout": 10 },
+        { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/board-context.js\"", "timeout": 10 }
       ] }
     ],
     "PreToolUse": [

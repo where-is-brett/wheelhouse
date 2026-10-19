@@ -1,6 +1,7 @@
 // scripts/state/card-lines.js
 // The exact words on the buttons and lines of the director's cards, so the
 // front desk asks in the words the helper checks against.
+import crypto from 'node:crypto';
 
 // The line on the card that asks the director to push a CI change.
 export function ciPushLine(branch, sha) {
@@ -19,6 +20,9 @@ export function confirmLine(event) {
   const words = typeof event?.data?.words === 'string' ? event.data.words : '';
   return `Confirm ${event?.kind} ${event?.id}: "${words}"`;
 }
+
+// The letters and digits a reply code is made from: none that are easy to mistake for another.
+export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
 
 export const LIFT_STOP = 'Lift STOP and let the agents carry on';
 
@@ -60,4 +64,42 @@ export function liftIncidentLine(id) {
 // The line that asks the director to merge a pull request as an incident's fix.
 export function incidentFixLine(id, pr) {
   return `Merge pull request #${pr} as the fix for incident ${id}`;
+}
+
+// A reply code: four characters of CODE_ALPHABET, the first eight bytes of the SHA-256 of a set
+// line read as one number and written in base 30, so one line always has one code and the codes
+// come out evenly. A card shows it as replyCodeLine(code).
+export function replyCode(line) {
+  let n = crypto.createHash('sha256').update(String(line)).digest().readBigUInt64BE(0);
+  const base = BigInt(CODE_ALPHABET.length);
+  let code = '';
+  for (let i = 0; i < 4; i += 1) {
+    code += CODE_ALPHABET[Number(n % base)];
+    n /= base;
+  }
+  return code;
+}
+
+export const replyCodeLine = (code) => `Reply code: ${code}`;
+
+const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// The lines a card's choice is set by, each matching a whole line of the question: the
+// approval, confirmation, lift-STOP, CI-push and runbook lines.
+export const SET_LINES = [
+  /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
+  /^Confirm [a-z-]+ \S+: ".*"$/m,
+  new RegExp(`^${literal(LIFT_STOP)}$`, 'm'),
+  /^Push the CI change on \S+ at commit [0-9a-f]{12} with your own sign-in$/m,
+  new RegExp(`^Runbook step (?:${Object.entries(RUNBOOK_TITLES).map(([step, title]) => `${step}: ${literal(title)}`).join('|')})(?:, to commit [0-9a-f]{12})?$`, 'm'),
+];
+
+// The one set line a question carries, or null when it carries none, or two or more.
+export function setLineOf(question) {
+  if (typeof question !== 'string') return null;
+  const found = SET_LINES.flatMap((pattern) => {
+    const every = new RegExp(pattern.source, [...new Set(`${pattern.flags}gm`)].join(''));
+    return [...question.matchAll(every)].map((m) => m[0]);
+  });
+  return found.length === 1 ? found[0] : null;
 }

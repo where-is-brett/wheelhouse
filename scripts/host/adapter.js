@@ -166,6 +166,12 @@ export function makeAdapter({ host, repo, run, env }) {
     }),
     prState: async (number) => c.prState(wholeNumber(number)),
     ciState: async (sha) => c.ciState(commit(sha)),
+    // The commit a branch points at, in full: the health read asks the default branch's CI with it.
+    // Whether the commit has any checks or pipeline, or the branch holds CI configuration. Unlike
+    // ciState it never turns a failed read into 'none': an error is thrown, so a failure to look
+    // is told from having looked and found nothing.
+    hasCi: async (sha, branch) => c.hasCi(commit(sha), text(branch, 'branch')),
+    branchHead: async (branch) => commit(await c.branchHead(text(branch, 'branch'))),
     merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({

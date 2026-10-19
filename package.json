@@ -7,7 +7,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test --test-timeout=480000",
+    "test": "node --test --test-timeout=480000 \"tests/**/*.test.js\"",
+    "mod-check": "node scripts/mod/validate.js && claude plugin test .",
     "eval": "node scripts/eval/run.js"
   }
 }

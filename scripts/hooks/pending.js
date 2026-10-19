@@ -68,7 +68,7 @@ export async function sendPending(project, client, { until = Infinity } = {}) {
     let body;
     try {
       ({ route, body } = JSON.parse(fs.readFileSync(file, 'utf8')));
-      if (route !== 'write' && route !== 'record') throw new Error('unknown route');
+      if (route !== 'write' && route !== 'record' && route !== 'profile-record') throw new Error('unknown route');
     } catch {
       try {
         fs.mkdirSync(path.join(folder, 'bad'), { recursive: true });
@@ -77,7 +77,8 @@ export async function sendPending(project, client, { until = Infinity } = {}) {
       continue;
     }
     try {
-      const result = await (route === 'write' ? client.state.write(body) : client.state.record(body));
+      const send = { write: () => client.state.write(body), record: () => client.state.record(body), 'profile-record': () => client.profile.record(body) };
+      const result = await send[route]();
       if (taken(result)) {
         fs.rmSync(file, { force: true });
         sent += 1;

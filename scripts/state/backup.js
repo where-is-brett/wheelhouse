@@ -5,7 +5,7 @@ import { profileDir, stateDir } from '../lib/paths.js';
 import { git } from './git.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const KEEP = 8;
+export const KEEP = 8;
 const NAME = /^(\d{4}-\d{2}-\d{2})\.bundle$/;
 
 // Bundles the state branch into profile/backups/<project>/<YYYY-MM-DD>.bundle. Skips, returning
