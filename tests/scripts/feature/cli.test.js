@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { ask, answer, report, openPr, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
-import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'scripts', 'feature', 'cli.js');
@@ -130,14 +129,16 @@ test('answer gives only a verified answer; an unsigned card answer gives none', 
       },
     },
   };
-  assert.deepEqual(await answer({ client, project: 'o__p', questionId: 'q-login-page-1' }), { answer: 'A' });
-  assert.deepEqual(await answer({ client, project: 'o__p', questionId: 'q-login-page-2' }), { answer: null });
-  assert.deepEqual(calls, [{ project: 'o__p', questionId: 'q-login-page-1' }, { project: 'o__p', questionId: 'q-login-page-2' }]);
+  // The helper places the project from the worktree's folder.
+  const worktree = real(tempFolder('wh-cli-'));
+  assert.deepEqual(await answer({ client, worktree, questionId: 'q-login-page-1' }), { answer: 'A' });
+  assert.deepEqual(await answer({ client, worktree, questionId: 'q-login-page-2' }), { answer: null });
+  assert.deepEqual(calls, [{ cwd: worktree, questionId: 'q-login-page-1' }, { cwd: worktree, questionId: 'q-login-page-2' }]);
   // Anything but a label or null from the helper is no answer.
   for (const odd of [{ ok: true, answer: { label: 'A' } }, { ok: true, answer: '' }, { ok: true }, { ok: false, refused: 'the helper is stopped' }]) {
-    await assert.rejects(answer({ client: { state: { answer: async () => odd } }, project: 'o__p', questionId: 'q-login-page-1' }), CliError);
+    await assert.rejects(answer({ client: { state: { answer: async () => odd } }, worktree, questionId: 'q-login-page-1' }), CliError);
   }
-  await assert.rejects(answer({ client, project: 'o__p', questionId: '../x' }), /question/);
+  await assert.rejects(answer({ client, worktree, questionId: '../x' }), /question/);
   assert.equal(calls.length, 2, 'a malformed id never reaches the helper');
 });
 
@@ -147,7 +148,6 @@ test('answer from the command line prints the label, or says there is none yet',
   const io = (reply) => ({
     cwd: tree,
     client: { state: { answer: async () => reply } },
-    projectOf: () => ({ project: 'o__p' }),
     out: (t) => lines.push(['out', t]),
     err: (t) => lines.push(['err', t]),
   });
@@ -205,11 +205,13 @@ test('report from the command line exits non-zero when anything is missing', () 
   const p = featurePaths(tree);
   write(p.rulings, `${JSON.stringify('Ruling: use A')}\n`);
   write(p.report, `${fence(reportFields())}\nShipped.\n`);
-  const short = spawnSync(process.execPath, [CLI, 'report'], { cwd: tree, encoding: 'utf8' });
+  // A home of its own, so the command never asks this computer's helper.
+  const env = { ...process.env, WHEELHOUSE_HOME: real(tempFolder('wh-cli-home-')) };
+  const short = spawnSync(process.execPath, [CLI, 'report'], { cwd: tree, encoding: 'utf8', env });
   assert.notEqual(short.status, 0);
   assert.match(short.stdout + short.stderr, /use A/);
   write(p.report, `${fence(reportFields({ rulings: ['Ruling: use A'] }))}\nShipped.\n`);
-  const whole = spawnSync(process.execPath, [CLI, 'report'], { cwd: tree, encoding: 'utf8' });
+  const whole = spawnSync(process.execPath, [CLI, 'report'], { cwd: tree, encoding: 'utf8', env });
   assert.equal(whole.status, 0, whole.stdout + whole.stderr);
 });
 
@@ -220,17 +222,17 @@ test('open-pr opens against the default branch and keeps the number', async () =
   write(p.report, `${fence(reportFields())}\nShipped the sign-in page.\n`);
   const calls = [];
   const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7, url: 'https://example.com/pull/7' } }; } };
-  const opened = await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 'Add the sign-in page'] });
+  const opened = await openPr({ client, worktree: tree, argv: ['--title', 'Add the sign-in page'] });
   assert.deepEqual(opened, { number: 7, already: false });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0], {
-    project: 'o__p', head: 'feature/login-page', title: 'Add the sign-in page', body: 'Shipped the sign-in page.', session: 'sess-abc_1',
+    cwd: tree, head: 'feature/login-page', title: 'Add the sign-in page', body: 'Shipped the sign-in page.', session: 'sess-abc_1',
   });
   assert.equal('base' in calls[0], false, 'the helper takes a missing base as the default branch');
   assert.deepEqual(JSON.parse(fs.readFileSync(p.pr, 'utf8')), { pr: 7 });
 
   // A second run finds the pull request open already and asks the host nothing.
-  assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 'Again'] }), { number: 7, already: true });
+  assert.deepEqual(await openPr({ client, worktree: tree, argv: ['--title', 'Again'] }), { number: 7, already: true });
   assert.equal(calls.length, 1);
 });
 
@@ -260,15 +262,15 @@ test('open-pr keeps the plan with the number, and opens the next slice\'s once t
   write(p.report, `${fence(reportFields())}\nShipped.\n`);
   let number = 7;
   const client = { openPr: async () => ({ ok: true, result: { number } }) };
-  assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), { number: 7, already: false });
+  assert.deepEqual(await openPr({ client, worktree: tree, argv: ['--title', 't'] }), { number: 7, already: false });
   assert.deepEqual(JSON.parse(fs.readFileSync(p.pr, 'utf8')), { pr: 7, plan: 'docs/plans/slice-1.md' });
-  assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), { number: 7, already: true });
+  assert.deepEqual(await openPr({ client, worktree: tree, argv: ['--title', 't'] }), { number: 7, already: true });
   // The foreman merges it; the next slice's plan is recorded and its pull request opened.
   write(p.pr, JSON.stringify({ pr: 7, plan: 'docs/plans/slice-1.md', merged: true }));
   write(path.join(tree, 'docs', 'plans', 'slice-2.md'), '# Plan\n');
   recordPlan({ worktree: tree, argv: ['docs/plans/slice-2.md'] });
   number = 8;
-  assert.deepEqual(await openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), { number: 8, already: false });
+  assert.deepEqual(await openPr({ client, worktree: tree, argv: ['--title', 't'] }), { number: 8, already: false });
   assert.deepEqual(JSON.parse(fs.readFileSync(p.pr, 'utf8')), { pr: 8, plan: 'docs/plans/slice-2.md' });
 });
 
@@ -277,7 +279,7 @@ test('open-pr is refused while the report is missing or incomplete, and the host
   const p = featurePaths(tree);
   const calls = [];
   const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
-  const open = () => openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] });
+  const open = () => openPr({ client, worktree: tree, argv: ['--title', 't'] });
 
   await assert.rejects(open(), (e) => e instanceof CliError && /report\.md is not there/.test(e.message) && !e.message.includes('\n'));
 
@@ -312,24 +314,24 @@ test('open-pr sends no session when there is none, and a refusal or an odd answe
   write(p.report, `${fence(reportFields())}\nShipped.\n`);
   const calls = [];
   const refusing = { openPr: async (args) => { calls.push(args); return { ok: false, refused: 'STOP is on' }; } };
-  await assert.rejects(openPr({ client: refusing, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), /STOP is on/);
+  await assert.rejects(openPr({ client: refusing, worktree: tree, argv: ['--title', 't'] }), /STOP is on/);
   assert.equal(calls[0].body, 'Shipped.');
   assert.equal('session' in calls[0], false);
   assert.equal(fs.existsSync(p.pr), false);
 
-  await assert.rejects(openPr({ client: refusing, project: 'o__p', worktree: tree, argv: [] }), /title/);
-  await assert.rejects(openPr({ client: refusing, project: 'o__p', worktree: tree, argv: ['--title', ''] }), /title/);
-  await assert.rejects(openPr({ client: refusing, project: 'o__p', worktree: tree, argv: ['--title', 't', '--base', 'release'] }), CliError);
+  await assert.rejects(openPr({ client: refusing, worktree: tree, argv: [] }), /title/);
+  await assert.rejects(openPr({ client: refusing, worktree: tree, argv: ['--title', ''] }), /title/);
+  await assert.rejects(openPr({ client: refusing, worktree: tree, argv: ['--title', 't', '--base', 'release'] }), CliError);
   assert.equal(calls.length, 1);
 
   // A host answer with no number is no pull request to keep.
   const odd = { openPr: async () => ({ ok: true, result: {} }) };
-  await assert.rejects(openPr({ client: odd, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), CliError);
+  await assert.rejects(openPr({ client: odd, worktree: tree, argv: ['--title', 't'] }), CliError);
   assert.equal(fs.existsSync(p.pr), false);
 
   // A detached head has no branch to open from.
   write(path.join(tree, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
-  await assert.rejects(openPr({ client: odd, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), /branch/);
+  await assert.rejects(openPr({ client: odd, worktree: tree, argv: ['--title', 't'] }), /branch/);
 });
 
 test('report and open-pr read nothing from a feature folder that is a link to somewhere else', { skip: process.platform === 'win32' }, async () => {
@@ -343,15 +345,15 @@ test('report and open-pr read nothing from a feature folder that is a link to so
   assert.match(report({ worktree: tree }).missing[0], /real folder/);
   const calls = [];
   const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
-  await assert.rejects(openPr({ client, project: 'o__p', worktree: tree, argv: ['--title', 't'] }), /real folder/);
+  await assert.rejects(openPr({ client, worktree: tree, argv: ['--title', 't'] }), /real folder/);
   assert.equal(calls.length, 0);
 });
 
-test('the project for a helper call comes from the folder, through a worktree under the checkout', async () => {
+test('a helper call carries the worktree\'s folder, found from a folder inside it, and nothing is read from the Wheelhouse home', async () => {
   const base = real(tempFolder('wh-cli-repo-'));
-  const home = real(tempFolder('wh-cli-home-'));
   const before = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
+  // A home that isn't there: the command places nothing itself, the helper does (R150).
+  process.env.WHEELHOUSE_HOME = path.join(base, 'no-home');
   try {
     const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'pipe', env });
@@ -361,7 +363,6 @@ test('the project for a helper call comes from the folder, through a worktree un
     write(path.join(mainDir, 'a.txt'), 'a');
     git(mainDir, 'add', '.');
     git(mainDir, 'commit', '-q', '-m', 'first');
-    writeProject('owner__name', { folder: mainDir, remoteUrl: 'https://example.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {} });
     const tree = path.join(mainDir, '.claude', 'worktrees', 'login-page');
     git(mainDir, 'worktree', 'add', '-q', tree, '-b', 'feature/login-page');
     write(featurePaths(tree).brief, `${fence(brief())}\nThe brief.\n`);
@@ -371,7 +372,8 @@ test('the project for a helper call comes from the folder, through a worktree un
     const sub = path.join(tree, 'src');
     fs.mkdirSync(sub);
     assert.equal(await main(['answer', 'q-login-page-1'], { cwd: sub, client, out: (t) => lines.push(t), err: (t) => lines.push(t) }), 0, lines.join(''));
-    assert.deepEqual(calls, [{ project: 'owner__name', questionId: 'q-login-page-1' }]);
+    assert.deepEqual(calls, [{ cwd: tree, questionId: 'q-login-page-1' }]);
+    assert.equal(fs.existsSync(process.env.WHEELHOUSE_HOME), false);
   } finally {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
   }

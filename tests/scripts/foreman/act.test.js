@@ -975,6 +975,20 @@ test('a merge that waits only for the director\'s click records what it waits fo
   assert.equal((await act(['merge', 'mine'], { client: again.client })).out, waiting);
   assert.deepEqual(again.writes, []);
 
+  // A release that is not pins-only lacks only the approval too: why it needs one is its own
+  // field, not a second reason (R148), so the merge waits for the click.
+  const releaseLine = 'release pull request, so it needs the director\'s approval: the tag is not at the commit the pull request names';
+  const releaseHead = 'a'.repeat(40);
+  const release = {
+    ok: false, refused: `${releaseLine}; no approval of aaaaaaa`, reasons: ['no approval of aaaaaaa'], releaseApproval: releaseLine,
+    needs: { approval: { pr: 12, commit: releaseHead } }, guardrailPaths: ['.claude/settings.json'], criticalAreas: [],
+  };
+  const releaseWork = fakeClient({ views, answers: { updateBranch: { ok: true, updated: false, head: releaseHead }, merge: release } });
+  const forRelease = await act(['merge', 'mine'], { client: releaseWork.client });
+  assert.equal(forRelease.code, 0, forRelease.err);
+  assert.equal(forRelease.out, 'Pull request #12 for mine waits for the director\'s click on #12 at aaaaaaaaaaaa: their approval of that commit. Nothing to do.\n');
+  assert.deepEqual(asks(releaseWork.writes).map((w) => w.data), [{ work: 'mine', pr: 12, ask: 'approval', sha: releaseHead }]);
+
   // Anything else unmet besides is still put to the director.
   const more = { ...approval, refused: 'CI has not passed on bbbbbbb; no approval of bbbbbbb', reasons: ['CI has not passed on bbbbbbb', 'no approval of bbbbbbb'] };
   const mixed = fakeClient({ views, answers: { updateBranch: current, merge: more } });

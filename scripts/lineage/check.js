@@ -1,0 +1,242 @@
+// scripts/lineage/check.js
+// Whether the upstream skills installed for a Wheelhouse project are the ones Wheelhouse's
+// manifest names. The session start runs the check (checkLineage) and records the session's
+// provenance: a mismatch writes the project's hold file, and while it is there the hold hook
+// (scripts/hooks/lineage-hold.js) refuses edits and commands; a match removes it. So the hold
+// lifts only at a session start whose check matches (ruling R145): a session keeps the skills
+// it loaded at its start. The command is the one the hold lets through: it reads only the
+// installed Wheelhouse's manifest and Claude Code's record of installs, never the Wheelhouse
+// home (a sandboxed command can't), says what still differs, and changes nothing.
+// Reads files only: never git.
+//   node scripts/lineage/check.js [projectDir]
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { stateDir } from '../lib/paths.js';
+import { canonicalJson } from '../lib/canonical.js';
+import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
+
+// This copy's root, holding lineage/ beside scripts/: the plugin's folder, or Locked's managed copy.
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+export const REGISTER_PATH = 'lineage/register.json';
+// The most paths a warning names for one upstream before "and N more".
+const NAMED_PATHS = 5;
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+// The project's folder under the Wheelhouse home (stateDir checks the name).
+const projectHome = (project) => path.dirname(stateDir(project));
+
+// While this file exists, the project's edits and commands are held: { at, mismatches, recorded? },
+// where `recorded` is the mismatchSet already put in the state as a lineage-hold event.
+export function holdFile(project) {
+  return path.join(projectHome(project), 'lineage', 'hold.json');
+}
+
+// Whether the project is held. Anything at the hold file's place counts.
+export function isHeld(project) {
+  try {
+    fs.lstatSync(holdFile(project));
+    return true;
+  } catch (error) {
+    return error?.code !== 'ENOENT';
+  }
+}
+
+// What the session start records of a session: projects/<p>/sessions/<session_id>/provenance.json.
+// Null for a session id that is not a plain name.
+export function provenanceFile(project, sessionId) {
+  if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return null;
+  return path.join(projectHome(project), 'sessions', sessionId, 'provenance.json');
+}
+
+const readJson = (file) => {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+const text = (value) => (typeof value === 'string' && value !== '' ? value : null);
+
+// This copy's Wheelhouse version: the plugin's own record, or what Locked recorded of the
+// version it copied. Null when neither can be read.
+export function wheelhouseVersion(root = ROOT) {
+  return text(readJson(path.join(root, '.claude-plugin', 'plugin.json'))?.version) ?? text(readJson(path.join(root, 'installed.json'))?.version);
+}
+
+// The register's version, or null when it can't be read.
+export function registerVersion(root = ROOT) {
+  return text(readJson(path.join(root, ...REGISTER_PATH.split('/')))?.version);
+}
+
+function writeFileMade(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+// What a set of mismatches is, whatever their order: the sha256 of its upstreams and paths.
+export function mismatchSet(mismatches) {
+  const pairs = mismatches.map((m) => canonicalJson([m.upstream ?? null, m.path])).sort();
+  return crypto.createHash('sha256').update(`[${pairs.join(',')}]`).digest('hex');
+}
+
+// Checks what is installed for the project in `projectDir` against the manifest in `root`.
+// Reads only. A manifest that can't be read is a mismatch at its own path. Returns { ok,
+// mismatches, manifest (whether it was read), upstreams: { name: installed commit | null } }.
+export function inspectLineage({ projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled }) {
+  const upstreams = {};
+  const seen = (upstream, where) => {
+    const found = locate(upstream, where);
+    upstreams[upstream.name] = typeof found?.sha === 'string' ? found.sha : null;
+    return found;
+  };
+  let manifest = null;
+  try {
+    manifest = readManifest(root);
+  } catch { /* a mismatch below */ }
+  let result;
+  if (manifest) {
+    result = checkInstalled({ manifest, projectDir, claudeHome, locate: seen });
+  } else {
+    for (const upstream of UPSTREAMS) seen(upstream, { projectDir, claudeHome });
+    result = { ok: false, mismatches: [{ upstream: null, path: MANIFEST_PATH, want: null, got: null }] };
+  }
+  return { ...result, manifest: manifest !== null, upstreams };
+}
+
+// The session start's check: inspectLineage for `project` (its folder `projectDir`), then the
+// hold file written on a mismatch and removed on a match. Returns inspectLineage's answer with
+// kept (whether the hold file now says so; false when it could not be written or removed),
+// and on a mismatch set (its mismatchSet) and recorded (whether the hold that stood already
+// had that set put in the state, so it is not recorded again).
+export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date() }) {
+  const file = holdFile(project);
+  const result = inspectLineage({ projectDir, root, claudeHome, locate });
+  let kept = true;
+  let set = null;
+  let recorded = false;
+  try {
+    if (result.ok) fs.rmSync(file, { force: true });
+    else {
+      set = mismatchSet(result.mismatches);
+      recorded = readJson(file)?.recorded === set;
+      writeFileMade(file, { at: now().toISOString(), mismatches: result.mismatches, ...(recorded ? { recorded: set } : {}) });
+    }
+  } catch {
+    kept = false;
+  }
+  return { ...result, kept, ...(result.ok ? {} : { set, recorded }) };
+}
+
+// Notes in the hold file that its mismatch set `set` is in the state now. Nothing is written
+// when the hold is gone or holds another set.
+export function markRecorded(project, set) {
+  const file = holdFile(project);
+  const held = readJson(file);
+  if (held === null || typeof held !== 'object' || !Array.isArray(held.mismatches) || mismatchSet(held.mismatches) !== set) return false;
+  writeFileMade(file, { ...held, recorded: set });
+  return true;
+}
+
+// The lineage-hold event's data for a hold: when, and which upstreams and paths differ.
+export function holdEvent(at, mismatches) {
+  return { at, mismatches: mismatches.map((m) => ({ upstream: m.upstream ?? null, path: m.path })) };
+}
+
+const shown = (relative) => ({ '*': 'not installed', '@commit': 'another commit' }[relative] ?? relative);
+
+function named(paths) {
+  const list = paths.slice(0, NAMED_PATHS).map(shown);
+  if (paths.length > NAMED_PATHS) list.push(`and ${paths.length - NAMED_PATHS} more`);
+  return list.join(', ');
+}
+
+// What the warning says of the hold: that it stands, or that it could not be written.
+const HELD_LINE = 'Edits and commands are held until a session starts with matching files. Raise this with the director as a card.';
+const NOT_HELD_LINE = 'The hold could not be written, so edits and commands are not held. Raise this with the director as a card.';
+export const MANIFEST_UNREADABLE = `Lineage: Wheelhouse's manifest can't be read, so the installed skills can't be checked. ${HELD_LINE}`;
+export const MANIFEST_UNREADABLE_NOT_HELD = `Lineage: Wheelhouse's manifest can't be read, so the installed skills can't be checked. ${NOT_HELD_LINE}`;
+
+// The session start's warning: one line for each upstream that differs. `kept` false: the hold
+// file could not be written, and the warning says so.
+export function warningLines(mismatches, { kept = true } = {}) {
+  if (mismatches.some((m) => m.upstream === null)) return [kept ? MANIFEST_UNREADABLE : MANIFEST_UNREADABLE_NOT_HELD];
+  const byUpstream = new Map();
+  for (const m of mismatches) byUpstream.set(m.upstream, [...(byUpstream.get(m.upstream) ?? []), m.path]);
+  return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${named(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
+}
+
+// Writes the session's provenance: what it runs on, and whether the fingerprints matched.
+export function writeProvenance({ project, sessionId, root = ROOT, upstreams, ok, claudeCode, transcript }) {
+  const file = provenanceFile(project, sessionId);
+  if (file === null) return null;
+  const provenance = {
+    wheelhouse: wheelhouseVersion(root),
+    upstreams,
+    register: registerVersion(root),
+    claudeCode: claudeCode ?? null,
+    fingerprints: ok ? 'match' : 'mismatch',
+    transcript: typeof transcript === 'string' ? transcript : null,
+  };
+  writeFileMade(file, provenance);
+  return provenance;
+}
+
+export const MATCHED = 'The installed skills match Wheelhouse\'s manifest. A hold lifts at the next session start, whose check finds them matching; this command changes nothing.';
+
+// What the command prints for inspectLineage's result.
+export function report(result) {
+  if (result.ok) return MATCHED;
+  if (!result.manifest) return `Wheelhouse's manifest ${MANIFEST_PATH} can't be read, so the installed skills can't be checked. Edits and commands stay held.`;
+  const lines = result.mismatches.map((m) => `- ${m.upstream}: ${shown(m.path)}`);
+  return ['These installed files still differ from Wheelhouse\'s manifest, so edits and commands stay held. Once they match, the hold lifts at the next session start.', ...lines].join('\n');
+}
+
+function realFolder(folder) {
+  try {
+    return fs.realpathSync.native(folder);
+  } catch {
+    return null;
+  }
+}
+
+// The folder Claude Code installed the upstreams for: `folder`, or the nearest folder above it
+// with a project-scope install of one of them (a feature's worktree sits inside its project's
+// folder). `folder` itself when there is none.
+function installedFolder(folder, { claudeHome, locate }) {
+  for (let dir = folder; ;) {
+    if (UPSTREAMS.some((upstream) => locate(upstream, { projectDir: dir, claudeHome }) !== null)) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) return folder;
+    dir = up;
+  }
+}
+
+// The command: checks what is installed for the folder's project, and changes nothing.
+export function main(args, { cwd = process.cwd(), write = (line) => process.stdout.write(line), root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled } = {}) {
+  if (args.length > 1) {
+    write('usage: node scripts/lineage/check.js [projectDir]\n');
+    return 2;
+  }
+  const folder = realFolder(path.resolve(cwd, args[0] ?? '.'));
+  if (folder === null) {
+    write('That folder can\'t be found, so there is nothing to check.\n');
+    return 1;
+  }
+  const result = inspectLineage({ projectDir: installedFolder(folder, { claudeHome, locate }), root, claudeHome, locate });
+  write(`${report(result)}\n`);
+  return result.ok ? 0 : 1;
+}
+
+function startedAsScript() {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (Boolean(process.argv[1]) && startedAsScript()) {
+  process.exitCode = main(process.argv.slice(2));
+}

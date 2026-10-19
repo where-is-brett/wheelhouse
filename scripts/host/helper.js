@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { computerId, helperAddress, profileDir, stateDir } from '../lib/paths.js';
+import { computerId, helperAddress, profileDir, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { stopState, setStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
@@ -44,6 +44,10 @@ import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writePr
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { SLUG } from '../lib/build-loop.js';
+import { ROOT as OWN_ROOT } from '../lineage/check.js';
+import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
+import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
+import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -98,6 +102,7 @@ const MOST_KEPT = 64 * 1024;
 const AUTH_FAILURE = /authentication|could not read username|permission denied|\b40[13]\b|not logged in|auth login|sign in/i;
 const NOT_AMONG = 'that commit is not among the last ten merges, so the product is not put back to it';
 const LOCK_REASON = 'this computer no longer holds the lock';
+const NO_PROVENANCE = 'this session\'s provenance is not on this computer, so the pull request could not say what built it: send it from a session that started on this computer';
 
 // The plugin's version, from .claude-plugin/plugin.json beside these scripts, so session-start
 // can tell a helper left running from an older copy. Null when it cannot be read.
@@ -130,8 +135,10 @@ const CONFIG_FILE = '.claude/wheelhouse.json';
 // connection's key (`run` is the keyed git runner); the head must be the one
 // the host reported. Paths come from the merge base, with renames listed as a
 // delete and an add, so a file moved out of .claude/ still counts by its old
-// path. The configuration is read from the default branch, never the pull request.
-export async function changedPaths({ mirror, host, number, headSha, defaultBranch, run: git }) {
+// path. The configuration is read from the default branch, never the pull request. For each
+// file in `read` that the pull request changes, `files` holds its text at the merge base and at
+// the head (null where it is absent) and the head's mode.
+export async function changedPaths({ mirror, host, number, headSha, defaultBranch, run: git, read = [] }) {
   if (!Number.isInteger(number) || number < 1) throw new Error('the pull request number must be a whole number from 1');
   if (typeof headSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(headSha)) throw new Error('the head commit is not known');
   if (!plainBranch(defaultBranch)) throw new Error('the default branch is not known');
@@ -150,10 +157,23 @@ export async function changedPaths({ mirror, host, number, headSha, defaultBranc
     const base = (await must(['merge-base', BASE_REF, prRef], 'finding the merge base')).trim();
     const listed = await must(['diff', '--name-only', '-z', '--no-renames', base, prRef], 'listing the changed files');
     const paths = listed.split('\0').filter((p) => p !== '');
-    return { paths, config: await baseConfig(must) };
+    const files = {};
+    for (const file of read.filter((f) => paths.includes(f))) {
+      const [before, after] = [await blobAt(must, base, file), await blobAt(must, prRef, file)];
+      files[file] = { base: before.text, head: after.text, headMode: after.mode };
+    }
+    return { paths, config: await baseConfig(must), files };
   } finally {
     await inMirror(['update-ref', '-d', prRef]);
   }
+}
+
+// One file at `commit` in the mirror, through `must`: { text, mode }, both null when it is absent.
+async function blobAt(must, commit, file) {
+  const listed = await must(['ls-tree', '-z', commit, '--', file], 'looking for a changed file');
+  const entry = /^(\d{6}) blob [0-9a-f]+\t/.exec(listed);
+  if (!entry) return { text: null, mode: null };
+  return { text: await must(['cat-file', 'blob', `${commit}:${file}`], 'reading a changed file'), mode: entry[1] };
 }
 
 // The project's configuration from the default branch's commit (BASE_REF),
@@ -560,7 +580,8 @@ function connectionOf(answer) {
 class Refusal extends Error {}
 const refuse = (message) => { throw new Refusal(message); };
 
-const NOT_IN_PROJECT = 'This folder is not inside a Wheelhouse project, so the runbook does not know which project to act on.';
+const NOT_IN_PROJECT = 'This folder is not inside a Wheelhouse project, so the helper does not know which project to act on.';
+const FOLDER_NOT_PROJECT = 'the folder given is not inside the project named';
 
 // The project whose folder holds `cwd`, a full path.
 function placeFolder(cwd) {
@@ -568,6 +589,21 @@ function placeFolder(cwd) {
   const found = projectForFolder(cwd);
   if (!found) refuse(NOT_IN_PROJECT);
   return found.project;
+}
+
+// Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
+// call. Those commands, like runbook.js, run inside the sandbox, which cannot read
+// ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance'];
+
+// The request with its project placed from `cwd`. A request that names a project too must
+// name the one the folder is in, or it is refused: the folder is placed from this computer's
+// records, a project name is only the caller's word, so the name never steers a request away
+// from where its folder lies.
+function placed(body) {
+  const project = placeFolder(body.cwd);
+  if (body.project !== undefined && body.project !== project) refuse(FOLDER_NOT_PROJECT);
+  return { ...body, project };
 }
 
 // Beside the runbook's own routes, these carry on with the director's sign-in once step 2 has
@@ -659,6 +695,10 @@ export async function startHelper({
   screenshotsMatch = async () => false,
   // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
   profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
+  // The installed Wheelhouse, whose lineage/manifest.json the gate checks a pull request's provenance against.
+  pluginRoot = OWN_ROOT,
+  // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
+  wheelhouseRepo = WHEELHOUSE_URL,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1252,9 +1292,28 @@ export async function startHelper({
     return oneAtATime(`mirror:${project}`, async () => {
       const mirror = await mirrorFor(project);
       return changedPaths({
-        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: gitIn(ctx.gitEnv),
+        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: gitIn(ctx.gitEnv), read: [SETTINGS_FILE],
       });
     });
+  }
+
+  // Whether a pull request is a pins-only Wheelhouse release (design section 14.4, ruling R132): its
+  // branch names the release's commit, its only change is the Wheelhouse marketplace's `ref` in the
+  // project's settings, and Wheelhouse's repository, fetched over https into the helper's own
+  // mirror, has that tag at that commit, on its default branch, with a release file saying it only
+  // moves the pins and passed the lineage job. The helper's own finding, never the caller's.
+  // Resolves with `{ matched: false }` for any other pull request, else `{ matched: true, ok, ref,
+  // sha, why? }`; anything that can't be read is not pins-only.
+  async function isPinsOnlyRelease({ pr, changes }) {
+    const named = RELEASE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '');
+    if (!named) return { matched: false };
+    const sha = named[1];
+    const change = changes === null ? null : pinsOnlyChange(changes.paths, changes.files?.[SETTINGS_FILE]);
+    if (change === null) return { matched: true, ok: false, why: `it changes more than the Wheelhouse marketplace's ref in ${SETTINGS_FILE}` };
+    const checked = await oneAtATime('wheelhouse-release', () => checkRelease({
+      ref: change.ref, sha, mirror: path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), url: wheelhouseRepo, git: (args, options) => unkeyed('git', args, options),
+    }));
+    return checked.ok ? { matched: true, ok: true, ref: change.ref, sha } : { matched: true, ok: false, why: checked.why };
   }
 
   // Whether the configuration git reads when `runner` runs in `mirror` sets any
@@ -1586,9 +1645,21 @@ export async function startHelper({
     } catch {
       readable = false;
     }
+    // A pins-only Wheelhouse release needs the review but not the director's approval: it lowers
+    // that one condition and nothing else (design section 14.4).
+    let releaseCheck = { matched: false };
+    if (readable && !restore) {
+      try {
+        releaseCheck = await isPinsOnlyRelease({ pr, changes });
+      } catch {
+        releaseCheck = { matched: true, ok: false, why: 'it could not be checked' };
+      }
+    }
+    const pinsOnly = releaseCheck.ok === true;
     // A restore is a release that passed review before; the director's approval stands in for it.
-    const touchesGuardrails = (!restore && classified.touchesGuardrails) || body.touchesGuardrails === true;
+    const touchesGuardrails = (!restore && !pinsOnly && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
+    const release = pinsOnly ? { release: { kind: 'pins-only', ref: releaseCheck.ref, sha: releaseCheck.sha } } : {};
     const ci = await adapter.ciState(headSha);
     // The state clone is brought up to date first, so an incident declared on another computer is
     // seen (Ruling 115); when it can't be, the merge waits, a restore excepted, since the runbook
@@ -1626,23 +1697,37 @@ export async function startHelper({
       enrolled,
       upToDate,
       incident: incidentFor(views, number),
-      // Interim value until Task 27.
-      provenance: { ok: true }, // Task 27 reads the PR's provenance block
+      // The block /pr/open stamped, against this Wheelhouse's own manifest. A verified restore
+      // has none: it puts back a release that merged before (Ruling 105).
+      provenance: restore ? { ok: true } : bodyProvenance(pr.body, pluginRoot),
     });
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
       const reasons = [...said, ...stateReasons, ...(readable ? decision.reasons : [...decision.reasons, UNREADABLE_CHANGES])];
+      // Why a release pull request needs the director's approval goes in its own field, not the
+      // reasons: it is why the approval is needed, not another condition unmet, so a release
+      // lacking only the approval still waits for the click (rulings R117, R148).
+      const releaseLine = releaseCheck.matched && !pinsOnly ? `release pull request, so it needs the director's approval: ${releaseCheck.why}` : null;
       // What the director's click can supply, by name, so the foreman can wait for that click
       // rather than ask (ruling R117). The reasons still list every condition that failed.
       const needs = decision.approvalMissing === true ? { needs: { approval: { pr: number, commit: headSha } } } : {};
-      return { ok: false, refused: reasons.join('; '), reasons, ...needs, ...found };
+      return {
+        ok: false,
+        refused: [...(releaseLine === null ? [] : [releaseLine]), ...reasons].join('; '),
+        reasons,
+        ...(releaseLine === null ? {} : { releaseApproval: releaseLine }),
+        ...needs,
+        ...found,
+        ...release,
+      };
     }
     if (stopped() && !restore) {
       const reasons = [...(restoreCheck.matched ? [`restore pull request: ${restoreCheck.why}`] : []), 'STOP is on'];
       return { ok: false, refused: reasons.join('; '), reasons, ...found };
     }
     const merged = await adapter.merge({ number, sha: headSha });
-    if (merged?.merged === true) return { ok: true, merged: true, sha: headSha, ...found };
+    // The front desk adds the briefing line for a pins-only release.
+    if (merged?.merged === true) return { ok: true, merged: true, sha: headSha, ...found, ...(pinsOnly ? { ...release, briefing: briefingLine(releaseCheck.ref) } : {}) };
     return { ok: false, refused: merged?.reason || 'the host did not merge the pull request', ...found };
   }
 
@@ -2154,10 +2239,21 @@ export async function startHelper({
       const spelled = checkRefspec(body.head, defaultBranch);
       if (!spelled.allowed) return { ok: false, refused: spelled.refused };
       if (spelled.branch === STATE_BRANCH || spelled.branch === LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.ownRequests };
+      const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
+      if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
       if (stopped()) return STOP_REFUSAL;
-      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: body.body }) };
+      const text = typeof body.body === 'string' ? stampProvenance(body.body, provenance) : body.body;
+      return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: text }) };
     },
-    '/pr/update': writing((a, { number, title, body }) => a.updatePr({ number, title, body })),
+    // A new body is stamped from the session's provenance, as /pr/open's is; a title alone leaves the body as it is.
+    '/pr/update': (request, ctx) => {
+      if (stopped()) return STOP_REFUSAL;
+      const provenance = sessionProvenance({ project: request.project, sessionId: request.session });
+      if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
+      return writing((a, { number, title, body }) => a.updatePr({
+        number, title, body: typeof body === 'string' ? stampProvenance(body, provenance) : body,
+      }))(request, ctx);
+    },
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),
     '/ci': pass((a, { sha }) => a.ciState(sha)),
     // Read-only, so STOP lets it through.
@@ -2192,6 +2288,14 @@ export async function startHelper({
       } finally {
         tidyAfterAnswer(body.project);
       }
+    },
+    // The block a pull request from this session would be stamped with (ruling R147), for its
+    // report: never the transcript's path. Null when the session's provenance is not on this
+    // computer. Read-only, so STOP lets it through; `stop` says whether STOP is on, since the
+    // report is not stamped then and the session can't read STOP itself in the sandbox.
+    '/lineage/provenance': (body) => {
+      const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
+      return { ok: true, block: provenance === null ? null : provenanceBlock(provenance), stop: stopped() };
     },
     '/host/facts': hostFacts,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
@@ -2234,9 +2338,9 @@ export async function startHelper({
     let ctx = null;
     try {
       const runbookRoute = url.pathname.startsWith('/runbook/');
-      // runbook.js and the front desk run inside the sandbox, which cannot read ~/.wheelhouse: they
-      // send their folder, and the project is placed here.
-      if ((runbookRoute || PLACED_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = { ...body, project: placeFolder(body.cwd) };
+      // runbook.js, a feature session's commands and the front desk run inside the sandbox, which
+      // cannot read ~/.wheelhouse: they send their folder, and the project is placed here.
+      if ((runbookRoute || FOLDER_ROUTES.includes(url.pathname) || PLACED_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = placed(body);
       // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
       if (NEEDS_PROFILE.includes(url.pathname) && profileRemote() === null) return send(res, 200, PROFILE_NOT_SET_UP);
       if (url.pathname.startsWith('/profile/')) {

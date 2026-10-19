@@ -16,6 +16,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
+  'lineage-hold',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -109,7 +110,12 @@ const PLAIN_SHAPES = {
   // The click the merge gate waits for (ruling R117): the director's approval of a pull request's
   // head, or their CI push of the update merge `sha` to `branch`. Recorded by the foreman's merge.
   'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch'] },
+  // A session start held the project's edits and commands because the installed upstream skills
+  // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
+  // upstream of null is the manifest itself, which could not be read. The front desk's card.
+  'lineage-hold': { must: ['at', 'mismatches'], may: [] },
 };
+const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
 
 function checkPlain(kind, data) {
@@ -199,6 +205,13 @@ function checkPlain(kind, data) {
     if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
     if (data.ask === 'ci-push' && !isText(data.branch)) bad('needs the branch the CI push is for');
     if (data.ask !== 'ci-push' && data.branch !== undefined) bad('has a branch it should not');
+  } else if (kind === 'lineage-hold') {
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
+    const one = (m) => isPlain(m) && Object.keys(m).length === 2 && isText(m.path)
+      && (m.upstream === null || (typeof m.upstream === 'string' && UPSTREAM_NAME.test(m.upstream)));
+    if (!Array.isArray(data.mismatches) || data.mismatches.length === 0 || !data.mismatches.every(one)) {
+      bad('needs mismatches, each an upstream (or null) and a path');
+    }
   }
 }
 

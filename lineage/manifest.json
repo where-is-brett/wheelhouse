@@ -1,0 +1,122 @@
+{
+  "v": 1,
+  "wheelhouse": {
+    "version": "0.0.0"
+  },
+  "upstreams": [
+    {
+      "name": "superpowers",
+      "plugin": "superpowers",
+      "repo": "https://github.com/obra/superpowers.git",
+      "ref": "v7.0.0",
+      "sha": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+      "folders": [
+        {
+          "path": "skills/brainstorming",
+          "hash": "76096af618e6d2f68c3225af28c2f77f3e68734c4f73ddc6eae670fa914b9a59"
+        },
+        {
+          "path": "skills/using-git-worktrees",
+          "hash": "97b924d20b46b90bb1bd3735c405f9228390553693f112caf3cfa055a5bb334b"
+        },
+        {
+          "path": "skills/writing-plans",
+          "hash": "70aa13d73e96a9d810a3ef1c52f820686dfadd7755c9b9c57d6ef3e983328cb6"
+        },
+        {
+          "path": "skills/subagent-driven-development",
+          "hash": "c985e5fbf287de92660b825116caa7106a6d598a10138348eec922264e128845"
+        },
+        {
+          "path": "skills/executing-plans",
+          "hash": "92a56b68b632cc174cfe2fb42cd3344864e3a860d016df57b2010c6c81ca5816"
+        },
+        {
+          "path": "skills/test-driven-development",
+          "hash": "acf361b1743f444028ed8123f1ccf2df6e1d4dcca65b3f982aedb42f4f68ec44"
+        },
+        {
+          "path": "skills/systematic-debugging",
+          "hash": "fa3fac4e35376230eb41c5504722b8309e2428e26932c90482dd313cb3dd34ef"
+        },
+        {
+          "path": "skills/dispatching-parallel-agents",
+          "hash": "a07f1c35d25cb21d078a48f42073d2da0df25d49ba034879f807ef5e686ff955"
+        },
+        {
+          "path": "skills/requesting-code-review",
+          "hash": "de15fd681bce2e32a9fa39cf99974638291198feb38670b3eb022dce0f6f518d"
+        },
+        {
+          "path": "skills/receiving-code-review",
+          "hash": "9f9b9bf6d2d5c93c20c0fbda1b43b0c667ee7f628f7aaaa94bbc100bb9dcfd95"
+        },
+        {
+          "path": "skills/verification-before-completion",
+          "hash": "29d4bd654fdc57679501bf73b2821abf4ce035c536054a3e8e90ed7ed38644c7"
+        },
+        {
+          "path": "skills/finishing-a-development-branch",
+          "hash": "02db5c2ad9d5c3c3345dfbf04dc85b256fca6aa67a5af1dcd615483888cd2ab1"
+        },
+        {
+          "path": "skills/using-superpowers",
+          "hash": "6675948a7ee7f8603336e18f033f54df319004ed1b348ebd33986f3495d5ad3d"
+        }
+      ],
+      "files": [
+        {
+          "path": "hooks/session-start",
+          "hash": "c00e520b606804fe64019a08abb33d552fb1816323482e9a479b0a3921dde261"
+        },
+        {
+          "path": "hooks/hooks.json",
+          "hash": "dd82d0df9317ca607c5cc0a8a27eb84a34fabc4555d53e584d3ccbf1c123a79b"
+        },
+        {
+          "path": "LICENSE",
+          "hash": "4db25212d883d94f148fb29dc737e796c0e0f3338a5f41753903b8f3a5b01076"
+        }
+      ]
+    },
+    {
+      "name": "mattpocock-skills",
+      "plugin": "mattpocock-skills",
+      "repo": "https://github.com/mattpocock/skills.git",
+      "ref": "v1.3.1",
+      "sha": "24fe0ef7737efae15c87225755e9f6f5965e4888",
+      "folders": [
+        {
+          "path": "skills/engineering/tdd",
+          "hash": "1289fe8710521503a953e2940792bf3fc3a6231a7a2c1347e58bf80267263748"
+        },
+        {
+          "path": "skills/engineering/code-review",
+          "hash": "c52c28f43ca4820ca7330d0baaba39cbe57865dd4b0c2220d0c4e0ac1bbf4b08"
+        },
+        {
+          "path": "skills/engineering/prototype",
+          "hash": "e86eb0efd570ab11acc4bfe064888e3a1ab56d956404edc27f19645b69b29a7e"
+        },
+        {
+          "path": "skills/engineering/domain-modeling",
+          "hash": "c25c0fbd89c5df79a01e7c820e2a7b2ae894f6c44206a50b0cb90e0db5613eb9"
+        },
+        {
+          "path": "skills/engineering/implement",
+          "hash": "379dc7f7c6a3aca41f7743ba8b564500d3c847cd2e8b4957e9156c5eea0fefb6"
+        }
+      ],
+      "files": [
+        {
+          "path": "LICENSE",
+          "hash": "0e3ae739482876652a589f038d2a261c72748932c870a2794db495aa28e80e83"
+        }
+      ]
+    }
+  ],
+  "claudeCode": {
+    "floor": "2.1.295"
+  },
+  "models": "the routing table in .claude/wheelhouse.json"
+}

@@ -21,6 +21,10 @@ import { writeViews } from '../../scripts/state/views.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../helpers/homes.js';
 import { prOnHost } from '../helpers/pr-on-host.js';
+import { matchingBody } from '../helpers/provenance.js';
+
+// A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
+const BODY = matchingBody();
 
 const PROJECT = 'o__p';
 const PR = 7;
@@ -38,7 +42,7 @@ function fakeAdapter(headOf = () => HEAD) {
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: headOf(), mergeable: 'mergeable', state: 'open' }),
+    prState: async () => ({ headSha: headOf(), mergeable: 'mergeable', state: 'open', body: BODY }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: PR }),
