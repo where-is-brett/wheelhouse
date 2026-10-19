@@ -1,7 +1,9 @@
 // scripts/briefing/seen.js
-// When the director was last seen in a project: `promptAt`, their last message, and `briefedAt`,
-// the last briefing they were given. Kept in projects/<project>/seen.json, beside the state clone,
-// and written whole (a temporary file in the same folder, then a rename).
+// When the director was last seen in a project: `promptAt`, their last message, `briefedAt`,
+// the last briefing they were given, and `weeklyAt`, the last briefing that showed them the lines
+// it repeats once a week (Unattended build commands on Windows). Kept in
+// projects/<project>/seen.json, beside the state clone, and written whole (a temporary file in the
+// same folder, then a rename).
 //
 // Reading never throws. A damaged file reads as no times, and so does a field that isn't a time
 // as toISOString writes it, or a time after now, which this computer's clock can't have written.
@@ -9,9 +11,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 
-const FIELDS = ['promptAt', 'briefedAt'];
+const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt'];
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const none = () => Object.fromEntries(FIELDS.map((field) => [field, null]));
 
 // The file for a project; throws for a name that can't be a project's.
 export function seenFile(project) {
@@ -40,15 +43,15 @@ function nowMs(now) {
 function readKept(project) {
   try {
     const kept = JSON.parse(fs.readFileSync(seenFile(project), 'utf8'));
-    if (!isRecord(kept)) return { promptAt: null, briefedAt: null };
+    if (!isRecord(kept)) return none();
     return Object.fromEntries(FIELDS.map((field) => [field, timeText(kept[field])]));
   } catch {
-    return { promptAt: null, briefedAt: null };
+    return none();
   }
 }
 
-// readSeen(project, { now }) -> { promptAt, briefedAt }, each a time or null. With a clock that
-// can't be read, no time counts as after it.
+// readSeen(project, { now }) -> { promptAt, briefedAt, weeklyAt }, each a time or null. With a
+// clock that can't be read, no time counts as after it.
 export function readSeen(project, { now } = {}) {
   const kept = readKept(project);
   const limit = nowMs(now);
@@ -58,7 +61,7 @@ export function readSeen(project, { now } = {}) {
   }));
 }
 
-// markSeen(project, { promptAt, briefedAt }): writes the times given, keeping the other as it was.
+// markSeen(project, { promptAt, briefedAt, weeklyAt }): writes the times given, keeping the others as they were.
 // A value that isn't a time is not written.
 export function markSeen(project, times = {}) {
   const file = seenFile(project);
