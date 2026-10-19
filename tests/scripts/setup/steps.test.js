@@ -42,8 +42,9 @@ test('the ten steps are numbered 1 to 10 in the design\'s order, with its titles
 test('until its task fills it, each step lists no changes and its card composes with the setup line', async () => {
   // Step 2, the tools, is filled (tests/scripts/setup/tools.test.js), step 3, the host
   // (tests/scripts/setup/host.test.js), and steps 4 and 5, the questions and the rules found
-  // (tests/scripts/setup/questions.test.js, rules.test.js).
-  for (const step of STEPS.filter((s) => ![2, 3, 4, 5].includes(s.n))) {
+  // (tests/scripts/setup/questions.test.js, rules.test.js), and steps 6 and 8, the changes to this
+  // computer and Locked (tests/scripts/setup/computer.test.js).
+  for (const step of STEPS.filter((s) => ![2, 3, 4, 5, 6, 8].includes(s.n))) {
     const ctx = { folder: '/tmp/x', step: step.n, now: () => NOW };
     const planned = await step.plan(ctx);
     assert.deepEqual(planned.changes, []);

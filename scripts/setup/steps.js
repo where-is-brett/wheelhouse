@@ -53,13 +53,15 @@
 // Step 1, the install, is the director's own (the README's line, Task 16), so it lists none.
 // Step 2, the tools, is scripts/setup/tools.js; step 3, the host and the connection, is
 // scripts/setup/host.js; step 4, the three questions, is scripts/setup/questions.js; step 5, the
-// rules found, is scripts/setup/rules.js.
+// rules found, is scripts/setup/rules.js; step 6, the changes to this computer, and step 8, Locked,
+// are scripts/setup/computer.js.
 import { listHash } from '../lib/setup-writes.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { toolsStep } from './tools.js';
 import { hostStep } from './host.js';
 import { questionsStep } from './questions.js';
 import { rulesStep } from './rules.js';
+import { computerStep, lockedStep } from './computer.js';
 
 // The first step of a run not yet done is in scripts/lib/setup-run.js, which the hooks read
 // without reaching this file; it numbers the steps as STEPS does.
@@ -99,6 +101,6 @@ function placeholder(n) {
   };
 }
 
-const FILLED = { 2: toolsStep, 3: hostStep, 4: questionsStep, 5: rulesStep };
+const FILLED = { 2: toolsStep, 3: hostStep, 4: questionsStep, 5: rulesStep, 6: computerStep, 8: lockedStep };
 
 export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => (FILLED[n] ? FILLED[n]() : placeholder(n))));
