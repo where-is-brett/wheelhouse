@@ -250,6 +250,37 @@ test('a damaged event file refuses an ordinary merge; a restore is not refused f
   } finally { remote.cleanup(); }
 });
 
+test('a reply-code clash is not damage: it doesn\'t refuse an ordinary merge, while a damaged event file still does', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const adapter = fakeAdapter({ 7: a });
+    // Two live cards with one code and different questions.
+    await as(home, () => {
+      record('shown', { code: 'K7M2', question: 'First?', options: ['Yes', 'No'] });
+      record('shown', { code: 'K7M2', question: 'Second?', options: ['Yes', 'No'] });
+    });
+    await withHelper(home, adapter, async (client) => {
+      assert.deepEqual(await merge(client), { ok: true, merged: true, sha: a.headSha, ...NONE_FOUND });
+      assert.deepEqual(adapter.merges, [{ number: 7, sha: a.headSha }]);
+    }, { now: at(60 * 1000) });
+    // The clash and a damaged event file together: the damage refuses.
+    const b = await readyPr(home, remote, 8, 'feature/more', { 'b.txt': 'b\n' });
+    const both = fakeAdapter({ 8: b });
+    await as(home, () => {
+      const folder = path.join(stateDir('o__p'), 'events');
+      fs.mkdirSync(folder, { recursive: true });
+      fs.writeFileSync(path.join(folder, 'damaged.json'), '{ not json');
+    });
+    await withHelper(home, both, async (client) => {
+      const refused = await merge(client, 8);
+      assert.deepEqual([refused.ok, refused.reasons], [false, [DAMAGED]]);
+      assert.deepEqual(both.merges, []);
+    }, { now: at(60 * 1000) });
+  } finally { remote.cleanup(); }
+});
+
 test('an incident declared on another computer freezes the merge before this clone has pulled it', async () => {
   const remote = await hostWith();
   try {

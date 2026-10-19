@@ -278,6 +278,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     decisions,
     shown,
     damaged: [...damaged, ...repeated, ...clashes],
+    // The clash lines again, on their own: a clash only means a code can't be used for a reply.
+    codeClashes: clashes,
     status: {
       builtAt: now().toISOString(),
       waitingCount: waiting.length,
