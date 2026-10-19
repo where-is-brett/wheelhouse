@@ -113,7 +113,8 @@ function buildSections(b) {
     })],
     ['Open pull requests', records(b.pullRequests).filter((p) => Number.isInteger(p.pr) && p.pr > 0).map((p) => {
       const work = words(p.work);
-      return `Pull request #${p.pr}${work ? ` for ${work}` : ''}: ${reviewWords(p)}`;
+      const blocked = typeof p.blocked === 'string' ? `blocked${words(p.blocked) ? `: ${words(p.blocked)}` : ''}; ` : '';
+      return `Pull request #${p.pr}${work ? ` for ${work}` : ''}: ${blocked}${reviewWords(p)}`;
     })],
     ['Quality this week', reviews > 0
       ? [`${reviews} ${reviews === 1 ? 'review' : 'reviews'}, ${count(quality.withFindings)} with findings, ${count(quality.findings)} ${count(quality.findings) === 1 ? 'finding' : 'findings'} in all`]

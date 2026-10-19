@@ -56,6 +56,9 @@
 //       the head, or their push of an update that changes a CI file), it records
 //       a `gate-asks` event once for that click and commit, and waits: the
 //       watcher wakes the foreman once the click is on record (ruling R117).
+//       A pins-only release the gate merged without the director's approval
+//       carries the helper's line for the briefing: it is recorded once, as a
+//       `merge` event's words for users (ruling F73).
 //   close <work>    records the report and closes the feature. Work that ended
 //       partial or blocked is put to the director (ruling R102), and it ends
 //       by saying to read the wake again: a slot or a dependency may be free.
@@ -113,7 +116,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { PLUGIN_ROOT } from './tools.js';
 import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
@@ -148,6 +150,7 @@ import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { makeWaker, sessionFile } from '../watcher/waker.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // The first number of the foreman's own question ids.
 export { FOREMAN_QUESTIONS };
@@ -1021,6 +1024,16 @@ async function gateAsks(ctx, data, what) {
   ctx.say(`Pull request #${data.pr} for ${data.work} waits for the director's click on #${data.pr} at ${short(data.sha)}: ${what}. Nothing to do.`);
 }
 
+// The helper's line for a pins-only release it merged without the director's approval (ruling
+// F73), recorded once as the merge's words for users, which the briefing shows in what changed.
+async function releaseMerged(ctx, pr, merged) {
+  const recorded = stateEvents(ctx.project).some((e) => e.kind === 'merge' && isPlain(e.data)
+    && e.data.pr === pr && e.data.forUsers === merged.briefing);
+  if (recorded) return;
+  const commit = typeof merged.sha === 'string' && FULL_COMMIT.test(merged.sha) ? { commit: merged.sha } : {};
+  await ctx.write('merge', { pr, ...commit, forUsers: merged.briefing });
+}
+
 async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
@@ -1056,7 +1069,10 @@ async function merge(ctx, work, rest) {
   const updated = await ctx.client.updateBranch(number);
   const ciPush = updated?.ok === false ? ciPushNeeded(updated) : null;
   if (ciPush !== null) {
-    await gateAsks(ctx, { work, pr, ask: 'ci-push', sha: ciPush.sha, branch: ciPush.branch }, `their push of ${ciPush.branch}, which changes a CI file`);
+    // The head the update was made from, as the host gave it just now, so the front desk can tell
+    // a pushed update from one not yet pushed (ruling F78).
+    const from = typeof state?.result?.headSha === 'string' && FULL_COMMIT.test(state.result.headSha) ? { from: state.result.headSha } : {};
+    await gateAsks(ctx, { work, pr, ask: 'ci-push', sha: ciPush.sha, branch: ciPush.branch, ...from }, `their push of ${ciPush.branch}, which changes a CI file`);
     return;
   }
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
@@ -1072,6 +1088,7 @@ async function merge(ctx, work, rest) {
     return;
   }
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);
+  if (typeof merged.briefing === 'string' && merged.briefing !== '') await releaseMerged(ctx, pr, merged);
   const phase = markMerged();
   ctx.say(`Merged pull request #${pr} for ${work} at ${short(merged.sha)}; its status reads ${phase}.`);
 }
@@ -1177,6 +1194,6 @@ export async function main(argv, {
 }
 
 // Run as a command, it forwards to the host helper, which runs `main` outside the sandbox (ruling R156).
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await forward('act', process.argv.slice(2));
 }

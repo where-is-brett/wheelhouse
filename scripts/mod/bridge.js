@@ -27,7 +27,6 @@
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { replyRecord as defaultReply } from './reply.js';
 import { pressCard as defaultPress } from './press.js';
 import { settingsRows as defaultRows, pressSetting as defaultSetting, effectiveFor as defaultEffective, ADVANCED } from './settings-pane.js';
@@ -47,6 +46,7 @@ import { digestText as defaultDigest } from './digest.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 import { needsYou, courierWake as defaultCourierWake, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // The whole run for most requests, from reading the request to the answer.
 export const BRIDGE_MS = 5000;
@@ -478,7 +478,7 @@ export async function runBridge({ stdin = process.stdin, limitMs = BRIDGE_MS, wa
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   const line = await runBridge();
   // Waits for the write to be taken (a Windows pipe takes it asynchronously), then exits, so a
   // request or a timer still open can't hold the process.

@@ -100,6 +100,17 @@ test('main refuses to run with no scenario named, before starting any session', 
   await assert.rejects(main([]), /scenario/);
 });
 
+test('loadScenarios finds the front desk\'s scenarios in tests/eval/front-desk/, by number, beside the build loop\'s', async () => {
+  for (const id of [1, 2, 3, 5, 7, 8, 9, 10, 16]) {
+    const found = await loadScenarios(id);
+    assert.deepEqual(found.map((s) => s.id), [id], `scenario ${id}`);
+  }
+  // A build loop number finds only its own: 20 is not 2, nor 2 the 20s.
+  assert.deepEqual((await loadScenarios(20)).map((s) => s.id), [20]);
+  assert.deepEqual((await loadScenarios('27-route')).map((s) => s.leg), ['route']);
+  await assert.rejects(loadScenarios(4), /No scenario 4/);
+});
+
 test('a scenario is found in its suite; one in two suites is refused', async () => {
   const root = twoSuites();
   assert.equal(findScenario(1, { root }), path.join(root, 'alpha', '01-one.js'));
@@ -207,6 +218,32 @@ test('a scenario named by its number runs every leg, and a leg id runs that leg 
   await main(['27', '--variant', 'with'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run: standInRun(calls) });
   await main(['27-route', '--variant', 'without', '--trials', '2'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run: standInRun(calls) });
   assert.deepEqual(calls, ['27 with 1', '27-route with 1', '27-route without 1', '27-route without 2']);
+});
+
+test('a first round never writes over a record saved that day: its trials follow the last one there, the same for every leg', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const day = path.join(home, '.wheelhouse-evals', today(firstNow()));
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(day, '1-with-1.json'), '{"kept":true}\n');
+  fs.writeFileSync(path.join(day, '27-route-with-3.json'), '{"kept":true}\n');
+  const calls = [];
+  await main(['1', '27', '--variant', 'with', '--trials', '2'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run: standInRun(calls) });
+  assert.deepEqual(calls, ['1 with 2', '1 with 3', '27 with 4', '27 with 5', '27-route with 4', '27-route with 5']);
+  assert.equal(fs.readFileSync(path.join(day, '1-with-1.json'), 'utf8'), '{"kept":true}\n');
+  const without = [];
+  await main(['1', '--variant', 'without'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run: standInRun(without) });
+  assert.deepEqual(without, ['1 without 1'], 'a variant with nothing saved starts at 1');
+});
+
+test('the run record keeps the trial a run was saved under, when a clash moved it (ruling F105)', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const run = async ({ scenario, variant, trial }) => ({ pass: true, handled: true, why: 'moved', file: null, trial: trial + 5, usage: { input: 0, output: 0 }, line: `${scenario.id} ${variant}` });
+  await main(['1', '--variant', 'with'], { root, home, now: firstNow, version: '0', commit: null, print: quiet, run });
+  const runsDir = path.join(home, '.wheelhouse-evals', 'runs');
+  const [name] = fs.readdirSync(runsDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runsDir, name), 'utf8')).runs.map((r) => r.trial), [6]);
 });
 
 test('--again reruns what the last run marked, only the variant that marked it, after the trials already there', async () => {
@@ -374,7 +411,7 @@ test('--again with no run before it says so', async () => {
 function standInClaude(lines, code = 0) {
   const folder = tempFolder('eval-claude-');
   const script = path.join(folder, 'claude.mjs');
-  const flags = ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources'];
+  const flags = ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources', '--strict-mcp-config', '--disallowedTools', '--settings'];
   fs.writeFileSync(script, `
 const args = process.argv.slice(2);
 if (args.includes('--help')) {

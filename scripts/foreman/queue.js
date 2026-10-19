@@ -72,9 +72,9 @@ export function clashCheck({ files, running, hotFiles }) {
 
 const FEATURE_LANE = 'feature';
 // The lanes whose work needs no approval unless it is shown to the director first (rulings R60, R78).
-const STARTS_UNAPPROVED = ['quick', 'bug'];
+export const STARTS_UNAPPROVED = Object.freeze(['quick', 'bug']);
 // The lanes with no plan, whose work builds as soon as it starts.
-const NO_PLAN = ['quick', 'bug'];
+export const NO_PLAN = Object.freeze(['quick', 'bug']);
 // A report with one of these outcomes ends the work; a blocked one leaves it in the queue.
 export const ENDED = Object.freeze(['merged', 'closed']);
 

@@ -48,6 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
+import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
@@ -286,7 +287,9 @@ export function allowRule(command) {
 // stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command and
 // setup's are allowed by their full paths, so the director's session isn't asked each time it
 // composes a card, records a decision or asks setup for a step; the paths name this computer's
-// folders too.
+// folders too. Beside the front desk's, writing the one file the front desk gives that command its
+// input from when its session has no scratchpad (FRONT_DESK_INPUT, ruling F85), by the
+// project-relative form, and nothing else in the project.
 export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   if (node && pluginRoot && !ownStatusLine) {
@@ -294,9 +297,12 @@ export function localSettings({ address, node, pluginRoot, ownStatusLine = null,
   }
   // Written on Windows too, unlike the build commands' rules: each reaches only one of Wheelhouse's
   // own cli.js files, by its full path, never `node` itself.
-  const allow = pluginRoot
-    ? [frontDeskCommand(pluginRoot, { platform }), setupCommand(pluginRoot, { platform })].map(allowRule).filter((rule) => rule !== null)
-    : [];
+  const frontDesk = pluginRoot ? allowRule(frontDeskCommand(pluginRoot, { platform })) : null;
+  const setup = pluginRoot ? allowRule(setupCommand(pluginRoot, { platform })) : null;
+  const allow = [
+    ...(frontDesk === null ? [] : [frontDesk, `Edit(/${FRONT_DESK_INPUT})`]),
+    ...(setup === null ? [] : [setup]),
+  ];
   if (allow.length > 0) settings.permissions = { allow };
   return settings;
 }

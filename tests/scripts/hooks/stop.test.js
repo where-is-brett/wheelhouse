@@ -160,7 +160,7 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" cards`,
         `node '${cli}' again 3`,
         `node "${cli}" again 12`,
-        ...['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels'].map((name) => `node "${cli}" views ${name}`),
+        ...['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work'].map((name) => `node "${cli}" views ${name}`),
         `node "${cli}" explain merge`,
         `node "${cli}" explain pull request`,
         `node "${cli}" explain "pull request"`,

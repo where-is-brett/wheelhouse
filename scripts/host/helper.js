@@ -55,6 +55,7 @@ import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } f
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
+import { CLICK_MS } from '../lib/core-numbers.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
@@ -76,7 +77,6 @@ const PROBE_MS = 1000;
 const PIPE = /^\\\\[.?]\\pipe\\/i;
 // Git for Windows reads "/dev/null" as its null device too.
 const NO_FILE = '/dev/null';
-const CLICK_MS = 10 * 60 * 1000;
 // A restore pull request may be merged under STOP for a day after the director's step 3 click.
 const RESTORE_MS = 24 * 60 * 60 * 1000;
 const CONTAIN_MS = 10 * 60 * 1000;
@@ -2528,15 +2528,18 @@ export async function startHelper({
     // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
     // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
     // `review`, the delegation review worked out from the project's events, { due, since, proposals }
-    // (ruling F41), for the front desk's `review`, which can't list them. Read-only, so STOP lets it through.
-    '/state/views': stateRoute(async ({ project, cards, review }) => {
+    // (ruling F41), for the front desk's `review`, which can't list them. With `answers`, the
+    // card-answer events, for the front desk's `views work` to tell a feature the director's Not now
+    // holds. Read-only, so STOP lets it through.
+    '/state/views': stateRoute(async ({ project, cards, review, answers }) => {
       const views = await writeViews(project, { now });
-      const events = cards === true || review === true ? listEvents(stateDir(project), { report: () => {} }) : [];
+      const events = cards === true || review === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];
       return {
         ok: true,
         views,
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
+        ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
         ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     }),

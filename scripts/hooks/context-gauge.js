@@ -5,10 +5,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 import { answer, runAndExit, projectOf, registeredByPath, readTailEntries } from './kit.js';
 import { projectForFolder } from '../lib/projects.js';
 import { wheelhouseHome } from '../lib/paths.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const SAVE_FROM = 200000;
 export const SAVE_NOTE = 'Finish this step, save state, then carry on.';
@@ -90,6 +90,6 @@ export async function decide(input, { dir, now = () => new Date() } = {}) {
   return answer.context('UserPromptSubmit', tokens >= SAVE_FROM ? `${text} ${SAVE_NOTE}` : text);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'UserPromptSubmit' });
 }

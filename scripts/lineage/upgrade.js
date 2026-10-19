@@ -15,6 +15,7 @@ import { run as defaultRun, withoutGitVars } from '../lib/run.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, MARKETPLACE_PATH, buildManifest, fetchUpstream, readManifest } from './manifest.js';
 import { REGISTER_PATH, checkAnchors, checkCarried, readRegister } from './register.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const SOURCE_PATH = 'scripts/lineage/manifest.js';
@@ -315,14 +316,6 @@ export function describePlan({ plan, pins, assumptions = [] }) {
   return lines;
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
 const USAGE = [
   'usage: node scripts/lineage/upgrade.js due --published <time> [--last <time>] [--security]',
   '       node scripts/lineage/upgrade.js plan --to <upstream>=<tag>[@<sha>] ... [--changelog <file>]',
@@ -350,7 +343,7 @@ function parseOptions(words) {
   return options;
 }
 
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   const [command, ...rest] = process.argv.slice(2);
   const out = (line) => process.stdout.write(`${line}\n`);
   try {

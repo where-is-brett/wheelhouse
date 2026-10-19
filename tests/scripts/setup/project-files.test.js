@@ -241,11 +241,13 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
     assert.equal(settings.extraKnownMarketplaces[MARKETPLACE].source.ref, REF);
     assert.equal(settings.autoCompactWindow, 300000);
 
-    // This computer's settings: setup's own rule kept, the front desk's added, the helper's socket
-    // and the status line, by key; never committed.
+    // This computer's settings: setup's own rule kept, the front desk's added with the one file it
+    // writes its input to without a scratchpad (ruling F85), the helper's socket and the status
+    // line, by key; never committed.
     const local = w.json('.claude/settings.local.json');
     assert.deepEqual(local.permissions.allow, [
       `Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`, `Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`,
+      'Edit(/.wheelhouse/front-desk.json)',
     ]);
     assert.deepEqual(local.sandbox.network.allowUnixSockets, [ADDRESS]);
     assert.match(local.statusLine.command, /statusline\.js/);

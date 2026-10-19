@@ -36,7 +36,11 @@ function fullModel(over = {}) {
         { work: 'logo', title: 'Broken logo', lane: 'bug', step: 'planned', slice: null, pr: null },
         { work: 'dark', title: 'Dark mode', lane: 'small', step: 'building', slice: null, pr: null },
       ],
-      pullRequests: [{ pr: 12, work: 'sign-in', review: 'findings', findings: 3 }, { pr: 14, work: null, review: 'none', findings: null }],
+      pullRequests: [
+        { pr: 12, work: 'sign-in', review: 'findings', findings: 3, blocked: null },
+        { pr: 14, work: null, review: 'none', findings: null, blocked: null },
+        { pr: 15, work: 'search', review: 'none', findings: null, blocked: 'Checks red on #15' },
+      ],
       quality: { reviews: 4, withFindings: 1, findings: 3 },
       decisions: [{ what: 'Store sessions in a cookie', why: 'simpler', at: '2026-10-17T10:00:00.000Z' }],
       risks: [{ what: 'No rate limit on sign-in', costLater: 'a day of work' }],
@@ -78,6 +82,7 @@ test('the director tab comes first by default, and the build tab when asked', ()
   assert.match(text, /^- Sign-in page \(feature lane\): building, slice 2 of 5, pull request #12$/m);
   assert.match(text, /^- Pull request #12 for sign-in: its review found 3 problems$/m);
   assert.match(text, /^- Pull request #14: not reviewed yet$/m);
+  assert.match(text, /^- Pull request #15 for search: blocked: Checks red on #15; not reviewed yet$/m);
   assert.match(text, /^- 4 reviews, 1 with findings, 3 findings in all$/m);
   assert.match(text, /^- Store sessions in a cookie: simpler \(17 October 2026\)$/m);
   assert.match(text, /^- No rate limit on sign-in; it would cost later: a day of work$/m);

@@ -12,13 +12,13 @@
 //   node scripts/lineage/release.js reinstall <project-folder> <tag> <commit>
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { FEATURE_STEPS } from '../lib/build-loop.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { invocation, resolveClaude, withoutHostVariables } from '../lib/claude.js';
 import { run as defaultRun, withoutGitVars } from '../lib/run.js';
 import { readProject } from '../lib/projects.js';
 import { MARKETPLACE, MARKETPLACE_PATH, WHEELHOUSE_REPO, WHEELHOUSE_URL, claudeHome as defaultClaudeHome, locateInstalled } from './manifest.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // The file a release changes in a project, and the one a Wheelhouse release carries to say what it is.
 export const SETTINGS_FILE = '.claude/settings.json';
@@ -170,8 +170,9 @@ export async function checkRelease({ ref, sha, mirror, git, url = WHEELHOUSE_URL
   }
 }
 
-// The line the front desk adds to the briefing when a pins-only release merges.
-export const briefingLine = (ref) => `Wheelhouse ${ref} was merged with a review and without your approval: it only moves the pinned kits, and its checks passed.`;
+// The line the briefing shows when a pins-only release merges: the foreman records it from the
+// merge's answer (ruling F73).
+export { briefingLine } from '../lib/release-line.js';
 
 // --- The reinstall (check 30's route) ---
 
@@ -323,15 +324,7 @@ export async function undo({
 
 // --- The command line ---
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   const [command, folder, ref, sha, ...rest] = process.argv.slice(2);
   if (command !== 'reinstall' || !folder || !isTag(ref) || !FULL_SHA.test(sha ?? '') || rest.length > 0) {
     process.stderr.write('usage: node scripts/lineage/release.js reinstall <project-folder> <tag> <full commit>\n');

@@ -382,10 +382,15 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
     const a = SHAPES['gate-asks'];
     const ci = { ...a, ask: 'ci-push', branch: 'feature/export-csv' };
     assert.deepEqual(makeEvent({ kind: 'gate-asks', data: ci }).data, ci);
+    // A CI push may name the head its update was made from, so the front desk can tell whether it was pushed (ruling F78).
+    const from = { ...ci, from: 'c'.repeat(40) };
+    assert.deepEqual(makeEvent({ kind: 'gate-asks', data: from }).data, from);
     for (const bad of [
       { ...a, ask: 'review' }, { ...a, pr: 0 }, { ...a, pr: '12' }, { ...a, sha: 'b'.repeat(12) }, { ...a, sha: 'B'.repeat(40) }, { ...a, work: 'Not A Slug' },
       // A branch only with a CI push, and a CI push only with one.
       { ...a, branch: 'feature/export-csv' }, { ...a, ask: 'ci-push' }, { ...ci, branch: '' }, { ...ci, branch: 7 },
+      // The head an update was made from only with a CI push, and in full.
+      { ...a, from: 'c'.repeat(40) }, { ...ci, from: 'c'.repeat(12) }, { ...ci, from: 7 },
     ]) assert.throws(() => makeEvent({ kind: 'gate-asks', data: bad }), /gate-asks event/, JSON.stringify(bad));
   });
 });

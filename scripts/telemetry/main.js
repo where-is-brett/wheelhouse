@@ -9,11 +9,11 @@
 // writes share series.json and are safe together only when one process does all of them.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { startReceiver } from './receiver.js';
 import { addPoints as addToStore, summariseDay, pruneUsage } from '../usage/store.js';
 import { TELEMETRY_PORT } from '../lib/core-numbers.js';
 import { usageDir } from '../lib/paths.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CHECK_EVERY_MS = 10 * 60 * 1000;
@@ -74,15 +74,7 @@ export async function startUsageReceiver({ port = receiverPort(), now = () => ne
   };
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (process.argv[1] && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   const pidFile = path.join(usageDir(), 'receiver.pid');
   try {
     const receiver = await startUsageReceiver();
