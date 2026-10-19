@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  checkMod, membersIn, moduleFiles, bridgeArgv, paneOrigin, bridgeImports,
+  checkMod, membersIn, moduleFiles, readMod, bridgeArgv, paneOrigin, bridgeImports,
   HOOKS, CALLS, FORBIDDEN_HOOKS, FORBIDDEN_CALLS, matchesForbidden,
 } from '../../../scripts/mod/validate.js';
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
@@ -358,4 +358,92 @@ test('npm test leaves the mod\'s tests to npm run mod-check', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts['mod-check'], 'node scripts/mod/validate.js && claude plugin test .');
   assert.match(pkg.scripts.test, /"tests\/\*\*\/\*\.test\.js"$/);
+});
+
+// Fix round 1: what the scans must not be fooled by.
+const REAL_ASK = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'ask.ts'), 'utf8');
+
+test('a second process run the scans could miss still fails, under any spelling', () => {
+  const evasions = [
+    "$?.process.run(['sh','-c','x'])",
+    "$ .process.run(['sh'])",
+    "$\n  .process\n  .run(['sh'])",
+    "const s = '//'; $.process.run(['sh'])",
+    "const s = '/*';\n$.process.run(['sh'])\nconst t = '*/'",
+    "const r = /\\//; $.process.run(['sh'])",
+    "const t = `${'//'}`; $.process.run(['sh'])",
+    "(api) => api.process.run(['sh'])",
+    "const { process } = $; process.run(['sh'])",
+    "$.process.run?.(['sh'])",
+  ];
+  for (const extra of evasions) {
+    const result = bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': `${REAL_ASK}\n${extra}\n` });
+    assert.equal(result.ok, false, extra);
+    assert.match(result.why, /exactly one/, extra);
+  }
+  assert.deepEqual(bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': REAL_ASK }), { ok: true });
+});
+
+test('the source scan reads past a // or /* inside a string, template or regular expression', () => {
+  const cases = [
+    ["const s = '//'; $.fs.write()", ['$.fs.write']],
+    ["const s = \"/*\";\n$.fs.write()\nconst t = '*/'", ['$.fs.write']],
+    ["const s = 'http://a.b'; $.ui.toast(s)", ['$.ui.toast']],
+    ['const t = `// ${$.fs.read}`', ['$.fs.read']],
+    ["const t = `a ${'`'} // b`; $.fs.write()", ['$.fs.write']],
+    ['const r = /\\//; $.fs.write()', ['$.fs.write']],
+    ["const r = /['\"]/; $.fs.write()", ['$.fs.write']],
+    ["const a = 1 / 2; // $.fs.read\n$.ui.toast(a / 3)", ['$.ui.toast']],
+    ["const s = 'it\\'s'; // $.fs.read\n$.ui.toast(s)", ['$.ui.toast']],
+    ['/* $.fs.read */ $.ui.toast(1) // $.fs.write', ['$.ui.toast']],
+    ['const t = `${/* $.fs.read */ 1}`', []],
+    ['return /x/.test(a) && $.ui.toast(1)', ['$.ui.toast']],
+  ];
+  for (const [text, members] of cases) assert.deepEqual(membersIn(text), members, text);
+});
+
+test('the source scan reads a member of $ however it is spaced or chained', () => {
+  assert.deepEqual(membersIn('$ .fs.write(); $?.fs.read(); $?.env?.set(); $\n.tool\n.call()'), ['$.env.set', '$.fs.read', '$.fs.write', '$.tool.call']);
+  const result = checkMod({ report: fixture('validate-repo.json'), sources: { ...repoSources(), 'hooks/mod/x.ts': 'await $ .fs.write(1); await $?.env.set(1)' } });
+  assert.match(result.problems.join('\n'), /\$\.fs\.write, which the mod must never call/);
+  assert.match(result.problems.join('\n'), /\$\.env\.set, which the mod must never call/);
+});
+
+test('a module file importing a file outside hooks/register.ts and hooks/mod/ fails', () => {
+  const report = fixture('validate-repo.json');
+  const withRegister = (text) => checkMod({ report, sources: { ...repoSources(), 'hooks/register.ts': `${repoSources()['hooks/register.ts']}\n${text}\n` } });
+  assert.deepEqual(withRegister("import { a } from './mod/ask.ts'; export * from './mod/ask'; import type { T } from 'claude-code'").problems, []);
+  for (const text of [
+    "import { h } from './helper'",
+    "import { h } from '../scripts/x.ts'",
+    "import './side'",
+    "export { h } from './mod/missing'",
+    "const m = await import('./lazy')",
+    "import {\n  a,\n  b,\n} from '../scripts/mod/bridge.js'",
+  ]) {
+    assert.match(withRegister(text).problems.join('\n'), /imports \S+, which isn't one of the mod's files/, text);
+  }
+  // A file under hooks/mod/ resolves from its own folder.
+  const nested = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.ts': "import { ask } from './ask'; import { r } from '../register'" } });
+  assert.deepEqual(nested.problems, []);
+  const outside = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.ts': "import { x } from '../x'" } });
+  assert.match(outside.problems.join('\n'), /hooks\/mod\/more\.ts imports \.\.\/x/);
+  // A comment's import is not one.
+  assert.deepEqual(withRegister("// import { h } from './helper'").problems, []);
+});
+
+test('hooks.json naming any module but ./register.ts fails, and so does a report naming one', () => {
+  const report = fixture('validate-repo.json');
+  const sources = repoSources();
+  const run = (hooksJson) => checkMod({ report, sources, hooksJson }).problems.join('\n');
+  assert.equal(run({ modules: ['./register.ts'], hooks: {} }), '');
+  for (const modules of [['./register.ts', './other.ts'], ['./other.ts'], [], undefined, './register.ts']) {
+    assert.match(run({ modules }), /hooks\.json names/, JSON.stringify(modules));
+  }
+  assert.match(run(null), /hooks\.json/);
+  const other = structuredClone(report);
+  other.contents[2].notes = other.contents[2].notes.map((n) => n.replace('./register.ts', './part.ts'));
+  assert.match(checkMod({ report: other, sources, hooksJson: { modules: ['./register.ts'] } }).problems.join('\n'), /lists hooks for \.\/part\.ts, not \.\/register\.ts/);
+  // The repository's own hooks.json and files pass.
+  assert.deepEqual(checkMod({ report, ...readMod(ROOT) }).problems, []);
 });

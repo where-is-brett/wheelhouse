@@ -57,15 +57,89 @@ function listed(line) {
   return items.map((i) => i.replace(/\s*\(via [^)]*\)$/, '').trim()).filter(Boolean);
 }
 
-// The source without its comments.
+// What may stand before a `/` that starts a regular expression, not a division.
+const REGEX_AFTER = '(,=:[!&|?{};+-*%<>~^}';
+const REGEX_AFTER_WORD = /(?:^|[^\w$.])(?:return|typeof|case|in|of|delete|void|throw|new|else|do|yield|await)$/;
+
+// The source without its comments. Strings, template literals (and what a `${}` holds) and
+// regular expressions are read as they are, so a `//` or a `/*` inside one is not a comment.
 function codeOf(source) {
-  return String(source).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:\\])\/\/.*$/gm, '$1');
+  const text = String(source);
+  let out = '';
+  let i = 0;
+  const regexHere = () => {
+    const tail = out.slice(-200).trimEnd();
+    return tail === '' || REGEX_AFTER.includes(tail.slice(-1)) || REGEX_AFTER_WORD.test(tail);
+  };
+  const quoted = (quote) => {
+    out += quote;
+    i += 1;
+    while (i < text.length && text[i] !== quote && text[i] !== '\n') {
+      if (text[i] === '\\') { out += text[i]; i += 1; }
+      if (i < text.length) { out += text[i]; i += 1; }
+    }
+    if (text[i] === quote) { out += quote; i += 1; }
+  };
+  const regex = () => {
+    let inClass = false;
+    out += '/';
+    i += 1;
+    while (i < text.length && text[i] !== '\n') {
+      const c = text[i];
+      out += c;
+      i += 1;
+      if (c === '\\') { if (i < text.length) { out += text[i]; i += 1; } } else if (c === '[') inClass = true;
+      else if (c === ']') inClass = false;
+      else if (c === '/' && !inClass) break;
+    }
+  };
+  const template = () => {
+    while (i < text.length) {
+      const c = text[i];
+      if (c === '\\') { out += text.slice(i, i + 2); i += 2; continue; }
+      out += c;
+      i += 1;
+      if (c === '`') return;
+      if (c === '$' && text[i] === '{') {
+        out += '{';
+        i += 1;
+        scan(true);
+        if (text[i] === '}') { out += '}'; i += 1; }
+      }
+    }
+  };
+  function scan(inExpression) {
+    let depth = 0;
+    while (i < text.length) {
+      const c = text[i];
+      const next = text[i + 1];
+      if (c === '/' && next === '/') {
+        while (i < text.length && text[i] !== '\n') i += 1;
+      } else if (c === '/' && next === '*') {
+        const end = text.indexOf('*/', i + 2);
+        const stop = end < 0 ? text.length : end + 2;
+        out += ` ${text.slice(i, stop).replace(/[^\n]/g, '')}`;
+        i = stop;
+      } else if (c === '"' || c === "'") quoted(c);
+      else if (c === '`') { out += c; i += 1; template(); } else if (c === '/' && regexHere()) regex();
+      else {
+        if (inExpression && c === '}') {
+          if (depth === 0) return;
+          depth -= 1;
+        } else if (inExpression && c === '{') depth += 1;
+        out += c;
+        i += 1;
+      }
+    }
+  }
+  scan(false);
+  return out;
 }
 
 // Every `$.noun.member` (or a bare `$.noun`) the source names outside its comments, sorted.
 export function membersIn(source) {
   const found = new Set();
-  for (const m of codeOf(source).matchAll(/(?<![\w$])\$\.([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?/g)) found.add(m[2] ? `$.${m[1]}.${m[2]}` : `$.${m[1]}`);
+  for (const m of codeOf(source).matchAll(/(?<![\w$])\$\s*\??\.\s*([A-Za-z_]\w*)(?:\s*\??\.\s*([A-Za-z_]\w*))?/g)) found.add(m[2] ? `$.${m[1]}.${m[2]}` : `$.${m[1]}`);
   return [...found].sort();
 }
 
@@ -92,6 +166,27 @@ export function moduleFiles(root) {
   return ['hooks/register.ts', ...found.sort()];
 }
 
+// readMod(root) -> { sources, hooksJson }: the text of every module file and the parsed
+// hooks/hooks.json (null when it can't be read), which is what checkMod reads besides the
+// report. Throws, naming the file, when a module file can't be read.
+export function readMod(root) {
+  const sources = {};
+  for (const file of moduleFiles(root)) {
+    try {
+      sources[file] = fs.readFileSync(path.join(root, file), 'utf8');
+    } catch {
+      throw new Error(`${file} can't be read`);
+    }
+  }
+  let hooksJson = null;
+  try {
+    hooksJson = JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8'));
+  } catch {
+    hooksJson = null;
+  }
+  return { sources, hooksJson };
+}
+
 // A map ({ file: text }, or a Map) of the module's files as a list of [file, text].
 function entriesOf(sources) {
   if (sources instanceof Map) return [...sources.entries()].map(([file, text]) => [slashes(file), String(text)]);
@@ -99,28 +194,32 @@ function entriesOf(sources) {
   return [];
 }
 
+// The mod's one entry file, the only module hooks/hooks.json and the validator's notes may name.
+const ENTRY = './register.ts';
 const ASK = 'hooks/mod/ask.ts';
-const ARGV = /^\(\s*\[\s*'node'\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/mod\/bridge\.js`\s*\]\s*[,)]/;
+const ARGV = /^\s*\(\s*\[\s*'node'\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/mod\/bridge\.js`\s*\]\s*[,)]/;
 
 // bridgeArgv(sources) -> { ok, why? }: the sources hold exactly one `$.process.run(`, in
 // hooks/mod/ask.ts, and its argv is the literal ['node', `${$.plugin.root}/scripts/mod/bridge.js`].
+// Every `process.run` counts, whatever stands before it (`$?.process.run`, `api.process.run`, a
+// destructured `process`), so a second run can't hide under another receiver's name.
 export function bridgeArgv(sources) {
   const mentions = [];
   let calls = 0;
   for (const [file, text] of entriesOf(sources)) {
     const code = codeOf(text);
-    for (const m of code.matchAll(/(?<![\w$])\$\.process\.run\b/g)) {
+    for (const m of code.matchAll(/(?<![\w$])process\s*\??\.\s*run(?![\w$])/g)) {
       const rest = code.slice(m.index + m[0].length);
-      mentions.push({ file, rest });
-      if (rest[0] === '(') calls += 1;
+      mentions.push({ file, before: code.slice(0, m.index), rest });
+      if (/^\s*(?:\?\.\s*)?\(/.test(rest)) calls += 1;
     }
   }
   if (mentions.length !== 1 || calls !== 1) {
-    return { ok: false, why: `The mod's source must hold exactly one $.process.run( call, the bridge's, and it holds ${mentions.length} mention${mentions.length === 1 ? '' : 's'} and ${calls} call${calls === 1 ? '' : 's'}` };
+    return { ok: false, why: `The mod's source must hold exactly one $.process.run( call, the bridge's, and it holds ${mentions.length} mention${mentions.length === 1 ? '' : 's'} of process.run and ${calls} call${calls === 1 ? '' : 's'}` };
   }
-  const [{ file, rest }] = mentions;
+  const [{ file, before, rest }] = mentions;
   if (file !== ASK) return { ok: false, why: `The mod's one $.process.run( is in ${file}, not ${ASK}` };
-  if (!ARGV.test(rest)) return { ok: false, why: `The mod's $.process.run( in ${ASK} runs something other than ['node', \`\${$.plugin.root}/scripts/mod/bridge.js\`], the bridge` };
+  if (!/(?<![\w$.])\$\s*\.\s*$/.test(before) || !ARGV.test(rest)) return { ok: false, why: `The mod's $.process.run( in ${ASK} runs something other than ['node', \`\${$.plugin.root}/scripts/mod/bridge.js\`], the bridge` };
   return { ok: true };
 }
 
@@ -237,6 +336,17 @@ const MANAGED_READERS = ['managedDir', 'lockedProjects'];
 const IMPORT = /(?<![\w$.])(import|export)\s+(?:([\w$*\s{},]+?)\s+from\s+)?(['"])([^'"\n]+)\3/g;
 const DYNAMIC = /(?<![\w$.])import\s*\(\s*(['"])([^'"\n]+)\1\s*\)/g;
 
+// The imports of a file's code: { specifier, clause } for each `import … from '…'`, `export …
+// from '…'`, side-effect `import '…'` and literal `import('…')`; `dynamic` counts the
+// `import(…)` whose specifier isn't a literal.
+function importsIn(code) {
+  const found = [];
+  for (const m of code.matchAll(IMPORT)) found.push({ specifier: m[4], clause: m[2] === undefined ? [] : taken(m[2]) });
+  for (const m of code.matchAll(DYNAMIC)) found.push({ specifier: m[2], clause: ['*'] });
+  found.dynamic = [...code.matchAll(/(?<![\w$.])import\s*\(\s*(?!['"])/g)].length;
+  return found;
+}
+
 // What an import clause takes: the names, or '*' when it takes the whole file (a namespace
 // or a default, which could be any of its names).
 function taken(clause) {
@@ -286,10 +396,7 @@ export function bridgeImports(root) {
     files.add(file);
     if (NEVER_REACHED(file)) reaches.push(file);
     const code = codeOf(text);
-    const found = [];
-    for (const m of code.matchAll(IMPORT)) found.push({ specifier: m[4], clause: m[2] === undefined ? [] : taken(m[2]) });
-    for (const m of code.matchAll(DYNAMIC)) found.push({ specifier: m[2], clause: ['*'] });
-    for (const { specifier, clause } of found) {
+    for (const { specifier, clause } of importsIn(code)) {
       if (!specifier.startsWith('.')) continue;
       const target = resolve(file, specifier);
       if (target === SETTINGS) {
@@ -311,7 +418,9 @@ export function bridgeImports(root) {
 // `claude plugin validate --json` printed; `sources` holds the text of every module file
 // ({ 'hooks/register.ts': text, … }, as moduleFiles lists them); `allow` ({ hooks, calls })
 // stands in for HOOKS and CALLS, which a test uses to show the forbidden lists hold alone.
-export function checkMod({ report, sources, allow = {} }) {
+// `hooksJson` is the parsed hooks/hooks.json (null when it can't be read; left out, it isn't
+// checked, as in a test of the report alone); its `modules` must be ./register.ts and nothing else.
+export function checkMod({ report, sources, hooksJson, allow = {} }) {
   const allowedHooks = allow.hooks ?? HOOKS;
   const allowedCalls = allow.calls ?? CALLS;
   const problems = [];
@@ -327,10 +436,21 @@ export function checkMod({ report, sources, allow = {} }) {
   const hooks = [];
   const calls = [];
   for (const note of notes) {
-    const hooked = /^\S+ hooks: (.*)$/.exec(note);
-    if (hooked) hooks.push(...listed(hooked[1]));
-    const called = /^\S+ calls: (.*)$/.exec(note);
-    if (called) calls.push(...listed(called[1]));
+    const hooked = /^(\S+) hooks: (.*)$/.exec(note);
+    if (hooked) {
+      hooks.push(...listed(hooked[2]));
+      if (hooked[1] !== ENTRY) problems.push(`claude plugin validate lists hooks for ${hooked[1]}, not ${ENTRY}`);
+    }
+    const called = /^(\S+) calls: (.*)$/.exec(note);
+    if (called) {
+      calls.push(...listed(called[2]));
+      if (called[1] !== ENTRY) problems.push(`claude plugin validate lists calls for ${called[1]}, not ${ENTRY}`);
+    }
+  }
+  if (hooksJson !== undefined) {
+    const modules = hooksJson !== null && typeof hooksJson === 'object' ? hooksJson.modules : undefined;
+    if (hooksJson === null || typeof hooksJson !== 'object') problems.push("hooks/hooks.json can't be read");
+    else if (!Array.isArray(modules) || modules.length !== 1 || modules[0] !== ENTRY) problems.push(`hooks/hooks.json names ${Array.isArray(modules) ? JSON.stringify(modules) : 'no list of'} modules, not only ["${ENTRY}"]`);
   }
   for (const hook of hooks) {
     if (matchesForbidden(hook, FORBIDDEN_HOOKS)) problems.push(`The mod hooks ${hook}, which the mod must never hook`);
@@ -343,27 +463,37 @@ export function checkMod({ report, sources, allow = {} }) {
     else if (!allowedCalls.includes(call)) problems.push(`The mod calls ${call}, which its brief doesn't name`);
   }
   const allowed = new Set([...allowedCalls, ...VALUES]);
-  for (const [file, text] of entriesOf(sources)) {
+  const files = entriesOf(sources);
+  const known = new Set(files.map(([file]) => file));
+  for (const [file, text] of files) {
+    const code = codeOf(text);
+    const imports = importsIn(code);
+    for (const { specifier } of imports) {
+      if (!specifier.startsWith('.')) continue;
+      const base = path.posix.join(path.posix.dirname(file), specifier);
+      if (![base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}/index.ts`, `${base}/index.tsx`].some((candidate) => known.has(candidate))) {
+        problems.push(`The mod's ${file} imports ${specifier}, which isn't one of the mod's files (hooks/register.ts and hooks/mod/)`);
+      }
+    }
+    if (imports.dynamic > 0) problems.push(`The mod's ${file} imports a file by a name the checks can't read`);
     for (const member of membersIn(text)) {
       if (matchesForbidden(member, FORBIDDEN_CALLS)) problems.push(`The mod's source uses ${member}, which the mod must never call (in ${file})`);
       else if (!allowed.has(member)) problems.push(`The mod's source uses ${member}, which its brief doesn't name (in ${file})`);
       else if (!VALUES.includes(member) && !calls.includes(member)) problems.push(`The mod's source uses ${member}, which claude plugin validate doesn't list (in ${file})`);
     }
-    if (/(?<![\w$])\$\s*\[/.test(codeOf(text))) problems.push(`The mod's source reads a member of $ by a computed name, which the checks can't follow (in ${file})`);
+    if (/(?<![\w$])\$\s*(?:\?\.)?\s*\[/.test(code)) problems.push(`The mod's source reads a member of $ by a computed name, which the checks can't follow (in ${file})`);
   }
   for (const check of [bridgeArgv(sources), paneOrigin(sources)]) if (!check.ok) problems.push(check.why);
   return { hooks, calls, problems };
 }
 
 async function main() {
-  const sources = {};
-  for (const file of moduleFiles(ROOT)) {
-    try {
-      sources[file] = fs.readFileSync(path.join(ROOT, file), 'utf8');
-    } catch {
-      console.log(`The mod check failed: ${file} can't be read.`);
-      return 1;
-    }
+  let mod;
+  try {
+    mod = readMod(ROOT);
+  } catch (error) {
+    console.log(`The mod check failed: ${error.message}.`);
+    return 1;
   }
   let report = null;
   try {
@@ -372,7 +502,7 @@ async function main() {
   } catch {
     report = null;
   }
-  const { hooks, calls, problems } = checkMod({ report, sources });
+  const { hooks, calls, problems } = checkMod({ report, ...mod });
   const graph = bridgeImports(ROOT);
   for (const reached of graph.reaches) problems.push(`The bridge's imports reach what writes Claude Code's settings: ${reached}`);
   for (const gone of graph.missing) problems.push(`The bridge imports ${gone}, which can't be read`);
