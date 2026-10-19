@@ -116,7 +116,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { PLUGIN_ROOT } from './tools.js';
 import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
@@ -151,6 +150,7 @@ import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { makeWaker, sessionFile } from '../watcher/waker.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // The first number of the foreman's own question ids.
 export { FOREMAN_QUESTIONS };
@@ -1194,6 +1194,6 @@ export async function main(argv, {
 }
 
 // Run as a command, it forwards to the host helper, which runs `main` outside the sandbox (ruling R156).
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await forward('act', process.argv.slice(2));
 }

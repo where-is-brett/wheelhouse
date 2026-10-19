@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { stateDir } from '../lib/paths.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // This copy's root, holding lineage/ beside scripts/: the plugin's folder, or Locked's managed copy.
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -230,14 +231,6 @@ export function main(args, { cwd = process.cwd(), write = (line) => process.stdo
   return result.ok ? 0 : 1;
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

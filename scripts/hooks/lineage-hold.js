@@ -12,12 +12,13 @@
 // A guard: a throw refuses (hooks.json, onFailure block).
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf } from './kit.js';
 import { HALT_TOOLS, READ_TOOLS, isFrontDeskRead, isRunbook, scriptArguments, pluginRoots } from './stop-guard.js';
 import { isHeld } from '../lineage/check.js';
 import { projectForFolder } from '../lib/projects.js';
 import { stateDir } from '../lib/paths.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const HELD = 'Wheelhouse is holding edits and commands: the installed skills differ from its manifest';
 export const CHECK_SCRIPT = 'scripts/lineage/check.js';
@@ -75,6 +76,6 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   return answer.deny(HELD);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: true, event: 'PreToolUse' });
 }

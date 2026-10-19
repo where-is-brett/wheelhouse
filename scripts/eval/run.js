@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, runScenario } from './harness.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const scenarioDir = fileURLToPath(new URL('../../tests/eval/build-loop/', import.meta.url));
 
@@ -51,7 +52,7 @@ export async function main(argv) {
   return failed ? 1 : 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (startedAsScript(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => { process.exitCode = code; },
     (error) => { console.error(error.message); process.exitCode = 2; },

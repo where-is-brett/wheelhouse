@@ -15,6 +15,7 @@ import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { run, withoutGitVars } from '../lib/run.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { checkAnchors, checkCarried, readRegister } from './register.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
 export const MODELS = 'the routing table in .claude/wheelhouse.json';
@@ -286,15 +287,7 @@ export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstrea
   return { ok: broken.length === 0, broken };
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   const [command, ...rest] = process.argv.slice(2);
   if (!['write', 'verify'].includes(command) || rest.length > 0) {
     process.stderr.write('usage: node scripts/lineage/manifest.js write | verify\n');

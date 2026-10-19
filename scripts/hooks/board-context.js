@@ -38,7 +38,6 @@
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
-import { pathToFileURL } from 'node:url';
 import { answer, runAndExit, projectOf } from './kit.js';
 import { featureSlug, localViews } from './session-start.js';
 import { loadBoardInputs } from '../board/inputs.js';
@@ -68,6 +67,7 @@ import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const WAIT_MS = 2000;
 // How long learning may take on a visit's first prompt; with WAIT_MS it stays well inside the hook's 10 s.
@@ -392,6 +392,6 @@ export async function decide(input, deps = {}) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'UserPromptSubmit' });
 }

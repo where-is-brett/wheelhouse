@@ -18,11 +18,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { commandPath } from '../lib/command-path.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { KEPT_NORMAL, SELF_TEST_FLAG, windowsTool } from './guarded.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // The plugin this file sits in: scripts/windows/ is two folders down.
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -403,7 +404,7 @@ export function needsSelfTest({ home, now = () => new Date() } = {}) {
 }
 
 // Run as a program (the session start starts it in the background): makes the copy of Node.js.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   try {
     copyLowNode({ home: wheelhouseHome() });
   } catch {

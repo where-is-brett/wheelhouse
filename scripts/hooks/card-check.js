@@ -5,12 +5,12 @@
 // prompt record is what refuses a wrong click, so this only informs: it refuses nothing it
 // can't read, and a failure of its own lets the card through. A card that doesn't come from
 // scripts/cards/compose.js can fail it; one that does cannot.
-import { pathToFileURL } from 'node:url';
 import { runAndExit, answer, projectOf } from './kit.js';
 import { PART_LABELS, whatProblem } from '../cards/compose.js';
 import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES,
 } from '../state/card-lines.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const SHA12 = '([0-9a-f]{12})';
 const FIVE = PART_LABELS.slice(0, 5);
@@ -90,6 +90,6 @@ export async function decide(input, { projectOf: find = projectOf, dir } = {}) {
   return answer.deny(`The director has not seen this card, which is not in the form their cards take. ${faults.join(' ')} ${REFUSAL_END}`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'PreToolUse' });
 }

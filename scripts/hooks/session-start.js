@@ -27,7 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
@@ -52,6 +52,7 @@ import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } 
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
 import { SETUP_STEPS, firstUnfinished } from '../lib/setup-run.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -489,6 +490,6 @@ export async function decide(input, deps = {}) {
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'SessionStart' });
 }

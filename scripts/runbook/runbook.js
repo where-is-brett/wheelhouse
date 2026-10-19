@@ -40,10 +40,9 @@
 //     https://docs.github.com/en/apps/using-github-apps/reviewing-and-modifying-installed-github-apps
 //   GitHub, with the director's sign-in (the quick connection). Only the director
 //   can revoke it: https://github.com/settings/applications.
-import { fileURLToPath } from 'node:url';
-import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const USAGE = 'Usage: node runbook.js <step 1 to 5>; for step 3 give the commit (12 or 40 hex characters) or "merge <pull request number>"';
 
@@ -103,14 +102,7 @@ export async function runbook({ argv, cwd = path.resolve(process.cwd()), client 
   }
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-if (process.argv[1] && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   const { code, text } = await runbook({ argv: process.argv.slice(2) });
   (code === 0 ? process.stdout : process.stderr).write(`${text}\n`);
   process.exitCode = code;

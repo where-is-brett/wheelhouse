@@ -15,14 +15,13 @@
 // TICK_MS, not by one long timer, since a timer doesn't count the time the computer sleeps: the
 // first tick after waking past it marks the step failed (if it is still this attempt) and ends
 // the process. Started past it, the process does nothing.
-import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { readJournal, markStep } from './journal.js';
 import { loadSteps, runApply } from './engine.js';
 import { planHash } from './steps.js';
 import { stopState } from '../lib/stop.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const TICK_MS = 5 * 1000;
 
@@ -71,16 +70,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
   }
 }
 
-// Started as a script: by real paths, as helper-main.js is, since a plugin folder may be reached through a link.
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (process.argv[1] && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   let code = 1;
   try {
     code = await runStep(process.argv.slice(2));

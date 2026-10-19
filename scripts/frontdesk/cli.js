@@ -26,7 +26,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { helperClient } from '../host/helper-client.js';
 import { composeCard, answerInput, PART_LABELS } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
@@ -41,6 +40,7 @@ import { answerLine, ID } from '../state/card-lines.js';
 import { countsAtOnce } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since } from '../foreman/queue.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -809,6 +809,6 @@ export async function main(argv, {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await main(process.argv.slice(2));
 }

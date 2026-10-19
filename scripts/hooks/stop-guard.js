@@ -5,7 +5,7 @@
 // session's bypass marker and says nothing. It acts in a registered project and in a folder
 // being set up (kit.js's beingSetUp), as in a project.
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import fs from 'node:fs';
 import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir, beingSetUp } from './kit.js';
@@ -14,6 +14,7 @@ import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite'];
 // They only halt work that is already running.
@@ -168,7 +169,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   return answer.deny(DENIED);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   // One script serves two events, and a failure answers differently on each, so
   // the event is read first and the input handed on.
   let text = '';

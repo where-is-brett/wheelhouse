@@ -7,12 +7,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 import { runAndExit, projectOf, answer, readTailEntries } from './kit.js';
 import { keep, taken, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { stateDir } from '../lib/paths.js';
 import { makeEvent } from '../state/events.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const ROLES = { 'wheelhouse:builder': 'builder', 'wheelhouse:reviewer': 'reviewer' };
 const SEND_BACKS = 2;
@@ -164,6 +164,6 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   return undefined;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'SubagentStop' });
 }

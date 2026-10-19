@@ -15,7 +15,6 @@
 // project record yet: kit.js's beingSetUp) that is the one click recorded, and nothing else is.
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { runAndExit, projectOf, beingSetUp } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
@@ -32,6 +31,7 @@ import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -391,6 +391,6 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   return undefined;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'PostToolUse' });
 }

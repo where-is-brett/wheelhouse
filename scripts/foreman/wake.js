@@ -68,7 +68,6 @@
 // feature's worktree and plan, the clash and slot answers) are act.js's too.
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
 import { briefHash, featurePaths } from '../feature/files.js';
@@ -86,6 +85,7 @@ import { projectConfig } from '../watcher/main.js';
 import { inWorktreesFolder, plainWorktreePath, recordedBriefs } from '../watcher/sources.js';
 import { readCursor } from '../watcher/core.js';
 import { readWake, watcherDir, watcherFolder } from '../watcher/waker.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // A refusal, said to the foreman as one plain line.
 export class ForemanError extends Error {}
@@ -811,6 +811,6 @@ export async function main(argv, {
 }
 
 // Run as a command, it forwards to the host helper, which runs `main` outside the sandbox (ruling R156).
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await forward('wake', process.argv.slice(2));
 }

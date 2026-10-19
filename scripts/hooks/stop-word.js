@@ -1,10 +1,10 @@
 // scripts/hooks/stop-word.js
 // The word "stop" typed as a whole prompt turns STOP on, in a Wheelhouse project.
-import { pathToFileURL } from 'node:url';
 import fs from 'node:fs';
 import { answer, runAndExit, projectOf } from './kit.js';
 import { setStop } from '../lib/stop.js';
 import { projectForFolder } from '../lib/projects.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const CONTEXT = 'STOP is on. Say in one or two lines what was in progress; lifting it is a card for the director.';
 const STOP_WORD = /^(?:stop[.!]*|\/(?:wheelhouse:)?stop\b.*)$/i;
@@ -23,6 +23,6 @@ export async function decide(input, { dir, projectOf: find = projectOf } = {}) {
   return answer.context('UserPromptSubmit', CONTEXT);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'UserPromptSubmit' });
 }

@@ -13,9 +13,10 @@
 //     Code's settings.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { run } from '../lib/run.js';
 import { PANE_ID } from '../lib/mod-numbers.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const VALIDATE_MS = 60000;
@@ -661,6 +662,6 @@ async function main() {
   return 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await main();
 }
