@@ -722,8 +722,8 @@ const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a featu
 // The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
 // runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
 // latest report names, either since the work was queued. `answers` are the card-answer events, for
-// the director's Not now. In the glossary's plain words, a title's included: the front desk reads
-// this to tell the director how things stand.
+// the director's Not now. In the glossary's plain words, but for the titles, kept as written: the
+// front desk reads this to tell the director how things stand.
 function workLines(views, answers, words) {
   const features = isPlain(views.features) ? views.features : {};
   const questions = isPlain(views.questions) ? views.questions : {};
@@ -754,7 +754,8 @@ function workLines(views, answers, words) {
       ...(Number.isSafeInteger(pr) && pr > 0 ? [`pull request #${pr}`] : []),
     ].join(', ');
   });
-  const protect = [...LABELS, ...open.map(({ id }) => `${id}:`)];
+  // Labels, ids and work titles stay as written, as the board keeps titles (design section 21).
+  const protect = [...LABELS, ...open.map(({ id }) => `${id}:`), ...open.map(({ entry }) => flat(entry.work.data.title)).filter((t) => t !== '')];
   return plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
 }
 

@@ -983,7 +983,7 @@ test('views and explain answer in short lines, and similar finds work that share
   });
 });
 
-test('views work lists the running and waiting work in plain words, and leaves ended work out', async () => {
+test('views work lists the running and waiting work in plain words, titles as written, and leaves ended work out', async () => {
   await inHome(async () => {
     const work = (id, title, lane, n, extra = {}) => makeEvent({ kind: 'work', data: { id, title, lane, visible: false, dependsOn: [], ...extra }, now: () => T(n) });
     const feature = (id, step, n, extra = {}) => makeEvent({ kind: 'feature', data: { work: id, step, ...extra }, now: () => T(n) });
@@ -1033,8 +1033,8 @@ test('views work lists the running and waiting work in plain words, and leaves e
     // Each as the board's build tab gives a feature: its title and lane, then whether a feature runs
     // for it, its step or state and its pull request.
     assert.equal(line('export-csv'), 'export-csv: Export a report as a spreadsheet (a feature): running, building, piece 2 of 3, proposed change #7');
-    // A worker label in a title is put in plain words; a term mentioned again stays, its meaning at the end.
-    assert.equal(line('ci-badge'), 'ci-badge: Show the automatic check run status on the PR page (quick work): running, building');
+    // A work title is kept as written, worker labels and all, as the board keeps it (design section 21).
+    assert.equal(line('ci-badge'), 'ci-badge: Show the CI status on the PR page (quick work): running, building');
     assert.equal(line('menu-photos'), 'menu-photos: Photos on the menu (small work): not running, planned, waiting for the go-ahead to build');
     assert.equal(line('loyalty'), 'loyalty: A loyalty stamp card (small work): not running, paused until the five-hour usage window has room');
     assert.equal(line('typo-fix'), 'typo-fix: Correct the spelling on the menu (a bug fix): not running, queued, not started yet');
@@ -1044,7 +1044,8 @@ test('views work lists the running and waiting work in plain words, and leaves e
     for (const ended of ['opening-hours', 'gift-cards']) assert.equal(line(ended), '', ended);
     // Running work first, each oldest first, then by id.
     assert.deepEqual(lines.filter((l) => /^[a-z-]+: /.test(l)).map((l) => l.split(':')[0]), ['export-csv', 'ci-badge', 'loyalty', 'menu-photos', 'typo-fix', 'dark-theme', 'newsletter', 'gallery']);
-    assert.match(out.out, /\n\nTerms: pull request \(PR\) means [^\n]*\.\n$/);
+    // A term only in a title kept as written gets no Terms line, as on the board.
+    assert.doesNotMatch(out.out, /Terms:/);
     assert.deepEqual(helper.writes(), []);
 
     const none = await run(fakeHelper({ events: [work('opening-hours', 'Opening hours', 'quick', 1), report('opening-hours', 'merged', 2)] }), ['views', 'work']);
