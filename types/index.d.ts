@@ -72,6 +72,9 @@ declare module 'claude-code' {
       surface: string | null;
       // The role the last tick answered: 'front-desk', 'foreman', 'feature' or 'setup'.
       role: string;
+      // Whether the last answered tick's answer held the pane's model: false for a session given
+      // no pane (a front desk outside a project among them). A failed tick leaves it as it was.
+      pictured: boolean;
       // The id of the session whose front-desk answer opened the pane: once opened, a tick or a
       // reload only retitles it while it is open. Null once the mod has closed it because the
       // session's role is no longer the front desk's, so the next front-desk answer opens it.

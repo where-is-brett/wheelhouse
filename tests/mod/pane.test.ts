@@ -616,3 +616,25 @@ for (const surface of SURFACES) {
     })
   }
 }
+
+// A front desk outside a project is known from the last answered tick, not the latest tick: a tick
+// that fails after that answer (here, a reload's) leaves /wheelhouse saying so, and opening nothing.
+for (const surface of SURFACES) {
+  test(`/wheelhouse after a front desk outside a project, then a failed tick, still opens nothing (${surface})`, async ($, on) => {
+    let reply: Reply = { ok: true, role: 'front-desk', every: 0 }
+    const { seen, clear, start, clock } = world(on, () => reply)
+    await start($, surface)
+    reply = { exitCode: 1 }
+    await start($, surface, true)
+    expect(seen.ticks).toHaveLength(1)
+    clear()
+    const result = await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    expect(result).toMatchObject({ text: NO_PROJECT })
+    expect(seen.opens).toEqual([])
+    const ui = await mount($, surface)
+    expect(await texts(ui)).toEqual([NO_PROJECT])
+    expect(await ui.find({ key: 'stop' })).toBeUndefined()
+    await clock.advance(TICK_MS)
+    await ui.unmount()
+  })
+}

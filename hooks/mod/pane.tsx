@@ -44,6 +44,7 @@ const CARD = { plugin: 'wheelhouse', key: 'card' } as const
 const BUSY = { plugin: 'wheelhouse', key: 'busy' } as const
 const SURFACE = { plugin: 'wheelhouse', key: 'surface' } as const
 const ROLE = { plugin: 'wheelhouse', key: 'role' } as const
+const PICTURED = { plugin: 'wheelhouse', key: 'pictured' } as const
 const OPENED = { plugin: 'wheelhouse', key: 'opened' } as const
 const VIEW = { plugin: 'wheelhouse', key: 'view' } as const
 const SETTINGS = { plugin: 'wheelhouse', key: 'settings' } as const
@@ -118,12 +119,15 @@ async function showOld($: EngineInterface, session: string) {
 // first prompt, or a project whose folder setup is working on again) closes the pane and clears
 // the status line; when the pane was open it forgets that it opened it, so a front-desk answer
 // after it (setup finished) opens the pane again, while a pane the director closed stays closed.
-// The picture is kept before the role, so /wheelhouse never reads a front-desk role with no
-// picture as a folder outside a project.
+// The picture, and whether the answer held one, are kept before the role, so /wheelhouse never
+// reads a front-desk role with no picture as a folder outside a project.
 async function show($: EngineInterface, answer: Answer, session: string, now: number) {
   const before = (await $.state.get(ROLE)).value
   if (answer.role === FRONT_DESK && answer.pane !== undefined) await $.state.set(PANE, { model: answer.pane, readAt: now })
-  if (answer.role !== undefined) await $.state.set(ROLE, answer.role)
+  if (answer.role !== undefined) {
+    await $.state.set(PICTURED, answer.pane !== undefined)
+    await $.state.set(ROLE, answer.role)
+  }
   if (answer.role === FRONT_DESK && answer.pane !== undefined) {
     const title = answer.glance ?? PLAIN_TITLE
     if ((await $.state.get(OPENED)).value !== session) {
@@ -237,12 +241,13 @@ export async function turnEnded($: EngineInterface, e: TurnCompleteInput) {
 
 // Why the session has no pane, from the last answered tick, or null when it has one or no tick
 // has answered yet: another role's session, a folder setup is working on, or a front desk outside
-// a project (its answer holds no picture).
-function noPane(role: string | undefined, kept: unknown, last: { failed: boolean } | undefined): string | null {
-  if (role === undefined) return null
-  if (role === SETUP) return SETTING_UP
-  if (role !== FRONT_DESK) return NOT_HERE
-  return kept === undefined && last?.failed === false ? NO_PROJECT : null
+// a project (its answer held no picture). A tick that failed since leaves the reason as it was.
+async function noPane($: EngineInterface, kept: unknown): Promise<string | null> {
+  const [role, pictured] = await Promise.all([$.state.get(ROLE), $.state.get(PICTURED)])
+  if (role.value === undefined) return null
+  if (role.value === SETUP) return SETTING_UP
+  if (role.value !== FRONT_DESK) return NOT_HERE
+  return kept === undefined && pictured.value === false ? NO_PROJECT : null
 }
 
 // /wheelhouse: the director asked, so the pane opens at any width, titled with the glance. While
@@ -250,9 +255,9 @@ function noPane(role: string | undefined, kept: unknown, last: { failed: boolean
 // session the bridge gave no pane opens none, and the answer says why.
 export async function openPane($: EngineInterface): Promise<{ text: string }> {
   try {
-    const [pane, last, now, role] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.clock.now(), $.state.get(ROLE)])
+    const [pane, last, now] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.clock.now()])
     const kept = pane.value
-    const why = noPane(role.value, kept, last.value)
+    const why = await noPane($, kept)
     if (why !== null) return { text: why }
     const glance = typeof kept?.model.glance === 'string' ? kept.model.glance : PLAIN_TITLE
     const stale = staleLine(kept, last.value, now)
@@ -290,7 +295,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   // tick has given the session no pane (another role's, setup's included, or a front desk outside
   // a project), a pane /wheelhouse opened before it says why, with no STOP, as /wheelhouse would.
   if (kept === undefined) {
-    const why = noPane((await $.state.get(ROLE)).value, kept, last.value)
+    const why = await noPane($, kept)
     if (why !== null) {
       return (
         <Box flexDirection="column">
