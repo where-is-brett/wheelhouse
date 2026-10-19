@@ -67,6 +67,28 @@ export function sayValue(key, value) {
   return String(value);
 }
 
+// A setting and its value in plain words, on one line: "Presence: away, until 18 October 2026,
+// 18:00 UTC", or "Knows "pull request": yes" for a concept the director knows. A setting's confirm
+// card names it by these words (ruling F30).
+export function settingWords(key, value, until) {
+  const label = key.startsWith('known:') ? `Knows "${key.slice('known:'.length).replaceAll('-', ' ')}"` : definitionOf(key).label;
+  return `${label}: ${sayValue(key, value)}${until ? `, until ${sayTime(until)}` : ''}`;
+}
+
+// What each decision level lets Wheelhouse do, in plain words (design section 6).
+const LEVEL_WORDS = {
+  1: 'decide quietly and record it',
+  2: 'decide alone and tell you',
+  3: 'propose and wait for you',
+  4: 'only you decide',
+};
+
+// A decision topic's level in plain words, on one line: `"copy-changes": decide alone and tell you
+// (level 2)`. A level's confirm card names it by these words (ruling F42).
+export function levelWords(topic, level) {
+  return `"${topic}": ${LEVEL_WORDS[level]} (level ${level})`;
+}
+
 // One line per setting, everyday then advanced: "Presence: away, until 18 October 2026, 18:00 UTC (yours)".
 export function settingsText(effective) {
   const lines = [];
@@ -74,9 +96,7 @@ export function settingsText(effective) {
     for (const [key, held_] of Object.entries(effective ?? {})) {
       const def = definitionOf(key);
       if (!def || def.group !== group) continue;
-      const label = key.startsWith('known:') ? `Knows "${key.slice('known:'.length)}"` : def.label;
-      const end = held_.until ? `, until ${sayTime(held_.until)}` : '';
-      lines.push(`${label}: ${sayValue(key, held_.value)}${end} (${SOURCE_WORDS[held_.from] ?? held_.from})`);
+      lines.push(`${settingWords(key, held_.value, held_.until)} (${SOURCE_WORDS[held_.from] ?? held_.from})`);
     }
   }
   return lines.join('\n');

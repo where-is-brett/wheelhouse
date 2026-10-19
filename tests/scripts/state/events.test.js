@@ -318,7 +318,7 @@ const H = 'abcdef0123456789'.repeat(4);
 const SHAPES = {
   work: { id: 'export-csv', title: 'Export as CSV', lane: 'feature', doc: { path: 'docs/specs/export.md', hash: H }, visible: true, dependsOn: ['login'], place: 2, parent: 'export' },
   feature: { work: 'export-csv', step: 'building', worktree: '/w/export', branch: 'feature/export-csv', session: 's1', plan: 'docs/plans/export.md', files: ['src/a.js'], brief: H, slice: { n: 1, m: 2 } },
-  question: { id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file', options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2 },
+  question: { id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file', options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }], recommendation: 'Comma', level: 2, commands: ['npm test'] },
   report: { work: 'export-csv', outcome: 'merged', pr: 12, summary: 'Export now writes CSV.', rulings: ['Totals to the cent'], provenance: { wheelhouse: '1.0.0' } },
   incident: { id: 'bad-total', what: 'Totals are wrong in production' },
   amendment: { work: 'export-csv', change: 'Make it CSV, not Excel', hash: H },
@@ -364,6 +364,7 @@ test('each new plain kind is accepted with its shape and refused without it', as
     for (const bad of [
       { ...q, id: 'q-other-1' }, { ...q, id: 'q-export-csv-x' }, { ...q, level: 5 }, { ...q, level: '2' }, { ...q, options: [] },
       { ...q, options: [{ label: 'Comma' }] }, { ...q, options: ['Comma'] },
+      { ...q, commands: [] }, { ...q, commands: 'npm test' }, { ...q, commands: [3] }, { ...q, commands: [''] },
     ]) assert.throws(() => makeEvent({ kind: 'question', data: bad }), /question event/);
     const r = SHAPES.report;
     for (const bad of [{ ...r, outcome: 'won' }, { ...r, pr: 0 }, { ...r, rulings: 'x' }, { ...r, rulings: [3] }, { ...r, provenance: [] }]) {
@@ -511,6 +512,8 @@ test('a card event needs its kind, options and level', async () => {
     assert.equal(make(CARD_DATA).kind, 'card');
     // A card with no line or code (a product question), and the optional topic and concepts.
     make({ ...CARD_DATA, kind: 'question', line: null, code: null, topic: 'colours', concepts: ['pull request'] });
+    // The option the card recommended, for the delegation review.
+    make({ ...CARD_DATA, recommend: 'Approve' });
     // The words on each button, one for each option, so the card can be asked again as composed.
     make({ ...CARD_DATA, descriptions: ['Approve it.', 'Wait.', 'Say it plainer.', 'Show it.'] });
     for (const kind of ['approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'question']) {
@@ -539,6 +542,8 @@ test('a card event needs its kind, options and level', async () => {
     bad({ descriptions: ['a', 'b', 'c', ''] });
     bad({ descriptions: 'Approve it.' });
     bad({ topic: '' });
+    bad({ recommend: '' });
+    bad({ recommend: 3 });
     bad({ concepts: 'pull request' });
     bad({ concepts: [3] });
     bad({ title: 'extra' });

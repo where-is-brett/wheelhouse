@@ -393,7 +393,7 @@ export function buildStatus({ worktree, now = () => new Date(), tokens = null, a
     building = read.any;
   }
 
-  const asked = readQuestions(p.questions).questions.filter((q) => q.kind === 'question');
+  const asked = readQuestions(p.questions).questions.filter((q) => q.kind !== 'extra-plan');
   const done = asked.length > 0 ? answered(worktree) : new Set();
   const waiting = asked.some((q) => !done.has(q.id));
   const kept = readPrRecord(worktree);

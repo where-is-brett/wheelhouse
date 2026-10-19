@@ -4,11 +4,14 @@
 // board-context hook builds it after a gap (briefingIn), from the board's full inputs (events, sources and
 // the settings in force), so it is within the words the briefing setting gives and goes through
 // the glossary's plain words. The helper is waited for INPUTS_WAIT_MS at most; one that doesn't
-// answer leaves the briefing built from what was read. Giving it marks the briefing given (briefedAt), so the next one starts
-// from it, and marks as raised the unusual use it showed. It leaves the director's last message
+// answer leaves the briefing built from what was read. It says when the delegation review is due
+// (reviewOf) and carries the weekly lines when they are due, as the hook's does. Giving it marks the
+// briefing given (briefedAt), so the next one starts from it, marks as raised the unusual use it
+// showed and, as the hook does, marks the weekly lines given (weeklyAt) only when its text showed
+// them: /digest's text is shown to the director as it is. It leaves the director's last message
 // (promptAt) alone: a command is not a message to the front desk.
 import { loadBoardInputs } from '../board/inputs.js';
-import { briefingIn, INPUTS_WAIT_MS } from '../hooks/board-context.js';
+import { briefingIn, reviewOf, INPUTS_WAIT_MS } from '../hooks/board-context.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { readSeen, markSeen } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
@@ -41,11 +44,12 @@ export async function digestText({
     if (!isRecord(inputs) || typeof inputs.project !== 'string' || !isRecord(inputs.model)) return { ok: false, text: UNBUILT };
     const { project, model, usage, sources } = inputs;
     const settings = isRecord(inputs.settings) ? inputs.settings : readEffective({ project, now: () => at });
-    const since = readSeen(project, { now: at }).briefedAt;
+    const seen = readSeen(project, { now: at });
     const given = briefingIn({
-      project, model, usage, sources, settings, since, at, briefingModel, room: CONTEXT_CHARS - FIRST_LINE.length - 2,
+      project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(project, settings, at),
+      at, briefingModel, room: CONTEXT_CHARS - FIRST_LINE.length - 2,
     });
-    attempt(() => markSeen(project, { briefedAt: at }));
+    attempt(() => markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}) }));
     if (given.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(given.raise, { now: at }));
     return { ok: true, text: `${FIRST_LINE}\n\n${given.text}` };
   } catch {

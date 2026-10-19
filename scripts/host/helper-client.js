@@ -47,9 +47,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
     push: post('/push'), //          { project, dir, refspec }
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
-    // /pr/open, /state/answer and /lineage/provenance take `cwd`, a full path, in place of or beside
-    // `project`, and the helper places the project from it (scripts/feature/cli.js runs where
-    // ~/.wheelhouse cannot be read); given both, the folder must be in the project named.
+    // /pr/open, /state/answer, /lineage/provenance and /config take `cwd`, a full path, in place of
+    // or beside `project`, and the helper places the project from it (scripts/feature/cli.js runs
+    // where ~/.wheelhouse cannot be read); given both, the folder must be in the project named.
     openPr: post('/pr/open'), //     { project | cwd, head, base?, title, body, session }: no base means the default branch; the helper stamps the body with what built it, from the session's provenance on this computer, and refuses a session with none
     updatePr: post('/pr/update'), // { project, number, title?, body?, session }: a new body is stamped as openPr's is; a session with no provenance on this computer is refused
     updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts?, ciPush?: { branch, sha } }: merges the default branch in; refused under STOP; ciPush names the merge commit the director's CI card must approve
@@ -57,7 +57,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     prState: post('/pr/state'), //   { project, number } (or `cwd` for `project`, as the runbook's)
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
-    config: post('/config'), //      { project } -> { ok, config }: the default branch's, read-only, answered under STOP
+    config: post('/config'), //      { project | cwd } -> { ok, config }: the default branch's, read-only, answered under STOP
     lineage: {
       provenance: post('/lineage/provenance'), // { project | cwd, session } -> { ok, block: text | null, stop }: the block a pull request from the session is stamped with, and whether STOP is on; read-only, answered under STOP
     },
@@ -70,7 +70,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
       record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
-      views: post('/state/views'), //   { project, cards? } -> { ok, views, cards? }: with cards: true, the card events too; `cwd` may stand for `project`
+      views: post('/state/views'), //   { project, cards?, review? } -> { ok, views, cards?, review? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
     },

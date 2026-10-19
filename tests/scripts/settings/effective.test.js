@@ -1,7 +1,8 @@
 // tests/scripts/settings/effective.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { effectiveSettings, settingsText } from '../../../scripts/settings/effective.js';
+import { effectiveSettings, settingsText, settingWords } from '../../../scripts/settings/effective.js';
+import { buildViews } from '../../../scripts/state/views.js';
 
 const entry = (key, value, extra = {}) => ({ key, id: `id-${key}`, at: '2026-10-18T08:00:00.000Z', value, before: null, ...extra });
 const view = (...entries) => Object.fromEntries(entries.map((e) => [e.key, e]));
@@ -81,4 +82,39 @@ test('settingsText says where each value comes from', () => {
   // Everyday settings come before advanced ones.
   assert.ok(lines.findIndex((l) => /autonomy/i.test(l)) < lines.findIndex((l) => /review round/i.test(l)));
   assert.ok(lines.findIndex((l) => /pace/i.test(l)) < lines.findIndex((l) => /compact/i.test(l)));
+});
+
+test('known set to false counts at once and is not listed as unconfirmed; known set to true waits', () => {
+  // Plain setting events, as learning writes them, with no confirmation of either.
+  const event = (id, key, value, n) => ({ v: 1, id, at: `2026-10-18T0${n}:00:00.000Z`, computer: 'aaaaaaaa', kind: 'setting', data: { key, value, words: settingWords(key, value) } });
+  const views = buildViews([
+    event('s1', 'known:pull-request', false, 1),
+    event('s2', 'known:ci', true, 2),
+    event('s3', 'explanations', 'some-terms', 3),
+  ], [], { now: () => new Date(NOON) });
+  const e = effectiveSettings({ project: {}, profile: views.settings, now: NOON });
+  assert.deepEqual(e['known:pull-request'], { value: false, from: 'profile' });
+  assert.equal('known:ci' in e, false);
+  assert.deepEqual(e.explanations, { value: 'plain', from: 'default' });
+  assert.deepEqual(views.unconfirmed.map((u) => u.id), ['s2', 's3']);
+
+  // Known, confirmed: a later false takes it back at once and remembers what it replaced.
+  const confirmedTrue = buildViews([event('s1', 'known:ci', true, 1), event('s2', 'known:ci', false, 2)], [], { now: () => new Date(NOON) });
+  assert.equal(confirmedTrue.settings['known:ci'].value, false);
+  assert.deepEqual(confirmedTrue.unconfirmed, []);
+  // A true proposed after a false waits, and the false stays in force.
+  const back = buildViews([event('s1', 'known:ci', false, 1), event('s2', 'known:ci', true, 2)], [], { now: () => new Date(NOON) });
+  assert.equal(back.settings['known:ci'].value, false);
+  assert.deepEqual(back.unconfirmed.map((u) => u.id), ['s2']);
+});
+
+test('settingWords names a setting and its value in plain words, on one line', () => {
+  assert.equal(settingWords('boardTab', 'build'), 'Board tab shown first: build');
+  assert.equal(settingWords('known:pull-request', true), 'Knows "pull request": yes');
+  assert.equal(settingWords('known:ci', false), 'Knows "ci": no');
+  assert.equal(settingWords('explanations', 'plain'), 'Explanations: plain');
+  assert.equal(settingWords('presence', 'away', SIX_PM), 'Presence: away, until 18 October 2026, 18:00 UTC');
+  assert.equal(settingWords('pace', 2), 'Pace (builders at once): 2');
+  // The settings list says each the same way.
+  assert.match(settingsText(effectiveSettings({ project: {}, profile: view(entry('known:pull-request', true)), now: NOON })), /^Knows "pull request": yes \(yours\)$/m);
 });

@@ -73,13 +73,35 @@ test('/digest marks the briefing given, so the next gap starts from it', () => w
   const got = await digestText({ cwd: repo, now: at(NOW), client: upClient, briefingModel: briefing, markRaised: (ids) => raised.push(...ids) });
   assert.equal(got.ok, true);
   // The briefing time moves; the director's last message is not a command's to move.
-  assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: '2026-10-19T11:30:00.000Z', briefedAt: NOW });
+  assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: '2026-10-19T11:30:00.000Z', briefedAt: NOW, weeklyAt: null });
   assert.deepEqual(raised, ['u1']);
 
   // The next briefing is measured from it: what was given is not given again.
   const since = [];
   await digestText({ cwd: repo, now: at('2026-10-19T14:00:00.000Z'), client: upClient, briefingModel: (input) => { since.push(input.since); return { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] }; } });
   assert.deepEqual(since, [NOW]);
+}));
+
+test('/digest carries the weekly lines and the delegation review as the hook does, and marks the weekly lines given only when shown', () => withProject(async ({ repo }) => {
+  markSeen(P, { briefedAt: new Date('2026-10-18T09:00:00.000Z'), weeklyAt: new Date('2026-10-12T09:00:00.000Z') });
+  const inputs = [];
+  const raised = [];
+  const weekly = (watch) => (input) => {
+    inputs.push(input);
+    return { first: [], waiting: [], changed: [], progress: [], watch, usage: null, raise: ['u1'], weekly: 1 };
+  };
+  await digestText({ cwd: repo, now: at(NOW), client: upClient, briefingModel: weekly(['Unattended is on for build commands', 'Unusual use: a lot']), markRaised: (ids) => raised.push(...ids) });
+  assert.equal(inputs[0].weeklySince, '2026-10-12T09:00:00.000Z');
+  assert.deepEqual(inputs[0].review, { due: false, days: 14 });
+  // The weekly line opens what to watch, so the unusual use after it is the one raised.
+  assert.deepEqual(raised, ['u1']);
+  assert.equal(readSeen(P, { now: at(NOW) }).weeklyAt, NOW);
+
+  // A briefing that shows no weekly line leaves the last one that did.
+  const later = '2026-10-19T14:00:00.000Z';
+  await digestText({ cwd: repo, now: at(later), client: upClient, briefingModel: weekly([]) });
+  assert.equal(inputs[1].weeklySince, NOW);
+  assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: null, briefedAt: later, weeklyAt: NOW });
 }));
 
 test('outside a project /digest says so', () => as(shortHome(), async () => {

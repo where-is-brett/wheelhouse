@@ -34,6 +34,7 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { readEnrolled, verify } from '../state/signing.js';
+import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
@@ -594,7 +595,7 @@ function placeFolder(cwd) {
 // Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
 // call. Those commands, like runbook.js, run inside the sandbox, which cannot read
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
-const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance'];
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/config'];
 
 // The request with its project placed from `cwd`. A request that names a project too must
 // name the one the folder is in, or it is refused: the folder is placed from this computer's
@@ -2194,13 +2195,20 @@ export async function startHelper({
     })),
     // With `cards`, the card events too, every one the state holds: the board numbers its list
     // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
-    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card.
-    '/state/views': stateRoute(async ({ project, cards }) => ({
-      ok: true,
-      views: await writeViews(project, { now }),
-      ...(stopped() ? { stop: true } : {}),
-      ...(cards === true ? { cards: listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card') } : {}),
-    })),
+    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
+    // `review`, the delegation review worked out from the project's events, { due, since, proposals }
+    // (ruling F41), for the front desk's `review`, which can't list them. Read-only, so STOP lets it through.
+    '/state/views': stateRoute(async ({ project, cards, review }) => {
+      const views = await writeViews(project, { now });
+      const events = cards === true || review === true ? listEvents(stateDir(project), { report: () => {} }) : [];
+      return {
+        ok: true,
+        views,
+        ...(stopped() ? { stop: true } : {}),
+        ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
+        ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
+      };
+    }),
     // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
     '/state/answer': stateRoute(async ({ project, questionId }) => {
       if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');

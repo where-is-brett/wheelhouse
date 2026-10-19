@@ -204,7 +204,7 @@ function readFeature(work, worktree, checkout) {
   }
   return {
     status: status !== null && status.work === work ? status : null,
-    questions: asked.questions.filter((q) => q.kind === 'question').map((q) => q.id),
+    questions: asked.questions.filter((q) => q.kind !== 'extra-plan').map((q) => q.id),
     extraPlans: asked.questions.filter((q) => q.kind === 'extra-plan').map((q) => q.id),
     skipped: asked.skipped,
     briefHash: brief === null ? null : briefHash(brief),

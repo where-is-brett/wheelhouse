@@ -1,12 +1,13 @@
 // scripts/board/health.js
 // How a project stands, in lines the board and the briefing show: STOP, the
-// protection level, the connection, CI, the lock, the helper, the key's renewal
-// and the profile. What only the host knows (protection, CI) comes from a cache
-// kept for a day, so reading never waits on the host.
+// protection level, the connection, the build-commands level on Windows, CI, the
+// lock, the helper, the key's renewal and the profile. What only the host knows
+// (protection, CI) comes from a cache kept for a day, so reading never waits on
+// the host.
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
-import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
@@ -124,8 +125,9 @@ export async function readHostFacts(project, { client, address, now = () => new 
   return cached?.facts ?? null;
 }
 
-// The lines for the board, in order. Each is { level: 'ok' | 'watch' | 'stop', text }.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers } = {}) {
+// The lines for the board, in order. Each is { level: 'ok' | 'watch' | 'stop', text }. `builds` is
+// buildsShown's reading for this computer, { level, lockedUnattended }; missing, it shows nothing.
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -136,7 +138,12 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   add('ok', locked ? 'Protection: Locked' : 'Protection: Standard');
   if (!locked && realUsers && platform === 'darwin') add('watch', 'This project has real users: Locked would protect it more');
   if (record?.connection?.mode === 'quick') add('watch', QUICK_LINE);
-  if (platform === 'win32') add('watch', WINDOWS_LINE);
+  if (platform === 'win32') {
+    add('watch', WINDOWS_LINE);
+    if (builds?.level === 'unattended') add('watch', UNATTENDED_LINE);
+    else if (builds?.level === 'guarded') add('ok', GUARDED_LINE);
+    if (builds?.lockedUnattended === true) add('watch', LOCKED_UNATTENDED_LINE);
+  }
   if (facts?.protection === 'none') add('watch', FREE_PLAN_LINE);
   if (facts?.ci === 'none') add('watch', 'This project has no CI, so nothing can merge');
   if (lock && lock.computer !== computerId()) add('watch', 'Another computer holds this project, so this one is read-only');

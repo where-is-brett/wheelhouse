@@ -16,16 +16,17 @@ import { runAndExit, projectOf } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
-import { profileDir, stateDir } from '../lib/paths.js';
+import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, ID, LANES, QUESTION_ID,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
+import { setLineOf, setLinesOf, replyCode, replyCodeLine } from '../state/card-lines.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
+import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -80,6 +81,7 @@ function only(pattern, text) {
 
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
 // of the question's own options (scripts/mod/reply.js), which earned checks against the question.
+// Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
 export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix'];
 
 // The events of one kind that the state holds, oldest first.
@@ -158,6 +160,30 @@ export async function earned({ project, question, label, client, now, left, stop
     const inProfile = named(profileDir());
     if (found.length + inProfile.length !== 1) return null;
     return found.length === 1 ? { made: confirmationFor(found[0]) } : { made: confirmationFor(inProfile[0]), profile: true };
+  }
+  if (label === 'Turn on (dangerous)') {
+    // The Unattended card for build commands on Windows: it says the design's words on the risk,
+    // its line names one setting event, written on this computer for this computer, and the
+    // confirmation carries the line, so the level counts Unattended from this card alone.
+    if (!question.includes(UNATTENDED_CARD().risk)) return null;
+    const computer = computerId();
+    const found = held(project, 'setting').filter((e) => e.computer === computer && e.data?.key === settingKey(computer)
+      && e.data?.value === 'unattended' && question.includes(unattendedBuildsLine(e.id, computer)));
+    if (found.length !== 1) return null;
+    const { kind, data } = confirmationFor(found[0]);
+    return { made: { kind, data: { ...data, line: unattendedBuildsLine(found[0].id, computer) } } };
+  }
+  if (label === USE_GUARDED) {
+    // Use Guarded on the Unattended card (ruling 22): the card carries exactly one confirm line,
+    // for a setting event proposing Guarded, written on this computer for this computer, and the
+    // click confirms that event as Confirm would, with no line, so the level counts Guarded (once
+    // this computer's self-test passes).
+    const confirms = setLinesOf(question).filter((line) => line.startsWith('Confirm '));
+    if (confirms.length !== 1) return null;
+    const computer = computerId();
+    const found = held(project, 'setting').filter((e) => e.computer === computer && e.data?.key === settingKey(computer)
+      && e.data?.value === 'guarded' && confirmLine(e) === confirms[0]);
+    return found.length === 1 ? { made: confirmationFor(found[0]) } : null;
   }
   if (label === 'Lift STOP') {
     const stop = stopState();

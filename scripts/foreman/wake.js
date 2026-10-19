@@ -176,6 +176,9 @@ export async function loadViews(project, client, { kept = false } = {}) {
       questions: isPlain(views.questions) ? views.questions : {},
       rulebook: Array.isArray(views.rulebook) ? views.rulebook : [],
       incidents: { open: Array.isArray(views.incidents?.open) ? views.incidents.open.filter(isPlain) : [] },
+      // The settings and the proposals not yet confirmed, for the level of build commands on Windows.
+      settings: isPlain(views.settings) ? views.settings : {},
+      unconfirmed: Array.isArray(views.unconfirmed) ? views.unconfirmed.filter(isPlain) : [],
     },
     fresh,
     ...(fresh ? {} : { why }),

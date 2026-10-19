@@ -8,7 +8,7 @@ import { BRIEFING_WORDS } from '../../../scripts/lib/core-numbers.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const wordCount = (text) => text.split(/\s+/).filter(Boolean).length;
-const empty = { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] };
+const empty = { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 };
 
 test('the parts come in the design\'s order, with unconfirmed changes first', () => {
   const text = briefingText({
