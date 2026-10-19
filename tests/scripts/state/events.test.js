@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
-import { makeEvent, eventPath, writeEvent, syncState, listEvents } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
@@ -322,6 +322,7 @@ const SHAPES = {
   report: { work: 'export-csv', outcome: 'merged', pr: 12, summary: 'Export now writes CSV.', rulings: ['Totals to the cent'], provenance: { wheelhouse: '1.0.0' } },
   incident: { id: 'bad-total', what: 'Totals are wrong in production' },
   amendment: { work: 'export-csv', change: 'Make it CSV, not Excel', hash: H },
+  'gate-asks': { work: 'export-csv', pr: 12, ask: 'approval', sha: 'b'.repeat(40) },
 };
 
 test('each new plain kind is accepted with its shape and refused without it', async () => {
@@ -334,6 +335,7 @@ test('each new plain kind is accepted with its shape and refused without it', as
       const required = {
         work: ['id', 'title', 'lane', 'visible', 'dependsOn'], feature: ['work', 'step'], question: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'],
         report: ['work', 'outcome', 'summary', 'rulings'], incident: ['id', 'what'], amendment: ['work', 'change', 'hash'],
+        'gate-asks': ['work', 'pr', 'ask', 'sha'],
       }[kind];
       const bare = Object.fromEntries(required.map((k) => [k, data[k]]));
       assert.ok(makeEvent({ kind, data: bare }), `${kind} with only what it must have`);
@@ -369,6 +371,21 @@ test('each new plain kind is accepted with its shape and refused without it', as
     }
     assert.throws(() => makeEvent({ kind: 'amendment', data: { ...SHAPES.amendment, hash: 'short' } }), /amendment event/);
     assert.throws(() => makeEvent({ kind: 'incident', data: { id: 'Has Spaces', what: 'x' } }), /incident event/);
+  });
+});
+
+test('a gate-asks record names the click the gate waits for: an approval of a head, or a CI push of a branch (R117)', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('gate-asks'), true);
+    assert.equal(PROTECTED_KINDS.includes('gate-asks'), false);
+    const a = SHAPES['gate-asks'];
+    const ci = { ...a, ask: 'ci-push', branch: 'feature/export-csv' };
+    assert.deepEqual(makeEvent({ kind: 'gate-asks', data: ci }).data, ci);
+    for (const bad of [
+      { ...a, ask: 'review' }, { ...a, pr: 0 }, { ...a, pr: '12' }, { ...a, sha: 'b'.repeat(12) }, { ...a, sha: 'B'.repeat(40) }, { ...a, work: 'Not A Slug' },
+      // A branch only with a CI push, and a CI push only with one.
+      { ...a, branch: 'feature/export-csv' }, { ...a, ask: 'ci-push' }, { ...ci, branch: '' }, { ...ci, branch: 7 },
+    ]) assert.throws(() => makeEvent({ kind: 'gate-asks', data: bad }), /gate-asks event/, JSON.stringify(bad));
   });
 });
 

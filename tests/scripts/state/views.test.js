@@ -15,7 +15,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -437,6 +437,9 @@ test('two shown records with one code and different questions are both left out 
     const v = build([a, b, fine]);
     assert.deepEqual(Object.keys(v.shown), ['P3Q4']);
     assert.equal(v.damaged.filter((d) => d.includes('K7M2')).length, 1);
+    // The clash is also listed under its own key, apart from real damage.
+    assert.deepEqual(v.codeClashes, ['a shown code held by two different questions: K7M2']);
+    assert.deepEqual(build([a, b, fine], { damaged: ['/x/bad.json'] }).codeClashes, v.codeClashes);
     // The same question shown again under its code is not damage.
     const again = ev('shown', 4, shownData('P3Q4', 'Fine?'));
     const w = build([fine, again]);
@@ -516,6 +519,22 @@ test('an approval of another hash leaves the work unapproved', async () => {
     // A click that no enrolled key signed counts for nothing.
     assert.equal(build([w, approve(2, H1)], {}).work['export-csv'].approved, true);
     assert.equal(buildViews([w, approve(2, H1)], [], { now }).work['export-csv'].approved, false);
+  });
+});
+
+test('the wish to see work first stands once any signed approval said it, in any lane or for any document (R120)', async () => {
+  await withHome(() => {
+    const w = workEv(1);
+    assert.equal(Object.hasOwn(build([w, approve(2, H1)]).work['export-csv'], 'shownFirst'), false);
+    // Another document's approval, and another lane's: neither approves the work, but the wish stands.
+    for (const said of [approve(2, H2, { shownFirst: true }), approve(2, H1, { shownFirst: true, lane: 'small' })]) {
+      const v = build([w, said]).work['export-csv'];
+      assert.deepEqual([v.approved, v.shownFirst], [false, true]);
+    }
+    // An approval that came later and said otherwise does not take it back.
+    assert.equal(build([w, approve(2, H1, { shownFirst: true }), approve(3, H1)]).work['export-csv'].shownFirst, true);
+    // An unsigned click says nothing.
+    assert.equal(Object.hasOwn(build([w, unsigned(approve(2, H1, { shownFirst: true }))]).work['export-csv'], 'shownFirst'), false);
   });
 });
 

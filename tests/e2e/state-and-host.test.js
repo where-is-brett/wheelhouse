@@ -20,26 +20,25 @@ import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { writeViews } from '../../scripts/state/views.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../helpers/homes.js';
+import { prOnHost } from '../helpers/pr-on-host.js';
 
 const PROJECT = 'o__p';
 const PR = 7;
 const HEAD = `abc1234${'0'.repeat(33)}`;
-const SHORT = HEAD.slice(0, 7);
-// The stand-in host holds no pull request refs, so the changed files can't be read.
-const UNREADABLE = 'the changed files couldn\'t be read, so this needs the director\'s approval';
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 const LOCK_REASON = 'this computer no longer holds the lock';
 
-// gh and glab stood in for: one open pull request at HEAD, CI green on it, main the default branch.
-function fakeAdapter() {
+// gh and glab stood in for: one open pull request at the head `headOf` gives (HEAD unless the
+// host holds one), CI green on it, main the default branch.
+function fakeAdapter(headOf = () => HEAD) {
   const merges = [];
   return {
     merges,
     defaultBranch: async () => 'main',
-    prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }),
+    prState: async () => ({ headSha: headOf(), mergeable: 'mergeable', state: 'open' }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async (args) => { merges.push(args); return { merged: true }; },
     openPr: async () => ({ number: PR }),
@@ -78,19 +77,23 @@ async function makeComputer(adapter, remoteUrl) {
 }
 
 // Computers enrolled in one shared profile (each home holds the same list),
-// each with a state clone of one bare repository.
-async function setUp(count) {
+// each with a state clone of one bare repository. With `pr`, the repository holds pull
+// request 7, up to date with main, and `head` is its head commit.
+async function setUp(count, { pr = false } = {}) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const computers = [];
-  for (let i = 0; i < count; i++) computers.push(await makeComputer(fakeAdapter(), remote.url));
+  let head = HEAD;
+  for (let i = 0; i < count; i++) computers.push(await makeComputer(fakeAdapter(() => head), remote.url));
   for (const c of computers) {
     await c.act(async (client) => {
       for (const other of computers) enrol(other.entry);
       assert.deepEqual(await client.state.clone({ project: PROJECT }), { ok: true });
     });
   }
+  if (pr) head = await prOnHost(remote.url);
   return {
     remote,
+    head,
     computers,
     cleanup: async () => {
       for (const c of computers) await c.close();
@@ -123,7 +126,7 @@ const remoteHeads = async (remoteUrl) => (await run('git', ['for-each-ref', '--f
   .stdout.split('\n').filter(Boolean);
 
 test('two computers: events from both land, the lock passes on, and the old holder can no longer merge', async () => {
-  const { remote, computers: [a, b], cleanup } = await setUp(2);
+  const { remote, head, computers: [a, b], cleanup } = await setUp(2, { pr: true });
   try {
     const idA = await a.act(async () => computerId());
     const idB = await b.act(async () => computerId());
@@ -135,8 +138,8 @@ test('two computers: events from both land, the lock passes on, and the old hold
       assert.deepEqual(await client.lock.take({ project: PROJECT }), { ok: true, result: { taken: true, counter: 1 } });
       const r = await write(a, client, 'ruling', { words: 'Prices show two decimal places', reason: 'the director asked', scope: 'project' }, 1000);
       await write(a, client, 'confirmation', confirmationFor(r).data, 2000);
-      await write(a, client, 'review', { pr: PR, commit: HEAD, verdict: 'CLEAN' }, 3000);
-      await write(a, client, 'approval', { pr: PR, commit: HEAD }, 4000);
+      await write(a, client, 'review', { pr: PR, commit: head, verdict: 'CLEAN' }, 3000);
+      await write(a, client, 'approval', { pr: PR, commit: head }, 4000);
       return r;
     });
 
@@ -165,7 +168,7 @@ test('two computers: events from both land, the lock passes on, and the old hold
       const answer = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
       assert.equal(answer.ok, false);
       assert.ok(answer.reasons.includes(LOCK_REASON), JSON.stringify(answer));
-      assert.deepEqual(answer.reasons, [LOCK_REASON, UNREADABLE]);
+      assert.deepEqual(answer.reasons, [LOCK_REASON]);
     });
     assert.deepEqual(a.adapter.merges, [], 'nothing reached the host from A');
 
@@ -178,9 +181,9 @@ test('two computers: events from both land, the lock passes on, and the old hold
       assert.equal(entry?.status, 'accepted');
       assert.equal(entry.words, 'Prices show two decimal places');
       const merged = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
-      assert.deepEqual(merged, { ok: true, merged: true, sha: HEAD, guardrailPaths: [], criticalAreas: [] });
+      assert.deepEqual(merged, { ok: true, merged: true, sha: head, guardrailPaths: [], criticalAreas: [] });
     });
-    assert.deepEqual(b.adapter.merges, [{ number: PR, sha: HEAD }]);
+    assert.deepEqual(b.adapter.merges, [{ number: PR, sha: head }]);
 
     // A pulls and sees B's note.
     await a.act(async (client) => {
@@ -196,16 +199,16 @@ test('two computers: events from both land, the lock passes on, and the old hold
 });
 
 test('an approval written by hand without a signature changes nothing', async () => {
-  const { remote, computers: [a], cleanup } = await setUp(1);
+  const { remote, head, computers: [a], cleanup } = await setUp(1, { pr: true });
   try {
     await a.act(async (client) => {
       a.time(0);
       assert.equal((await client.lock.take({ project: PROJECT })).result.taken, true);
-      await write(a, client, 'review', { pr: PR, commit: HEAD, verdict: 'CLEAN' }, 1000);
+      await write(a, client, 'review', { pr: PR, commit: head, verdict: 'CLEAN' }, 1000);
 
       // The helper refuses an unsigned approval...
       const unsigned = {
-        v: 1, id: crypto.randomUUID(), at: at(2000)().toISOString(), computer: computerId(), kind: 'approval', data: { pr: PR, commit: HEAD },
+        v: 1, id: crypto.randomUUID(), at: at(2000)().toISOString(), computer: computerId(), kind: 'approval', data: { pr: PR, commit: head },
       };
       const refusedUnsigned = await client.state.record({ project: PROJECT, event: unsigned });
       assert.equal(refusedUnsigned.ok, false);
@@ -223,11 +226,11 @@ test('an approval written by hand without a signature changes nothing', async ()
 
       const views = await writeViews(PROJECT, { now: at(3000) });
       assert.equal(views.approvals[String(PR)], undefined, 'the views ignore it');
-      assert.ok(views.reviews[String(PR)]?.[HEAD], 'the signed review still counts');
+      assert.ok(views.reviews[String(PR)]?.[head], 'the signed review still counts');
 
       const answer = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false, approvalRequired: true });
       assert.equal(answer.ok, false);
-      assert.deepEqual(answer.reasons, [`no approval of ${SHORT}`, UNREADABLE]);
+      assert.deepEqual(answer.reasons, [`no approval of ${head.slice(0, 7)}`]);
     });
     assert.deepEqual(a.adapter.merges, []);
   } finally {

@@ -88,13 +88,13 @@ test('GitHub updatePr changes only what is given', async () => {
 test('GitHub prState reads the recorded pull request', async () => {
   const { a, calls } = adapter('github', { stdout: gh('pr-view-open.json') });
   assert.deepEqual(await a.prState(3), { headSha: SHA, mergeable: 'yes', state: 'open' });
-  assert.deepEqual(calls[0].args, ['pr', 'view', '3', '--repo', REPO, '--json', 'number,url,headRefOid,headRefName,baseRefName,mergeable,state']);
+  assert.deepEqual(calls[0].args, ['pr', 'view', '3', '--repo', REPO, '--json', 'number,url,headRefOid,headRefName,baseRefName,mergeable,state,body']);
 });
 
-test('GitHub prState names the head branch when GitHub does', async () => {
-  const text = JSON.stringify({ ...JSON.parse(gh('pr-view-open.json')), headRefName: 'wheelhouse-restore-0123456789ab', baseRefName: 'main' });
+test('GitHub prState names the head branch and gives the body when GitHub does', async () => {
+  const text = JSON.stringify({ ...JSON.parse(gh('pr-view-open.json')), headRefName: 'wheelhouse-restore-0123456789ab', baseRefName: 'main', body: 'The body.' });
   const { a } = adapter('github', { stdout: text });
-  assert.deepEqual(await a.prState(3), { headSha: SHA, headRef: 'wheelhouse-restore-0123456789ab', baseRef: 'main', mergeable: 'yes', state: 'open' });
+  assert.deepEqual(await a.prState(3), { headSha: SHA, headRef: 'wheelhouse-restore-0123456789ab', baseRef: 'main', mergeable: 'yes', state: 'open', body: 'The body.' });
 });
 
 test('GitHub prState: CONFLICTING is no, and a merged pull request is merged', async () => {
@@ -198,13 +198,13 @@ test('GitLab updatePr changes only what is given', async () => {
 
 test('GitLab prState reads the recorded merge request', async () => {
   const { a, calls } = adapter('gitlab', { stdout: gl('mr-view-closed.json') });
-  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'no', state: 'closed' });
+  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'no', state: 'closed', body: '' });
   assert.deepEqual(calls[0].args, ['mr', 'view', '1', '-R', REPO, '--output', 'json']);
 });
 
 test('GitLab prState maps detailed_merge_status and state', async () => {
   const { a } = adapter('gitlab', { stdout: gl('mr-view-open.json') }, { stdout: gl('mr-view-conflict.json') }, { stdout: gl('mr-view-merged.json') });
-  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'yes', state: 'open' });
+  assert.deepEqual(await a.prState(1), { headSha: GL_SHA, headRef: 'wheelhouse/welcome-page', baseRef: 'main', mergeable: 'yes', state: 'open', body: '' });
   assert.equal((await a.prState(1)).mergeable, 'no');
   assert.equal((await a.prState(1)).state, 'merged');
 });
