@@ -45,6 +45,7 @@ const status = (work, over = {}) => ({
 const question = (id, kind = 'question') => ({
   id, kind, what: 'Which?', why: 'It matters', options: [{ label: 'A', says: 'a' }], recommendation: 'A', level: 2,
   ...(kind === 'extra-plan' ? { plan: 'docs/plans/x.md' } : {}),
+  ...(kind === 'build-command' ? { commands: ['npm test'] } : {}),
 });
 
 function record(kind, data, ms) {
@@ -113,6 +114,7 @@ test('observe reads state, feature files and PRs into one observation', () => wi
       JSON.stringify(question('q-login-page-1')),
       'not json',
       JSON.stringify(question('q-login-page-2', 'extra-plan')),
+      JSON.stringify(question('q-login-page-3', 'build-command')),
       '',
     ].join('\n'),
     report: '',
@@ -140,7 +142,7 @@ test('observe reads state, feature files and PRs into one observation', () => wi
   assert.deepEqual(Object.keys(first.features).sort(), ['login-page', 'search-box'], 'a closed feature is not read');
   assert.deepEqual(first.features['login-page'], {
     status: status('login-page'),
-    questions: ['q-login-page-1'],
+    questions: ['q-login-page-1', 'q-login-page-3'],
     extraPlans: ['q-login-page-2'],
     skipped: 1,
     briefHash: briefHash(brief),

@@ -49,6 +49,7 @@ import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'];
 const HOST_TOOLS = ['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe'];
@@ -83,15 +84,28 @@ export function credentialRules() {
 // deny rule still wins over any of them. They are passed only with the Shape 1
 // starter's --allowedTools, never written into the project's settings: that
 // file is shared by every computer, Windows ones too, so an interactive
-// session asks. On Windows there are none: the sandbox does not run there, so
-// a rule such as `Bash(node:*)` would let a session run anything unasked. The
-// commands are still checked there.
-export function featureAllowRules(config, { platform = process.platform } = {}) {
+// session asks. The commands are checked on every system.
+//
+// On Windows (design section 12.2) the sandbox does not run, so a rule such as
+// `Bash(node:*)` would let a session run anything unasked: the rules follow
+// the level of build commands on this computer (windows-builds.js). At
+// `unattended`, one for each configured command and each local git command;
+// at `guarded`, the one rule for the runner, `guardedCommand`; at `ask`, and
+// at any level not known, one for each command the director granted
+// (`grants`, from buildGrants) that is still configured or local git.
+// Elsewhere the level and grants change nothing.
+export function featureAllowRules(config, { platform = process.platform, level = 'ask', grants = [], guardedCommand = null } = {}) {
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
   if (!Array.isArray(commands)) throw new Error('The build commands are not a list');
   for (const c of commands) if (!isBuildCommand(c)) throw new Error(`This build command can't be made into an allow rule: ${JSON.stringify(c)}`);
-  if (platform === 'win32') return [];
-  return unique(commands.map((c) => `Bash(${c}:*)`));
+  const rules = (list) => unique(list.map((c) => `Bash(${c}:*)`));
+  if (platform !== 'win32') return rules(commands);
+  if (level === 'unattended') return rules([...commands, ...GIT_LOCAL]);
+  if (level === 'guarded') {
+    return typeof guardedCommand === 'string' && guardedCommand !== '' && !/[\r\n]/.test(guardedCommand) ? rules([guardedCommand]) : [];
+  }
+  const granted = (Array.isArray(grants) ? grants : []).flatMap((g) => (Array.isArray(g?.commands) ? g.commands : []));
+  return rules(granted.filter((c) => isConfiguredBuildCommand(c, commands)));
 }
 
 export function projectSettings(config) {

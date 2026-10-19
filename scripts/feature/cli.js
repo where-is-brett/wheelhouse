@@ -1,6 +1,7 @@
 // scripts/feature/cli.js
 // The commands a feature session runs, as `node "<pluginRoot>/scripts/feature/cli.js" <command> …`:
-//   ask      writes a question for the director and prints its id
+//   ask      writes a question for the director and prints its id; with --kind build-command,
+//            asks for build commands on Windows (design section 12.2)
 //   answer   prints the director's answer to a question, once it is signed
 //   plan     records the plan just written, in plan.json, for the status and the foreman
 //   report   checks report.md and that it holds every ruling kept
@@ -21,6 +22,8 @@ import { branchOf } from '../hooks/session-start.js';
 import { projectOf } from '../hooks/kit.js';
 import { helperClient } from '../host/helper-client.js';
 import { REPORT_WORDS } from '../lib/build-loop.js';
+import { readConfig } from '../gate/guardrails.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -77,13 +80,11 @@ function nextQuestionId(file, work) {
   return `q-${work}-${highest + 1}`;
 }
 
-// Appends a question to questions.jsonl and returns `{ id }`.
-export function ask({ worktree, argv }) {
-  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan']);
-  const kind = single(found, 'kind') ?? 'question';
-  if (!QUESTION_KINDS.includes(kind)) throw new CliError(`--kind is ${QUESTION_KINDS.join(' or ')}`);
+// What a question or an extra plan asks, with the options, recommendation and level the
+// session gives it.
+function plainQuestion(found, kind) {
+  if (found.command !== undefined) throw new CliError('--command is only for --kind build-command');
   const what = needed(found, 'what');
-  const why = needed(found, 'why');
   const recommendation = needed(found, 'recommend');
   const levelText = needed(found, 'level');
   if (!/^[1-4]$/.test(levelText)) throw new CliError('--level is a decision level from 1 to 4');
@@ -100,12 +101,86 @@ export function ask({ worktree, argv }) {
   if (options.length < 2) throw new CliError('Give two or more options, each with --option "<label>=<what it means>"');
   if (new Set(options.map((o) => o.label)).size !== options.length) throw new CliError('Each option needs its own label');
   if (!options.some((o) => o.label === recommendation)) throw new CliError(`--recommend must be the label of one option (${options.map((o) => o.label).join(', ')})`);
+  return { what, options, recommendation, level: Number(levelText), ...(kind === 'extra-plan' ? { plan } : {}) };
+}
+
+const PACKAGE_BYTES = 1024 * 1024;
+const SCRIPT_CHARS = 200;
+
+// The package script `command` runs, for `npm test` and `npm run <x>`, or undefined for any other.
+function scriptOf(command) {
+  if (command === 'npm test' || command.startsWith('npm test ')) return 'test';
+  return /^npm run ([^ ]+)/.exec(command)?.[1];
+}
+
+// What a build-command question asks: each command and, for `npm test` and `npm run <x>`, the
+// line it runs from the worktree's package.json, on one line and cut at 200 characters.
+function buildWhat(worktree, commands) {
+  let scripts = {};
+  try {
+    const parsed = JSON.parse(readCapped(path.join(worktree, 'package.json'), PACKAGE_BYTES) ?? 'null');
+    if (parsed !== null && typeof parsed.scripts === 'object' && !Array.isArray(parsed.scripts)) scripts = parsed.scripts ?? {};
+  } catch { /* no package.json that reads: every script is missing */ }
+  const named = commands.map((c) => {
+    const script = scriptOf(c);
+    if (script === undefined) return c;
+    const line = Object.hasOwn(scripts, script) && typeof scripts[script] === 'string' ? scripts[script] : null;
+    return line === null ? `${c}, which runs (no such script)` : `${c}, which runs "${line.replace(/\s*[\r\n]+\s*/g, ' ').slice(0, SCRIPT_CHARS)}"`;
+  });
+  return `Let this feature's builder run: ${named.join('; ')}.`;
+}
+
+// A build-command question (design section 12.2): its options are the design's, never the
+// session's, and each command must be local git or one of the configuration's build commands,
+// as the helper reads it from the default branch, never the working copy.
+async function buildQuestion(found, { worktree, client, project }) {
+  for (const flag of ['what', 'option', 'recommend', 'level', 'plan']) {
+    if (found[flag] !== undefined) throw new CliError(`--${flag} is not given for a build-command question: Wheelhouse writes it`);
+  }
+  const commands = [...new Set((found.command ?? []).map((c) => c.trim()))];
+  if (commands.length === 0) throw new CliError('Name each build command you need with --command "<command>"');
+  if (commands.includes('')) throw new CliError('--command needs a command');
+  if (typeof project !== 'string' || project === '') throw new CliError("Wheelhouse doesn't know which project this worktree belongs to");
+  let answer;
+  try {
+    answer = await client.config({ project });
+  } catch {
+    answer = null;
+  }
+  if (answer?.ok !== true) throw new CliError(`The project's build commands can't be read from the host helper, so nothing was asked: ${answer?.refused ?? 'it gave no answer'}`);
+  let config;
+  try {
+    config = readConfig(JSON.stringify(answer.config));
+  } catch {
+    throw new CliError("The project's configuration on the default branch can't be read, so nothing was asked");
+  }
+  for (const c of commands) {
+    if (!isConfiguredBuildCommand(c, config.buildCommands)) throw new CliError(`"${c}" isn't one of this project's build commands or local git, so it can't be asked for`);
+  }
+  return {
+    what: buildWhat(worktree, commands),
+    options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })),
+    recommendation: BUILD_QUESTION_LABELS.once,
+    level: 3,
+    commands,
+  };
+}
+
+// Appends a question to questions.jsonl and returns `{ id }`. Only a build-command question
+// needs `client` and `project`, to read the configuration.
+export async function ask({ worktree, argv, client, project }) {
+  const found = flagsOf(argv, ['kind', 'what', 'why', 'option', 'recommend', 'level', 'plan', 'command']);
+  const kind = single(found, 'kind') ?? 'question';
+  if (!QUESTION_KINDS.includes(kind)) throw new CliError(`--kind is ${QUESTION_KINDS.join(', ')}`);
+  const why = needed(found, 'why');
+  const asked = kind === 'build-command' ? await buildQuestion(found, { worktree, client, project }) : plainQuestion(found, kind);
 
   const brief = readBriefOrSay(worktree);
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const p = featurePaths(worktree);
   const id = nextQuestionId(p.questions, brief.work);
-  const question = { id, kind, what, why, options, recommendation, level: Number(levelText), ...(kind === 'extra-plan' ? { plan } : {}) };
+  const { what, ...rest } = asked;
+  const question = { id, kind, what, why, ...rest };
   const kept = readCapped(p.questions, QUESTIONS_BYTES);
   // A file that is there but can't be read (a link, a folder) must not be replaced.
   if (kept === null && exists(p.questions)) throw new CliError("questions.jsonl can't be added to");
@@ -288,7 +363,12 @@ export async function main(argv, {
     };
 
     if (command === 'ask') {
-      out(`${ask({ worktree, argv: rest }).id}\n`);
+      // The project is wanted only by a build-command question, which says so when it is unknown.
+      let placed = null;
+      try {
+        placed = findProject(worktree)?.project ?? null;
+      } catch { /* left unknown */ }
+      out(`${(await ask({ worktree, argv: rest, client: helper(), project: placed })).id}\n`);
     } else if (command === 'answer') {
       if (rest.length !== 1) throw new CliError('Give the id of the question: answer <questionId>');
       const { answer: label } = await answer({ client: helper(), project: project(), questionId: rest[0] });

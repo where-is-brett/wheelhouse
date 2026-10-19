@@ -14,7 +14,7 @@ export const FEATURE_DIR = '.wheelhouse/feature';
 
 export const PHASES = Object.freeze(['planning', 'ready-to-build', 'building', 'pr-open', 'waiting', 'done']);
 export const WAITING_ON = Object.freeze(['question', 'clash', 'pace', 'dependency', 'ci', 'review', 'merge']);
-export const QUESTION_KINDS = Object.freeze(['question', 'extra-plan']);
+export const QUESTION_KINDS = Object.freeze(['question', 'extra-plan', 'build-command']);
 export const REPORT_STATUSES = Object.freeze(['done', 'blocked', 'partial']);
 
 // The most of a question file, or of a status file, that is read.
@@ -190,7 +190,7 @@ export function writeStatus(file, status) {
 
 // --- The questions ---
 
-const QUESTION_KEYS = ['id', 'kind', 'what', 'why', 'options', 'recommendation', 'level', 'plan'];
+const QUESTION_KEYS = ['id', 'kind', 'what', 'why', 'options', 'recommendation', 'level', 'plan', 'commands'];
 
 // `q-<work>-<n>`, the same id the state's question record carries.
 export const QUESTION_ID = /^q-([a-z0-9-]+)-[0-9]+$/;
@@ -211,7 +211,8 @@ function validQuestion(q) {
     && q.options.every((o) => isPlain(o) && Object.keys(o).length === 2 && isText(o.label) && typeof o.says === 'string')
     && isText(q.recommendation)
     && [1, 2, 3, 4].includes(q.level)
-    && (q.kind === 'extra-plan' ? isText(q.plan) : q.plan === undefined || typeof q.plan === 'string');
+    && (q.kind === 'extra-plan' ? isText(q.plan) : q.plan === undefined || typeof q.plan === 'string')
+    && (q.kind === 'build-command' ? Array.isArray(q.commands) && q.commands.length > 0 && q.commands.every(isText) : q.commands === undefined);
 }
 
 // The questions in `file`, one JSON object per line. Lines that are not a valid

@@ -93,7 +93,8 @@ function buildLoopViews(sorted, enrolled) {
   const reports = latestPerKey(sorted.filter((e) => e.kind === 'report'), (e) => e.data?.work);
 
   // An answer counts for the question as it was shown: it names the hash of the question's data, and
-  // one question recorded again with other words or options needs a fresh answer.
+  // one question recorded again with other words or options needs a fresh answer. It keeps the
+  // computer the click was made on, where a build-command grant holds.
   const questions = {};
   for (const e of sorted) {
     if (e.kind === 'question' && isPlainKey(e.data?.id)) questions[e.data.id] = { question: { key: e.data.id, ...mark(e) }, answer: null };
@@ -102,7 +103,7 @@ function buildLoopViews(sorted, enrolled) {
     const q = questions[a.data.questionId];
     if (!q || typeof a.data.label !== 'string' || a.data.questionHash !== dataHash(q.question.data)) continue;
     if (Array.isArray(q.question.data.options) && q.question.data.options.some((o) => o?.label === a.data.label)) {
-      q.answer = { label: a.data.label, at: a.at };
+      q.answer = { label: a.data.label, at: a.at, computer: a.computer };
     }
   }
 

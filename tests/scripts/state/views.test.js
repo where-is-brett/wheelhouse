@@ -9,7 +9,7 @@ import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
@@ -623,12 +623,12 @@ test('a question is answered only by a verified answer action', async () => {
     assert.equal(build([q, ...noise]).questions['q-export-csv-1'].answer, null);
     assert.equal(buildViews([q, answer(5, 'Comma')], [], { now }).questions['q-export-csv-1'].answer, null);
     const done = build([q, ...noise, answer(6, 'Tab')]).questions['q-export-csv-1'];
-    assert.deepEqual(done.answer, { label: 'Tab', at: T(6) });
+    assert.deepEqual(done.answer, { label: 'Tab', at: T(6), computer: computerId() });
     // An answer to a question nobody asked is not a question.
     assert.deepEqual(Object.keys(build([answer(6, 'Tab')]).questions), []);
     // A question the foreman records again, word for word, is still one question and keeps its answer.
     assert.deepEqual(Object.keys(build([q, answer(6, 'Tab'), question(7)]).questions), ['q-export-csv-1']);
-    assert.deepEqual(build([q, answer(6, 'Tab'), question(7)]).questions['q-export-csv-1'].answer, { label: 'Tab', at: T(6) });
+    assert.deepEqual(build([q, answer(6, 'Tab'), question(7)]).questions['q-export-csv-1'].answer, { label: 'Tab', at: T(6), computer: computerId() });
     // A label the question does not offer, or an answer naming another question hash, answers nothing.
     assert.equal(build([q, answer(6, 'Semicolon')]).questions['q-export-csv-1'].answer, null);
     assert.equal(build([q, answer(6, 'Tab', { questionHash: 'e'.repeat(64) })]).questions['q-export-csv-1'].answer, null);
@@ -645,7 +645,7 @@ test('a question rewritten after it was answered needs a fresh answer', async ()
     assert.equal(v.answer, null, 'the earlier answer was for the question as it was');
     // An answer that names the new content counts; the old one still does not replace it.
     const fresh = answer(8, 'Semicolon', { questionHash: dataHash(rewritten.data) });
-    assert.deepEqual(build([q, early, rewritten, fresh]).questions['q-export-csv-1'].answer, { label: 'Semicolon', at: T(8) });
+    assert.deepEqual(build([q, early, rewritten, fresh]).questions['q-export-csv-1'].answer, { label: 'Semicolon', at: T(8), computer: computerId() });
     // A rewritten question that kept the label but changed the words still asks again.
     const reworded = question(7, { what: 'Which delimiter?' });
     assert.equal(build([q, early, reworded]).questions['q-export-csv-1'].answer, null);

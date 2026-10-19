@@ -637,9 +637,11 @@ function featureQuestion(ctx, views, work, rest) {
 async function question(ctx, work, rest) {
   const views = await ctx.views();
   const q = featureQuestion(ctx, views, work, rest);
-  if (q.kind !== 'question') refuse(`${q.id} is an extra plan: act extra-plan ${work} ${q.id}`);
+  if (q.kind === 'extra-plan') refuse(`${q.id} is an extra plan: act extra-plan ${work} ${q.id}`);
+  // A build-command question carries the commands it asks for, which a grant reads from state.
   const data = {
     id: q.id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation, level: q.level,
+    ...(q.kind === 'build-command' ? { commands: q.commands } : {}),
   };
   if (same(views.questions[q.id]?.question?.data, data)) {
     ctx.say(`Question ${q.id} is recorded already.`);

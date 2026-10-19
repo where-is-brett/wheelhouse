@@ -1,7 +1,9 @@
 // scripts/protection/windows-builds.js
 // Build commands on Windows (design section 12.2): the level each computer runs a
-// feature's build commands at, read from the state views, and the words of its cards.
-// Ask is the default, and anything that can't be read is Ask.
+// feature's build commands at and the director's grants of them, read from the state
+// views, and the words of their cards. Ask is the default, and anything that can't be
+// read is Ask.
+import { isBuildCommand } from '../gate/guardrails.js';
 import { unattendedBuildsLine } from '../state/card-lines.js';
 
 export const LEVELS = ['ask', 'guarded', 'unattended'];
@@ -14,6 +16,22 @@ export const settingKey = (computer) => `windowsBuildCommands:${computer}`;
 
 // The options on a build-command question.
 export const BUILD_QUESTION_LABELS = { once: 'Allow this time', feature: 'Allow for this feature', notNow: 'Not now' };
+const WHATEVER_YOUR_ACCOUNT_CAN = 'For as long as this lasts, the builder can do whatever your account can.';
+// The options as the feature session's ask writes them, in the design's words. The session never writes its own.
+export const BUILD_QUESTION_OPTIONS = Object.freeze([
+  { label: BUILD_QUESTION_LABELS.once, says: `For the builder's next run only. ${WHATEVER_YOUR_ACCOUNT_CAN}` },
+  { label: BUILD_QUESTION_LABELS.feature, says: `Until the feature ends. This is the dangerous level, Unattended, for one feature. ${WHATEVER_YOUR_ACCOUNT_CAN}` },
+  { label: BUILD_QUESTION_LABELS.notNow, says: 'The feature waits, and the foreman raises it with your next briefing.' },
+].map((o) => Object.freeze(o)));
+
+// Whether `command` is a build command of the configuration's `buildCommands`, or local git:
+// one of them, or one of them with more words after it (`npm run build` is `npm run`'s), and
+// one an allow rule can hold.
+export function isConfiguredBuildCommand(command, buildCommands) {
+  if (!isBuildCommand(command)) return false;
+  const known = [...GIT_LOCAL, ...(Array.isArray(buildCommands) ? buildCommands.filter(isBuildCommand) : [])];
+  return known.some((k) => command === k || command.startsWith(`${k} `));
+}
 
 // The level in force on `computer`. `views` are the project's state views; `locked` is whether
 // the project is Locked (lockedByPath); `guardedReady` is whether this computer's self-test passed.
@@ -32,6 +50,39 @@ export function buildsLevel({ views, computer, locked, guardedReady }) {
   }
   if (entry.value === 'guarded') return guardedReady === true && entry.line === null ? 'guarded' : 'ask';
   return 'ask';
+}
+
+// What each Allow click grants, by its label.
+const SCOPES = new Map([[BUILD_QUESTION_LABELS.once, 'run'], [BUILD_QUESTION_LABELS.feature, 'feature']]);
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+// The director's grants of build commands to the feature `work` on `computer`, one for each
+// verified answer (views.questions counts only signed clicks) to a build-command question, a
+// question whose data carries `commands`, made on this computer. Allow this time is for one
+// run (scope `run`) until its question id is in `used`, the waker's record of the run grants
+// it has given; anything but a list or a set there counts every run grant as used. Allow for
+// this feature lasts the feature's life. Either ends when the feature closes, or with a report
+// at or after the click, and nothing is granted to a feature the views don't hold. The commands
+// are the question's; featureAllowRules gives a rule only for those still configured.
+export function buildGrants({ views, work, used, computer }) {
+  const feature = isPlain(views?.features) && Object.hasOwn(views.features, work) ? views.features[work]?.data : null;
+  if (!isPlain(feature) || feature.step === 'closed' || typeof computer !== 'string') return [];
+  const report = isPlain(views.reports) && Object.hasOwn(views.reports, work) ? views.reports[work] : null;
+  const ran = used instanceof Set ? used : Array.isArray(used) ? new Set(used) : null;
+  const questions = isPlain(views.questions) ? views.questions : {};
+  const grants = [];
+  for (const [questionId, entry] of Object.entries(questions)) {
+    const data = entry?.question?.data;
+    const answer = entry?.answer;
+    if (!isPlain(data) || data.work !== work || !Array.isArray(data.commands) || !data.commands.every(isBuildCommand)) continue;
+    if (!isPlain(answer) || answer.computer !== computer || typeof answer.at !== 'string') continue;
+    const scope = SCOPES.get(answer.label);
+    if (scope === undefined) continue;
+    if (typeof report?.at === 'string' && report.at >= answer.at) continue;
+    if (scope === 'run' && (ran === null || ran.has(questionId))) continue;
+    grants.push({ questionId, commands: [...data.commands], scope });
+  }
+  return grants;
 }
 
 const UNATTENDED_RISK = 'Builders on this computer will run their tests and build steps without asking you, and with nothing to hold them. '

@@ -676,6 +676,25 @@ test('question copies the feature\'s question line into state unchanged, once', 
   assert.equal(fake.writes.length, 1);
 }));
 
+test('question records a build-command question with the commands it asks for', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine', { lane: 'feature', visible: true, doc: { path: 'docs/specs/mine.md', hash: HASH } });
+  const build = {
+    id: 'q-mine-1', kind: 'build-command', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
+    options: [{ label: 'Allow this time', says: 'a' }, { label: 'Allow for this feature', says: 'b' }, { label: 'Not now', says: 'c' }],
+    recommendation: 'Allow this time', level: 3, commands: ['npm test'],
+  };
+  const wt = worktree(checkout, 'mine', { questions: [build] });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  const fake = fakeClient({ views });
+  const r = await act(['question', 'mine', 'q-mine-1'], { client: fake.client });
+  assert.equal(r.code, 0, r.err);
+  const { kind, ...asked } = build;
+  assert.deepEqual(fake.writes.map((w) => [w.kind, w.data]), [['question', { ...asked, work: 'mine' }]]);
+  refusedInOneLine(await act(['extra-plan', 'mine', 'q-mine-1'], { client: fake.client }));
+}));
+
 test('extra-plan queues the plan as work of its own, with the parent\'s lane, visibility and document', () => withHome(async () => {
   const { views } = await questionScene();
   const fake = fakeClient({ views });

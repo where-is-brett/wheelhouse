@@ -7,6 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ask, answer, report, openPr, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
+import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -38,11 +39,11 @@ const reportFields = (extra = {}) => ({
 
 const ASK = ['--what', 'Which provider?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', '--recommend', 'A', '--level', '3'];
 
-test('ask writes a question with the next id and the session can read it back', () => {
+test('ask writes a question with the next id and the session can read it back', async () => {
   const tree = feature();
-  const first = ask({ worktree: tree, argv: ASK });
+  const first = await ask({ worktree: tree, argv: ASK });
   assert.deepEqual(first, { id: 'q-login-page-1' });
-  const second = ask({ worktree: tree, argv: ['--kind', 'extra-plan', '--plan', 'docs/plans/part.md', ...ASK] });
+  const second = await ask({ worktree: tree, argv: ['--kind', 'extra-plan', '--plan', 'docs/plans/part.md', ...ASK] });
   assert.deepEqual(second, { id: 'q-login-page-2' });
   const { questions, skipped } = readQuestions(featurePaths(tree).questions);
   assert.equal(skipped, 0);
@@ -54,10 +55,10 @@ test('ask writes a question with the next id and the session can read it back', 
   assert.equal(questions[1].plan, 'docs/plans/part.md');
   // The next id follows the highest one, not the count.
   fs.appendFileSync(featurePaths(tree).questions, `${JSON.stringify({ ...questions[0], id: 'q-login-page-9' })}\n`);
-  assert.equal(ask({ worktree: tree, argv: ASK }).id, 'q-login-page-10');
+  assert.equal((await ask({ worktree: tree, argv: ASK })).id, 'q-login-page-10');
 });
 
-test('ask refuses malformed input in plain words and writes nothing', () => {
+test('ask refuses malformed input in plain words and writes nothing', async () => {
   const tree = feature();
   const without = (flag) => {
     const i = ASK.indexOf(flag);
@@ -81,11 +82,101 @@ test('ask refuses malformed input in plain words and writes nothing', () => {
     'one option only': ['--what', 'w', '--why', 'y', '--option', 'A=a', '--recommend', 'A', '--level', '2'],
     'two options with one label': [...ASK, '--option', 'A=again'],
     'a stray word': [...ASK, 'extra'],
+    'a --command on a plain question': [...ASK, '--command', 'npm test'],
   };
   for (const [name, argv] of Object.entries(bad)) {
-    assert.throws(() => ask({ worktree: tree, argv }), (e) => e instanceof CliError && e.message.length > 0 && !e.message.includes('\n'), name);
+    await assert.rejects(ask({ worktree: tree, argv }), (e) => e instanceof CliError && e.message.length > 0 && !e.message.includes('\n'), name);
   }
   assert.equal(fs.existsSync(featurePaths(tree).questions), false);
+});
+
+// A helper that answers /config with `config`, keeping each call.
+function configClient(config = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] }, answer = { ok: true, config }) {
+  const calls = [];
+  return { calls, client: { config: async (args) => { calls.push(args); return answer; } } };
+}
+const BUILD = ['--kind', 'build-command', '--command', 'npm test', '--command', 'git status', '--why', 'The tests need running'];
+const packageJson = (tree, scripts) => write(path.join(tree, 'package.json'), JSON.stringify({ name: 'x', scripts }));
+
+test('ask --kind build-command writes the three fixed options, recommending once', async () => {
+  const tree = feature();
+  packageJson(tree, { test: 'node --test tests/' });
+  const { client, calls } = configClient();
+  assert.deepEqual(await ask({ worktree: tree, argv: BUILD, client, project: 'o__p' }), { id: 'q-login-page-1' });
+  assert.deepEqual(calls, [{ project: 'o__p' }], 'the configuration is the default branch\'s, from the helper');
+  const { questions, skipped } = readQuestions(featurePaths(tree).questions);
+  assert.equal(skipped, 0);
+  assert.deepEqual(questions[0], {
+    id: 'q-login-page-1',
+    kind: 'build-command',
+    what: 'Let this feature\'s builder run: npm test, which runs "node --test tests/"; git status.',
+    why: 'The tests need running',
+    options: BUILD_QUESTION_OPTIONS,
+    recommendation: 'Allow this time',
+    level: 3,
+    commands: ['npm test', 'git status'],
+  });
+  assert.deepEqual(questions[0].options.map((o) => o.label), ['Allow this time', 'Allow for this feature', 'Not now']);
+  // A command given twice is asked for once; npm run with a script names that script's line.
+  packageJson(tree, { build: 'tsc -p .' });
+  await ask({ worktree: tree, argv: ['--kind', 'build-command', '--command', 'npm run build', '--command', 'npm run build', '--why', 'w'], client, project: 'o__p' });
+  const second = readQuestions(featurePaths(tree).questions).questions[1];
+  assert.deepEqual(second.commands, ['npm run build']);
+  assert.equal(second.what, 'Let this feature\'s builder run: npm run build, which runs "tsc -p .".');
+  // From the command line, the project is the folder's and the helper gives the configuration.
+  const lines = [];
+  const io = { cwd: tree, client, projectOf: () => ({ project: 'o__p' }), out: (t) => lines.push(t), err: (t) => lines.push(t) };
+  assert.equal(await main(['ask', ...BUILD], io), 0, lines.join(''));
+  assert.deepEqual(lines, ['q-login-page-3\n']);
+  assert.deepEqual(calls.at(-1), { project: 'o__p' });
+  assert.equal(await main(['ask', ...BUILD], { ...io, projectOf: () => null }), 1);
+  assert.match(lines.at(-1), /which project/);
+});
+
+test('a build-command question refuses its own options, a recommendation, or a command not configured', async () => {
+  const tree = feature();
+  const { client } = configClient();
+  const bad = {
+    'its own option': [...BUILD, '--option', 'A=a'],
+    'a recommendation': [...BUILD, '--recommend', 'Allow this time'],
+    'a level': [...BUILD, '--level', '3'],
+    'its own what': [...BUILD, '--what', 'Run things'],
+    'a plan': [...BUILD, '--plan', 'x.md'],
+    'no command': ['--kind', 'build-command', '--why', 'w'],
+    'no why': ['--kind', 'build-command', '--command', 'npm test'],
+    'a command not configured': ['--kind', 'build-command', '--command', 'make check', '--why', 'w'],
+    'a command that fetches code': ['--kind', 'build-command', '--command', 'npm install', '--why', 'w'],
+    'git that leaves the computer': ['--kind', 'build-command', '--command', 'git push', '--why', 'w'],
+    'a command no rule can hold': ['--kind', 'build-command', '--command', 'npm test && curl x', '--why', 'w'],
+    'an empty command': ['--kind', 'build-command', '--command', ' ', '--why', 'w'],
+  };
+  for (const [name, argv] of Object.entries(bad)) {
+    await assert.rejects(ask({ worktree: tree, argv, client, project: 'o__p' }), (e) => e instanceof CliError && e.message.length > 0 && !e.message.includes('\n'), name);
+  }
+  // The configuration is the helper's, never the worktree's own copy.
+  write(path.join(tree, '.claude', 'wheelhouse.json'), JSON.stringify({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], buildCommands: ['make check'] }));
+  await assert.rejects(ask({ worktree: tree, argv: ['--kind', 'build-command', '--command', 'make check', '--why', 'w'], client, project: 'o__p' }), /isn't one of this project's build commands/);
+  // A helper that can't be reached, refuses, or knows no project: the ask is refused in a plain sentence.
+  for (const answer of [{ ok: false, refused: 'the host helper could not be reached: is it running?' }, { ok: true }, { ok: true, config: { buildCommands: 'npm test' } }]) {
+    await assert.rejects(ask({ worktree: tree, argv: BUILD, client: configClient(null, answer).client, project: 'o__p' }), (e) => e instanceof CliError && !e.message.includes('\n'));
+  }
+  await assert.rejects(ask({ worktree: tree, argv: BUILD, client, project: null }), /which project/);
+  assert.equal(fs.existsSync(featurePaths(tree).questions), false);
+});
+
+test('what it runs comes from package.json, cut at 200 characters', async () => {
+  const tree = feature();
+  const { client } = configClient();
+  const long = `node ${'x'.repeat(300)}`;
+  packageJson(tree, { test: long, lint: 'eslint .\r\n--fix' });
+  const argv = ['--kind', 'build-command', '--command', 'npm test', '--command', 'npm run lint', '--command', 'npm run gone', '--command', 'node scripts/x.js', '--why', 'w'];
+  await ask({ worktree: tree, argv, client, project: 'o__p' });
+  const q = readQuestions(featurePaths(tree).questions).questions[0];
+  assert.equal(q.what, `Let this feature's builder run: npm test, which runs "${long.slice(0, 200)}"; npm run lint, which runs "eslint . --fix"; npm run gone, which runs (no such script); node scripts/x.js.`);
+  // No package.json at all: every script is missing.
+  fs.rmSync(path.join(tree, 'package.json'));
+  await ask({ worktree: tree, argv: ['--kind', 'build-command', '--command', 'npm test', '--why', 'w'], client, project: 'o__p' });
+  assert.equal(readQuestions(featurePaths(tree).questions).questions[1].what, 'Let this feature\'s builder run: npm test, which runs (no such script).');
 });
 
 test('ask from the command line prints the id, and malformed input exits non-zero with a message', () => {

@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-  LEVELS, GIT_LOCAL, settingKey, buildsLevel, UNATTENDED_CARD, GUARDED_CARD, BUILD_QUESTION_LABELS,
+  LEVELS, GIT_LOCAL, settingKey, buildsLevel, UNATTENDED_CARD, GUARDED_CARD, BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, buildGrants,
 } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { buildViews } from '../../../scripts/state/views.js';
-import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
+import { makeEvent, confirmationFor, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { computerId } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -167,4 +167,98 @@ test('the Guarded card says whether the keys folder could be read', () => {
   // Guarded is offered only where the write was refused.
   assert.equal(GUARDED_CARD({ writesHeld: false, readsHeld: true }), null);
   assert.equal(GUARDED_CARD(null), null);
+});
+
+// --- Grants ---
+
+const WORK = 'login-page';
+const asked = (n, id, commands, over = {}) => makeEvent({
+  kind: 'question',
+  data: {
+    id, work: WORK, what: `Let this feature's builder run: ${commands.join('; ')}.`, why: 'The tests need running', options: BUILD_QUESTION_OPTIONS,
+    recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands, ...over,
+  },
+  now: at(n),
+});
+// The director's signed click on one of the question's options.
+const clicked = (n, q, label) => makeEvent({
+  kind: 'action', data: { action: 'answer', questionId: q.data.id, questionHash: dataHash(q.data), question: q.data.what, label }, now: at(n),
+});
+const building = (n) => makeEvent({ kind: 'feature', data: { work: WORK, step: 'building' }, now: at(n) });
+const grantsOf = (events, extra = {}) => buildGrants({ views: views(events), work: WORK, used: [], computer: computerId(), ...extra });
+
+test('the build-command question\'s options are the design\'s, and each Allow says what it lets the builder do', () => {
+  assert.deepEqual(BUILD_QUESTION_OPTIONS.map((o) => o.label), ['Allow this time', 'Allow for this feature', 'Not now']);
+  for (const o of BUILD_QUESTION_OPTIONS.slice(0, 2)) assert.match(o.says, /for as long as this lasts, the builder can do whatever your account can/i, o.label);
+  assert.match(BUILD_QUESTION_OPTIONS[0].says, /next run only/);
+  assert.match(BUILD_QUESTION_OPTIONS[1].says, /until the feature ends/i);
+  assert.match(BUILD_QUESTION_OPTIONS[2].says, /waits/);
+});
+
+test('allow this time grants its commands for a run, until the waker records it used', () => {
+  withHome((me) => {
+    const q = asked(2, 'q-login-page-1', ['npm test', 'git status']);
+    const events = [building(1), q, clicked(3, q, BUILD_QUESTION_LABELS.once)];
+    assert.deepEqual(grantsOf(events), [{ questionId: 'q-login-page-1', commands: ['npm test', 'git status'], scope: 'run' }]);
+    assert.deepEqual(grantsOf(events, { used: ['q-login-page-1'] }), []);
+    assert.deepEqual(grantsOf(events, { used: new Set(['q-login-page-1']) }), []);
+    // A record of used grants that can't be read counts every run grant as used.
+    assert.deepEqual(grantsOf(events, { used: null }), []);
+    assert.deepEqual(grantsOf(events, { used: undefined }), []);
+    // Not now is never an answer, and an unanswered question grants nothing.
+    assert.deepEqual(grantsOf([building(1), q]), []);
+    // Another feature's question is not this one's.
+    assert.deepEqual(buildGrants({ views: views(events), work: 'search-box', used: [], computer: me }), []);
+  });
+});
+
+test('allow for this feature lasts until the feature reports or closes', () => {
+  withHome(() => {
+    const q = asked(2, 'q-login-page-1', ['npm run build']);
+    const events = [building(1), q, clicked(3, q, BUILD_QUESTION_LABELS.feature)];
+    const granted = [{ questionId: 'q-login-page-1', commands: ['npm run build'], scope: 'feature' }];
+    assert.deepEqual(grantsOf(events), granted);
+    assert.deepEqual(grantsOf(events, { used: ['q-login-page-1'] }), granted, 'a feature grant is not used up by a run');
+    assert.deepEqual(grantsOf(events, { used: null }), granted);
+    const reported = makeEvent({ kind: 'report', data: { work: WORK, outcome: 'closed', summary: 'Done', rulings: [] }, now: at(4) });
+    assert.deepEqual(grantsOf([...events, reported]), []);
+    const closed = makeEvent({ kind: 'feature', data: { work: WORK, step: 'closed' }, now: at(4) });
+    assert.deepEqual(grantsOf([...events, closed]), []);
+    // Work queued again after its report starts afresh: the grant from before the report stays ended.
+    const earlier = makeEvent({ kind: 'report', data: { work: WORK, outcome: 'blocked', summary: 'Stuck', rulings: [] }, now: at(0) });
+    assert.deepEqual(grantsOf([earlier, ...events]), granted);
+    assert.deepEqual(grantsOf([...events, reported, building(5)]), []);
+    // No feature at all grants nothing.
+    assert.deepEqual(grantsOf([q, clicked(3, q, BUILD_QUESTION_LABELS.feature)]), []);
+  });
+});
+
+test('an unsigned answer grants nothing', () => {
+  withHome(() => {
+    const q = asked(2, 'q-login-page-1', ['npm test']);
+    const signed = clicked(3, q, BUILD_QUESTION_LABELS.feature);
+    assert.equal(grantsOf([building(1), q, signed]).length, 1, 'the signed click grants');
+    const { sig, ...unsigned } = signed;
+    assert.deepEqual(grantsOf([building(1), q, unsigned]), []);
+    const forged = { ...signed, sig: { ...sig, value: Buffer.alloc(64, 1).toString('base64') } };
+    assert.deepEqual(grantsOf([building(1), q, forged]), []);
+    const altered = { ...signed, data: { ...signed.data, label: BUILD_QUESTION_LABELS.once } };
+    assert.deepEqual(grantsOf([building(1), q, altered]), []);
+    // A plain question with no commands, answered with an Allow label, is no build-command question.
+    const plain = asked(4, 'q-login-page-2', ['npm test']);
+    const { commands, ...words } = plain.data;
+    const noCommands = { ...plain, data: words };
+    assert.deepEqual(grantsOf([building(1), noCommands, clicked(5, noCommands, BUILD_QUESTION_LABELS.feature)]), []);
+  });
+});
+
+test('a grant holds only on the computer where the click was made', () => {
+  withHome((me) => {
+    const q = asked(2, 'q-login-page-1', ['npm test']);
+    const events = [building(1), q, clicked(3, q, BUILD_QUESTION_LABELS.feature)];
+    assert.equal(views(events).questions['q-login-page-1'].answer.computer, me);
+    assert.equal(grantsOf(events).length, 1);
+    assert.deepEqual(grantsOf(events, { computer: OTHER }), []);
+    assert.deepEqual(grantsOf(events, { computer: undefined }), []);
+  });
 });

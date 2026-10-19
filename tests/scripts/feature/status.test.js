@@ -245,6 +245,10 @@ test('an unanswered question means waiting on a question', async () => {
   s = status(tree, { answered: () => new Set(['q-login-page-1']) });
   assert.equal(s.phase, 'building');
   assert.equal(s.waitingOn, null);
+  // A build-command question is waited on as a question is.
+  fs.appendFileSync(p.questions, `${JSON.stringify(question(3, { kind: 'build-command', commands: ['npm test'] }))}\n`);
+  assert.equal(status(tree, { answered: () => new Set(['q-login-page-1']) }).waitingOn, 'question');
+  assert.equal(status(tree, { answered: () => new Set(['q-login-page-1', 'q-login-page-3']) }).waitingOn, null);
 
   // By default the answers come from the project's questions view, read from disk.
   await withHome(async (home) => {
