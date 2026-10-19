@@ -1,6 +1,8 @@
 // scripts/lib/mod-numbers.js
 // The mod's numbers and words, named once. The foreman's own lead is FOREMAN_PROMPT_LEAD in
-// scripts/foreman/start.js; it is imported from there, never written again.
+// scripts/foreman/start.js, and the scripts import it from there. The mod can't import scripts/,
+// so it holds a copy, FOREMAN_LEAD in hooks/mod/numbers.ts, with copies of the numbers here it
+// needs; tests/scripts/mod/validate.test.js keeps each copy in step (ruling 27).
 
 // The id of the side pane the mod draws.
 export const PANE_ID = 'wheelhouse';

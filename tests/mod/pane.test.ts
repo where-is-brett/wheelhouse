@@ -13,7 +13,7 @@ const SESSION = '0b6a4e1c-4f3a-4d7e-9a51-2f3c8d9e1a77'
 const PANE_ID = 'wheelhouse'
 const TICK_MS = 15000
 const TICK_ASK_MS = 50000
-// 03:00:50 UTC on 19 October 2026, so a tick fifteen seconds on reads 03:01.
+// 03:00:50 UTC on 19 October 2026, so a tick fifteen seconds on reads a minute later.
 const START = Date.parse('2026-10-19T03:00:50.000Z')
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const PRESENTATION = { isFullscreen: false, columns: 80 }
@@ -100,8 +100,9 @@ function world(on: any, answer: (request: any) => Reply) {
   return { seen, clear, start, clock, panes, current, newSession }
 }
 
-// "03:01 UTC" for the clock's milliseconds, as the pane says a time.
-const timeOf = (ms: number) => new Date(ms).toISOString().slice(11, 16) + ' UTC'
+// "14:01" for the clock's milliseconds, as the pane says a time: in the computer's own time zone,
+// worked out here from the zone's offset rather than the local clock readings the mod uses.
+const timeOf = (ms: number) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(11, 16)
 
 const mount = ($: any, surface: string) => $.ui.mount({ plugin: 'wheelhouse', surface, component: 'Pane', requestId: PANE_ID, props: PANE_PROPS })
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
@@ -205,8 +206,17 @@ test('a failed tick shows the last picture under a line saying it is old', async
     await ui.redraw()
     const drawn = await texts(ui)
     expect(drawn[0]).toBe(`Couldn't read the latest at ${timeOf(failed)}; showing ${timeOf(read)}'s`)
-    // The clock starts at 03:00:50, so the first surface's times are these.
-    if (surface === SURFACES[0]) expect(drawn[0]).toBe('Couldn\'t read the latest at 03:01 UTC; showing 03:00 UTC\'s')
+    // The clock starts at 03:00:50 UTC, so the first surface's times are these, in the computer's
+    // zone (14:01 and 14:00 in Sydney's summer), never named as UTC.
+    if (surface === SURFACES[0]) {
+      const offset = new Date(START).getTimezoneOffset()
+      const local = (utcMinutes: number) => {
+        const m = (((utcMinutes - offset) % 1440) + 1440) % 1440
+        return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+      }
+      expect(drawn[0]).toBe(`Couldn't read the latest at ${local(3 * 60 + 1)}; showing ${local(3 * 60)}'s`)
+      expect(drawn[0]).not.toContain('UTC')
+    }
     expect(drawn.slice(1)).toContain('2 cards wait')
     expect(drawn.slice(1)).toContain(FIRST)
     expect(seen.statuses).toEqual([undefined])
@@ -512,3 +522,74 @@ test('/wheelhouse opens the pane', async ($, on) => {
     expect(seen.ticks).toHaveLength(0)
   }
 })
+
+test('the stale line comes by itself while a tick hangs', async ($, on) => {
+  let reply: Reply = frontDesk('2 cards wait')
+  const { start, clock } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    reply = frontDesk('2 cards wait')
+    await start($, surface)
+    const read = clock.now()
+    const ui = await mount($, surface)
+    expect((await texts(ui))[0]).toBe('2 cards wait')
+    // The next tick never answers. Nothing is drawn again by the test: the pane redraws itself
+    // once the picture is more than three ticks old.
+    reply = { hold: 5 * TICK_MS, then: frontDesk('2 cards wait') }
+    await clock.advance(3 * TICK_MS)
+    expect((await texts(ui))[0]).toBe('2 cards wait')
+    await clock.advance(TICK_MS)
+    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(read)}'s`)
+    // Its time follows the timer while the tick still hangs.
+    await clock.advance(TICK_MS)
+    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(read)}'s`)
+    reply = frontDesk('2 cards wait')
+    await clock.advance(2 * TICK_MS)
+    expect((await texts(ui))[0]).toBe('2 cards wait')
+    await ui.unmount()
+  }
+})
+
+// What /wheelhouse says where the session has no pane of its own.
+const NOT_HERE = 'Wheelhouse\'s pane belongs to the project\'s front desk: type /wheelhouse there'
+const SETTING_UP = 'This project is still being set up: its pane opens once setup finishes'
+const NO_PROJECT = 'This folder isn\'t a Wheelhouse project, so it has no pane'
+
+test('/wheelhouse in a session that isn\'t the front desk\'s says whose the pane is, and opens nothing', async ($, on) => {
+  let reply: object = { ok: true, role: 'feature', every: 0 }
+  const { seen, clear, start } = world(on, () => reply)
+  const cases: [object, string][] = [
+    [{ ok: true, role: 'feature', every: 0 }, NOT_HERE],
+    [{ ok: true, role: 'foreman', every: 30000, submit: [] }, NOT_HERE],
+    [{ ok: true, role: 'foreman', every: 0, submit: [] }, NOT_HERE],
+    [{ ok: true, role: 'setup', every: TICK_MS }, SETTING_UP],
+    // A front desk outside a project: the bridge answers its role with no pane.
+    [{ ok: true, role: 'front-desk', every: 0 }, NO_PROJECT],
+  ]
+  for (const [answer, says] of cases) {
+    for (const surface of SURFACES) {
+      reply = answer
+      await start($, surface)
+      clear()
+      const result = await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+      expect(result).toMatchObject({ text: says })
+      expect(seen.opens).toEqual([])
+      expect(seen.toasts).toEqual([])
+    }
+  }
+})
+
+for (const surface of SURFACES) {
+  test(`/wheelhouse before the first tick has answered opens the pane, which says it is reading (${surface})`, async ($, on) => {
+    const { seen, clear, clock } = world(on, () => ({ hold: 60000, then: frontDesk('2 cards wait') }))
+    clear()
+    await $.session.start({ cwd: ROOT, surface, isInteractive: true })
+    await clock.settle()
+    const result = await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    expect(result).toMatchObject({ text: 'Wheelhouse' })
+    expect(seen.opens).toEqual([{ id: PANE_ID, title: 'Wheelhouse' }])
+    const ui = await mount($, surface)
+    expect(await texts(ui)).toEqual(['Reading how the project stands…'])
+    await clock.advance(60000)
+    await ui.unmount()
+  })
+}

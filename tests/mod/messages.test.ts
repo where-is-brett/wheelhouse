@@ -62,6 +62,7 @@ function world(on: any, tick: () => Reply, bridge: (request: any) => Reply = () 
   const panes = new Map<string, string>()
   const current = { session: SESSION }
   let sessions = 0
+  const control = { refuse: new Set<string>(), drop: new Set<string>() }
   const seen = {
     ticks: [] as any[], runs: [] as any[], prompts: [] as any[], receives: [] as any[],
     toasts: [] as string[], registered: [] as any[], commands: [] as any[],
@@ -96,7 +97,14 @@ function world(on: any, tick: () => Reply, bridge: (request: any) => Reply = () 
     if (got.stdout !== undefined) return { value: { ...RUN_RESULT, stdout: got.stdout } }
     return { value: { ...RUN_RESULT, stdout: `${JSON.stringify(got)}\n` } }
   })
-  on('prompt.submit', ($: any, e: any) => { seen.prompts.push(e); return { text: e.text, origin: e.origin } })
+  // A prompt whose text `control.refuse` holds is one the session can't take (the call rejects);
+  // one `control.drop` holds is one the engine drops.
+  on('prompt.submit', ($: any, e: any) => {
+    if (control.refuse.has(e.text)) throw new Error('the session took no prompt')
+    if (control.drop.has(e.text)) return { drop: 'a Stop stands' }
+    seen.prompts.push(e)
+    return { text: e.text, origin: e.origin }
+  })
   on('session.receive', ($: any, e: any) => { seen.receives.push(e); return { text: e.text } })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
@@ -111,7 +119,7 @@ function world(on: any, tick: () => Reply, bridge: (request: any) => Reply = () 
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
   }
-  return { seen, clear, start, clock }
+  return { seen, clear, start, clock, control }
 }
 
 const submit = ($: any, text: string, kind: string, extra: object = {}) =>
@@ -416,6 +424,76 @@ test('a Shape 2 foreman\'s tick submits each wake line in order', async ($, on) 
     await clock.advance(FOREMAN_TICK_MS * 3)
     expect(seen.ticks).toHaveLength(1)
     expect(seen.prompts).toHaveLength(0)
+  }
+})
+
+// What a toast says when a tick's prompt can't be handed on: the courier's wake goes to the front
+// desk, a Shape 2 foreman's watcher lines to the foreman.
+const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
+const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
+
+test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by role, and the rest are handed on', async ($, on) => {
+  const LINES = ['Wheelhouse watcher: CI failed on pull request #4', 'Wheelhouse watcher: pull request #5 merged', 'Wheelhouse watcher: review asked on #6'] as const
+  const WAKE = 'Wheelhouse courier: 2 cards wait, and the build stopped.'
+  let reply: object = foreman()
+  const { seen, clear, start, clock, control } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    // A foreman's: the line the session can't take, or the engine drops, is one toast naming the
+    // foreman, and each line after it is still handed on, in order.
+    for (const refused of [control.refuse, control.drop]) {
+      reply = foreman(LINES)
+      refused.add(LINES[1])
+      await start($, surface)
+      expect(seen.prompts.map((p: any) => p.text)).toEqual([LINES[0], LINES[2]])
+      expect(seen.toasts).toEqual([NOT_HANDED_FOREMAN])
+      refused.clear()
+      // Two that can't be: still one toast.
+      reply = foreman(LINES)
+      control.refuse.add(LINES[0])
+      control.drop.add(LINES[2])
+      clear()
+      await clock.advance(30000)
+      expect(seen.prompts.map((p: any) => p.text)).toEqual([LINES[1]])
+      expect(seen.toasts).toEqual([NOT_HANDED_FOREMAN])
+      control.refuse.clear()
+      control.drop.clear()
+    }
+
+    // The front desk's: the courier's wake names the front desk.
+    for (const refused of [control.refuse, control.drop]) {
+      reply = frontDesk([WAKE])
+      refused.add(WAKE)
+      await start($, surface)
+      expect(seen.prompts).toHaveLength(0)
+      expect(seen.toasts).toEqual([NOT_HANDED])
+      refused.clear()
+    }
+  }
+})
+
+test('a message whose first line has the lead is traffic, whatever names the foreman after it', async ($, on) => {
+  // Ruling 34 spares only a first line that starts with the foreman's lead.
+  const LATER = [
+    'Wheelhouse courier: card 3 waits. Wheelhouse foreman: CI failed on pull request #4',
+    'Wheelhouse builder: slice 2 of 3 finished\nWheelhouse foreman: CI failed on pull request #4',
+    'Wheelhouse: the banner change is ready (Wheelhouse foreman: told)',
+  ]
+  const { seen, clear, start, clock } = world(on, () => frontDesk())
+  for (const surface of SURFACES) {
+    await start($, surface)
+    for (const text of LATER) {
+      for (const kind of ['sdk', 'peer']) {
+        clear()
+        expect(await submit($, text, kind)).toEqual({ drop: KEPT_OUT })
+        await clock.settle()
+        expect(seen.prompts).toHaveLength(0)
+        expect(seen.ticks).toHaveLength(1)
+      }
+      clear()
+      expect(await receive($, text, { kind: 'peer' })).toEqual({ consumed: KEPT_OUT })
+      await clock.settle()
+      expect(seen.receives).toHaveLength(0)
+    }
   }
 })
 
