@@ -20,14 +20,15 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { approvalLine, answerLine, confirmLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, answerLine, ciPushLine, confirmLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
-import { decide as cardCheck } from '../../../scripts/hooks/card-check.js';
+import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { answerInput } from '../../../scripts/cards/compose.js';
 import { plainWords, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
+import { CLICK_MS } from '../../../scripts/lib/core-numbers.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -51,8 +52,8 @@ async function inHome(fn) {
 // The helper as the front desk sees it: every call is kept; writes make the event as /state/write
 // does (a signed kind is refused) and the views are built from what is held. Under `stop` (true, or
 // a function read on each request) every write is refused and the views say STOP is on, as the
-// helper does under STOP.
-function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {}) {
+// helper does under STOP. A pull request is open at `head`, unless `pr` answers for it.
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {} } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
@@ -96,6 +97,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {
     },
     prState: async (body) => {
       calls.push(['prState', body]);
+      if (pr !== undefined) return pr(body.number);
       return { ok: true, result: { headSha: head, state: 'open', mergeable: 'clean' } };
     },
   };
@@ -271,6 +273,181 @@ test('cards says which questions it could not make a card of, and asks the rest'
   });
 });
 
+// --- The build loop's cards: the click the merge gate waits for, and a lineage hold ---
+
+// The update merge a CI push card is for: not the pull request's head until it is pushed.
+const MERGE = '1234567890abcdef1234567890abcdef12345678';
+const BRANCH = 'wh/export-csv';
+const LATER = '0123456789abcdef0123456789abcdef01234567';
+const MINUTE = 60 * 1000;
+const ago = (ms) => () => new Date(NOW.getTime() - ms);
+const EXPORT = makeEvent({ kind: 'work', data: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [] }, now: () => T(1) });
+const gateAsks = (data, when = () => T(5)) => makeEvent({ kind: 'gate-asks', data: { work: 'export-csv', pr: 7, ...data }, now: when });
+const APPROVE_ASK = { ask: 'approval', sha: FULL };
+const PUSH_ASK = { ask: 'ci-push', sha: MERGE, branch: BRANCH };
+const openAt = (headSha, state = 'open') => () => ({ ok: true, result: { headSha, state, mergeable: 'clean' } });
+const cardWrites = (helper) => helper.writes().filter((w) => w.kind === 'card').map((w) => w.data);
+
+test('a gate-asks for an approval becomes one approval card for that pull request and commit, made once', async () => {
+  await inHome(async () => {
+    // Within the click window, so the second visit has no reason to ask it again.
+    const helper = fakeHelper({ events: [EXPORT, gateAsks(APPROVE_ASK, ago(2 * MINUTE))] });
+    const first = await run(helper, ['cards']);
+    assert.equal(first.code, 0, first.err);
+    assert.equal(first.json.problems, undefined);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'approval');
+    assert.equal(card.line, approvalLine(7, FULL));
+    assert.equal(setLineOf(card.question), approvalLine(7, FULL));
+    // The work is named by its title, in plain words; the card is handed out at once and marked asked.
+    assert.match(card.question, /^What this is: \S.* #7 for Export a report as a spreadsheet /m);
+    assert.deepEqual(first.json.questions.map((q) => q.question), [card.question]);
+    assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
+    assert.deepEqual(cardProblems(card.question), []);
+    // The host was asked whether the pull request is still at that commit.
+    assert.deepEqual(helper.calls.filter(([name]) => name === 'prState'), [['prState', { cwd: CWD, number: 7 }]]);
+    // The next visit makes no second card, and has nothing to ask.
+    const second = await run(helper, ['cards']);
+    assert.deepEqual(second.json, { questions: [], left: 0 });
+    assert.equal(cardWrites(helper).length, 1);
+    // A card already waiting with that line is not made again: it is asked as it waits.
+    const waiting = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 4);
+    const already = fakeHelper({ events: [EXPORT, waiting, gateAsks(APPROVE_ASK, ago(2 * MINUTE))] });
+    const asked = await run(already, ['cards']);
+    assert.equal(cardWrites(already).length, 0);
+    assert.deepEqual(asked.json.questions.map((q) => q.question), [waiting.data.question]);
+  });
+});
+
+test('a gate-asks for a CI push becomes a CI push card for its branch and the update\'s commit', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [EXPORT, gateAsks(PUSH_ASK)] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'ci-push');
+    assert.equal(card.line, ciPushLine(BRANCH, MERGE));
+    assert.equal(setLineOf(card.question), ciPushLine(BRANCH, MERGE));
+    assert.ok(card.question.split('\n')[0].includes(` ${BRANCH}`), card.question);
+    assert.deepEqual(card.options.slice(0, 1), ['Push it']);
+    assert.deepEqual(cardProblems(card.question), []);
+  });
+});
+
+test('no gate card when the click is on record, the pull request has moved on, or the work is finished', async () => {
+  await inHome(async () => {
+    const question = 'as shown';
+    const approved = makeEvent({ kind: 'approval', data: { pr: 7, commit: FULL, words: 'Approve', question }, now: () => T(9) });
+    const pushedJustNow = makeEvent({ kind: 'action', data: { action: 'ci-push', branch: BRANCH, sha: MERGE, question, label: 'Push it' }, now: ago(2 * MINUTE) });
+    const merged = makeEvent({ kind: 'report', data: { work: 'export-csv', outcome: 'merged', summary: 'Done.', rulings: [] }, now: () => T(9) });
+    const cases = [
+      ['an approval of that commit', [gateAsks(APPROVE_ASK), approved], {}],
+      ['a CI push click within the window', [gateAsks(PUSH_ASK), pushedJustNow], {}],
+      ['an approval asked of a head that has moved on', [gateAsks(APPROVE_ASK)], { head: LATER }],
+      ['a CI push whose update is the head now: it was pushed', [gateAsks(PUSH_ASK)], { head: MERGE }],
+      ['a pull request merged on the host', [gateAsks(APPROVE_ASK)], { pr: openAt(FULL, 'merged') }],
+      ['a pull request closed on the host', [gateAsks(PUSH_ASK)], { pr: openAt(FULL, 'closed') }],
+      ['a later gate-asks for the same pull request', [gateAsks(APPROVE_ASK), gateAsks(PUSH_ASK, () => T(6))], { head: MERGE }],
+      ['work whose report says merged', [gateAsks(APPROVE_ASK), merged], {}],
+    ];
+    for (const [name, events, options] of cases) {
+      const helper = fakeHelper({ events: [EXPORT, ...events], ...options });
+      const out = await run(helper, ['cards']);
+      assert.equal(out.code, 0, `${name}: ${out.err}`);
+      assert.deepEqual(cardWrites(helper), [], name);
+      assert.deepEqual(out.json.questions, [], name);
+    }
+    // When the host can't say, the card is made: asking is the safe side.
+    for (const answer of [() => ({ ok: false, refused: 'the host helper could not be reached' }), () => { throw new Error('gone'); }, openAt('not a commit')]) {
+      const helper = fakeHelper({ events: [EXPORT, gateAsks(APPROVE_ASK)], pr: answer });
+      const out = await run(helper, ['cards']);
+      assert.equal(out.code, 0, out.err);
+      assert.deepEqual(cardWrites(helper).map((c) => c.line), [approvalLine(7, FULL)]);
+    }
+  });
+});
+
+test('R121: a gate-asks older than the click window with no fresh click puts its card back on this visit, once', async () => {
+  await inHome(async () => {
+    const waiting = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 4);
+    const handedOut = (when) => makeEvent({ kind: 'asked', data: { cards: [waiting.id] }, now: when });
+    // Asked long ago, and the gate still waits: asked again, from the card as it was made.
+    const stale = fakeHelper({ events: [EXPORT, waiting, handedOut(() => T(8)), gateAsks(APPROVE_ASK, ago(CLICK_MS + MINUTE))] });
+    const again = await run(stale, ['cards']);
+    assert.equal(again.code, 0, again.err);
+    assert.deepEqual(again.json.questions.map((q) => q.question), [waiting.data.question]);
+    assert.equal(cardWrites(stale).length, 0, 'not composed twice');
+    assert.deepEqual(stale.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [waiting.id] } }]);
+    // Within the window nothing is asked again: neither the gate-asks nor the last asking is old enough.
+    for (const events of [[handedOut(() => T(8)), gateAsks(APPROVE_ASK, ago(CLICK_MS - MINUTE))], [handedOut(ago(MINUTE)), gateAsks(APPROVE_ASK)]]) {
+      const fresh = fakeHelper({ events: [EXPORT, waiting, ...events] });
+      const none = await run(fresh, ['cards']);
+      assert.deepEqual(none.json, { questions: [], left: 0 });
+    }
+    // A CI push clicked once, whose click is older than the window, is asked again too: the card
+    // was decided by that click, so it comes back as it was made.
+    const push = cardEvent({
+      kind: 'ci-push', level: 3, what: `The branch ${BRANCH} needs the latest changes.`, why: 'It changes a checks file.',
+      options: [says('Push it')], recommend: 'Push it', because: 'the merge waits for it', meanwhile: 'The merge waits.', target: { branch: BRANCH, sha: MERGE },
+    }, 4);
+    const clicked = makeEvent({ kind: 'action', data: { action: 'ci-push', branch: BRANCH, sha: MERGE, question: push.data.question, label: 'Push it' }, now: ago(CLICK_MS + MINUTE) });
+    const lapsed = fakeHelper({ events: [EXPORT, push, gateAsks(PUSH_ASK, ago(CLICK_MS + 2 * MINUTE)), clicked] });
+    assert.equal(lapsed.views().waiting.length, 0, 'the click decided the card');
+    const back = await run(lapsed, ['cards']);
+    assert.equal(back.code, 0, back.err);
+    assert.deepEqual(back.json.questions.map((q) => q.question), [push.data.question]);
+    assert.equal(cardWrites(lapsed).length, 0);
+  });
+});
+
+test('a lineage hold becomes one question card naming the kits and the first paths, made once', async () => {
+  await inHome(async () => {
+    const paths = ['skills/a/SKILL.md', 'skills/b/SKILL.md', 'skills/c/SKILL.md', 'skills/d/SKILL.md', 'skills/e/SKILL.md', 'skills/f/SKILL.md', 'skills/g/SKILL.md'];
+    const hold = makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: paths.map((p) => ({ upstream: 'superpowers', path: p })) }, now: () => T(3) });
+    const helper = fakeHelper({ events: [hold] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'question');
+    assert.equal(card.line, null);
+    assert.equal(card.event, hold.id);
+    const [what, why] = card.question.split('\n');
+    assert.match(what, /superpowers/);
+    assert.ok(what.includes('skills/e/SKILL.md, and 2 more'), what);
+    assert.ok(!what.includes('skills/f/SKILL.md'), what);
+    assert.match(what, /held/);
+    assert.match(why, /next session/);
+    assert.ok(card.question.length <= CARD.chars);
+    assert.deepEqual(cardProblems(card.question), []);
+    assert.deepEqual(out.json.questions.map((q) => q.question), [card.question]);
+    // Made once: the next visit has a card for that hold already, even once it is answered.
+    await run(helper, ['cards']);
+    assert.equal(cardWrites(helper).length, 1);
+    // The manifest that couldn't be read is said so.
+    const unread = fakeHelper({ events: [makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [{ upstream: null, path: 'lineage/manifest.json' }] }, now: () => T(3) })] });
+    await run(unread, ['cards']);
+    const [manifest] = cardWrites(unread);
+    assert.match(manifest.question.split('\n')[0], /can't be read/);
+    assert.deepEqual(cardProblems(manifest.question), []);
+  });
+});
+
+test('under STOP neither a gate card nor a hold card is made', async () => {
+  await inHome(async () => {
+    const hold = makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] }, now: () => T(3) });
+    const helper = fakeHelper({ stop: true, events: [EXPORT, hold, gateAsks(APPROVE_ASK), gateAsks({ ...PUSH_ASK, pr: 8 })] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(out.json.questions.map((q) => q.header), ['Lift STOP']);
+    assert.deepEqual(helper.writes(), []);
+    assert.equal(helper.calls.filter(([name]) => name === 'prState').length, 0);
+  });
+});
+
 test('card fills a pull request\'s head and records the card once', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
@@ -307,6 +484,10 @@ test('card refuses an answer card, input that is not JSON and a card the compose
     const answer = await run(helper, ['card'], JSON.stringify({ ...PRODUCT(1), kind: 'answer', target: { questionId: 'q-export-csv-1' } }));
     assert.equal(answer.code, 1);
     assert.match(answer.err, /cards/);
+    // Nor a card tied to a record of the build's, which `cards` makes once (a lineage hold's).
+    const tied = await run(helper, ['card'], JSON.stringify({ ...PRODUCT(1), event: 'e-hold' }));
+    assert.equal(tied.code, 1);
+    assert.match(tied.err, /cards/);
     const notJson = await run(helper, ['card'], 'not json');
     assert.equal(notJson.code, 1);
     assert.match(notJson.err, /JSON/);

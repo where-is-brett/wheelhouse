@@ -8,14 +8,14 @@ import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
-import { confirmLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -921,5 +921,51 @@ test('a card written before cards carried options closes on any answer but a put
     const old = legacyCard('t002', 1, { title: 'Pick a shape' });
     assert.deepEqual(build([old, ev('card-answer', 2, { question: 'Pick a shape', label: 'Not now' })]).waiting.map((c) => c.id), [old.id]);
     assert.deepEqual(build([old, ev('card-answer', 2, { question: 'Pick a shape', label: 'Round' })]).waiting, []);
+  });
+});
+
+test('the click the merge gate waits for: the latest gate-asks of each pull request, its card, when it was asked and clicked', async () => {
+  await withHome(() => {
+    const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
+    const MERGE = '1234567890abcdef1234567890abcdef12345678';
+    const asks = (n, data) => ev('gate-asks', n, { work: 'export-csv', pr: 7, ...data });
+    const approve = asks(1, { ask: 'approval', sha: HEAD });
+    const push = asks(2, { pr: 8, ask: 'ci-push', sha: MERGE, branch: 'wh/x' });
+    const line = approvalLine(7, HEAD);
+    // Nothing yet: the line its card would carry, and no card, asking or click.
+    assert.deepEqual(build([approve, push]).gateAsks, {
+      7: { id: approve.id, at: approve.at, data: approve.data, line, card: null, askedAt: null, clickedAt: null },
+      8: { id: push.id, at: push.at, data: push.data, line: ciPushLine('wh/x', MERGE), card: null, askedAt: null, clickedAt: null },
+    });
+    // Its card, the latest asked record naming it, and a verified approval of that pull request at that commit.
+    const card = ev('card', 3, cardData(`What this is: #7.\n${line}`, { line }));
+    const handed = [ev('asked', 4, { cards: [card.id] }), ev('asked', 6, { cards: ['other', card.id] }), ev('asked', 7, { cards: ['other'] })];
+    const approval = ev('approval', 8, { pr: 7, commit: HEAD, words: 'Approve', question: 'as shown' });
+    const elsewhere = [ev('approval', 9, { pr: 7, commit: MERGE, words: 'Approve', question: 'as shown' }), unsigned(ev('approval', 9, { pr: 7, commit: HEAD, words: 'Approve', question: 'x' }))];
+    const seven = build([approve, card, ...handed, approval, ...elsewhere]).gateAsks[7];
+    assert.deepEqual([seven.card, seven.askedAt, seven.clickedAt], [card.id, T(6), T(8)]);
+    // A CI push is clicked by a verified ci-push action naming its branch and commit.
+    const pushed = [click(5, { action: 'ci-push', branch: 'wh/x', sha: MERGE, label: 'Push it' }), click(6, { action: 'ci-push', branch: 'wh/x', sha: MERGE, label: 'Push it' })];
+    const others = [click(9, { action: 'ci-push', branch: 'wh/y', sha: MERGE, label: 'Push it' }), unsigned(click(9, { action: 'ci-push', branch: 'wh/x', sha: MERGE, label: 'Push it' }))];
+    assert.equal(build([push, ...pushed, ...others]).gateAsks[8].clickedAt, T(6));
+    // A later record for the same pull request takes the earlier one's place: the gate waits for one click at a time.
+    const later = asks(9, { ask: 'ci-push', sha: MERGE, branch: 'wh/x' });
+    assert.deepEqual(build([approve, later]).gateAsks[7].id, later.id);
+    assert.deepEqual(build([]).gateAsks, {});
+  });
+});
+
+test('each lineage hold, with the card made for it', async () => {
+  await withHome(() => {
+    const hold = (n) => ev('lineage-hold', n, { at: T(n), mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] });
+    const [first, second] = [hold(1), hold(2)];
+    assert.deepEqual(build([first, second]).lineageHolds, [
+      { id: first.id, at: first.at, data: first.data, card: null },
+      { id: second.id, at: second.at, data: second.data, card: null },
+    ]);
+    const card = ev('card', 3, cardData('What this is: the kits differ.', { kind: 'question', event: first.id }));
+    // Answered or not, the card stands for its hold.
+    const answered = ev('card-answer', 4, { card: card.id, label: 'Leave it for now' });
+    assert.deepEqual(build([first, second, card, answered]).lineageHolds.map((h) => h.card), [card.id, null]);
   });
 });

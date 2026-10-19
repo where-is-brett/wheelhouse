@@ -110,7 +110,8 @@ const PLAIN_SHAPES = {
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts'] },
+  // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
@@ -202,6 +203,7 @@ function checkPlain(kind, data) {
     if (data.importance !== undefined && !Number.isFinite(data.importance)) bad('has an importance that is not a number');
     optionalText('topic');
     optionalText('recommend');
+    optionalText('event');
     if (data.concepts !== undefined && !(Array.isArray(data.concepts) && data.concepts.every(isText))) bad('has concepts that are not a list of text');
   } else if (kind === 'reversal') {
     text('topic');

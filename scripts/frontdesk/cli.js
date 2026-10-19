@@ -3,7 +3,8 @@
 // JSON on standard input where a command takes it:
 //   cards           this visit's cards, as AskUserQuestion's input, and how many are left; first
 //                   it makes an answer card for each open question from the build that no waiting
-//                   card asks yet. Under STOP, the Lift STOP card alone
+//                   card asks yet, the card for each click the merge gate waits for, and one for
+//                   each lineage hold. Under STOP, the Lift STOP card alone
 //   card            composes one card from the composer's input and records it ({ question, id })
 //   again <n>       the card the board numbers n, to ask again
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON
@@ -27,6 +28,7 @@ import { pathToFileURL } from 'node:url';
 import { helperClient } from '../host/helper-client.js';
 import { composeCard, answerInput, PART_LABELS } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
+import { gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS } from '../settings/catalogue.js';
@@ -208,17 +210,97 @@ function answerCard(id, data, views, words) {
   throw refusal;
 }
 
+// The card for a click the merge gate waits for, naming the work by its title, or by its id when
+// it has none or the card won't carry the title (the first part may name no other pull request or
+// commit than the set line's).
+function gateCard(entry, views, words) {
+  const work = entry.data.work;
+  const title = flat(views.work?.[work]?.work?.data?.title);
+  let refusal = null;
+  for (const name of [...new Set([title || work, work, 'this work'])]) {
+    try {
+      return composePlain(gateInput(entry, name), words);
+    } catch (error) {
+      refusal ??= error;
+    }
+  }
+  throw refusal;
+}
+
+// A lineage hold's card, naming the first paths that differ, or only how many when they make the
+// card too long.
+function holdCard(hold, words) {
+  try {
+    return composePlain(holdInput(hold), words);
+  } catch {
+    return composePlain(holdInput(hold, { short: true }), words);
+  }
+}
+
+// Whether the pull request a gate-asks names still waits for its click, as the host says (see
+// stillWaits). A read that fails says it does: asking is the safe side.
+async function gateStillWaits(client, cwd, entry) {
+  try {
+    const got = await client.prState({ cwd, number: entry.data.pr });
+    return got?.ok === true ? stillWaits(entry, got.result) : true;
+  } catch {
+    return true;
+  }
+}
+
+// The cards the build loop's records call for (rulings F71, F72): for each click the merge gate
+// waits for, its approval or CI push card, made once, unless the host says the pull request has
+// moved on, and asked again when R121 says so (gateAsksDue); and a question card for each lineage
+// hold, made once. Resolves with { made, again }: how many cards were recorded, and the ids of the
+// cards to put back on this visit. What couldn't be made goes into `problems`.
+async function buildLoopCards({ client, cwd, views, words, now, problems }) {
+  let made = 0;
+  const again = new Set();
+  for (const due of gateAsksDue(views, now)) {
+    const { pr } = due.entry.data;
+    if (!(await gateStillWaits(client, cwd, due.entry))) continue;
+    if (due.again !== undefined) {
+      again.add(due.again);
+      continue;
+    }
+    let card;
+    try {
+      ({ card } = gateCard(due.entry, views, words));
+    } catch (error) {
+      problems.push(`The click pull request #${pr} waits for couldn't be made a card: ${error.message}`);
+      continue;
+    }
+    try {
+      await write(client, cwd, 'card', card);
+      made += 1;
+    } catch (error) {
+      problems.push(`The card for pull request #${pr} wasn't recorded: ${error.message}`);
+    }
+  }
+  for (const hold of holdsDue(views)) {
+    try {
+      await write(client, cwd, 'card', holdCard(hold, words).card);
+      made += 1;
+    } catch (error) {
+      problems.push(`The card for the lineage hold ${hold.id} wasn't made: ${error.message}`);
+    }
+  }
+  return { made, again };
+}
+
 // This visit's cards: { questions, left }, and `problems` when something couldn't be done. An open
-// question from the build that no waiting card asks gets its answer card first. The cards handed
-// out are recorded as asked, so a card dismissed with no answer isn't offered on every turn. A
-// write the helper refuses is a problem, not a failure: the cards waiting are still given. Under
-// STOP the visit's one card is Lift STOP: the helper writes nothing, so no answer card is made, and
-// the cards waiting stay on the board, counted in `left`, for the visit after STOP is lifted.
+// question from the build that no waiting card asks gets its answer card first, and the build
+// loop's records theirs (buildLoopCards). The cards handed out are recorded as asked, so a card
+// dismissed with no answer isn't offered on every turn. A write the helper refuses is a problem,
+// not a failure: the cards waiting are still given. Under STOP the visit's one card is Lift STOP:
+// the helper writes nothing, so no card is made, and the cards waiting stay on the board, counted
+// in `left`, for the visit after STOP is lifted.
 export async function cards({ client, cwd, now }) {
   const problems = [];
   let { views, stop } = await viewsOf(client, cwd);
   const words = await wordsOf(client, views, now);
   const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
+  const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   let made = 0;
   for (const [id, entry] of Object.entries(isPlain(views.questions) && !stop ? views.questions : {})) {
     if (!isPlain(entry) || entry.answer || existingCard(views, answerLine(id)) !== null) continue;
@@ -236,8 +318,17 @@ export async function cards({ client, cwd, now }) {
       problems.push(`The card for question ${id} wasn't recorded: ${error.message}`);
     }
   }
-  if (made > 0) ({ views } = await viewsOf(client, cwd));
-  const chosen = cardsForVisit(views, { room: lift === null ? CARD.questions : 0 });
+  let again = new Set();
+  if (!stop) {
+    const built = await buildLoopCards({ client, cwd, views, words, now: at, problems });
+    made += built.made;
+    again = built.again;
+  }
+  // A card put back that no longer waits (it was decided) is put back from its card event.
+  const decided = [...again].some((id) => !(Array.isArray(views.waiting) ? views.waiting : []).some((c) => c?.id === id));
+  let events = [];
+  if (made > 0 || decided) ({ views, cards: events } = await viewsOf(client, cwd, { cards: decided }));
+  const chosen = cardsForVisit(withPutBack(views, again, events), { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...withProblems(problems) };
 }
@@ -259,6 +350,7 @@ function topicOf(given) {
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
+  if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
   const topic = input.topic === undefined ? undefined : topicOf(input.topic);
   const { views } = await viewsOf(client, cwd);
   let target = input.target;

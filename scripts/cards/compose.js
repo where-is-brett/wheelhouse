@@ -236,7 +236,9 @@ function offered(kind, given, { build = false, target } = {}) {
 // `because` is a clause after "because" ("the checks passed"); a trailing full stop is dropped.
 // `what` must name what the set line names (see sameThing). `glossary` (optional) is the glossary
 // whose terms found in the five parts and the checks line become the card's concepts when
-// `concepts` isn't given; it defaults to the starter's.
+// `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
+// the card is made from, which the card keeps so it is made once: a card with no set line (a
+// lineage hold's) is tied to its record by it, as an answer card is by its line.
 export function composeCard(input) {
   const kind = input?.kind;
   if (!CARD_KINDS.includes(kind)) throw new Error('A card needs its kind to be one the front desk knows');
@@ -256,6 +258,7 @@ export function composeCard(input) {
     fail(kind, 'concepts', 'must be a list of terms');
   }
   if (kind === 'question' && input.target !== undefined) fail(kind, 'target', 'is not needed: a product question has no set line');
+  if (input.event !== undefined && !(typeof input.event === 'string' && /^\S+$/.test(input.event))) fail(kind, 'event', 'must be the id of the record the card is made from');
 
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
@@ -298,6 +301,7 @@ export function composeCard(input) {
     ...(input.importance === undefined ? {} : { importance: input.importance }),
     ...(topic === undefined ? {} : { topic }),
     concepts: [...(input.concepts ?? termsIn(explained.join('\n'), input.glossary ?? glossaryOf({})))],
+    ...(input.event === undefined ? {} : { event: input.event }),
   };
   return { question, card };
 }

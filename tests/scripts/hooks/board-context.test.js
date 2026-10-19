@@ -432,6 +432,34 @@ const question = (id) => ({
   options: [{ label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }], recommendation: 'Tab', level: 2,
 });
 
+test('the count takes in the cards the build loop\'s records call for: the gate\'s clicks and lineage holds', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    const entry = (pr, over = {}) => ({
+      id: `g${pr}`, at: '2026-10-19T11:58:00.000Z', data: { work: 'export-csv', pr, ask: 'approval', sha: 'a'.repeat(40) },
+      line: `Approve pull request #${pr} at commit aaaaaaaaaaaa`, card: null, askedAt: null, clickedAt: null, ...over,
+    });
+    const hold = (id, card = null) => ({ id, at: '2026-10-19T11:00:00.000Z', data: { at: '2026-10-19T11:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] }, card });
+    put(viewFile('waiting'), [{ id: 'c9', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }]);
+    put(viewFile('gateAsks'), {
+      // No card yet: one to make.
+      7: entry(7),
+      // Approved already, and a card made and asked within the window: nothing.
+      8: entry(8, { clickedAt: '2026-10-19T11:59:00.000Z' }),
+      9: entry(9, { card: 'c9', askedAt: '2026-10-19T11:59:00.000Z' }),
+    });
+    put(viewFile('lineageHolds'), [hold('h1'), hold('h2', 'c2')]);
+    assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(2));
+    // Its card asked long ago and the gate-asks older than the window: asked again (ruling R121).
+    put(viewFile('gateAsks'), { 9: entry(9, { at: '2026-10-19T11:00:00.000Z', card: 'c9', askedAt: '2026-10-19T11:01:00.000Z' }) });
+    put(viewFile('lineageHolds'), []);
+    assert.equal(contextOf(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z')), cardsLine(1));
+    // Finished work asks nothing more.
+    put(viewFile('reports'), { 'export-csv': { data: { work: 'export-csv', outcome: 'merged' } } });
+    assert.equal(await run(repo, 'And then?', '2026-10-19T12:02:00.000Z'), undefined);
+  });
+});
+
 test('under STOP the line announces the one Lift STOP card that `cli.js cards` puts first, whatever else waits', async () => {
   await withProject(async ({ repo }) => {
     markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });

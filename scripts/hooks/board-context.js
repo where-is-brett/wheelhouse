@@ -54,6 +54,7 @@ import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js'
 import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { existingCard } from '../cards/visit.js';
+import { gateAsksDue, holdsDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { answerLine, confirmLine } from '../state/card-lines.js';
 import { listEvents } from '../state/events.js';
@@ -201,17 +202,24 @@ function inPlainWords(make, room, words) {
 
 // How many cards `cli.js cards` would hand out now, from the views on disk: the waiting cards no
 // visit has handed out, and the open questions from the build that no waiting card asks yet and
-// that the composer can make a card of, which it makes cards of first. At most one call's worth.
-// Under STOP, the one Lift STOP card.
-function cardsToAsk(project) {
+// that the composer can make a card of, which it makes cards of first; then the cards the build
+// loop's records call for (scripts/cards/build-loop.js): each click the merge gate waits for whose
+// card is to be made or asked again, and each lineage hold with no card. Whether a pull request
+// has moved on is the host's to say, which `cli.js cards` asks and this doesn't, so for a while
+// this may count a gate card that `cards` then doesn't make. At most one call's worth. Under STOP,
+// the one Lift STOP card.
+function cardsToAsk(project, at) {
   if (stopState().on) return 1;
-  const views = localViews(project, ['waiting', 'questions']) ?? {};
+  const views = localViews(project, ['waiting', 'questions', 'gateAsks', 'lineageHolds', 'reports']) ?? {};
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  const fresh = waiting.filter((card) => card.asked === null || card.asked === undefined).length;
+  const fresh = new Set(waiting.filter((card) => card.asked === null || card.asked === undefined).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
     .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null
       && questionProblem(entry.question?.data) === null).length;
-  return Math.min(CARD.questions, fresh + questions);
+  const gate = gateAsksDue(views, at);
+  for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
+  const made = gate.filter((due) => due.make).length + holdsDue(views).length;
+  return Math.min(CARD.questions, fresh.size + questions + made);
 }
 
 // What `start` gives within `ms`, or null when it throws or is late.
@@ -356,7 +364,7 @@ export async function decide(input, deps = {}) {
     if (!command && due && !attempt(() => stopState().on, true)) {
       await within(() => learn({ project, cwd: input.cwd, client, at, boardAsks: visits.boardAsks }), learnWaitMs);
     }
-    const count = attempt(() => cardsToAsk(project), 0);
+    const count = attempt(() => cardsToAsk(project, at), 0);
     const cards = count > 0 ? cardsLine(count) : null;
     const reserve = cards === null ? 0 : cards.length + 2;
     const built = want

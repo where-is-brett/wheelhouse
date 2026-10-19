@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
+import { approvalLine, ciPushLine } from './card-lines.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -44,6 +45,45 @@ export function latestFor(viewsMap, pr) {
   if (!commits) return null;
   const all = Object.values(commits).sort(byOrder);
   return all.length > 0 ? all[all.length - 1] : null;
+}
+
+// The click the merge gate waits for, by pull request (ruling R117): the latest `gate-asks` record
+// for each, with the set line of the card that asks for it, the latest card carrying that line
+// (its id, or null), when a visit last handed that card out, and when the click was made: the
+// latest verified approval of the pull request at that commit, or verified CI push of that branch
+// at that commit. A later record for a pull request takes the place of an earlier one, since the
+// gate waits for one click at a time. The front desk makes and asks the cards from this (ruling F72).
+function gateAsksOf(sorted, { enrolled, approvals, handedOut }) {
+  const cards = sorted.filter((e) => e.kind === 'card');
+  const pushes = sorted.filter((e) => e.kind === 'action' && e.data?.action === 'ci-push' && verify(e, enrolled));
+  const out = {};
+  for (const e of sorted) {
+    const d = e.data;
+    if (e.kind !== 'gate-asks' || !Number.isInteger(d?.pr) || typeof d.sha !== 'string') continue;
+    let line;
+    let clicked;
+    if (d.ask === 'approval') {
+      line = approvalLine(d.pr, d.sha);
+      clicked = approvals[String(d.pr)]?.[d.sha];
+    } else if (d.ask === 'ci-push' && isPlainKey(d.branch)) {
+      line = ciPushLine(d.branch, d.sha);
+      clicked = pushes.filter((a) => a.data.branch === d.branch && a.data.sha === d.sha).at(-1);
+    } else {
+      continue;
+    }
+    const card = cards.filter((c) => c.data?.line === line).at(-1);
+    const asked = card === undefined ? undefined : handedOut.filter((h) => h.data.cards.includes(card.id)).at(-1);
+    out[String(d.pr)] = { id: e.id, at: e.at, data: d, line, card: card?.id ?? null, askedAt: asked?.at ?? null, clickedAt: clicked?.at ?? null };
+  }
+  return out;
+}
+
+// The lineage holds the session start recorded (ruling R146), in order, each with the card made for
+// it (its id, or null): a card names the hold it was made from by its `event` (ruling F71).
+function lineageHoldsOf(sorted) {
+  const cards = sorted.filter((e) => e.kind === 'card');
+  return sorted.filter((e) => e.kind === 'lineage-hold' && Array.isArray(e.data?.mismatches))
+    .map((e) => ({ id: e.id, at: e.at, data: e.data, card: cards.find((c) => c.data?.event === e.id)?.id ?? null }));
 }
 
 // The events with an id no other event carries, in order, and a line for each repeated one: an id
@@ -339,6 +379,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
+  const gateAsks = gateAsksOf(sorted, { enrolled, approvals, handedOut });
+  const lineageHolds = lineageHoldsOf(sorted);
 
   // Launch blockers, shortcuts taken and decisions told.
   const blockers = latestPerKey(sorted.filter((e) => e.kind === 'blocker'), (e) => e.data?.key);
@@ -394,6 +436,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     decisions,
     shown,
     keptAsIs,
+    gateAsks,
+    lineageHolds,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,

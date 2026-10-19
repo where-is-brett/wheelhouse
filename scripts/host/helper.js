@@ -54,6 +54,7 @@ import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } f
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
+import { CLICK_MS } from '../lib/core-numbers.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
@@ -74,7 +75,6 @@ const PROBE_MS = 1000;
 const PIPE = /^\\\\[.?]\\pipe\\/i;
 // Git for Windows reads "/dev/null" as its null device too.
 const NO_FILE = '/dev/null';
-const CLICK_MS = 10 * 60 * 1000;
 // A restore pull request may be merged under STOP for a day after the director's step 3 click.
 const RESTORE_MS = 24 * 60 * 60 * 1000;
 const CONTAIN_MS = 10 * 60 * 1000;

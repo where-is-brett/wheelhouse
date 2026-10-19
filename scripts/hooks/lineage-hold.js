@@ -1,18 +1,20 @@
 // scripts/hooks/lineage-hold.js
 // While a Wheelhouse project's lineage hold file is there (the session start wrote it because
 // the installed upstream skills differ from Wheelhouse's manifest), lets only reading, halting
-// work already running, the runbook and the lineage check through, each command with nothing
-// chained, piped or redirected. The check (`node <pluginRoot>/scripts/lineage/check.js
-// [projectDir]`) only reads and says what still differs; the hold lifts at the next session
-// start whose check matches (ruling R145). As under STOP (stop-guard.js), the halting tools and
-// the runbook stay open: each runbook step but STOP itself needs the director's signed click,
-// and an incident during a hold must still be contained.
+// work already running, the runbook, the lineage check and the front desk's reading commands
+// through, each command with nothing chained, piped or redirected. The check (`node
+// <pluginRoot>/scripts/lineage/check.js [projectDir]`) only reads and says what still differs; the
+// hold lifts at the next session start whose check matches (ruling R145). As under STOP
+// (stop-guard.js), the halting tools and the runbook stay open: each runbook step but STOP itself
+// needs the director's signed click, and an incident during a hold must still be contained. The
+// front desk's command runs in exactly the forms STOP lets through (isFrontDeskRead, ruling F70):
+// `cards` is how the hold's own card reaches the director, and `record`, `card` and `review` stay held.
 // A guard: a throw refuses (hooks.json, onFailure block).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { answer, runAndExit, projectOf } from './kit.js';
-import { HALT_TOOLS, READ_TOOLS, isRunbook, scriptArguments, pluginRoots } from './stop-guard.js';
+import { HALT_TOOLS, READ_TOOLS, isFrontDeskRead, isRunbook, scriptArguments, pluginRoots } from './stop-guard.js';
 import { isHeld } from '../lineage/check.js';
 import { projectForFolder } from '../lib/projects.js';
 import { stateDir } from '../lib/paths.js';
@@ -68,7 +70,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   if (input.tool_name === 'Bash') {
     const roots = pluginRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;
-    if (isCheck(command, roots, platform) || isRunbook(command, roots, platform)) return undefined;
+    if (isCheck(command, roots, platform) || isRunbook(command, roots, platform) || isFrontDeskRead(command, roots, platform)) return undefined;
   }
   return answer.deny(HELD);
 }

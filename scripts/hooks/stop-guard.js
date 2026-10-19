@@ -63,14 +63,14 @@ function isFeatureRead(command, pluginRoots, platform) {
 // `explain <term>` (one to four words of letters and digits, a word's parts joined by hyphens) and
 // `preview <pull request>`. `cards` and `again` record which cards they handed out, and under STOP
 // the helper refuses that write, so the cards are still given. `card` and `record` write, so they
-// stay refused, as does every other form.
+// stay refused, as does every other form. The lineage hold lets the same forms through (ruling F70).
 const VIEW_NAMES = ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels'];
 const COUNT = /^[1-9][0-9]{0,8}$/;
 const TERM = /^[\p{L}\p{N}]+(?:[ -][\p{L}\p{N}]+)*$/u;
 // A request's words for `similar`, quoted or not: they start with a letter or digit and hold only
 // letters, digits, spaces and plain punctuation, nothing a shell would expand or read as a comment.
 const REQUEST = /^[\p{L}\p{N}][\p{L}\p{N} ,.:'’"!?\/@%+=-]*$/u;
-function isFrontDeskRead(command, pluginRoots, platform) {
+export function isFrontDeskRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/frontdesk/cli.js');
   if (args === null || args.length === 0) return false;
   const [name, ...rest] = args;

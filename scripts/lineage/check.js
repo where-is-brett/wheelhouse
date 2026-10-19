@@ -146,7 +146,8 @@ export function holdEvent(at, mismatches) {
 
 const shown = (relative) => ({ '*': 'not installed', '@commit': 'another commit' }[relative] ?? relative);
 
-function named(paths) {
+// The first NAMED_PATHS of an upstream's paths as the warning names them, then "and N more".
+export function namedPaths(paths) {
   const list = paths.slice(0, NAMED_PATHS).map(shown);
   if (paths.length > NAMED_PATHS) list.push(`and ${paths.length - NAMED_PATHS} more`);
   return list.join(', ');
@@ -164,7 +165,7 @@ export function warningLines(mismatches, { kept = true } = {}) {
   if (mismatches.some((m) => m.upstream === null)) return [kept ? MANIFEST_UNREADABLE : MANIFEST_UNREADABLE_NOT_HELD];
   const byUpstream = new Map();
   for (const m of mismatches) byUpstream.set(m.upstream, [...(byUpstream.get(m.upstream) ?? []), m.path]);
-  return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${named(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
+  return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${namedPaths(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
 }
 
 // Writes the session's provenance: what it runs on, and whether the fingerprints matched.

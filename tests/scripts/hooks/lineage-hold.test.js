@@ -182,6 +182,27 @@ test('the check command and the runbook are let through; the check only reads, a
   });
 });
 
+test('while held, the front desk\'s reading commands run, as under STOP; its writing commands and edits stay held', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    const cli = `node ${PLUGIN}/scripts/frontdesk/cli.js`;
+    for (const command of [
+      `${cli} cards`, `${cli} again 2`, `${cli} preview 12`, `${cli} views waiting`, `${cli} explain pull request`,
+      `${cli} similar`, `${cli} similar "Could we export the orders as a spreadsheet?"`,
+    ]) {
+      assert.equal(await decide(bash(main, command), deps(home)), undefined, command);
+    }
+    for (const command of [
+      `${cli} record idea`, `${cli} record ruling`, `${cli} card`, `${cli} review`, `${cli} cards now`, `${cli} views secrets`,
+      `${cli} cards && rm -rf x`, `${cli} record idea <<'EOF'`, `node /other/root/scripts/frontdesk/cli.js cards`,
+    ]) {
+      assert.ok(denied(await decide(bash(main, command), deps(home))), command);
+    }
+    assert.ok(denied(await decide(call(main, 'Edit', { file_path: path.join(main, 'x.js') }), deps(home))));
+  });
+});
+
 test('the check script runs on its own, names what is missing, and writes nothing', async () => {
   await withHome(async (home) => {
     const main = makeProject();
