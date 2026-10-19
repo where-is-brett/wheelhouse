@@ -31,6 +31,9 @@ import { writeJsonFile } from '../watcher/waker.js';
 
 // How long a shape read from the default branch is kept.
 export const SHAPE_FRESH_MS = 10 * 60 * 1000;
+// The most wake lines watch.json keeps as `unsent`, the latest, so the file stays well inside
+// SMALL_BYTES and can always be read back.
+export const UNSENT_KEPT = 100;
 const ANSWERS = ['running', 'started', 'failed', 'not-needed'];
 const SMALL_BYTES = 64 * 1024;
 
@@ -108,15 +111,15 @@ function keepRunning(project, { spawn, pluginRoot, alive, now, env }) {
 //
 // A line counts as delivered by the waker once it is printed, so each is also kept in watch.json
 // as `unsent` until the loop has returned and the line is in the answer. A tick cut off by the
-// bridge's limit leaves its lines there, and the next tick that runs a loop hands them back
-// first (a wake may repeat). `loop` passes the observation, the waker's options, the log and the
-// runner in tests.
+// bridge's limit leaves its lines there, the latest UNSENT_KEPT of them, and the next tick that
+// runs a loop hands them back first (a wake may repeat). `loop` passes the observation, the
+// waker's options, the log and the runner in tests.
 async function oneLoop(project, { client, config, now, kept, t, loop }) {
   const leftover = strings(kept.unsent) ? kept.unsent : [];
   const lines = [];
   const print = (line) => {
     lines.push(line);
-    change(project, { unsent: [...leftover, ...lines] });
+    change(project, { unsent: [...leftover, ...lines].slice(-UNSENT_KEPT) });
   };
   const cap = 2 * Math.min(...Object.values(INTERVALS));
   const gap = since(kept.loop?.at, t);

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { watchTick, watchFile, SHAPE_FRESH_MS } from '../../../scripts/mod/watch.js';
+import { watchTick, watchFile, SHAPE_FRESH_MS, UNSENT_KEPT } from '../../../scripts/mod/watch.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { WATCH_EVERY_MS } from '../../../scripts/lib/mod-numbers.js';
@@ -262,6 +262,29 @@ test('Shape 2: lines printed by a loop cut off at the bridge\'s limit are handed
   c.move(30 * SEC);
   assert.deepEqual(await tick(runner([], 'ran')), { watcher: 'running', submit: [] });
   assert.deepEqual(JSON.parse(fs.readFileSync(watchFile(P), 'utf8')).unsent, []);
+}));
+
+test('Shape 2: watch.json keeps at most the latest UNSENT_KEPT unsent lines, so it can always be read', () => withHome(async () => {
+  await project();
+  const h = helper(config({ watcherShape: 2 }));
+  const c = clock();
+  const lines = Array.from({ length: UNSENT_KEPT + 50 }, (_, i) => `WAKE feature login-page /w/${'x'.repeat(200)}-${i}.json`);
+  const runner = (printed, ends) => async (args) => {
+    for (const line of printed) args.wakerOptions.print(line);
+    return ends === 'never' ? new Promise(() => {}) : { started: true, loops: 1 };
+  };
+  const tick = (runWatcher) => watchTick({ project: P, role: 'foreman', client: h.client, now: c.now, loop: { runWatcher } });
+  // A loop cut off at the bridge's limit after printing more lines than are kept.
+  const late = new Promise((resolve) => { setTimeout(() => resolve('late'), 50); });
+  assert.equal(await Promise.race([tick(runner(lines, 'never')), late]), 'late');
+  assert.equal(UNSENT_KEPT, 100);
+  const kept = JSON.parse(fs.readFileSync(watchFile(P), 'utf8'));
+  assert.deepEqual(kept.unsent, lines.slice(-UNSENT_KEPT));
+  assert.ok(fs.statSync(watchFile(P)).size < 64 * 1024);
+  // The next loop hands back the latest lines kept, so the file was read.
+  c.move(30 * SEC);
+  const got = await tick(runner([], 'ran'));
+  assert.deepEqual(got.submit, lines.slice(-UNSENT_KEPT).map((line) => `${FOREMAN_PROMPT_LEAD} ${line}`));
 }));
 
 test('nothing starts before the default branch\'s configuration has been read', () => withHome(async () => {
