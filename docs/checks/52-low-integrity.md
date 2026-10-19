@@ -1,0 +1,61 @@
+<!-- docs/checks/52-low-integrity.md -->
+
+# Check 52: the low-integrity runner
+
+**Answer:** Deferred — waiting for the director's Windows sitting. The probe is written and tried on the Mac against stand-ins only; no Windows output exists yet.
+
+## Question
+
+Whether a copy of Node.js labelled low with `icacls` starts at low, and its children too, or is refused by AppLocker or App Control; whether `npm test`, a `node` script and `git commit` work in a worktree labelled low with `.git/hooks`, `.git/config` and `.claude/` left at the normal level, and how much slower; whether the low process is refused writes to `~/.claude`, the plugin's folder, the Startup folder, `HKCU`'s Run key, `.git/hooks` and a second drive; what it can read of `~/.ssh`, `~/.wheelhouse`, a browser profile and git's stored credentials; whether a "no read up" label can be set on a folder with stock tools (`icacls`, PowerShell in the language mode the computer allows, or Node's built-in `node:ffi`) and then holds; and whether the low process can start a normal-level one. The answers set what Guarded's card says it holds (design section 12.2) and shape Task 6, the runner (`scripts/windows/guarded.js`, `scripts/windows/low.js`). The steps are the research's section 8.4, items 1 to 7 (`docs/research/windows-build-commands-2026-10.md`).
+
+## Tested on
+
+19 October 2026, on macOS only, which cannot answer it: the probe refuses to run off Windows. What was done there:
+
+- The pure helpers (reading `whoami /groups`, the allow-rule path form, the PowerShell command, the report lines, the build number) have tests that run on any system (`tests/probes/lib/windows.test.js`), and the helper the low process runs (`probes/52-low-integrity/low-try.js`) was run on the Mac for every operation it has.
+- The whole probe was run on the Mac once with stand-in `icacls` and `whoami` programs on the path and `--allow-off-windows`, to see that every step runs through, that git and `npm test` work in the scratch repository's worktree, and that nothing is left in the temporary folder. Those lines (writes "allowed", no lock held) say nothing about Windows.
+- The `node:ffi` call follows the Node.js documentation read that day (https://nodejs.org/api/ffi.html) and has not been run: Node 22 has no such module.
+
+Not yet run on a Windows computer, a managed one or a personal one.
+
+## Method
+
+`probes/52-low-integrity/run.js`, run with `node probes/52-low-integrity/run.js` on Windows, as a standard user, in an ordinary terminal. It prints one line per trial (`PASS`, `FAIL` or `SEEN <what>`), and cleans up after itself (see `run.md` beside it for what it makes and removes). Everything is under the temporary folder, except three uniquely named entries it asks Windows to make to see whether the low process is refused (a `.txt` file in the Startup folder, a `HKCU\...\Run` value, a scheduled task), which a normal-level step removes at the end.
+
+The trials, in the order they run, and the name each result has:
+
+1. **The computer:** `windows-build` and `mxc-build-threshold` (research 8.4 item 8), `applocker-policy-keys` (whether AppLocker rules are set), `node-version`, `probe-own-integrity`, `powershell-language-mode` (research item 6).
+2. **The low copy** (item 1): `medium-copy-starts` (a control: an unlabelled copy), `low-label-set` (`icacls <copy> /setintegritylevel L`), then either `low-node-starts-at-low` and `low-child-is-low` (`whoami /groups` shows S-1-16-4096, "Low Mandatory Level", for the copy and for a process it starts) or `low-node-refused-by-policy`.
+3. **The scratch repository** with a linked worktree on `feature/probe-one`, labelled as the plan's `labelWorktree` describes: the worktree `(OI)(CI)L`; its `.git` file, `.claude`, `.mcp.json` and `.vscode` back to `M`; `L` on the worktree's admin folder under the common folder's `worktrees/`, on `objects`, and on the feature's folders under `refs/heads/feature/` and `logs/refs/heads/feature/`; never `hooks` or `config` (`git-label-worktree`). `label-reaches-existing-files` says whether files already in the worktree become writable without `icacls /T`.
+4. **Writes** (item 3): `write-inside-worktree` (a control, should be allowed), then PASS if refused: `write-medium-folder`, `write-claude-settings-standin` (a scratch file standing in for `~/.claude/settings.json`), `write-startup-folder`, `write-hkcu-run` (`reg add` of a probe value, removed afterwards), `write-git-hooks`, `write-git-config`, `write-worktree-git-file`, `write-worktree-claude-existing`, `write-worktree-claude-new`, `write-worktree-mcp-json`, `write-worktree-vscode`. A second drive was not tried.
+5. **Reads** (item 4), all `SEEN`: markers in scratch folders standing in for `~/.wheelhouse` and `~/.ssh`, and for `~/.claude/settings.json` (`read-...-standin`). The probe never reads real secrets. `git-credential-fill-scratch` runs `git credential fill` only against an empty scratch configuration, which shows git runs at low and nothing about a real store.
+6. **A "no read up" label** (items 5 and 6): on fresh scratch folders, with a file made before the label and one after. It holds when the low process can neither list the folder nor read either file and the probe itself still can. `lock-reads-icacls` tries `/setintegritylevel` with the policy spellings `(OI)(CI)M:NR`, `M:NWNR`, `M:(NR)` and `M:NW,NR`, each without and with `/T` (the documentation shows a `Level:policy` form but does not name the read flag); `lock-reads-powershell` runs only in FullLanguage, compiling with `Add-Type` a call to `SetNamedSecurityInfoW` with the label `S:(ML;OICI;NWNR;;;ME)`; `lock-reads-ffi` runs `require('node:ffi')` and, if it loads, the same call through `node:ffi`. The probe then prints `LOCK_READS_ROUTE <icacls|powershell|ffi|none>` and `LOCK_READS_CALL <the exact call>`; the exact PowerShell script is in the log.
+7. **Git and npm at low** (item 2): `git-status-low`, `git-add-low`, `git-commit-low`, `git-commit-visible-from-medium`, `git-hooks-still-refused-after-commit`; `npm-test-low` and `npm-test-time` (a one-test package, run twice each at normal and at low, with npm's cache and `TEMP` pointed inside the labelled folder; the first run of each warms the caches).
+8. **Starting a normal process from low** (item 7): `low-cannot-schedule-task` (`schtasks /create`; if it is allowed, the task is run once to see what level its process has, then deleted). `explorer.exe` and `start` are not tried, because they open windows (`low-starts-medium-through-explorer` says so).
+
+## Evidence
+
+None from Windows yet. The lines will be pasted here, per computer, after the sitting.
+
+## What it means for the design
+
+Task 6 waits for this check. What each answer changes, in the plan's terms:
+
+- **`low-node-starts-at-low` PASS, `low-child-is-low` PASS** (and `low-label-set` PASS): Guarded is possible on that computer; `lowNode` copies `process.execPath` to `<home>/windows/low-node/node.exe` and labels it low, as the plan has it. **`low-node-refused-by-policy`, or `low-label-set` FAIL, or the copy shows a level other than low:** Guarded isn't offered on such computers. Tasks 1 to 4 stand as they are, and Task 6 is built for the computers where it works (`guardedReady` is false there, so the card never offers it). The `applocker-policy-keys` line says whether a policy is the likely reason.
+- **The write trials all PASS, with `write-inside-worktree` allowed:** the card may say what Guarded holds: writes outside the feature's worktree, and to `.git/hooks`, `.git/config`, `.claude/` and `.mcp.json`, are refused. **A FAIL on any one** removes that item from the card's claim; a FAIL on `write-medium-folder` or `write-claude-settings-standin` means the label doesn't hold writes at all and Guarded isn't offered. `write-hkcu-run` and `write-startup-folder` are what the card means by "startup folders and the registry's Run key". `write-inside-worktree` FAIL means the worktree label isn't working and `labelWorktree` must change before anything else.
+- **`label-reaches-existing-files`:** "yes" means `labelWorktree`'s plain `icacls <worktree> /setintegritylevel (OI)(CI)L` is enough. "No: needs /T" means it must pass `/T` (and `/C /Q`) on the worktree, and on the "back to medium" calls, which is slower on a large worktree; Task 6's tests and the labelling's cost note change with it.
+- **The read trials** (`read-...-standin`, all SEEN) say what the card must admit: if the markers are readable from low and no lock route holds, the card says the helper's keys folder and the credential folders stay readable by the build.
+- **`LOCK_READS_ROUTE`:** `icacls`, `powershell` or `ffi` is the route `lockReads(paths, { run })` uses, with the exact call printed in `LOCK_READS_CALL` (the PowerShell script and the `node:ffi` file are in `probes/52-low-integrity/`). The `held` result also depends on `lock-reads-...` showing the probe itself can still read the folder. **`none`:** `lockReads` returns `{ held: false }` everywhere, `keysReadHeld` is false in the self-test, and Guarded's card says the keys folder stays readable. Guarded is still offered when the writes are held, as the plan's call 7 has it. The `powershell-language-mode` and `node-version` lines record why a route was or wasn't open.
+- **`git-commit-low` PASS** with the folders in step 3 labelled: Task 6's `labelWorktree` is right as written, and local git stays inside the runner. **FAIL:** the error text on the line names what git could not write. If more of the common folder would have to be labelled low, local git stays out of the runner and keeps asking (or runs at Unattended), and Task 6 labels only the worktree; `<commonDir>/hooks` and `<commonDir>/config` are never labelled either way (`git-hooks-still-refused-after-commit` checks it). The runner's temporary files (`<worktree>/.wheelhouse/tmp/`) show up as untracked in `git status`; the probe excludes that folder in the scratch repository's `info/exclude`, and Task 6 will need the same or an ignore rule.
+- **`npm-test-low` and `npm-test-time`:** PASS and a small difference means no note is needed on the card. A large slowdown goes on the card (the time Guarded's `npm test` takes against a normal one), and the runner's 30-minute limit is revisited if low runs are many times slower. FAIL means npm needs something else redirected, which the line's error shows.
+- **`low-cannot-schedule-task`:** PASS means a low process cannot start a normal-level one through the task scheduler, and the card can say builds cannot start normal processes by that route. If it is allowed and `low-starts-medium-through-task-scheduler` shows a normal level, that is a way out of the label: the card must say Guarded stops accidents and ordinary malicious scripts, not a program written to escape it, and the design's wording of what Guarded holds (section 12.2) is revisited. Other brokers (explorer, COM servers) were not tried.
+- **`windows-build` and `mxc-build-threshold`** record the computer against research 8.4 item 8: whether Microsoft Execution Containers are available there without admin, which is the better route for the computers where Guarded is refused.
+
+## Needs the director
+
+One Windows sitting, about 20 minutes together with check 53, as a standard user, on the work computer (it is managed, which is the case that matters most) and, if it is to hand, a personal one. The run sheet is `probes/52-low-integrity/run.md`. This one takes about 6 minutes of it.
+
+- **The agent running the sitting** starts `node probes/52-low-integrity/run.js` on the computer, reads the lines, pastes them into this note's Evidence, sets the Answer and writes the card text for Tasks 2 and 6.
+- **Only the director** can be at the computer, in an ordinary (not elevated) terminal, signed in as themselves.
+
+Until then the Answer stays Deferred; Task 6 is not started, and Guarded is not offered on any computer.
