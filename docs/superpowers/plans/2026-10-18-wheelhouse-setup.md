@@ -341,11 +341,11 @@ git commit -m "Start the missing installers first, and fetch gh and glab for the
 **Interfaces:**
 - Consumes: `startDeviceSignIn`, `waitForSignIn`, `installUrl`, `installationCovers` (`scripts/host/github-app.js`, `connection.js`); `gitlabApi`, `makeProjectKey`, `checkBaseUrl` (`gitlab-key.js`); `tokenUrl`; `askSecret`; `writeKey`; `switchOnProtection`, `protectionStatus`, `readGitlabProtection`; `writeProject`; `cloneState`; `profileRemote`, `ensureProfileClone` (board-and-usage plan, Task 4); `QUICK_LINE` (board-and-usage plan, Task 11).
 - Produces:
-  - `scripts/host/app.json`: `{ clientId: string | null, slug: string | null, owner: string | null }`, the Wheelhouse organisation's app, `null` until the organisation is made and the app registered (Card 1). `appFor() -> { clientId, slug, owner, own: boolean } | null`: the person's own app (Task 8b) when they recorded one, else Wheelhouse's when set, else `null`. `narrowOffered(host) -> boolean`: GitHub when `appFor()` is not `null`; GitLab always.
+  - `scripts/host/app.json`: `{ clientId: string | null, slug: string | null, owner: string | null }`, the Wheelhouse organisation's app, `null` until the organisation is made and the app registered (Card 1). `appFor() -> { clientId, slug, owner, own: boolean } | null`: the person's own app (Task 8b) when they recorded one, else Wheelhouse's when set, else `null`. `narrowOffered(host) -> boolean`: always `true`, on GitHub as on GitLab: on GitHub their own app (Task 8b) is always possible, since the director's answer to Card 1 keeps a way in without Wheelhouse's app, even when `appFor()` is `null`. `wheelhouseAppOffered() -> boolean`: `true` only while `scripts/host/app.json` holds Wheelhouse's client ID; it gates the **Wheelhouse app** option alone.
   - `signIn({ host, run }) -> Promise<{ signedIn: boolean, user }>`: nothing when `gh` or `glab` is already signed in; otherwise their own browser sign-in, run by the helper with the director's environment. With no account yet, the card links the host's sign-up page first (design section 15, "Before starting").
   - `makeRepos({ host, owner, name, isNew, run }) -> Promise<Change[]>`: a private repository for a new product; the private profile repository `wheelhouse-profile` when `profileRemote()` is null, then `profile.json` (the shape board-and-usage Task 4 reads) and `ensureProfileClone`. Each is a `host` change, so uninstall can offer to remove it.
-  - `connectionCard({ host, locked }) -> CardInput`: on GitHub, three options (Card 1's answer): **The Wheelhouse app** (recommended, offered only while Wheelhouse's app is registered), **My own app** (Task 8b) and **Quick**, with `QUICK_LINE` as its cost; on GitLab, **Narrow** or **Quick**, as design section 11's table says. A Locked project is never offered Quick; on GitHub it is still asked which app, or skips the card when only one is offered.
-  - Narrow on GitHub: the code sign-in, keys to `writeKey('github-app')`, then the app's Install page opened, recommending the project and profile repositories, not **All repositories**; read back with `installationCovers` and said plainly.
+  - `connectionCard({ host, locked }) -> CardInput`: on GitHub, three options (Card 1's answer): **The Wheelhouse app** (recommended, offered only while `wheelhouseAppOffered()`), **My own app** (Task 8b, always offered) and **Quick**, with `QUICK_LINE` as its cost; on GitLab, **Narrow** or **Quick**, as design section 11's table says. A Locked project is never offered Quick. On GitHub it still gets the card: with both apps offered it is asked which, and with only their own app on offer (Wheelhouse's not registered) it is still shown the card, because that choice means making a GitHub App of their own, which the person agrees to on the card, never by default.
+  - Narrow on GitHub: with the app `appFor()` gives (when it gives `null`, Task 8b's route to their own app comes first), the code sign-in, keys to `writeKey('github-app')`, then the app's Install page opened, recommending the project and profile repositories, not **All repositories**; read back with `installationCovers` and said plainly.
   - Narrow on GitLab: `makeProjectKey` at Developer level; on refusal, `tokenUrl` opened and the token typed into `askSecret`, straight to `writeKey`.
   - Protection is planned here, shown on step 3's card, and switched on at the end of step 7, once the setup commit is up (Task 13): `switchOnProtection`, then `protectionStatus` read back and shown; on GitLab, "pipelines must succeed" only where the project has a pipeline, else a card (design section 12.3).
   - Then `writeProject` and `cloneState`.
@@ -356,9 +356,11 @@ git commit -m "Start the missing installers first, and fetch gh and glab for the
 test('an existing sign-in is used with no browser step', ...)
 test('a new product gets a private repository; an existing one gets none', ...)
 test('the profile repository is made once, and profile.json written in the shape the profile reads', ...)
-test('narrow on GitHub is not offered while the app is not registered', ...)
+test('the Wheelhouse app is not offered while it is not registered', ...)
+test('narrow on GitHub is always offered, through their own app when Wheelhouse\'s is not registered', ...)
 test('on GitHub the card offers the Wheelhouse app, their own app and Quick, and Locked never Quick', ...)
-test('a Locked project is narrow without a card', ...)
+test('a Locked project is never offered Quick', ...)
+test('a Locked project with only their own app on offer still gets the card', ...)
 test('a refused GitLab project key falls back to the system\'s box, never the chat', ...)
 test('GitLab pipelines must succeed only where a pipeline exists', ...)
 test('protection is read back and said as it is', ...)
@@ -383,9 +385,9 @@ git commit -m "Connect to the host at setup, quick or narrow, with the profile a
 - Consumes: Card 1's answer; check 20 (the filled-in new-app link, and the **Enable Device Flow** tick it can't fill in); `startDeviceSignIn`; `run` (the helper's `gh api`); the profile (board-and-usage plan, Task 4).
 - Produces:
   - `scripts/host/app-manifest.json`: the one description of Wheelhouse's app, used both to register Wheelhouse's own and for a person's own: `{ name, description, url, public, webhook_active: false, default_permissions: { contents: 'write', pull_requests: 'write', issues: 'write', metadata: 'read' } }`. Never Workflows, Administration or Secrets.
-  - `newAppUrl({ manifest, owner: { kind: 'user' } | { kind: 'org', login }, name }) -> string`: GitHub's new-app page (`https://github.com/settings/apps/new`, or `https://github.com/organizations/<login>/settings/apps/new`) with every field filled in by URL parameter from the manifest. *Plan's call:* GitHub's manifest flow makes a private key and a client secret and needs a page served on this computer; the URL-parameter form of the same manifest makes neither, and check 20 used it. The card names the one box GitHub can't fill in: tick **Enable Device Flow**, then **Create**.
-  - `readOwnApp({ slug, run }) -> Promise<{ clientId, slug, owner, permissions }>`: `gh api /apps/<slug>` with the director's own sign-in. Refused, and said plainly, when its permissions are more than the manifest's, or include Workflows, Administration or Secrets.
-  - `recordOwnApp({ clientId, slug, owner }) -> Change`: written to the profile's `github-app` key (so a second computer gets it), with its value before, for uninstall. `appFor()` reads it before `scripts/host/app.json`. No secret is involved: the client ID is public.
+  - `newAppUrl({ manifest, owner: { kind: 'user' } | { kind: 'org', login }, name }) -> string`: GitHub's new-app page (`https://github.com/settings/apps/new`, or `https://github.com/organizations/<login>/settings/apps/new`) with every field filled in by URL parameter from the manifest, except `public`: a person's own app is always registered with `public=false`, whatever the manifest says (Wheelhouse's own app is public, so every user can install it), so theirs can be installed only on the account that owns it. *Plan's call:* GitHub's manifest flow makes a private key and a client secret and needs a page served on this computer; the URL-parameter form of the same manifest makes neither, and check 20 used it. The card names the one box GitHub can't fill in: tick **Enable Device Flow**, then **Create**.
+  - `readOwnApp({ slug, run }) -> Promise<{ clientId, slug, owner, permissions }>`: `gh api /apps/<slug>` with the director's own sign-in. Refused, and said plainly, when its permissions are more than the manifest's, or include Workflows, Administration or Secrets. Run when the app is recorded and again before each code sign-in with it (on every computer), since the app's owner can widen its permissions on GitHub at any time; a refusal then stops the sign-in and names what grew.
+  - `recordOwnApp({ clientId, slug, owner }) -> Change`: written to the profile's `own-github-app` key (so a second computer gets it), with its value before, for uninstall. The name keeps it apart from the keys file's `github-app` entry, which holds the sign-in's keys, not the app. `appFor()` reads it before `scripts/host/app.json`. No secret is involved: the client ID is public.
   - The first code sign-in with their app checks the tick: GitHub's "device flow disabled" answer is said as "Tick Enable Device Flow on your app's page", with the page opened, and asked again.
   - The organisation choice: the card lists the person's organisations where they may make apps (`gh api /user/memberships/orgs`, admin role), and their own account.
 
@@ -393,11 +395,13 @@ git commit -m "Connect to the host at setup, quick or narrow, with the profile a
 
 ```js
 test('the new-app link carries every manifest field, for an account and for an organisation', ...)
+test('their own app is registered with public=false, whatever the manifest says', ...)
 test('the manifest asks for no Workflows, Administration or Secrets', ...)
 test('an app asking for more than the manifest is refused and named', ...)
+test('their own app is read again at each code sign-in, and a sign-in is refused once its permissions grew', ...)
 test('their own app\'s client ID wins over Wheelhouse\'s, and reaches a second computer through the profile', ...)
 test('device flow switched off is said with the page to tick, and asked again', ...)
-test('uninstall puts back the profile\'s app key', ...)
+test('uninstall puts back the profile\'s own-github-app key, and leaves the keys file\'s github-app entry to its own undo', ...)
 ```
 
 - [ ] **Step 2: Run, expect FAIL; implement; run `npm test`, expect PASS.**
@@ -746,7 +750,7 @@ Read on 19 October 2026 as the builder would, against design section 15 and the 
 
 ## Order
 
-Part 1 first: Tasks 1 to 3 in one Mac sitting, Task 4 by the agent. Tasks 5 and 6 can be built meanwhile. Then Tasks 7 to 13 in order, since each step's card follows the last; Task 8 builds against a stand-in app until the Wheelhouse organisation's app is registered (Card 1), and Task 8b follows it. Task 14 needs Tasks 6, 8, 8b and 10; Task 15 needs Tasks 5 to 13. Task 16 needs Tasks 6 to 15, Task 17 needs Tasks 5 to 16, Task 18 needs Task 17, and Task 19 is last.
+Part 1 first: Tasks 1 to 3 in one Mac sitting, Task 4 by the agent. Tasks 5 and 6 can be built meanwhile. Then Tasks 7 to 13 in order, since each step's card follows the last; Task 8 builds against a stand-in app until the Wheelhouse organisation's app is registered (Card 1), and Task 8b follows Task 8. Task 14 needs Tasks 6, 8, 8b and 10; Task 15 needs Tasks 5 to 13. Task 16 needs Tasks 6 to 15, Task 17 needs Tasks 5 to 16, Task 18 needs Task 17, and Task 19 is last.
 
 ## The director's sittings
 
@@ -754,8 +758,8 @@ Agents do every step they can (the director's standing rule, 18 October 2026). E
 
 | Sitting | Computer | Tasks | The director's part | About |
 |---|---|---|---|---|
-| 1 | Mac | 1, 2, 3 (checks 35, 36, 37) | the password twice, logging in to the throwaway account and opening Desktop, one Desktop restart, pasting the install line | 15 min |
-| 2 | Windows, when next at it | 1, 2, 4 (checks 35, 36, 38), 18 (the steps it can) | being at the computer, one Desktop restart | 15 min |
+| 1 | Mac | 1, 2, 3 (checks 35, 36, 37) | two cards (three if Trial B is asked); two `sudo` lines in Terminal with the administrator password, the throwaway user's password set and used to log in; macOS's set-up prompts and signing in to Claude there; four quits and reopens of Desktop, each followed by a new session and a pasted one-line message; one `ln -s` line in the throwaway user's Terminal; the install line with its boxes and the project scope; up to three `/reload-plugins`; logging out and back in. List: `docs/checks/35-node.md`, "Needs the director" | about 45 min of the director's steps in about 1 h 15 at the computer; up to 20 min more with the optional steps (not counting Trial B's installer, recommended skip) |
+| 2 | Windows, when next at it | 1, 2, 4 (checks 35, 36, 38), 3 if the tag is pushed, 18 (the steps it can) | two or three cards; four sessions with a pasted request or prompt; four quits and reopens of Desktop (two for the no-`node` start, two for check 36); reading out `/status`; being at the computer for check 38; check 37's install line, if run | about 25 min of the director's steps in about 45 min at the computer; check 37 adds about 10, Task 18 its own |
 | 3 | Mac | 18 (the timed run) | setup itself, timed, and the password twice | 25 min |
 
 ## After this plan
