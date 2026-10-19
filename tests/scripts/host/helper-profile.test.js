@@ -63,8 +63,9 @@ async function computer({ profile = true, shared } = {}) {
     home, now, profileRemote, stateRemote,
     client: helperClient({ address: helper.address }),
     as: (fn) => as(home, fn),
+    // Closed inside the home: work still queued then would otherwise reach the real one.
     close: async () => {
-      await helper.close();
+      await as(home, () => helper.close());
       fs.rmSync(home, { recursive: true, force: true });
       if (!shared) {
         stateRemote.cleanup();

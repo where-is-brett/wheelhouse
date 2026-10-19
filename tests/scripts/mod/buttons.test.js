@@ -8,11 +8,14 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { approvalLine, replyCode, replyCodeLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
+import { withHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
 const NOW = new Date('2026-10-18T05:00:00.000Z');
-const RULING = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW });
+// Made in a home of its own: an event names its computer, which is kept in the home, so made with
+// none it would be kept in the real ~/.wheelhouse.
+const RULING = withHome(() => makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => NOW }));
 
 const common = {
   why: 'It changes what users see, which is yours to decide at level 3.',
@@ -172,8 +175,10 @@ test('junk gives no buttons and never throws', () => {
 
 test('the Unattended card gets no button on the pane, with or without Use Guarded', () => {
   const computer = '0a1b2c3d';
-  const on = makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended' }, now: () => NOW });
-  const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'guarded', words: 'Run build commands guarded' }, now: () => NOW });
+  const [on, guarded] = withHome(() => [
+    makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended' }, now: () => NOW }),
+    makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'guarded', words: 'Run build commands guarded' }, now: () => NOW }),
+  ]);
   const plain = unattendedCardData(UNATTENDED_CARD(), on.id, computer);
   const offered = unattendedCardData(UNATTENDED_CARD({ guardedReady: true }), on.id, computer, guarded);
   // Without Guarded it has no set line, so it would otherwise be a question whose options are turns.

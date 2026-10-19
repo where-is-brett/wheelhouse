@@ -128,6 +128,8 @@ function freshFacts() {
 // repository and pull request 7 there, the profile on its own, and a helper on the home's socket.
 // `register` false leaves the project's record to the test. The test's body runs inside the
 // home, since the helper answers the bridge in this process and reads WHEELHOUSE_HOME as it does.
+// The helper is closed inside the home too: a request a bridge gave up on (its own time limit,
+// under load) is still being answered then, and outside the home it would write the real one.
 async function onComputer({ register = true } = {}, body) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const profileRemote = await makeBareRemote({ repo: 'o/profile' });
@@ -140,7 +142,6 @@ async function onComputer({ register = true } = {}, body) {
   c.register = () => writeProject(PROJECT, {
     folder, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
   });
-  let helper;
   try {
     await as(home, async () => {
       if (register) c.register();
@@ -149,16 +150,19 @@ async function onComputer({ register = true } = {}, body) {
         remoteUrl: profileRemote.url, host: 'github', repo: 'o/profile', connection: { host: 'github', mode: 'quick', project: 'o/profile' },
       }));
       freshFacts();
-      helper = await startHelper({ address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}) });
-      c.client = helperClient({ address: helper.address });
-      if (register) {
-        assert.deepEqual(await c.client.state.clone({ project: PROJECT }), { ok: true });
-        assert.equal((await projectConfig(PROJECT, c.client)).config?.watcherShape, 2, 'the configuration is read from the default branch');
+      const helper = await startHelper({ address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}) });
+      try {
+        c.client = helperClient({ address: helper.address });
+        if (register) {
+          assert.deepEqual(await c.client.state.clone({ project: PROJECT }), { ok: true });
+          assert.equal((await projectConfig(PROJECT, c.client)).config?.watcherShape, 2, 'the configuration is read from the default branch');
+        }
+        await body(c);
+      } finally {
+        await helper.close();
       }
-      await body(c);
     });
   } finally {
-    await helper?.close();
     remote.cleanup();
     profileRemote.cleanup();
   }

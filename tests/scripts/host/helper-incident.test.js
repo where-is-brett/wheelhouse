@@ -18,7 +18,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
-import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody } from '../../helpers/provenance.js';
 
@@ -291,10 +291,10 @@ test('an incident declared on another computer freezes the merge before this clo
     const home = await project(remote);
     const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
     const adapter = fakeAdapter({ 7: a });
-    // Another computer's clone of the state branch declares the incident and pushes it.
+    // Another computer, with a home of its own, declares the incident in its clone of the state branch and pushes it.
     const other = tempFolder('wh-other-');
     await g(other, 'clone', '-q', '--branch', 'wheelhouse-state', remote.url, '.');
-    const event = makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: at(500) });
+    const event = withHome(() => makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: at(500) }), { prefix: 'wh-other-home-' });
     const file = path.join(other, eventPath(event));
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
