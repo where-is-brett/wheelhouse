@@ -7,8 +7,12 @@
 //   node run.js receiver [--minutes N] [--detach]   capture server (default 30 minutes); --detach starts it
 //                                             apart from this process, so it outlives a Desktop restart
 //   node run.js stop                          stop the receiver started from this folder
-//   node run.js read                          what the receiver has seen so far
-//   node run.js settings set|unset (--user | --file <settings.json>)
+//   node run.js mark <label>                  start a new count: from now on `read` counts only
+//                                             requests that arrive after this mark
+//   node run.js read [--since <ISO time> | --all]   what the receiver has seen since the latest
+//                                             mark (or the time given, or everything)
+//   node run.js settings set|unset (--user | --file <settings.json>)   (a --file that is this
+//                                             account's own user settings counts as --user)
 //   node run.js launch-env set|unset          launchctl setenv (macOS) or user variables (Windows)
 //   node run.js show-env                      the variables as NAME=value lines (for the local environment editor)
 //   (--user and launch-env change the account they run in: on macOS only the throwaway account of
@@ -119,6 +123,12 @@ async function setup(args) {
   fs.mkdirSync(path.join(root, 'log'), { recursive: true });
   fs.mkdirSync(path.join(root, 'project'), { recursive: true });
   fs.writeFileSync(path.join(root, 'project', 'hello.txt'), 'hello from check 36\n');
+  // A folder of its own (Windows) keeps its own notes; inside check 35's folder (the Mac),
+  // the results go into check 35's notes.md instead.
+  const notes = path.join(root, 'notes.md');
+  if (path.basename(root).startsWith('wheelhouse-check36') && !fs.existsSync(notes)) {
+    fs.writeFileSync(notes, '# Check 36 notes\n\nResults of each trial, appended as they are made (see run.md).\n\n## Starting point\n\n');
+  }
   const script = path.join(root, 'run.js');
   if (path.resolve(SELF) !== script) fs.copyFileSync(SELF, script);
   for (const [from, to] of [
@@ -249,8 +259,16 @@ export function readRequests(file) {
   return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
+// The entries that arrived at or after `iso` (all of them when no time is given).
+export function since(entries, iso) {
+  if (!iso) return entries;
+  const from = Date.parse(iso);
+  if (Number.isNaN(from)) throw new Error(`--since: ${iso} is not a time (use the ISO form, e.g. 2026-10-19T01:00:00Z)`);
+  return entries.filter((e) => Date.parse(e.at) >= from);
+}
+
 export function describe(entries) {
-  if (!entries.length) return 'Points arrived: NO (the receiver has seen no requests).';
+  if (!entries.length) return 'Points arrived: NO (no requests in this count).';
   const lines = [`Points arrived: YES (${entries.length} request${entries.length === 1 ? '' : 's'}).`];
   const services = new Map();
   for (const e of entries) {
@@ -270,8 +288,38 @@ export function describe(entries) {
   return lines.join('\n');
 }
 
+// Starts a new count, so that one trial's requests are never counted as the next one's.
+function mark(args) {
+  const root = rootOf(args);
+  const state = readState(root);
+  const label = args[0] && !args[0].startsWith('--') ? args[0] : 'unnamed';
+  state.mark = { label, at: new Date().toISOString() };
+  writeState(root, state);
+  console.log(`Mark "${label}" at ${state.mark.at}: from now on "read" counts only the requests that arrive after this.`);
+}
+
 function read(args) {
-  console.log(describe(readRequests(path.join(rootOf(args), 'log', REQUESTS))));
+  const root = rootOf(args);
+  const all = readRequests(path.join(root, 'log', REQUESTS));
+  let state = {};
+  try { state = readState(root); } catch { /* no state: no mark */ }
+  let from;
+  if (args.includes('--all')) {
+    console.log('Counting every request since the receiver started.');
+  } else if (option(args, '--since')) {
+    from = option(args, '--since');
+    console.log(`Counting requests since ${from}.`);
+  } else if (state.mark) {
+    from = state.mark.at;
+  } else {
+    console.log('No mark yet: counting every request since the receiver started.');
+  }
+  const counted = since(all, from);
+  if (from && from === state.mark?.at && !option(args, '--since')) {
+    const earlier = all.length - counted.length;
+    console.log(`Counting requests since mark "${state.mark.label}" (${from}); ${earlier} earlier request${earlier === 1 ? '' : 's'} not counted.`);
+  }
+  console.log(describe(counted));
 }
 
 // ---------- user settings `env` ----------
@@ -281,6 +329,22 @@ export function settingsFile(args) {
   if (file) return path.resolve(file);
   if (!args.includes('--user')) throw new Error('Say which file: --user (this account\'s user settings) or --file <settings.json>');
   return path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'settings.json');
+}
+
+// Whether `file` is the running account's own user settings: `~/.claude/settings.json`, or
+// `$CLAUDE_CONFIG_DIR/settings.json` where that is set. Compared through the real path of the
+// folder, so a link or a `..` does not get round it.
+export function isOwnSettings(file, { env = process.env, home = os.homedir() } = {}) {
+  const real = (p) => {
+    const dir = path.dirname(path.resolve(p));
+    let resolvedDir = dir;
+    try { resolvedDir = fs.realpathSync(dir); } catch { /* not there yet */ }
+    const same = process.platform === 'win32' || process.platform === 'darwin' ? (x) => x.toLowerCase() : (x) => x;
+    return same(path.join(resolvedDir, path.basename(p)));
+  };
+  const own = [path.join(home, '.claude', 'settings.json')];
+  if (env.CLAUDE_CONFIG_DIR) own.push(path.join(env.CLAUDE_CONFIG_DIR, 'settings.json'));
+  return own.map(real).includes(real(file));
 }
 
 function canonical(value) {
@@ -321,8 +385,9 @@ async function settingsCommand(args) {
   const state = readState(root);
   const values = await probeEnv(state.port);
   if (action === 'set') {
-    if (!args.includes('--file') && args.includes('--user')) assertIntendedAccount({ args });
     const file = settingsFile(args);
+    // --user, or a --file that names the same file, changes this account's own settings.
+    if (!option(args, '--file') || isOwnSettings(file)) assertIntendedAccount({ args });
     if (state.settings?.active) throw new Error(`Already set in ${state.settings.file}; run "settings unset" first`);
     const existed = fs.existsSync(file);
     const raw = existed ? fs.readFileSync(file, 'utf8') : null;
@@ -499,7 +564,7 @@ function cleanup(args) {
 }
 
 const COMMANDS = {
-  setup, receiver, stop, read, cleanup,
+  setup, receiver, stop, mark, read, cleanup,
   settings: settingsCommand,
   'launch-env': launchEnvCommand,
   'show-env': showEnv,
@@ -509,7 +574,7 @@ const COMMANDS = {
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(SELF)) {
   const [command, ...rest] = process.argv.slice(2);
   if (!COMMANDS[command]) {
-    console.error('Usage: node run.js setup | receiver | stop | read | settings set|unset | launch-env set|unset | show-env | cli-trial | cleanup <root>');
+    console.error('Usage: node run.js setup | receiver | stop | mark <label> | read [--since <time> | --all] | settings set|unset | launch-env set|unset | show-env | cli-trial | cleanup <root>');
     process.exit(2);
   }
   try {

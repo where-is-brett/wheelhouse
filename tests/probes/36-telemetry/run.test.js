@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { addEnv, removeEnv, summarise, assertScratch, describe, probeEnv, assertIntendedAccount, THROWAWAY_ACCOUNT } from '../../../probes/36-telemetry/run.js';
+import { addEnv, removeEnv, summarise, assertScratch, describe, probeEnv, assertIntendedAccount, THROWAWAY_ACCOUNT, since, isOwnSettings } from '../../../probes/36-telemetry/run.js';
 
 const script = fileURLToPath(new URL('../../../probes/36-telemetry/run.js', import.meta.url));
 const sample = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../../fixtures/otlp-metrics.json', import.meta.url)), 'utf8'));
@@ -114,5 +114,70 @@ test('show-env prints the five variables as NAME=value', () => {
     assert.ok(lines.includes('CLAUDE_CODE_ENABLE_TELEMETRY=1'));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('read counts only the requests since the latest mark, and says how many earlier ones it left out', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-check36-test-'));
+  try {
+    const run = (...args) => execFileSync(process.execPath, [script, ...args, '--root', root], { encoding: 'utf8' });
+    run('setup');
+    const file = path.join(root, 'log', 'requests.jsonl');
+    const entry = (at, serviceName) => JSON.stringify({ at, method: 'POST', url: '/v1/metrics', serviceName, serviceVersion: '1', metrics: { 'claude_code.session.count': 1 }, tokens: {} }) + '\n';
+    fs.writeFileSync(file, entry('2026-10-19T01:00:00.000Z', 'trial-one'));
+    assert.match(run('mark', 'trial 2'), /Mark "trial 2"/);
+    assert.match(run('read'), /Points arrived: NO/);
+    assert.match(run('read'), /since mark "trial 2".*1 earlier request not counted/s);
+    fs.appendFileSync(file, entry(new Date(Date.now() + 1000).toISOString(), 'trial-two'));
+    const out = run('read');
+    assert.match(out, /Points arrived: YES \(1 request\)/);
+    assert.match(out, /trial-two/);
+    assert.ok(!out.includes('trial-one'));
+    assert.match(run('read', '--all'), /Points arrived: YES \(2 requests\)/);
+    assert.match(run('read', '--since', '2026-10-19T00:00:00.000Z'), /YES \(2 requests\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('since keeps the entries at or after the time given, and all of them with no time', () => {
+  const entries = [{ at: '2026-10-19T01:00:00.000Z' }, { at: '2026-10-19T02:00:00.000Z' }];
+  assert.equal(since(entries, '2026-10-19T01:30:00.000Z').length, 1);
+  assert.equal(since(entries, '2026-10-19T01:00:00.000Z').length, 2);
+  assert.equal(since(entries, undefined).length, 2);
+  assert.throws(() => since(entries, 'not a time'), /not a time/);
+});
+
+test('settings set --file on the account\'s own user settings is refused like --user, and writes nothing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-check36-test-'));
+  const config = path.join(root, 'config');
+  try {
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: config, HOME: root, USERPROFILE: root };
+    execFileSync(process.execPath, [script, 'setup', '--root', root], { env });
+    for (const file of [path.join(config, 'settings.json'), path.join(root, '.claude', 'settings.json'), path.join(root, '.claude', '..', '.claude', 'settings.json')]) {
+      const result = spawnSync(process.execPath, [script, 'settings', 'set', '--file', file, '--root', root], { env, encoding: 'utf8' });
+      assert.equal(result.status, 1, file);
+      assert.match(result.stderr, /Refusing/);
+      assert.ok(!fs.existsSync(file), file);
+    }
+    assert.ok(isOwnSettings(path.join(config, 'settings.json'), { env, home: root }));
+    assert.ok(!isOwnSettings(path.join(root, 'settings.json'), { env, home: root }));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('setup starts notes.md in a folder of its own, and not inside check 35\'s folder, which has its own', () => {
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-check36-test-'));
+  const check35 = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-check35-test-'));
+  try {
+    execFileSync(process.execPath, [script, 'setup', '--root', own]);
+    assert.match(fs.readFileSync(path.join(own, 'notes.md'), 'utf8'), /^# Check 36 notes/);
+    const inner = path.join(check35, 'check36');
+    execFileSync(process.execPath, [script, 'setup', '--root', inner]);
+    assert.ok(!fs.existsSync(path.join(inner, 'notes.md')));
+  } finally {
+    fs.rmSync(own, { recursive: true, force: true });
+    fs.rmSync(check35, { recursive: true, force: true });
   }
 });
