@@ -10,9 +10,10 @@
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask }
 //
-// A step may name steps it waits for (`after`, ruling R47): its apply is refused until they are
-// done, while its plan and its questions are asked as usual, so step 3's cards are asked while
-// step 2's installers run, and its Go ahead counts once they have finished.
+// A step may name steps it waits for (`after`, rulings R47 and R54): while they are unfinished, its
+// plan still asks its questions, but gives `{ wait, why }` in place of its Go-ahead card, and its
+// apply is refused, so step 3's questions are asked while step 2's installers run, and its Go
+// ahead is shown once they have finished.
 //
 // A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
 // list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules? } }`: a question it needs
@@ -71,6 +72,8 @@ export const CHANGED = 'the list has changed since the card: ask for the plan ag
 export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
 const APPLY_FIELDS = ['folder', 'step', 'hash'];
+// How long the playbook waits before asking again for a step whose Go ahead waits on another (R54).
+export const AFTER_WAIT_MS = 30 * 1000;
 const FULL_HASH = /^[0-9a-f]{64}$/;
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
 
@@ -167,15 +170,6 @@ export async function loadSteps(modulePath) {
 
 const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
 const isDone = (run, n) => typeof run?.steps?.[n]?.doneAt === 'string';
-
-// Why a step waiting for step m may not be applied yet: the installers step m started, by name,
-// while it has any (step 2, ruling R47), or that it is not done.
-function waitingOn(run, m) {
-  const tools = [...new Set((run?.changes ?? []).filter((c) => c?.step === m && c.kind === 'process' && typeof c.after?.tool === 'string').map((c) => c.after.tool))];
-  return tools.length > 0
-    ? `step ${m} is still installing: ${tools.join(', ')}; this step goes ahead once it is done`
-    : `step ${m} (${SETUP_TITLES[m]}) is not done yet; this step goes ahead once it is`;
-}
 
 // Running: clicked, not done, not failed, and not past the time a step may take.
 function runningSince(entry, now) {
@@ -275,6 +269,23 @@ export function setupRoutes({
     return step;
   }
 
+  // Why a step waiting for step m may not go ahead yet (rulings R47, R54): while step m runs, the
+  // installers it started, by name (step 2), or that it is running; once it has failed, that it did
+  // not finish; otherwise that it is not done.
+  function waitingOn(run, m) {
+    const entry = run?.steps?.[m];
+    if (runningIn(run, m)) {
+      const tools = [...new Set((run.changes ?? []).filter((c) => c?.step === m && c.kind === 'process' && typeof c.after?.tool === 'string').map((c) => c.after.tool))];
+      return tools.length > 0
+        ? `step ${m} is still installing: ${tools.join(', ')}; this step goes ahead once it is done`
+        : `step ${m} (${SETUP_TITLES[m]}) is still running; this step goes ahead once it is done`;
+    }
+    if (entry?.failed) return `step ${m} (${SETUP_TITLES[m]}) did not finish; this step goes ahead once it has been run again`;
+    return `step ${m} (${SETUP_TITLES[m]}) is not done yet; this step goes ahead once it is`;
+  }
+  // The first step this one waits for that is not done, or null.
+  const unfinishedBefore = (run, step) => stepsBefore(step).find((m) => !isDone(run, m)) ?? null;
+
   // A step's ctx: with every answer the director has given to its run's questions (ruling R31).
   const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform, answers: answersFor(runId) });
 
@@ -320,6 +331,10 @@ export function setupRoutes({
     showable(run, step.n);
     const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
     if (got.wait !== undefined) return { ok: true, wait: got.wait, why: got.why };
+    // Its questions are asked whatever, but no Go ahead is shown while a step it waits for is
+    // unfinished (ruling R54): apply would refuse it, and the click would go stale.
+    const before = got.changes ? unfinishedBefore(run, step) : null;
+    if (before !== null) return { ok: true, wait: AFTER_WAIT_MS, why: waitingOn(run, before) };
     // The card as the director will see it: its input cleaned before it is composed, so the
     // composer judges the text that is sent (its length too), and the stored card is the one sent
     // (the helper cleans what it sends again, which changes nothing). The set line holds no address.
@@ -362,7 +377,8 @@ export function setupRoutes({
     startable(run);
     // A step that waits for others (ruling R47) is not applied before they are done, and its click
     // is not used, so it still counts once they are; its plan and questions were asked meanwhile.
-    for (const m of stepsBefore(step)) if (!isDone(run, m)) refuse(waitingOn(run, m));
+    const before = unfinishedBefore(run, step);
+    if (before !== null) refuse(waitingOn(run, before));
     // The list as it is now, worked out by the helper: the request's hash must name it, and the
     // card this folder was shown for the step must have shown it.
     const ctx = ctxFor(run.folder, step.n, run.id);

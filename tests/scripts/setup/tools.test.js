@@ -36,8 +36,9 @@ function machine(state) {
   const s = { platform: 'darwin', clt: true, paths: {}, versions: {}, installerOpen: false, installs: 0, opened: [], unpacked: [], calls: [], ...state };
   const answer = (stdout, code = 0) => ({ code, stdout, stderr: '' });
   const toolOf = (file) => Object.entries(s.paths).find(([, p]) => p === file)?.[0];
-  s.run = async (file, args = []) => {
-    s.calls.push({ file, args: [...args] });
+  s.run = async (file, args = [], options = {}) => {
+    s.calls.push({ file, args: [...args], cwd: options.cwd, env: options.env });
+    s.looked?.(file, args);
     const name = file.split(/[\\/]/).pop();
     if (name === 'which' || name === 'where') return s.paths[args[0]] ? answer(`${s.paths[args[0]]}\n`) : answer('', 1);
     if (name === 'xcode-select' && args[0] === '-p') return s.clt ? answer('/Library/Developer/CommandLineTools\n') : answer('', 2);
@@ -49,13 +50,15 @@ function machine(state) {
     if (name === 'pgrep') return s.installerOpen && args[1] === MAC_INSTALLER ? answer('4242\n') : answer('', 1);
     if (name === 'tasklist') return s.installerOpen ? answer(`"${s.installerImage}","${args[1].split(' ').pop()}","Console","1","40,000 K"\n`) : answer('INFO: No tasks are running which match the specified criteria.\n');
     if (name === 'powershell.exe') {
-      s.opened.push({ args: [...args], folder: s.watchFolder?.() });
+      s.opened.push({ args: [...args], env: options.env, folder: s.watchFolder?.() });
       s.installerOpen = true;
       return answer('5150\n');
     }
     if (/^tar(\.exe)?$/.test(name)) {
-      const [, archive, , into] = args;
-      s.unpacked.push({ archive, into, bytes: fs.readFileSync(archive), args: [...args] });
+      const [, given, , givenInto] = args;
+      const archive = path.resolve(options.cwd ?? '.', given);
+      const into = path.resolve(options.cwd ?? '.', givenInto);
+      s.unpacked.push({ archive, into, bytes: fs.readFileSync(archive), args: [...args], cwd: options.cwd });
       const tool = path.basename(archive).split('_')[0];
       const binary = `${tool}${s.platform === 'win32' ? '.exe' : ''}`;
       fs.mkdirSync(path.join(into, `${tool}_x`, 'bin'), { recursive: true });
@@ -92,7 +95,11 @@ const GIT_TAG = 'v2.56.0.windows.2';
 const GIT_NAME = 'Git-2.56.0.2-64-bit.exe';
 const GIT_BYTES = Buffer.from('the official Git for Windows installer');
 
-function internet({ tamper = false } = {}) {
+const GLAB_TAG = 'v1.123.0';
+const GLAB_NAMES = ['glab_1.123.0_darwin_arm64.tar.gz', 'glab_1.123.0_darwin_amd64.tar.gz', 'glab_1.123.0_windows_amd64.zip', 'glab_1.123.0_Windows_x86_64_installer.exe'];
+const glabUrl = (name) => `https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_TAG}/downloads/${name}`;
+
+function internet({ tamper = false, glabLink = {} } = {}) {
   const calls = [];
   const archive = (name) => Buffer.from(`archive ${name}`);
   const sums = GH_NAMES.map((name) => `${sha(archive(name))}  ${name}`).join('\n');
@@ -120,6 +127,13 @@ function internet({ tamper = false } = {}) {
       const bytes = archive(ghFile);
       return new Response(tamper ? Buffer.concat([Buffer.from([bytes[0] ^ 1]), bytes.subarray(1)]) : bytes);
     }
+    if (url === 'https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest') {
+      const links = [...GLAB_NAMES, 'checksums.txt'].map((name) => ({ name, direct_asset_url: glabLink[name] ?? glabUrl(name) }));
+      return Response.json({ tag_name: GLAB_TAG, assets: { links } });
+    }
+    if (url === glabUrl('checksums.txt')) return new Response(GLAB_NAMES.map((name) => `${sha(archive(name))}  ${name}`).join('\n'));
+    const glabFile = GLAB_NAMES.find((name) => url === glabUrl(name));
+    if (glabFile) return new Response(archive(glabFile));
     if (url === 'https://github.com/git-for-windows/git/releases/latest' && init.redirect === 'manual') {
       return new Response(null, { status: 302, headers: { location: `https://github.com/git-for-windows/git/releases/tag/${GIT_TAG}` } });
     }
@@ -218,6 +232,9 @@ test('a checksum that does not match is refused and nothing is opened', async ()
 });
 
 test('the installer is picked by matching the release\'s names, and only one may match', () => {
+  // As the release page shows the table, with or without attributes on a cell.
+  const page = notesChecksums(`<tr>\n<td>${GIT_NAME}</td>\n<td>${'a'.repeat(64)}</td>\n</tr><tr><td align="left">Git-2.56.0.2-arm64.exe</td><td align="left">${'b'.repeat(64)}</td></tr>`);
+  assert.deepEqual([...page.entries()], [[GIT_NAME, 'a'.repeat(64)], ['Git-2.56.0.2-arm64.exe', 'b'.repeat(64)]]);
   const names = [...notesChecksums(`${GIT_NAME} | ${'a'.repeat(64)}\nGit-2.56.0.2-arm64.exe | ${'b'.repeat(64)}\nPortableGit-2.56.0.2-64-bit.7z.exe | ${'c'.repeat(64)}\nMinGit-2.56.0.2-64-bit.zip | ${'d'.repeat(64)}`).keys()];
   assert.equal(names.length, 4);
   assert.equal(pickInstaller(names, 'x64'), GIT_NAME);
@@ -240,7 +257,7 @@ test('gh is fetched into the tools folder and the adapter runs that copy', async
     assert.equal(path.basename(m.unpacked[0].archive), 'gh_2.102.0_macOS_arm64.zip');
     assert.deepEqual(m.unpacked[0].bytes, net.archive('gh_2.102.0_macOS_arm64.zip'));
     assert.ok(!m.unpacked[0].args.includes('-P'));
-    assert.deepEqual(m.unpacked[0].args.slice(0, 1), ['-xf']);
+    assert.deepEqual(m.unpacked[0].args, ['-xf', 'gh_2.102.0_macOS_arm64.zip', '-C', 'unpacked']);
     assert.equal(fs.statSync(got.path).mode & 0o111, 0o111, 'it can be run');
     assert.equal(fs.readFileSync(path.join(toolFolder('gh'), 'version'), 'utf8'), `${GH_TAG}\n`);
     assert.deepEqual(fs.readdirSync(path.dirname(toolFolder('gh'))), ['gh'], 'the unpacking folder is gone');
@@ -269,25 +286,34 @@ test('gh is fetched into the tools folder and the adapter runs that copy', async
 test('an installer path with a space is quoted', async () => {
   // `run` has no shell, so a path is one argument as it is; only the line PowerShell reads as a
   // command quotes it, with a quote inside it doubled.
-  const tempRoot = tempFolder("wh-Jo Smith O'Brien Zoë ");
-  const m = machine({ platform: 'win32', installerImage: GIT_NAME });
-  const started = await startInstaller({ tool: 'git', platform: 'win32', arch: 'x64', run: m.run, fetch: internet().fetch, tempRoot, sleep: async () => {} });
-  const { args } = m.opened[0];
-  assert.equal(args.length, 4);
-  assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
-  assert.equal(args[3], `(Start-Process -FilePath '${started.image.replaceAll("'", "''")}' -ArgumentList ${GIT_INSTALLER_ARGS.map((a) => `'${a}'`).join(',')} -PassThru).Id`);
-  assert.deepEqual(openCommand('C:\\Users\\Jo Smith\\Git.exe', [], { systemRoot: 'C:\\Windows' }), {
+  // PowerShell takes ‘ ’ ‚ ‛ as single quotes too, so the path never goes into the command's
+  // text: it reaches Start-Process through the environment, whatever it holds.
+  for (const name of ["wh-Jo Smith O'Brien Zoë ", 'wh-Zoë O’Brien ‘‚‛ $(x) ']) {
+    const tempRoot = tempFolder(name);
+    const m = machine({ platform: 'win32', installerImage: GIT_NAME });
+    const started = await startInstaller({ tool: 'git', platform: 'win32', arch: 'x64', run: m.run, fetch: internet().fetch, tempRoot, sleep: async () => {} });
+    const { args, env } = m.opened[0];
+    assert.equal(args.length, 4);
+    assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
+    assert.equal(args[3], `(Start-Process -FilePath $env:WHEELHOUSE_INSTALLER -ArgumentList ${GIT_INSTALLER_ARGS.map((a) => `'${a}'`).join(',')} -PassThru).Id`);
+    assert.equal(env.WHEELHOUSE_INSTALLER, started.image);
+    assert.ok(started.image.startsWith(tempRoot), name);
+  }
+  assert.deepEqual(openCommand('C:\\Users\\Jo O’Brien\\Git.exe', [], { systemRoot: 'C:\\Windows' }), {
     file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-    args: ['-NoProfile', '-NonInteractive', '-Command', "(Start-Process -FilePath 'C:\\Users\\Jo Smith\\Git.exe' -PassThru).Id"],
+    args: ['-NoProfile', '-NonInteractive', '-Command', '(Start-Process -FilePath $env:WHEELHOUSE_INSTALLER -PassThru).Id'],
+    env: { WHEELHOUSE_INSTALLER: 'C:\\Users\\Jo O’Brien\\Git.exe' },
   });
   // gh's archive, in a home with a space and an accent, reaches tar as one argument.
   await withHome(async () => {
     const tar = machine({ platform: 'win32' });
     await fetchHostTool({ tool: 'gh', platform: 'win32', arch: 'x64', fetch: internet().fetch, run: tar.run });
+    // tar runs in the unpacking folder, with names relative to it, so a home outside the system's
+    // code page never reaches tar's own arguments.
     const [archive] = tar.unpacked;
-    assert.match(archive.args[0], /^-xf$/);
-    assert.ok(archive.args[1].includes(' ') && fs.existsSync(path.dirname(archive.args[1])) === false, 'one argument, the whole path, since removed');
-    assert.equal(path.basename(archive.args[1]), 'gh_2.102.0_windows_amd64.zip');
+    assert.deepEqual(archive.args, ['-xf', 'gh_2.102.0_windows_amd64.zip', '-C', 'unpacked']);
+    assert.ok(archive.cwd.includes(' ') && archive.cwd.startsWith(path.dirname(toolFolder('gh'))), archive.cwd);
+    assert.equal(fs.existsSync(archive.cwd), false, 'the unpacking folder is gone');
     assert.match(tar.calls.find((c) => /tar\.exe$/.test(c.file)).file, /System32[\\/]tar\.exe$/);
     assert.equal(toolPath('gh', { platform: 'win32' }), path.join(toolFolder('gh'), 'bin', 'gh.exe'));
   }, { prefix: 'wh-home Jo Smith Zoë ' });
@@ -399,15 +425,18 @@ test('a wait on an open installer starts none, and an installer closed before gi
     const { addChanges, newId } = await import('../../../scripts/setup/journal.js');
     addChanges(run.id, [{ id: newId('chg'), step: 2, kind: 'process', target: MAC_INSTALLER, before: null, after: { tool: 'git', pid: 4242, startedAt: NOW.toISOString(), image: MAC_INSTALLER } }]);
     let looks = 0;
+    let clock = NOW.getTime();
+    const now = () => new Date(clock);
     const sleep = async () => {
       looks += 1;
+      clock += 60 * 1000;
       if (looks === 2) m.installerOpen = false; // the director closed it with Not Now
     };
-    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 1 });
+    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 60 * 1000 });
     const planned = await step.plan(ctxFor(folder, { runId: run.id }));
     assert.deepEqual(planned.changes.slice(0, 1), [{ kind: 'process', target: 'git', action: 'wait' }]);
     markStep(run.id, 2, 'clickedAt', { now: () => NOW });
-    const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id, stopped: () => false }) });
+    const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id, now, stopped: () => false }) });
     assert.equal(m.installs, 0);
     assert.equal(done.ok, false);
     assert.match(done.reason, /git installer closed before it finished/);
@@ -444,6 +473,96 @@ test('the longest list\'s card composes within the card\'s length, on a Mac and 
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
       assert.ok(question.question.includes('gh and glab'), question.question);
       assert.match(question.question, platform === 'darwin' ? /Apple's own window/ : /Windows asks you to allow it/);
+    }
+  });
+});
+
+test('glab is fetched from GitLab\'s release, picked from its links and checked against its checksums', async () => {
+  await withHome(async () => {
+    const net = internet();
+    const m = machine({});
+    const got = await fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: net.fetch, run: m.run });
+    assert.deepEqual(got, { path: path.join(toolFolder('glab'), 'bin', 'glab'), version: '1.123.0' });
+    assert.deepEqual(m.unpacked[0].bytes, net.archive('glab_1.123.0_darwin_arm64.tar.gz'));
+    assert.deepEqual(net.calls, [
+      'https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest',
+      glabUrl('checksums.txt'),
+      glabUrl('glab_1.123.0_darwin_arm64.tar.gz'),
+    ]);
+    assert.equal(fs.readFileSync(path.join(toolFolder('glab'), 'version'), 'utf8'), `${GLAB_TAG}\n`);
+    assert.equal(toolPath('glab'), got.path);
+  });
+});
+
+test('a release file anywhere but its official host is refused, and nothing is fetched from it', async () => {
+  await withHome(async () => {
+    for (const glabLink of [
+      { 'glab_1.123.0_darwin_arm64.tar.gz': 'https://downloads.example.com/glab.tar.gz' },
+      { 'checksums.txt': 'https://gitlab.com.example.com/checksums.txt' },
+      { 'glab_1.123.0_darwin_arm64.tar.gz': 'http://gitlab.com/gitlab-org/cli/glab.tar.gz' },
+    ]) {
+      const net = internet({ glabLink });
+      const m = machine({});
+      await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: net.fetch, run: m.run }), /not on gitlab\.com/);
+      assert.ok(net.calls.every((url) => url.startsWith('https://gitlab.com/')), net.calls.join(', '));
+      assert.deepEqual(m.unpacked, []);
+      assert.equal(fs.existsSync(toolFolder('glab')), false);
+    }
+  });
+});
+
+test('the rule is written only once each installer\'s start is recorded', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    const m = machine({ ...everythingHere, clt: false });
+    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep: async () => {} });
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned.changes.map((c) => c.kind), ['process', 'json-key']);
+    const order = [];
+    const ctx = ctxFor(folder, {
+      record: (change) => order.push(change.kind),
+      applyJsonKey: () => {
+        order.push('json-key');
+        throw new Error('the settings file is held by another program');
+      },
+    });
+    await assert.rejects(step.apply(ctx, planned.changes), /held by another program/);
+    assert.deepEqual(order, ['process', 'json-key']);
+  });
+});
+
+test('on a Mac, an installer window not seen for two minutes of looks fails the step; one seen again in time does not', async () => {
+  // Ruling R55: completion is read only by xcode-select -p; not seeing Apple's window fails the
+  // step only after two minutes without it, not after a few looks.
+  await withHome(async () => {
+    for (const comesBack of [false, true]) {
+      const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+      const m = machine({ ...everythingHere, clt: false });
+      let clock = NOW.getTime();
+      const seen = [];
+      const sleep = async () => {
+        clock += 30 * 1000;
+        const after = clock - NOW.getTime();
+        if (after === 30 * 1000) m.installerOpen = false; // not seen from 30 s on
+        if (comesBack && after === 120 * 1000) m.installerOpen = true; // seen again at 2 minutes
+        if (comesBack && after === 150 * 1000) m.clt = true; // and then finishes
+        seen.push(after);
+      };
+      const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 30 * 1000 });
+      const now = () => new Date(clock);
+      const planned = await step.plan(ctxFor(folder, { now }));
+      const run = startRun({ folder, now });
+      markStep(run.id, 2, 'clickedAt', { now });
+      const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id, now, stopped: () => false }) });
+      if (comesBack) {
+        assert.deepEqual(done, { ok: true });
+        assert.equal(m.installs, 1);
+      } else {
+        assert.equal(done.ok, false);
+        assert.match(done.reason, /closed before it finished/);
+        // Last seen at 0 s: not failed at 2:00 minus a look, failed at the first look 2 minutes on.
+        assert.equal(seen.at(-1), 120 * 1000);
+      }
     }
   });
 });

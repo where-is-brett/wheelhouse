@@ -49,11 +49,12 @@ const FLOOR = NODE_FLOOR.join('.');
 // with no `node` (check 35), as well as a Node.js that is missing or too old.
 export const NODE_LINE = `Wheelhouse needs Node.js ${NODE_FLOOR[0]} or later. If this computer has none or an older one, or a Wheelhouse session refuses every tool with a message naming a Wheelhouse script and "node: command not found", install the LTS from nodejs.org, then ask again in the same conversation; if it still refuses, start a new session.`;
 
-// How often the step looks again while an installer runs, and how many looks in a row may find
-// the installer gone with git still missing before the step says so (the window may take a moment
-// to appear, and git a moment to be found once it closes).
+// How often the step looks again while an installer runs, and how long the installer may go unseen,
+// with git still missing, before the step says it closed (ruling R55): its window may take a
+// moment to appear, git a moment to be found once it closes, and on a Mac whether `pgrep` sees
+// Apple's window at all waits for the sitting, so completion is read only by xcode-select -p.
 export const POLL_MS = 10 * 1000;
-const GONE_LOOKS = 3;
+export const GONE_MS = 2 * 60 * 1000;
 
 // macOS's own installer for the command-line tools, which `xcode-select --install` opens.
 export const MAC_INSTALLER = 'Install Command Line Developer Tools';
@@ -62,6 +63,20 @@ export const MAC_INSTALLER = 'Install Command Line Developer Tools';
 export const GIT_INSTALLER_ARGS = ['/SILENT', '/NORESTART'];
 
 const HEADERS = { 'user-agent': 'wheelhouse-setup' };
+
+// The official host of each release's files: every address fetched from a release is checked to
+// be on it, over https, so a link in a release's list can't send setup elsewhere.
+const OFFICIAL = { gh: 'github.com', glab: 'gitlab.com', git: 'github.com' };
+function official(url, tool) {
+  let parsed = null;
+  try {
+    parsed = new URL(url);
+  } catch { /* not an address */ }
+  if (parsed?.protocol !== 'https:' || parsed.hostname !== OFFICIAL[tool] || parsed.username || parsed.password || parsed.port) {
+    throw new Error(`A ${tool} release file is not on ${OFFICIAL[tool]}, so setup did not fetch it`);
+  }
+  return url;
+}
 const GIT_FOR_WINDOWS = 'https://github.com/git-for-windows/git/releases';
 
 // ---- Copied from probes/38-host-tools/run.js ----
@@ -162,7 +177,7 @@ const SOURCES = {
     const release = await (await getOk(fetch, 'https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest')).json();
     const byName = new Map((release?.assets?.links ?? []).map((link) => [link.name, link.direct_asset_url]));
     if (!byName.has('checksums.txt')) throw new Error('The glab release lists no checksums.txt');
-    const checksumText = await getText(fetch, byName.get('checksums.txt'));
+    const checksumText = await getText(fetch, official(byName.get('checksums.txt'), 'glab'));
     return { tag: release.tag_name, checksumText, names: [...byName.keys()], urlFor: (name) => byName.get(name) };
   },
 };
@@ -170,7 +185,9 @@ const SOURCES = {
 // The command that unpacks an archive: the `tar` the system ships, which on macOS and Windows is
 // bsdtar and reads zip as well as tar.gz. On Windows the System32 copy is named, so a GNU tar from
 // Git for Windows, which cannot read zip, is never picked up from the path. Never with -P, so tar
-// strips a leading / and refuses a path with `..`, and nothing lands outside `into`.
+// strips a leading / and refuses a path with `..`, and nothing lands outside `into`. `archive` and
+// `into` are given relative to the folder tar runs in, since Windows' tar reads its arguments in
+// the system's code page, which a home folder's name may fall outside.
 export function unpackCommand(archive, into, { platform = process.platform, systemRoot = process.env.SystemRoot } = {}) {
   const tar = platform === 'win32' ? path.win32.join(systemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
   return { file: tar, args: ['-xf', archive, '-C', into] };
@@ -202,7 +219,7 @@ export async function fetchHostTool({ tool, platform = process.platform, arch = 
   const sums = parseChecksums(release.checksumText);
   const name = pickArchive(tool, release.names, platform, arch);
   const version = versionOf(name);
-  const bytes = await getBytes(fetch, release.urlFor(name));
+  const bytes = await getBytes(fetch, official(release.urlFor(name), tool));
   verifyChecksum(name, bytes, sums);
   const target = toolFolder(tool);
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -212,8 +229,8 @@ export async function fetchHostTool({ tool, platform = process.platform, arch = 
     fs.writeFileSync(archive, bytes, { flag: 'wx' });
     const unpacked = path.join(work, 'unpacked');
     fs.mkdirSync(unpacked);
-    const unpack = unpackCommand(archive, unpacked, { platform });
-    const opened = await run(unpack.file, unpack.args);
+    const unpack = unpackCommand(name, path.basename(unpacked), { platform });
+    const opened = await run(unpack.file, unpack.args, { cwd: work });
     if (opened.code !== 0) throw new Error(`${tool}'s archive could not be unpacked: ${(opened.stderr || opened.stdout || '').trim().slice(0, 200)}`);
     const binary = `${tool}${platform === 'win32' ? '.exe' : ''}`;
     const staged = path.join(work, tool);
@@ -253,9 +270,9 @@ function atLeast(version, floor) {
   return true;
 }
 
-async function quietly(run, file, args) {
+async function quietly(run, file, args, options) {
   try {
-    return await run(file, args);
+    return await (options === undefined ? run(file, args) : run(file, args, options));
   } catch {
     return { code: 1, stdout: '', stderr: '' };
   }
@@ -342,14 +359,16 @@ export function nodeRefusal(node) {
 export const WAITS_FOR = { darwin: 'click', win32: 'admin' };
 
 // The command that opens an installer so that Windows asks to allow it: PowerShell's
-// Start-Process, the only line here with a path inside a command's own text, so the path is quoted
-// there (single quotes, a quote in it doubled). It prints the installer's process id.
+// Start-Process, which prints the installer's process id. The installer's path reaches it through
+// the environment (`env`), never inside the command's own text, where PowerShell would read any of
+// ' ‘ ’ ‚ ‛ in an account's name as the end of a quoted string.
 export function openCommand(file, args = [], { systemRoot = process.env.SystemRoot } = {}) {
-  const quote = (text) => `'${String(text).replaceAll("'", "''")}'`;
-  const list = args.length > 0 ? ` -ArgumentList ${args.map(quote).join(',')}` : '';
+  const list = args.length > 0 ? ` -ArgumentList ${args.map((a) => `'${a}'`).join(',')}` : '';
+  if (!args.every((a) => /^[A-Za-z0-9/_-]+$/.test(a))) throw new Error('An installer\'s arguments are plain switches');
   return {
     file: path.win32.join(systemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    args: ['-NoProfile', '-NonInteractive', '-Command', `(Start-Process -FilePath ${quote(file)}${list} -PassThru).Id`],
+    args: ['-NoProfile', '-NonInteractive', '-Command', `(Start-Process -FilePath $env:WHEELHOUSE_INSTALLER${list} -PassThru).Id`],
+    env: { WHEELHOUSE_INSTALLER: file },
   };
 }
 
@@ -364,10 +383,10 @@ export function pickInstaller(names, arch) {
 }
 
 // The checksum table in a Git for Windows release's notes, as its page shows it (rows of
-// <td>name</td><td>sha-256</td>) or as written (name | sha-256).
+// <td>name</td><td>sha-256</td>, a cell perhaps with attributes) or as written (name | sha-256).
 export function notesChecksums(text) {
   const sums = new Map();
-  for (const m of String(text).matchAll(/([A-Za-z0-9][A-Za-z0-9._-]*\.(?:exe|zip))\s*(?:<\/td>\s*<td>|\|)\s*([0-9a-fA-F]{64})(?![0-9a-fA-F])/g)) {
+  for (const m of String(text).matchAll(/([A-Za-z0-9][A-Za-z0-9._-]*\.(?:exe|zip))\s*(?:<\/td>\s*<td[^>]*>|\|)\s*([0-9a-fA-F]{64})(?![0-9a-fA-F])/g)) {
     sums.set(m[1], m[2].toLowerCase());
   }
   return sums;
@@ -378,9 +397,9 @@ export function notesChecksums(text) {
 // the folder's change at once after the folder is made.
 async function fetchGitInstaller({ arch, fetch, tempRoot, record }) {
   const tag = await latestTag(fetch, GIT_FOR_WINDOWS);
-  const sums = notesChecksums(await getText(fetch, `${GIT_FOR_WINDOWS}/tag/${encodeURIComponent(tag)}`));
+  const sums = notesChecksums(await getText(fetch, official(`${GIT_FOR_WINDOWS}/tag/${encodeURIComponent(tag)}`, 'git')));
   const name = pickInstaller([...sums.keys()], arch);
-  const bytes = await getBytes(fetch, `${GIT_FOR_WINDOWS}/download/${encodeURIComponent(tag)}/${name}`);
+  const bytes = await getBytes(fetch, official(`${GIT_FOR_WINDOWS}/download/${encodeURIComponent(tag)}/${name}`, 'git'));
   verifyChecksum(name, bytes, sums);
   const folder = fs.mkdtempSync(path.join(tempRoot, 'wheelhouse-git-'));
   if (typeof record === 'function') record({ id: newId('chg'), kind: 'folder', target: folder, before: null, after: { tool: 'git', installer: name } });
@@ -421,7 +440,7 @@ export async function startInstaller({
   if (platform === 'win32') {
     const file = await fetchGitInstaller({ arch, fetch, tempRoot, record });
     const open = openCommand(file, GIT_INSTALLER_ARGS);
-    const got = await quietly(run, open.file, open.args);
+    const got = await quietly(run, open.file, open.args, { env: open.env });
     const pid = Number(String(got.stdout).trim());
     if (got.code !== 0 || !Number.isInteger(pid)) return { started: false, waitsFor: WAITS_FOR.win32, why: 'the installer was not allowed to start' };
     return { started: true, waitsFor: WAITS_FOR.win32, pid, image: file };
@@ -472,7 +491,7 @@ function cardFor(changes, status, platform) {
   }
   const fetched = changes.filter((c) => c.action === 'fetch').map((c) => c.tool);
   if (fetched.length > 0) {
-    lines.push(`${fetched.join(' and ')}, the host's command-line ${fetched.length === 1 ? 'tool' : 'tools'}: fetched from ${fetched.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; nothing for you to do`);
+    lines.push(`${fetched.join(' and ')}, the host's command-line ${fetched.length === 1 ? 'tool' : 'tools'}: fetched from ${fetched.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
   }
   if (changes.some((c) => c.kind === 'json-key')) lines.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
@@ -548,10 +567,11 @@ export function toolsStep({
       }
       return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };
     },
-    // Starts every installer at once, first; fetches the host tools and writes the rule meanwhile;
-    // then waits, looking every pollMs, until git is in, an installer closes without it, or STOP
-    // comes on. A long step: the helper has already handed back, so the next steps' cards are
-    // asked while this runs.
+    // Starts every installer at once, first, and fetches the host tools meanwhile; writes the rule
+    // once each installer's start is recorded; then waits, looking every pollMs, until git is in
+    // (on a Mac, by xcode-select -p alone), no installer has been seen for GONE_MS with git still
+    // missing, or STOP comes on. A long step: the helper has already handed back, so the next
+    // steps' questions are asked while this runs.
     async apply(ctx, changes) {
       const platform = ctx.platform ?? process.platform;
       const now = ctx.now ?? (() => new Date());
@@ -564,18 +584,20 @@ export function toolsStep({
         record({ id: newId('chg'), kind: 'process', target: started.image, before: null, after: { tool: c.target, pid: started.pid, startedAt: now().toISOString(), image: started.image } });
       });
       const fetches = changes.filter((c) => c.action === 'fetch').map((c) => fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record }));
-      for (const c of changes.filter((x) => x.kind === 'json-key')) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
+      // The rule is written once every installer's start is recorded, so a write that fails can't
+      // leave an installer open that the journal doesn't know about.
       const failed = (await Promise.allSettled([...installs, ...fetches])).find((r) => r.status === 'rejected');
       if (failed) throw failed.reason;
+      for (const c of changes.filter((x) => x.kind === 'json-key')) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
       const waiting = [...new Set(changes.filter((c) => c.kind === 'process').map((c) => c.target))];
-      let gone = 0;
+      let seenAt = now().getTime();
       while (waiting.length > 0) {
         if (ctx.stopped?.()) throw new Error('STOP came on while the installer ran; it is left to finish');
         const status = await toolsStatus({ platform, run, tools: waiting, env });
         if (waiting.every((tool) => status[tool].ok)) break;
         const open = await Promise.all(waiting.filter((tool) => !status[tool].ok).map((tool) => openInstaller(tool, { platform, run })));
-        gone = open.every(Boolean) ? 0 : gone + 1;
-        if (gone >= GONE_LOOKS) throw new Error(`the ${waiting.join(' and ')} installer closed before it finished; a fresh Go ahead starts it again`);
+        if (open.every(Boolean)) seenAt = now().getTime();
+        else if (now().getTime() - seenAt >= GONE_MS) throw new Error(`the ${waiting.join(' and ')} installer closed before it finished; a fresh Go ahead starts it again`);
         await sleep(pollMs);
       }
       return [];

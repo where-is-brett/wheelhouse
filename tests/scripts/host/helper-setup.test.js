@@ -524,26 +524,41 @@ test('a card is cleaned before it is composed, so the card sent is within the co
   });
 });
 
-test('a step that waits for another is asked meanwhile but applied only once that one is done, with the same click', async () => {
-  // Ruling R47: step 3 needs the git that step 2 installs.
+test('a step that waits for another asks its questions meanwhile, waits in place of its Go ahead, and is applied once that one is done', async () => {
+  // Rulings R47 and R54: step 3 needs the git that step 2 installs, so no Go ahead for it is shown
+  // while step 2 is unfinished; its questions are asked meanwhile, and apply refuses as a backstop.
   await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { 3: [KEY(3)], after: { 3: [2] }, ask: { 3: [{ id: 'which', options: ['GitHub', 'GitLab'] }] } });
+    const asked = await client.setup.plan({ folder, step: 3 });
+    assert.equal(asked.ok, true, asked.refused);
+    assert.equal(asked.ask?.id, 'which', 'its question is asked while step 2 is unfinished');
     setWorld(home, { 3: [KEY(3)], after: { 3: [2] } });
-    const plan = await client.setup.plan({ folder, step: 3 });
-    assert.equal(plan.ok, true, plan.refused);
-    const status = await client.setup.status({ folder });
-    assert.equal(status.ask, 1);
-    click(3, plan.hash);
-    const apply = () => client.setup.apply({ folder, step: 3, hash: plan.hash });
-    assert.match((await apply()).refused, /^step 2 \(Tools\) is not done yet/);
-    // While step 2's installer runs, the refusal names it.
+    const waiting = await client.setup.plan({ folder, step: 3 });
+    assert.equal(waiting.ok, true, waiting.refused);
+    assert.equal(waiting.card, undefined, 'no Go ahead is shown');
+    assert.ok(Number.isFinite(waiting.wait) && waiting.wait > 0);
+    assert.match(waiting.why, /^step 2 \(Tools\) is not done yet/);
     const run = runOf(folder);
+    assert.equal(run.steps[3]?.shownAt, undefined);
+    // While step 2 runs with an installer, the wait names it.
+    markStep(run.id, 2, 'clickedAt', { now: () => T0 });
     addChanges(run.id, [{ id: newId('chg'), step: 2, kind: 'process', target: 'Install Command Line Developer Tools', before: null, after: { tool: 'git', pid: 4242, startedAt: T0.toISOString(), image: 'Install Command Line Developer Tools' } }]);
-    assert.match((await apply()).refused, /^step 2 is still installing: git/);
+    assert.match((await client.setup.plan({ folder, step: 3 })).why, /^step 2 is still installing: git/);
+    // Apply refuses as a backstop, whatever it is sent, and uses no click.
+    const listed = [{ kind: 'json-key', target: path.join(fs.realpathSync.native(folder), '.claude', 'x.json'), key: ['wheelhouse', 'a'], after: 3 }];
+    click(3, planHash(listed));
+    assert.match((await client.setup.apply({ folder, step: 3, hash: planHash(listed) })).refused, /^step 2 is still installing: git/);
+    // Once step 2 failed, the installer is not named: nothing says it is still running.
+    markStep(run.id, 2, 'failed', { now: () => T0, reason: 'the git installer closed before it finished' });
+    assert.match((await client.setup.plan({ folder, step: 3 })).why, /^step 2 \(Tools\) did not finish/);
+    assert.match((await client.setup.apply({ folder, step: 3, hash: planHash(listed) })).refused, /^step 2 \(Tools\) did not finish/);
     assert.equal(written(folder), null, 'nothing was written');
-    assert.equal(runOf(folder).steps[3].clickedAt, undefined);
-    // Once step 2 is done, the click the director gave meanwhile still counts.
+    assert.equal(runOf(folder).steps[3]?.clickedAt, undefined);
+    // Once step 2 is done, the Go ahead is shown, and the click the director gave meanwhile counts.
     markStep(run.id, 2, 'doneAt', { now: () => T0 });
-    const done = await apply();
+    const plan = await client.setup.plan({ folder, step: 3 });
+    assert.equal(plan.hash, planHash(listed));
+    const done = await client.setup.apply({ folder, step: 3, hash: plan.hash });
     assert.equal(done.ok, true, done.refused);
     assert.deepEqual(written(folder), { wheelhouse: { a: 3 } });
   });
