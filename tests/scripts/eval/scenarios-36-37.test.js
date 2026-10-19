@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { EVAL_ROOT, findScenario, loadScenarios, main, suitesIn } from '../../../scripts/eval/run.js';
-import { REPO_ROOT } from '../../../scripts/eval/feature-project.js';
+import { repositoryReadable } from '../../../scripts/eval/feature-project.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
@@ -165,7 +165,7 @@ test('37 alone is offered PushNotification, and its project\'s local settings tu
       const hooks = hooksOf(project.dir);
       assert.deepEqual(hooks.map((h) => h.matcher), matchers);
       // The plugin's command runs the repository's own cli.js, so the sandbox reads it there.
-      assert.deepEqual(context.readable, [REPO_ROOT]);
+      assert.deepEqual(context.readable, repositoryReadable());
       for (const [hook, said] of hooks.map((h, i) => [h, [SHOWN, PUSHED][i]])) {
         const script = /^node "(.+)"$/.exec(hook.hooks[0].command)[1];
         const out = spawnSync(process.execPath, [script], { input: JSON.stringify({ tool_name: hook.matcher }), encoding: 'utf8' });

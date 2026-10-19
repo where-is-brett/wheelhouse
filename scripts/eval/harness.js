@@ -8,6 +8,7 @@ import path from 'node:path';
 import { invocation, quoteForCmd, resolveClaude } from '../lib/claude.js';
 import { run } from '../lib/run.js';
 import { projectSettings } from '../protection/settings.js';
+import { fileURLToPath } from 'node:url';
 import { makeScratchProject } from '../../probes/lib/scratch.js';
 
 const VARIANTS = ['with', 'without'];
@@ -44,11 +45,25 @@ export const SESSION_SETTINGS = {
 // This process's environment as a session gets it: the allowlist only.
 export const sessionEnv = (from = process.env) => Object.fromEntries(Object.entries(from).filter(([name]) => SESSION_ENV.test(name)));
 
-// What the sandbox keeps a session from reading beyond a project's own list (ruling F94): the
-// director's conversations with Claude Code, and the folder their projects live in (setup's
-// ~/Projects). A run's set-up names what it must read in them (`readable`), such as the
-// repository's own scripts a feature brief's commands run.
-export const EVAL_DENY_READ = ['~/.claude/projects', '~/Projects'];
+// This repository: its tests, the judges and the expected results among them, are no session's to read.
+const REPOSITORY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// What the sandbox keeps a session from reading beyond a project's own list (rulings F94, F102):
+// the director's conversations with Claude Code (their transcripts, the prompts they typed, the
+// files' history, sessions, environments and shell snapshots), their account file, the Desktop
+// app's own folder, other evaluation runs' records, the folder their projects live in (setup's
+// ~/Projects), and this repository wherever it is. The installed plugins (~/.claude/plugins) stay
+// readable: Superpowers' scripts run from there. A run's set-up names what it must read in these
+// (`readable`), such as the repository's scripts a feature brief's commands run.
+export const EVAL_DENY_READ = [
+  '~/.claude/projects', '~/.claude/history.jsonl', '~/.claude/file-history', '~/.claude/sessions', '~/.claude/session-env',
+  '~/.claude/shell-snapshots', '~/.claude.json', '~/Library/Application Support/Claude', '~/.wheelhouse-evals', '~/Projects', REPOSITORY,
+];
+
+// The commands a session may not run (ruling F102): the keychain's, by name and by its path, in
+// both forms Claude Code matches. A sandboxed command runs without asking, and the sandbox lets it
+// reach the keychain, where Claude Code keeps the director's sign-in.
+export const EVAL_DENY_COMMANDS = ['security', '/usr/bin/security'].flatMap((c) => [`Bash(${c}:*)`, `Bash(${c} *)`]);
 
 // The only extra arguments a session takes (ruling F100): what gives a `claude -p` session
 // AskUserQuestion. Anything else could override or widen the isolation, so it is refused.
@@ -78,7 +93,7 @@ function inRealHome(file) {
   });
 }
 
-// A session's settings (ruling F94): SESSION_SETTINGS, and the sandbox a project's own settings
+// A session's settings (ruling F94): SESSION_SETTINGS with EVAL_DENY_COMMANDS, and the sandbox a project's own settings
 // give its sessions (projectSettings: on, no command outside it, no reading the real
 // ~/.wheelhouse or any credential, the npm registry only), with EVAL_DENY_READ added. Per run:
 // `socket`, the run's stand-in helper's socket, the one Unix socket a command may reach (none
@@ -89,8 +104,10 @@ export function sessionSettings({ socket = null, readable = [], writable = [] } 
   if (socket !== null && (typeof socket !== 'string' || socket === '')) throw new Error('A session\'s socket is a path');
   if (socket !== null && inRealHome(socket)) throw new Error(`A session never reaches a socket in the real Wheelhouse home: ${socket}`);
   const { sandbox } = projectSettings({ webDomains: [] });
+  const own = structuredClone(SESSION_SETTINGS);
   return {
-    ...structuredClone(SESSION_SETTINGS),
+    ...own,
+    permissions: { ...own.permissions, deny: [...own.permissions.deny, ...EVAL_DENY_COMMANDS] },
     sandbox: {
       ...sandbox,
       filesystem: {

@@ -27,14 +27,15 @@
 // call is in the events and nothing reaches the director's phone. runSession offers the tool only
 // when that hook is there.
 //
-// The sandbox (ruling F94): the plugin's command imports the repository's own cli.js, under the
-// projects folder the sandbox denies, so the context names the repository as `readable`.
+// The sandbox (rulings F94, F102): the plugin's command imports the repository's own cli.js, which
+// the sandbox denies, so the context names what that command needs of the repository as
+// `readable` (repositoryReadable), and nothing else of it.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { REPO_ROOT, callsOf } from '../../../scripts/eval/feature-project.js';
+import { REPO_ROOT, callsOf, repositoryReadable } from '../../../scripts/eval/feature-project.js';
 import { seedEvent, setUpFrontDesk, writtenEvents } from '../../../scripts/eval/front-desk.js';
 import { standInViews } from '../../../scripts/eval/stand-in-helper.js';
 import { assertUnderTmp } from '../../../probes/lib/scratch.js';
@@ -169,7 +170,7 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push 
     };
     // The Node running the evaluation first on the session's PATH: the command needs Node 22.
     const env = { ...context.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` };
-    return { ...context, env, pluginDirs: [plugin], appendSystemPrompt: FRONT_DESK_LINE, readable: [REPO_ROOT], close };
+    return { ...context, env, pluginDirs: [plugin], appendSystemPrompt: FRONT_DESK_LINE, readable: repositoryReadable(), close };
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });
     await context.close();

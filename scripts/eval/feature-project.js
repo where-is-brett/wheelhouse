@@ -28,6 +28,17 @@ import { assertUnderTmp } from '../../probes/lib/scratch.js';
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const FEATURE = '.wheelhouse/feature';
 
+// What a run's commands may read of the repository (ruling F102), which the session's sandbox
+// otherwise denies: the scripts its commands run and what they load (every folder of scripts/
+// but the evaluation's own, scripts/eval, and its files), the package file that makes them
+// modules, the templates (the brief's, the glossary's starter) and the lineage files they read.
+// Never the tests, the judges among them, the evaluation docs with their expected results, or the
+// ledger.
+export function repositoryReadable(root = REPO_ROOT) {
+  const scripts = fs.readdirSync(path.join(root, 'scripts')).filter((name) => name !== 'eval').sort().map((name) => path.join(root, 'scripts', name));
+  return [...scripts, ...['package.json', 'templates', 'lineage'].map((name) => path.join(root, name))];
+}
+
 // The repository's own agent files, read when a scenario wants them in its scratch plugin.
 export function agentText(name) {
   return fs.readFileSync(path.join(REPO_ROOT, 'agents', `${name}.md`), 'utf8');
@@ -74,10 +85,10 @@ const PROJECT_FILES = {
 //   agents              null, or { name: text } for the scratch plugin's agents/<name>.md
 //   routing             the brief's models by role, { role: model } (none by default)
 // Resolves with the context runScenario takes: { env, pluginDirs, helper, home, main, readable,
-// writable, evidence, close }. `readable` and `writable` are for the session's sandbox (ruling
-// F94): the repository, whose scripts/feature/cli.js the rendered brief's commands run from under
-// the projects folder the sandbox denies, and the main checkout's .git, where a linked worktree's
-// commits go, outside the project the sandbox lets a command write.
+// writable, evidence, close }. `readable` and `writable` are for the session's sandbox (rulings
+// F94, F102): what the rendered brief's commands (scripts/feature/cli.js) need of the repository,
+// which the sandbox denies (repositoryReadable), and the main checkout's .git, where a linked
+// worktree's commits go, outside the project the sandbox lets a command write.
 export async function setUpFeature(dir, {
   work, lane, goal, done, plan, files = {}, branchFiles = {}, brief, agents = null, routing = {},
 }) {
@@ -140,7 +151,7 @@ export async function setUpFeature(dir, {
     // What the run's record keeps beside the events: the helper's records and the feature files.
     const evidence = () => ({ helper: helper.records(), questions: questionsIn(dir), ledger: ledgerLines(dir) });
     return {
-      env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: [REPO_ROOT], writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
+      env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: repositoryReadable(), writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
     };
   } catch (error) {
     await close();

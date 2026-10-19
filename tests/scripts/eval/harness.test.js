@@ -278,6 +278,21 @@ test('runSession runs the session in Claude Code\'s sandbox as a project\'s own 
   }
 });
 
+test('runSession denies the keychain\'s command and the director\'s own Claude data, its own repository, and other runs\' records, but keeps the installed plugins readable (F102)', async () => {
+  const { settings } = await sawWith({});
+  for (const rule of ['Bash(security:*)', 'Bash(security *)', 'Bash(/usr/bin/security:*)', 'Bash(/usr/bin/security *)']) {
+    assert.ok(settings.permissions.deny.includes(rule), rule);
+  }
+  const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  const { denyRead } = settings.sandbox.filesystem;
+  for (const denied of [
+    '~/.claude/history.jsonl', '~/.claude/file-history', '~/.claude/sessions', '~/.claude/session-env', '~/.claude/shell-snapshots',
+    '~/.claude.json', '~/Library/Application Support/Claude', '~/.wheelhouse-evals', '~/.claude/projects', '~/Projects', repository,
+  ]) assert.ok(denyRead.includes(denied), denied);
+  // Superpowers' scripts run from the installed plugins, so neither they nor ~/.claude as a whole are denied.
+  assert.ok(!denyRead.some((p) => p === '~/.claude' || p === '~/.claude/plugins' || p.startsWith('~/.claude/plugins/')), denyRead.join(' '));
+});
+
 test('runSession takes no extra arguments but --permission-prompt-tool stdio, so none can widen or override the isolation (F100)', async () => {
   assert.deepEqual((await sawWith({ extraArgs: [] })).args.includes('--permission-prompt-tool'), false);
   for (const extraArgs of [
