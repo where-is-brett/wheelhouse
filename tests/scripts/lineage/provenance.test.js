@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  BEGIN, END, WHY, bodyProvenance, modelsOf, parseProvenance, provenanceBlock, provenanceMatches, removeProvenance, sessionProvenance, stampProvenance,
+  BEGIN, END, WHY, bodyProvenance, claudeCodeOf, modelsOf, parseProvenance, provenanceBlock, provenanceMatches, removeProvenance, sessionProvenance, stampProvenance,
 } from '../../../scripts/lineage/provenance.js';
 import { readManifest } from '../../../scripts/lineage/manifest.js';
 import { lineageFixture } from '../../helpers/lineage.js';
@@ -93,7 +93,7 @@ test('provenance matches the manifest only with the same versions, commits and f
   assert.deepEqual(bodyProvenance(undefined, root), { ok: false, why: WHY.none });
   assert.deepEqual(bodyProvenance(`${BEGIN}\nnonsense\n${END}`, root), { ok: false, why: WHY.unreadable });
   assert.deepEqual(bodyProvenance(stampProvenance('x', match), tempFolder('wh-empty-')), { ok: false, why: WHY.manifest });
-  // Every reason is a fixed phrase.
+  // Every reason is a set phrase.
   assert.deepEqual(Object.values(WHY).sort(), [
     'Claude Code is older than the floor', 'an upstream commit differs', 'no provenance block', 'the Wheelhouse version differs',
     'the fingerprints did not match', 'the installed manifest can\'t be read', 'the provenance block can\'t be read',
@@ -123,4 +123,32 @@ test('a session\'s provenance comes from its file on this computer, with the mod
     { type: 'assistant', message: { model: 'model-a' } }, { type: 'user', message: { model: 'model-x' } },
     { type: 'assistant', message: { model: '<synthetic>' } }, { type: 'assistant', message: { model: 'bad model' } }, null,
   ]), ['model-a']);
+});
+
+test('a session\'s Claude Code version is the transcript\'s newest when it has one, else the file\'s (R144)', async () => {
+  await as(tempFolder('wh-home-'), async () => {
+    // At a first session start the transcript had no entry, so the file says unknown.
+    const file = writeSessionProvenance(P, 'sess-1', { claudeCode: null });
+    const transcript = JSON.parse(fs.readFileSync(file, 'utf8')).transcript;
+    assert.equal(sessionProvenance({ project: P, sessionId: 'sess-1' }).claudeCode, null);
+    fs.appendFileSync(transcript, `\n${JSON.stringify({ type: 'user', version: '2.1.299' })}\n${JSON.stringify({ type: 'assistant', version: '2.1.300', message: { model: 'model-b' } })}\n${JSON.stringify({ type: 'summary' })}\n`);
+    const found = sessionProvenance({ project: P, sessionId: 'sess-1' });
+    assert.equal(found.claudeCode, '2.1.300');
+    assert.deepEqual(found.models, ['model-a', 'model-b']);
+    // The transcript's version wins over the file's; a transcript with none leaves the file's.
+    writeSessionProvenance(P, 'sess-2', { claudeCode: '2.1.295' });
+    assert.equal(sessionProvenance({ project: P, sessionId: 'sess-2' }).claudeCode, '2.1.295');
+  });
+  assert.equal(claudeCodeOf([{ version: '2.1.1' }, { version: '2.1.300-beta' }, {}]), '2.1.300');
+  assert.equal(claudeCodeOf([{ version: '2.1.1' }, { version: 'odd' }]), null, 'the newest one that carries a version is the one read');
+  assert.equal(claudeCodeOf([]), null);
+  assert.equal(claudeCodeOf(null), null);
+});
+
+test('a marker split around another is taken out as well', () => {
+  const split = `Text.\n<!-- wheel${END}house-provenance -->\n- Claude Code: 99.0.0\n<!-- /wheel${BEGIN}house-provenance -->`;
+  assert.equal(removeProvenance(split), 'Text.\n\n- Claude Code: 99.0.0');
+  const stamped = stampProvenance(split, PROVENANCE);
+  assert.equal(stamped.split(BEGIN).length, 2, 'one block');
+  assert.deepEqual(parseProvenance(stamped), PROVENANCE);
 });

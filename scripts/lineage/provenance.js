@@ -11,7 +11,7 @@ import { readManifest } from './manifest.js';
 
 export const BEGIN = '<!-- wheelhouse-provenance -->';
 export const END = '<!-- /wheelhouse-provenance -->';
-// How much of the end of a session's transcript is read for the models it used.
+// How much of the end of a session's transcript is read for the models and Claude Code version it used.
 const TRANSCRIPT_BYTES = 8 * 1024 * 1024;
 // The most a provenance.json may be.
 const FILE_BYTES = 64 * 1024;
@@ -23,7 +23,7 @@ const FINGERPRINTS = ['match', 'mismatch'];
 // Claude Code's own name for an entry it made up rather than a model wrote.
 const SYNTHETIC = '<synthetic>';
 
-// Why provenance does not match, always one of these fixed phrases (never text from a pull request).
+// Why provenance does not match, always one of these set phrases (never text from a pull request).
 export const WHY = Object.freeze({
   none: 'no provenance block',
   unreadable: 'the provenance block can\'t be read',
@@ -50,8 +50,23 @@ export function modelsOf(entries) {
   return models;
 }
 
+// Claude Code's version as the newest transcript entry that carries one gives it ('2.1.300'), or
+// null when none does or that one can't be read.
+export function claudeCodeOf(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const version = list[i]?.version;
+    if (typeof version !== 'string') continue;
+    const m = /^(\d+)\.(\d+)\.(\d+)(?![0-9])/.exec(version);
+    return m ? m.slice(1, 4).join('.') : null;
+  }
+  return null;
+}
+
 // The provenance of `sessionId` in `project`, from its provenance.json on this computer, with
-// the models from its transcript. Null when there is no such file or it is not one.
+// the models from its transcript. Claude Code's version is the transcript's too when it carries
+// one: at a session's first start the transcript has no entry yet, so the file's is unknown
+// (ruling R144). Null when there is no such file or it is not one.
 export function sessionProvenance({ project, sessionId, readEntries = (file) => readTailEntries(file, { bytes: TRANSCRIPT_BYTES }) }) {
   let file;
   let kept;
@@ -70,16 +85,16 @@ export function sessionProvenance({ project, sessionId, readEntries = (file) => 
     if (!UPSTREAM_NAME.test(name)) return null;
     upstreams[name] = valueOrNull(sha);
   }
-  let models = [];
+  let entries = [];
   try {
-    models = typeof kept.transcript === 'string' && kept.transcript !== '' ? modelsOf(readEntries(kept.transcript)) : [];
+    entries = typeof kept.transcript === 'string' && kept.transcript !== '' ? readEntries(kept.transcript) : [];
   } catch { /* none read */ }
   return {
     wheelhouse: valueOrNull(kept.wheelhouse),
     upstreams,
     register: valueOrNull(kept.register),
-    claudeCode: valueOrNull(kept.claudeCode),
-    models,
+    claudeCode: claudeCodeOf(entries) ?? valueOrNull(kept.claudeCode),
+    models: modelsOf(entries),
     fingerprints: kept.fingerprints,
   };
 }
@@ -104,16 +119,27 @@ export function provenanceBlock(provenance) {
 
 const BLOCK = () => new RegExp(`${BEGIN}[\\s\\S]*?${END}`, 'g');
 
-// `body` with every block, and any marker left on its own, taken out.
+// `body` with every block, and any marker left on its own, taken out, again and again until
+// nothing changes: a marker split around another (`<!-- wheel<!-- /wheelhouse-provenance -->house-provenance -->`)
+// is whole once the inner one is gone.
 export function removeProvenance(body) {
-  const text = typeof body === 'string' ? body : '';
-  return text.replace(BLOCK(), '').replaceAll(BEGIN, '').replaceAll(END, '').trimEnd();
+  let text = typeof body === 'string' ? body : '';
+  for (;;) {
+    const next = text.replace(BLOCK(), '').replaceAll(BEGIN, '').replaceAll(END, '');
+    if (next === text) return text.trimEnd();
+    text = next;
+  }
+}
+
+// `body` with `block` (one provenanceBlock made) in place of any it had, at the end.
+export function withBlock(body, block) {
+  const rest = removeProvenance(body);
+  return `${rest === '' ? '' : `${rest}\n\n`}${block}\n`;
 }
 
 // `body` with a block for `provenance` in place of any it had, at the end.
 export function stampProvenance(body, provenance) {
-  const rest = removeProvenance(body);
-  return `${rest === '' ? '' : `${rest}\n\n`}${provenanceBlock(provenance)}\n`;
+  return withBlock(body, provenanceBlock(provenance));
 }
 
 // The provenance in `body`'s block, or null when it has none, more than one, or one that
