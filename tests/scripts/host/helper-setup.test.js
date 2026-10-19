@@ -13,7 +13,7 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { setupLine } from '../../../scripts/state/card-lines.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { findRun, readJournal, markStep } from '../../../scripts/setup/journal.js';
+import { findRun, readJournal, markStep, reverseChange } from '../../../scripts/setup/journal.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { keepClick, clicksDir } from '../../../scripts/setup/clicks.js';
 import { planHash } from '../../../scripts/setup/steps.js';
@@ -59,10 +59,11 @@ async function withSetup(fn, extra = {}) {
   });
 }
 
-// The director's click on the card for this step and list, as the prompt record keeps it.
-function click(step, hash, { at = new Date(T0.getTime() - MINUTE) } = {}) {
+// The director's click on the card for this step and list, as the prompt record keeps it, for
+// the run the card was shown for (the latest one, unless named).
+function click(step, hash, { at = new Date(T0.getTime() - MINUTE), runId = readJournal().runs.at(-1)?.id ?? 'run-0000000000' } = {}) {
   const question = `What this is: setup step ${step}.\n${setupLine(step, hash)}`;
-  const event = makeEvent({ kind: 'action', data: { action: 'setup', step, hash, question, label: 'Go ahead' }, now: () => at });
+  const event = makeEvent({ kind: 'action', data: { action: 'setup', runId, step, hash, question, label: 'Go ahead' }, now: () => at });
   keepClick(event);
   return event;
 }
@@ -327,5 +328,102 @@ test('under STOP, plan and status answer and apply is refused', async () => {
     liftStop();
     assert.equal((await client.setup.apply({ folder, step: 1, hash: card.hash })).ok, true);
     assert.deepEqual(written(folder), { wheelhouse: { a: 1 } });
+  });
+});
+
+test('a short step that fails part-way leaves every change it made in the journal, each one put back', async () => {
+  await withSetup(async ({ client, home, folder }) => {
+    const second = { file: path.join('.claude', 'y.json'), key: ['b'], value: 2 };
+    setWorld(home, { 1: [KEY(1), second], fail: { 1: 'the installer stopped' } });
+    fs.mkdirSync(path.join(folder, '.claude'));
+    fs.writeFileSync(path.join(folder, '.claude', 'x.json'), '{"wheelhouse":{"a":"theirs"}}\n');
+    const card = await client.setup.plan({ folder, step: 1 });
+    click(1, card.hash);
+    const failed = await client.setup.apply({ folder, step: 1, hash: card.hash });
+    assert.equal(failed.ok, false);
+    assert.match(failed.refused, /did not finish: the installer stopped/);
+    const run = runOf(folder);
+    assert.equal(run.steps[1].failed, 'the installer stopped');
+    assert.deepEqual(run.changes.map((c) => [c.step, c.key, c.before, c.after]), [[1, ['wheelhouse', 'a'], 'theirs', 1], [1, ['b'], null, 2]]);
+    for (const change of [...run.changes].reverse()) assert.deepEqual(reverseChange(change), { put: true });
+    assert.deepEqual(written(folder), { wheelhouse: { a: 'theirs' } });
+  });
+});
+
+test('a click on one folder\'s card is not used for another folder\'s run, though their lists are the same', async () => {
+  await withSetup(async ({ client, user, folder }) => {
+    const other = path.join(user, 'Projects', 'Other shop');
+    fs.mkdirSync(other);
+    // Both cards list nothing, so both lists have one hash.
+    const mine = await client.setup.plan({ folder, step: 1 });
+    const theirs = await client.setup.plan({ folder: other, step: 1 });
+    assert.equal(mine.hash, theirs.hash);
+    click(1, mine.hash, { runId: runOf(folder).id });
+    assert.match((await client.setup.apply({ folder: other, step: 1, hash: theirs.hash })).refused, /click/);
+    assert.equal(runOf(other).steps[1].clickedAt, undefined);
+    assert.equal((await client.setup.apply({ folder, step: 1, hash: mine.hash })).ok, true);
+  });
+});
+
+test('a short step still working in the helper past its time is not started again, nor its card shown again', async () => {
+  await withSetup(async ({ home, user, folder }) => {
+    setWorld(home, { 1: [KEY(1)], hold: [1] });
+    let clock = T0;
+    const routes = setupRoutes({ now: () => clock, stepsModule: STEPS_MODULE, userHome: user });
+    const card = await routes['/setup/plan']({ folder, step: 1 });
+    click(1, card.hash);
+    const first = routes['/setup/apply']({ folder, step: 1, hash: card.hash });
+    for (let i = 0; i < 500 && !runOf(folder).steps[1]?.clickedAt; i += 1) await sleep(10);
+    // Past STEP_TIMEOUT_MS by the clock, the journal alone would read it as stuck.
+    clock = new Date(T0.getTime() + 25 * MINUTE);
+    click(1, card.hash, { at: new Date(clock.getTime() - MINUTE) });
+    await assert.rejects(routes['/setup/plan']({ folder, step: 1 }), /already running/);
+    await assert.rejects(routes['/setup/apply']({ folder, step: 1, hash: card.hash }), /already running/);
+    assert.ok((await routes['/setup/status']({ folder })).lines.some((l) => /^Step 1, Install: running since /.test(l)));
+    fs.writeFileSync(path.join(home, 'release-1'), '');
+    assert.deepEqual(await first, { ok: true, started: true, done: true });
+    assert.equal(runOf(folder).changes.length, 1);
+    assert.equal(fs.readdirSync(path.join(home, 'setup', 'clicks-used')).length, 1, 'the second click was not used');
+  });
+});
+
+test('the plan of a step that is running is refused, and its card\'s shown time and record are left as they were', async () => {
+  const spawn = () => ({ on() {}, unref() {} });
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { 2: [KEY(1)] });
+    const card = await client.setup.plan({ folder, step: 2 });
+    click(2, card.hash);
+    assert.deepEqual(await client.setup.apply({ folder, step: 2, hash: card.hash }), { ok: true, started: true });
+    const shownFile = path.join(home, 'setup', 'shown', `${runOf(folder).id}-2.json`);
+    const shown = fs.readFileSync(shownFile, 'utf8');
+    const shownAt = runOf(folder).steps[2].shownAt;
+    const again = await client.setup.plan({ folder, step: 2 });
+    assert.equal(again.ok, false);
+    assert.match(again.refused, /already running/);
+    assert.equal(runOf(folder).steps[2].shownAt, shownAt);
+    assert.equal(fs.readFileSync(shownFile, 'utf8'), shown);
+  }, { spawn });
+});
+
+test('what setup\'s routes say is cleaned of anything key-like, as the other routes\' answers are', async () => {
+  const token = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { 1: [KEY(1)], fail: { 1: `the installer said: bad credentials ${token}` } });
+    const card = await client.setup.plan({ folder, step: 1 });
+    click(1, card.hash);
+    const failed = await client.setup.apply({ folder, step: 1, hash: card.hash });
+    assert.equal(failed.ok, false);
+    assert.ok(!failed.refused.includes(token), failed.refused);
+    assert.match(failed.refused, /\[hidden\]/);
+    const status = await client.setup.status({ folder });
+    assert.equal(status.ok, true);
+    assert.ok(status.lines.some((l) => l.includes('did not finish') && l.includes('[hidden]')), status.lines.join('\n'));
+    assert.ok(!status.lines.join('\n').includes(token));
+    // A refusal from a step's plan is cleaned too, and so is an address with a sign-in in it.
+    setWorld(home, { planFail: { 3: `could not reach https://jo:${token}@example.com/o/p.git` } });
+    const planned = await client.setup.plan({ folder, step: 3 });
+    assert.equal(planned.ok, false);
+    assert.equal(planned.refused.includes(token), false, planned.refused);
+    assert.match(planned.refused, /https:\/\/\[hidden\]@example\.com/);
   });
 });

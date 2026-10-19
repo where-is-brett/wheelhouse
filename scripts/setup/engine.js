@@ -11,9 +11,10 @@
 // reads a list a caller sends, and a request that carries anything but the folder, the step and
 // the hash is refused. Apply goes ahead only when a fresh plan gives the hash the request names,
 // that list is the one this folder's card showed, and the director's click on it is signed by
-// this computer's enrolled key, names this step and this hash, is from the last CLICK_FRESH_MS
-// and hasn't been used. A long step runs in a detached child (scripts/setup/run-step.js), which
-// works the list out again and records its progress in the journal. Plan and status change
+// this computer's enrolled key, names this folder's run, this step and this hash, is from the
+// last CLICK_FRESH_MS and hasn't been used. A long step runs in a detached child
+// (scripts/setup/run-step.js), which works the list out again and records its progress in the
+// journal. A short step runs here, counted as running for as long as it takes. Plan and status change
 // nothing a step lists: plan starts the folder's run when there is none and records when the card
 // was shown, which the timed runs read. Under STOP they answer; apply is refused.
 //
@@ -30,7 +31,7 @@ import { projectForFolder } from '../lib/projects.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
-import { readJournal, startRun, markStep, addChanges } from './journal.js';
+import { readJournal, startRun, markStep, addChanges, applyJsonKey as journalKey } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, shownFor, freshClicks, useClick, releaseClick } from './clicks.js';
 
@@ -108,21 +109,28 @@ function runningSince(entry, now) {
   return now().getTime() - Date.parse(entry.clickedAt) < STEP_TIMEOUT_MS ? entry.clickedAt : null;
 }
 
-// Runs a step's apply on the list worked out for it, records each change in the journal (as the
-// step makes it, through ctx.record, or at the end), and marks the step done, or failed with why.
+// Runs a step's apply on the list worked out for it, records each change in the journal as the
+// step makes it, and marks the step done, or failed with why. The step's ctx carries
+// `applyJsonKey(args)`, the journal's key edit with the change recorded before the file is
+// written, and `record(change or changes)`, which the step calls before or as it makes each change
+// of any other kind. So a step that fails part-way leaves every change it made in the journal, for
+// uninstall to put back, and a retry never takes setup's own value for the director's. Changes
+// apply returns are recorded too, each once: one already recorded through ctx is not doubled.
 // `current`, a test of the step's journal entry, keeps the mark to this attempt: a newer attempt's
 // entry is never marked by an older one. Each change made is recorded whatever, since it was made.
 // Used by the helper for a short step and by scripts/setup/run-step.js for a long one.
 export async function runApply({ step, runId, changes, ctx, current }) {
   const recorded = new Set();
   const record = (made) => {
-    const list = (Array.isArray(made) ? made : []).filter((c) => !recorded.has(c?.id)).map((c) => ({ ...c, step: step.n }));
+    const given = Array.isArray(made) ? made : (made === undefined || made === null ? [] : [made]);
+    const list = given.filter((c) => !recorded.has(c?.id)).map((c) => ({ ...c, step: step.n }));
     if (list.length === 0) return;
     addChanges(runId, list);
     for (const c of list) recorded.add(c.id);
   };
+  const applyJsonKey = (args) => journalKey({ ...args, step: step.n, record });
   try {
-    record(await step.apply({ ...ctx, runId, record }, changes));
+    record(await step.apply({ ...ctx, runId, record, applyJsonKey }, changes));
     markStep(runId, step.n, 'doneAt', { now: ctx.now, when: current });
     return { ok: true };
   } catch (error) {
@@ -134,15 +142,16 @@ export async function runApply({ step, runId, changes, ctx, current }) {
   }
 }
 
-// The first step neither done nor running, or null.
-function toAsk(run, steps, now) {
-  return [...steps].map((s) => s.n).sort((a, b) => a - b).find((n) => !isDone(run, n) && !runningSince(run?.steps?.[n], now)) ?? null;
+// The first step neither done nor running (`running(n)`), or null.
+function toAsk(run, steps, running) {
+  return [...steps].map((s) => s.n).sort((a, b) => a - b).find((n) => !isDone(run, n) && !running(n)) ?? null;
 }
 
 // One line for each step of a run, then its changes, and what is next: `next`, the first step not
 // done (null when every step is), and `ask`, the first step neither done nor running, whose card
 // is asked next (a long step's later cards are asked while it runs; null when there is none).
-function statusLines(run, steps, now) {
+// `running(n)` gives when step n was clicked while it runs, or null.
+function statusLines(run, steps, running) {
   const lines = [`Setup of ${run.folder}, started ${run.startedAt}.`];
   for (const { n } of [...steps].sort((a, b) => a.n - b.n)) {
     const entry = run.steps?.[n] ?? {};
@@ -150,7 +159,7 @@ function statusLines(run, steps, now) {
     if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
     else if (entry.failed) lines.push(`${name}: did not finish: ${entry.failed}`);
     else if (entry.clickedAt) {
-      lines.push(runningSince(entry, now)
+      lines.push(running(n)
         ? `${name}: running since ${entry.clickedAt}`
         : `${name}: stuck: running since ${entry.clickedAt}, more than ${STEP_TIMEOUT_MS / 60000} minutes`);
     } else if (entry.shownAt) lines.push(`${name}: card shown at ${entry.shownAt}, not clicked yet`);
@@ -161,7 +170,7 @@ function statusLines(run, steps, now) {
   }
   const next = firstUnfinished(run, steps);
   lines.push(next === null ? 'Every step is done.' : `Next: ${title(next)}.`);
-  return { lines, next, ask: toAsk(run, steps, now) };
+  return { lines, next, ask: toAsk(run, steps, running) };
 }
 
 // The routes' handlers, each taking the request's body and giving its answer. A refusal throws
@@ -173,6 +182,17 @@ export function setupRoutes({
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
+  // The short steps this helper is running now, as `<run id>:<step>`. A short step has no time
+  // limit of its own, so one still working past STEP_TIMEOUT_MS is still running: it is neither
+  // started again nor shown again while it is here.
+  const inHelper = new Set();
+  // When step n of a run was clicked, while it runs: in this helper, or clicked less than
+  // STEP_TIMEOUT_MS ago and not finished. Null when it isn't running.
+  const runningIn = (run, n) => {
+    const entry = run?.steps?.[n];
+    if (run && inHelper.has(`${run.id}:${n}`)) return entry?.clickedAt ?? 'now';
+    return runningSince(entry, now);
+  };
 
   async function stepOf(n) {
     if (!Number.isInteger(n)) refuse(`the step must be a number from 1 to ${Object.keys(SETUP_TITLES).length}`);
@@ -191,13 +211,23 @@ export function setupRoutes({
     return { ...got, hash };
   }
 
+  // A step done or running is not planned again: its card's shown time and record stay as they are.
+  const showable = (run, n) => {
+    if (isDone(run, n)) refuse(`${title(n)} is already done`);
+    if (runningIn(run, n)) refuse(`${title(n)} is already running`);
+  };
+
+  // Answers under STOP, as status does (ruling R19): it writes only setup's own records (the run
+  // when the folder has none, the card's shownAt, the shown card), never anything a step lists.
   async function plan(body) {
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     let run = runFor(folder);
-    if (isDone(run, step.n)) refuse(`${title(step.n)} is already done`);
+    showable(run, step.n);
     const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
     const { question } = composeCard({ ...got.card, kind: 'setup', target: { step: step.n, hash: got.hash } });
+    // Read again: the step may have been started while its plan was worked out.
+    if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now });
     noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card: question, now });
     mark(run.id, step.n, 'shownAt', { now });
@@ -212,11 +242,11 @@ export function setupRoutes({
     if (typeof body.hash !== 'string' || !FULL_HASH.test(body.hash)) refuse('the hash must be the full hash of the list on the card');
     const run = runFor(folder);
     if (run === null) refuse('this step\'s card has not been shown: ask for its plan first');
-    const startable = (entry) => {
-      if (entry?.doneAt) refuse(`${title(step.n)} is already done`);
-      if (runningSince(entry, now)) refuse(`${title(step.n)} is already running`);
+    const startable = (current) => {
+      if (isDone(current, step.n)) refuse(`${title(step.n)} is already done`);
+      if (runningIn(current, step.n)) refuse(`${title(step.n)} is already running`);
     };
-    startable(run.steps?.[step.n]);
+    startable(run);
     // The list as it is now, worked out by the helper: the request's hash must name it, and the
     // card this folder was shown for the step must have shown it.
     const ctx = ctxFor(run.folder, step.n, run.id);
@@ -224,11 +254,11 @@ export function setupRoutes({
     // Nothing is awaited from here until the step is marked clicked, so of two requests in flight
     // together (two Go aheads on one card) only one starts the step: the journal is read again
     // here, and the other finds the step running, or done.
-    startable(runById(run.id)?.steps?.[step.n]);
+    startable(runById(run.id));
     if (fresh.hash !== body.hash || shownFor(run.id, step.n)?.hash !== fresh.hash) refuse(CHANGED);
     // STOP is read again at the last moment, before the click is used.
     if (stopped()) return stopRefusal;
-    const click = freshClicks({ step: step.n, hash: fresh.hash, now }).find((e) => useClick(e, now));
+    const click = freshClicks({ runId: run.id, step: step.n, hash: fresh.hash, now }).find((e) => useClick(e, now));
     if (!click) refuse(NEEDS_CLICK);
     const clickedAt = new Date(click.at).toISOString();
     try {
@@ -244,7 +274,15 @@ export function setupRoutes({
       startChild({ step, run, hash: fresh.hash, clickedAt, deadline: new Date(Date.parse(clickedAt) + STEP_TIMEOUT_MS).toISOString() });
       return { ok: true, started: true };
     }
-    const done = await runApply({ step, runId: run.id, changes: fresh.changes, ctx: { ...ctx, stopped }, current });
+    // Counted running in this helper from its click until it finishes, however long that takes.
+    const key = `${run.id}:${step.n}`;
+    inHelper.add(key);
+    let done;
+    try {
+      done = await runApply({ step, runId: run.id, changes: fresh.changes, ctx: { ...ctx, stopped }, current });
+    } finally {
+      inHelper.delete(key);
+    }
     return done.ok ? { ok: true, started: true, done: true } : { ok: false, refused: `${title(step.n)} did not finish: ${done.reason}` };
   }
 
@@ -273,8 +311,9 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const run = runFor(folder);
     const all = await steps();
-    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, now) };
-    return { ok: true, ...statusLines(run, all, now) };
+    const running = (n) => runningIn(run, n);
+    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running) };
+    return { ok: true, ...statusLines(run, all, running) };
   }
 
   return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status };

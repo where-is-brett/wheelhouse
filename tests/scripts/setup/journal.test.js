@@ -372,3 +372,69 @@ test('a lock left by a process that died is taken over', () => {
     assert.deepEqual(fs.readdirSync(path.dirname(journalFile())), ['journal.json']);
   });
 });
+
+test('a key that held null is put back as null; only a key that was absent is removed', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-journal-');
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, '{\n  "model": null\n}\n');
+    const held = applyJsonKey({ file, key: ['model'], value: 'x' });
+    assert.equal(held.before, null);
+    assert.equal(held.absent, undefined);
+    const missing = applyJsonKey({ file, key: ['other'], value: 1 });
+    assert.equal(missing.before, null);
+    assert.equal(missing.absent, true);
+    assert.deepEqual(reverseChange(missing), { put: true });
+    assert.deepEqual(reverseChange(held), { put: true });
+    const back = readJson(file);
+    assert.ok(Object.hasOwn(back, 'model'), 'the key that held null is still there');
+    assert.equal(back.model, null);
+    assert.equal(Object.hasOwn(back, 'other'), false);
+    // The journal keeps the difference.
+    const run = startRun({ folder: dir, now: at('2026-10-19T03:00:00.000Z') });
+    addChanges(run.id, [{ ...held, step: 6 }, { ...missing, step: 6 }]);
+    assert.deepEqual(findRun(dir).changes.map((c) => c.absent), [undefined, true]);
+    assert.throws(() => addChanges(run.id, [{ ...missing, id: 'chg-0000000001', step: 6, absent: 'yes' }]), /absent/);
+  });
+});
+
+test('a change is recorded before its key is written, and one recorded but never written is not put back', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-journal-');
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, '{"theme":"dark"}\n');
+    // The record is made while the file still holds its value before.
+    const seen = [];
+    const change = applyJsonKey({ file, key: ['theme'], value: 'light', record: (c) => seen.push([c, readJson(file).theme]) });
+    assert.deepEqual(seen, [[change, 'dark']]);
+    assert.equal(readJson(file).theme, 'light');
+    // A record that fails leaves the file as it was.
+    const stop = () => { throw new Error('the journal could not be written'); };
+    assert.throws(() => applyJsonKey({ file, key: ['theme'], value: 'blue', record: stop }), /could not be written/);
+    assert.equal(readJson(file).theme, 'light');
+    // Recorded, then the write never happened (a crash between the two): neither a key that was
+    // there nor one that was absent is touched on reversal.
+    for (const key of [['theme'], ['absent']]) {
+      let recorded = null;
+      assert.throws(() => applyJsonKey({ file, key, value: 'setup', record: (c) => { recorded = c; throw new Error('crash'); } }), /crash/);
+      const text = readText(file);
+      assert.deepEqual(reverseChange(recorded), { put: false, why: 'changed since setup' });
+      assert.equal(readText(file), text);
+    }
+  });
+});
+
+test('the journal is written for its owner only', { skip: process.platform === 'win32' }, () => {
+  withHome(() => {
+    startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    assert.equal(fs.statSync(journalFile()).mode & 0o777, 0o600);
+    fs.chmodSync(journalFile(), 0o644);
+    startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    assert.equal(fs.statSync(journalFile()).mode & 0o777, 0o600);
+  });
+});
+
+test('the journal\'s source names the byte order mark by its escape, not as a literal character', () => {
+  const source = fs.readFileSync(new URL('../../../scripts/setup/journal.js', import.meta.url), 'utf8');
+  assert.equal(source.includes('\uFEFF'), false);
+});

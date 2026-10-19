@@ -14,8 +14,9 @@
 // works out the list itself. `plan`, `status` and `resume` only read (resume asks for the status,
 // then one plan), and the STOP guard lets them through; `apply` is refused under STOP.
 // Errors are one line on standard error.
+import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { helperClient } from '../host/helper-client.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 
@@ -84,6 +85,16 @@ export async function main(argv, {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// Started as a script: by real paths, as run-step.js and helper-main.js are, since a plugin folder
+// may be reached through a link, and the command's path is then the link's.
+function startedAsScript() {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (process.argv[1] && startedAsScript()) {
   process.exitCode = await main(process.argv.slice(2));
 }

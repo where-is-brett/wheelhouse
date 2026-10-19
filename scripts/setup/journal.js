@@ -9,7 +9,8 @@
 //     kind: 'json-key' | 'file' | 'folder' | 'process' | 'host' | 'locked' | 'env',
 //     target: string,        a file or folder path, an environment variable, or a host object
 //     key?: string[],        json-key: the path of the key inside the file
-//     before: unknown | null,  what it held before setup (null: it was absent)
+//     before: unknown | null,  what it held before setup (null: it was absent, or held null)
+//     absent?: true,         json-key: the key was not there before setup (before is then null)
 //     after: unknown,        what setup wrote
 //     project?: string,
 //   }
@@ -21,7 +22,8 @@
 //   }> }
 //
 // Every write is the whole file: a temporary file beside it, then a rename, so a crash leaves
-// the earlier journal whole. A journal that cannot be read is refused, never replaced.
+// the earlier journal whole. A journal that cannot be read is refused, never replaced. The
+// journal and its temporary file are for their owner only (mode 0o600), as the clicks are.
 // Every writer reads, changes and writes under a lock file beside the journal
 // (journal.json.lock, taken with an exclusive create), so the helper and a long step's
 // child writing together lose nothing. A writer waits up to LOCK_WAIT_MS for it; a lock
@@ -43,15 +45,18 @@ export function journalFile() {
 
 // ---- Writing whole files, atomically ----
 
-// A temporary file in the same folder, then a rename. A file that is there keeps its mode.
-function writeAtomic(file, text) {
+// A temporary file in the same folder, then a rename. A file that is there keeps its mode,
+// unless `mode` is given.
+function writeAtomic(file, text, { mode: given } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
-  let mode;
-  try {
-    mode = fs.statSync(file).mode & 0o777;
-  } catch {
-    mode = undefined;
+  let mode = given;
+  if (mode === undefined) {
+    try {
+      mode = fs.statSync(file).mode & 0o777;
+    } catch {
+      mode = undefined;
+    }
   }
   try {
     const fd = fs.openSync(temp, 'w', mode);
@@ -115,7 +120,7 @@ export function readJournal() {
 }
 
 function writeJournal(journal) {
-  writeAtomic(journalFile(), `${JSON.stringify(journal, null, 2)}\n`);
+  writeAtomic(journalFile(), `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
 }
 
 const LOCK_STALE_MS = 5000;
@@ -230,6 +235,9 @@ function checkChange(change, { needStep = true } = {}) {
   if (change.key !== undefined && !(Array.isArray(change.key) && change.key.every((k) => typeof k === 'string'))) {
     throw new Error(`Change ${change.id} has a key that is not a list of names`);
   }
+  if (change.absent !== undefined && !(change.absent === true && change.before === null)) {
+    throw new Error(`Change ${change.id} says absent only as true, with its value before null`);
+  }
 }
 
 // Appends changes to a run. A change whose id is already there is refused, so a retry cannot double one.
@@ -266,7 +274,7 @@ function readObjectFile(file) {
     if (error.code === 'ENOENT') return { data: {}, indent: 2, eol: '\n', bom: '', newline: true };
     throw error;
   }
-  const bom = text.startsWith('﻿') ? '﻿' : '';
+  const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
   const body = text.slice(bom.length);
   let data;
   try {
@@ -328,9 +336,12 @@ function deleteAt(data, key) {
 }
 
 // Sets one key in a JSON file, leaving every other key and the file's layout as they were.
-// The change it returns has the value before (null when the key was absent). A file that
-// is not a JSON object is refused, naming it, never replaced.
-export function applyJsonKey({ file, key, value, step, project }) {
+// The change it returns has the value before (null, with `absent: true`, when the key was not
+// there). A file that is not a JSON object is refused, naming it, never replaced. `record`, when
+// given, is called with the change before the file is written, so the journal holds it first;
+// if it throws, the file is left as it was. A change recorded whose write then never happened is
+// safe to reverse: the file does not hold `after`, so it is left alone.
+export function applyJsonKey({ file, key, value, step, project, record }) {
   checkKey(key);
   if (typeof file !== 'string' || file === '') throw new Error('A file is needed');
   if (value === undefined) throw new Error('A value is needed');
@@ -340,17 +351,20 @@ export function applyJsonKey({ file, key, value, step, project }) {
   if (!setAt(read.data, key, structuredClone(value))) {
     throw new Error(`${file} holds something that is not an object at ${key.join('.')}, so setup has left it as it was`);
   }
-  writeObjectFile(file, read);
-  return {
+  const change = {
     id: newId('chg'),
     ...(step === undefined ? {} : { step }),
     kind: 'json-key',
     target: file,
     key: [...key],
     before: structuredClone(before),
+    ...(was.found ? {} : { absent: true }),
     after: structuredClone(value),
     ...(project === undefined ? {} : { project }),
   };
+  if (typeof record === 'function') record(structuredClone(change));
+  writeObjectFile(file, read);
+  return change;
 }
 
 // ---- Putting changes back ----
@@ -372,7 +386,7 @@ function reverseJsonKey(change) {
   }
   const now = getAt(read.data, change.key);
   if (!now.found || canonicalJson(now.value) !== canonicalJson(change.after)) return CHANGED;
-  if (change.before === null) deleteAt(read.data, change.key);
+  if (change.absent === true) deleteAt(read.data, change.key);
   else setAt(read.data, change.key, structuredClone(change.before));
   writeObjectFile(change.target, read);
   return { put: true };

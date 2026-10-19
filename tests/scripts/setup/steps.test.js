@@ -7,12 +7,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STEPS, planHash, firstUnfinished } from '../../../scripts/setup/steps.js';
-import { admitFolder } from '../../../scripts/setup/engine.js';
+import { admitFolder, runApply } from '../../../scripts/setup/engine.js';
 import { setupLine, SETUP_TITLES, SETUP_LABEL, setLineOf } from '../../../scripts/state/card-lines.js';
 import { composeCard, DECIDING, HEADERS } from '../../../scripts/cards/compose.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey } from '../../../scripts/state/signing.js';
-import { startRun, markStep, findRun } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, findRun, applyJsonKey, reverseChange, newId } from '../../../scripts/setup/journal.js';
 import { runStep } from '../../../scripts/setup/run-step.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -70,13 +70,15 @@ test('the setup line names the step and the hash\'s first twelve characters, and
   assert.throws(() => composeCard({ kind: 'setup', level: 3, what: 'Step 1.', why: 'w', because: 'b', meanwhile: 'm', recommend: 'Go ahead', options: [{ label: 'Go ahead', says: 's' }], target: { step: 11, hash: H } }), /target/);
 });
 
-test('a setup click is an action naming the step and the full hash, with the Go ahead label', () => {
+test('a setup click is an action naming the run, the step and the full hash, with the Go ahead label', () => {
   withHome(() => {
     makeSigningKey();
-    const make = (data) => makeEvent({ kind: 'action', data: { action: 'setup', question: setupLine(1, H), label: 'Go ahead', step: 1, hash: H, ...data }, now: () => NOW });
+    const make = (data) => makeEvent({ kind: 'action', data: { action: 'setup', question: setupLine(1, H), label: 'Go ahead', runId: 'run-0123456789', step: 1, hash: H, ...data }, now: () => NOW });
     const event = make({});
     assert.ok(event.sig);
-    assert.deepEqual(Object.keys(event.data).sort(), ['action', 'hash', 'label', 'question', 'step']);
+    assert.deepEqual(Object.keys(event.data).sort(), ['action', 'hash', 'label', 'question', 'runId', 'step']);
+    assert.throws(() => make({ runId: undefined }), /run/);
+    assert.throws(() => make({ runId: 'run-x' }), /run/);
     assert.throws(() => make({ step: 11 }), /step/);
     assert.throws(() => make({ step: 0 }), /step/);
     assert.throws(() => make({ hash: H.slice(0, 12) }), /hash/);
@@ -244,4 +246,67 @@ test('a long step\'s process from an older click never marks the newer attempt d
       assert.deepEqual(findRun(folder).steps[2], newer, ending);
     });
   }
+});
+
+const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+
+test('a step records each change as it makes it, so one that fails part-way leaves every change it made in the journal', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-record Zoë '));
+    const file = path.join(folder, 'x.json');
+    fs.writeFileSync(file, '{"a":"theirs"}\n');
+    const run = startRun({ folder, now: () => NOW });
+    const stepOf = (n, apply) => ({ n, title: SETUP_TITLES[n], plan: async () => ({ changes: [] }), apply });
+    // Two key edits through ctx, then a throw: both are in the journal, the step is failed, and
+    // both are put back, the director's own value first among them.
+    const failing = stepOf(6, async (ctx) => {
+      ctx.applyJsonKey({ file, key: ['a'], value: 'setup' });
+      ctx.applyJsonKey({ file, key: ['b'], value: 2 });
+      throw new Error('the installer stopped');
+    });
+    markStep(run.id, 6, 'clickedAt', { now: () => NOW });
+    assert.deepEqual(await runApply({ step: failing, runId: run.id, changes: [], ctx: { now: () => NOW } }), { ok: false, reason: 'the installer stopped' });
+    const made = findRun(folder).changes;
+    assert.deepEqual(made.map((c) => [c.step, c.key, c.before, c.after]), [[6, ['a'], 'theirs', 'setup'], [6, ['b'], null, 2]]);
+    assert.equal(findRun(folder).steps[6].failed, 'the installer stopped');
+    assert.deepEqual(readJson(file), { a: 'setup', b: 2 });
+    for (const change of [...made].reverse()) assert.deepEqual(reverseChange(change), { put: true });
+    assert.deepEqual(readJson(file), { a: 'theirs' });
+
+    // Each way of recording gives each change once: returned only; through ctx and returned too;
+    // and ctx.record of one change, made before the change it names.
+    const returned = stepOf(7, async () => [applyJsonKey({ file, key: ['c'], value: 3 })]);
+    const both = stepOf(8, async (ctx) => [ctx.applyJsonKey({ file, key: ['d'], value: 4 })]);
+    const own = stepOf(9, async (ctx) => {
+      const change = { id: newId('chg'), kind: 'folder', target: path.join(folder, 'made'), before: null, after: 'made' };
+      ctx.record(change);
+      fs.mkdirSync(change.target);
+      return [change];
+    });
+    for (const step of [returned, both, own]) {
+      markStep(run.id, step.n, 'clickedAt', { now: () => NOW });
+      assert.deepEqual(await runApply({ step, runId: run.id, changes: [], ctx: { now: () => NOW } }), { ok: true });
+    }
+    assert.deepEqual(findRun(folder).changes.slice(2).map((c) => [c.step, c.kind]), [[7, 'json-key'], [8, 'json-key'], [9, 'folder']]);
+  });
+});
+
+test('a long step that fails part-way leaves every change it made in the journal, each one put back', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-long-fail '));
+    const hash = longWorld(home, folder);
+    fs.writeFileSync(path.join(folder, 'x.json'), '{"a":"theirs"}\n');
+    const world = readJson(path.join(home, 'test-world.json'));
+    fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ ...world, fail: { 2: 'the installer stopped' } }));
+    fs.writeFileSync(path.join(home, 'release-2'), '');
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    assert.equal(await runStep(childArgs({ folder, step: '2', hash, runId: run.id }), { now: () => at(MINUTE), exit: () => {} }), 1);
+    const { changes, steps } = findRun(folder);
+    assert.equal(steps[2].failed, 'the installer stopped');
+    assert.deepEqual(changes.map((c) => [c.step, c.target, c.before, c.after]), [[2, path.join(folder, 'x.json'), 'theirs', 1], [2, path.join(folder, 'y.json'), null, 2]]);
+    for (const change of [...changes].reverse()) assert.deepEqual(reverseChange(change), { put: true });
+    assert.deepEqual(readJson(path.join(folder, 'x.json')), { a: 'theirs' });
+    assert.deepEqual(readJson(path.join(folder, 'y.json')), {});
+  });
 });

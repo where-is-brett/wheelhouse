@@ -9,7 +9,8 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
-import { startRun } from '../../../scripts/setup/journal.js';
+import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
 import { clicksDir, noteShown } from '../../../scripts/setup/clicks.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 
@@ -770,7 +771,7 @@ test('in a folder being set up, the helper starts and a setup click is recorded;
       const [only, ...rest] = clicks();
       assert.deepEqual(rest, []);
       assert.equal(only.kind, 'action');
-      assert.deepEqual(only.data, { action: 'setup', step: 3, hash: H, question: setupCard(3, H), label: 'Go ahead' });
+      assert.deepEqual(only.data, { action: 'setup', runId: run.id, step: 3, hash: H, question: setupCard(3, H), label: 'Go ahead' });
       assert.equal(only.at, NOW.toISOString());
       assert.equal(verify(only, readEnrolled()), true);
       // Nothing else is recorded there: no answer, no signed record, no question to the host, and STOP stays on.
@@ -822,6 +823,41 @@ test('in a registered project a setup click is kept in setup/clicks, and the ans
       assert.deepEqual(c.calls.write.map((w) => w.data.label), ['Go ahead']);
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a registered folder setup is still finishing, a setup click is kept, with or without its first commit', async () => {
+  await withHome(async () => {
+    const made = [];
+    try {
+      for (const git of [false, true]) {
+        const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), `wh-registered${git ? '-git' : ''} zoë `)));
+        made.push(folder);
+        if (git) fs.mkdirSync(path.join(folder, '.git'));
+        writeProject(git ? 'o__git' : 'o__new', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+        const run = startRun({ folder, now: () => NOW });
+        for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => NOW });
+        noteShown({ runId: run.id, folder, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
+        const before = clicks().length;
+        // The hook as it runs: the folder is placed by itself, not by a stand-in.
+        await decide({ ...input({ [setupCard(4, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: folder }, { client: fake(), now: () => NOW });
+        const kept = clicks();
+        assert.equal(kept.length, before + 1, git ? 'with .git' : 'without .git');
+        assert.equal(kept.find((e) => e.data.runId === run.id)?.data.step, 4);
+      }
+      // Once every step is done, a folder with no .git yet is left alone again.
+      const done = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-done-')));
+      made.push(done);
+      writeProject('o__done', { folder: done, remoteUrl: 'https://example.com/o/d.git', host: 'github', repo: 'o/d', connection: {} });
+      const run = startRun({ folder: done, now: () => NOW });
+      for (let n = 1; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => NOW });
+      noteShown({ runId: run.id, folder: done, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
+      const before = clicks().length;
+      await decide({ ...input({ [setupCard(4, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: done }, { client: fake(), now: () => NOW });
+      assert.equal(clicks().length, before);
+    } finally {
+      for (const folder of made) fs.rmSync(folder, { recursive: true, force: true });
     }
   });
 });

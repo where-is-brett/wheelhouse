@@ -2179,7 +2179,9 @@ export async function startHelper({
   }
   const pass = (call) => async (body, ctx) => ({ ok: true, result: await call(await ctx.adapter(), body) });
   // Setup's routes act on a folder, not a registered project, and check it themselves. Plan and
-  // status answer under STOP; apply is refused.
+  // status answer under STOP; apply is refused. Plan writes under STOP (ruling R19), but only
+  // setup's own records: it starts the folder's run when there is none, stamps the card's shownAt
+  // and keeps the shown card in setup/shown/. It changes nothing a step lists.
   const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn });
   const routes = {
     ...setup,
@@ -2346,12 +2348,18 @@ export async function startHelper({
       }
     }
     if (url.pathname.startsWith('/setup/')) {
+      // Setup's routes have no project, so no project's secrets: their answers are cleaned as the
+      // other routes' are, without them. A refusal, and each line status gives (a step that did
+      // not finish says why, in an installer's own words), get the key-like scrub too.
       try {
         onArrive(url.pathname);
-        return send(res, 200, await route(body));
+        const answer = cleanDeep(await route(body), []);
+        if (typeof answer?.refused === 'string') answer.refused = clean(answer.refused, []) || 'the request failed';
+        if (Array.isArray(answer?.lines)) answer.lines = answer.lines.map((line) => `${/^\s*/.exec(String(line))[0]}${clean(line, [])}`);
+        return send(res, 200, answer);
       } catch (error) {
         const message = error instanceof SetupRefusal || error instanceof Error ? error.message : '';
-        return send(res, 200, { ok: false, refused: message || 'the request failed' });
+        return send(res, 200, { ok: false, refused: clean(message, []) || 'the request failed' });
       }
     }
     let ctx = null;

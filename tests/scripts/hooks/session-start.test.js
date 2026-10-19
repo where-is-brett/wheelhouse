@@ -23,6 +23,7 @@ import { startRun, markStep } from '../../../scripts/setup/journal.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
 
 const P = 'owner__name';
 
@@ -796,5 +797,52 @@ test('the guards act in a folder being set up', async () => {
     }
     assert.equal(await stop({ ...call(stranger, 'Write'), tool_input: { file_path: path.join(stranger, 'a.txt') } }), undefined);
     liftStop();
+  });
+});
+
+test('in a registered folder setup is still finishing, the session start resumes it and the guards act, with or without its first commit', async () => {
+  // Step 3 registers the folder; step 7 makes its first commit. Between them it has no .git.
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const T = Date.parse('2026-10-19T03:00:00.000Z');
+    const start = (f, cwd) => decide({ cwd, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: managed, stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+    });
+    const STEP_4 = 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.';
+    for (const git of [false, true]) {
+      const folder = fs.realpathSync.native(tempFolder(`wh-registered${git ? '-git' : ''} zoë `));
+      if (git) fs.mkdirSync(path.join(folder, '.git'));
+      writeProject(git ? 'o__git' : 'o__new', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+      const run = startRun({ folder, now: () => new Date(T) });
+      for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+      const f = fake();
+      const out = await start(f, folder);
+      assert.equal(f.calls.spawn.length, 1, `the helper is started (${git ? 'with' : 'without'} .git)`);
+      const lines = text(out).split('\n');
+      assert.ok(lines.includes(STEP_4), lines.join('\n'));
+      assert.ok(!lines.includes(FRONT_DESK_LINE), 'setup, not the front desk, while setup is part-way');
+      // The guards act there, as in a project.
+      const bash = (command) => ({ ...call(folder, 'Bash'), tool_input: { command } });
+      const denied = (answer) => answer?.hookSpecificOutput?.permissionDecision === 'deny';
+      assert.ok(denied(await toolGuard(bash('gh pr merge 3'), { dir: managed, home: os.homedir(), platform: 'darwin', pluginRoot: PLUGIN_ROOT })));
+      setStop({ by: 'prompt' });
+      const stop = (input) => stopGuard(input, { dir: managed, pluginRoot: PLUGIN_ROOT, platform: 'darwin' });
+      assert.ok(denied(await stop(bash('npm install'))));
+      assert.equal(await stop(bash(`node ${PLUGIN_ROOT}/scripts/setup/cli.js resume`)), undefined);
+      liftStop();
+      // Once every step is done, the folder is a project like any other.
+      for (let n = 4; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+      const g = fake();
+      const after = await start(g, folder);
+      if (git) {
+        assert.equal(g.calls.spawn.length, 1);
+        assert.ok(!text(after).includes('Setup is part-way'), text(after));
+        assert.ok(text(after).split('\n').includes(FRONT_DESK_LINE), text(after));
+      } else {
+        assert.equal(after, undefined);
+        assert.equal(g.calls.spawn.length, 0);
+      }
+    }
   });
 });

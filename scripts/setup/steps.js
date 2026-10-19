@@ -11,14 +11,25 @@
 //     long?: boolean,        runs in a detached child (scripts/setup/run-step.js)
 //   }
 //   ctx = { folder, step, runId, now, userHome, platform }, and for apply also
-//         record(changes), to put changes in the journal as they are made, and stopped().
+//         applyJsonKey({ file, key, value, project? }), the journal's key edit, which records the
+//           change in the journal before it writes the file, and gives the change back;
+//         record(change or changes), to put a change of any other kind in the journal;
+//         stopped(), whether STOP has come on meanwhile.
 //
 // `plan` changes nothing. Its list is what the card shows and what its hash names, so it must be
 // the same list each time for the same world: no ids, no times. `card` is the composer's input
 // (scripts/cards/compose.js) of kind `setup`, without its target: the engine gives it this step
 // and the list's hash, which make its set line. `director` is what the director does, in plain words.
-// `apply` gets the list the helper has just worked out again, never one a caller sent, and returns
-// the changes it made (scripts/setup/journal.js's Change), each with this step.
+// `apply` gets the list the helper has just worked out again, never one a caller sent.
+//
+// The step contract: `apply` records each change as it is made, never only at the end. A key in a
+// JSON file goes through ctx.applyJsonKey; any other change is passed to ctx.record just before
+// it is made (or, where its value before can only be read as it is made, at once after), with its
+// value before. A step that fails part-way then leaves every change it made in the journal, so
+// uninstall can put them back, and a retry, which reads setup's own value as the value before,
+// never loses the director's. `apply` may also return the changes it made; one already recorded
+// is not recorded twice. A throw marks the step failed with its message; a fresh card and click
+// run it again, so apply must be safe to repeat.
 //
 // Until each step's task (Tasks 7 to 13) fills it in, the step lists no changes (ruling R14).
 import crypto from 'node:crypto';

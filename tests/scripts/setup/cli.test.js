@@ -15,6 +15,7 @@ import { makeEvent } from '../../../scripts/state/events.js';
 import { setupLine } from '../../../scripts/state/card-lines.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { keepClick } from '../../../scripts/setup/clicks.js';
+import { readJournal } from '../../../scripts/setup/journal.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
 const SCRIPT = fileURLToPath(new URL('../../../scripts/setup/cli.js', import.meta.url));
@@ -121,7 +122,8 @@ test('against the helper, a card is planned, refused without its click, applied 
       const refused = await run(['apply', '1', plan.hash], { client, cwd: folder });
       assert.equal(refused.code, 1);
       assert.match(refused.err, /click/);
-      keepClick(makeEvent({ kind: 'action', data: { action: 'setup', step: 1, hash: plan.hash, question: plan.card.question, label: 'Go ahead' }, now: () => T0 }));
+      const runId = readJournal().runs.at(-1).id;
+      keepClick(makeEvent({ kind: 'action', data: { action: 'setup', runId, step: 1, hash: plan.hash, question: plan.card.question, label: 'Go ahead' }, now: () => T0 }));
       setStop({ by: 'prompt' });
       assert.equal((await run(['status'], { client, cwd: folder })).code, 0);
       assert.equal((await run(['plan', '1'], { client, cwd: folder })).code, 0);
@@ -144,5 +146,14 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume\n$/);
+});
+
+test('run as a script through a linked plugin folder, it still runs', () => {
+  // A plugin folder reached through a link: the command's path is the link's, its module's is real.
+  const linked = path.join(tempFolder('wh-linked '), 'plugin');
+  fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
+  const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
+  assert.equal(got.status, 1);
   assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume\n$/);
 });

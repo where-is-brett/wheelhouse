@@ -4,16 +4,16 @@
 // <wheelhouseHome()>/setup/, out of agents' reach (Task 13 copies the clicks into the state once
 // the state branch exists):
 //   clicks/        each click as the prompt record signed it: an `action` event `setup`
-//                  { step, hash, question, label }
+//                  { runId, step, hash, question, label }, naming the run the card was shown for
 //   clicks-used/   one empty marker per click the helper has used, named by the click's id
 //   shown/         the card each run's step last showed: { runId, folder, step, hash, card, at },
 //                  written by the helper when it works out a step's plan and composes its card;
 //                  `card` is what the director reads: { question, header, options: [{ label,
 //                  description }] }
 // The prompt record reads `shown/` to turn the twelve characters on a card into the full hash
-// the click names, and counts a click only on the card exactly as the helper composed it (its
-// text, header and each option's label and description), so the words the director read are the
-// helper's for that list. The helper reads `clicks/`
+// the click names, with the run the card was shown for, and counts a click only on the card
+// exactly as the helper composed it (its text, header and each option's label and description),
+// so the words the director read are the helper's for that list. The helper reads `clicks/`
 // before it applies a step.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -116,9 +116,12 @@ export function shownFor(runId, step) {
   return r && r.runId === runId && r.step === step ? r : null;
 }
 
-// The full hash of the one list shown for `step` in a folder holding `cwd` whose hash starts with
-// `h12`, on a card the director saw exactly as shown (`card`, the question AskUserQuestion was
-// given); null when there is none, or two different ones.
+// The card shown for `step` in a folder holding `cwd` whose list's hash starts with `h12`, on a
+// card the director saw exactly as shown (`card`, the question AskUserQuestion was given):
+// { runId, hash }, the run it was shown for and the list's full hash. Null when there is none, or
+// two different lists. When several runs showed that very card (every list that changes nothing
+// has one hash), the run of the nearest folder holding `cwd` is taken, as the helper places a
+// folder, and of those the card shown last.
 export function shownHash({ cwd, step, h12, card }) {
   const asked = shownCard(card);
   if (typeof cwd !== 'string' || !/^[0-9a-f]{12}$/.test(String(h12)) || asked === null) return null;
@@ -129,10 +132,13 @@ export function shownHash({ cwd, step, h12, card }) {
   } catch {
     return null;
   }
-  const found = new Set(names.map((n) => readShown(path.join(shownDir(), n)))
-    .filter((r) => r !== null && r.step === step && r.hash.startsWith(h12) && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd))
-    .map((r) => r.hash));
-  return found.size === 1 ? [...found][0] : null;
+  const found = names.map((n) => readShown(path.join(shownDir(), n)))
+    .filter((r) => r !== null && r.step === step && r.hash.startsWith(h12) && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd));
+  if (new Set(found.map((r) => r.hash)).size !== 1) return null;
+  const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
+  const nearest = Math.max(...found.map(depth));
+  const chosen = found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  return { runId: chosen.runId, hash: chosen.hash };
 }
 
 // Every setup click kept on this computer; a file that isn't one is passed over.
@@ -156,15 +162,17 @@ function keptClicks() {
 const used = (event) => fs.existsSync(path.join(usedDir(), String(event.id)));
 
 // The director's clicks that let this step's list go ahead, newest first: a setup action naming
-// this step and this full hash, made on this computer, signed by its enrolled key, from the last
-// CLICK_FRESH_MS, and not yet used.
-export function freshClicks({ step, hash, now = () => new Date() }) {
+// this run, this step and this full hash, made on this computer, signed by its enrolled key, from
+// the last CLICK_FRESH_MS, and not yet used. A click on another folder's card, though its list has
+// the same hash, names another run and is not one of them.
+export function freshClicks({ runId, step, hash, now = () => new Date() }) {
   const enrolled = readEnrolled();
   const me = computerId();
   const at = now().getTime();
   return keptClicks().filter((e) => {
     const age = at - Date.parse(e.at);
-    return e.kind === 'action' && e.data?.action === 'setup' && e.data.step === step && e.data.hash === hash
+    return e.kind === 'action' && e.data?.action === 'setup' && RUN_ID.test(String(runId)) && e.data.runId === runId
+      && e.data.step === step && e.data.hash === hash
       && e.computer === me && e.sig?.computer === me && EVENT_ID.test(String(e.id))
       && age <= CLICK_FRESH_MS && age >= -SKEW_MS && !used(e) && verify(e, enrolled);
   }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));

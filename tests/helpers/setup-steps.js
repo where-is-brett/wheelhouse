@@ -1,14 +1,18 @@
 // tests/helpers/setup-steps.js
 // Steps for the setup engine's tests, standing in for Tasks 7 to 13. Each step reads what it
-// would change from <WHEELHOUSE_HOME>/test-world.json ({ "<step>": [{ file, key, value, home? }],
-// "planMs": n }), so a test can change the list between the card and the click. A file is in the
-// folder being set up, or with `home` in the user's home the step is given; `planMs` makes
-// each plan take that long, so a test can have two requests planning at once. Apply writes each listed key with
-// the journal's key edit. Step 2 is long: it records its first change, then waits for
+// would change from <WHEELHOUSE_HOME>/test-world.json, so a test can change the list between the
+// card and the click:
+//   { "<step>": [{ file, key, value, home? }], "planMs": n, "hold": [<step>],
+//     "fail": { "<step>": why }, "planFail": { "<step>": why } }
+// A file is in the folder being set up, or with `home` in the user's home the step is given;
+// `planMs` makes each plan take that long, so a test can have two requests planning at once. Apply
+// writes each listed key with ctx.applyJsonKey, which records the change in the journal as it is
+// made, and returns them too. A step in `hold` waits for <WHEELHOUSE_HOME>/release-<step> before it
+// begins; a step in `fail` throws `why` once it has made its changes; a step in `planFail` throws
+// `why` from its plan. Step 2 is long: it makes its first change, then waits for
 // <WHEELHOUSE_HOME>/release-2 before it makes the rest, so a test can read its progress.
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyJsonKey } from '../../scripts/setup/journal.js';
 import { wheelhouseHome } from '../../scripts/lib/paths.js';
 import { SETUP_TITLES } from '../../scripts/state/card-lines.js';
 
@@ -49,8 +53,9 @@ function step(n, { long = false } = {}) {
     title: SETUP_TITLES[n],
     ...(long ? { long: true } : {}),
     async plan(ctx) {
-      const { [n]: listed = [], planMs = 0 } = world();
+      const { [n]: listed = [], planMs = 0, planFail = {} } = world();
       if (planMs > 0) await new Promise((resolve) => { setTimeout(resolve, planMs); });
+      if (typeof planFail[n] === 'string') throw new Error(planFail[n]);
       return {
         changes: listed.map((k) => ({ kind: 'json-key', target: path.join(k.home ? ctx.userHome : ctx.folder, k.file), key: k.key, after: k.value })),
         card: card(n),
@@ -58,13 +63,14 @@ function step(n, { long = false } = {}) {
       };
     },
     async apply(ctx, changes) {
+      const { hold = [], fail = {} } = world();
+      if (hold.includes(n)) await released(n);
       const made = [];
       for (const [i, c] of changes.entries()) {
         if (long && i > 0) await released(n);
-        const change = applyJsonKey({ file: c.target, key: c.key, value: c.after, step: n });
-        if (long) ctx.record([change]);
-        else made.push(change);
+        made.push(ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after }));
       }
+      if (typeof fail[n] === 'string') throw new Error(fail[n]);
       return made;
     },
   };

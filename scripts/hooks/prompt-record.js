@@ -204,16 +204,16 @@ export async function earned({ project, question, label, client, now, left, stop
 // is the very card the helper composed for the list its twelve characters name, for the folder
 // this session is in, word for word (its text, header and options), so a card reworded around the
 // right set line earns nothing.
-// The record names that list's full hash, which the helper matches against the list it works out
-// again.
+// The record names the run the card was shown for and that list's full hash, which the helper
+// matches against its run for the folder and the list it works out again.
 function setupClickOf(cwd, { question, label, card }) {
   if (label !== SETUP_LABEL) return null;
   const m = only(SETUP, question);
   if (!m) return null;
   const step = Number(m[1]);
   if (!Object.hasOwn(SETUP_TITLES, step) || setLineOf(question) !== setupLine(step, m[2])) return null;
-  const hash = shownHash({ cwd, step, h12: m[2], card });
-  return hash === null ? null : { kind: 'action', data: { action: 'setup', step, hash, question, label } };
+  const shown = shownHash({ cwd, step, h12: m[2], card });
+  return shown === null ? null : { kind: 'action', data: { action: 'setup', runId: shown.runId, step, hash: shown.hash, question, label } };
 }
 
 // Signs each setup click and keeps it in setup/clicks/. One failing does not stop the rest.

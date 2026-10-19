@@ -14,9 +14,12 @@
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
 //
-// In a folder being set up (no project record yet: kit.js's beingSetUp) it makes this computer's
-// signing key when there is none, and enrols it when this computer's list is empty (the plan's
-// call: the first key is trusted on first use), starts the helper, and says where setup stands.
+// In a folder being set up (no project record yet, or one setup registered and is still finishing:
+// kit.js's beingSetUp) it makes this computer's signing key when there is none, and enrols it when
+// this computer's list is empty (the plan's call: the first key is trusted on first use), starts
+// the helper, and says where setup stands. In a project setup is still finishing (step 3 has
+// registered it and step 7 made its first commit), the project's reload says where setup stands in
+// place of the front desk's line, so the session carries on with setup.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
@@ -387,11 +390,15 @@ export async function decide(input, deps = {}) {
   views ??= localViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
+  const setup = beingSetUp(input.cwd);
+  const setupLine = setup === null ? null : setupNote(setup);
+  if (setupLine !== null) notes.push(setupLine);
+
   const stateRoot = stateDir(project);
   const text = reload({
     views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot,
     windows: platform === 'win32' && firstForSession(project, input.session_id, now),
-    frontDesk: featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
+    frontDesk: setupLine === null && featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

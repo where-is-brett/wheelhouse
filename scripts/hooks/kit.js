@@ -54,6 +54,7 @@ import { projectForFolder, isInsideFolder } from '../lib/projects.js';
 import { lockedProjects, managedDir } from '../protection/managed.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { readJournal } from '../setup/journal.js';
+import { firstUnfinished } from '../setup/steps.js';
 
 export { managedDir, lockedProjects };
 
@@ -191,14 +192,21 @@ function pluginOnIn(dir) {
 // settings, or a folder's above it short of the home folder, switch the plugin on: setup installs
 // the plugin for the project's folder. `run` is the latest run there (the nearest folder's), or null.
 // A journal that can't be read leaves the folder counted as being set up, so the guards act, with
-// `journal: false`. Never throws: a folder that can't be placed is null, and callers that guard
-// treat that as they already do. Callers ask projectOf and registeredByPath first.
+// `journal: false`.
+// Setup's step 3 registers the folder, and step 7 makes its first commit, so for steps 4 to 10 the
+// folder is a registered one, with no .git until step 7. A registered folder still counts as being
+// set up while a run that holds it is unfinished, and only then: once every step is done it is a
+// project like any other, and a registered folder whose journal can't be read is left to the
+// project's own hooks. Never throws: a folder that can't be placed is null, and callers that guard
+// treat that as they already do. The guards ask projectOf and registeredByPath first, and act in
+// a registered folder by those.
 export function beingSetUp(cwd, { home = os.homedir() } = {}) {
   if (typeof cwd !== 'string' || cwd === '' || !path.isAbsolute(cwd)) return null;
   let real;
+  let registered;
   try {
     real = fs.realpathSync.native(cwd);
-    if (projectForFolder(real) !== null) return null;
+    registered = projectForFolder(real) !== null;
   } catch {
     return null;
   }
@@ -206,14 +214,16 @@ export function beingSetUp(cwd, { home = os.homedir() } = {}) {
   try {
     runs = readJournal().runs;
   } catch {
-    return { folder: real, run: null, journal: false };
+    return registered ? null : { folder: real, run: null, journal: false };
   }
   const holding = runs.filter((r) => typeof r?.folder === 'string' && isInsideFolder(r.folder, real));
   if (holding.length > 0) {
     const nearest = Math.max(...holding.map((r) => r.folder.length));
     const run = holding.filter((r) => r.folder.length === nearest).at(-1);
+    if (registered && firstUnfinished(run) === null) return null;
     return { folder: run.folder, run, journal: true };
   }
+  if (registered) return null;
   const stop = path.resolve(home);
   for (let dir = real; dir !== stop && !sameFolder(dir, stop); dir = path.dirname(dir)) {
     if (pluginOnIn(dir)) return { folder: dir, run: null, journal: true };
