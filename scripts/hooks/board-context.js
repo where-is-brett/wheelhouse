@@ -246,21 +246,54 @@ async function within(start, ms) {
   }
 }
 
-// The briefing in plain words within `room` characters, the unusual items it showed and whether it
-// showed the weekly lines (neither when it was cut for length, which may have lost them).
+const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
+
+// The text's first `limit` words, with the white space between them as it was.
+function firstWords(text, limit) {
+  const kept = text.trim().split(/(\s+)/).slice(0, 2 * limit - 1);
+  return kept.join('').trimEnd();
+}
+
+// The briefing in plain words within `room` characters and the words its length setting gives, the
+// unusual items it showed and whether it showed the weekly lines (neither when it was cut for
+// characters, which may have lost them). The words are counted as the director is shown them: in
+// plain words, which are longer than the labels they replace, with the "Terms:" line. So when the
+// briefing cut to the limit runs over it in plain words, it is cut to fewer, in the briefing's own
+// order of what goes first: the most words that keep to the limit in plain words, found by halving.
+// What is marked as shown is what that cut kept.
 // `settings` are the settings in force, `weeklySince` the last briefing that showed the weekly
 // lines and `review` the delegation review's { due, days } (reviewOf). Throws when it can't be built.
 export function briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room }) {
   const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review });
   const length = settings?.briefing?.value;
-  const words = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
-  const parts = briefingParts(briefing, { words });
-  const body = parts.text.split('\n').map(unlinked).join('\n');
+  const limit = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
+  const words = wordsOf(project, settings, model);
+  const cutTo = (budget) => {
+    const parts = briefingParts(briefing, { words: budget });
+    const fitted = inPlainWords(() => parts.text.split('\n').map(unlinked).join('\n'), room, words);
+    return { parts, fitted, fits: wordsIn(fitted.text) <= limit };
+  };
+  let given = cutTo(limit);
+  if (!given.fits) {
+    let [low, high] = [1, limit - 1];
+    given = null;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const tried = cutTo(middle);
+      if (tried.fits) [given, low] = [tried, middle + 1];
+      else high = middle - 1;
+    }
+    // Only a glossary whose meanings run longer than the whole briefing leaves nothing that fits.
+    if (given === null) {
+      const least = cutTo(1);
+      given = { parts: least.parts, fitted: { text: firstWords(least.fitted.text, limit), cut: true } };
+    }
+  }
+  const { parts, fitted } = given;
   // The weekly lines open what to watch, then unusual use.
   const weekly = Number.isInteger(briefing?.weekly) && briefing.weekly > 0 ? briefing.weekly : 0;
   const raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, Math.max(0, parts.shownWatch - weekly)) : [];
   const weeklyShown = weekly > 0 && parts.shownWatch >= weekly;
-  const fitted = inPlainWords(() => body, room, wordsOf(project, settings, model));
   return { text: fitted.text, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut };
 }
 

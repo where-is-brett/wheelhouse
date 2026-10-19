@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, cardsDue, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -18,7 +18,8 @@ import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { briefingLine } from '../../../scripts/lineage/release.js';
-import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
+import { BRIEFING_WORDS, CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
+import { briefingText } from '../../../scripts/briefing/text.js';
 import { LEADS } from '../../../scripts/lib/mod-numbers.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
@@ -193,6 +194,68 @@ test('the briefing command marks the briefing given, so the next gap starts from
     // Ninety minutes on is inside the gap, measured from the command.
     assert.equal(await run(repo, 'Next', '2026-10-19T13:30:00.000Z'), undefined);
     assert.ok(contextOf(await run(repo, 'Later', '2026-10-19T15:30:00.000Z')).startsWith(HEADINGS.briefing));
+  });
+});
+
+const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
+// The briefing as briefingIn gives it, from a stand-in briefing model, with the settings given.
+const briefed = (briefing, settings = {}) => briefingIn({
+  project: P, model: {}, usage: null, sources: null, settings, at: new Date(NOW), briefingModel: () => briefing, room: CONTEXT_CHARS,
+});
+const EMPTY = { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 };
+
+test('the briefing in plain words keeps to its words, its Terms line counted', async () => {
+  await withProject(async () => {
+    // Labels that plain words make longer, each used once, so no Terms line follows: the lines
+    // alone fill the limit before the labels are put in plain words.
+    const longer = { ...EMPTY, progress: ['The PR, its CI, its branch and its worktree are ready', ...Array.from({ length: 80 }, (_, i) => `Item ${i} is ready`)] };
+    for (const [length, limit] of Object.entries(BRIEFING_WORDS)) {
+      const { text } = briefed(longer, { briefing: { value: length } });
+      assert.ok(wordsIn(text) <= limit, `${length}: ${wordsIn(text)} words\n${text}`);
+      assert.match(text, /The proposed change, its automatic check run, its separate copy of the work and its separate working folder are ready/);
+      assert.doesNotMatch(text, /Terms:/);
+      assert.match(text, /and \d+ more/);
+    }
+    // Labels used more than once, so their meanings follow in a Terms line, which counts too. The
+    // cut keeps as many lines as fit with it: the short length has no room for the line and a
+    // second mention, so it gives one line in plain words alone.
+    const repeated = { ...EMPTY, progress: Array.from({ length: 30 }, (_, i) => `The PR's CI is red on slice ${i + 1}`) };
+    const shown = {};
+    for (const [length, limit] of Object.entries(BRIEFING_WORDS)) {
+      const { text } = briefed(repeated, { briefing: { value: length } });
+      assert.ok(wordsIn(text) <= limit, `${length}: ${wordsIn(text)} words\n${text}`);
+      if (length !== 'short') {
+        assert.ok(wordsIn(text) > limit - 12, `${length}: ${wordsIn(text)} words, cut further than it needed\n${text}`);
+        assert.match(text, /\n\nTerms: pull request means [^]*; CI means [^]*; slice means [^]*\.$/);
+      }
+      assert.match(text, /and \d+ more/);
+      shown[length] = text.split('\n').filter((line) => line.startsWith('- ')).length;
+    }
+    assert.ok(shown.short < shown.standard && shown.standard < shown.detailed, JSON.stringify(shown));
+  });
+});
+
+test('what the cut for plain words takes out of what to watch is neither raised nor given', async () => {
+  await withProject(async () => {
+    const weekly = 'Build commands run unattended on this Windows computer, with no sandbox.';
+    const unusual = Array.from({ length: 6 }, (_, i) => `One session used ${i + 2}M tokens, against a usual 400K: a long run`);
+    const briefing = {
+      ...EMPTY,
+      progress: ['The PR\'s CI is red on slice 2', 'Another PR\'s CI is red on slice 3'],
+      watch: [weekly, ...unusual],
+      raise: unusual.map((_, i) => `u${i + 1}`),
+      weekly: 1,
+    };
+    // Before plain words, every line fits the standard length; the Terms line takes it past.
+    assert.ok(unusual.every((line) => briefingText(briefing).includes(line)));
+    const given = briefed(briefing);
+    assert.ok(wordsIn(given.text) <= BRIEFING_WORDS.standard, given.text);
+    assert.match(given.text, /\n\nTerms: /);
+    const shown = unusual.filter((line) => given.text.includes(line)).length;
+    assert.ok(shown > 0 && shown < unusual.length, given.text);
+    assert.deepEqual(given.raise, briefing.raise.slice(0, shown));
+    assert.equal(given.weeklyShown, true);
+    assert.ok(given.text.includes(weekly));
   });
 });
 
