@@ -505,3 +505,18 @@ test('Turn on (dangerous) on the Unattended card records nothing from the pane, 
   assert.equal(client.calls.write.length, 1);
   assert.equal(waitingIds().includes(other.id), false);
 }));
+
+test('no press on a setup card records anything: only the director\'s click on the card setup showed lets its step go ahead', () => withKey(async () => {
+  const hash = 'fedcba9876543210'.repeat(4);
+  const setup = putCard(composeCard({ ...common, kind: 'setup', recommend: 'Go ahead', what: 'Setup step 1, checking this computer, changes nothing on it.', options: [says('Go ahead')], target: { step: 1, hash } }).card);
+  for (const label of ['Go ahead', 'Not now', 'Explain more', 'Show me']) {
+    const client = fake();
+    assert.deepEqual(await press(setup, client, label), { made: false, says: SAYS.setupByClick }, label);
+    assert.equal(untouched(client), 0, label);
+    assert.equal(client.calls.profileRecord.length, 0, label);
+  }
+  assert.equal(waitingIds().includes(setup.id), true);
+  assert.deepEqual(pendingFiles(), []);
+  assert.equal(claimedNothing(), true);
+  assert.equal(listEvents(stateDir(P), { report: () => {} }).some((e) => e.kind === 'card-answer' || e.kind === 'action'), false);
+}));

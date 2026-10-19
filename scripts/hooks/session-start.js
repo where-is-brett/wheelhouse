@@ -49,7 +49,7 @@ import {
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
-import { STEPS, firstUnfinished } from '../setup/steps.js';
+import { SETUP_STEPS, firstUnfinished } from '../lib/setup-run.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -366,7 +366,7 @@ function setupNote(setup) {
   if (setup.journal === false) return JOURNAL_UNREADABLE;
   if (setup.run === null) return NOT_SET_UP;
   const next = firstUnfinished(setup.run);
-  return next === null ? null : partWay(next, STEPS.find((s) => s.n === next).title);
+  return next === null ? null : partWay(next, SETUP_STEPS.find((s) => s.n === next).title);
 }
 
 // The session start in a folder being set up: the first key, the helper as in a project, and a

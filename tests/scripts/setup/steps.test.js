@@ -16,6 +16,10 @@ import { startRun, markStep, findRun, applyJsonKey, reverseChange, newId } from 
 import { runStep } from '../../../scripts/setup/run-step.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import * as setupRun from '../../../scripts/lib/setup-run.js';
+import * as setupClicks from '../../../scripts/lib/setup-clicks.js';
+import * as journal from '../../../scripts/setup/journal.js';
+import * as clicks from '../../../scripts/setup/clicks.js';
 
 const H = 'ab'.repeat(32);
 const TEST_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-steps.js');
@@ -94,6 +98,19 @@ test('the first unfinished step is the lowest one not done, whatever ran after i
   assert.equal(firstUnfinished({ steps: { 1: { doneAt: 'x' }, 2: { doneAt: 'y', failed: undefined }, 3: { doneAt: 'z' } } }), 4);
   const all = Object.fromEntries(STEPS.map((s) => [s.n, { doneAt: 'x' }]));
   assert.equal(firstUnfinished({ steps: all }), null);
+});
+
+test('the hooks read where a run stands as setup does: the same steps, titles, journal reader and click keeper', () => {
+  // The hooks take these from scripts/lib, so the mod's bridge reaches nothing under scripts/setup/.
+  assert.deepEqual(setupRun.SETUP_STEPS.map((s) => [s.n, s.title]), STEPS.map((s) => [s.n, s.title]));
+  assert.equal(firstUnfinished, setupRun.firstUnfinished);
+  const some = [null, { steps: {} }, { steps: { 1: { doneAt: 'x' }, 3: { doneAt: 'y' } } }, { steps: Object.fromEntries(STEPS.map((s) => [s.n, { doneAt: 'x' }])) }];
+  for (const run of some) assert.equal(setupRun.firstUnfinished(run), firstUnfinished(run, STEPS));
+  assert.equal(journal.readJournal, setupRun.readJournal);
+  assert.equal(journal.journalFile, setupRun.journalFile);
+  assert.equal(clicks.keepClick, setupClicks.keepClick);
+  assert.equal(clicks.shownHash, setupClicks.shownHash);
+  assert.equal(clicks.clicksDir, setupClicks.clicksDir);
 });
 
 test('the folder check admits ~/Projects folders, registered projects and setup runs, by their real paths', () => {

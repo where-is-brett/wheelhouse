@@ -31,17 +31,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { wheelhouseHome } from '../lib/paths.js';
 import { canonicalJson } from '../lib/canonical.js';
+import { journalFile, readJournal } from '../lib/setup-run.js';
+
+// The journal's file and its reader are in scripts/lib/setup-run.js, which the hooks read without
+// reaching these writers.
+export { journalFile, readJournal };
 
 const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env'];
 const STEP_FIELDS = ['shownAt', 'clickedAt', 'doneAt', 'failed'];
 const CHANGED = { put: false, why: 'changed since setup' };
 const OWN_STEP = { put: false, why: 'put back by its own step' };
-
-export function journalFile() {
-  return path.join(wheelhouseHome(), 'setup', 'journal.json');
-}
 
 // ---- Writing whole files, atomically ----
 
@@ -92,32 +92,6 @@ function stamp(now) {
 }
 
 // ---- The journal ----
-
-function refuse(why) {
-  return new Error(`The setup journal ${journalFile()} ${why}; it has been left as it was`);
-}
-
-// The journal; the empty one when there is none yet. A file that is not a journal this
-// version reads is refused, naming it.
-export function readJournal() {
-  let text;
-  try {
-    text = fs.readFileSync(journalFile(), 'utf8');
-  } catch (error) {
-    if (error.code === 'ENOENT') return { v: 1, runs: [] };
-    throw error;
-  }
-  let journal;
-  try {
-    journal = JSON.parse(text);
-  } catch {
-    throw refuse('is not JSON');
-  }
-  if (!journal || typeof journal !== 'object' || journal.v !== 1 || !Array.isArray(journal.runs)) {
-    throw refuse('is not a journal this version of Wheelhouse can read');
-  }
-  return journal;
-}
 
 function writeJournal(journal) {
   writeAtomic(journalFile(), `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });

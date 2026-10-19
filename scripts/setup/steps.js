@@ -36,6 +36,10 @@ import crypto from 'node:crypto';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 
+// The first step of a run not yet done is in scripts/lib/setup-run.js, which the hooks read
+// without reaching this file; it numbers the steps as STEPS does.
+export { firstUnfinished } from '../lib/setup-run.js';
+
 // The SHA-256 of a list of changes in canonical JSON: what a setup card's line names.
 export function planHash(changes) {
   return crypto.createHash('sha256').update(canonicalJson(changes)).digest('hex');
@@ -72,10 +76,3 @@ function placeholder(n) {
 }
 
 export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map(placeholder));
-
-// The lowest step of a run not yet done, or null when every step is; 1 when there is no run.
-// A step that ran after it (a long step's next cards are asked while it runs) doesn't count.
-export function firstUnfinished(run, steps = STEPS) {
-  const done = (n) => typeof run?.steps?.[n]?.doneAt === 'string';
-  return steps.map((s) => s.n).sort((a, b) => a - b).find((n) => !done(n)) ?? null;
-}

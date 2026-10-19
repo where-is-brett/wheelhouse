@@ -4,7 +4,9 @@
 // (Task 5). The mod decides none of this. A card is judged by the same function the card check
 // hook uses, so a card the hook would have refused gets no button that records anything. The
 // Unattended card for build commands on Windows, known by its risk words as the prompt record knows
-// it, gets no button at all: only a click on it when the front desk asks it sets the level.
+// it, gets no button at all: only a click on it when the front desk asks it sets the level. Nor
+// does a setup card: its step goes ahead only by the director's click on the very card setup
+// showed, which only the prompt record counts (scripts/setup/clicks.js).
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -13,6 +15,7 @@ import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
 const ANSWER_LINE = /^Answer question /;
+const SETUP_LINE = /^Set up step /;
 const EXPLAIN = 'Explain more';
 const NOT_NOW = 'Not now';
 // What a card offers to turn to the front desk, apart from its own options.
@@ -30,6 +33,12 @@ function optionsOf(card) {
 }
 
 const button = (label, does) => ({ label, does });
+
+// Whether a card is a setup card: of kind setup, or carrying setup's set line.
+export function isSetupCard(card) {
+  const text = typeof card?.question === 'string' ? card.question : '';
+  return card?.kind === 'setup' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
+}
 
 // cardButtons(card) -> { buttons, note }. `card` is a card event's data: { kind, question,
 // options }. Never throws.
@@ -50,6 +59,8 @@ function buttonsOf(card) {
 
   // The Unattended card, with or without Use Guarded: nothing on it is answered from the pane.
   if (text.includes(UNATTENDED_CARD().risk)) return { buttons: [], note: CANT_ANSWER };
+  // A setup card: nothing on it is answered from the pane either.
+  if (isSetupCard(card)) return { buttons: [], note: CANT_ANSWER };
 
   // A card with no set line asks a question the front desk takes up: every option is a turn.
   if (kind === 'question' && lines.length === 0) return { buttons: offers.map((label) => button(label, 'turn')), note: null };

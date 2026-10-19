@@ -53,8 +53,7 @@ import { fileURLToPath } from 'node:url';
 import { projectForFolder, isInsideFolder } from '../lib/projects.js';
 import { lockedProjects, managedDir } from '../protection/managed.js';
 import { wheelhouseHome } from '../lib/paths.js';
-import { readJournal } from '../setup/journal.js';
-import { firstUnfinished } from '../setup/steps.js';
+import { readJournal, firstUnfinished } from '../lib/setup-run.js';
 
 export { managedDir, lockedProjects };
 

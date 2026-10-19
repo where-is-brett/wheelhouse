@@ -24,7 +24,8 @@
 // (reply.js): turning on or confirming a Windows build-commands setting (Turn on (dangerous), Use
 // Guarded, or Confirm on the setting's card), which only a click on its own card when the front
 // desk asks it sets (design section 12.2), and an Allow on a build-command question recorded on
-// another computer, which would grant nothing there.
+// another computer, which would grant nothing there. Nor does any press on a setup card, whose
+// step goes ahead only by the director's click on the very card setup showed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
@@ -35,7 +36,7 @@ import { PUT_OFF } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
-import { cardButtons, kindOf } from './buttons.js';
+import { cardButtons, kindOf, isSetupCard } from './buttons.js';
 import { cardTextOf, hashOf } from './status.js';
 import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsElsewhere, ALLOWED_ELSEWHERE, CLICK_ONLY_LABELS } from './reply.js';
 
@@ -58,6 +59,7 @@ export const SAYS = {
   notNoted: 'STOP is on, so that wasn\'t noted; the card stays as it was',
   lost: 'That wasn\'t noted this time, so the card stays as it was',
   buildsByClick: 'That setting is set only by a click on its own card when the front desk asks it, so nothing was recorded',
+  setupByClick: 'A setup step goes ahead only by a click on its own card when setup asks it, so nothing was recorded',
   elsewhere: ALLOWED_ELSEWHERE,
 };
 
@@ -157,6 +159,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   if (typeof hash !== 'string' || hash !== hashOf(question)) return no(SAYS.changed);
   if (typeof label !== 'string' || label === '' || label.length > LABEL_CHARS || /[\p{Cc}\p{Cf}]/u.test(label)) return no(SAYS.notOffered);
   if (CLICK_ONLY_LABELS.includes(label) || (label === 'Confirm' && confirmsBuilds(project, question))) return no(SAYS.buildsByClick);
+  if (isSetupCard(data)) return no(SAYS.setupByClick);
   const button = cardButtons(data).buttons.find((b) => b.label === label);
   if (!button) return no(`That card doesn't offer ${label}`);
   const line = setLineOf(question);

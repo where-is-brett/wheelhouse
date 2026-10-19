@@ -15,79 +15,23 @@
 // exactly as the helper composed it (its text, header and each option's label and description),
 // so the words the director read are the helper's for that list. The helper reads `clicks/`
 // before it applies a step.
+//
+// What the prompt record needs of this, keeping a click and finding the card it was on, is in
+// scripts/lib/setup-clicks.js, so the mod's bridge, which imports the prompt record, reaches
+// nothing under scripts/setup/.
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerId, wheelhouseHome } from '../lib/paths.js';
+import { computerId } from '../lib/paths.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
+import {
+  HASH, RUN_ID, EVENT_ID, clicksDir, usedDir, shownDir, writeWhole, shownCard, readShown,
+} from '../lib/setup-clicks.js';
 
-const HASH = /^[0-9a-f]{64}$/;
-const RUN_ID = /^run-[0-9a-f]{10}$/;
-const EVENT_ID = /^[A-Za-z0-9-]{1,64}$/;
+export { clicksDir, keepClick, shownHash } from '../lib/setup-clicks.js';
+
 // A click dated a little after the helper's clock still counts: two clocks on one computer.
 const SKEW_MS = 60 * 1000;
-const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
-
-export const clicksDir = () => path.join(wheelhouseHome(), 'setup', 'clicks');
-const usedDir = () => path.join(wheelhouseHome(), 'setup', 'clicks-used');
-const shownDir = () => path.join(wheelhouseHome(), 'setup', 'shown');
-
-const keyOf = (p) => {
-  const text = p.normalize('NFC');
-  return caseBlind ? text.toLowerCase() : text;
-};
-function realPath(p) {
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
-  }
-}
-// Whether `dir` is `folder` or inside it, by real paths.
-function holds(folder, dir) {
-  const a = realPath(folder);
-  const b = realPath(dir);
-  if (a === null || b === null) return false;
-  const base = keyOf(a);
-  const target = keyOf(b);
-  return target === base || target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
-}
-
-function writeWhole(file, text, { exclusive = false } = {}) {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  if (exclusive) {
-    fs.writeFileSync(file, text, { flag: 'wx', mode: 0o600 });
-    return;
-  }
-  const temp = `${file}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(temp, text, { mode: 0o600 });
-    fs.renameSync(temp, file);
-  } catch (error) {
-    fs.rmSync(temp, { force: true });
-    throw error;
-  }
-}
-
-// Keeps one signed setup click, under a name of its time, computer and id, never over another.
-export function keepClick(event) {
-  if (event?.kind !== 'action' || event.data?.action !== 'setup' || !event.sig) throw new Error('Only a signed setup click is kept here');
-  if (typeof event.at !== 'string' || !EVENT_ID.test(String(event.id)) || !/^[0-9a-f]{8}$/.test(String(event.computer))) {
-    throw new Error('A setup click needs its time, its id and its computer');
-  }
-  const file = path.join(clicksDir(), `${event.at.replaceAll(':', '-')}_${event.computer}_setup_${event.id}.json`);
-  writeWhole(file, `${JSON.stringify(event, null, 2)}\n`, { exclusive: true });
-  return file;
-}
-
-// What a card shows the director, in one form: its text, header, and each option's label and
-// description; null when it isn't a card.
-function shownCard(card) {
-  if (!card || typeof card !== 'object' || typeof card.question !== 'string' || card.question === '' || !Array.isArray(card.options)) return null;
-  const text = (x) => (typeof x === 'string' ? x : null);
-  if (card.options.some((o) => typeof o?.label !== 'string')) return null;
-  return { question: card.question, header: text(card.header), options: card.options.map((o) => ({ label: o.label, description: text(o.description) })) };
-}
 
 // Records the card a run's step showed: the list's full hash and the card, for the folder.
 export function noteShown({ runId, folder, step, hash, card, now = () => new Date() }) {
@@ -99,46 +43,11 @@ export function noteShown({ runId, folder, step, hash, card, now = () => new Dat
   writeWhole(path.join(shownDir(), `${runId}-${step}.json`), `${JSON.stringify(record)}\n`);
 }
 
-function readShown(file) {
-  try {
-    const r = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return r && RUN_ID.test(String(r.runId)) && Number.isInteger(r.step) && HASH.test(String(r.hash)) && typeof r.folder === 'string'
-      && shownCard(r.card) !== null ? r : null;
-  } catch {
-    return null;
-  }
-}
-
 // The list a run's step last showed, or null.
 export function shownFor(runId, step) {
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step)) return null;
   const r = readShown(path.join(shownDir(), `${runId}-${step}.json`));
   return r && r.runId === runId && r.step === step ? r : null;
-}
-
-// The card shown for `step` in a folder holding `cwd` whose list's hash starts with `h12`, on a
-// card the director saw exactly as shown (`card`, the question AskUserQuestion was given):
-// { runId, hash }, the run it was shown for and the list's full hash. Null when there is none, or
-// two different lists. When several runs showed that very card (every list that changes nothing
-// has one hash), the run of the nearest folder holding `cwd` is taken, as the helper places a
-// folder, and of those the card shown last.
-export function shownHash({ cwd, step, h12, card }) {
-  const asked = shownCard(card);
-  if (typeof cwd !== 'string' || !/^[0-9a-f]{12}$/.test(String(h12)) || asked === null) return null;
-  const same = JSON.stringify(asked);
-  let names;
-  try {
-    names = fs.readdirSync(shownDir()).filter((n) => n.endsWith('.json'));
-  } catch {
-    return null;
-  }
-  const found = names.map((n) => readShown(path.join(shownDir(), n)))
-    .filter((r) => r !== null && r.step === step && r.hash.startsWith(h12) && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd));
-  if (new Set(found.map((r) => r.hash)).size !== 1) return null;
-  const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
-  const nearest = Math.max(...found.map(depth));
-  const chosen = found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
-  return { runId: chosen.runId, hash: chosen.hash };
 }
 
 // Every setup click kept on this computer; a file that isn't one is passed over.
