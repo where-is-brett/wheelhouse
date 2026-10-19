@@ -14,7 +14,8 @@
 //       the figures waiting and the shown card
 //
 // Not now is the prompt record's to act on: a click on it, on the card as composed, clears the
-// figures waiting and writes nothing. The figures live only in <wheelhouseHome()>/measures/ and in
+// figures waiting and writes nothing. Figures waiting, and the card that showed them, count as gone
+// BASELINE_WAIT_MS after they were written, and each request sweeps them away then. The figures live only in <wheelhouseHome()>/measures/ and in
 // the card the director reads: never in a state event, the repository or a log, and no answer
 // but the card repeats them. scripts/lib/measures-clicks.js says how the click is kept.
 import crypto from 'node:crypto';
@@ -28,7 +29,7 @@ import { composeCard } from '../cards/compose.js';
 import { BASELINE_LABEL } from '../state/card-lines.js';
 import { EVENT_ID, writeWhole } from '../lib/setup-clicks.js';
 import {
-  measuresDir, pendingFile, shownFile, clicksDir, usedDir, cardHash, readPending, dropPending,
+  measuresDir, pendingFile, shownFile, clicksDir, usedDir, cardHash, readPending, dropPending, sweepStale, BASELINE_PHRASES,
 } from '../lib/measures-clicks.js';
 
 export const NEEDS_CLICK = `recording the baseline needs the director's click on Record these, on its card, from the last ${CLICK_FRESH_MS / 60000} minutes`;
@@ -96,12 +97,12 @@ export function baselineCard(figures, hash) {
   return composeCard({
     kind: 'baseline',
     level: 3,
-    what: `The first version's figures from your private note: ${dollars(figures.usd)} for ${figures.merges} merged pull requests, `
-      + `from ${plainDate(figures.from)} to ${plainDate(figures.to)}, which is ${dollars(perMerge)} per merge. How the note counted: ${figures.counted}`,
+    what: `${BASELINE_PHRASES.what}: ${dollars(figures.usd)} for ${figures.merges} merged pull requests, `
+      + `from ${plainDate(figures.from)} to ${plainDate(figures.to)}, which is ${dollars(perMerge)} per merge. ${BASELINE_PHRASES.counted} ${figures.counted}`,
     why: 'Each week Wheelhouse compares its own cost per merged pull request with the first version\'s, and only your note has those figures.',
     options: [
-      { label: BASELINE_LABEL, says: 'Keep these figures on this computer as the baseline; they never go into a project\'s records.' },
-      { label: 'Not now', says: 'Record nothing and forget these figures.' },
+      { label: BASELINE_LABEL, says: `${BASELINE_PHRASES.record}; they never go into a project's records.` },
+      { label: 'Not now', says: `${BASELINE_PHRASES.notNow}.` },
     ],
     recommend: BASELINE_LABEL,
     because: 'these are the figures you gave, so record them if they match your note',
@@ -109,6 +110,10 @@ export function baselineCard(figures, hash) {
     target: { hash },
   }).question;
 }
+
+// The hash a card names the figures by: of the figures and a random nonce, so it can't be worked
+// back to them.
+const figuresHash = (figures, nonce) => crypto.createHash('sha256').update(canonicalJson({ ...figures, nonce })).digest('hex');
 
 // The figures a request names, as noteBaseline takes them.
 function figuresOf(body) {
@@ -169,11 +174,12 @@ function useClick(event, now) {
 // shown, but nothing is recorded.
 export function baselineRoutes({ now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' } } = {}) {
   function show(body) {
+    sweepStale(now);
     const given = figuresOf(body);
     // The account of how the note counted, as the baseline keeps it: on one line.
     const figures = { ...given, counted: noteBaseline({ ...given, now }).counted };
     const nonce = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.createHash('sha256').update(canonicalJson({ ...figures, nonce })).digest('hex');
+    const hash = figuresHash(figures, nonce);
     let card;
     try {
       card = baselineCard(figures, hash);
@@ -189,10 +195,14 @@ export function baselineRoutes({ now = () => new Date(), stopped = () => false, 
     if (Object.keys(body).some((k) => k !== 'confirm')) refuse('a request to record names only the hash on the card');
     if (typeof body.confirm !== 'string' || !FULL_HASH.test(body.confirm)) refuse('give the full hash the card was shown with');
     if (stopped()) return stopRefusal;
-    const pending = readPending();
+    sweepStale(now);
+    const pending = readPending({ now });
     if (pending === null || pending.hash !== body.confirm) refuse(NOT_WAITING);
-    // The figures waiting are checked again, as the click recorded them, before the click is used.
-    const baseline = noteBaseline({ ...figuresOf(pending.figures), now });
+    // The figures waiting are checked again, and must still give the hash the card and the click
+    // name, before the click is used.
+    const figures = figuresOf(pending.figures);
+    if (typeof pending.nonce !== 'string' || figuresHash(figures, pending.nonce) !== pending.hash) refuse(NOT_WAITING);
+    const baseline = noteBaseline({ ...figures, now });
     const click = freshClicks({ hash: pending.hash, now }).find((e) => useClick(e, now));
     if (!click) refuse(NEEDS_CLICK);
     writeWhole(baselineFile(), `${JSON.stringify(baseline, null, 2)}\n`);

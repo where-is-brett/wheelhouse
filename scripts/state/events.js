@@ -8,7 +8,8 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, BASELINE_LABEL, BASELINE_WORDS, baselineLine } from './card-lines.js';
+import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, BASELINE_LABEL, baselineLine } from './card-lines.js';
+import { looksLikeBaseline } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 
@@ -349,11 +350,28 @@ function removeEmpty(folders) {
   }
 }
 
-// Whether an event carries the baseline card or its click: the private note's figures, and the
-// click on them, stay in <wheelhouseHome()>/measures/ and never enter the state or the profile.
+// Every string a value holds, keys included, at any depth.
+function stringsIn(value, out = []) {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const v of value) stringsIn(v, out);
+  else if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      out.push(k);
+      stringsIn(v, out);
+    }
+  }
+  return out;
+}
+
+// Whether an event carries the baseline card, its click or the private note's figures: they stay
+// in <wheelhouseHome()>/measures/ and never enter the state or the profile. A card or record reads
+// as the baseline card by any of its fixed words or its header, however they are written, or by
+// the figures waiting for the director's click (scripts/lib/measures-clicks.js).
 export function carriesBaseline(event) {
-  if (event?.kind === 'action' && event.data?.action === 'baseline') return true;
-  return String(JSON.stringify(event?.data ?? null)).includes(JSON.stringify(BASELINE_WORDS).slice(1, -1));
+  const data = event?.data;
+  if (event?.kind === 'action' && data?.action === 'baseline') return true;
+  if (data?.kind === 'baseline') return true;
+  return looksLikeBaseline(stringsIn(data).join('\n'), data?.header, { any: true });
 }
 
 // `dir` and `branch` name another clone of events, such as the profile's; by default

@@ -11,7 +11,8 @@
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
-import { setLinesOf, BASELINE_WORDS } from '../state/card-lines.js';
+import { setLinesOf } from '../state/card-lines.js';
+import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
@@ -61,7 +62,7 @@ function buttonsOf(card) {
   // The Unattended card, with or without Use Guarded: nothing on it is answered from the pane.
   if (text.includes(UNATTENDED_CARD().risk)) return { buttons: [], note: CANT_ANSWER };
   // A setup card or the baseline card: nothing on it is answered from the pane either.
-  if (isSetupCard(card) || card.kind === 'baseline' || text.includes(BASELINE_WORDS)) return { buttons: [], note: CANT_ANSWER };
+  if (isSetupCard(card) || card.kind === 'baseline' || baselineWording(text, card.header)) return { buttons: [], note: CANT_ANSWER };
 
   // A card with no set line asks a question the front desk takes up: every option is a turn.
   if (kind === 'question' && lines.length === 0) return { buttons: offers.map((label) => button(label, 'turn')), note: null };

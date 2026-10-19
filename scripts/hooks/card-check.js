@@ -5,8 +5,14 @@
 // prompt record is what refuses a wrong click, so this only informs: it refuses nothing it
 // can't read, and a failure of its own lets the card through. A card that doesn't come from
 // scripts/cards/compose.js can fail it; one that does cannot.
+// In any folder, a card that reads as the baseline card (its header, any of its fixed words however
+// written, or the private note's figures waiting for the click) is refused unless it is the very
+// card the helper composed and recorded as shown, word for word: a reworded copy would carry the
+// figures without the words that keep them out of the state, and an ordinary card using the
+// baseline card's words would have its answer dropped.
 import { pathToFileURL } from 'node:url';
 import { runAndExit, answer, projectOf } from './kit.js';
+import { looksLikeBaseline, cardHash, readShown } from '../lib/measures-clicks.js';
 import { PART_LABELS, whatProblem } from '../cards/compose.js';
 import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES,
@@ -76,11 +82,26 @@ export function cardProblems(question) {
 
 const REFUSAL_END = 'Ask each question again exactly as `cli.js card` or `cli.js cards` returns it; do not write or change a card by hand.';
 
-export async function decide(input, { projectOf: find = projectOf, dir } = {}) {
+const BASELINE_REFUSAL = 'reads as the baseline card but is not the card the helper composed: ask it exactly as `cli.js baseline` gave it, or give the figures again for a new card';
+
+// What is wrong with the baseline cards among the questions: each question that reads as the
+// baseline card and isn't the card the helper recorded as shown, still in date at `now`.
+function baselineFaults(questions, now) {
+  const shown = readShown({ now });
+  return questions.flatMap((q, i) => {
+    if (typeof q?.question !== 'string' || !looksLikeBaseline(q.question, q.header, { now })) return [];
+    if (shown !== null && cardHash(q) === shown.card) return [];
+    return [`Question ${i + 1} ${BASELINE_REFUSAL}.`];
+  });
+}
+
+export async function decide(input, { projectOf: find = projectOf, dir, now = () => new Date() } = {}) {
   if (input.tool_name !== 'AskUserQuestion') return undefined;
-  if (!find(input.cwd, { dir })) return undefined;
   const questions = input.tool_input?.questions;
   if (!Array.isArray(questions)) return undefined;
+  const baseline = baselineFaults(questions, now);
+  if (baseline.length > 0) return answer.deny(`The director has not seen this card. ${baseline.join(' ')}`);
+  if (!find(input.cwd, { dir })) return undefined;
   const faults = questions.flatMap((q, i) => {
     if (typeof q?.question !== 'string') return [];
     const name = typeof q.header === 'string' && q.header !== '' ? `Question ${i + 1} ("${q.header}")` : `Question ${i + 1}`;

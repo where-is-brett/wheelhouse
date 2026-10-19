@@ -7,12 +7,13 @@
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
   liftIncidentLine, incidentFixLine, setupLine, baselineLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
-  SETUP_LABEL, BASELINE_LABEL, ID, LANES, QUESTION_ID,
+  SETUP_LABEL, BASELINE_LABEL, BASELINE_HEADER, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
+import { baselineWording } from '../lib/measures-clicks.js';
 
 // The labels the five parts start with, in order, then the one for a level 4 card.
 export const PART_LABELS = Object.freeze([
@@ -32,7 +33,7 @@ export const HEADERS = Object.freeze({
   'lift-incident': 'End incident',
   'incident-fix': 'Incident fix',
   setup: 'Setup',
-  baseline: 'Baseline',
+  baseline: BASELINE_HEADER,
   question: 'Question',
 });
 
@@ -289,6 +290,9 @@ export function composeCard(input) {
   const text = [...explained, ...(line === null ? [] : [line, replyCodeLine(code)])].join('\n');
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
+  // The baseline card's own words belong to it alone: on another card they would read as the
+  // private note's figures, and the card check and the prompt record would treat it as one.
+  if (kind !== 'baseline' && baselineWording(text, HEADERS[kind])) fail(kind, 'text', 'must not use the baseline card\'s words');
 
   const question = {
     question: text,

@@ -32,7 +32,7 @@ import {
 } from '../state/card-lines.js';
 import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine } from '../state/card-lines.js';
 import { keepClick, shownHash } from '../lib/setup-clicks.js';
-import { keepClick as keepBaselineClick, shownBaseline, dropPending } from '../lib/measures-clicks.js';
+import { keepClick as keepBaselineClick, shownBaseline, dropPending, looksLikeBaseline } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -51,9 +51,10 @@ const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with
 const BASELINE_TEXT = BASELINE_WORDS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const BASELINE = new RegExp(`${BASELINE_TEXT}, ${SHA12}`, 'g');
 
-// Whether a question holds the baseline card's words: the private note's figures, which never go
-// to a project's state, whatever else the card says.
-const carriesBaseline = (question) => typeof question === 'string' && question.includes(BASELINE_WORDS);
+// Whether a question reads as the baseline card, by its header, any of its fixed words however
+// written, or the figures waiting for the click: the private note's figures never go to a
+// project's state, whatever else the card says or however it was reworded.
+const carriesBaseline = (question, header, now) => looksLikeBaseline(question, header, { now });
 
 function ciEntry(project, branch, sha12, now) {
   try {
@@ -272,11 +273,11 @@ function keepSetupClicks(cwd, out, now) {
 const NOT_NOW = 'Not now';
 function keepBaselineClicks(out, now) {
   for (const click of out) {
-    if (!click.signable || !carriesBaseline(click.question)) continue;
+    if (!click.signable) continue;
     try {
       const m = only(BASELINE, click.question);
       if (!m || setLineOf(click.question) !== baselineLine(m[1])) continue;
-      const hash = shownBaseline({ h12: m[1], card: click.card });
+      const hash = shownBaseline({ h12: m[1], card: click.card, now });
       if (hash === null) continue;
       if (click.label === BASELINE_LABEL) {
         keepBaselineClick(makeEvent({ kind: 'action', data: { action: 'baseline', hash, question: baselineLine(hash), label: click.label }, now }));
@@ -345,13 +346,14 @@ export async function sendKept(api, left, { file, body, route }) {
 // options are the card's own labels. A Lift STOP card shown again under a STOP that began after
 // its held record gets a new one, since a reply lifts STOP only by a card shown after it began.
 function shownFor(project, input, at, stopState = defaultStopState) {
+  const clock = () => at;
   const questions = input.tool_input?.questions;
   if (!Array.isArray(questions)) return [];
   const held = localViews(project, ['shown'])?.shown;
   const out = [];
   for (const q of questions) {
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
-    if (carriesBaseline(q.question)) continue;
+    if (carriesBaseline(q.question, q.header, clock)) continue;
     const line = setLineOf(q.question);
     if (line === null) continue;
     const code = replyCode(line);
@@ -381,7 +383,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const end = Date.now() + budget;
   const left = withinBudget(end);
   // The baseline card's answers stay on this computer: none is sent to the project.
-  const out = answered.filter((click) => !carriesBaseline(click.question));
+  const out = answered.filter((click) => !carriesBaseline(click.question, click.card?.header, () => at));
 
   // First the signed records, each written down before it is sent. The cards' shown records
   // go first and are dated a millisecond before the clicks, so a record a click earns sorts

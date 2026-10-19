@@ -13,3 +13,7 @@ export const RETENTION_DAYS = 30;
 export const PUSH_TEST_WAIT_MS = 2 * 60 * 1000;
 // How long one setup step may run before it is reported as stuck, in milliseconds.
 export const STEP_TIMEOUT_MS = 20 * 60 * 1000;
+
+// The baseline from the private note (scripts/measures/baseline.js): how long the figures waiting
+// for the director's click, and the card that read them back, are kept before they count as gone.
+export const BASELINE_WAIT_MS = 24 * 60 * 60 * 1000;

@@ -13,6 +13,10 @@ import { main } from '../../../scripts/measures/cli.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
+import { decide as cardCheck } from '../../../scripts/hooks/card-check.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { BASELINE_WAIT_MS } from '../../../scripts/lib/setup-numbers.js';
+import { readPending } from '../../../scripts/lib/measures-clicks.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent, listEvents } from '../../../scripts/state/events.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -74,15 +78,17 @@ const git = (cwd, args) => {
   return got.stdout.trim();
 };
 
-// Runs fn with a scratch home, this computer's signing key enrolled and a helper started on it.
+// Runs fn with a scratch home, this computer's signing key enrolled and a helper started on it,
+// whose clock reads T0 until fn moves it with `setClock`.
 async function withHelper(fn) {
   const home = shortHome();
+  let clock = T0;
   await as(home, async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => T0 });
+    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => clock });
     try {
-      await fn({ home, client: helperClient({ address: helper.address }) });
+      await fn({ home, client: helperClient({ address: helper.address }), setClock: (at) => { clock = at; } });
     } finally {
       await helper.close();
     }
@@ -247,9 +253,115 @@ test('the figures reach no state event', async () => {
     for (const event of [
       makeEvent({ kind: 'card-answer', data: { question: card.question, label: 'Record these' }, now: () => T0 }),
       makeEvent({ kind: 'note', data: { text: card.question }, now: () => T0 }),
+      makeEvent({ kind: 'note', data: { text: 'Record the private note\u2019s  FIGURES as the baseline' }, now: () => T0 }),
+      makeEvent({ kind: 'note', data: { text: `The note: ${COUNTED.toUpperCase()}` }, now: () => T0 }),
     ]) {
       await assert.rejects(writeEvent({ project: P, event, push: false }), /baseline/);
     }
     assert.equal(git(state, ['rev-parse', 'HEAD']), head);
+  });
+});
+
+// A registered project whose folder is a git repository, for the front desk to sit in.
+function registered() {
+  const P = 'o__p';
+  const folder = tempFolder('wh-project ');
+  git(folder, ['init', '-q']);
+  writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+  return { P, folder };
+}
+
+const asking = (questions, cwd) => ({ cwd, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions } });
+const denied = (got) => got?.hookSpecificOutput?.permissionDecision === 'deny';
+
+test('a reworded, stripped or look-alike baseline card is refused, and its figures reach no state write', async () => {
+  await withHelper(async ({ client }) => {
+    const { folder } = registered();
+    const { card } = JSON.parse((await run(ARGS, client)).out);
+    const rows = card.question.split('\n');
+    const setLine = rows.find((r) => r.startsWith('Record the private note'));
+    const variants = {
+      'a typographic apostrophe in the set line': { ...card, question: card.question.replace(setLine, setLine.replace("note's", 'note’s')) },
+      'the set line removed': { ...card, question: rows.filter((r) => r !== setLine).join('\n') },
+      'the set line and reply code removed': { ...card, question: rows.filter((r) => r !== setLine && !r.startsWith('Reply code:')).join('\n') },
+      'every fixed word rewritten, the figures kept': {
+        question: `What this is: Your note says $4,127.35 for 37 pull requests.\nWhy it's coming to you: To compare.\nOptions: Record these: keep them; Not now: drop them\nMy recommendation: Record these, because they match.\nWhile you decide: Nothing happens.`,
+        header: 'Figures',
+        options: [{ label: 'Record these', description: 'Keep them.' }, { label: 'Not now', description: 'Drop them.' }],
+        multiSelect: false,
+      },
+    };
+    // The card exactly as composed passes the card check, in the project and anywhere else.
+    assert.equal(await cardCheck(asking([card], folder), { now: () => T0 }), undefined);
+    assert.equal(await cardCheck(asking([card], tempFolder('wh-desk ')), { now: () => T0 }), undefined);
+    for (const [name, variant] of Object.entries(variants)) {
+      const got = await cardCheck(asking([variant], folder), { now: () => T0 });
+      assert.ok(denied(got), name);
+      assert.match(got.hookSpecificOutput.permissionDecisionReason, /baseline card/, name);
+      // Were it asked all the same, nothing of it goes to the project, and no click is kept.
+      const helper = spy();
+      await decide(answered([[variant, 'Record these']], folder), { client: helper, now: () => T0 });
+      assert.deepEqual(helper.calls, [], name);
+      // And the state refuses it, should it ever be sent.
+      const event = makeEvent({ kind: 'card-answer', data: { question: variant.question, label: 'Record these' }, now: () => T0 });
+      await assert.rejects(writeEvent({ project: 'o__p', event, push: false }), /baseline/, name);
+    }
+    assert.equal(fs.existsSync(path.join(process.env.WHEELHOUSE_HOME, 'measures', 'clicks')), false);
+  });
+});
+
+test('the baseline card\'s words are refused on any other card', async () => {
+  await withHelper(async () => {
+    const { folder } = registered();
+    const approval = {
+      kind: 'approval', level: 3, what: 'Pull request #7 changes the sign-in page.', why: 'It is yours to decide.', recommend: 'Approve',
+      because: 'the checks passed', meanwhile: 'Nothing is released.', options: [{ label: 'Approve', says: 'It goes ahead.' }], target: { pr: 7, sha: 'a'.repeat(40) },
+    };
+    composeCard(approval);
+    for (const words of ['Record the private note\'s figures as the baseline', 'How the note counted: by hand.', 'Keep these figures on this computer as the baseline']) {
+      assert.throws(() => composeCard({ ...approval, why: `It is yours to decide. ${words}` }), /baseline card's words/, words);
+    }
+    // The card check refuses an ordinary card using them, so its click can't be dropped unseen.
+    const five = (what) => `What this is: ${what}\nWhy it's coming to you: It is yours.\nOptions: Blue: blue; Green: green\nMy recommendation: Blue, because it matches.\nWhile you decide: Nothing changes.`;
+    const ordinary = { question: five('The export colour. How the note counted: by hand.'), header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }] };
+    const reason = async (q) => (await cardCheck(asking([q], folder), { now: () => T0 }))?.hookSpecificOutput?.permissionDecisionReason;
+    assert.match(await reason(ordinary), /baseline card/);
+    assert.match(await reason({ ...ordinary, question: five('The export colour.'), header: 'Baseline' }), /baseline card/);
+    assert.equal(await reason({ ...ordinary, question: five('The export colour.') }), undefined);
+  });
+});
+
+test('figures waiting and the card that showed them are gone after a day', async () => {
+  await withHelper(async ({ home, client, setClock }) => {
+    const cwd = tempFolder('wh-desk ');
+    const { hash, card } = JSON.parse((await run(ARGS, client)).out);
+    const later = new Date(T0.getTime() + BASELINE_WAIT_MS + 1000);
+    assert.notEqual(readPending({ now: () => T0 }), null);
+    assert.equal(readPending({ now: () => later }), null);
+    // A day on, the card is no longer the one shown: the card check refuses it, and a click on it is not kept.
+    assert.ok(denied(await cardCheck(asking([card], cwd), { now: () => later })));
+    await decide(answered([[card, 'Record these']], cwd), { client: spy(), now: () => later, projectOf: () => null });
+    assert.equal(fs.existsSync(path.join(home, 'measures', 'clicks')), false);
+    // The helper sweeps them away at its next request, and records nothing.
+    setClock(later);
+    assert.equal((await run(['baseline', '--confirm', hash], client)).code, 1);
+    assert.equal(fs.existsSync(path.join(home, 'measures', 'pending.json')), false);
+    assert.equal(fs.existsSync(path.join(home, 'measures', 'shown', 'baseline.json')), false);
+    assert.equal(readBaseline(), null);
+  });
+});
+
+test('figures changed on disk after the card was shown are not recorded', async () => {
+  await withHelper(async ({ home, client }) => {
+    const cwd = tempFolder('wh-desk ');
+    const { hash, card } = JSON.parse((await run(ARGS, client)).out);
+    const file = path.join(home, 'measures', 'pending.json');
+    const pending = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, JSON.stringify({ ...pending, figures: { ...pending.figures, merges: 38 } }));
+    await decide(answered([[card, 'Record these']], cwd), { client: spy(), now: () => T0, projectOf: () => null });
+    const got = await run(['baseline', '--confirm', hash], client);
+    assert.equal(got.code, 1);
+    assert.match(got.err, /not the figures waiting/);
+    assert.equal(readBaseline(), null);
   });
 });
