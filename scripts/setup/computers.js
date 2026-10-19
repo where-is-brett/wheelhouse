@@ -25,7 +25,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { run as realRun, withoutGitVars } from '../lib/run.js';
+import { run as realRun } from '../lib/run.js';
+import { setupGit } from './git.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { ownKey, makeSigningKey } from '../state/signing.js';
@@ -79,7 +80,8 @@ const beforeOf = (text) => (text === null || text.length <= BEFORE_CHARS ? text
 // at `gitPath` run with `env`, the director's own sign-in. Everything runs in a scratch bare
 // repository setup makes under <wheelhouseHome()>/setup/ and removes afterwards (ruling R106): the
 // helper's profile clone, its hooks, its config and its refs are never touched, and every call
-// has hooks and the file-system monitor switched off. `listed` is the change step 3's card named.
+// has hooks and the file-system monitor switched off, git's global and system config shut out, and
+// a hook declared in the scratch's own config refused (scripts/setup/git.js). `listed` is the change step 3's card named.
 // Gives { published, at, commit? }.
 export async function publishEnrolment({ profile, listed = null, gitPath = 'git', env = {}, run = realRun, record = () => {}, now = () => new Date() }) {
   const own = keyHere();
@@ -89,9 +91,10 @@ export async function publishEnrolment({ profile, listed = null, gitPath = 'git'
   const parent = path.join(wheelhouseHome(), 'setup');
   fs.mkdirSync(parent, { recursive: true });
   const dir = fs.mkdtempSync(path.join(parent, 'publish-'));
-  const git = (args, input) => run(gitPath, [...NO_HOOKS, ...args], {
-    cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1', ...env }, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000, ...(input === undefined ? {} : { input }),
-  });
+  // Global and system config shut out, and a hook the scratch's own config declares refused, as
+  // every git call setup makes (ruling R109, scripts/setup/git.js).
+  const call = setupGit({ run, gitPath, env: { GIT_NO_REPLACE_OBJECTS: '1', ...env }, cwd: dir });
+  const git = (args, input) => call([...NO_HOOKS, ...args], input === undefined ? {} : { input });
   const must = async (args, input) => {
     const got = await git(args, input);
     if (got.code !== 0) throw new Error(NOT_PUBLISHED);

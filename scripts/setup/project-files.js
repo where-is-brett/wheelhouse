@@ -78,7 +78,7 @@ import path from 'node:path';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
-import { helperAddress, wheelhouseHome } from '../lib/paths.js';
+import { helperAddress } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { resolveClaude, invocation, withoutHostVariables } from '../lib/claude.js';
@@ -94,6 +94,7 @@ import { protectionStatus as realProtectionStatus } from '../host/protection.js'
 import { projectPath } from '../host/gitlab-key.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
+import { isolated, refuseConfigHooks } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA } from './questions.js';
 import { newId, readJournal } from './journal.js';
@@ -384,20 +385,17 @@ export async function commitAuthor({ host, run = realRun }) {
   throw new Error(`Setup could not read who is signed in to ${NAME[host]}, so the setup commit has no author: sign in again (step 3), then a fresh Go ahead`);
 }
 
-// An empty folder of Wheelhouse's own for core.hooksPath, so no hook in the folder runs with
-// setup's commit and push.
-function noHooks() {
-  const dir = path.join(wheelhouseHome(), 'setup', 'no-hooks');
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-// git in the project's folder, with the director's own sign-in and no hooks: `out(args)` its
-// trimmed output or null, `raw(args)` its output as it is or null, `ok(args)` whether it went
-// through, `must(args, doing)` its output or a throw naming only what was being done.
+// git in the project's folder, with the director's own sign-in, git's global and system config
+// shut out, hooks pointed at the null file, and a hook the folder's own config declares refused
+// before every call (ruling R109, scripts/setup/git.js): `out(args)` its trimmed output or null,
+// `raw(args)` its output as it is or null, `ok(args)` whether it went through, `must(args, doing)`
+// its output or a throw naming only what was being done. A declared hook throws, naming it.
 function gitIn({ run, gitPath, host, platform, folder }) {
   const env = directorGitEnv({ host, gitPath, platform });
-  const call = (args) => quietly(run, gitPath, ['-c', `core.hooksPath=${noHooks()}`, ...args], { cwd: folder, env, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+  const call = async (args) => {
+    await refuseConfigHooks({ run, gitPath, env, cwd: folder });
+    return quietly(run, gitPath, args, { cwd: folder, env: isolated(env), baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+  };
   return {
     env,
     raw: async (args) => {

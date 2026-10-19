@@ -503,6 +503,33 @@ test('step 3 lists this computer\'s key and puts it in the profile, pushed by it
   });
 });
 
+test('a hook declared in the product folder\'s git config stops step 3, named, before git runs there with the director\'s sign-in (ruling R109)', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder();
+    const mark = path.join(path.dirname(folder), 'hook-ran');
+    await g(folder, 'init', '-q', '-b', 'main');
+    await g(folder, 'config', 'hook.planted.event', 'reference-transaction');
+    await g(folder, 'config', 'hook.planted.command', `echo ran >> "${mark}"`);
+    const gits = [];
+    const run = async (file, args, options = {}) => {
+      if (path.basename(file).replace(/\.exe$/, '') === 'git') gits.push({ args: [...args], env: options.env, cwd: options.cwd });
+      return w.run(file, args, options);
+    };
+    const step = stepFor(w, { run });
+    const planned = await answerAll(step, ctxFor(folder), choose());
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /declares a hook \(hook\.planted\.event, hook\.planted\.command\)/);
+    assert.equal(fs.existsSync(mark), false);
+    assert.equal((await realRun('git', ['config', '--get', 'remote.origin.url'], { cwd: folder })).code !== 0, true, 'nothing was done in the folder');
+    // Every git call step 3 made shut out git's global and system config, with hooks off.
+    assert.ok(gits.length > 0);
+    for (const c of gits) {
+      assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1', c.args.join(' '));
+      assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    }
+  });
+});
+
 test('the longest Go-ahead card composes within the card\'s length, for each host and way', async () => {
   await withHome(async () => {
     const folder = productFolder('A product whose folder has a very long name indeed, Zoë');

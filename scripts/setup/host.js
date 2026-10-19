@@ -81,7 +81,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { run as realRun, withoutGitVars } from '../lib/run.js';
+import { run as realRun } from '../lib/run.js';
 import { wheelhouseHome, profileDir, stateDir, projectSlug } from '../lib/paths.js';
 import { toolPath } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
@@ -107,6 +107,7 @@ import {
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
 import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
+import { setupGit, setupGitEnv, refuseConfigHooks } from './git.js';
 
 // The Wheelhouse organisation's GitHub App: null fields until the organisation is made and the app
 // registered (Card 1).
@@ -607,26 +608,25 @@ export async function directorGitlabApi({ run = realRun, fetch = globalThis.fetc
 }
 
 // The environment setup's git runs with: the director's own sign-in, through their host tool as
-// git's credential helper (the list cleared first, so no other helper asks), never the narrow key;
-// and the folder of the git step 2 found first on the path, so a git installed since the helper
-// started is the one run. Carried in the environment, never an argument.
+// git's only credential helper, never the narrow key, with git's global and system config shut
+// out and no hooks (ruling R109, scripts/setup/git.js, setupGitEnv).
 export function directorGitEnv({ host, gitPath = 'git', env = process.env, platform = process.platform } = {}) {
-  const tool = toolPath(TOOL[host], { platform }).replaceAll('\\', '/');
-  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-  const paths = platform === 'win32' ? path.win32 : path.posix;
-  const dir = paths.isAbsolute(gitPath) ? paths.dirname(gitPath) : null;
-  return {
-    GIT_TERMINAL_PROMPT: '0',
-    GIT_CONFIG_COUNT: '2',
-    GIT_CONFIG_KEY_0: 'credential.helper',
-    GIT_CONFIG_VALUE_0: '',
-    GIT_CONFIG_KEY_1: 'credential.helper',
-    GIT_CONFIG_VALUE_1: `!"${tool}" auth git-credential`,
-    ...(dir === null ? {} : { [pathKey]: `${dir}${paths.delimiter}${env[pathKey] ?? ''}` }),
-  };
+  return setupGitEnv({ host, gitPath, env, platform });
 }
 
 // ---- The repositories ----
+
+// A folder of Wheelhouse's own for git calls that need no repository (ls-remote).
+function outsideAny() {
+  fs.mkdirSync(wheelhouseHome(), { recursive: true });
+  return wheelhouseHome();
+}
+
+// Refuses, as every setup git call does, when a clone of Wheelhouse's own that git is about to run
+// in (scripts/state/, scripts/profile/) declares a hook in its config (ruling R109).
+async function refuseHooksIn({ dir, run, gitPath, env }) {
+  if (fs.existsSync(path.join(dir, '.git'))) await refuseConfigHooks({ run, gitPath, env, cwd: dir });
+}
 
 // A repository on the host as the director's sign-in sees it: { repo, id, defaultBranch }, or null
 // when there is none. Anything but "not found" stops the step, said plainly.
@@ -676,7 +676,7 @@ export const madeBySetup = (target) => readJournal().runs.flatMap((r) => r?.chan
 // setup adds the remote. Safe to repeat from any point: a retry finishes what an earlier attempt
 // left, and records nothing again.
 async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
-  const git = (args) => run(gitPath, args, { cwd: folder, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  const git = setupGit({ run, gitPath, env, cwd: folder });
   const must = async (args, why) => {
     const done = await git(args);
     if (done.code !== 0) throw new Error(why);
@@ -718,7 +718,7 @@ export function profileCloneWhole() {
 // Refuses an existing product whose repository has no branch of its own yet (an empty repository):
 // the state branch, pushed next, would become its default branch (ruling R34).
 async function productBranchOn({ host, repo, remoteUrl, gitPath, env, run }) {
-  const listed = await run(gitPath, ['ls-remote', '--heads', remoteUrl], { env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  const listed = await setupGit({ run, gitPath, env, cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl]);
   if (listed.code !== 0) throw new Error(`${repo} on ${NAME[host]} could not be reached with your sign-in`);
   const own = String(listed.stdout).split(/\r?\n/).map((line) => /\trefs\/heads\/(.+)$/.exec(line)?.[1]).filter(Boolean)
     .filter((branch) => !WHEELHOUSE_BRANCHES.includes(branch));
@@ -748,7 +748,7 @@ async function accountsOf({ host, run, api }) {
 
 // Whether a repository holds Wheelhouse's state branch, read with the director's own sign-in.
 async function holdsState({ remoteUrl, gitPath, env, run }) {
-  const listed = await run(gitPath, ['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`], { env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  const listed = await setupGit({ run, gitPath, env, cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
@@ -785,7 +785,7 @@ export function joinMissLine({ host, wanted, found }) {
 // (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
 // left as it is.
 async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, run, record }) {
-  const git = (args) => run(gitPath, args, { cwd: folder, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  const git = setupGit({ run, gitPath, env, cwd: folder });
   const must = async (args, why) => {
     const done = await git(args);
     if (done.code !== 0) throw new Error(why);
@@ -901,6 +901,7 @@ export async function makeRepos({
   }
   if (!profileCloneWhole()) {
     keep({ id: newId('chg'), kind: 'folder', target: profileDir(), before: fs.existsSync(profileDir()) ? {} : null, after: { clone: profile.remoteUrl, branch: PROFILE_BRANCH } });
+    await refuseHooksIn({ dir: profileDir(), run, gitPath, env });
     await ensureProfileClone({ remote: profile, env });
   }
   return made;
@@ -1429,6 +1430,7 @@ export function hostStep({
       const remoteUrl = hostUrl({ host, repo: project.repo });
       const cloneRecords = async () => {
         record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { clone: remoteUrl, branch: STATE_BRANCH } });
+        await refuseHooksIn({ dir: stateDir(slug), run, gitPath: git.path, env: gitEnv });
         await cloneState({ project: slug, remoteUrl, env: gitEnv });
       };
       // A joining computer clones the project's state before anything is connected or registered,

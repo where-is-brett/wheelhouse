@@ -384,11 +384,23 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       // Every call in a scratch repository of setup's own, with no hooks and no file-system monitor,
       // never in the helper's profile clone; the scratch is gone afterwards.
       const scratch = path.join(wheelhouseHome(), 'setup');
-      assert.ok(git.calls.every((c) => c.args.slice(0, 4).join(' ') === NO_HOOKS.join(' ')), 'no hooks on any call');
+      // Each of its own calls comes after a look for a hook declared in the scratch's config (R109).
+      const CHECK = ['config', '--includes', '--name-only', '--get-regexp', '^hook\\.'];
+      const calls = git.calls.filter((c) => c.args.join(' ') !== CHECK.join(' '));
+      assert.equal(git.calls.length, calls.length * 2);
+      git.calls.forEach((c, i) => { if (i % 2 === 0) assert.deepEqual(c.args, CHECK); });
+      assert.ok(calls.every((c) => c.args.slice(0, 4).join(' ') === NO_HOOKS.join(' ')), 'no hooks on any call');
+      // Every call with git's global and system config shut out, and hooks and the monitor off by environment.
+      for (const c of git.calls) {
+        assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1');
+        assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null');
+        const pairs = Array.from({ length: Number(c.env.GIT_CONFIG_COUNT) }, (_, i) => `${c.env[`GIT_CONFIG_KEY_${i}`]}=${c.env[`GIT_CONFIG_VALUE_${i}`]}`);
+        assert.ok(pairs.includes('core.hooksPath=/dev/null') && pairs.includes('core.fsmonitor=false'), pairs.join(' '));
+      }
       assert.ok(git.calls.every((c) => path.dirname(c.cwd) === scratch && path.basename(c.cwd).startsWith('publish-')));
       assert.equal(new Set(git.calls.map((c) => c.cwd)).size, 1);
       assert.equal(fs.existsSync(git.calls[0].cwd), false);
-      assert.deepEqual(callOf(git.calls[0].args), ['init', '-q', '--bare']);
+      assert.deepEqual(callOf(calls[0].args), ['init', '-q', '--bare']);
       // Pushed by its exact SHA, never forced, with the director's own sign-in in git's environment.
       const pushes = git.calls.filter((c) => callOf(c.args)[0] === 'push');
       assert.deepEqual(pushes.map((c) => callOf(c.args)), [['push', '--no-verify', '--porcelain', remote.url, `${tip}:refs/heads/${PROFILE_BRANCH}`]]);

@@ -47,7 +47,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { run as realRun, withoutGitVars } from '../lib/run.js';
+import { run as realRun } from '../lib/run.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { parseTrialLine } from '../lib/trial-lines.js';
@@ -67,6 +67,7 @@ import { projectConfig } from '../watcher/main.js';
 import { readJournal, newId } from './journal.js';
 import { HEALTH_STEP } from '../lib/setup-run.js';
 import { directorGitEnv, directorGitlabApi, STOPPED } from './host.js';
+import { setupGit } from './git.js';
 import { toolsStatus } from './tools.js';
 
 export { HEALTH_STEP };
@@ -255,10 +256,11 @@ function subcommand(args) {
   return '';
 }
 
-// Runs git for the trial branch with the director's own sign-in, in `dir`; its output, or a throw
-// naming only the subcommand.
+// Runs git for the trial branch with the director's own sign-in, in `dir`, with git's global and
+// system config shut out and a hook its config declares refused (ruling R109, scripts/setup/git.js);
+// its output, or a throw naming only the subcommand (or the hook).
 async function gitIn(run, { gitPath, env, dir }, args) {
-  const got = await run(gitPath, args, { cwd: dir, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  const got = await setupGit({ run, gitPath, env, cwd: dir })(args);
   if (got.code !== 0) throw new Error(`git ${subcommand(args)} failed for the trial branch`);
   return got.stdout.trim();
 }
