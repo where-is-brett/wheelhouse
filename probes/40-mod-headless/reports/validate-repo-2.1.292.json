@@ -1,5 +1,5 @@
 {
-  "success": false,
+  "success": true,
   "strict": false,
   "target": "<repo>/.claude-plugin/marketplace.json",
   "manifest": {
@@ -53,16 +53,22 @@
     {
       "file": "<repo>/hooks/hooks.json",
       "type": "hooks",
-      "errors": [
-        {
-          "path": "modules../register.ts",
-          "message": "mod-plan-b4f6a7: <repo>/hooks/register.ts, compiled line 18 `await ask($, {`: $ is passed to \"ask\", imported from \"./mod/ask\": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on(\"<event>\", hook), and next.to always next.to(e, \"<tier… [+3 chars]",
-          "code": null
-        }
-      ],
+      "errors": [],
       "warnings": [],
-      "notes": [],
-      "gatingHooks": []
+      "notes": [
+        "./register.ts hooks: session.start, session.measure, prompt.submit, command.run{command=go}",
+        "./register.ts answers its own command: command.run{command=go}",
+        "./register.ts gating hook with .catch: prompt.submit",
+        "./register.ts calls: $.command.register, $.process.run (via ask), $.session.id (via sendUsage), $.session.root, $.session.usage, $.ui.toast"
+      ],
+      "gatingHooks": [
+        {
+          "module": "./register.ts",
+          "pattern": "prompt.submit",
+          "hook": "prompt.submit",
+          "hasCatch": true
+        }
+      ]
     }
   ]
 }

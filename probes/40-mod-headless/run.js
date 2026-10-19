@@ -6,8 +6,12 @@
 //   test      `claude plugin test` on the copy with HOME set to an empty folder, so no
 //             sign-in is there (`claude auth status` is run the same way to show it);
 //   digest    `claude -p "/digest"`: what the classic hook saw, and whether a model turn ran;
-//   ci        the same validate and test runs, and the help text, on the Claude Code release CI
-//             pins (2.1.278), fetched with npx (says plainly if npx can't fetch it);
+//   ci        the same validate and test runs, and the help text, on Claude Code 2.1.278,
+//             fetched with npx (says plainly if npx can't fetch it), and a table of releases
+//             run on the repository as it stands. What depends on the repository is written
+//             under `split` names (validate-repo-split-<version>.json, ci-versions-split.txt):
+//             the files without `split` were recorded in Task 1, before the mod was split
+//             into files, and a re-run leaves them as they were;
 //   stream    two long-lived `claude -p --input-format stream-json` sessions: A sends an
 //             ordinary message, then a `probe-drop:` message while idle, and the timer's
 //             third fire finds the session idle; B starts a long turn (a story to write),
@@ -101,8 +105,9 @@ function scrub(text) {
   return out.replace(/\/Users\/[^/\s"]+/g, '<home>');
 }
 
-function saveReport(name, text) {
+function saveReport(name, text, { keep = false } = {}) {
   fs.mkdirSync(reportsDir, { recursive: true });
+  if (keep && fs.existsSync(path.join(reportsDir, name))) return;
   fs.writeFileSync(path.join(reportsDir, name), scrub(text).replace(/\s+$/, '') + '\n', 'utf8');
 }
 
@@ -312,17 +317,17 @@ try {
         const r = npx(line.split(' '), { cwd: scratch, env });
         return `$ claude ${line}   (${CI_VERSION}, exit ${r.status})\n${(r.stdout + r.stderr).trim()}`;
       });
-      saveReport('ci-2.1.278-help.txt', `claude --version: ${version.stdout.trim()}\n\n${help.join('\n\n')}`);
+      saveReport('ci-2.1.278-help.txt', `claude --version: ${version.stdout.trim()}\n\n${help.join('\n\n')}`, { keep: true });
       const validate = (target) => npx(['plugin', 'validate', '--json', target], { cwd: scratch, env });
       const manifest = path.join(repoDir, '.claude-plugin', 'plugin.json');
       const onProbe = validate(plugin);
       const onRepo = validate(repoDir);
       const onRepoManifest = validate(manifest);
-      saveReport('validate-probe-2.1.278.json', onProbe.stdout);
-      saveReport('validate-repo-2.1.278.json', onRepo.stdout);
-      saveReport('validate-repo-plugin-json-2.1.278.json', onRepoManifest.stdout);
+      saveReport('validate-probe-2.1.278.json', onProbe.stdout, { keep: true });
+      saveReport('validate-repo-split-2.1.278.json', onRepo.stdout);
+      saveReport('validate-repo-split-plugin-json-2.1.278.json', onRepoManifest.stdout);
       const current = runClaude(['plugin', 'validate', '--json', manifest], { cwd: os.tmpdir(), env: cleanEnv() });
-      saveReport('validate-repo-plugin-json.json', current.stdout);
+      saveReport('validate-repo-split-plugin-json.json', current.stdout);
       // CI has no sign-in and no variables of ours: the test command as that release gives it
       // there, then with the variable the release names for hooks modules.
       const test = npx(['plugin', 'test', plugin], { cwd: scratch, env });
@@ -332,25 +337,36 @@ try {
         shown(`claude plugin test <scratch copy of the probe>   (${CI_VERSION}, HOME set to an empty folder)`, test),
         '',
         shown(`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test <scratch copy of the probe>   (${CI_VERSION}, HOME set to an empty folder)`, testWithVariable),
-      ].join('\n'));
+      ].join('\n'), { keep: true });
       // The releases between, as a table: does `plugin test` run with an empty HOME and no
-      // variable, and what does `plugin validate --json` on the repository root list? Each
-      // release's report is saved as validate-repo-<version>.json.
+      // variable, on the probe and on the repository, and what does `plugin validate --json`
+      // on the repository root list? Each release's report is saved as
+      // validate-repo-split-<version>.json and the table as ci-versions-split.txt;
+      // ci-versions.txt and validate-repo-<version>.json are Task 1's, left as they are.
       const table = [];
       for (const v of CI_SCAN) {
         const run = (args, extra = {}) => spawnSync('npx', ['--yes', `@anthropic-ai/claude-code@${v}`, ...args], { cwd: scratch, env: { ...env, ...extra }, encoding: 'utf8', timeout: 240000, maxBuffer: 32 * 1024 * 1024 });
         const t = run(['plugin', 'test', plugin]);
         const root = run(['plugin', 'validate', '--json', repoDir]);
+        const onRepoTest = run(['plugin', 'test', repoDir]);
         let listed = 'no report';
-        try { const d = JSON.parse(root.stdout); listed = `${d.contents.length} contents, target type ${d.manifest.type}`; } catch { /* keep the default */ }
-        saveReport(`validate-repo-${v}.json`, root.stdout);
+        try {
+          const d = JSON.parse(root.stdout);
+          const errors = [d.manifest, ...d.contents].reduce((n, part) => n + (Array.isArray(part?.errors) ? part.errors.length : 0), 0);
+          listed = `${d.contents.length} contents, target type ${d.manifest.type}, ${errors} error${errors === 1 ? '' : 's'}`;
+        } catch { /* keep the default */ }
+        saveReport(`validate-repo-split-${v}.json`, root.stdout);
         const passed = /(\d+) pass\b/.exec(t.stdout)?.[1];
         const failed = /(\d+) fail\b/.exec(t.stdout)?.[1];
         const first = (t.stdout + t.stderr).split('\n').map((l) => l.trim()).find((l) => l && !/^npm /.test(l) && !/^probe\.test\.ts:?$/.test(l)) ?? '';
         const outcome = passed !== undefined ? `${passed} pass, ${failed ?? '?'} fail` : first;
-        table.push(`${v} | plugin test, empty HOME, no variable: exit ${t.status}, ${outcome} | validate --json on the repository root: exit ${root.status}, ${listed}`);
+        const repoPassed = /(\d+) pass\b/.exec(onRepoTest.stdout)?.[1];
+        const repoFailed = /(\d+) fail\b/.exec(onRepoTest.stdout)?.[1];
+        const repoFirst = (onRepoTest.stdout + onRepoTest.stderr).split('\n').map((l) => l.trim()).find((l) => l && !/^npm /.test(l)) ?? '';
+        const repoOutcome = repoPassed !== undefined ? `${repoPassed} pass, ${repoFailed ?? '?'} fail` : repoFirst;
+        table.push(`${v} | plugin test on the probe, empty HOME, no variable: exit ${t.status}, ${outcome} | validate --json on the repository root: exit ${root.status}, ${listed} | plugin test on the repository: exit ${onRepoTest.status}, ${repoOutcome}`);
       }
-      saveReport('ci-versions.txt', table.join('\n'));
+      saveReport('ci-versions-split.txt', table.join('\n'));
       const contents = (r) => { try { return JSON.parse(r.stdout).contents.map((c) => ({ type: c.type, notes: c.notes })); } catch { return null; } };
       await record('ci', {
         fetched: true, version: version.stdout.trim(),

@@ -1,0 +1,68 @@
+{
+  "success": false,
+  "strict": false,
+  "target": "<repo>/.claude-plugin/marketplace.json",
+  "manifest": {
+    "file": "<repo>/.claude-plugin/marketplace.json",
+    "type": "marketplace",
+    "errors": [],
+    "warnings": [
+      {
+        "path": "description",
+        "message": "No marketplace description provided. Adding a description helps users understand what this marketplace offers",
+        "code": null
+      },
+      {
+        "path": "plugins[0] plugin.json → author",
+        "message": "No author information provided. Consider adding author details for plugin attribution",
+        "code": null
+      }
+    ],
+    "notes": [],
+    "gatingHooks": []
+  },
+  "contents": [
+    {
+      "file": "<repo>/.claude-plugin/plugin.json",
+      "type": "plugin",
+      "errors": [],
+      "warnings": [
+        {
+          "path": "author",
+          "message": "No author information provided. Consider adding author details for plugin attribution",
+          "code": null
+        }
+      ],
+      "notes": [],
+      "gatingHooks": []
+    },
+    {
+      "file": "<repo>/CLAUDE.md",
+      "type": "plugin",
+      "errors": [],
+      "warnings": [
+        {
+          "path": "root",
+          "message": "CLAUDE.md at the plugin root is not loaded as project context. To ship context with your plugin, use a skill (skills/<name>/SKILL.md) instead.",
+          "code": null
+        }
+      ],
+      "notes": [],
+      "gatingHooks": []
+    },
+    {
+      "file": "<repo>/hooks/hooks.json",
+      "type": "hooks",
+      "errors": [
+        {
+          "path": "modules../register.ts",
+          "message": "mod-plan-b4f6a7: <repo>/hooks/register.ts, compiled line 18 `await ask($, {`: $ is passed to \"ask\", imported from \"./mod/ask\": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on(\"<event>\", hook), and next.to always next.to(e, \"<tier… [+3 chars]",
+          "code": null
+        }
+      ],
+      "warnings": [],
+      "notes": [],
+      "gatingHooks": []
+    }
+  ]
+}
