@@ -580,7 +580,8 @@ function connectionOf(answer) {
 class Refusal extends Error {}
 const refuse = (message) => { throw new Refusal(message); };
 
-const NOT_IN_PROJECT = 'This folder is not inside a Wheelhouse project, so the runbook does not know which project to act on.';
+const NOT_IN_PROJECT = 'This folder is not inside a Wheelhouse project, so the helper does not know which project to act on.';
+const FOLDER_NOT_PROJECT = 'the folder given is not inside the project named';
 
 // The project whose folder holds `cwd`, a full path.
 function placeFolder(cwd) {
@@ -588,6 +589,21 @@ function placeFolder(cwd) {
   const found = projectForFolder(cwd);
   if (!found) refuse(NOT_IN_PROJECT);
   return found.project;
+}
+
+// Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
+// call. Those commands, like runbook.js, run inside the sandbox, which cannot read
+// ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance'];
+
+// The request with its project placed from `cwd`. A request that names a project too must
+// name the one the folder is in, or it is refused: the folder is placed from this computer's
+// records, a project name is only the caller's word, so the name never steers a request away
+// from where its folder lies.
+function placed(body) {
+  const project = placeFolder(body.cwd);
+  if (body.project !== undefined && body.project !== project) refuse(FOLDER_NOT_PROJECT);
+  return { ...body, project };
 }
 
 // Beside the runbook's own routes, these carry on with the director's sign-in once step 2 has
@@ -2262,10 +2278,11 @@ export async function startHelper({
     },
     // The block a pull request from this session would be stamped with (ruling R147), for its
     // report: never the transcript's path. Null when the session's provenance is not on this
-    // computer. Read-only, so STOP lets it through.
+    // computer. Read-only, so STOP lets it through; `stop` says whether STOP is on, since the
+    // report is not stamped then and the session can't read STOP itself in the sandbox.
     '/lineage/provenance': (body) => {
       const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
-      return { ok: true, block: provenance === null ? null : provenanceBlock(provenance) };
+      return { ok: true, block: provenance === null ? null : provenanceBlock(provenance), stop: stopped() };
     },
     '/host/facts': hostFacts,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
@@ -2308,9 +2325,9 @@ export async function startHelper({
     let ctx = null;
     try {
       const runbookRoute = url.pathname.startsWith('/runbook/');
-      // runbook.js runs inside the sandbox, which cannot read ~/.wheelhouse: it sends its folder,
-      // and the project is placed here.
-      if (runbookRoute && body.cwd !== undefined) body = { ...body, project: placeFolder(body.cwd) };
+      // runbook.js and a feature session's commands run inside the sandbox, which cannot read
+      // ~/.wheelhouse: they send their folder, and the project is placed here.
+      if ((runbookRoute || FOLDER_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = placed(body);
       // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
       if (NEEDS_PROFILE.includes(url.pathname) && profileRemote() === null) return send(res, 200, PROFILE_NOT_SET_UP);
       if (url.pathname.startsWith('/profile/')) {

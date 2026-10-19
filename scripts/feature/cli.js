@@ -9,6 +9,10 @@
 // the worktree, so tests use a fake helper. Files are read and written only in the
 // feature folder, through the safe readers and writers of status.js; the head
 // branch is read from the .git files. Nothing here runs git.
+// These commands run inside the project's sandbox, which cannot read ~/.wheelhouse
+// (ruling R150): nothing here reads it. Each helper request carries the worktree's
+// folder as `cwd`, and the helper places the project from it; STOP, too, comes
+// from the helper.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,10 +22,8 @@ import {
 } from './status.js';
 import { featureWorktree } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
-import { projectOf } from '../hooks/kit.js';
 import { helperClient } from '../host/helper-client.js';
 import { REPORT_WORDS } from '../lib/build-loop.js';
-import { stopState } from '../lib/stop.js';
 import { parseProvenance, withBlock } from '../lineage/provenance.js';
 
 // An error whose message is said to the session as it is.
@@ -137,10 +139,11 @@ function readBriefOrSay(worktree) {
 
 // --- answer ---
 
-// The label the director chose, or null while the question has no signed answer.
-export async function answer({ client, project, questionId }) {
+// The label the director chose, or null while the question has no signed answer. The helper
+// places the project from the worktree's folder.
+export async function answer({ client, worktree, questionId }) {
   if (typeof questionId !== 'string' || !QUESTION_ID.test(questionId)) throw new CliError('Give the id of the question, as ask printed it');
-  const said = await client.state.answer({ project, questionId });
+  const said = await client.state.answer({ cwd: worktree, questionId });
   if (said?.ok !== true) throw new CliError(said?.refused ?? 'The host helper gave no answer');
   if (said.answer === null) return { answer: null };
   if (typeof said.answer !== 'string' || said.answer === '') throw new CliError('The host helper gave an answer this could not read');
@@ -259,8 +262,9 @@ function keptSession(file) {
 // takes a missing base for it) and keeps its number in pr.json, with the plan it was opened for
 // (ruling R88). A pull request kept already is not opened again until the foreman's merge marks
 // it merged: then the next slice's is opened. The report becomes the pull request's body, so
-// nothing is opened until the report passes the `report` check.
-export async function openPr({ client, project, worktree, argv }) {
+// nothing is opened until the report passes the `report` check. The helper places the project
+// from the worktree's folder.
+export async function openPr({ client, worktree, argv }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
@@ -272,7 +276,7 @@ export async function openPr({ client, project, worktree, argv }) {
   const checked = inspect(worktree);
   if (checked.missing.length > 0) throw new CliError(`The pull request is not opened until the report passes. ${checked.missing.join(' ')}`);
   const session = keptSession(p.session);
-  const opened = await client.openPr({ project, head, title, body: checked.body, ...(session ? { session } : {}) });
+  const opened = await client.openPr({ cwd: worktree, head, title, body: checked.body, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
   if (!Number.isSafeInteger(number) || number < 1) throw new CliError('The host opened a pull request but gave no number for it');
@@ -290,8 +294,7 @@ const COMMANDS = ['ask', 'answer', 'plan', 'report', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
-  cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), find = featureWorktree, projectOf: findProject = projectOf,
-  stopped = () => stopState().on,
+  cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t), find = featureWorktree,
 } = {}) {
   try {
     const [command, ...rest] = argv;
@@ -300,17 +303,12 @@ export async function main(argv, {
     if (found === null) throw new CliError("This folder isn't a feature session's worktree: run the command from there");
     const worktree = found.root;
     const helper = () => client ?? helperClient();
-    const project = () => {
-      const placed = findProject(worktree);
-      if (!placed) throw new CliError("Wheelhouse doesn't know which project this worktree belongs to");
-      return placed.project;
-    };
 
     if (command === 'ask') {
       out(`${ask({ worktree, argv: rest }).id}\n`);
     } else if (command === 'answer') {
       if (rest.length !== 1) throw new CliError('Give the id of the question: answer <questionId>');
-      const { answer: label } = await answer({ client: helper(), project: project(), questionId: rest[0] });
+      const { answer: label } = await answer({ client: helper(), worktree, questionId: rest[0] });
       out(label === null ? 'There is no answer yet.\n' : `${label}\n`);
     } else if (command === 'plan') {
       out(`Recorded the plan: ${recordPlan({ worktree, argv: rest }).plan}\n`);
@@ -322,23 +320,25 @@ export async function main(argv, {
         return 1;
       }
       out('The report is whole.\n');
-      if (stopped()) {
+      // The session's own block, and whether STOP is on, from the helper (rulings R147, R150):
+      // this command runs where the Wheelhouse home can't be read. The session is the one the
+      // hooks kept. A helper that gives no answer, or doesn't say STOP is off, gives no block,
+      // so nothing is stamped.
+      const session = keptSession(featurePaths(worktree).session);
+      let got = null;
+      try {
+        got = await helper().lineage.provenance({ cwd: worktree, ...(session ? { session } : {}) });
+      } catch { /* said below */ }
+      if (got?.ok === true && got.stop === true) {
         out('STOP is on, so the report was not stamped with what built it.\n');
         return 0;
       }
-      // The session's own block, from the helper (ruling R147): this command runs where the
-      // Wheelhouse home can't be read. The session is the one the hooks kept.
-      const session = keptSession(featurePaths(worktree).session);
-      let block = null;
-      try {
-        const placed = session === null ? null : findProject(worktree);
-        const got = placed ? await helper().lineage.provenance({ project: placed.project, session }) : null;
-        if (got?.ok === true && typeof got.block === 'string') block = got.block;
-      } catch { /* said below */ }
+      const usable = got?.ok === true && got.stop === false && session !== null && typeof got.block === 'string';
+      const block = usable ? got.block : null;
       if (block === null) out(`${NO_PROVENANCE}\n`);
       else if (stampReport({ worktree, block })) out('It now says what built it.\n');
     } else {
-      const { number, already } = await openPr({ client: helper(), project: project(), worktree, argv: rest });
+      const { number, already } = await openPr({ client: helper(), worktree, argv: rest });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);
     }
     return 0;
