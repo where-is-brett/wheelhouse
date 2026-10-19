@@ -34,12 +34,20 @@ const KEY_NAMES = new Set([
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY/i;
 const ROLE = 'WHEELHOUSE_ROLE';
 
+// Claude Code's sign-in variables that the sessions the watcher starts are given (sessionEnv,
+// scripts/watcher/waker.js), kept so a session the foreman starts can sign in as they can
+// (ruling R159). None is one of the host session's own (scripts/lib/claude.js): those, such as
+// CLAUDE_CODE_OAUTH_TOKEN, are dropped for every started session, so they are dropped here too.
+export const SIGN_IN_NAMES = Object.freeze(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK']);
+
 // The child's environment: the helper's own, less the host session's variables (as a session
 // started by the waker gets it), every GIT_* variable, every spelling of WHEELHOUSE_ROLE, and
-// every variable that holds or leads to a key or a secret. WHEELHOUSE_HOME and PATH stay, so
-// the scripts find Wheelhouse's records and git.
+// every variable that holds or leads to a host's key or any other secret, but for the sign-in
+// variables above, spelt exactly. WHEELHOUSE_HOME and PATH stay, so the scripts find
+// Wheelhouse's records and git.
 export function foremanEnv(env = process.env) {
   return Object.fromEntries(Object.entries(withoutGitVars(withoutHostVariables(env))).filter(([name]) => {
+    if (SIGN_IN_NAMES.includes(name)) return true;
     const upper = name.toUpperCase();
     return upper !== ROLE && !KEY_NAMES.has(upper) && !SECRET_NAME.test(name);
   }));

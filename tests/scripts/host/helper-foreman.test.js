@@ -10,7 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { FOREMAN_RUNNER, foremanEnv, foremanRequestRefusal } from '../../../scripts/host/foreman-run.js';
+import { FOREMAN_RUNNER, SIGN_IN_NAMES, foremanEnv, foremanRequestRefusal } from '../../../scripts/host/foreman-run.js';
+import { sessionEnv } from '../../../scripts/watcher/waker.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
@@ -162,4 +163,16 @@ test('a feature session\'s push names its worktree, and the helper places the pr
       assert.match((await client.push({ cwd: elsewhere, dir: worktree, refspec: 'feature/export' })).refused, /not inside a Wheelhouse project/);
     });
   } finally { p.remote.cleanup(); }
+});
+
+test('the foreman\'s child keeps Claude Code\'s sign-in, as started sessions get it, and drops host keys and other secrets (R159)', () => {
+  const signIn = Object.fromEntries(SIGN_IN_NAMES.map((name) => [name, `value-of-${name}`]));
+  const env = {
+    PATH: '/bin', ...signIn, GH_TOKEN: 'ghp_x', GITLAB_TOKEN: 'glpat_y', OTHER_SECRET: 'z',
+    CLAUDE_CODE_OAUTH_TOKEN: 'host', anthropic_api_key: 'a spelling not kept',
+  };
+  assert.deepEqual(foremanEnv(env), { PATH: '/bin', ...signIn });
+  // Each one kept is one the waker gives the sessions it starts: none is the host session's own.
+  for (const name of SIGN_IN_NAMES) assert.equal(sessionEnv(env)[name], signIn[name], name);
+  assert.equal('CLAUDE_CODE_OAUTH_TOKEN' in sessionEnv(env), false, 'dropped for started sessions too');
 });
