@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { tempFolder } from '../../helpers/homes.js';
 import {
-  guarded, isLowToken, fetchesCode, NOT_LOW, ASK_INSTEAD, GUARDED_TIMEOUT_MS, EXIT,
+  guarded, isLowToken, fetchesCode, NOT_LOW, ASK_INSTEAD, GUARDED_TIMEOUT_MS, EXIT, KEPT_NORMAL, KEPT_TRIES, keptNormalHeld,
 } from '../../../scripts/windows/guarded.js';
 
 const unix = process.platform !== 'win32';
@@ -129,11 +129,13 @@ test('the runner refuses the fetching forms and says to ask', async () => {
 test('the runner leaves local git to run at the normal level, and says to ask for it', async () => {
   for (const words of [['git', 'commit', '-m', 'x'], ['git', 'status'], ['git.exe', 'add', '.'], ['C:/Program Files/Git/cmd/git', 'diff']]) {
     const s = scene();
-    assert.equal(await s.go(words), EXIT.fetches, words.join(' '));
+    assert.equal(await s.go(words), EXIT.git, words.join(' '));
     assert.ok(s.said[0].endsWith(ASK_INSTEAD), s.said[0]);
     assert.match(s.said[0], /git/);
     assert.deepEqual(s.started, []);
   }
+  // Its own name, with the code of a fetching form: the session asks for either.
+  assert.equal(EXIT.git, 4);
 });
 
 test('the runner points npm\'s cache and the temporary folders inside the worktree', async () => {
@@ -199,33 +201,120 @@ test('a run past the time limit has its whole tree killed', async () => {
   assert.ok(!quick.calls.some((c) => nameOf(c.file) === 'taskkill'));
 });
 
-test('in self-test mode the runner tries a write in the home and a read of the marker, and says what Windows did', async () => {
+// A scratch folder as the self-test labels one: the entries kept at the normal level, each there.
+function scratchFolder() {
+  const scratch = fs.realpathSync(tempFolder('wh-scratch-'));
+  for (const name of KEPT_NORMAL.folders) fs.mkdirSync(path.join(scratch, name));
+  for (const name of KEPT_NORMAL.files) fs.writeFileSync(path.join(scratch, name), 'kept\n');
+  return scratch;
+}
+
+// Sets the file modes that stand in for Windows' labels: each kept entry there can't be written,
+// and, when `parent` is true, the scratch folder can't be changed either, so nothing in it can be
+// renamed or removed.
+function lockScratch(scratch, { parent }) {
+  for (const name of fs.readdirSync(scratch)) {
+    const entry = path.join(scratch, name);
+    fs.chmodSync(entry, fs.lstatSync(entry).isDirectory() ? 0o500 : 0o400);
+  }
+  fs.chmodSync(scratch, parent ? 0o500 : 0o700);
+}
+
+// Puts the modes lockScratch set back, so the folder can be removed.
+function openScratch(scratch) {
+  fs.chmodSync(scratch, 0o700);
+  for (const name of fs.readdirSync(scratch)) {
+    const entry = path.join(scratch, name);
+    fs.chmodSync(entry, fs.lstatSync(entry).isDirectory() ? 0o700 : 0o600);
+  }
+}
+
+test('in self-test mode the runner tries a write in the home, a read of the marker, and the kept entries, and says what Windows did', async () => {
   const home = fs.realpathSync(tempFolder('wh-selfhome-'));
   const marker = path.join(home, 'keys', 'marker.txt');
   fs.mkdirSync(path.dirname(marker));
   fs.writeFileSync(marker, 'marker\n');
+  const scratch = scratchFolder();
   const lines = [];
   const s = scene();
   const out = (line) => lines.push(line);
-  assert.equal(await s.go(['--self-test', home, marker], { out }), 0);
-  assert.deepEqual(JSON.parse(lines.at(-1)), { low: true, writeHeld: false, readHeld: false });
+  assert.equal(await s.go(['--self-test', home, marker, scratch], { out }), 0);
+  assert.deepEqual(JSON.parse(lines.at(-1)), { low: true, writeHeld: false, readHeld: false, keptHeld: false });
   assert.deepEqual(fs.readdirSync(home), ['keys'], 'a write that got through is removed');
   assert.deepEqual(s.started, [], 'nothing else is run');
+  // The self-test's old form, without the scratch folder, is refused.
+  assert.equal(await scene().go(['--self-test', home, marker], { out }), EXIT.usage);
 
   if (unix && process.getuid?.() !== 0) {
     // Refusals, as a low process meets them, stood in for by the file modes.
     fs.chmodSync(marker, 0o000);
     fs.chmodSync(home, 0o500);
+    const held = scratchFolder();
+    const renamed = scratchFolder();
+    const missing = scratchFolder();
+    fs.rmSync(path.join(missing, '.mcp.json'));
     try {
       lines.length = 0;
-      assert.equal(await scene().go(['--self-test', home, marker], { out }), 0);
-      assert.deepEqual(JSON.parse(lines.at(-1)), { low: true, writeHeld: true, readHeld: true });
+      lockScratch(held, { parent: true });
+      assert.equal(await scene().go(['--self-test', home, marker, held], { out }), 0);
+      assert.deepEqual(JSON.parse(lines.at(-1)), { low: true, writeHeld: true, readHeld: true, keptHeld: true });
+      for (const name of [...KEPT_NORMAL.folders, ...KEPT_NORMAL.files]) assert.ok(fs.existsSync(path.join(held, name)), `${name} is still there`);
+
+      // A computer where the writes are refused but a kept entry can be renamed away is not held.
+      lockScratch(renamed, { parent: false });
+      assert.equal(await scene().go(['--self-test', home, marker, renamed], { out }), 0);
+      assert.deepEqual(JSON.parse(lines.at(-1)), { low: true, writeHeld: true, readHeld: true, keptHeld: false });
+      const kept = [...KEPT_NORMAL.folders, ...KEPT_NORMAL.files];
+      const there = fs.readdirSync(renamed);
+      assert.ok(there.some((n) => n.endsWith('.moved-from-low')) || kept.some((n) => !there.includes(n)), `a rename or a removal got through: ${there.join(' ')}`);
+
+      // A kept entry that isn't there is not held.
+      lockScratch(missing, { parent: true });
+      assert.equal(await scene().go(['--self-test', home, marker, missing], { out }), 0);
+      assert.deepEqual(JSON.parse(lines.at(-1)), { low: true, writeHeld: true, readHeld: true, keptHeld: false });
     } finally {
       fs.chmodSync(home, 0o700);
       fs.chmodSync(marker, 0o600);
+      for (const folder of [held, renamed, missing]) openScratch(folder);
     }
   }
   // Not low: refused as any command is.
   const medium = scene({ whoami: () => ({ code: 0, stdout: MEDIUM, stderr: '' }) });
-  assert.equal(await medium.go(['--self-test', home, marker], { out }), EXIT.notLow);
+  assert.equal(await medium.go(['--self-test', home, marker, scratch], { out }), EXIT.notLow);
+});
+
+// Each try on a kept entry as Windows might answer it: refused, or let through. Any one let
+// through, on any entry, is not held; so is a failure that isn't a refusal.
+test('the kept entries hold only when Windows refuses every try on every one of them', () => {
+  const refused = (code) => () => { throw Object.assign(new Error(code), { code }); };
+  const allRefused = Object.fromEntries(Object.keys(KEPT_TRIES).map((name, i) => [name, refused(i % 2 ? 'EPERM' : 'EACCES')]));
+  assert.deepEqual(Object.keys(KEPT_TRIES), ['writeInto', 'rename', 'remove'], 'in this order');
+  const scratch = scratchFolder();
+  assert.equal(keptNormalHeld(scratch, allRefused), true);
+
+  const kept = [...KEPT_NORMAL.folders, ...KEPT_NORMAL.files];
+  for (const name of Object.keys(KEPT_TRIES)) {
+    for (const entry of kept) {
+      // `name` gets through on `entry` alone; every other try is refused.
+      const tries = { ...allRefused, [name]: (at, ...rest) => (path.basename(at) === entry ? undefined : allRefused[name](at, ...rest)) };
+      assert.equal(keptNormalHeld(scratch, tries), false, `${name} let through on ${entry}`);
+    }
+    // A failure other than a refusal (the entry gone, say) isn't counted as held.
+    assert.equal(keptNormalHeld(scratch, { ...allRefused, [name]: refused('ENOENT') }), false, `${name} failing another way`);
+  }
+
+  // A kept entry missing, or a folder where a file should be: not held, whatever Windows does.
+  for (const entry of kept) {
+    const missing = scratchFolder();
+    fs.rmSync(path.join(missing, entry), { recursive: true });
+    assert.equal(keptNormalHeld(missing, allRefused), false, `${entry} missing`);
+  }
+  const swapped = scratchFolder();
+  fs.rmSync(path.join(swapped, '.mcp.json'));
+  fs.mkdirSync(path.join(swapped, '.mcp.json'));
+  assert.equal(keptNormalHeld(swapped, allRefused), false, 'a folder named .mcp.json');
+  // Each try is given the entry and whether it is a folder.
+  const given = [];
+  keptNormalHeld(scratch, { ...allRefused, writeInto: (at, folder) => { given.push([path.basename(at), folder]); allRefused.writeInto(); } });
+  assert.deepEqual(given, [['.claude', true], ['.vscode', true], ['.git', false], ['.mcp.json', false]]);
 });

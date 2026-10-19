@@ -22,7 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { commandPath } from '../lib/command-path.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome } from '../lib/paths.js';
-import { SELF_TEST_FLAG, windowsTool } from './guarded.js';
+import { KEPT_NORMAL, SELF_TEST_FLAG, windowsTool } from './guarded.js';
 
 // The plugin this file sits in: scripts/windows/ is two folders down.
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -55,17 +55,24 @@ export const PLAN_GIT_LOW_LABELS = Object.freeze({
 export const LABEL_EXISTING = false;
 
 // In the worktree, what stays at the normal level after the worktree is labelled low, so a build
-// can't plant a hook or a setting: a folder with inheritance, a file on its own. The folders are
-// made, empty, when they aren't there, so the name can't later be made at low.
-const KEPT_NORMAL_FOLDERS = ['.claude', '.vscode'];
-const KEPT_NORMAL_FILES = ['.git', '.mcp.json'];
+// can't plant a hook or a setting: a folder with inheritance, a file on its own (KEPT_NORMAL,
+// guarded.js, whose self-test tries each). The folders are made, empty, when they aren't there,
+// so the name can't later be made at low. A missing .mcp.json isn't made: it would show in git
+// and be committed (Ruling 30). So a build can make one at low during a run; the next labelling
+// finds it low, puts it back at the normal level and that run asks, and until then
+// `enableAllProjectMcpServers: false` in the Standard settings keeps its servers from starting
+// unapproved. Check 52's note holds the question.
+const KEPT_NORMAL_FOLDERS = KEPT_NORMAL.folders;
+const KEPT_NORMAL_FILES = KEPT_NORMAL.files;
 
 // How long the self-test has at a session start before it is counted as not ready, and how long
 // a result counts.
 export const SELF_TEST_MS = 3000;
 export const SELF_TEST_DAY_MS = 24 * 60 * 60 * 1000;
 const KEYS_MARKER = 'guarded-selftest-marker.txt';
-// A temporary copy older than this was left by a copy that stopped part-way.
+// The self-test's scratch folders, in `<home>/windows`, labelled as a worktree is.
+const SCRATCH_PREFIX = 'guarded-scratch-';
+// A temporary copy, or a scratch folder, older than this was left by one that stopped part-way.
 const LEFTOVER_MS = 10 * 60 * 1000;
 
 export const lowNodePath = (home) => path.join(home, 'windows', 'low-node', 'node.exe');
@@ -184,13 +191,25 @@ function checkWorktree(worktree, commonDir) {
   if (admin === null || common === null || path.dirname(admin) !== path.join(common, 'worktrees')) refuse();
 }
 
+// Labels `folder` low, inherited by what is in it, and each entry kept at the normal level that is
+// there back at the normal level. Rejects at the first label refused.
+async function labelKeepingNormal(folder, { run, env }) {
+  await label(run, folder, '(OI)(CI)L', env);
+  for (const name of [...KEPT_NORMAL_FILES, ...KEPT_NORMAL_FOLDERS]) {
+    const target = path.join(folder, name);
+    const stat = lstatOf(target);
+    if (stat === null) continue;
+    await label(run, target, stat.isDirectory() ? '(OI)(CI)M' : 'M', env);
+  }
+}
+
 // Labels a feature's worktree for Guarded, before each run there: the worktree low, inherited by
 // what is in it, and its .git file, .claude, .mcp.json and .vscode at the normal level. A missing
-// .claude or .vscode is made, empty, first. Only the worktree is labelled (PLAN_GIT_LOW_LABELS
-// says why): the common folder, its hooks and config included, never is. A .mcp.json found
-// labelled low (made at low since the last run) is put back at the normal level and the labelling
-// then rejects, so that run gets the Ask rules. Rejects, at the first label refused, when any
-// can't be set.
+// .claude or .vscode is made, empty, first; a missing .mcp.json isn't (KEPT_NORMAL_FILES says
+// why). Only the worktree is labelled (PLAN_GIT_LOW_LABELS says why): the common folder, its
+// hooks and config included, never is. A .mcp.json found labelled low (made at low since the last
+// run) is put back at the normal level and the labelling then rejects, so that run gets the Ask
+// rules. Rejects, at the first label refused, when any can't be set.
 export async function labelWorktree(worktree, { run, commonDir, env = process.env }) {
   checkWorktree(worktree, commonDir);
   icaclsOf(env);
@@ -202,13 +221,7 @@ export async function labelWorktree(worktree, { run, commonDir, env = process.en
   for (const name of KEPT_NORMAL_FOLDERS) {
     if (lstatOf(path.join(worktree, name)) === null) fs.mkdirSync(path.join(worktree, name));
   }
-  await label(run, worktree, '(OI)(CI)L', env);
-  for (const name of [...KEPT_NORMAL_FILES, ...KEPT_NORMAL_FOLDERS]) {
-    const target = path.join(worktree, name);
-    const stat = lstatOf(target);
-    if (stat === null) continue;
-    await label(run, target, stat.isDirectory() ? '(OI)(CI)M' : 'M', env);
-  }
+  await labelKeepingNormal(worktree, { run, env });
   if (mcpWasLow) throw new Error(`${mcp} was labelled low, so a build may have written it; it is back at the normal level, and this run asks`);
 }
 
@@ -259,17 +272,54 @@ function lastJson(stdout) {
 
 const NOT_READY = Object.freeze({ lowStarts: false, writeHeld: false, keysReadHeld: false });
 
-async function tryGuarded({ run, home, worktree, pluginRoot, execPath, env, homeDir, timeoutMs }) {
+// A scratch folder in `<home>/windows` (never in the project), labelled as labelWorktree labels a
+// worktree: the folder low, and in it a .git file, .claude, .mcp.json and .vscode, each at the
+// normal level. Scratch folders left by a self-test that stopped part-way are removed first.
+async function scratchWorktree({ run, home, env, now }) {
+  const dir = path.join(home, 'windows');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.startsWith(SCRATCH_PREFIX)) continue;
+    const old = path.join(dir, name);
+    try {
+      if (now().getTime() - fs.lstatSync(old).mtimeMs > LEFTOVER_MS) fs.rmSync(old, { recursive: true, force: true });
+    } catch { /* gone already */ }
+  }
+  const scratch = path.join(dir, `${SCRATCH_PREFIX}${crypto.randomBytes(6).toString('hex')}`);
+  fs.mkdirSync(scratch);
+  try {
+    for (const name of KEPT_NORMAL_FOLDERS) fs.mkdirSync(path.join(scratch, name));
+    for (const name of KEPT_NORMAL_FILES) fs.writeFileSync(path.join(scratch, name), `A stand-in for a worktree's ${name}, for the Guarded self-test.\n`);
+    await labelKeepingNormal(scratch, { run, env });
+    return scratch;
+  } catch (error) {
+    fs.rmSync(scratch, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function tryGuarded({ run, home, worktree, pluginRoot, execPath, env, homeDir, timeoutMs, now }) {
   const node = await lowNode({ run, home, execPath, env });
   const keys = path.join(home, 'keys');
   fs.mkdirSync(keys, { recursive: true });
   await lockReads(readLockedPaths(home, homeDir), { run, env });
   const marker = path.join(keys, KEYS_MARKER);
   fs.writeFileSync(marker, 'A marker for the Guarded self-test: a build at low integrity should not be able to read it.\n');
-  const result = await run(node, [path.join(pluginRoot, RUNNER), SELF_TEST_FLAG, home, marker], { cwd: worktree ?? home, timeoutMs });
-  const seen = lastJson(result?.stdout);
-  if (result?.code !== 0 || seen?.low !== true) return { ...NOT_READY };
-  return { lowStarts: true, writeHeld: seen.writeHeld === true, keysReadHeld: seen.readHeld === true };
+  let scratch = null;
+  try {
+    scratch = await scratchWorktree({ run, home, env, now });
+    const result = await run(node, [path.join(pluginRoot, RUNNER), SELF_TEST_FLAG, home, marker, scratch], { cwd: worktree ?? home, timeoutMs });
+    const seen = lastJson(result?.stdout);
+    if (result?.code !== 0 || seen?.low !== true) return { ...NOT_READY };
+    // The write is held only when the write outside and every try on the kept entries were refused.
+    return { lowStarts: true, writeHeld: seen.writeHeld === true && seen.keptHeld === true, keysReadHeld: seen.readHeld === true };
+  } finally {
+    if (scratch !== null) {
+      try {
+        fs.rmSync(scratch, { recursive: true, force: true });
+      } catch { /* the next self-test removes it */ }
+    }
+  }
 }
 
 // Writes a self-test result where guardedReady reads it.
@@ -286,11 +336,14 @@ function writeSelfTest(home, result) {
 }
 
 // The self-test: makes the low copy, locks reads of the helper's keys folder and the credential
-// folders where Windows allows it, places a marker beside the helper's keys, then starts the
-// runner from the low copy, which checks it is low, tries to write in `<home>` and to read the
-// marker. Resolves with `{ at, lowStarts, writeHeld, keysReadHeld }`, written to
-// `<home>/windows/guarded-selftest.json`. One that can't finish within `timeoutMs` is not ready
-// (`timedOut: true`, so the next session start tries again), and so is one that fails.
+// folders where Windows allows it, places a marker beside the helper's keys, makes a scratch
+// folder in `<home>/windows` labelled as a worktree is (scratchWorktree), then starts the runner
+// from the low copy, which checks it is low, tries to write in `<home>`, to read the marker, and
+// to write into, rename and remove each entry kept at the normal level in the scratch folder. The
+// scratch folder is removed afterwards. `writeHeld` is true only when the write in `<home>` and
+// every one of those tries were refused. Resolves with `{ at, lowStarts, writeHeld, keysReadHeld }`,
+// written to `<home>/windows/guarded-selftest.json`. One that can't finish within `timeoutMs` is
+// not ready (`timedOut: true`, so the next session start tries again), and so is one that fails.
 export async function selfTest({
   run, home, worktree, now = () => new Date(), pluginRoot = PLUGIN_ROOT, execPath = process.execPath, env = process.env,
   homeDir = os.homedir(), timeoutMs = SELF_TEST_MS,
@@ -298,7 +351,7 @@ export async function selfTest({
   const at = now().toISOString();
   let timer;
   const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ ...NOT_READY, timedOut: true }), timeoutMs); });
-  const tried = tryGuarded({ run, home, worktree, pluginRoot, execPath, env, homeDir, timeoutMs }).catch(() => ({ ...NOT_READY }));
+  const tried = tryGuarded({ run, home, worktree, pluginRoot, execPath, env, homeDir, timeoutMs, now }).catch(() => ({ ...NOT_READY }));
   const found = await Promise.race([tried, late]);
   clearTimeout(timer);
   const result = { at, ...found };
@@ -328,8 +381,9 @@ export function readSelfTest({ home, now = () => new Date(), platform = process.
   }
 }
 
-// Whether Guarded holds on this computer: a self-test under a day old found the runner low and a
-// write outside the worktree refused.
+// Whether Guarded holds on this computer: a self-test under a day old found the runner low, a
+// write outside the worktree refused, and the entries kept at the normal level in a folder
+// labelled as a worktree is held against a write, a rename and a removal.
 export function guardedReady(options) {
   const result = readSelfTest(options);
   return result !== null && result.lowStarts && result.writeHeld;

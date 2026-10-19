@@ -8,7 +8,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { main, FOREMAN_QUESTIONS, extraPlanId, unattendedCardData } from '../../../scripts/foreman/act.js';
+import {
+  main, FOREMAN_QUESTIONS, extraPlanId, unattendedCardData, unattendedCardFault,
+} from '../../../scripts/foreman/act.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
@@ -829,6 +831,7 @@ test('the Unattended card passes the card check and fits the card, with and with
     const data = unattendedCardData(words, setting.id, computer, guardedReady ? guarded : null);
     assert.deepEqual(cardProblems(data.question), [], name);
     assert.ok(data.question.length <= CARD.chars, `${name}: ${data.question.length} characters`);
+    assert.equal(unattendedCardFault(data), null, name);
     assert.ok(data.question.includes(words.risk), 'the design\'s words on the risk, as they are');
     assert.deepEqual(data.options, words.options.map((o) => o.label));
     assert.equal(data.question.split('\n').includes(unattendedBuildsLine(setting.id, computer)), true, name);
@@ -857,6 +860,35 @@ test('the Unattended card passes the card check and fits the card, with and with
     assert.equal(used.made.data.confirms, guarded.id);
     assert.equal(used.made.data.line, undefined, 'an ordinary confirmation');
   }
+}));
+
+test('an Unattended card past the card\'s length, or in a form the card check refuses, is found where it is written', () => withHome(async () => {
+  const computer = computerId();
+  const setting = recordInState('setting', { key: settingKey(computer), value: 'unattended' }, T0);
+  const words = UNATTENDED_CARD({ guardedReady: false });
+  const long = unattendedCardData({ ...words, what: `${words.what} ${'More words. '.repeat(120)}` }, setting.id, computer);
+  assert.match(unattendedCardFault(long), new RegExp(`would pass ${CARD.chars} characters \\(it is ${long.question.length}\\)`));
+  const blank = unattendedCardData({ ...words, meanwhile: '' }, setting.id, computer);
+  assert.match(unattendedCardFault(blank), /^the card has nothing after "While you decide:"/);
+  assert.match(unattendedCardFault({}), /^the card lacks its "What this is:" part/);
+}));
+
+test('question writes no Unattended card that would pass the card\'s length, and says so', () => withHome(async () => {
+  // Guarded ready here, so the card is at its longest, and event ids as long as an id may be: the
+  // card's set line, which names the setting event, takes it past the card's length.
+  const result = { at: new Date(T0 - 60 * 60 * 1000).toISOString(), lowStarts: true, writeHeld: true, keysReadHeld: false };
+  fs.mkdirSync(path.dirname(selfTestFile(wheelhouseHome())), { recursive: true });
+  fs.writeFileSync(selfTestFile(wheelhouseHome()), JSON.stringify(result));
+  const { views } = await buildScene(3);
+  const fake = fakeClient({ views });
+  let n = 0;
+  const makeId = () => { n += 1; return `e-${String(n).padStart(198, '0')}`; };
+  const run = (k) => act(['question', 'mine', `q-mine-${k}`], { client: fake.client, makeId, ...onWindows });
+  for (const k of [1, 2]) assert.equal((await run(k)).code, 0);
+  const third = await run(3);
+  assert.equal(third.code, 0, third.err);
+  assert.match(third.out, new RegExp(`^Recorded question q-mine-3 for the director\\.\\nThe Unattended card wasn't written, so builders keep asking: it would pass ${CARD.chars} characters \\(it is \\d+\\)\\.\\n$`));
+  assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'setting'], 'no card');
 }));
 
 test('question offers Use Guarded where this computer\'s self-test passed, proposing both levels, once', () => withHome(async () => {

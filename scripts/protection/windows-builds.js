@@ -160,8 +160,9 @@ export function UNATTENDED_CARD({ guardedReady, readsHeld } = {}) {
 
 // The card that turns Guarded on, from this computer's self-test (scripts/windows/low.js,
 // guardedCardInput): `writesHeld`, the runner started at low and was refused a write outside the
-// worktree; `readsHeld`, it was refused a read of the helper's keys folder. Null where the write wasn't refused, since
-// Guarded is offered only where it works.
+// worktree and every try on the entries a worktree keeps at the normal level; `readsHeld`, it was
+// refused a read of the helper's keys folder. Null where the writes weren't held, since Guarded is
+// offered only where it works.
 export function GUARDED_CARD(selfTest) {
   if (selfTest?.writesHeld !== true) return null;
   const reads = selfTest.readsHeld === true

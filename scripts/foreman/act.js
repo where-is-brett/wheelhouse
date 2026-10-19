@@ -123,11 +123,13 @@ import {
 import {
   buildStatus, loadFeature, readCapped, readPrRecord, safeFeatureFolder, validSlice, writeWhole,
 } from '../feature/status.js';
+import { cardProblems } from '../hooks/card-check.js';
 import { sameStatus } from '../hooks/feature-status.js';
 import { lockedByPath } from '../hooks/kit.js';
 import { branchOf } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
+import { CARD } from '../lib/front-desk.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram, withoutGitVars } from '../lib/run.js';
@@ -763,6 +765,16 @@ export function unattendedCardData(card, settingId, computer, guarded = null) {
   };
 }
 
+// What stops the Unattended card as `data` holds it reaching the director, as a clause, or null:
+// a question past the card's length, or one the card-check hook would refuse. Checked here, where
+// the card is written, so a card in the wrong form is never written, whatever the hook does.
+export function unattendedCardFault(data) {
+  const question = typeof data?.question === 'string' ? data.question : '';
+  if (question.length > CARD.chars) return `it would pass ${CARD.chars} characters (it is ${question.length})`;
+  const problems = cardProblems(question);
+  return problems.length === 0 ? null : `the card ${problems.join('; ')}`;
+}
+
 // After a feature's third build-command question recorded in a day (the computer's own date),
 // on Windows, outside a Locked project and below Unattended: a setting event proposing
 // Unattended for this computer, and where this computer's Guarded self-test passed one proposing
@@ -800,7 +812,13 @@ async function offerUnattended(ctx, views, work, asked) {
       }
     }
     const card = UNATTENDED_CARD({ guardedReady: guarded.ready, readsHeld: guarded.readsHeld });
-    await ctx.write('card', unattendedCardData(card, settingId, computer, guardedEvent));
+    const data = unattendedCardData(card, settingId, computer, guardedEvent);
+    const fault = unattendedCardFault(data);
+    if (fault !== null) {
+      ctx.say(`The Unattended card wasn't written, so builders keep asking: ${fault}.`);
+      return;
+    }
+    await ctx.write('card', data);
     ctx.say('Offered the director the Unattended card for build commands on this computer.');
   } catch (error) {
     ctx.say(`The Unattended card wasn't offered: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}. It is offered with the next build-command question.`);

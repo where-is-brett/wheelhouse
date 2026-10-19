@@ -256,11 +256,27 @@ function selfTestScene(seen) {
 }
 const said = (value) => ({ code: 0, stdout: `npm says nothing here\n${JSON.stringify(value)}\n`, stderr: '' });
 
+// The scratch folder the runner was given, and what was in it when it was started.
+const KEPT = ['.claude', '.vscode', '.git', '.mcp.json'];
+function scratchSeen() {
+  const seen = { scratch: null, entries: null };
+  const answer = (value) => (args) => {
+    seen.scratch = args.at(-1);
+    seen.entries = fs.existsSync(seen.scratch) ? fs.readdirSync(seen.scratch).sort() : null;
+    return said(value);
+  };
+  return { seen, answer };
+}
+
 test('the self-test is ready only when low starts and the write is held, and for a day', async () => {
   const cases = [
-    ['low, write and read held', said({ low: true, writeHeld: true, readHeld: true }), { lowStarts: true, writeHeld: true, keysReadHeld: true }, true],
-    ['low, write held, keys readable', said({ low: true, writeHeld: true, readHeld: false }), { lowStarts: true, writeHeld: true, keysReadHeld: false }, true],
-    ['low, write allowed', said({ low: true, writeHeld: false, readHeld: true }), { lowStarts: true, writeHeld: false, keysReadHeld: true }, false],
+    ['low, write, kept entries and read held', said({ low: true, writeHeld: true, readHeld: true, keptHeld: true }), { lowStarts: true, writeHeld: true, keysReadHeld: true }, true],
+    ['low, write and kept entries held, keys readable', said({ low: true, writeHeld: true, readHeld: false, keptHeld: true }), { lowStarts: true, writeHeld: true, keysReadHeld: false }, true],
+    ['low, write allowed', said({ low: true, writeHeld: false, readHeld: true, keptHeld: true }), { lowStarts: true, writeHeld: false, keysReadHeld: true }, false],
+    // A computer where a build can rename or remove .claude, .git or .mcp.json, or write into one,
+    // though the write outside is refused: not ready.
+    ['low, write held, a kept entry renamed away', said({ low: true, writeHeld: true, readHeld: true, keptHeld: false }), { lowStarts: true, writeHeld: false, keysReadHeld: true }, false],
+    ['low, write held, kept entries not said', said({ low: true, writeHeld: true, readHeld: true }), { lowStarts: true, writeHeld: false, keysReadHeld: true }, false],
     ['not low', { code: 3, stdout: '', stderr: 'This runner isn\'t at low integrity, so it won\'t run anything.\n' }, { lowStarts: false, writeHeld: false, keysReadHeld: false }, false],
     ['says nothing', { code: 0, stdout: 'hello\n', stderr: '' }, { lowStarts: false, writeHeld: false, keysReadHeld: false }, false],
   ];
@@ -271,11 +287,13 @@ test('the self-test is ready only when low starts and the write is held, and for
     assert.deepEqual(JSON.parse(fs.readFileSync(selfTestFile(home), 'utf8')), result, `${name}: written to the home`);
     assert.equal(guardedReady({ home, now: at(T0 + HOUR), platform: 'win32' }), ready, name);
 
-    // The runner was started from the low copy, in self-test mode, asked to write in the home and to
-    // read a marker placed beside the helper's keys.
+    // The runner was started from the low copy, in self-test mode, asked to write in the home, to
+    // read a marker placed beside the helper's keys, and to try the kept entries of a scratch folder.
     const started = fake.calls.find((c) => nameOf(c.file) !== 'icacls');
     assert.equal(started.file, lowNodePath(home), name);
-    const [runner, flag, where, marker] = started.args;
+    const [runner, flag, where, marker, scratch] = started.args;
+    assert.equal(started.args.length, 5, name);
+    assert.equal(path.dirname(scratch), path.join(home, 'windows'), name);
     assert.equal(runner, path.join('/plugins/wheelhouse', 'scripts', 'windows', 'guarded.js'));
     assert.equal(flag, '--self-test');
     assert.equal(where, home);
@@ -285,7 +303,7 @@ test('the self-test is ready only when low starts and the write is held, and for
   }
 
   // Ready for a day, no longer, and never from a time to come; only on Windows.
-  const { home, go } = selfTestScene(() => said({ low: true, writeHeld: true, readHeld: false }));
+  const { home, go } = selfTestScene(() => said({ low: true, writeHeld: true, readHeld: false, keptHeld: true }));
   await go();
   assert.equal(guardedReady({ home, now: at(T0 + 23 * HOUR), platform: 'win32' }), true);
   assert.equal(guardedReady({ home, now: at(T0 + 24 * HOUR), platform: 'win32' }), false);
@@ -306,6 +324,52 @@ test('the self-test is ready only when low starts and the write is held, and for
   assert.equal(guardedReady({ home: path.join(home, 'nowhere'), now: at(T0), platform: 'win32' }), false);
 });
 
+test('the self-test labels a scratch folder in the home as a worktree is, for the runner to try, and removes it', async () => {
+  const { seen, answer } = scratchSeen();
+  const { home, fake, go } = selfTestScene(answer({ low: true, writeHeld: true, readHeld: true, keptHeld: true }));
+  // Scratch folders left by a self-test that stopped part-way: an old one is removed, a recent one
+  // (perhaps another session start's) is left.
+  const windows = path.join(home, 'windows');
+  const old = path.join(windows, 'guarded-scratch-0123456789ab');
+  const recent = path.join(windows, 'guarded-scratch-ba9876543210');
+  for (const [folder, ms] of [[old, T0 - HOUR], [recent, T0 - 60 * 1000]]) {
+    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+    fs.utimesSync(folder, new Date(ms), new Date(ms));
+  }
+  const result = await go();
+  assert.equal(result.writeHeld, true);
+
+  const { scratch } = seen;
+  assert.match(path.basename(scratch), /^guarded-scratch-[0-9a-f]{12}$/);
+  assert.equal(path.dirname(scratch), windows, 'in the home, never the project');
+  assert.deepEqual(seen.entries, [...KEPT].sort(), 'each kept entry was there for the runner');
+  // Labelled as labelWorktree labels a worktree: the folder low, each kept entry at the normal level.
+  const labels = fake.icacls().filter((a) => a[0] === scratch || a[0].startsWith(`${scratch}${path.sep}`));
+  assert.deepEqual(labels, [
+    [scratch, '/setintegritylevel', '(OI)(CI)L'],
+    [path.join(scratch, '.git'), '/setintegritylevel', 'M'],
+    [path.join(scratch, '.mcp.json'), '/setintegritylevel', 'M'],
+    [path.join(scratch, '.claude'), '/setintegritylevel', '(OI)(CI)M'],
+    [path.join(scratch, '.vscode'), '/setintegritylevel', '(OI)(CI)M'],
+  ]);
+  // Labelled before the runner started.
+  const runnerAt = fake.calls.findIndex((c) => nameOf(c.file) !== 'icacls');
+  assert.ok(fake.calls.findIndex((c) => c.args[0] === scratch) < runnerAt);
+  assert.equal(fs.existsSync(scratch), false, 'removed afterwards');
+  assert.equal(fs.existsSync(old), false, 'an old leftover is removed');
+  assert.equal(fs.existsSync(recent), true, 'a recent one is left');
+
+  // A scratch label refused: not ready, the runner never started, and the scratch folder removed.
+  const refusing = selfTestScene(() => said({ low: true, writeHeld: true, readHeld: true, keptHeld: true }));
+  const scratchRefused = fakeRun({ icacls: (args) => (path.basename(args[0]).startsWith('guarded-scratch-') ? { code: 5, stdout: '', stderr: 'Access is denied.' } : ICACLS_OK) });
+  const refusedResult = await selfTest({
+    run: scratchRefused.run, home: refusing.home, worktree: refusing.home, now: at(T0), pluginRoot: '/p', execPath: fakeNode(), env: WIN, homeDir: refusing.home,
+  });
+  assert.equal(refusedResult.writeHeld, false);
+  assert.ok(scratchRefused.calls.every((c) => nameOf(c.file) === 'icacls'), 'the runner never started');
+  assert.deepEqual(fs.readdirSync(path.join(refusing.home, 'windows')).filter((n) => n.startsWith('guarded-scratch-')), []);
+});
+
 test('a self-test that can\'t finish in its time, or whose low copy can\'t be made, is not ready', async () => {
   // Never answers: counted as not ready once its time is up, and tried again at the next start.
   const slow = selfTestScene(() => new Promise(() => {}));
@@ -313,6 +377,17 @@ test('a self-test that can\'t finish in its time, or whose low copy can\'t be ma
   assert.deepEqual(late, { at: new Date(T0).toISOString(), lowStarts: false, writeHeld: false, keysReadHeld: false, timedOut: true });
   assert.equal(guardedReady({ home: slow.home, now: at(T0 + HOUR), platform: 'win32' }), false);
   assert.equal(needsSelfTest({ home: slow.home, now: at(T0 + HOUR) }), true);
+
+  // Labelling the scratch folder never finishes: not ready either, and the runner never started.
+  const hung = selfTestScene(() => said({ low: true, writeHeld: true, readHeld: true, keptHeld: true }));
+  const hangs = fakeRun({ icacls: (args) => (path.basename(args[0]).startsWith('guarded-scratch-') ? new Promise(() => {}) : ICACLS_OK) });
+  const stuck = await selfTest({
+    run: hangs.run, home: hung.home, worktree: hung.home, now: at(T0), pluginRoot: '/p', execPath: fakeNode(), env: WIN, homeDir: hung.home, timeoutMs: 20,
+  });
+  assert.deepEqual(stuck, { at: new Date(T0).toISOString(), lowStarts: false, writeHeld: false, keysReadHeld: false, timedOut: true });
+  assert.ok(hangs.icacls().some((a) => path.basename(a[0]).startsWith('guarded-scratch-')), 'it reached the scratch folder');
+  assert.ok(hangs.calls.every((c) => nameOf(c.file) === 'icacls'), 'the runner never started');
+  assert.equal(guardedReady({ home: hung.home, now: at(T0 + HOUR), platform: 'win32' }), false);
 
   // A label refused (policy, or icacls missing) is not ready, and nothing is started.
   const home = path.join(tempFolder('wh-self-'), 'home');

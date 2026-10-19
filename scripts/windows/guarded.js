@@ -9,14 +9,17 @@
 // the Mandatory Label S-1-16-4096) and runs nothing otherwise (exit 3), nor when Windows' folder
 // can't be known to find whoami by. Low integrity doesn't hold the network, so it refuses the
 // forms that fetch and run new code (exit 4) and tells the session to ask for them. It refuses
-// local git the same way: the worktree's git folders aren't labelled low (scripts/windows/low.js,
-// PLAN_GIT_LOW_LABELS), so local git is asked for and runs at the normal level. It points npm's cache and the temporary folders inside the worktree, where a low process
+// local git the same way (exit 4, EXIT.git): the worktree's git folders aren't labelled low
+// (scripts/windows/low.js, PLAN_GIT_LOW_LABELS), so local git is asked for and runs at the normal
+// level. It points npm's cache and the temporary folders inside the worktree, where a low process
 // can write, runs the command, ends it and everything it started with `taskkill /T /F` after 30
 // minutes, and exits with the command's code.
 //
-// `--self-test <home> <marker>` is the self-test's mode (low.js, selfTest): after the same check,
-// it tries to write a file in Wheelhouse's home and to read the marker beside the helper's keys,
-// and prints one JSON line saying whether Windows refused each. It never prints what it read.
+// `--self-test <home> <marker> <scratch>` is the self-test's mode (low.js, selfTest): after the
+// same check, it tries to write a file in Wheelhouse's home, to read the marker beside the
+// helper's keys, and to write into, rename and remove each entry kept at the normal level in
+// `scratch`, a folder labelled as a worktree is; it prints one JSON line saying whether Windows
+// refused each. It never prints what it read.
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -31,9 +34,14 @@ export const NOT_LOW = 'This runner isn\'t at low integrity, so it won\'t run an
 export const ASK_INSTEAD = 'Ask for this with ask --kind build-command.';
 export const SELF_TEST_FLAG = '--self-test';
 
-// The runner's exit codes, beside the command's own: `timedOut` is the usual code of a command
-// ended for its time.
-export const EXIT = Object.freeze({ usage: 2, notLow: 3, fetches: 4, notFound: 127, timedOut: 124 });
+// The runner's exit codes, beside the command's own: `fetches` and `git` share a code, since the
+// session does the same for both (asks for the command), and the line said tells them apart;
+// `timedOut` is the usual code of a command ended for its time.
+export const EXIT = Object.freeze({ usage: 2, notLow: 3, fetches: 4, git: 4, notFound: 127, timedOut: 124 });
+
+// What stays at the normal level in a worktree labelled low (low.js, labelWorktree), so a build
+// can't plant a hook or a setting there: folders, labelled with inheritance, and files.
+export const KEPT_NORMAL = Object.freeze({ folders: Object.freeze(['.claude', '.vscode']), files: Object.freeze(['.git', '.mcp.json']) });
 
 const LOW_LABEL = 'S-1-16-4096';
 
@@ -157,9 +165,48 @@ function runToEnd(child, { run, env, timeoutMs }) {
 // Whether an error is Windows refusing access.
 const refusedBy = (error) => ['EACCES', 'EPERM'].includes(error?.code);
 
-// The self-test's two tries, as one JSON line: a write in `home` (removed if it got through) and
-// a read of `marker`. Only a refusal counts as held; any other failure counts as not held.
-function selfTestTries(home, marker, out) {
+// Whether `attempt` was refused by Windows. Anything that went through, or failed another way,
+// is not held.
+function refusedTry(attempt) {
+  try {
+    attempt();
+    return false;
+  } catch (error) {
+    return refusedBy(error);
+  }
+}
+
+// The tries on a kept entry, in order, each of which would let a build put a low one in its place:
+// a write into it, renaming it away and removing it. `folder` says whether the entry is a folder.
+export const KEPT_TRIES = Object.freeze({
+  writeInto: (entry, folder) => (folder ? fs.writeFileSync(path.join(entry, 'planted-from-low.json'), '{}\n', { flag: 'wx' }) : fs.appendFileSync(entry, '\n')),
+  rename: (entry) => fs.renameSync(entry, `${entry}.moved-from-low`),
+  remove: (entry, folder) => (folder ? fs.rmdirSync(entry) : fs.unlinkSync(entry)),
+});
+
+// Whether every entry kept at the normal level in `scratch` held from here: Windows refused each
+// of `tries` on it. A missing entry, or one of the wrong kind, is not held. The self-test removes
+// `scratch` afterwards.
+export function keptNormalHeld(scratch, tries = KEPT_TRIES) {
+  const entries = [...KEPT_NORMAL.folders.map((name) => [name, true]), ...KEPT_NORMAL.files.map((name) => [name, false])];
+  for (const [name, folder] of entries) {
+    const entry = path.join(scratch, name);
+    let stat;
+    try {
+      stat = fs.lstatSync(entry);
+    } catch {
+      return false;
+    }
+    if (stat.isDirectory() !== folder) return false;
+    if (!Object.values(tries).every((attempt) => refusedTry(() => attempt(entry, folder)))) return false;
+  }
+  return true;
+}
+
+// The self-test's tries, as one JSON line: a write in `home` (removed if it got through), a read
+// of `marker`, and the tries on what is kept at the normal level in `scratch`. Only a refusal
+// counts as held; any other failure counts as not held.
+function selfTestTries(home, marker, scratch, out) {
   let writeHeld = false;
   const file = path.join(home, `guarded-selftest-${crypto.randomBytes(6).toString('hex')}.txt`);
   try {
@@ -174,7 +221,7 @@ function selfTestTries(home, marker, out) {
   } catch (error) {
     readHeld = refusedBy(error);
   }
-  out(JSON.stringify({ low: true, writeHeld, readHeld }));
+  out(JSON.stringify({ low: true, writeHeld, readHeld, keptHeld: keptNormalHeld(scratch) }));
   return 0;
 }
 
@@ -200,11 +247,11 @@ export async function guarded(words, {
     return EXIT.usage;
   }
   if (words[0] === SELF_TEST_FLAG) {
-    if (words.length !== 3) {
-      say('The self-test takes the home folder and the marker to read.');
+    if (words.length !== 4) {
+      say('The self-test takes the home folder, the marker to read and the scratch folder.');
       return EXIT.usage;
     }
-    return selfTestTries(words[1], words[2], out);
+    return selfTestTries(words[1], words[2], words[3], out);
   }
   if (fetchesCode(words)) {
     say(`The runner won't run ${words.join(' ')}: it fetches new code, which low integrity doesn't hold. ${ASK_INSTEAD}`);
@@ -212,7 +259,7 @@ export async function guarded(words, {
   }
   if (programOf(words[0]) === 'git') {
     say(`The runner doesn't run git: local git runs at the normal level, outside the runner. ${ASK_INSTEAD}`);
-    return EXIT.fetches;
+    return EXIT.git;
   }
   const resolved = resolveCommand(words, { platform, env, exists });
   if (resolved.missing) {
