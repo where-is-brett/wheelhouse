@@ -89,7 +89,10 @@ test('no pages, no commits or a shooter that throws do not match', async () => {
 
 const S0 = `${SCREEN_SIZES[0].width}x${SCREEN_SIZES[0].height}`;
 const keyed = (pages) => pages.flatMap((page) => SCREEN_SIZES.map(({ width, height }) => `${page} ${width}x${height}`));
-const savedOf = (dir, sha) => JSON.parse(fs.readFileSync(path.join(dir, `${sha}.json`), 'utf8'));
+const savedOf = (dir, sha, maybe = false) => {
+  const file = path.join(dir, `${sha}.json`);
+  return maybe && !fs.existsSync(file) ? null : JSON.parse(fs.readFileSync(file, 'utf8'));
+};
 const compare = (options) => compareCommits({ before: BEFORE, after: AFTER, pages: ['/'], previewUrl, browser: '/bin/chrome', ...options });
 
 test('no browser installed means no match', async () => {
@@ -113,10 +116,15 @@ test('a page that loads with a 404 at both commits does not match', async () => 
   };
   const fetch = async () => new Response('Not found', { status: 404 });
   const dir = tempFolder('wh-screens-');
-  assert.equal(await compare({ dir, pages: ['/missing'], shoot, run, fetch, tmp: tempFolder('wh-shoot-') }), false);
-  assert.equal(runs.length, 0);
+  const real = { pages: ['/missing'], dir, previewUrl, shoot, browser: '/bin/chrome', run, fetch, tmp: tempFolder('wh-shoot-') };
+  assert.equal(await photographCommit({ ...real, sha: BEFORE }), 0);
   // Nothing failed is kept.
   assert.deepEqual(fs.readdirSync(dir), []);
+  // With the approved commit's pictures kept from when its page loaded, the head's 404 is no match.
+  fs.writeFileSync(path.join(dir, `${BEFORE}.json`), JSON.stringify({ address: previews[BEFORE], shots: Object.fromEntries(keyed(['/missing']).map((k) => [k, H1])) }));
+  assert.equal(await compare({ ...real }), false);
+  assert.equal(runs.length, 0);
+  assert.deepEqual(fs.readdirSync(dir), [`${BEFORE}.json`]);
 });
 
 test('a preview missing for either commit does not match', async () => {
@@ -179,16 +187,24 @@ test('hashes are cached per commit with the address they came from, and answer w
   const pages = ['/', '/about'];
   let gone = false;
   const live = async (sha) => (gone && sha === BEFORE ? null : previews[sha]);
+  // The approved commit is photographed when its approval is recorded; the comparison takes the head's.
+  assert.equal(await photographCommit({ sha: BEFORE, pages, dir, previewUrl: live, shoot: shot, browser: '/bin/chrome' }), pages.length * SCREEN_SIZES.length);
   assert.equal(await compare({ dir, shoot: shot, pages, previewUrl: live }), true);
   assert.equal(shot.calls.length, pages.length * SCREEN_SIZES.length * 2);
+  assert.ok(shot.calls.slice(pages.length * SCREEN_SIZES.length).every((c) => c.url.startsWith(previews[AFTER])));
   assert.deepEqual(savedOf(dir, BEFORE), { address: previews[BEFORE], shots: Object.fromEntries(keyed(pages).map((k) => [k, H1])) });
   assert.equal(savedOf(dir, AFTER).address, previews[AFTER]);
 
   gone = true;
   assert.equal(await compare({ dir, shoot: shot, pages, previewUrl: live }), true);
   assert.equal(shot.calls.length, pages.length * SCREEN_SIZES.length * 2, 'every picture came from the cache');
-  // A page not photographed at the approved commit needs its preview.
-  assert.equal(await compare({ dir, shoot: shot, pages: ['/', '/contact'], previewUrl: live }), false);
+  // A page not photographed at the approved commit is no match, with or without its preview.
+  for (const state of [true, false]) {
+    gone = state;
+    assert.equal(await compare({ dir, shoot: shot, pages: ['/', '/contact'], previewUrl: live }), false);
+  }
+  assert.ok(shot.calls.every((c) => !c.url.includes('/contact')));
+  gone = true;
 
   // The head's pictures count only from the address the host gives for it now.
   const moved = async (sha) => (sha === AFTER ? 'https://shop-moved.example.app/' : null);
@@ -218,6 +234,46 @@ test('one address given for both commits never matches, and nothing is photograp
     assert.equal(await compare({ dir, shoot: shot, previewUrl: async (sha) => (sha === AFTER ? branch : old) }), false, String(old));
   }
   assert.equal(shot.calls.length, taken, 'no picture is taken once the addresses are known');
+});
+
+test('the approved commit is never photographed in a comparison: with nothing kept of it, no match', async () => {
+  const dir = tempFolder('wh-screens-');
+  const shot = fakeShoot();
+  const pages = ['/', '/pricing'];
+  assert.equal(await compare({ dir, shoot: shot, pages }), false);
+  assert.equal(shot.calls.length, 0);
+  assert.deepEqual(fs.readdirSync(dir), []);
+
+  // Some pictures kept, one missing: the head's are taken up to the gap, the approved commit's never.
+  fs.writeFileSync(path.join(dir, `${BEFORE}.json`), JSON.stringify({ address: previews[BEFORE], shots: { [`/ ${S0}`]: H1 } }));
+  assert.equal(await compare({ dir, shoot: shot, pages }), false);
+  assert.deepEqual(shot.calls.map((c) => c.url), [previews[AFTER]]);
+  assert.deepEqual(Object.keys(savedOf(dir, BEFORE).shots), [`/ ${S0}`]);
+});
+
+test('an approved commit whose shared address is still current, with the head at its own, is no match', async () => {
+  // The approved commit's deployment is still current at an address that now shows the head, and
+  // the head has an address of its own: every picture would match, so none of the approved commit
+  // is taken now.
+  const shared = 'https://shared.example.app/';
+  const dir = tempFolder('wh-screens-');
+  const shot = fakeShoot();
+  const reviewer = async (sha) => (sha === BEFORE ? shared : 'https://head-own.example.app/');
+  assert.equal(await compare({ dir, shoot: shot, pages: ['/'], previewUrl: reviewer }), false);
+  assert.ok(shot.calls.every((c) => !c.url.startsWith(shared)));
+  assert.equal(savedOf(dir, BEFORE, true), null);
+});
+
+test('a comparison stops as soon as it is told to, and answers no', async () => {
+  const dir = tempFolder('wh-screens-');
+  const shot = fakeShoot();
+  const pages = ['/', '/about'];
+  await photographCommit({ sha: BEFORE, pages, dir, previewUrl, shoot: shot, browser: '/bin/chrome' });
+  const taken = shot.calls.length;
+  let left = 1;
+  assert.equal(await compare({ dir, shoot: shot, pages, keepGoing: () => (left -= 1) >= 0 }), false);
+  assert.equal(shot.calls.length - taken, 1);
+  assert.equal(await compare({ dir, shoot: shot, pages, keepGoing: () => true }), true);
 });
 
 test('a failed photograph is not cached, and a broken cache file, or one from before addresses were kept, is no picture', async () => {
@@ -250,13 +306,15 @@ test('a failed photograph is not cached, and a broken cache file, or one from be
   assert.equal(fresh.calls.length, 0);
 });
 
-test('a photograph whose cache can not be written is still answered', async () => {
+test('a photograph whose cache can not be written is still answered, and is no picture of the approved commit', async () => {
   const blocker = path.join(tempFolder('wh-screens-'), 'a-file');
   fs.writeFileSync(blocker, '');
   const shot = fakeShoot({ ok: true, hash: H2 });
   // The cache folder sits under a file, so it can't be made.
-  assert.equal(await compare({ dir: path.join(blocker, 'cache'), shoot: shot }), true);
-  assert.equal(shot.calls.length, 2 * SCREEN_SIZES.length);
+  const dir = path.join(blocker, 'cache');
+  assert.equal(await photographCommit({ sha: BEFORE, pages: ['/'], dir, previewUrl, shoot: shot, browser: '/bin/chrome' }), SCREEN_SIZES.length);
+  assert.equal(await compare({ dir, shoot: shot }), false);
+  assert.equal(shot.calls.length, SCREEN_SIZES.length);
 });
 
 test('two commits\' pictures, or two runs for one commit at once, all reach their cache files', async () => {

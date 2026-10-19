@@ -4,10 +4,12 @@
 // does any error: a director's approval only carries over when there is no doubt.
 //
 // Each commit's pictures are cached in `<dir>/<sha>.json` as { address, shots: { "<page>
-// <width>x<height>": hash } }, `address` being the preview they were taken on. An address shown for
-// both commits (a branch's, say, which shows whatever is newest) is no one commit's own, so a
-// comparison finds both addresses before any picture is taken, and answers false when the head's
-// is one the approved commit's pictures came from, or would come from.
+// <width>x<height>": hash } }, `address` being the preview they were taken on. The approved commit
+// is photographed only when its approval is recorded (photographCommit); a comparison takes the
+// head's pictures alone, and a picture of the approved commit missing from the cache answers false.
+// An address shown for both commits (a branch's, say, which shows whatever is newest) is no one
+// commit's own, so a comparison finds both addresses before any picture is taken, and answers false
+// when the head's is the approved commit's now or the one its pictures came from.
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -99,19 +101,38 @@ async function addressOf(previewUrl, sha) {
 
 const sizeOk = (size) => Number.isInteger(size?.width) && Number.isInteger(size?.height);
 
-// One picture of `page` at `size` for `sha`: its cached hash when `cached(address)` accepts the
-// address the commit's cache file was taken on, or else photographed at `address` with `shoot` and
-// kept under it. { ok: true, hash } or { ok: false, why }.
-async function pictureOf({ dir, sha, page, size, address, cached, shoot, browser, run, fetch, tmp }) {
+// The cache file and key of one picture of `page` at `size` for `sha`, or { why } when one of them
+// is not what it should be.
+function placeOf({ dir, sha, page, size }) {
+  if (typeof sha !== 'string' || !COMMIT.test(sha)) return { why: 'not a commit' };
+  if (!isPage(page)) return { why: 'not a page' };
+  if (!sizeOk(size)) return { why: 'not a size' };
+  return { file: path.join(dir, `${sha.toLowerCase()}.json`), key: `${page} ${size.width}x${size.height}` };
+}
+
+// One picture's hash from the cache, when `cached(address)` accepts the address the commit's cache
+// file was taken on: { ok: true, hash }, or { ok: false, why }. Nothing is photographed.
+function keptPicture({ dir, sha, page, size, cached }) {
   try {
-    if (typeof sha !== 'string' || !COMMIT.test(sha)) return { ok: false, why: 'not a commit' };
-    if (!isPage(page)) return { ok: false, why: 'not a page' };
-    if (!sizeOk(size)) return { ok: false, why: 'not a size' };
-    const file = path.join(dir, `${sha.toLowerCase()}.json`);
-    const key = `${page} ${size.width}x${size.height}`;
+    const { file, key, why } = placeOf({ dir, sha, page, size });
+    if (why) return { ok: false, why };
     const saved = readCache(file);
     const hash = saved.shots[key];
     if (saved.address !== null && cached(saved.address) && typeof hash === 'string' && HASH.test(hash)) return { ok: true, hash };
+    return { ok: false, why: 'not kept' };
+  } catch (error) {
+    return { ok: false, why: error?.message ?? 'failed' };
+  }
+}
+
+// One picture of `page` at `size` for `sha`: its cached hash (keptPicture), or else photographed at
+// `address` with `shoot` and kept under it. { ok: true, hash } or { ok: false, why }.
+async function pictureOf({ dir, sha, page, size, address, cached, shoot, browser, run, fetch, tmp }) {
+  try {
+    const { file, key, why } = placeOf({ dir, sha, page, size });
+    if (why) return { ok: false, why };
+    const kept = keptPicture({ dir, sha, page, size, cached });
+    if (kept.ok) return kept;
 
     if (!browser) return { ok: false, why: 'no browser' };
     if (!address) return { ok: false, why: 'no preview' };
@@ -128,24 +149,30 @@ async function pictureOf({ dir, sha, page, size, address, cached, shoot, browser
 
 // Whether `before` (the approved commit) and `after` (the head) look the same on every page at
 // every size, through the cache in `dir` and the previews `previewUrl(sha)` gives (null for none).
-// Both addresses are found first, and before any picture is taken it answers false when the head
-// has no preview, or its address is the approved commit's now or the one its cached pictures came
-// from. The approved commit's cached pictures count whatever address they came from (they may
-// predate its preview being taken down); the head's only from the address it has now.
+// The approved commit is never photographed here: its pictures come only from the cache that
+// photographCommit wrote when its approval was recorded, from whatever address they came from (its
+// preview may have been taken down since), and a picture missing there answers false. With nothing
+// kept of it, no address is asked for. Otherwise both addresses are found first, and before any
+// picture is taken it answers false when the head has no preview, or its address is the approved
+// commit's now or the one its pictures came from. The head's cached pictures count only from the
+// address it has now. `keepGoing()` is asked before each of the head's pictures; once it says no,
+// the answer is false.
 export async function compareCommits({
-  before, after, pages, sizes = SCREEN_SIZES, dir, previewUrl, shoot = shootPage, browser, run, fetch, tmp,
+  before, after, pages, sizes = SCREEN_SIZES, dir, previewUrl, shoot = shootPage, browser, run, fetch, tmp, keepGoing = () => true,
 } = {}) {
   try {
     if (typeof before !== 'string' || !COMMIT.test(before) || typeof after !== 'string' || !COMMIT.test(after)) return false;
     if (before.toLowerCase() === after.toLowerCase() || typeof previewUrl !== 'function') return false;
-    const now = { before: await addressOf(previewUrl, before), after: await addressOf(previewUrl, after) };
-    if (now.after === null) return false;
     const kept = readCache(path.join(dir, `${before.toLowerCase()}.json`)).address;
-    if (now.after === now.before || now.after === kept) return false;
+    if (kept === null) return false;
+    const now = { before: await addressOf(previewUrl, before), after: await addressOf(previewUrl, after) };
+    if (now.after === null || now.after === now.before || now.after === kept) return false;
     const common = { dir, shoot, browser, run, fetch, tmp };
-    const shootAt = (sha, page, size) => (sha === before
-      ? pictureOf({ ...common, sha, page, size, address: now.before, cached: (address) => address !== now.after })
-      : pictureOf({ ...common, sha, page, size, address: now.after, cached: (address) => address === now.after }));
+    const shootAt = async (sha, page, size) => {
+      if (sha === before) return keptPicture({ dir, sha, page, size, cached: (address) => address !== now.after });
+      if (!keepGoing()) return { ok: false, why: 'stopped' };
+      return pictureOf({ ...common, sha, page, size, address: now.after, cached: (address) => address === now.after });
+    };
     return await screenshotsMatch({ before, after, pages, sizes, shootAt });
   } catch {
     return false;

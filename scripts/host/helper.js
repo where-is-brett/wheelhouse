@@ -51,7 +51,7 @@ import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChan
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
-import { findBrowser, shoot as shootPage } from '../screens/shoot.js';
+import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -724,7 +724,8 @@ export async function startHelper({
   // comparison (scripts/screens/compare.js), photographing with `screens`; a test may give its own.
   screenshotsMatch = null,
   // How pictures are taken: `shoot` (scripts/screens/shoot.js's by default) and the browser's path
-  // (by default the one findBrowser finds when a picture is first needed; null for none).
+  // (null for none), or `findBrowser` to look for one (shoot.js's by default) when pictures are
+  // needed.
   screens = {},
   // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
   profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
@@ -1508,13 +1509,21 @@ export async function startHelper({
 
   // --- screenshots (design section 12.3; front desk plan, Task 12) ---
 
-  // The browser, found when a picture is first needed.
-  let browserFound;
+  // The browser, looked for when pictures are needed. Only a Chrome that is found is kept: with none,
+  // or only Edge, whose pictures don't count yet, it is looked for again next time, so a Chrome
+  // installed later is used without restarting the helper.
+  let chrome = null;
   function browserPath() {
     if (screens.browser !== undefined) return screens.browser;
-    if (browserFound === undefined) browserFound = findBrowser();
-    return browserFound;
+    if (chrome !== null) return chrome;
+    const found = (screens.findBrowser ?? findBrowser)();
+    if (stopsAtPicture(found)) chrome = found;
+    return found;
   }
+
+  // Set when the helper is closing: photographing and comparing stop after the picture under way,
+  // so closing waits for one picture at most, and a comparison cut short answers false.
+  let closing = false;
 
   // How the comparison and the photographing find pictures for one request: the project's cache,
   // each commit's preview from the request's adapter, and the shoot and browser to use.
@@ -1530,36 +1539,37 @@ export async function startHelper({
   }
 
   // Whether every page looks the same at both commits (scripts/screens/compare.js's compareCommits,
-  // which answers false when the head's preview address is one the approved commit's pictures came
-  // from). No pages, no comparison: false, and no browser is opened. One comparison or
-  // photographing at a time per project, so pictures of an approved commit still being taken are
-  // in the cache before the gate looks.
+  // which photographs only the head: the approved commit's pictures come from the cache written when
+  // its approval was recorded, and any missing answers false). No pages, no comparison: false, and
+  // no browser is opened. One comparison or photographing at a time per project, so pictures of an
+  // approved commit still being taken are in the cache before the gate looks.
   async function pagesLookSame({ project, before, after, pages }, ctx) {
     if (!Array.isArray(pages) || pages.length === 0) return false;
     return oneAtATime(`screens:${project}`, async () => {
+      if (closing) return false;
       if (screenshotsMatch) return (await screenshotsMatch({ project, before, after, pages })) === true;
-      return (await compareCommits({ before, after, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx) })) === true;
+      return (await compareCommits({ before, after, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !closing })) === true;
     });
   }
 
   // The approved commit's pages, photographed at every size into the cache when its approval is
-  // recorded, each with the address it came from, so the pictures are there when an update comes,
-  // after the host may have taken that commit's preview down. In the background: the answer
-  // doesn't wait, and nothing is reported. Nothing when the configuration lists no pages or can't
-  // be read, and STOP is read before each picture.
+  // recorded, each with the address it came from. These are the only pictures of it the gate uses:
+  // they are there when an update comes, after the host may have taken that commit's preview down.
+  // In the background: the answer doesn't wait, and nothing is reported. Nothing when the
+  // configuration lists no pages or can't be read, and STOP and closing are read before each picture.
   function photographApproved(project, commit, ctx) {
     if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return;
     oneAtATime(`screens:${project}`, async () => {
-      if (stopped()) return;
+      if (stopped() || closing) return;
       const adapter = await ctx.adapter();
       const defaultBranch = await defaultBranchOf(project, adapter);
       const pages = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
         await defaultHistory(must, defaultBranch);
         return pagesOf(await baseConfig(must));
       }));
-      if (pages.length === 0 || stopped()) return;
+      if (pages.length === 0 || stopped() || closing) return;
       pruneScreens(screensDir(project));
-      await photographCommit({ sha: commit, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !stopped() });
+      await photographCommit({ sha: commit, pages, sizes: SCREEN_SIZES, ...picturesFor(project, ctx), keepGoing: () => !stopped() && !closing });
     }).catch(() => {});
   }
 
@@ -1578,10 +1588,11 @@ export async function startHelper({
   // The review and the approval the gate weighs, and whether the branch is up to date. Each is
   // the latest signed record for this pull request, in the carried form when it names an
   // earlier commit and still holds for the head (carryFacts); an approval carries only when the
-  // screenshots of the two commits match too. Anything the mirror can't say leaves the branch
-  // unknown (null, which the gate refuses with its own reason) and nothing carried. The one rule
-  // behind /merge and /pr/carried.
-  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true }, ctx) {
+  // screenshots of the two commits match too, and they are compared only when `compare` says the
+  // merge needs the approval. Anything the mirror can't say leaves the branch unknown (null, which
+  // the gate refuses with its own reason) and nothing carried. The one rule behind /merge and
+  // /pr/carried.
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false }, ctx) {
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
     const from = {
@@ -1594,8 +1605,9 @@ export async function startHelper({
       facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
     } catch { /* not readable: not known whether it is up to date, and nothing carries */ }
     let shown = false;
-    // Under STOP the gate refuses anyway, so nothing is compared or photographed.
-    if (facts.approval === true && !stopped()) {
+    // With no approval needed, or under STOP, where the gate refuses anyway, nothing is compared
+    // or photographed.
+    if (compare && facts.approval === true && !stopped()) {
       try { shown = await pagesLookSame({ project, before: from.approval, after: headSha, pages: facts.pages }, ctx); } catch { /* not compared: asked again */ }
     }
     return {
@@ -1796,7 +1808,7 @@ export async function startHelper({
     const shownFirst = readable && shownFirstNeeded({ views, headRef: pr.headRef, paths: changes.paths, config: changes.config });
     const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore || shownFirst;
     const holdsLock = await lockHeld(project, ctx);
-    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter }, ctx);
+    const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // STOP and bypass are read last, just before the decision, so one set during the
     // fetches above is seen. The caller may only raise them.
     const decision = gateDecision({
@@ -2516,8 +2528,10 @@ export async function startHelper({
   return {
     address,
     // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
-    // a git process is working in can't be removed.
+    // a git process is working in can't be removed. Photographing and comparing stop after the
+    // picture under way.
     close: async () => {
+      closing = true;
       await new Promise((resolve) => {
         server.close(() => {
           if (!pipe) fs.rmSync(address, { force: true });
