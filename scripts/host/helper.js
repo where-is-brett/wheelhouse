@@ -48,6 +48,7 @@ import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
+import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -594,7 +595,27 @@ function placeFolder(cwd) {
 // Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
 // call. Those commands, like runbook.js, run inside the sandbox, which cannot read
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
-const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance'];
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/push'];
+
+const NOT_MAIN_CHECKOUT = 'the foreman\'s commands run only in the project\'s main checkout';
+
+// The project whose main checkout `folder` is, for /foreman/run (ruling R156): placed from this
+// computer's records, as placeFolder does, and refused for any other folder inside the project,
+// a feature's worktree among them. No project the request names counts.
+function placeMainCheckout(folder) {
+  const project = placeFolder(folder);
+  const real = (p) => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return null;
+    }
+  };
+  const record = readProject(project);
+  const here = real(folder);
+  if (here === null || typeof record?.folder !== 'string' || here !== real(record.folder)) refuse(NOT_MAIN_CHECKOUT);
+  return project;
+}
 
 // The request with its project placed from `cwd`. A request that names a project too must
 // name the one the folder is in, or it is refused: the folder is placed from this computer's
@@ -2284,6 +2305,25 @@ export async function startHelper({
       const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
       return { ok: true, block: provenance === null ? null : provenanceBlock(provenance), stop: stopped() };
     },
+    // The foreman's act.js or wake.js (ruling R156), run outside the sandbox as a child process in
+    // the project's main checkout, with no key or secret in its environment; it reaches the host
+    // and the state through this helper, like any other caller. Answered under STOP: the scripts
+    // say their own STOP holds. The answer is the child's exit code and output, scrubbed of the
+    // connection's secrets as every answer is.
+    '/foreman/run': async ({ project, script, argv }) => {
+      const why = foremanRequestRefusal({ script, argv });
+      if (why !== null) refuse(why);
+      let result;
+      try {
+        result = await run(process.execPath, [FOREMAN_RUNNER, address, script, ...argv], {
+          cwd: recordOf(project).folder, baseEnv: foremanEnv(process.env), timeoutMs: FOREMAN_RUN_MS, limit: FOREMAN_OUTPUT_BYTES,
+        });
+      } catch {
+        return { ok: false, refused: `the foreman's ${script} command could not be started` };
+      }
+      const stopped = result.timedOut ? `The foreman's ${script} command did not finish in fifteen minutes and was stopped.\n` : '';
+      return { ok: true, code: result.timedOut ? 1 : result.code, stdout: result.stdout, stderr: `${result.stderr}${stopped}` };
+    },
     '/host/facts': hostFacts,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
@@ -2328,6 +2368,8 @@ export async function startHelper({
       // runbook.js and a feature session's commands run inside the sandbox, which cannot read
       // ~/.wheelhouse: they send their folder, and the project is placed here.
       if ((runbookRoute || FOLDER_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = placed(body);
+      // The foreman's commands send their folder, which must be the main checkout (ruling R156).
+      if (url.pathname === '/foreman/run') body = { ...body, project: placeMainCheckout(body.folder) };
       // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
       if (NEEDS_PROFILE.includes(url.pathname) && profileRemote() === null) return send(res, 200, PROFILE_NOT_SET_UP);
       if (url.pathname.startsWith('/profile/')) {

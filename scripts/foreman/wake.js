@@ -35,7 +35,12 @@
 //   node wake.js measures
 //     The idle share and the conflicts per merge (design section 15).
 // The project is the one whose folder the command runs in: the foreman runs
-// in the project's main checkout.
+// in the project's main checkout. `read` and `done` take only a wake copied
+// into that checkout's .wheelhouse/foreman/wakes/.
+//
+// The command forwards to the host helper (ruling R156, scripts/foreman/forward.js),
+// since the foreman's session is sandboxed and this reads the Wheelhouse home: the
+// helper runs `main` outside the sandbox, in the main checkout.
 //
 // Where it reads from. The views are the helper's: asked for afresh, which
 // rebuilds them from the state clone, or when the helper does not answer, the
@@ -70,6 +75,7 @@ import { briefHash, featurePaths } from '../feature/files.js';
 import {
   loadFeature, readCapped, readPlan, readPrRecord, safeFeatureFolder,
 } from '../feature/status.js';
+import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
 import { HASH, PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { stateDir, wheelhouseHome } from '../lib/paths.js';
@@ -754,6 +760,22 @@ function countMeasures(lines) {
 
 const USAGE = 'Commands: read <file>, done <file> --acted|--idle, measures';
 
+// The wake `given` names, when it is a file in the main checkout's .wheelhouse/foreman/wakes/
+// (where the waker copies the foreman's wakes), by its real path: no argument makes `read` or
+// `done` open any other file.
+function foremanWake(project, cwd, given) {
+  let file = null;
+  let dir = null;
+  try {
+    file = fs.realpathSync.native(path.resolve(cwd, given));
+    dir = fs.realpathSync.native(path.join(checkoutOf(project), '.wheelhouse', 'foreman', 'wakes'));
+  } catch (error) {
+    if (error instanceof ForemanError) throw error;
+  }
+  if (file === null || dir === null || path.dirname(file) !== dir) refuse(`This isn't a wake copied for the foreman: ${oneLine(given, 120)}`);
+  return file;
+}
+
 export async function main(argv, {
   cwd = process.cwd(), project: given, client = helperClient(), now = () => new Date(),
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
@@ -763,13 +785,13 @@ export async function main(argv, {
     const project = given ?? projectHere(cwd);
     if (command === 'read') {
       if (rest.length !== 1) refuse('Give the wake file: read <file>');
-      const { lines } = await readWakeLines({ file: path.resolve(cwd, rest[0]), project, client, now });
+      const { lines } = await readWakeLines({ file: foremanWake(project, cwd, rest[0]), project, client, now });
       out(`${lines.join('\n')}\n`);
     } else if (command === 'done') {
       const flags = rest.slice(1);
       if (rest.length !== 2 || !['--acted', '--idle'].includes(flags[0])) refuse('Give the wake file and how it went: done <file> --acted, or done <file> --idle');
       const outcome = flags[0].slice(2);
-      const { recorded, wake } = recordDone({ file: path.resolve(cwd, rest[0]), project, outcome, now });
+      const { recorded, wake } = recordDone({ file: foremanWake(project, cwd, rest[0]), project, outcome, now });
       out(recorded ? `Recorded wake ${wake} as ${outcome}.\n` : `Wake ${wake} was recorded already.\n`);
     } else if (command === 'measures') {
       if (rest.length !== 0) refuse('measures takes nothing more');
@@ -785,6 +807,7 @@ export async function main(argv, {
   }
 }
 
+// Run as a command, it forwards to the host helper, which runs `main` outside the sandbox (ruling R156).
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode = await forward('wake', process.argv.slice(2));
 }

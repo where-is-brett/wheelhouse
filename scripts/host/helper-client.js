@@ -45,9 +45,12 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
   return {
     health: () => ask(address, 'GET', '/health', undefined, timeout),
     stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
-    push: post('/push'), //          { project, dir, refspec }
+    push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
+    foreman: {
+      run: post('/foreman/run'), // { folder, script: 'act' | 'wake', argv } -> { ok, code, stdout, stderr }: the foreman's command, run by the helper outside the sandbox; `folder` must be the project's main checkout; answered under STOP
+    },
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
-    // /pr/open, /state/answer and /lineage/provenance take `cwd`, a full path, in place of or beside
+    // /push, /pr/open, /state/answer and /lineage/provenance take `cwd`, a full path, in place of or beside
     // `project`, and the helper places the project from it (scripts/feature/cli.js runs where
     // ~/.wheelhouse cannot be read); given both, the folder must be in the project named.
     openPr: post('/pr/open'), //     { project | cwd, head, base?, title, body, session }: no base means the default branch; the helper stamps the body with what built it, from the session's provenance on this computer, and refuses a session with none

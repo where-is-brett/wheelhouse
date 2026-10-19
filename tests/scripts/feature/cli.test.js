@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ask, answer, report, openPr, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
+import { ask, answer, report, openPr, push, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -34,6 +34,9 @@ function feature() {
 const reportFields = (extra = {}) => ({
   v: 1, work: 'login-page', status: 'done', pr: 7, head: 'abc', tests: '10 pass', assumptions: [], concerns: [], rulings: [], ...extra,
 });
+
+// The helper's push, as open-pr asks for it first: it takes the branch.
+const pushes = async () => ({ ok: true });
 
 const ASK = ['--what', 'Which provider?', '--why', 'It decides what users see', '--option', 'A=Use A', '--option', 'B=Use B', '--recommend', 'A', '--level', '3'];
 
@@ -205,7 +208,11 @@ test('open-pr opens against the default branch and keeps the number', async () =
   write(p.session, `${JSON.stringify({ sessionId: 'sess-abc_1' })}\n`);
   write(p.report, `${fence(reportFields())}\nShipped the sign-in page.\n`);
   const calls = [];
-  const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7, url: 'https://example.com/pull/7' } }; } };
+  const pushed = [];
+  const client = {
+    push: async (args) => { pushed.push(args); return { ok: true }; },
+    openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7, url: 'https://example.com/pull/7' } }; },
+  };
   const opened = await openPr({ client, worktree: tree, argv: ['--title', 'Add the sign-in page'] });
   assert.deepEqual(opened, { number: 7, already: false });
   assert.equal(calls.length, 1);
@@ -213,6 +220,8 @@ test('open-pr opens against the default branch and keeps the number', async () =
     cwd: tree, head: 'feature/login-page', title: 'Add the sign-in page', body: 'Shipped the sign-in page.', session: 'sess-abc_1',
   });
   assert.equal('base' in calls[0], false, 'the helper takes a missing base as the default branch');
+  // The branch went up first, through the helper, which places the project from the folder.
+  assert.deepEqual(pushed, [{ cwd: tree, dir: tree, refspec: 'feature/login-page' }]);
   assert.deepEqual(JSON.parse(fs.readFileSync(p.pr, 'utf8')), { pr: 7 });
 
   // A second run finds the pull request open already and asks the host nothing.
@@ -245,7 +254,7 @@ test('open-pr keeps the plan with the number, and opens the next slice\'s once t
   recordPlan({ worktree: tree, argv: ['docs/plans/slice-1.md'] });
   write(p.report, `${fence(reportFields())}\nShipped.\n`);
   let number = 7;
-  const client = { openPr: async () => ({ ok: true, result: { number } }) };
+  const client = { push: pushes, openPr: async () => ({ ok: true, result: { number } }) };
   assert.deepEqual(await openPr({ client, worktree: tree, argv: ['--title', 't'] }), { number: 7, already: false });
   assert.deepEqual(JSON.parse(fs.readFileSync(p.pr, 'utf8')), { pr: 7, plan: 'docs/plans/slice-1.md' });
   assert.deepEqual(await openPr({ client, worktree: tree, argv: ['--title', 't'] }), { number: 7, already: true });
@@ -262,7 +271,7 @@ test('open-pr is refused while the report is missing or incomplete, and the host
   const tree = feature();
   const p = featurePaths(tree);
   const calls = [];
-  const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
+  const client = { push: pushes, openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
   const open = () => openPr({ client, worktree: tree, argv: ['--title', 't'] });
 
   await assert.rejects(open(), (e) => e instanceof CliError && /report\.md is not there/.test(e.message) && !e.message.includes('\n'));
@@ -297,7 +306,7 @@ test('open-pr sends no session when there is none, and a refusal or an odd answe
   const p = featurePaths(tree);
   write(p.report, `${fence(reportFields())}\nShipped.\n`);
   const calls = [];
-  const refusing = { openPr: async (args) => { calls.push(args); return { ok: false, refused: 'STOP is on' }; } };
+  const refusing = { push: pushes, openPr: async (args) => { calls.push(args); return { ok: false, refused: 'STOP is on' }; } };
   await assert.rejects(openPr({ client: refusing, worktree: tree, argv: ['--title', 't'] }), /STOP is on/);
   assert.equal(calls[0].body, 'Shipped.');
   assert.equal('session' in calls[0], false);
@@ -309,13 +318,51 @@ test('open-pr sends no session when there is none, and a refusal or an odd answe
   assert.equal(calls.length, 1);
 
   // A host answer with no number is no pull request to keep.
-  const odd = { openPr: async () => ({ ok: true, result: {} }) };
+  const odd = { push: pushes, openPr: async () => ({ ok: true, result: {} }) };
   await assert.rejects(openPr({ client: odd, worktree: tree, argv: ['--title', 't'] }), CliError);
   assert.equal(fs.existsSync(p.pr), false);
 
   // A detached head has no branch to open from.
   write(path.join(tree, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
   await assert.rejects(openPr({ client: odd, worktree: tree, argv: ['--title', 't'] }), /branch/);
+});
+
+test('push sends the worktree\'s branch through the helper by its folder, and says a refusal', async () => {
+  const tree = feature();
+  const calls = [];
+  const client = { push: async (args) => { calls.push(args); return { ok: true }; } };
+  assert.deepEqual(await push({ client, worktree: tree }), { branch: 'feature/login-page' });
+  assert.deepEqual(calls, [{ cwd: tree, dir: tree, refspec: 'feature/login-page' }]);
+
+  const said = { out: '', err: '' };
+  const io = { cwd: tree, client, find: () => ({ root: tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; } };
+  assert.equal(await main(['push'], io), 0, said.err);
+  assert.equal(said.out, 'Pushed feature/login-page\n');
+  assert.equal(await main(['push', 'main'], io), 1);
+  assert.match(said.err, /push takes no arguments/);
+
+  const refusing = { push: async () => ({ ok: false, refused: 'the push would change a CI file, so it needs the director\'s click' }) };
+  await assert.rejects(push({ client: refusing, worktree: tree }), (e) => e instanceof CliError && /^The branch was not pushed: the push would change a CI file/.test(e.message));
+  await assert.rejects(push({ client: { push: async () => undefined }, worktree: tree }), /no answer/);
+
+  // A detached head has no branch to push.
+  write(path.join(tree, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
+  await assert.rejects(push({ client, worktree: tree }), /branch/);
+  assert.equal(calls.length, 2);
+});
+
+test('open-pr opens nothing when its branch can\'t be pushed', async () => {
+  const tree = feature();
+  const p = featurePaths(tree);
+  write(p.report, `${fence(reportFields())}\nShipped.\n`);
+  const opened = [];
+  const client = {
+    push: async () => ({ ok: false, refused: 'STOP is on' }),
+    openPr: async (args) => { opened.push(args); return { ok: true, result: { number: 7 } }; },
+  };
+  await assert.rejects(openPr({ client, worktree: tree, argv: ['--title', 't'] }), /The branch was not pushed: STOP is on/);
+  assert.deepEqual(opened, []);
+  assert.equal(fs.existsSync(p.pr), false);
 });
 
 test('report and open-pr read nothing from a feature folder that is a link to somewhere else', { skip: process.platform === 'win32' }, async () => {
@@ -328,7 +375,7 @@ test('report and open-pr read nothing from a feature folder that is a link to so
   fs.symlinkSync(elsewhere, dir, 'dir');
   assert.match(report({ worktree: tree }).missing[0], /real folder/);
   const calls = [];
-  const client = { openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
+  const client = { push: pushes, openPr: async (args) => { calls.push(args); return { ok: true, result: { number: 7 } }; } };
   await assert.rejects(openPr({ client, worktree: tree, argv: ['--title', 't'] }), /real folder/);
   assert.equal(calls.length, 0);
 });

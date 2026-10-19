@@ -4,7 +4,8 @@
 //   answer   prints the director's answer to a question, once it is signed
 //   plan     records the plan just written, in plan.json, for the status and the foreman
 //   report   checks report.md and that it holds every ruling kept, then stamps it with what built it
-//   open-pr  opens the feature's pull request and keeps its number with its plan
+//   push     pushes the worktree's branch to the host, through the helper (after a fix)
+//   open-pr  pushes the branch, opens the feature's pull request and keeps its number with its plan
 // Each command's core is an exported function that takes the helper's client and
 // the worktree, so tests use a fake helper. Files are read and written only in the
 // feature folder, through the safe readers and writers of status.js; the head
@@ -247,6 +248,19 @@ export function recordPlan({ worktree, argv }) {
   return { plan: rel };
 }
 
+// --- push ---
+
+// Pushes the worktree's branch to the host through the helper, which places the project from
+// the worktree's folder and applies its push rules (never the default branch, never a force).
+// Returns `{ branch }`.
+export async function push({ client, worktree }) {
+  const branch = branchOf(worktree);
+  if (branch === null) throw new CliError("This worktree isn't on a branch, so there is nothing to push");
+  const pushed = await client.push({ cwd: worktree, dir: worktree, refspec: branch });
+  if (pushed?.ok !== true) throw new CliError(`The branch was not pushed: ${pushed?.refused ?? 'the host helper gave no answer'}`);
+  return { branch };
+}
+
 // --- open-pr ---
 
 function keptSession(file) {
@@ -262,8 +276,9 @@ function keptSession(file) {
 // takes a missing base for it) and keeps its number in pr.json, with the plan it was opened for
 // (ruling R88). A pull request kept already is not opened again until the foreman's merge marks
 // it merged: then the next slice's is opened. The report becomes the pull request's body, so
-// nothing is opened until the report passes the `report` check. The helper places the project
-// from the worktree's folder.
+// nothing is opened until the report passes the `report` check. The branch is pushed first,
+// through the helper, since the host opens a pull request only from a branch it holds. The
+// helper places the project from the worktree's folder.
 export async function openPr({ client, worktree, argv }) {
   const found = flagsOf(argv, ['title']);
   const title = needed(found, 'title');
@@ -276,6 +291,8 @@ export async function openPr({ client, worktree, argv }) {
   const checked = inspect(worktree);
   if (checked.missing.length > 0) throw new CliError(`The pull request is not opened until the report passes. ${checked.missing.join(' ')}`);
   const session = keptSession(p.session);
+  // The host opens a pull request only from a branch it holds.
+  await push({ client, worktree });
   const opened = await client.openPr({ cwd: worktree, head, title, body: checked.body, ...(session ? { session } : {}) });
   if (opened?.ok !== true) throw new CliError(opened?.refused ?? 'The host helper did not open the pull request');
   const number = opened.result?.number;
@@ -290,7 +307,7 @@ export async function openPr({ client, worktree, argv }) {
 
 // --- The command line ---
 
-const COMMANDS = ['ask', 'answer', 'plan', 'report', 'open-pr'];
+const COMMANDS = ['ask', 'answer', 'plan', 'report', 'push', 'open-pr'];
 
 // Runs a command and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
@@ -337,6 +354,9 @@ export async function main(argv, {
       const block = usable ? got.block : null;
       if (block === null) out(`${NO_PROVENANCE}\n`);
       else if (stampReport({ worktree, block })) out('It now says what built it.\n');
+    } else if (command === 'push') {
+      if (rest.length > 0) throw new CliError('push takes no arguments');
+      out(`Pushed ${(await push({ client: helper(), worktree })).branch}\n`);
     } else {
       const { number, already } = await openPr({ client: helper(), worktree, argv: rest });
       out(already ? `The pull request is open already: #${number}\n` : `Opened pull request #${number}\n`);

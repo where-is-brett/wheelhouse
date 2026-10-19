@@ -62,6 +62,10 @@
 // `merge` refuses but for an open incident's recorded fix, and under STOP
 // refuses that too.
 //
+// The command forwards to the host helper (ruling R156, scripts/foreman/forward.js):
+// the foreman's session is sandboxed, and these commands read and write the
+// Wheelhouse home, so the helper runs `main` outside the sandbox, in the main checkout.
+//
 // Every command checks the work id, prints a few short lines, and refuses
 // with one plain line and exit code 1. Each may be run again with nothing
 // more done (a wake may repeat, ruling R27): it says what is so already.
@@ -118,6 +122,7 @@ import {
 } from '../feature/status.js';
 import { sameStatus } from '../hooks/feature-status.js';
 import { branchOf } from '../hooks/session-start.js';
+import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { canonicalJson } from '../lib/canonical.js';
@@ -997,6 +1002,7 @@ export async function main(argv, {
   }
 }
 
+// Run as a command, it forwards to the host helper, which runs `main` outside the sandbox (ruling R156).
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode = await forward('act', process.argv.slice(2));
 }

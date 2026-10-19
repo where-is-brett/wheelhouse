@@ -9,13 +9,12 @@
 // copied into the session's own folder. The hooks' `decide` functions are called with the
 // input Claude Code sends, and the director's clicks are signed by the prompt-record hook.
 //
-// Sandbox-shaped. A feature session's commands (scripts/feature/cli.js, and the lineage check
-// the hold lets through) run inside `sandboxed`, which refuses, as the project's sandbox does,
-// every file call into the Wheelhouse home and records it: each such call fails the test.
-// Hooks run outside the sandbox (check 32), as do the helper and the watcher. The foreman's
-// commands run outside it here too, though in a project they run through the foreman session's
-// Bash: they still read the home directly (STOP, the state clone, the watcher's cursor and its
-// list of handled ids).
+// Sandbox-shaped. The commands sessions run through Bash run inside `sandboxed`, which refuses,
+// as the project's sandbox does, every file call into the Wheelhouse home and records it: each
+// such call fails the test. Those are a feature session's (scripts/feature/cli.js, and the
+// lineage check the hold lets through) and the foreman's (act.js and wake.js, which forward to
+// the helper; the helper runs them outside the sandbox as a child process, ruling R156). Hooks
+// run outside the sandbox (check 32), as do the helper and the watcher.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -23,8 +22,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main as act } from '../../scripts/foreman/act.js';
-import { readWakeLines } from '../../scripts/foreman/wake.js';
+import { forward } from '../../scripts/foreman/forward.js';
 import { briefHash, featurePaths, parseBrief, readStatus } from '../../scripts/feature/files.js';
 import { main as cli } from '../../scripts/feature/cli.js';
 import { decide as featureStatus } from '../../scripts/hooks/feature-status.js';
@@ -303,19 +301,23 @@ function foremanEvents(woke) {
 
 // --- The foreman ---
 
-async function foreman(world, argv) {
+// One of the foreman's commands, `node act.js …` or `node wake.js …`, run in the sandbox from
+// the main checkout: it forwards to the helper, which runs it in a child process.
+async function foremanRuns(world, script, argv) {
   const said = { out: '', err: '' };
   world.tick();
-  const code = await act(argv, {
-    project: P, client: world.client, now: world.now, wakerFor: () => world.waker,
-    out: (t) => { said.out += t; }, err: (t) => { said.err += t; },
-  });
+  const code = await sandboxed(world, () => forward(script, argv, {
+    cwd: world.checkout, client: world.client, out: (t) => { said.out += t; }, err: (t) => { said.err += t; },
+  }));
   return { code, ...said };
 }
 
+const foreman = (world, argv) => foremanRuns(world, 'act', argv);
+
 async function foremanReads(world, file) {
-  const { lines } = await readWakeLines({ file, project: P, client: world.client, now: world.now });
-  return lines.join('\n');
+  const read = await foremanRuns(world, 'wake', ['read', file]);
+  assert.equal(read.code, 0, read.err);
+  return read.out;
 }
 
 // --- The front desk and the director ---
@@ -387,7 +389,7 @@ async function startWork(world, work, { provenance = true } = {}) {
   ]);
   assert.equal(started.code, 0, started.err);
   const s = { work, worktree: path.join(world.checkout, '.claude', 'worktrees', work), sessionId: `sess-${work}` };
-  assert.ok(world.lines.includes(`START feature ${work} ${s.worktree}`), 'the waker was asked to start the session');
+  assert.ok(started.out.split('\n').includes(`START feature ${work} ${s.worktree}`), 'the waker was asked to start the session');
   assert.equal(await g(s.worktree, 'rev-parse', '--abbrev-ref', 'HEAD'), `feature/${work}`);
   if (provenance) writeSessionProvenance(P, s.sessionId);
   await statusHook(world, s);
@@ -398,23 +400,20 @@ const reportText = (work) => `\`\`\`json\n${JSON.stringify({
   v: 1, work, status: 'done', tests: 'npm test: 4 pass', assumptions: [], concerns: [], rulings: [],
 }, null, 2)}\n\`\`\`\n\nBuilt ${work}. The tests pass.\n`;
 
-// The session commits `files`, its branch goes up to the host, it writes and checks its report,
-// opens its pull request, and the reviewer's signed CLEAN review of the head is recorded.
+// The session commits `files`, writes and checks its report, and opens its pull request, which
+// pushes its branch to the host first; the reviewer's signed CLEAN review of the head is recorded.
 async function buildAndOpen(world, s, files) {
   writeFiles(s.worktree, files);
   await g(s.worktree, 'add', '-A');
   await g(s.worktree, 'commit', '-q', '-m', `Build ${s.work}`);
   const head = await g(s.worktree, 'rev-parse', 'HEAD');
-  // No command a feature session can run pushes its branch yet: cli.js has none, open-pr does
-  // not push, and git push is refused. The helper's /push, which needs the project's name, stands
-  // in for it here.
-  assert.deepEqual(await world.client.push({ project: P, dir: s.worktree, refspec: `feature/${s.work}` }), { ok: true });
   writeFiles(s.worktree, { '.wheelhouse/feature/report.md': reportText(s.work) });
   const checked = await session(world, s, ['report']);
   assert.equal(checked.code, 0, checked.err);
   const opened = await session(world, s, ['open-pr', '--title', `Build ${s.work}`]);
   assert.equal(opened.code, 0, opened.err);
-  const pr = Number(/#(\d+)/.exec(opened.out)[1]);
+  const pr = Number(/^Opened pull request #(\d+)$/m.exec(opened.out)[1]);
+  assert.equal(await g(world.remote.url, 'rev-parse', `refs/heads/feature/${s.work}`), head, 'open-pr pushed the branch');
   assert.equal((await statusHook(world, s)).phase, 'pr-open');
   world.tick();
   const reviewed = await world.client.state.record({
@@ -899,7 +898,9 @@ test('an upgrade whose anchor has gone stops before landing', async () => {
     assert.equal(reason.at(-1), 'upgrade stopped: an override or carried text breaks; rewrite or drop it before the upgrade goes on');
 
     // It stops before landing: no branch, no commit, the pins as they were.
-    await assert.rejects(land({ root, pins, fetchTo }), /the upgrade is stopped, so nothing lands/);
+    await assert.rejects(land({ root, pins, fetchTo }), {
+      message: `the upgrade is stopped, so nothing lands: anchor gone: nothing-waits: skills/writing-plans/SKILL.md: ${ANCHOR}. Rewrite or drop the broken override first`,
+    });
     assert.equal(await g(root, 'rev-parse', 'HEAD'), head);
     assert.equal(await g(root, 'branch', '--list', 'upgrade/*'), '');
     assert.equal(await g(root, 'status', '--porcelain'), '');
