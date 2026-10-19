@@ -38,3 +38,4 @@ The answers to the checks in section 20 of the design, one note per check.
 | 31 | The safety checks tried live | Yes, with three changes | [31-safety-live.md](31-safety-live.md) |
 | 32 | The mod's commands and the sandbox | Yes | [32-mod-sandbox.md](32-mod-sandbox.md) |
 | 35 | Node.js and the hooks on a fresh account | Partly | [35-node.md](35-node.md) |
+| 36 | Switching telemetry on for Desktop sessions | Partly | [36-telemetry.md](36-telemetry.md) |
