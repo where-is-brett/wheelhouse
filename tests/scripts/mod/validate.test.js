@@ -11,9 +11,12 @@ import {
 } from '../../../scripts/mod/validate.js';
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
+import { PANE_ID, TICK_MS, STALE_TICKS, WATCH_BRIDGE_MS, LEADS, MESSAGE_LEAD } from '../../../scripts/lib/mod-numbers.js';
+import { BRIDGE_MS } from '../../../scripts/mod/bridge.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-const FOUR = 'session.start, session.measure, prompt.submit, command.run{command=go}';
+// The mod's hooks as the validator lists them.
+const LISTED = HOOKS.join(', ');
 const ARGV = "['node', `${$.plugin.root}/scripts/mod/bridge.js`]";
 // The module's source as it stands: the bridge's one call in hooks/mod/ask.ts.
 const SOURCES = {
@@ -52,12 +55,18 @@ function reportWith(notes, { success = true, errors = [] } = {}) {
   };
 }
 
-test('the first piece\'s report and source pass as before', () => {
-  for (const name of ['validate-repo.json', 'validate-repo-2.1.292.json']) {
-    const result = checkMod({ report: fixture(name), sources: repoSources() });
-    assert.deepEqual(result.problems, [], name);
-    assert.deepEqual(result.hooks, HOOKS);
-    assert.deepEqual(result.calls, CALLS);
+test('the repository\'s report and source pass', () => {
+  const result = checkMod({ report: fixture('validate-repo.json'), sources: repoSources() });
+  assert.deepEqual(result.problems, []);
+  assert.deepEqual(result.hooks, HOOKS);
+  assert.deepEqual(result.calls, CALLS);
+});
+
+test('a report recorded before the pane, on 2.1.292, reads as the first piece\'s and misses the pane\'s hooks', () => {
+  const result = checkMod({ report: fixture('validate-repo-2.1.292.json'), sources: repoSources() });
+  assert.deepEqual(result.hooks, ['session.start', 'session.measure', 'prompt.submit', 'command.run{command=go}']);
+  for (const hook of ['turn.start', 'turn.complete', 'command.run{command=wheelhouse}', 'ui.render{component=Pane, requestId=wheelhouse}']) {
+    assert.ok(result.problems.includes(`The mod doesn't hook ${hook}`), hook);
   }
 });
 
@@ -69,9 +78,9 @@ test('a report from a mod in two files lists the imported file\'s hooks and call
   assert.match(result.problems.join('\n'), /ui\.render\{component=Pane, requestId=probe40\}/);
 });
 
-test('the mod passes with exactly the four hooks and the calls the bridge needs', () => {
+test('the mod passes with exactly its hooks and the calls it needs', () => {
   const result = checkMod({
-    report: reportWith([`./register.ts hooks: ${FOUR}`, `./register.ts calls: ${CALLS.join(', ')}`]),
+    report: reportWith([`./register.ts hooks: ${LISTED}`, `./register.ts calls: ${CALLS.join(', ')}`]),
     sources: SOURCES,
   });
   assert.deepEqual(result.problems, []);
@@ -81,15 +90,15 @@ test('the mod passes with exactly the four hooks and the calls the bridge needs'
 
 test('a call made inside one of the module\'s own functions is read without its "via"', () => {
   const result = checkMod({
-    report: reportWith([`./register.ts hooks: ${FOUR}`, './register.ts calls: $.process.run (via ask), $.session.id (via a, b), $.ui.toast']),
+    report: reportWith([`./register.ts hooks: ${LISTED}`, './register.ts calls: $.process.run (via ask), $.session.id (via a, b), $.ui.toast']),
     sources: SOURCES,
   });
   assert.deepEqual(result.calls, ['$.process.run', '$.session.id', '$.ui.toast']);
   assert.ok(!result.problems.some((p) => /brief doesn't name/.test(p)), result.problems.join('\n'));
 });
 
-test('a hook beyond the four, or one missing, fails', () => {
-  const extra = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}, tool.call`]), sources: SOURCES });
+test('a hook beyond the mod\'s, or one missing, fails', () => {
+  const extra = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}, tool.call`]), sources: SOURCES });
   assert.match(extra.problems.join('\n'), /tool\.call/);
   const missing = checkMod({ report: reportWith(['./register.ts hooks: session.start, prompt.submit']), sources: SOURCES });
   assert.match(missing.problems.join('\n'), /session\.measure/);
@@ -99,38 +108,38 @@ test('a hook beyond the four, or one missing, fails', () => {
 });
 
 test('a call the brief does not name fails, in the report or in the source', () => {
-  const reported = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}`, './register.ts calls: $.process.run, $.clock.now']), sources: SOURCES });
-  assert.match(reported.problems.join('\n'), /\$\.clock\.now/);
+  const reported = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, './register.ts calls: $.process.run, $.clock.sleep']), sources: SOURCES });
+  assert.match(reported.problems.join('\n'), /\$\.clock\.sleep/);
   const scanned = checkMod({
-    report: reportWith([`./register.ts hooks: ${FOUR}`]),
-    sources: { ...SOURCES, 'hooks/mod/x.ts': 'const p = $.process; $.clock.now()' },
+    report: reportWith([`./register.ts hooks: ${LISTED}`]),
+    sources: { ...SOURCES, 'hooks/mod/x.ts': 'const p = $.process; $.clock.sleep()' },
   });
-  assert.match(scanned.problems.join('\n'), /\$\.clock\.now/);
+  assert.match(scanned.problems.join('\n'), /\$\.clock\.sleep/);
   assert.match(scanned.problems.join('\n'), /\$\.process\b/);
 });
 
 test('a report that failed, or holds errors, fails', () => {
-  const notes = [`./register.ts hooks: ${FOUR}`];
+  const notes = [`./register.ts hooks: ${LISTED}`];
   assert.notDeepEqual(checkMod({ report: reportWith(notes, { success: false }), sources: SOURCES }).problems, []);
   assert.notDeepEqual(checkMod({ report: reportWith(notes, { errors: [{ path: 'modules', message: 'bad' }] }), sources: SOURCES }).problems, []);
   assert.notDeepEqual(checkMod({ report: null, sources: SOURCES }).problems, []);
 });
 
 test('a report listing a tool.check hook fails, even when HOOKS names it', () => {
-  const report = reportWith([`./register.ts hooks: ${FOUR}, tool.check`]);
+  const report = reportWith([`./register.ts hooks: ${LISTED}, tool.check`]);
   const named = checkMod({ report, sources: SOURCES, allow: { hooks: [...HOOKS, 'tool.check'], calls: CALLS } });
   assert.match(named.problems.join('\n'), /tool\.check, which the mod must never hook/);
-  const matched = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}, tool.check{tool=Bash}`]), sources: SOURCES });
+  const matched = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}, tool.check{tool=Bash}`]), sources: SOURCES });
   assert.match(matched.problems.join('\n'), /tool\.check\{tool=Bash\}, which the mod must never hook/);
   for (const hook of ['tool.call', 'tool.describe', 'config.set', 'agent.offer', 'plugin.register']) {
-    const result = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}, ${hook}`]), sources: SOURCES });
+    const result = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}, ${hook}`]), sources: SOURCES });
     assert.match(result.problems.join('\n'), new RegExp(`${hook.replace('.', '\\.')}, which the mod must never hook`));
   }
 });
 
 test('a classic.PermissionRequest or classic.PreToolUse hook fails', () => {
   for (const hook of ['classic.PermissionRequest', 'classic.PreToolUse', 'classic.Stop']) {
-    const result = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}, ${hook}`]), sources: SOURCES, allow: { hooks: [...HOOKS, hook], calls: CALLS } });
+    const result = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}, ${hook}`]), sources: SOURCES, allow: { hooks: [...HOOKS, hook], calls: CALLS } });
     assert.match(result.problems.join('\n'), new RegExp(`${hook.replace('.', '\\.')}, which the mod must never hook`));
   }
 });
@@ -138,13 +147,13 @@ test('a classic.PermissionRequest or classic.PreToolUse hook fails', () => {
 test('a call to $.tool.call, $.fs.write, $.env.set or $.settings.read fails', () => {
   for (const call of ['$.tool.call', '$.fs.write', '$.env.set', '$.settings.read', '$.command.run', '$.process.spawn']) {
     const reported = checkMod({
-      report: reportWith([`./register.ts hooks: ${FOUR}`, `./register.ts calls: $.process.run, ${call}`]),
+      report: reportWith([`./register.ts hooks: ${LISTED}`, `./register.ts calls: $.process.run, ${call}`]),
       sources: SOURCES,
       allow: { hooks: HOOKS, calls: [...CALLS, call] },
     });
     assert.match(reported.problems.join('\n'), new RegExp(`${call.replaceAll('$', '\\$').replaceAll('.', '\\.')}, which the mod must never call`), call);
     const scanned = checkMod({
-      report: reportWith([`./register.ts hooks: ${FOUR}`]),
+      report: reportWith([`./register.ts hooks: ${LISTED}`]),
       sources: { ...SOURCES, 'hooks/mod/x.ts': `await ${call}(1)` },
       allow: { hooks: HOOKS, calls: [...CALLS, call] },
     });
@@ -163,13 +172,13 @@ test('the forbidden and allowed lists never overlap', () => {
 });
 
 test('a member used in an imported file but not in the report fails', () => {
-  // The validator didn't follow the import: the report lists no $.clock.now, though hooks/mod/clock.ts uses it.
+  // The validator didn't follow the import: the report lists no $.clock.sleep, though hooks/mod/clock.ts uses it.
   const result = checkMod({
     report: fixture('validate-repo.json'),
-    sources: { ...repoSources(), 'hooks/mod/clock.ts': 'export const now = ($) => $.clock.now()' },
-    allow: { hooks: HOOKS, calls: [...CALLS, '$.clock.now'] },
+    sources: { ...repoSources(), 'hooks/mod/clock.ts': 'export const wait = ($) => $.clock.sleep()' },
+    allow: { hooks: HOOKS, calls: [...CALLS, '$.clock.sleep'] },
   });
-  assert.match(result.problems.join('\n'), /\$\.clock\.now, which claude plugin validate doesn't list/);
+  assert.match(result.problems.join('\n'), /\$\.clock\.sleep, which claude plugin validate doesn't list/);
   assert.equal(result.problems.length, 1, result.problems.join('\n'));
 });
 
@@ -193,7 +202,7 @@ test('a second $.process.run, or one running anything but the bridge, fails', ()
   // A mention in a comment counts too: the check reads the raw text, so a misread comment can't hide a call.
   assert.equal(bridgeArgv({ ...SOURCES, 'hooks/mod/note.ts': '// $.process.run( is the only call' }).ok, false);
   // checkMod carries the same problem.
-  const result = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, 'hooks/mod/more.ts': `$.process.run(${ARGV})` } });
+  const result = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, 'hooks/mod/more.ts': `$.process.run(${ARGV})` } });
   assert.match(result.problems.join('\n'), /exactly one/);
 });
 
@@ -333,6 +342,32 @@ test('the mod reads a reply code from the code alphabet', () => {
   assert.ok(alphabet, 'hooks/register.ts names its CODE_ALPHABET on one line');
   assert.equal(alphabet[1], CODE_ALPHABET);
   assert.match(source, /^const REPLY = new RegExp\(`\^\[\$\{CODE_ALPHABET\}\]\{4\}/m, 'REPLY is built from CODE_ALPHABET');
+});
+
+// hooks/mod/numbers.ts holds the mod's copies, since the mod can't import scripts/: each is
+// written once, there, and is the value the scripts name.
+test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
+  const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'MESSAGE_LEAD', 'PANE_ID', 'PANE_LEAD', 'STALE_TICKS', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS']);
+  const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
+  assert.equal(value('PANE_ID'), PANE_ID);
+  assert.equal(value('TICK_MS'), TICK_MS);
+  assert.equal(value('STALE_TICKS'), STALE_TICKS);
+  assert.equal(value('BRIDGE_MS'), BRIDGE_MS);
+  assert.equal(value('WATCH_BRIDGE_MS'), WATCH_BRIDGE_MS);
+  assert.equal(value('PANE_LEAD'), LEADS.pane);
+  assert.equal(written.MESSAGE_LEAD, String(MESSAGE_LEAD));
+  // The waits are the bridge's limits and the time node takes to start (ruling 26).
+  assert.equal(written.ASK_MS, 'BRIDGE_MS + 1500');
+  assert.equal(written.TICK_ASK_MS, 'WATCH_BRIDGE_MS + 5000');
+  // No other file of the mod names one of them again.
+  for (const [file, text] of Object.entries(repoSources())) {
+    if (file === 'hooks/mod/numbers.ts') continue;
+    for (const name of Object.keys(written)) {
+      assert.doesNotMatch(text, new RegExp(`(?:const|let|var)\\s+${name}\\b`), `${file} names ${name} again`);
+    }
+  }
 });
 
 test('the mod\'s phoned "stop" is the stop-word hook\'s plain word', () => {
@@ -520,7 +555,7 @@ test('the bridge call passes no option but stdin and timeoutMs', () => {
     assert.match(result.why, /options/, options);
   }
   // The same through checkMod, and the real hooks/mod/ask.ts still passes.
-  const result = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, 'hooks/mod/ask.ts': `export const ask = async ($, r) => $.process.run(${ARGV}, { env: { PATH: '/tmp/evil' } })` } });
+  const result = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, 'hooks/mod/ask.ts': `export const ask = async ($, r) => $.process.run(${ARGV}, { env: { PATH: '/tmp/evil' } })` } });
   assert.match(result.problems.join('\n'), /options/);
   assert.deepEqual(bridgeArgv(repoSources()), { ok: true });
 });
@@ -537,12 +572,31 @@ test('a hook or call named by a wildcard that covers a forbidden one is forbidde
   for (const call of ['$.clock.*', '$.ui.*', '$.plugin.*']) assert.equal(matchesForbidden(call, FORBIDDEN_CALLS), false, call);
   for (const hook of ['session.*', 'prompt.*', 'command.*']) assert.equal(matchesForbidden(hook, FORBIDDEN_HOOKS), false, hook);
   const result = checkMod({
-    report: reportWith([`./register.ts hooks: ${FOUR}, tool.*`, `./register.ts calls: ${CALLS.join(', ')}, $.*`]),
+    report: reportWith([`./register.ts hooks: ${LISTED}, tool.*`, `./register.ts calls: ${CALLS.join(', ')}, $.*`]),
     sources: SOURCES,
     allow: { hooks: [...HOOKS, 'tool.*'], calls: [...CALLS, '$.*'] },
   });
   assert.match(result.problems.join('\n'), /hooks tool\.\*, which the mod must never hook/);
   assert.match(result.problems.join('\n'), /calls \$\.\*, which the mod must never call/);
+});
+
+// A ui.render or ui.resolve hook with no matcher draws every component the engine draws: the
+// mod's hooks there always name what they draw (ruling 30).
+test('a ui.render or ui.resolve hook with no matcher fails, even when HOOKS names it', () => {
+  for (const hook of ['ui.render', 'ui.resolve']) {
+    const result = checkMod({
+      report: reportWith([`./register.ts hooks: ${LISTED}, ${hook}`, `./register.ts calls: ${CALLS.join(', ')}`]),
+      sources: SOURCES,
+      allow: { hooks: [...HOOKS, hook], calls: CALLS },
+    });
+    assert.match(result.problems.join('\n'), new RegExp(`hooks ${hook.replace('.', '\\.')} with no matcher`), hook);
+  }
+  const matched = checkMod({
+    report: reportWith([`./register.ts hooks: ${LISTED}, ui.render{component=Pane, requestId=wheelhouse}`, `./register.ts calls: ${CALLS.join(', ')}`]),
+    sources: SOURCES,
+    allow: { hooks: [...HOOKS, 'ui.render{component=Pane, requestId=wheelhouse}'], calls: CALLS },
+  });
+  assert.deepEqual(matched.problems.filter((p) => /no matcher/.test(p)), []);
 });
 
 // The bridge's graph is read by its literal imports: a name it can't read, a require or a
@@ -576,9 +630,9 @@ test('the real bridge graph has no import the checks can\'t follow', () => {
 // A comment's `//` inside JSX text is not a comment, so a member of $ after it still counts.
 test('a member of $ after a // in text that is not a comment is found, whatever the brief names', () => {
   const report = fixture('validate-repo.json');
-  const line = '<Text>See https://example.com {$.clock.now()}</Text>';
+  const line = '<Text>See https://example.com {$.clock.sleep()}</Text>';
   const result = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.tsx': `export const x = () => ${line}\n` } });
-  assert.match(result.problems.join('\n'), /\$\.clock\.now, which its brief doesn't name/);
+  assert.match(result.problems.join('\n'), /\$\.clock\.sleep, which its brief doesn't name/);
   // Allowed members named only in comments are not a problem.
   const comment = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.ts': '// calls $.ui.toast and $.plugin.root\n' } });
   assert.deepEqual(comment.problems, []);

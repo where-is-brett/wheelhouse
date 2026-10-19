@@ -2,8 +2,9 @@
 // Checks the mod before its tests run (npm run mod-check). It is the proof that the mod
 // approves nothing, from three sides:
 //   - `claude plugin validate --json` reads the mod's files as Claude Code will: the mod must
-//     hook exactly the events its brief names and none of the forbidden hooks, and call only
-//     what the brief names and never a forbidden call;
+//     hook exactly the events its brief names and none of the forbidden hooks, never a
+//     ui.render or ui.resolve with no matcher, and call only what the brief names and never a
+//     forbidden call;
 //   - the source of every module file (hooks/register.ts and everything under hooks/mod/) is
 //     read for every member of `$` it touches, so nothing the validator doesn't list slips
 //     past, and for the one `$.process.run` (the bridge's, in hooks/mod/ask.ts) and for where
@@ -14,14 +15,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { run } from '../lib/run.js';
+import { PANE_ID } from '../lib/mod-numbers.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const VALIDATE_MS = 60000;
 
 // The hooks, as the validator spells them, and the calls on `$` the brief allows: the whole
 // mod's lists, each entry added by the task that first needs it.
-export const HOOKS = ['session.start', 'session.measure', 'prompt.submit', 'command.run{command=go}'];
-export const CALLS = ['$.command.register', '$.process.run', '$.session.id', '$.session.root', '$.session.usage', '$.ui.toast'];
+export const HOOKS = [
+  'session.start', 'session.measure', 'turn.start', 'turn.complete', 'prompt.submit', 'command.run{command=go}',
+  'command.run{command=wheelhouse}', `ui.render{component=Pane, requestId=${PANE_ID}}`,
+];
+// $.clock.now reads the time a tick's answer was read and the time the pane is drawn, for the
+// line saying what is shown is old.
+export const CALLS = [
+  '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.session.id', '$.session.root', '$.session.usage',
+  '$.state.get', '$.state.set', '$.ui.close', '$.ui.open', '$.ui.panes', '$.ui.resolve', '$.ui.status', '$.ui.toast',
+];
+// Hooks that must always carry a matcher: one with none would draw every component the engine draws.
+const MATCHED_HOOKS = ['ui.render', 'ui.resolve'];
 // A value of `$`, not a call, so the validator doesn't list it.
 const VALUES = ['$.plugin.root'];
 
@@ -571,6 +583,7 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
     else if (!Array.isArray(modules) || modules.length !== 1 || modules[0] !== ENTRY) problems.push(`hooks/hooks.json names ${Array.isArray(modules) ? JSON.stringify(modules) : 'no list of'} modules, not only ["${ENTRY}"]`);
   }
   for (const hook of hooks) {
+    if (MATCHED_HOOKS.includes(hook)) problems.push(`The mod hooks ${hook} with no matcher, which would draw every component the engine draws`);
     if (matchesForbidden(hook, FORBIDDEN_HOOKS)) problems.push(`The mod hooks ${hook}, which the mod must never hook`);
     else if (!allowedHooks.includes(hook)) problems.push(`The mod hooks ${hook}, which its brief doesn't name`);
   }

@@ -1,19 +1,23 @@
 // hooks/register.ts
 // Wheelhouse's mod. It signs nothing and runs no shell: every call it makes goes to the
 // plugin's bridge, `node <plugin root>/scripts/mod/bridge.js`, through ask (hooks/mod/ask.ts),
-// with one JSON request, and the bridge answers one JSON line, { ok, says? }.
+// with one JSON request, and the bridge answers one JSON line.
 //
-// Four hooks, each passing on with next(e) and never changing the message:
-//   session.start    registers /go and sends the session's usage figures
-//   session.measure  sends them again when the allowance or the cost moved
+// This file only wires the hooks, each passing on with next(e) and never changing the message:
+//   session.start    registers /go and /wheelhouse, sends the session's usage figures and
+//                    starts the pane's ticks (hooks/mod/pane.tsx)
+//   session.measure  sends the usage figures again when the allowance or the cost moved
 //   prompt.submit    a phoned "stop" sends stop; a reply code and an option sends reply
-//   command.run      /go sends go and answers with the bridge's words
+//   turn.start       marks the session busy, for the tick
+//   turn.complete    marks it idle again
+//   command.run      /go sends go and answers with the bridge's words; /wheelhouse opens the pane
+//   ui.render        draws the pane
 // A message counts as the director's only when it came from the prompt (`composer`) or the
 // phone (`bridge`); every other origin never reaches the bridge.
 import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, SessionCost } from 'claude-code'
-import { ask, type Answer } from './mod/ask'
+import { ask, send, FAILED, type Answer } from './mod/ask'
+import { drawPane, openPane, startPane, turnEnded, turnStarted } from './mod/pane'
 
-const FAILED = 'Wheelhouse couldn\'t record that'
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
 // kept in step by tests/scripts/mod/validate.test.js. The bridge refuses every other option.
@@ -34,18 +38,6 @@ const CODED = new RegExp(`^[${CODE_ALPHABET}]{4} (.+)$`)
 // "stop" as the stop-word hook (scripts/hooks/stop-word.js) reads it: the word, in any case,
 // with any closing full stops or exclamation marks.
 const STOP = /^stop[.!]*$/i
-
-// A request the director made from a message: the bridge's words are a toast, and so is a
-// failure. A `quiet` request is one an ordinary message could be: only a record made is shown.
-async function send($: EngineInterface, request: Record<string, unknown>, quiet: boolean) {
-  const answer = await ask($, request)
-  if (quiet) {
-    if (answer?.ok === true && answer.says !== undefined) $.ui.toast(answer.says)
-    return
-  }
-  if (answer?.says !== undefined) $.ui.toast(answer.says)
-  else if (answer === null || !answer.ok) $.ui.toast(FAILED)
-}
 
 // The session's usage figures. A reading that can't be kept says nothing: the next one comes
 // at the next measure.
@@ -94,6 +86,11 @@ export const register: Register = on => {
     } catch {
       // Without the command, a reply code still lifts STOP.
     }
+    try {
+      await $.command.register({ name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' })
+    } catch {
+      // Without the command, the pane still opens at the session's start.
+    }
     // Usage is informing only, so the session starts without waiting for it.
     void (async () => {
       try {
@@ -103,13 +100,28 @@ export const register: Register = on => {
         // The next measure sends it again.
       }
     })()
+    try {
+      await startPane($, e)
+    } catch {
+      // The pane is informing only.
+    }
     return next(e)
-  })
+  }).catch(($, e, next) => next(e))
 
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits') || e.changed.includes('cost')) await sendUsage($, e.rateLimits, e.cost)
     return next(e)
   })
+
+  on('turn.start', async ($, e, next) => {
+    await turnStarted($, e)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    await turnEnded($, e)
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
     const asked = requestFor(e)
@@ -135,4 +147,11 @@ export const register: Register = on => {
     if (answer === null) $.ui.toast(FAILED)
     return { text: answer?.says ?? FAILED }
   })
+
+  on('command.run', { command: 'wheelhouse' }, async ($) => openPane($))
+
+  // The pane's id, PANE_ID, written out so the validator can name the hook; scripts/mod/validate.js
+  // checks it is PANE_ID.
+  on('ui.render', { component: 'Pane', requestId: 'wheelhouse' }, async ($, e) => drawPane($, e))
+    .catch(($, e, next) => next(e))
 }
