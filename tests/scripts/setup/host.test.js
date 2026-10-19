@@ -13,7 +13,7 @@ import path from 'node:path';
 import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
-  PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed,
+  PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
 } from '../../../scripts/setup/host.js';
 import { questionsStep } from '../../../scripts/setup/questions.js';
 import { rulesStep } from '../../../scripts/setup/rules.js';
@@ -76,6 +76,7 @@ function standIn(state = {}) {
   };
   w.run = async (file, args = [], options = {}) => {
     const name = path.basename(file).replace(/\.exe$/, '');
+    if (name === 'git' && w.gitFails?.(args)) return answer('', 1, 'refused by the test');
     if (name !== 'gh' && name !== 'glab') return realRun(file, args, options);
     const host = name === 'gh' ? 'github' : 'gitlab';
     w.calls.push({ tool: name, args: [...args], env: options.env });
@@ -102,7 +103,7 @@ function standIn(state = {}) {
       if (!app) return answer('', 1, 'gh: Not Found (HTTP 404)');
       return answer(JSON.stringify({ slug: app.slug, client_id: app.clientId, owner: { login: app.owner, type: app.org ? 'Organization' : 'User' }, permissions: app.permissions }));
     }
-    if (args[0] === 'api' && args[1].startsWith('user/memberships/orgs')) return answer(JSON.stringify(w.memberships ?? []));
+    if (args[0] === 'api' && args[1].startsWith('user/memberships/orgs')) return w.orgsFail ? answer('', 1, 'gh: Server Error (HTTP 502)') : answer(JSON.stringify(w.memberships ?? []));
     if (args[0] === 'repo' && args[1] === 'create') {
       await w.add(args[2], { readme: args.includes('--add-readme') });
       return answer(`https://github.com/${args[2]}\n`);
@@ -1329,6 +1330,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     ]);
     assert.ok(!planned.changes.some((c) => c.action === 'repository'), 'nothing is made for the product');
     assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'quick', locked: false });
+    assert.equal(planned.asked.at(-1).card.recommend, WAYS.own, 'a narrow way until the phase is known, never Quick');
     const text = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } }).question.question;
     assert.match(text, /Cafe-Menu found on your GitHub account or organisations, the one holding Wheelhouse's records, and checked out into this folder/);
     assert.doesNotMatch(text, /protection/, 'the first computer\'s step 7 switched it on');
@@ -1371,9 +1373,15 @@ test('a second computer joins from an empty folder: the project found on an orga
     assert.equal(joinedRepo(after), 'cafe-co/Cafe-Menu');
     assert.equal(stepsFor(after), JOINING_STEPS);
     assert.deepEqual(stepsFor(after).map((s) => s.n), [1, 2, 3, 6, 7, 8, 9]);
-    // Applied again, nothing is checked out or recorded twice.
+    // Planned again, the folder is joined for good: no question, and the list names the repository
+    // found (ruling R102). Applied, nothing is checked out or recorded twice. The old list, naming
+    // the bare name, is refused.
+    const again = await answerJoin(step, ctxFor(folder, { runId: run.id }), joining());
+    assert.deepEqual(again.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['host', 'connection']);
+    assert.deepEqual(again.changes.find((c) => c.action === 'join'), { kind: 'host', target: 'github', action: 'join', name: 'cafe-co/Cafe-Menu' });
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /checked out to cafe-co\/Cafe-Menu from your other computer/);
     const count = findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length;
-    await applyIn(step, folder, run.id, planned.changes, { answers: planned.answers });
+    await applyIn(step, folder, run.id, again.changes, { answers: again.answers });
     assert.equal(findRun(folder).changes.filter((c) => c.kind === 'folder' && c.target.endsWith('.git')).length, count);
   });
 });
@@ -1490,4 +1498,122 @@ test('no card of step 4 or 5 comes on a computer whose answer is joining: they w
     assert.deepEqual(joinedOf(folder), [{ joined: 'Cafe-Menu' }]);
     for (const n of [4, 5, 10]) assert.equal(onRunList(findRun(folder), n), false, `step ${n}`);
   });
+});
+
+// ---- A joining folder stays joined (ruling R102) ----
+
+// STOP comes on once the project is checked out into the folder, so an attempt ends right after it.
+const stopAfterCheckout = (folder) => () => fs.existsSync(path.join(folder, 'README.md'));
+
+test('a retry after the repository was found checks that repository and never searches again, whatever the organisation listing does', async () => {
+  await withHome(async () => {
+    const w = standIn({ memberships: [{ state: 'active', role: 'member', organization: { login: 'cafe-co' } }] });
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    await seedProject(w, 'cafe-co/Cafe-Menu');
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const planned = await answerJoin(step, ctx, joining());
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers, stopped: stopAfterCheckout(folder) }), { message: STOPPED });
+    assert.equal(await g(folder, 'config', '--get', 'remote.origin.url'), w.hostUrl({ repo: 'cafe-co/Cafe-Menu' }));
+    // The organisation listing now fails: the retry doesn't need it.
+    w.orgsFail = true;
+    const again = await answerJoin(step, ctx, joining());
+    assert.ok(!again.asked.some((a) => a.id.startsWith('join')), 'the join question is not asked again');
+    assert.equal(again.changes.find((c) => c.action === 'join').name, 'cafe-co/Cafe-Menu');
+    assert.notEqual(planHash(again.changes), planHash(planned.changes), 'the list, and its hash, name the repository found');
+    await applyIn(step, folder, run.id, again.changes, { answers: again.answers });
+    assert.equal(w.calls.filter((c) => c.args?.[1]?.startsWith('user/memberships/orgs')).length, 1, 'listed once, on the first attempt only');
+    assert.equal(readProject(slugFor('cafe-co/Cafe-Menu')).folder, folder);
+    assert.equal(joinedRepo(findRun(folder)), 'cafe-co/Cafe-Menu');
+  });
+});
+
+test('a failed organisation listing refuses, never reading as none found', async () => {
+  await withHome(async () => {
+    const w = standIn({ orgsFail: true });
+    await seedProject(w, 'cafe-co/Cafe-Menu');
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const planned = await answerJoin(step, ctx, joining());
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), { message: ORGS_UNREAD });
+    assert.ok(!joinedOf(folder).some((j) => j.missed !== undefined), 'nothing recorded as missed');
+    // So the question is not asked again: the same list, for a fresh Go ahead.
+    const again = await step.plan({ ...ctx, answers: planned.answers });
+    assert.equal(planHash(again.changes), planHash(planned.changes));
+    assert.equal(fs.existsSync(path.join(folder, '.git')), false);
+  });
+});
+
+test('a folder checked out to a joined repository can never become a full run, in this run or another', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    await seedProject(w, `${USER}/Cafe-Menu`);
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const planned = await answerJoin(step, ctx, joining());
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers, stopped: stopAfterCheckout(folder) }), { message: STOPPED });
+    // Every join answer saying A new product changes nothing: the question isn't asked, and the
+    // list joins the repository the folder is checked out to.
+    const fresh = Object.fromEntries(['join', ...planned.asked.map((a) => a.id)].map((id) => [`3.${id}`, said(id.startsWith('join') ? NEW_PRODUCT : planned.answers[`3.${id}`].label)]));
+    const replanned = await answerJoin(step, { ...ctx, answers: fresh }, joining());
+    assert.equal(replanned.changes.find((c) => c.action === 'join').name, `${USER}/Cafe-Menu`);
+    assert.ok(!replanned.changes.some((c) => c.action === 'repository'));
+    // A list of a product of its own (as an old card might hold) is refused, and records nothing.
+    const own = planned.changes.filter((c) => c.action !== 'join' && c.action !== 'checkout')
+      .map((c) => (c.action === 'project' ? { ...c, repo: `${USER}/Cafe-Menu` } : c));
+    const before = findRun(folder).changes.length;
+    await assert.rejects(applyIn(step, folder, run.id, own, { answers: planned.answers }), /checked out to a-director\/Cafe-Menu from your other computer/);
+    assert.equal(findRun(folder).changes.length, before, 'no { joined: null }');
+    assert.equal(stepsFor(findRun(folder)), JOINING_STEPS);
+    // Another run in the same folder joins it too, without asking.
+    const other = startRun({ folder, now: () => NOW });
+    const there = await answerJoin(step, ctxFor(folder, { runId: other.id }), joining());
+    assert.ok(!there.asked.some((a) => a.id.startsWith('join')));
+    assert.equal(there.changes.find((c) => c.action === 'join').name, `${USER}/Cafe-Menu`);
+  });
+});
+
+test('a retry never checks out over files added to the folder since the first attempt', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    await seedProject(w, `${USER}/Cafe-Menu`);
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const run = startRun({ folder, now: () => NOW });
+    const ctx = ctxFor(folder, { runId: run.id });
+    const planned = await answerJoin(step, ctx, joining({ typed: `${USER}/Cafe-Menu` }));
+    // The first attempt stops after the remote is added, before the checkout.
+    w.gitFails = (args) => args[0] === 'fetch';
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }), /could not fetch the project/);
+    w.gitFails = null;
+    for (const [file, text] of [['README.md', 'mine\n'], [path.join('.claude', 'wheelhouse.json'), '{"mine":true}\n']]) {
+      fs.writeFileSync(path.join(folder, file), text);
+      const again = await answerJoin(step, ctx, joining());
+      await assert.rejects(applyIn(step, folder, run.id, again.changes, { answers: again.answers }), /now holds files beside step 1's install/);
+      assert.equal(fs.readFileSync(path.join(folder, file), 'utf8'), text, 'left as it was');
+      fs.rmSync(path.join(folder, file));
+    }
+    const again = await answerJoin(step, ctx, joining());
+    await applyIn(step, folder, run.id, again.changes, { answers: again.answers });
+    assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), '# Cafe menu\n');
+  });
+});
+
+test('a joining computer\'s card says its own app is made, or found in its profile, and a state that can\'t be read counts as launched', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const planned = await answerJoin(stepFor(w), ctxFor(emptyFolder()), joining({ way: WAYS.own }));
+    assert.match(planned.card.what, /your own GitHub App, made, or found in your profile/);
+    assert.doesNotMatch(planned.card.what, /click Create/);
+    assert.match(planned.director, /if your app is not in your profile/);
+  });
+  assert.equal(launchedIn('..'), true, 'fails closed');
 });

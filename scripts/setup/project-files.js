@@ -62,8 +62,10 @@
 // configuration is the project's as committed (.claude/wheelhouse.json), so step 4's answers,
 // which a joining run never has, are not read; its `after` of step 4 counts as done there
 // (scripts/lib/setup-run.js, stepDone). A shared file that differs from what is committed is left
-// as it is and named on the card, never committed. Claude Code's rewrite of the project's settings
-// while the pins install is put back to what the file held before, key by key.
+// as it is and named on the card, never committed. The committed .claude/settings.json is left
+// exactly as committed (ruling R103): rewritten by Claude Code while the pins install, in a layout
+// of its own but holding the same, it gets the committed text back; holding something else, it is
+// left as it is and named in a line.
 //
 // The step is long (it installs and pushes), so it runs in its own process. It waits for step 3,
 // which registers the project and clones its state, and step 4, whose live-data answer the
@@ -735,8 +737,6 @@ export function projectFilesStep({
       if (pins.length > 0) {
         const settingsFile = at(SETTINGS);
         const joining = joiningRun(ctx);
-        // A joining computer puts the project's settings back to what they held before the installs.
-        const held = joining ? objectIn(SETTINGS, readText(settingsFile)) : null;
         for (const c of pins) {
           const upstream = { plugin: c.target.split('@')[0] };
           const before = locate(upstream, { projectDir: folder, claudeHome: claudeHome() });
@@ -744,11 +744,26 @@ export function projectFilesStep({
           await installPin({ id: c.target, folder, run, claude });
           halt();
         }
-        const now = objectIn(SETTINGS, readText(settingsFile)) ?? {};
-        const wanted = joining ? held ?? {}
-          : targetsFor({ folder, config: starterConfig({ answers: ctx.answers }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }) })[SETTINGS](readText(settingsFile));
-        for (const { key, value } of keyEdits(now, wanted)) ctx.applyJsonKey({ file: settingsFile, key, value, project });
+        let differs = null;
+        if (joining) {
+          // A joining computer leaves the committed .claude/settings.json exactly as committed
+          // (ruling R103): rewritten by the installs into a layout of their own but holding the
+          // same, it gets the committed text back, recorded first; holding something else, it is
+          // left as it is and named.
+          const git = await gitFor({ host, platform, folder });
+          const committed = await headText(git, SETTINGS);
+          const text = readText(settingsFile);
+          if (committed !== null && text !== committed) {
+            if (sameContent(SETTINGS, text, committed)) writeRecorded(ctx, { target: settingsFile, before: text, after: committed, project });
+            else differs = `${SETTINGS} differs from what is committed since the pinned kits were installed, and setup leaves it as it is`;
+          }
+        } else {
+          const now = objectIn(SETTINGS, readText(settingsFile)) ?? {};
+          const wanted = targetsFor({ folder, config: starterConfig({ answers: ctx.answers }), release: wheelhouseRelease({ folder, claudeHome: claudeHome() }) })[SETTINGS](readText(settingsFile));
+          for (const { key, value } of keyEdits(now, wanted)) ctx.applyJsonKey({ file: settingsFile, key, value, project });
+        }
         say(`${listed(pins.map((c) => pinName(c.target)))} ${pins.length === 1 ? 'is' : 'are'} installed for this project`);
+        if (differs !== null) say(differs);
       }
       const checked = lineage(folder);
       if (!checked.ok) {

@@ -299,13 +299,13 @@ export function onlyInstall(folder) {
 // `phase` setting, ruling R38). A computer joining a project does not yet trust the other
 // computers' keys (Task 14's trust card), so it can't tell a confirmed setting from a proposal, or
 // a later one written to weaken it: any `phase` setting saying launched counts. It only ever takes
-// Quick away, or asks Locked.
+// Quick away, or asks Locked, so a state that can't be listed counts as launched (it fails closed).
 export function launchedIn(project) {
   let events;
   try {
     events = listEvents(stateDir(project), { report: () => {} });
   } catch {
-    return false;
+    return true;
   }
   return events.some((e) => e.kind === 'setting' && e.data?.key === 'phase' && e.data.value === 'launched');
 }
@@ -422,15 +422,40 @@ export function repoNamed(text) {
 const joinRecords = (run) => (Array.isArray(run?.changes) ? run.changes : [])
   .filter((c) => c?.step === JOIN_STEP && c.kind === 'answer' && c.after && typeof c.after === 'object' && Object.hasOwn(c.after, 'joined'));
 
+// Whether `origin` names the repository `repo` (owner/name), whatever the address's form.
+function originNames(origin, repo) {
+  if (typeof origin !== 'string' || typeof repo !== 'string') return false;
+  const named = origin.trim().replace(/\\/g, '/').replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase();
+  const wanted = repo.toLowerCase();
+  return named.endsWith(`/${wanted}`) || named.endsWith(`:${wanted}`);
+}
+
+// The repository this folder is checked out to as a joining computer's (ruling R102), or null: the
+// `.git` change step 3's checkout recorded for it, in any run, or this run's repository found by a
+// joining attempt when the folder's `origin` names it. Such a folder stays joined: the join question
+// is not asked again, every retry uses that repository, and it is never set up as a new product.
+export function joinedFolder(folder, run = null) {
+  const target = path.join(folder, '.git');
+  const checkout = readJournal().runs.flatMap((r) => r?.changes ?? [])
+    .filter((c) => c?.step === JOIN_STEP && c.kind === 'folder' && c.target === target && typeof c.after?.joined === 'string').at(-1);
+  if (checkout) return checkout.after.joined;
+  const found = joinRecords(run).filter((c) => c.after.found === true).at(-1)?.after.joined ?? null;
+  return found !== null && originNames(originUrl(folder), found) ? found : null;
+}
+
 // Whether this computer is joining a product, from the join question's answer (ruling R77): { ask }
 // while the question is open; { join, known } for a product from another computer, `join` the name
-// asked for (a bare name or owner/name) and `known` the owner/name an attempt found, or null; or
+// asked for (a bare name or owner/name) and `known` the owner/name an attempt found, or null (the
+// list then names `known`, so a retry checks that repository and never searches again); or
 // null for a new product, and in a folder where the question isn't asked (one holding more than
 // step 1's install, unless the run is already joining). Each name an attempt missed, and each
 // typed text that names no repository, asks the question again under an id naming them (ruling
 // R51), so no answer is used again for a name that wasn't found.
 function joinChoice(ctx) {
   const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
+  // A folder checked out to a joined repository is joined to it for good (ruling R102).
+  const fixed = joinedFolder(ctx.folder, run);
+  if (fixed !== null) return { join: fixed, known: fixed };
   const joined = joinedRepo(run);
   if (joined === null && !onlyInstall(ctx.folder)) return null;
   const name = repoName(ctx.folder);
@@ -700,16 +725,20 @@ async function productBranchOn({ host, repo, remoteUrl, gitPath, env, run }) {
 
 // ---- Joining a product set up on another computer (ruling R77) ----
 
+export const ORGS_UNREAD = 'GitHub could not list your organisations with your sign-in, so setup has not looked for the project: a fresh Go ahead tries again, or type its owner/name on step 3\'s question';
+
 // The director's organisations on GitHub, or groups on GitLab, as their sign-in sees them.
 async function accountsOf({ host, run, api }) {
   if (host === 'github') {
     const got = await ask(run, host, ['api', 'user/memberships/orgs?state=active&per_page=100']);
     const list = got.code === 0 ? json(got.stdout) : null;
-    return (Array.isArray(list) ? list : []).filter((m) => m?.state === 'active').map((m) => m?.organization?.login)
+    // A listing that fails is never read as no organisations (ruling R102): the step stops.
+    if (!Array.isArray(list)) throw new Error(ORGS_UNREAD);
+    return list.filter((m) => m?.state === 'active').map((m) => m?.organization?.login)
       .filter((login) => typeof login === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(login));
   }
   const got = await api.get('/groups?min_access_level=10&per_page=100');
-  if (got.status !== 200 || !Array.isArray(got.body)) throw new Error(`GitLab could not list your groups with your sign-in (HTTP ${got.status})`);
+  if (got.status !== 200 || !Array.isArray(got.body)) throw new Error(`GitLab could not list your groups with your sign-in (HTTP ${got.status}), so setup has not looked for the project: a fresh Go ahead tries again, or type its owner/name on step 3's question`);
   return got.body.map((g) => g?.full_path).filter((p) => typeof p === 'string' && repoNamed(p) === p);
 }
 
@@ -751,7 +780,7 @@ export function joinMissLine({ host, wanted, found }) {
 // wrote; that one is recorded first, its text as the value before. Files the project doesn't hold
 // (this computer's settings.local.json) stay. Safe to repeat: once the folder has a commit it is
 // left as it is.
-async function checkOutJoined({ folder, remoteUrl, branch, gitPath, env, run, record }) {
+async function checkOutJoined({ folder, repo, remoteUrl, branch, gitPath, env, run, record }) {
   const git = (args) => run(gitPath, args, { cwd: folder, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
   const must = async (args, why) => {
     const done = await git(args);
@@ -762,13 +791,23 @@ async function checkOutJoined({ folder, remoteUrl, branch, gitPath, env, run, re
   if (origin !== null && !sameRemote(origin, remoteUrl)) throw new Error('This folder is connected to another repository, so setup has left it as it is');
   if (origin === null) {
     const hadGit = fs.existsSync(path.join(folder, '.git'));
-    record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: hadGit ? { origin: null } : null, after: { origin: remoteUrl, branch } });
+    record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: hadGit ? { origin: null } : null, after: { origin: remoteUrl, branch, joined: repo } });
     if (!hadGit) await must(['init', '-q', '-b', branch], 'git could not start in this folder');
     await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the project\'s repository in this folder');
   }
   await must(['fetch', '-q', 'origin', branch], 'git could not fetch the project');
   const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
   if (head.code !== 0) {
+    // checkout -f writes over what is in its way, so the folder must still hold only step 1's
+    // install (and the .git begun here): a file of the director's added since, at the top or among
+    // the project's own files in .claude/, stops the step instead.
+    const tracked = (await must(['ls-tree', '-r', '--name-only', `refs/remotes/origin/${branch}`, '--', '.claude'], 'git could not read the project')).stdout
+      .split(/\r?\n/).filter(Boolean);
+    const theirs = [
+      ...fs.readdirSync(folder).filter((n) => n !== '.claude' && n !== '.git' && !SYSTEM_FILES.includes(n)),
+      ...tracked.filter((f) => f !== '.claude/settings.json' && fs.existsSync(path.join(folder, ...f.split('/')))),
+    ];
+    if (theirs.length > 0) throw new Error(`This folder now holds files beside step 1's install (${theirs.slice(0, 5).join(', ')}), so setup has not checked the project out over them: move them aside, then ask again`);
     const settings = path.join(folder, '.claude', 'settings.json');
     const installed = readText(settings);
     const committed = await git(['show', `refs/remotes/origin/${branch}:.claude/settings.json`]);
@@ -1110,7 +1149,10 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   if (way === WAYS.quick) parts.push('Quick: your own sign-in, which reaches your whole account');
   else if (host === 'gitlab') parts.push('Developer project keys for the project and profile, or where GitLab refuses, a token typed in your computer\'s own box');
   else if (app === null) parts.push('your own GitHub App');
-  else if (app.own && typeof app.clientId !== 'string') {
+  else if (app.own && typeof app.clientId !== 'string' && product.joining) {
+    // A joining computer's profile isn't here yet, so the app the first computer made can't be known.
+    parts.push('your own GitHub App, made, or found in your profile: then a code and ticks on its Install page (not All repositories)');
+  } else if (app.own && typeof app.clientId !== 'string') {
     parts.push(`your own GitHub App${app.name ? ` ${app.name} on ${app.account}` : ''}, filled in from Wheelhouse's: tick Enable Device Flow, click Create, then a code and ticks on its Install page (not All repositories); kept in your profile`);
   } else if (appKeys === 'installed') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked`);
   else if (appKeys === 'signed-in') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick the project and profile on its Install page, not All repositories`);
@@ -1133,11 +1175,12 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   };
 }
 
-function directorFor({ signedIn, way, host, app, appKeys }) {
+function directorFor({ signedIn, way, host, app, appKeys, joining = false }) {
   const parts = ['One click'];
   if (!signedIn) parts.push('your sign-in in the browser');
   if (way !== WAYS.quick && host === 'github' && app !== null) {
-    if (app.own && typeof app.clientId !== 'string') parts.push('Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub, Authorise, and two ticks on the Install page');
+    if (app.own && typeof app.clientId !== 'string' && joining) parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page (and, if your app is not in your profile, Enable Device Flow ticked and Create clicked first)');
+    else if (app.own && typeof app.clientId !== 'string') parts.push('Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub, Authorise, and two ticks on the Install page');
     else if (appKeys === 'installed') parts.push('a tick on the app\'s settings page, if the project is not ticked');
     else if (appKeys === 'signed-in') parts.push('two ticks on the app\'s Install page');
     else parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page');
@@ -1196,7 +1239,9 @@ export function hostStep({
       const where = product.isNew ? `the new private repository ${product.name} on ${NAME[host]}` : `${product.repo ?? product.name} on ${NAME[host]}`;
       let way = WAYS.narrow;
       if (!(host === 'gitlab' && (locked || launched))) {
-        const card = connectionCard({ host, locked, realUsers: realUsers || launched, launched, where, appFile });
+        // A joining computer can't know the phase before its state is cloned, so its card recommends
+        // a narrow way, as for real users; kept once known, so a retry is not asked again.
+        const card = connectionCard({ host, locked, realUsers: realUsers || launched || product.joining === true, launched, where, appFile });
         const id = `connection-${digest(card)}`;
         const got = answer(id);
         if (got === null || !card.options.some((o) => o.label === got.label)) return { ask: { id, card } };
@@ -1249,7 +1294,8 @@ export function hostStep({
         changes.push({ kind: 'folder', target: ctx.folder, action: 'connect', branch: 'main' });
       }
       if (product.joining) {
-        changes.push({ kind: 'host', target: host, action: 'join', name: join.join });
+        // Once an attempt found the repository, the list names it, so every retry uses it (R102).
+        changes.push({ kind: 'host', target: host, action: 'join', name: product.repo ?? join.join });
         changes.push({ kind: 'folder', target: ctx.folder, action: 'checkout' });
       }
       if (profileRemote() === null) {
@@ -1270,7 +1316,7 @@ export function hostStep({
       return {
         changes,
         card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys }),
-        director: directorFor({ signedIn, way, host, app, appKeys }),
+        director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true }),
       };
     },
 
@@ -1301,8 +1347,15 @@ export function hostStep({
       // R77), so the run's steps are a joining computer's from here on, before step 4's or 5's
       // questions could come; a new product chosen after a joining attempt records that it is not.
       const answerRecord = (after) => record({ id: newId('chg'), kind: 'answer', target: `step ${JOIN_STEP}`, before: null, after });
+      // A folder checked out to a joined repository stays joined to it (ruling R102): never set up
+      // as a new product or an existing one of its own, and never joined to another repository.
+      const thisRun = readJournal().runs.find((r) => r?.id === ctx.runId) ?? null;
+      const fixed = joinedFolder(ctx.folder, thisRun);
+      if (fixed !== null && (join === null || join.name.toLowerCase() !== fixed.toLowerCase())) {
+        throw new Error(`This folder is checked out to ${fixed} from your other computer, so setup goes on joining it and nothing else: ask for step 3's card again`);
+      }
       if (join !== null) answerRecord({ joined: join.name });
-      else if (joinedRepo(readJournal().runs.find((r) => r?.id === ctx.runId) ?? null) !== null) answerRecord({ joined: null });
+      else if (joinedRepo(thisRun) !== null) answerRecord({ joined: null });
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform });
@@ -1318,6 +1371,10 @@ export function hostStep({
       let joined = null;
       if (join !== null) {
         const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, hostUrl });
+        // The repository this folder is checked out to is checked again, never searched for.
+        if (fixed !== null && found.length !== 1) {
+          throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or no longer holds Wheelhouse's records, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
+        }
         if (found.length !== 1) {
           answerRecord({ joined: join.name, missed: found.length === 0 ? 'none' : found.map((f) => f.repo) });
           throw new Error(joinMissLine({ host, wanted: join.name, found }));
@@ -1348,7 +1405,7 @@ export function hostStep({
         if (typeof branch !== 'string' || branch === '' || WHEELHOUSE_BRANCHES.includes(branch)) {
           throw new Error(`${joined.repo}'s default branch on ${NAME[host]} is ${branch || 'not set'}, not a branch of the product's, so setup has not checked it out: make the product's own branch the default in the repository's settings, then ask again`);
         }
-        await checkOutJoined({ folder: ctx.folder, remoteUrl: hostUrl({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, run, record });
+        await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: hostUrl({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, run, record });
         halt();
       }
       // The product under its owner; the profile always on the director's own account.

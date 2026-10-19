@@ -103,7 +103,7 @@ function kits(root) {
 async function world({
   defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = null, ownStatusLine = null,
 } = {}) {
-  const w = { calls: [], protection: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [] };
+  const w = { calls: [], protection: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o) };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
@@ -166,9 +166,9 @@ async function world({
         try { record = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first install */ }
         record.plugins[args[2]] = [{ scope: 'project', projectPath: options.cwd, installPath: into, version: '1.0.0', gitCommitSha: SHA[plugin] }];
         fs.writeFileSync(file, JSON.stringify(record));
-        // Claude Code writes the project's settings again on the way, in its own layout.
+        // Claude Code writes the project's settings again on the way, in its own layout (`w.layout`).
         const settings = path.join(options.cwd, '.claude', 'settings.json');
-        fs.writeFileSync(settings, JSON.stringify(JSON.parse(fs.readFileSync(settings, 'utf8'))));
+        fs.writeFileSync(settings, w.layout(JSON.parse(fs.readFileSync(settings, 'utf8'))));
         await w.duringInstall(plugin);
         return answer(`Successfully installed plugin: ${args[2]} (scope: project)\n`);
       }
@@ -763,6 +763,8 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
     // A note of the director's in CLAUDE.md on this computer, not committed.
     fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- A note on the laptop.\n');
     const before = Object.fromEntries(SETUP_FILES.map((rel) => [rel, fs.readFileSync(path.join(w.folder, rel), 'utf8')]));
+    // This computer's Claude Code lays the settings out its own way as it installs the pins.
+    w.layout = (o) => JSON.stringify(o, null, '\t');
 
     const planned = await w.step.plan(w.ctx({ runId: run.id }));
     assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
@@ -780,22 +782,41 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
 
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
-    // This computer's settings by key, kept out of git; the pins installed; nothing shared changed.
+    // This computer's settings by key, kept out of git; the pins installed; every shared file exactly
+    // as it was, byte for byte (ruling R103), though Claude Code rewrote the settings in its own layout.
     const mine = JSON.parse(fs.readFileSync(local, 'utf8'));
     assert.deepEqual(mine.sandbox.network.allowUnixSockets, [ADDRESS]);
     assert.ok(mine.permissions.allow.includes(`Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`));
     assert.ok(fs.readFileSync(path.join(w.folder, '.git', 'info', 'exclude'), 'utf8').split('\n').includes(EXCLUDE_LINE));
     assert.equal(checkInstalled({ manifest: w.manifest, projectDir: w.folder, claudeHome: w.claudeHome }).ok, true);
-    for (const rel of SETUP_FILES) {
-      const now = fs.readFileSync(path.join(w.folder, rel), 'utf8');
-      if (rel.endsWith('.json')) assert.deepEqual(JSON.parse(now), JSON.parse(before[rel]), rel);
-      else assert.equal(now, before[rel], rel);
-    }
+    for (const rel of SETUP_FILES) assert.equal(fs.readFileSync(path.join(w.folder, rel), 'utf8'), before[rel], rel);
+    assert.equal(await g(w.folder, 'status', '--porcelain', '--', '.claude/settings.json', '.claude/wheelhouse.json'), '', 'git sees no change to them');
     assert.equal(await lsRemote(w.bare, 'main'), tip, 'nothing went up');
     assert.deepEqual(w.protection, [], 'protection left as the first computer set it');
     const made = done.run.changes.filter((c) => c.step === 7);
-    assert.ok(made.every((c) => !SETUP_FILES.some((rel) => c.target === path.join(w.folder, rel))), 'no shared file recorded as changed');
+    // The one shared file recorded is the settings put back to the committed text, recorded first.
+    const shared = made.filter((c) => SETUP_FILES.some((rel) => c.target === path.join(w.folder, rel)));
+    assert.deepEqual(shared.map((c) => [c.kind, path.relative(w.folder, c.target), c.after === before['.claude/settings.json']]), [['file', path.join('.claude', 'settings.json'), true]]);
+    assert.notEqual(shared[0].before, shared[0].after, 'the layout the installs left is the value before');
     assert.ok(!made.some((c) => c.kind === 'host'));
+  });
+});
+
+test('a joining computer\'s settings changed in their keys by the installs are left as they are and named', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    const run = await secondComputer(w);
+    const settings = path.join(w.folder, '.claude', 'settings.json');
+    w.duringInstall = () => {
+      fs.writeFileSync(settings, JSON.stringify({ ...JSON.parse(fs.readFileSync(settings, 'utf8')), addedByTheInstall: true }));
+    };
+    const done = await w.apply((await w.step.plan(w.ctx({ runId: run.id }))).changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(JSON.parse(fs.readFileSync(settings, 'utf8')).addedByTheInstall, true, 'left as it is');
+    assert.equal(done.run.steps[7].say.line, '.claude/settings.json differs from what is committed since the pinned kits were installed, and setup leaves it as it is');
+    assert.ok(!done.run.changes.some((c) => c.step === 7 && c.target === settings), 'never written by setup');
   });
 });
 
