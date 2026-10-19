@@ -1,15 +1,22 @@
 // scripts/briefing/seen.js
 // When the director was last seen in a project: `promptAt`, their last message, and `briefedAt`,
-// the last briefing they were given. Kept in projects/<project>/seen.json, beside the state clone,
-// and written whole (a temporary file in the same folder, then a rename).
+// the last briefing they were given; and their visits: `visitAt`, when the latest visit began, and
+// `boardAsks`, the last BOARD_ASKS board commands as { at, tab, visit } (`tab` the command's word or
+// null, `visit` the visitAt it was asked in), which learning reads. Kept in
+// projects/<project>/seen.json, beside the state clone, and written whole (a temporary file in the
+// same folder, then a rename).
 //
 // Reading never throws. A damaged file reads as no times, and so does a field that isn't a time
 // as toISOString writes it, or a time after now, which this computer's clock can't have written.
+// A board command whose fields aren't such times, or whose tab isn't one, is left out.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 
-const FIELDS = ['promptAt', 'briefedAt'];
+const FIELDS = ['promptAt', 'briefedAt', 'visitAt'];
+// How many board commands are kept.
+export const BOARD_ASKS = 10;
+const TABS = ['director', 'build'];
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -36,30 +43,48 @@ function nowMs(now) {
   }
 }
 
-// The times as written, each null when it isn't one; all null when the file can't be read.
+// The board commands as written, each with its times and its tab, leaving out any that aren't.
+function asksOf(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((a) => isRecord(a) && timeText(a.at) !== null && timeText(a.visit) !== null && (a.tab === null || TABS.includes(a.tab)))
+    .map((a) => ({ at: a.at, tab: a.tab, visit: a.visit })).slice(-BOARD_ASKS);
+}
+
+// The times as written, each null when it isn't one, and the board commands; all none when the
+// file can't be read.
 function readKept(project) {
+  const none = { ...Object.fromEntries(FIELDS.map((field) => [field, null])), boardAsks: [] };
   try {
     const kept = JSON.parse(fs.readFileSync(seenFile(project), 'utf8'));
-    if (!isRecord(kept)) return { promptAt: null, briefedAt: null };
-    return Object.fromEntries(FIELDS.map((field) => [field, timeText(kept[field])]));
+    if (!isRecord(kept)) return none;
+    return { ...Object.fromEntries(FIELDS.map((field) => [field, timeText(kept[field])])), boardAsks: asksOf(kept.boardAsks) };
   } catch {
-    return { promptAt: null, briefedAt: null };
+    return none;
   }
 }
+
+// A time read back: null when it is after now, or when a clock that can't be read leaves nothing to measure by.
+const notAhead = (value, limit) => (value !== null && Number.isFinite(limit) && Date.parse(value) > limit ? null : value);
 
 // readSeen(project, { now }) -> { promptAt, briefedAt }, each a time or null. With a clock that
 // can't be read, no time counts as after it.
 export function readSeen(project, { now } = {}) {
   const kept = readKept(project);
   const limit = nowMs(now);
-  return Object.fromEntries(FIELDS.map((field) => {
-    const value = kept[field];
-    return [field, value !== null && Number.isFinite(limit) && Date.parse(value) > limit ? null : value];
-  }));
+  return { promptAt: notAhead(kept.promptAt, limit), briefedAt: notAhead(kept.briefedAt, limit) };
 }
 
-// markSeen(project, { promptAt, briefedAt }): writes the times given, keeping the other as it was.
-// A value that isn't a time is not written.
+// readVisits(project, { now }) -> { visitAt, boardAsks }: when the latest visit began, or null,
+// and the board commands kept, oldest first, leaving out any asked after now.
+export function readVisits(project, { now } = {}) {
+  const kept = readKept(project);
+  const limit = nowMs(now);
+  return { visitAt: notAhead(kept.visitAt, limit), boardAsks: kept.boardAsks.filter((a) => notAhead(a.at, limit) !== null) };
+}
+
+// markSeen(project, { promptAt, briefedAt, visitAt, boardAsk }): writes the times given, keeping
+// the others as they were, and adds `boardAsk` ({ at, tab, visit }) to the board commands, keeping
+// the last BOARD_ASKS. A value that isn't a time, or a board command that isn't one, is not written.
 export function markSeen(project, times = {}) {
   const file = seenFile(project);
   const next = readKept(project);
@@ -67,6 +92,9 @@ export function markSeen(project, times = {}) {
     const value = timeText(isRecord(times) ? times[field] : undefined);
     if (value !== null) next[field] = value;
   }
+  const ask = isRecord(times) && isRecord(times.boardAsk)
+    ? { at: timeText(times.boardAsk.at), tab: times.boardAsk.tab ?? null, visit: timeText(times.boardAsk.visit) } : null;
+  if (ask !== null) next.boardAsks = asksOf([...next.boardAsks, ask]);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   try {

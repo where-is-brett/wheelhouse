@@ -50,7 +50,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 
 ## Cards
 
-- **Every card** comes from `card`, `cards`, `again` or `record ruling`. Never write a card's words, options or set line yourself, even when a ready-made one seems quicker.
+- **Every card** comes from `card`, `cards`, `again`, `record ruling` or `record setting` (ask the confirm card each `record` prints). Never write a card's words, options or set line yourself, even when a ready-made one seems quicker.
 - **Asked once.** Never paste a card again into a later reply; it stays on the board. Only when the director asks for one again: `again <n>`.
 - **Explain more:** `explain <term>` gives the plain words; add an everyday example, then ask the card again.
 - **Show me:** the preview, its screenshots, or a short visual page; then ask again.

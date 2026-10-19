@@ -6,14 +6,17 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { readSeen, markSeen } from '../../../scripts/briefing/seen.js';
+import { readSeen, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
 import { wasRaised } from '../../../scripts/usage/figures.js';
-import { setStop } from '../../../scripts/lib/stop.js';
-import { profileViewsDir, sourcesDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { profileDir, profileViewsDir, sourcesDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
@@ -464,5 +467,123 @@ test('the role comes from the session\'s first prompt and is kept: the wake line
     assert.ok(contextOf(await send('Hello', 's-desk')).length > 0);
     assert.equal(contextOf(await send(`${FOREMAN_PROMPT_LEAD} handle wake-1.json`, 's-desk', '2026-10-19T12:10:00.000Z')), cardsLine(1));
     assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-desk'), 'utf8')), { role: 'front-desk' });
+  });
+});
+
+// --- Learning ---
+
+// Writes events to a clone of events on disk, as the helper would.
+const store = (dir, events) => { for (const e of events) put(path.join(dir, eventPath(e)), e); };
+const noon = (d, minutes = 0) => new Date(Date.UTC(2026, 9, d, 12, minutes)).toISOString();
+const learnCard = (d, concepts) => makeEvent({
+  kind: 'card',
+  now: () => new Date(noon(d)),
+  data: composeCard({
+    kind: 'question', level: 2, what: `Which name suits page ${d}?`, why: 'It is the wording users see.',
+    options: [{ label: 'Plain', says: 'Plain words.' }, { label: 'Playful', says: 'Playful words.' }],
+    recommend: 'Plain', because: 'it reads quickest', meanwhile: 'The page keeps its old name.', concepts,
+  }).card,
+});
+const clicked = (card, label, d) => makeEvent({ kind: 'card-answer', data: { card: card.id, label }, now: () => new Date(noon(d, 5)) });
+
+// A helper client that keeps what it is asked to write. A card it records joins the waiting view,
+// unasked, as the helper's fresh views would show it.
+function learningClient() {
+  const profileWrites = [];
+  const stateWrites = [];
+  const learnt = {
+    ...client,
+    state: {
+      write: async (body) => {
+        stateWrites.push(body);
+        const id = `card-${stateWrites.length}`;
+        const file = viewFile('waiting');
+        put(file, [...JSON.parse(fs.readFileSync(file, 'utf8')), { id, at: NOW, data: body.data, asked: null }]);
+        return { ok: true, id, pushed: true };
+      },
+    },
+    profile: {
+      write: async (body) => {
+        profileWrites.push(body);
+        return { ok: true, id: `p-${profileWrites.length}`, pushed: true };
+      },
+    },
+  };
+  return { learnt, profileWrites, stateWrites };
+}
+
+test('the hook runs learning once a visit and records each proposal as one waiting card', async () => {
+  await withProject(async ({ repo }) => {
+    assert.equal(LEARN_WAIT_MS, 3000);
+    // Three cards about pull requests answered on three days; Explain more on a card about CI, which the director knows.
+    const cards = [15, 16, 17].map((d) => learnCard(d, ['pull request']));
+    const ci = learnCard(18, ['CI']);
+    store(stateDir(P), [...cards, ...cards.map((card, i) => clicked(card, 'Plain', 15 + i)), ci, clicked(ci, 'Explain more', 18)]);
+    store(profileDir(), [makeEvent({ kind: 'setting', data: { key: 'known:ci', value: true, words: 'Knows "ci": yes' }, now: () => new Date(noon(1)) })]);
+    setProfile({ 'known:ci': true });
+    // The build tab asked for on three visits running.
+    for (const d of [15, 16, 17]) markSeen(P, { boardAsk: { at: noon(d), tab: 'build', visit: noon(d) } });
+
+    const { learnt, profileWrites, stateWrites } = learningClient();
+    const out = contextOf(await run(repo, 'Hello', NOW, { client: learnt }));
+    // known:ci false counts at once, with no card; each other proposal is one waiting card.
+    assert.deepEqual(profileWrites.map((w) => [w.data.key, w.data.value]), [['known:ci', false], ['known:pull-request', true], ['boardTab', 'build']]);
+    assert.ok(profileWrites.every((w) => w.kind === 'setting' && typeof w.data.because === 'string' && typeof w.data.words === 'string'));
+    assert.deepEqual(stateWrites.map((w) => [w.kind, w.cwd, w.data.line]), [
+      ['card', repo, confirmLine({ kind: 'setting', id: 'p-2', data: profileWrites[1].data })],
+      ['card', repo, confirmLine({ kind: 'setting', id: 'p-3', data: profileWrites[2].data })],
+    ]);
+    // They reach the director with this visit's cards, and learning adds no text of its own.
+    assert.ok(out.startsWith(`${cardsLine(2)}\n\n${HEADINGS.briefing}`), out);
+    assert.equal(readVisits(P, { now: at(NOW) }).visitAt, NOW);
+
+    // Later in the same visit, nothing more is learnt.
+    await run(repo, 'And then?', '2026-10-19T12:10:00.000Z', { client: learnt });
+    assert.equal(profileWrites.length, 3);
+    // A command after a gap learns nothing either; the visit's first prompt does.
+    await run(repo, '/wheelhouse:board build', '2026-10-19T18:00:00.000Z', { client: learnt });
+    assert.equal(profileWrites.length, 3);
+    const asks = readVisits(P, { now: at('2026-10-19T18:00:00.000Z') }).boardAsks;
+    assert.deepEqual(asks.at(-1), { at: '2026-10-19T18:00:00.000Z', tab: 'build', visit: '2026-10-19T18:00:00.000Z' });
+  });
+});
+
+test('learning never runs under STOP, and a helper that never answers holds the prompt LEARN_WAIT_MS at most', async () => {
+  await withProject(async ({ repo }) => {
+    const cards = [15, 16, 17].map((d) => learnCard(d, ['pull request']));
+    store(stateDir(P), [...cards, ...cards.map((card, i) => clicked(card, 'Plain', 15 + i))]);
+    const { learnt, profileWrites } = learningClient();
+    setStop({ by: 'prompt' });
+    await run(repo, 'Hello', NOW, { client: learnt });
+    assert.deepEqual(profileWrites, []);
+
+    liftStop();
+    const never = () => new Promise(() => {});
+    const hung = { ...client, state: { write: never }, profile: { write: never } };
+    const started = Date.now();
+    const out = contextOf(await run(repo, 'Hello', '2026-10-19T18:00:00.000Z', { client: hung, learnWaitMs: 50 }));
+    assert.ok(Date.now() - started < LEARN_WAIT_MS, `${Date.now() - started} ms`);
+    assert.ok(out.startsWith(HEADINGS.briefing), out);
+    // What wasn't written is worked out again on the next visit.
+    await run(repo, 'Hello', '2026-10-20T09:00:00.000Z', { client: learnt });
+    assert.deepEqual(profileWrites.map((w) => w.data.key), ['known:pull-request']);
+  });
+});
+
+test('a learnt setting whose card was not written gets its card on the next visit', async () => {
+  await withProject(async ({ repo }) => {
+    const data = { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you opened the build tab first on each of your last three visits' };
+    put(path.join(profileViewsDir(), 'unconfirmed.json'), [
+      { kind: 'setting', id: 'p-old', at: '2026-10-18T09:00:00.000Z', key: 'boardTab', data },
+      // One the director set themselves, which is not learning's to ask.
+      { kind: 'setting', id: 'p-own', at: '2026-10-18T09:00:00.000Z', key: 'briefing', data: { key: 'briefing', value: 'short', words: 'Briefing length: short' } },
+    ]);
+    const { learnt, stateWrites } = learningClient();
+    await run(repo, 'Hello', NOW, { client: learnt });
+    assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'setting', id: 'p-old', data })]);
+    // Once a card in this project carries its line, none is written again.
+    store(stateDir(P), [makeEvent({ kind: 'card', data: stateWrites[0].data, now: () => new Date(NOW) })]);
+    await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });
+    assert.equal(stateWrites.length, 1);
   });
 });

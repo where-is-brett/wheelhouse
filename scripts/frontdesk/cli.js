@@ -27,9 +27,10 @@ import { numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS } from '../settings/catalogue.js';
 import { CARD } from '../lib/front-desk.js';
-import { effectiveSettings, settingsText } from '../settings/effective.js';
+import { effectiveSettings, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
 import { answerLine } from '../state/card-lines.js';
+import { countsAtOnce } from '../state/views.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -291,11 +292,66 @@ function confirmCard(event, words) {
   }, words);
 }
 
-// Records one event and resolves with { id, pushed }, and for a ruling its confirm card, recorded
-// too, as { question, id }. A setting the catalogue refuses is refused here, before the helper is
-// asked; the director's own settings go to their profile. A ruling keeps its words exactly as
-// given: its card is composed first, under the id the ruling is then written with, so a ruling
-// whose words no card can carry is never written. The confirm card is recorded as asked.
+// The confirm card for a setting, which names the setting by its id and its words (ruling F30). A
+// learnt setting carries `because`, learning's one-line reason, which the card gives.
+export function settingCard(event, words) {
+  const learnt = typeof event.data.because === 'string' && event.data.because.trim() !== '';
+  const whose = definitionOf(event.data.key)?.home === 'project' ? 'this project\'s settings' : 'your settings';
+  return composePlain({
+    kind: 'confirm',
+    level: 3,
+    what: `A change to ${whose}, ${learnt ? 'suggested from how you work' : 'as you asked'}: ${event.data.words}`,
+    why: 'A setting changes only once you confirm it, so it comes to you.',
+    options: [{ label: 'Confirm', says: 'The setting takes effect from now on.' }],
+    recommend: 'Confirm',
+    because: learnt ? event.data.because : 'it is the change you asked for',
+    meanwhile: 'Nothing changes until you confirm.',
+    target: { event },
+  }, words);
+}
+
+// Writes a setting the catalogue allows, with its words, and its confirm card into the project
+// `cwd` names: { id, pushed, card?: { question, id } }. The card isn't marked asked. A setting no
+// card can carry is never written: the card is composed before the setting is. The profile gives
+// its own id, so a profile setting's card is tried first under a stand-in id and composed again
+// under the real one; a project's setting is written under the id its card was composed with.
+export async function writeSetting({ client, cwd, data, words, makeId = () => crypto.randomUUID() }) {
+  try {
+    checkSetting(data.key, data.value, data.until);
+  } catch (error) {
+    throw new CliError(error.message);
+  }
+  const setting = { ...data, words: settingWords(data.key, data.value, data.until) };
+  const answered = (got) => ({ id: got.id, pushed: got.pushed === true });
+  const withCard = async (got) => {
+    const { question, card } = settingCard({ kind: 'setting', id: got.id, data: setting }, words);
+    try {
+      const made = await write(client, cwd, 'card', card);
+      return { ...answered(got), card: { question, id: made.id } };
+    } catch (error) {
+      throw new CliError(`The setting was recorded as ${got.id}, but its confirm card wasn't: ${error.message}`);
+    }
+  };
+  if (definitionOf(data.key).home === 'profile') {
+    const needsCard = !countsAtOnce({ kind: 'setting', data: setting });
+    if (needsCard) settingCard({ kind: 'setting', id: makeId(), data: setting }, words);
+    const got = await client.profile.write({ kind: 'setting', data: setting });
+    if (got?.ok !== true || typeof got.id !== 'string') throw new CliError(said(got, 'The host helper did not record the setting'));
+    return needsCard ? withCard(got) : answered(got);
+  }
+  const id = makeId();
+  settingCard({ kind: 'setting', id, data: setting }, words);
+  const got = await write(client, cwd, 'setting', setting, id);
+  if (got.id !== id) throw new CliError(`The setting was recorded as ${got.id}, not under the id its confirm card names`);
+  return withCard(got);
+}
+
+// Records one event and resolves with { id, pushed }, and for a ruling or a setting its confirm
+// card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
+// the helper is asked; the director's own settings go to their profile, and a concept set to false
+// needs no card (writeSetting). A ruling keeps its words exactly as given: its card is composed
+// first, under the id the ruling is then written with, so a ruling whose words no card can carry
+// is never written. The confirm card is recorded as asked.
 export async function record({ client, cwd, kind, input, now, makeId = () => crypto.randomUUID() }) {
   if (!RECORD_KINDS.includes(kind)) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
   if (!isPlain(input)) throw new CliError(`Give the ${kind} as a JSON object on standard input`);
@@ -306,11 +362,12 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
     } catch (error) {
       throw new CliError(error.message);
     }
-    if (definitionOf(input.key).home === 'profile') {
-      const got = await client.profile.write({ kind: 'setting', data: input });
-      if (got?.ok !== true || typeof got.id !== 'string') throw new CliError(said(got, 'The host helper did not record the setting'));
-      return answered(got);
-    }
+    // Only what the setting is: its words are made from it, and a reason marks a learnt one.
+    const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }) };
+    const words = countsAtOnce({ kind: 'setting', data }) ? null : await wordsOf(client, (await viewsOf(client, cwd)).views, now);
+    const got = await writeSetting({ client, cwd, data, words, makeId });
+    if (got.card === undefined) return got;
+    return { ...got, ...withProblems(await markAsked(client, cwd, [got.card.id], false)) };
   }
   if (kind !== 'ruling') return answered(await write(client, cwd, kind, input));
 

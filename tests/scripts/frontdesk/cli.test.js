@@ -385,10 +385,53 @@ test('a setting the catalogue refuses is refused before it reaches the helper', 
     assert.deepEqual(helper.calls, []);
     // A project's setting goes to the project's state, the director's own to their profile.
     assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'pace', value: 2 }))).code, 0);
-    assert.deepEqual(helper.calls.at(-1), ['write', { cwd: CWD, kind: 'setting', data: { key: 'pace', value: 2 } }]);
+    assert.deepEqual(helper.writes()[0].data, { key: 'pace', value: 2, words: 'Pace (builders at once): 2' });
     const profile = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'presence', value: 'away', until: '2026-10-20T00:00:00.000Z' }));
     assert.equal(profile.code, 0, profile.err);
-    assert.deepEqual(helper.calls.at(-1), ['profile.write', { kind: 'setting', data: { key: 'presence', value: 'away', until: '2026-10-20T00:00:00.000Z' } }]);
+    assert.deepEqual(helper.calls.find(([name]) => name === 'profile.write'), ['profile.write', {
+      kind: 'setting', data: { key: 'presence', value: 'away', until: '2026-10-20T00:00:00.000Z', words: 'Presence: away, until 20 October 2026, 00:00 UTC' },
+    }]);
+  });
+});
+
+test('record setting records its confirm card and marks it asked, except a concept set to false', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    // The director's own setting: written to the profile, then its card, naming the id the profile gave it.
+    const tab = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'boardTab', value: 'build', because: 'given by the front desk' }));
+    assert.equal(tab.code, 0, tab.err);
+    const data = { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' };
+    assert.deepEqual(helper.calls.filter(([name]) => name === 'profile.write'), [['profile.write', { kind: 'setting', data }]]);
+    const [card, asked] = helper.writes();
+    assert.equal(card.kind, 'card');
+    assert.equal(card.data.line, confirmLine({ kind: 'setting', id: 'p-1', data }));
+    assert.equal(tab.json.id, 'p-1');
+    assert.equal(tab.json.card.question.question, card.data.question);
+    assert.ok(card.data.question.includes('Board tab shown first: build'));
+    assert.deepEqual(asked.data, { cards: [tab.json.card.id] });
+
+    // A concept set to false counts at once (explanations get longer), so it needs no card.
+    const before = helper.writes().length;
+    const known = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'known:ci', value: false }));
+    assert.equal(known.code, 0, known.err);
+    assert.deepEqual(helper.calls.at(-1), ['profile.write', { kind: 'setting', data: { key: 'known:ci', value: false, words: 'Knows "ci": no' } }]);
+    assert.equal(helper.writes().length, before);
+    assert.equal(known.json.card, undefined);
+
+    // A project's setting is written under the id its card was composed with.
+    const pace = await main(['record', 'setting'], {
+      cwd: CWD, client: helper.client, input: JSON.stringify({ key: 'pace', value: 1 }), now: () => NOW, makeId: () => 'id-pace', out: () => {}, err: () => {},
+    });
+    assert.equal(pace, 0);
+    const [setting, paceCard] = helper.writes().slice(before);
+    assert.equal(setting.id, 'id-pace');
+    assert.equal(paceCard.data.line, confirmLine({ kind: 'setting', id: 'id-pace', data: { key: 'pace', value: 1, words: 'Pace (builders at once): 1' } }));
+
+    // Under STOP nothing is written, and no card is made for a setting that wasn't.
+    const stopped = fakeHelper({ stop: true });
+    const refused = await run(stopped, ['record', 'setting'], JSON.stringify({ key: 'boardTab', value: 'build' }));
+    assert.equal(refused.code, 1);
+    assert.deepEqual(stopped.writes(), []);
   });
 });
 
