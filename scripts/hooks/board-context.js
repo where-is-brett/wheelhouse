@@ -217,7 +217,11 @@ function inPlainWords(make, room, words) {
 // the one Lift STOP card.
 function cardsToAsk(project, at) {
   if (stopState().on) return 1;
-  const views = localViews(project, ['waiting', 'questions', 'gateAsks', 'lineageHolds', 'reports']) ?? {};
+  return cardsDue(localViews(project, ['waiting', 'questions', 'gateAsks', 'lineageHolds', 'reports']) ?? {}, at);
+}
+
+// The count cardsToAsk gives, from the views given (with STOP off).
+export function cardsDue(views, at) {
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
   const fresh = new Set(waiting.filter((card) => card.asked === null || card.asked === undefined).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})

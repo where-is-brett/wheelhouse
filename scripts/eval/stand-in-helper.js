@@ -7,7 +7,11 @@
 // reading the views and the card events, the director's profile, and a pull
 // request's head), on the same kind of socket the real helper uses, records
 // each one, and answers as a helper with a host behind it would. Its state is
-// a list of events in memory, not a state branch.
+// a list of events in memory, not a state branch. For the front desk's
+// scenarios it also answers the scratch plugin's hooks (`onHook`, route
+// /eval/hook), which a real helper never does, and signs, with a key of its
+// own, the confirmation a director's click on a confirm card would record
+// (`confirm`), since no click is made in an evaluation.
 // It reaches no host and signs nothing. A scenario starts it in its setup,
 // points the session at it through WHEELHOUSE_HOME, and reads its records in
 // its pass. Never used by the product, and not run by `npm test` except in its
@@ -22,8 +26,9 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { PLAIN_KINDS, PROTECTED_KINDS, makeEvent } from '../state/events.js';
+import { PLAIN_KINDS, PROTECTED_KINDS, confirmationFor, makeEvent } from '../state/events.js';
 import { buildViews } from '../state/views.js';
+import { makeSigningKey } from '../state/signing.js';
 
 // The commit `ref` names in the repository at `dir`, or null.
 function commitOf(dir, ref) {
@@ -65,28 +70,37 @@ export function plainEvent(kind, data, at = new Date()) {
 
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-// Why a plain event's data is refused, as the real helper's makeEvent refuses it, or null. makeEvent
-// checks the shape, then names this computer from WHEELHOUSE_HOME, so the stand-in's own home is
-// named for that moment, and nothing is written to the real one.
-function shapeProblem(kind, data, home) {
+// What `fn` gives with WHEELHOUSE_HOME naming `home` for that moment, so whatever it names or
+// signs (this computer, its key) is the stand-in's own and nothing is written to the real home.
+function inHome(home, fn) {
   const was = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {
-    makeEvent({ kind, data });
-    return null;
-  } catch (error) {
-    return error.message;
+    return fn();
   } finally {
     if (was === undefined) delete process.env.WHEELHOUSE_HOME;
     else process.env.WHEELHOUSE_HOME = was;
   }
 }
 
+// Why a plain event's data is refused, as the real helper's makeEvent refuses it, or null. makeEvent
+// checks the shape, then names this computer, in the stand-in's own home.
+function shapeProblem(kind, data, home) {
+  try {
+    inHome(home, () => makeEvent({ kind, data }));
+    return null;
+  } catch (error) {
+    return error.message;
+  }
+}
+
 // The views of `events`, as /state/views answers them. No click is signed in an evaluation, so
 // `approved` ({ work: hash }) says which work the director approved before the run, and in
 // what document: that work shows as approved while its latest work event still names that hash.
-export function standInViews(events, approved = {}) {
-  const views = buildViews(events, []);
+// `enrolled` are the computers whose signatures count: the stand-in's own, for the confirmations
+// it signs (`confirm`).
+export function standInViews(events, approved = {}, enrolled = []) {
+  const views = buildViews(events, enrolled);
   for (const [work, hash] of Object.entries(approved)) {
     const entry = views.work?.[work];
     if (entry && entry.work?.data?.doc?.hash === hash) {
@@ -99,19 +113,28 @@ export function standInViews(events, approved = {}) {
 // Starts the stand-in on `address` (a socket path, or a pipe on Windows).
 // `answers` maps a question id to the label the director chose; any other
 // question has no answer yet. `state` is what the project's state holds when the
-// run starts: { events, approved } (see standInViews). Resolves with
-// { address, records(), events(), close() }: records() gives every request in the
-// order it came, as { at, route, ...what it asked, ...what was answered };
-// events() gives the state's events, those the state started with and those written since.
-export async function startStandInHelper({ address, answers = {}, state = {} } = {}) {
+// run starts: { events, approved, pullRequests } (see standInViews; `pullRequests` maps the number
+// of a pull request already open to its head commit). `onHook({ body, views, events })`, when
+// given, answers /eval/hook with the text a hook adds (`{ text }`, or null for none): the scratch
+// plugin's hooks ask it, with the event and what Claude Code gave them. Resolves with
+// { address, records(), events(), views(), confirm(id), close() }: records() gives every request in
+// the order it came, as { at, route, ...what it asked, ...what was answered }; events() gives the
+// state's events, those the state started with and those written since; views() the views of
+// them; confirm(id) records, signed by the stand-in's own key, the confirmation of the ruling,
+// level or setting `id`, as the director's click on its confirm card would.
+export async function startStandInHelper({ address, answers = {}, state = {}, onHook } = {}) {
   if (typeof address !== 'string' || address === '') throw new Error('The stand-in helper needs an address');
   const records = [];
   const events = [...(state.events ?? [])];
   const approved = { ...(state.approved ?? {}) };
-  // A home of its own, where checking an event's shape may name a stand-in computer.
+  // A home of its own, where checking an event's shape may name a stand-in computer, and where its
+  // signing key is kept: the one computer enrolled.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-stand-in-'));
-  const opened = new Map();
-  let nextPr = 1;
+  const own = inHome(home, () => makeSigningKey());
+  const enrolled = [{ computer: own.computer, publicKey: own.publicKey, enrolledAt: new Date(0).toISOString() }];
+  const views = () => standInViews(events, approved, enrolled);
+  const opened = new Map(Object.entries(state.pullRequests ?? {}).map(([number, sha]) => [Number(number), sha]));
+  let nextPr = Math.max(0, ...opened.keys()) + 1;
   const record = (entry) => {
     records.push({ at: new Date().toISOString(), ...entry });
   };
@@ -194,7 +217,7 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
       record({ route: 'state/views', ...(body.cards === true ? { cards: true } : {}) });
       return {
         ok: true,
-        views: standInViews(events, approved),
+        views: views(),
         ...(body.cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
       };
     },
@@ -202,6 +225,12 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
     'POST /profile/views': () => {
       record({ route: 'profile/views' });
       return { ok: true, views: {} };
+    },
+    // The scratch plugin's hooks: { event, ...what Claude Code gave them } -> { text }.
+    'POST /eval/hook': (body) => {
+      const text = typeof onHook === 'function' ? onHook({ body, views: views(), events: events.map((e) => structuredClone(e)) }) : null;
+      record({ route: 'eval/hook', event: body.event ?? null, source: body.source ?? null, text: text ?? null });
+      return { ok: true, text: text ?? null };
     },
     // cli.js report: { cwd, session? }. No provenance on this computer, and STOP is off.
     'POST /lineage/provenance': (body) => {
@@ -240,6 +269,15 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
     address,
     records: () => records.map((entry) => ({ ...entry })),
     events: () => events.map((event) => structuredClone(event)),
+    views,
+    confirm: (id) => {
+      const target = events.find((e) => e.id === id);
+      if (target === undefined) throw new Error(`The state holds no event ${id} to confirm`);
+      const event = inHome(home, () => makeEvent(confirmationFor(target)));
+      events.push(event);
+      record({ route: 'eval/click', confirms: id, id: event.id });
+      return event;
+    },
     close: () => new Promise((resolve) => {
       server.close(() => {
         fs.rmSync(home, { recursive: true, force: true });

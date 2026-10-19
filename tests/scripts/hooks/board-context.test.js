@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, cardsDue, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -539,6 +539,14 @@ test('the count is at most one call\'s worth, and counts a question from the bui
     const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.ok(board.startsWith(`${cardsLine(1)}\n\n${HEADINGS.board}`), board);
   });
+});
+
+test('cardsDue counts from the views it is given, as the hook counts from the views on disk', () => {
+  const now = new Date(NOW);
+  assert.equal(cardsDue({ waiting: [...unasked(2), { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }] }, now), 2);
+  assert.equal(cardsDue({ waiting: unasked(6) }, now), 4, 'one call\'s worth at most');
+  assert.equal(cardsDue({ waiting: [], questions: { 'q-export-1': { question: { data: question('q-export-1') } } } }, now), 1);
+  assert.equal(cardsDue({}, now), 0);
 });
 
 test('the role comes from the session\'s first prompt and is kept: the wake line first makes the foreman, later changes nothing', async () => {

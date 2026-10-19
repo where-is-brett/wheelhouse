@@ -15,7 +15,15 @@ const VARIANTS = ['with', 'without'];
 // left out on purpose: Claude Code 2.1.302 does not list it in --help, yet
 // stops a session with `error_max_turns` when it is given (tried on that
 // version), so its effect shows in the result event, not the help text.
-const NEEDED_FLAGS = ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources'];
+const NEEDED_FLAGS = ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources', '--strict-mcp-config', '--disallowedTools'];
+
+// A session is kept away from the director's own. Started from inside a Claude Code session, it
+// would inherit that session's messaging socket, through which it could list and message the
+// director's other sessions, and the account's connectors (claude.ai MCP servers): so the socket is
+// not passed on, no MCP server is loaded but those a scenario names (--strict-mcp-config), and the
+// tools that reach other sessions or the account's routines are denied.
+const DENIED_TOOLS = ['ListAgents', 'SendMessage', 'RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList'];
+const NOT_PASSED_ON = { CLAUDE_CODE_MESSAGING_SOCKET: undefined, CLAUDE_CODE_MESSAGING_TOKEN: undefined };
 
 // ---------------------------------------------------------------- the stream
 
@@ -90,6 +98,12 @@ export function usageOf(events) {
   };
 }
 
+// The session's id, from its init event, or null.
+export function sessionIdOf(events) {
+  const init = events.find((event) => event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string');
+  return init?.session_id ?? null;
+}
+
 // Tokens across every model that worked, the main session's and the subagents',
 // summed from the result event's modelUsage. Falls back to the main session's
 // usage when the result carries no modelUsage.
@@ -135,6 +149,7 @@ async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs })
 // do not load beside the ones the scenario names with `pluginDirs`.
 // `appendSystemPrompt`, when given, is added to the session's system prompt: one
 // line with no double quotes, so it passes through claude.cmd on Windows too.
+// `resume`, when given, is the id of the session this prompt continues (--resume).
 export async function runSession({
   dir,
   prompt,
@@ -144,6 +159,7 @@ export async function runSession({
   maxTurns,
   env,
   appendSystemPrompt,
+  resume,
   settingSources = 'project,local',
   timeoutMs = 20 * 60 * 1000,
   command = 'claude',
@@ -151,7 +167,7 @@ export async function runSession({
 }) {
   // With the default command, find claude (on Windows, its .exe or .cmd); a command given is used as it is.
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
-  const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : [])];
+  const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
   await checkFlags({ commandArgs, flags, env, resolved });
   const args = [
     '--output-format', 'stream-json',
@@ -159,11 +175,14 @@ export async function runSession({
     '--permission-mode', permissionMode,
     '--max-turns', String(maxTurns),
     '--setting-sources', settingSources,
+    '--strict-mcp-config',
+    '--disallowedTools', DENIED_TOOLS.join(','),
     ...pluginDirs.flatMap((pluginDir) => ['--plugin-dir', pluginDir]),
     ...(model ? ['--model', model] : []),
     ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
+    ...(resume ? ['--resume', resume] : []),
   ];
-  const result = await start(resolved, { lead: commandArgs, args, prompt, cwd: dir, env, timeoutMs });
+  const result = await start(resolved, { lead: commandArgs, args, prompt, cwd: dir, env: { ...NOT_PASSED_ON, ...env }, timeoutMs });
   const events = parseStream(result.stdout);
   const outcome = { events, exitCode: result.code, usage: usageOf(events), totalUsage: totalUsageOf(events) };
   if (result.timedOut) outcome.timedOut = true;
@@ -297,6 +316,11 @@ async function commitSetup(dir) {
 // the scenario's setup(dir, variant), commits it, runs the session, asks the
 // scenario to judge it, writes the whole record to the evaluations folder in
 // the home folder, and removes the scratch project.
+// A scenario with `prompts` (a list) in place of `prompt` is one session over several of the
+// director's turns: each prompt after the first resumes the session (--resume), and
+// `between({ turn, turns, context, dir, variant })`, when given, runs before each of them (turn is
+// its index). Its pass gets `turns` ([{ prompt, events }]) beside `events`, every turn's in order;
+// its tokens are every turn's together. A session whose id can't be read ends after that turn.
 // setup may return a context: `env` (added to the session's environment),
 // `pluginDirs` (loaded after the variant's own), `appendSystemPrompt` (added to
 // the session's system prompt), anything its pass reads (given
@@ -308,23 +332,44 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
   try {
     context = (await scenario.setup(project.dir, variant)) ?? {};
     await commitSetup(project.dir);
-    const session = await runner({
-      dir: project.dir,
-      prompt: scenario.prompt,
-      pluginDirs: [...scenario.variants[variant].pluginDirs, ...(context.pluginDirs ?? [])],
-      permissionMode: scenario.permissionMode ?? 'acceptEdits',
-      model: scenario.model,
-      maxTurns: scenario.maxTurns ?? 30,
-      ...(context.env ? { env: context.env } : {}),
-      ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
-    });
-    const judged = scenario.pass({ events: session.events, dir: project.dir, variant, context });
+    const prompts = Array.isArray(scenario.prompts) ? scenario.prompts : [scenario.prompt];
+    const turns = [];
+    let resume = null;
+    for (const [turn, prompt] of prompts.entries()) {
+      if (turn > 0) {
+        if (resume === null) break;
+        await scenario.between?.({ turn, turns, context, dir: project.dir, variant });
+      }
+      const ran = await runner({
+        dir: project.dir,
+        prompt,
+        pluginDirs: [...scenario.variants[variant].pluginDirs, ...(context.pluginDirs ?? [])],
+        permissionMode: scenario.permissionMode ?? 'acceptEdits',
+        model: scenario.model,
+        maxTurns: scenario.maxTurns ?? 30,
+        ...(context.env ? { env: context.env } : {}),
+        ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
+        ...(resume === null ? {} : { resume }),
+      });
+      turns.push({ prompt, ...ran });
+      resume = sessionIdOf(ran.events);
+    }
+    const session = {
+      events: turns.flatMap((t) => t.events),
+      exitCode: turns.find((t) => t.exitCode !== 0)?.exitCode ?? 0,
+      ...(turns.some((t) => t.timedOut) ? { timedOut: true } : {}),
+      ...(turns.find((t) => t.stderr) ? { stderr: turns.find((t) => t.stderr).stderr } : {}),
+    };
+    const several = prompts.length > 1;
+    const judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}) });
     // A session whose result event says it errored (it ran out of turns, say) never passes.
-    const errored = session.events.findLast((event) => event.type === 'result')?.is_error === true;
+    const errored = turns.some((t) => t.events.findLast((event) => event.type === 'result')?.is_error === true);
     const pass = judged.pass && !errored;
-    const total = totalUsageOf(session.events);
+    const sum = (count) => turns.map((t) => count(t.events)).reduce((a, b) => ({ input: a.input + b.input, output: a.output + b.output }), { input: 0, output: 0 });
+    const total = sum(totalUsageOf);
     const notes = [judged.why];
     if (errored) notes.push('the result event is an error');
+    if (several && turns.length < prompts.length) notes.push(`only ${turns.length} of ${prompts.length} turns ran`);
     if (session.exitCode !== 0) notes.push(`claude exited ${session.exitCode}`);
     if (session.timedOut) notes.push('timed out');
     const why = notes.join('; ');
@@ -339,10 +384,11 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       why,
       exitCode: session.exitCode,
       usage: total,
-      mainSessionUsage: usageOf(session.events),
-      models: modelsUsed(session.events),
+      mainSessionUsage: sum(usageOf),
+      models: [...new Set(turns.flatMap((t) => modelsUsed(t.events)))],
       subagents: subagents(session.events),
-      finalText: finalText(session.events),
+      finalText: finalText(turns.at(-1)?.events ?? []),
+      ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, finalText: finalText(t.events), usage: totalUsageOf(t.events) })) } : {}),
       ...(session.stderr ? { stderr: session.stderr } : {}),
       ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
       events: session.events,

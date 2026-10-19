@@ -1,9 +1,9 @@
 // scripts/eval/front-desk.js
-// What the build loop's front desk scenarios share (tests/eval/build-loop/25,
-// 26, 27's route leg and 35): setting a scratch project up as the project's
-// main checkout, where the front desk works, with state already holding what
-// the scenario needs; and reading what the session did from its stream-json
-// events, its files and the state it wrote to.
+// What the front desk scenarios share (tests/eval/front-desk/, and
+// tests/eval/build-loop/25, 26, 27's route leg and 35): setting a scratch
+// project up as the project's main checkout, where the front desk works, with
+// state already holding what the scenario needs; and reading what the session
+// did from its stream-json events, its files and the state it wrote to.
 //
 // The set-up: the project's files committed on `main`; a feature's worktree
 // under .claude/worktrees/ when the scenario has one building; a stand-in
@@ -13,11 +13,16 @@
 // plugin named `wheelhouse` holds what a real front desk session uses: the
 // front desk's command (scripts/frontdesk/cli.js) with what it imports and
 // reads, the intake and front-desk skills, and a session start hook that gives
-// the line the real session start's reload gives a front desk session over
-// this state (session-start.js, `reload`). The real session start and the
-// board context hook need a real Wheelhouse home, and the card check would
-// never run, as `claude -p` offers no AskUserQuestion, so they stay out.
-// **Without**, no plugin of Wheelhouse's and a plain prompt.
+// what the real session start's reload gives a front desk session over the
+// state as it stands then (session-start.js, `reload`), asked of the stand-in
+// each time it runs, so a resumed or compacted session gets the state the
+// run has made. With `lastPrompt`, a prompt hook gives what the board context
+// hook gives the front desk on each prompt (board-context.js): the "cards to
+// ask" line, and the briefing on the first prompt after the gap, built by the
+// hook's own functions from the stand-in's state (promptContext). The real
+// session start and the board context hook need a real Wheelhouse home, and
+// the card check would never run, as `claude -p` offers no AskUserQuestion,
+// so they stay out. **Without**, no plugin of Wheelhouse's and a plain prompt.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,6 +32,12 @@ import { helperAddress } from '../lib/paths.js';
 import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { briefHash } from '../feature/files.js';
 import { reload } from '../hooks/session-start.js';
+import { HEADINGS, briefingIn, cardsDue, cardsLine } from '../hooks/board-context.js';
+import { boardModel } from '../board/model.js';
+import { effectiveSettings } from '../settings/effective.js';
+import { SETTINGS } from '../settings/catalogue.js';
+import { reviewDue } from '../frontdesk/learning.js';
+import { BRIEFING_GAP_HOURS, CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { locateSuperpowers } from './harness.js';
 import { plainEvent, standInViews, startStandInHelper } from './stand-in-helper.js';
 import { REPO_ROOT, callsOf, filesWritten } from './feature-project.js';
@@ -114,31 +125,114 @@ export const PLUGIN_FILES = [
   'templates/glossary.json',
 ];
 
-// The session start hook's script: the context the real session start gives, worked out at set-up.
-function reloadScript(text) {
-  const answer = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } };
-  return `// hooks/reload.js\n// The real session start's reload for this evaluation's state, worked out when it was set up.\nprocess.stdout.write(${JSON.stringify(JSON.stringify(answer))});\n`;
+// The hooks' script: it hands what Claude Code gave it to the stand-in helper at `address`, which
+// works out the text the real hook would add over the state as it stands (onHook), and prints it.
+// Nothing is printed when there is no text, or the stand-in can't be reached.
+function hookScript(address) {
+  return `// hooks/context.js
+// What the real session start or board context hook would add, asked of this evaluation's stand-in helper.
+import http from 'node:http';
+let given = '';
+process.stdin.on('data', (chunk) => { given += chunk; });
+process.stdin.on('end', () => {
+  let input = {};
+  try { input = JSON.parse(given); } catch { /* nothing to pass on */ }
+  const body = JSON.stringify({ event: input.hook_event_name ?? null, source: input.source ?? null, prompt: input.prompt ?? null });
+  const req = http.request({ socketPath: ${JSON.stringify(address)}, path: '/eval/hook', method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+    let text = '';
+    res.on('data', (chunk) => { text += chunk; });
+    res.on('end', () => {
+      try {
+        const answer = JSON.parse(text);
+        if (typeof answer.text === 'string' && answer.text !== '') {
+          process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext: answer.text } }));
+        }
+      } catch { /* adds nothing */ }
+    });
+  });
+  req.on('error', () => {});
+  req.end(body);
+});
+`;
 }
 
-const HOOKS = {
+const HOOK = { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/context.js"', timeout: 10 };
+const hooksFor = (prompts) => ({
   hooks: {
-    SessionStart: [{
-      matcher: 'startup|resume|compact|clear|fork',
-      hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/reload.js"', timeout: 10 }],
-    }],
+    SessionStart: [{ matcher: 'startup|resume|compact|clear|fork', hooks: [HOOK] }],
+    ...(prompts ? { UserPromptSubmit: [{ hooks: [HOOK] }] } : {}),
   },
-};
+});
+
+// The project the board context hook's functions are given: no project of this name is ever
+// registered, so they read nothing of one from the evaluation's home.
+const EVAL_PROJECT = 'wheelhouse-eval';
+
+// What the board context hook adds to a front desk prompt at `at` (a Date), over the stand-in's
+// `views` and `events`, as board-context.js's decide does: the "cards to ask" line, then, when the
+// gap since the director's last prompt (`seen.promptAt`) has passed, the briefing within what is
+// left of CONTEXT_CHARS. `usage` is the usage figures the briefing reads (usageFigures' shape), or
+// null for none. `seen` ({ promptAt, briefedAt }) is updated as markSeen would. The functions run
+// with WHEELHOUSE_HOME naming `home`, the evaluation's own, so they read nothing of the real one;
+// the glossary is the starter's. Left out, as no scenario needs them: STOP, learning, the board
+// commands and the gap setting. Null when it adds nothing.
+export function promptContext({ views, events, seen, at, usage = null, home }) {
+  const was = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    const last = seen.promptAt === null ? NaN : Date.parse(seen.promptAt);
+    const due = Number.isNaN(last) || at.getTime() - last >= BRIEFING_GAP_HOURS * 60 * 60 * 1000;
+    const count = cardsDue(views, at);
+    const cards = count > 0 ? cardsLine(count) : null;
+    let briefing = null;
+    if (due) {
+      const settings = effectiveSettings({ project: views.settings ?? {}, profile: {}, now: () => at });
+      const model = boardModel({ project: EVAL_PROJECT, views, events, usage, health: [], settings, sources: null, now: () => at });
+      const days = settings.delegationReviewDays?.value ?? SETTINGS.delegationReviewDays.default;
+      const review = { due: reviewDue({ events, now: at, days }), days };
+      const room = CONTEXT_CHARS - HEADINGS.briefing.length - 2 - (cards === null ? 0 : cards.length + 2);
+      const given = briefingIn({ project: EVAL_PROJECT, model, usage, sources: null, settings, since: seen.briefedAt, weeklySince: null, review, at, room });
+      briefing = `${HEADINGS.briefing}\n\n${given.text}`;
+    }
+    seen.promptAt = at.toISOString();
+    if (briefing !== null) seen.briefedAt = seen.promptAt;
+    const text = [cards, briefing].filter((part) => part !== null).join('\n\n');
+    return text === '' ? null : text;
+  } finally {
+    if (was === undefined) delete process.env.WHEELHOUSE_HOME;
+    else process.env.WHEELHOUSE_HOME = was;
+  }
+}
+
+// What the scratch plugin's hooks add, asked of the stand-in: the session start's reload, or the
+// board context hook's text when the scenario has it (`seen` not null).
+function hookText({ body, views, events, seen, usage, home }) {
+  if (body.event === 'SessionStart') return reload({ views, stop: null, notes: [], frontDesk: true });
+  if (body.event === 'UserPromptSubmit' && seen !== null) return promptContext({ views, events, seen, at: new Date(), usage, home });
+  return null;
+}
 
 // Sets `dir`, the scratch project, up as the project's main checkout for the front desk, and
 // starts the stand-in helper. Options:
 //   files       the project's files, { relative: text }, committed on main
-//   seed        the events the state holds when the run starts (seedEvent)
+//   commits     the project's history after that, [{ message, files }], each committed on main
+//   seed        the events the state holds when the run starts (seedEvent), or a function that
+//               makes them from { head }, the feature worktree's head commit (null without one)
 //   approved    { work: hash }: work the director approved before the run (standInViews)
 //   worktree    null, or { work, files }: a feature building in .claude/worktrees/<work>,
 //               on feature/<work>, its files committed there
+//   pullRequests  { number: 'head' }: pull requests open when the run starts, each at the commit
+//               the feature's worktree branch holds ('head') or a full commit
+//   lastPrompt  undefined for no board context hook (the build loop's scenarios); otherwise the
+//               time of the director's last prompt, or null for none, and with Wheelhouse the
+//               board context hook's text comes on each prompt (promptContext)
+//   usage       the usage figures the briefing reads, or null
 // Resolves with the context runScenario takes: { env, pluginDirs, appendSystemPrompt, helper,
-// seededIds, evidence, close }, with `reload`, the session start's text, with Wheelhouse.
-export async function setUpFrontDesk(dir, variant, { files = {}, seed = [], approved = {}, worktree = null } = {}) {
+// seededIds, evidence, hooksGave, head, close }, with `reload`, the session start's text over the
+// seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added, in order.
+export async function setUpFrontDesk(dir, variant, {
+  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, lastPrompt, usage = null,
+} = {}) {
   assertUnderTmp(dir);
   // By its real path: the command runs nothing when started through a link in its path (the
   // temporary folder is one on macOS), as it compares its own address with the one it was given.
@@ -161,14 +255,22 @@ export async function setUpFrontDesk(dir, variant, { files = {}, seed = [], appr
     for (const [relative, content] of Object.entries({ ...PROJECT_FILES, ...files })) write(dir, relative, content);
     git(dir, 'add', '--all');
     git(dir, 'commit', '--quiet', '-m', 'The project so far');
+    for (const commit of commits) {
+      for (const [relative, content] of Object.entries(commit.files ?? {})) write(dir, relative, content);
+      git(dir, 'add', '--all');
+      git(dir, 'commit', '--quiet', '--allow-empty', '-m', commit.message);
+    }
 
+    let head = null;
     if (worktree) {
       const at = path.join(dir, '.claude', 'worktrees', worktree.work);
       git(dir, 'worktree', 'add', '--quiet', '-b', `feature/${worktree.work}`, at, 'main');
       for (const [relative, content] of Object.entries(worktree.files ?? {})) write(at, relative, content);
       git(at, 'add', '--all');
       git(at, 'commit', '--quiet', '-m', 'Build task 1');
+      head = git(at, 'rev-parse', 'HEAD');
     }
+    if (typeof seed === 'function') seed = seed({ head });
     const pluginDirs = [];
     let appendSystemPrompt = PLAIN_PROMPT;
     let reloadText = null;
@@ -179,19 +281,28 @@ export async function setUpFrontDesk(dir, variant, { files = {}, seed = [], appr
       write(plugin, '.claude-plugin/plugin.json', `${JSON.stringify({ name: 'wheelhouse', version: '0.0.0', description: 'Wheelhouse\'s front desk, for one evaluation run.' }, null, 2)}\n`);
       for (const file of PLUGIN_FILES) write(plugin, file, fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'));
       reloadText = reload({ views: standInViews(seed, approved), stop: null, notes: [], frontDesk: true });
-      write(plugin, 'hooks/hooks.json', `${JSON.stringify(HOOKS, null, 2)}\n`);
-      write(plugin, 'hooks/reload.js', reloadScript(reloadText));
+      write(plugin, 'hooks/hooks.json', `${JSON.stringify(hooksFor(lastPrompt !== undefined), null, 2)}\n`);
       pluginDirs.push(plugin);
       appendSystemPrompt = undefined;
     }
 
     const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
-    helper = await startStandInHelper({ address, state: { events: seed, approved } });
+    if (plugin) write(plugin, 'hooks/context.js', hookScript(address));
+    // What the board context hook keeps in seen.json: the director's last prompt, the last briefing.
+    const seen = lastPrompt === undefined ? null : { promptAt: lastPrompt, briefedAt: null };
+    const prs = Object.fromEntries(Object.entries(pullRequests).map(([number, sha]) => [number, sha === 'head' ? head : sha]));
+    helper = await startStandInHelper({
+      address,
+      state: { events: seed, approved, pullRequests: prs },
+      onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home }),
+    });
     const seededIds = new Set(seed.map((e) => e.id));
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
+    // What the hooks added, in order: { event, source, text }.
+    const hooksGave = () => helper.records().filter((r) => r.route === 'eval/hook').map(({ event, source, text }) => ({ event, source, text }));
     return {
-      env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }),
-      helper, seededIds, evidence, close,
+      env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }), head,
+      helper, seededIds, evidence, hooksGave, close,
     };
   } catch (error) {
     await close();
@@ -256,6 +367,8 @@ export function skillsStarted(calls) {
 }
 
 const CODE = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
+// The product's own files a page or a style is in, beside its code.
+const PAGES = /\.(?:html?|css|svg)$/;
 
 const realOr = (p) => {
   try {
@@ -297,6 +410,88 @@ export function isProductCode(file, dir) {
 export function codeWrites(calls, dir) {
   return calls.flatMap((call) => filesWritten(call).filter((file) => isProductCode(file, dir)));
 }
+
+// The product's files the session or its subagents wrote: its code, as codeWrites reads it, and its
+// pages and styles, wherever in the project they are but among the front desk's papers.
+export function productWrites(calls, dir) {
+  return calls.flatMap((call) => filesWritten(call).filter((file) => {
+    if (isProductCode(file, dir)) return true;
+    if (typeof file !== 'string' || !PAGES.test(file)) return false;
+    const relative = inProject(dir, file);
+    return relative !== null && !PAPERS.test(relative) && !/^\.claude[\\/](?!worktrees[\\/])/.test(relative);
+  }));
+}
+
+// Every text the session wrote into a file with a tool: a Write's content, an Edit's new text; with
+// `dir`, only into a file in that project (not the scratchpad, say).
+export function textsWritten(calls, dir) {
+  return calls.filter((call) => dir === undefined || inProject(dir, String(call.input.file_path ?? '')) !== null).flatMap((call) => {
+    if (call.name === 'Write') return [String(call.input.content ?? '')];
+    if (call.name === 'Edit') return [String(call.input.new_string ?? '')];
+    if (call.name === 'MultiEdit') return (Array.isArray(call.input.edits) ? call.input.edits : []).map((e) => String(e?.new_string ?? ''));
+    return [];
+  });
+}
+
+// The skills that build or plan a build: never started at the front desk.
+export const BUILD_SKILLS = /writing-plans|executing-plans|subagent-driven-development|test-driven-development|\btdd\b|using-git-worktrees|finishing-a-development-branch/;
+
+// Whether `text` says a lane by name: "the small lane", "a small feature", "a small change" or
+// "job"; "the quick lane", "a quick change" or "job"; "the feature lane".
+export function laneSaid(text, lane) {
+  const said = {
+    quick: /\bquick[- ](?:lane|change|fix|job)\b/i,
+    small: /\bsmall[- ](?:lane|feature|change|job)\b/i,
+    feature: /\bfeature lane\b/i,
+    bug: /\bbug lane\b/i,
+  }[lane];
+  return said !== undefined && said.test(String(text));
+}
+
+// The sentences of a text, split after a stop, a question mark or a line's end.
+const sentences = (text) => String(text).split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean);
+
+// Whether `text` offers the director a look before the change is built: a sentence naming a
+// preview, a mock-up, a prototype, showing them or letting them see it (not users seeing it), as an offer (a question, "I can", "I'll", "want
+// me") or as what comes first ("before"), and not a sentence saying there is none (no, not,
+// without, n't).
+export function previewOffered(text) {
+  return sentences(text).some((one) => /\b(?:preview|mock-?ups?|prototype|sample page|show you|you see it|let you see)\b/i.test(one)
+    && (/\?$|\b(?:I can|I could|I'll|I will|want me|shall I|should I|before)\b/i.test(one))
+    && !/\b(?:no|not|without|never)\b|n't\b/i.test(one));
+}
+
+// The worker labels the briefing scenario looks for, each a whole word: "PR", "CI" in their own
+// capitals, "slice" in any case, each with its plural.
+export const LABELS = { PR: /\bPRs?\b/g, CI: /\bCI\b/g, slice: /\bslices?\b/gi };
+
+// The labels `text` uses bare: used, and nowhere defined: no "<label> means", "<label> (", or
+// "(<label>)" in it.
+export function bareLabels(text) {
+  const said = String(text);
+  return Object.entries(LABELS).filter(([label, pattern]) => {
+    if (said.match(pattern) === null) return false;
+    const word = label === 'slice' ? '[Ss]lices?' : `${label}s?`;
+    return !new RegExp(`\\b${word} means\\b|\\b${word} \\(|\\(${word}\\)`).test(said);
+  }).map(([label]) => label);
+}
+
+// Whether `text` quotes `words`: `n` of its words in a row, as they stand, in any case and with
+// any punctuation between them.
+export function quotes(text, words, n = 6) {
+  const tokens = (t) => String(t).toLowerCase().match(/[$a-z0-9]+(?:[.'][a-z0-9]+)*/g) ?? [];
+  const said = ` ${tokens(text).join(' ')} `;
+  const own = tokens(words);
+  for (let i = 0; i + n <= own.length; i += 1) if (said.includes(` ${own.slice(i, i + n).join(' ')} `)) return true;
+  return false;
+}
+
+// Lines of a text that are items of a list: "- ", "* ", "• " or "1. ", or a line in bold that starts
+// with "Option".
+export const listItems = (text) => String(text).split('\n').filter((line) => /^\s*(?:[-*•]\s+|\d+[.)]\s+|\*\*Option\b)/.test(line));
+
+// Whether the session compacted: a compact boundary in its events.
+export const compacted = (events) => events.some((e) => e.type === 'system' && e.subtype === 'compact_boundary');
 
 // The product's code files the session read: Read, a Grep or Glob over code, or a shell
 // command that shows a code file (cat, head, tail, less, sed -n, grep).

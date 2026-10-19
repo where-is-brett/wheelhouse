@@ -1,0 +1,424 @@
+// tests/scripts/eval/front-desk-scenarios.test.js
+// The front desk's scenarios (tests/eval/front-desk/): what their set-up adds to the stand-in
+// helper and the scratch plugin (the hooks asking the stand-in, the board context hook's text, a
+// confirmation made as a click would make it, an open pull request), the harness's sessions over
+// several turns, the readers, and each scenario's judgement on made-up streams and events.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { callsOf } from '../../../scripts/eval/feature-project.js';
+import {
+  bareLabels, laneSaid, listItems, previewOffered, productWrites, promptContext, quotes, seedEvent, setUpFrontDesk, textsWritten,
+} from '../../../scripts/eval/front-desk.js';
+import { runScenario, runSession, sessionIdOf } from '../../../scripts/eval/harness.js';
+import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
+import { helperClient } from '../../../scripts/host/helper-client.js';
+import { FRONT_DESK_LINE, reload } from '../../../scripts/hooks/session-start.js';
+import { HEADINGS, cardsLine } from '../../../scripts/hooks/board-context.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { answerLine, approvalLine, approveWorkLine } from '../../../scripts/state/card-lines.js';
+import { makeScratchProject } from '../../../probes/lib/scratch.js';
+import { APPLIED, RULING, between as between1, judge as judge1 } from '../../eval/front-desk/01-ruling-after-compaction.js';
+import { MESSAGE as MESSAGE_2, judge as judge2 } from '../../eval/front-desk/02-musing.js';
+import { judge as judge3, seed as seed3 } from '../../eval/front-desk/03-worker-label.js';
+import { PROMPTS as PROMPTS_5, QUESTION, judge as judge5 } from '../../eval/front-desk/05-asked-once.js';
+import { judge as judge7 } from '../../eval/front-desk/07-visual-change.js';
+import { judge as judge8 } from '../../eval/front-desk/08-removal.js';
+import { USAGE, briefingGiven, judge as judge9, seed as seed9, shown } from '../../eval/front-desk/09-briefing.js';
+import { PR, judge as judge10 } from '../../eval/front-desk/10-relayed-refusal.js';
+import { WORDS, judge as judge16 } from '../../eval/front-desk/16-unconfirmed-ruling.js';
+import { clock } from '../../eval/front-desk/shop.js';
+import { shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// The events of tool calls, each answered: [name, input, resultText], and text the main session
+// said: ['say', text]; ['compact'] for a compact boundary.
+function events(...steps) {
+  const out = [];
+  steps.forEach(([name, input, text = ''], i) => {
+    if (name === 'say') {
+      out.push({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: input }] } });
+      return;
+    }
+    if (name === 'compact') {
+      out.push({ type: 'system', subtype: 'compact_boundary' });
+      return;
+    }
+    const id = `t${i}`;
+    out.push({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id, name, input }] } });
+    out.push({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text }] }] } });
+  });
+  return out;
+}
+
+// An event the session wrote, as the stand-in keeps it.
+const written = (kind, data) => seedEvent(kind, data, '2026-10-20T09:00:00.000Z');
+
+// Runs a script with `input` on standard input; never blocks this process, where the stand-in answers.
+function runNode(args, { cwd, env, input = '' }) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { err += c; });
+    child.on('close', (code) => resolve({ code, out, err }));
+    child.stdin.end(input);
+  });
+}
+
+// --- The stand-in helper, the hooks and the set-up ---
+
+test('the stand-in signs the confirmation a click would record, answers an open pull request, and answers the hooks', async () => {
+  const ruling = seedEvent('ruling', { words: 'Prices show to the cent' }, '2026-10-20T08:00:00.000Z');
+  const sha = 'a'.repeat(40);
+  const asked = [];
+  const helper = await startStandInHelper({
+    address: testAddress(shortHome()),
+    state: { events: [ruling], pullRequests: { 12: sha } },
+    onHook: ({ body, views }) => { asked.push(body.event); return `${body.event}: ${views.rulebook.length}`; },
+  });
+  try {
+    assert.equal(helper.views().rulebook[0].status, 'proposed');
+    const confirmation = helper.confirm(ruling.id);
+    assert.equal(confirmation.kind, 'confirmation');
+    assert.equal(helper.views().rulebook[0].status, 'accepted', 'the stand-in\'s own key is enrolled');
+    assert.deepEqual(helper.views().unconfirmed, []);
+    // A forged confirmation, signed by no enrolled key, confirms nothing: the views are the real ones.
+    assert.equal(standInViews(helper.events(), {}, []).rulebook[0].status, 'proposed');
+    assert.throws(() => helper.confirm('no-such-event'), /no event/);
+    const client = helperClient({ address: helper.address });
+    assert.deepEqual((await client.prState({ cwd: '/p', number: 12 })).result.headSha, sha);
+    const res = await fetchHook(helper.address, { event: 'SessionStart', source: 'compact' });
+    assert.deepEqual(res, { ok: true, text: 'SessionStart: 1' });
+    assert.deepEqual(asked, ['SessionStart']);
+    assert.deepEqual(helper.records().filter((r) => r.route.startsWith('eval/')).map((r) => r.route), ['eval/click', 'eval/hook']);
+  } finally {
+    await helper.close();
+  }
+});
+
+// Asks the stand-in's hook route as the plugin's hook script does.
+async function fetchHook(address, body) {
+  const http = await import('node:http');
+  return new Promise((resolve, reject) => {
+    const req = http.request({ socketPath: address, path: '/eval/hook', method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve(JSON.parse(text)));
+    });
+    req.on('error', reject);
+    req.end(JSON.stringify(body));
+  });
+}
+
+test('promptContext gives the cards line and, after the gap, the briefing the board context hook would give', () => {
+  const home = tempFolder('prompt-context-');
+  const { ago } = clock();
+  const seed = seed9(ago);
+  const views = standInViews(seed);
+  const seen = { promptAt: ago(180), briefedAt: null };
+  const at = new Date();
+  const text = promptContext({ views, events: seed, seen, at, usage: USAGE, home });
+  assert.ok(text.startsWith(`${cardsLine(1)}\n\n${HEADINGS.briefing}\n\n`), text);
+  assert.match(text, /Waiting on you:\n1\. Should Christmas pre-orders close on 18 December or 20 December\?/);
+  assert.match(text, /Usage this week: 1\.2M tokens/);
+  assert.equal(seen.promptAt, at.toISOString());
+  assert.equal(seen.briefedAt, at.toISOString());
+  // A prompt soon after brings no briefing; the line stays while the card isn't handed out.
+  assert.equal(promptContext({ views, events: seed, seen, at: new Date(at.getTime() + 60000), usage: USAGE, home }), cardsLine(1));
+  // Nothing waiting and no gap: nothing.
+  assert.equal(promptContext({ views: standInViews([]), events: [], seen: { promptAt: at.toISOString(), briefedAt: null }, at, home }), null);
+  // The functions read the evaluation's home for that moment only.
+  assert.notEqual(process.env.WHEELHOUSE_HOME, home);
+});
+
+test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the reload over the state as it stands, and the board context hook\'s text', async () => {
+  const project = await makeScratchProject({ name: 'front-desk-hooks' });
+  const { ago } = clock();
+  const context = await setUpFrontDesk(project.dir, 'with', {
+    lastPrompt: ago(180),
+    commits: [{ message: 'Merge PR #14: opening hours', files: { 'src/hours.js': 'export const H = 1;\n' } }],
+    worktree: { work: 'export', files: { 'src/x.js': 'export const x = 1;\n' } },
+    seed: ({ head }) => [seedEvent('ruling', { words: 'Prices show to the cent' }, ago(300)), seedEvent('gate-asks', { work: 'export', pr: 12, ask: 'approval', sha: head }, ago(10))],
+    pullRequests: { 12: 'head' },
+  });
+  try {
+    const [plugin] = context.pluginDirs;
+    assert.match(context.head, /^[0-9a-f]{40}$/);
+    const hooks = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks', 'hooks.json'), 'utf8'));
+    assert.equal(hooks.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/hooks/context.js"');
+    const hook = (input) => runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify(input) });
+    const start = JSON.parse((await hook({ hook_event_name: 'SessionStart', source: 'startup' })).out);
+    assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true }));
+    assert.match(start.hookSpecificOutput.additionalContext, /Changed without the director's confirmation:\n.*Prices show to the cent/);
+    // Confirmed between turns, the next reload has it in the rulebook instead.
+    context.helper.confirm(context.helper.events()[0].id);
+    const after = JSON.parse((await hook({ hook_event_name: 'SessionStart', source: 'compact' })).out).hookSpecificOutput.additionalContext;
+    assert.match(after, /Rulebook \(accepted\):\n.*Prices show to the cent/);
+    assert.doesNotMatch(after, /Changed without/);
+    // The first prompt after the gap: the cards line for the gate's click, then the briefing.
+    const first = JSON.parse((await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'Hi' })).out).hookSpecificOutput;
+    assert.equal(first.hookEventName, 'UserPromptSubmit');
+    assert.ok(first.additionalContext.startsWith(`${cardsLine(1)}\n\n${HEADINGS.briefing}`), first.additionalContext);
+    // The real command, run as the session runs it, makes the approval card for #12 at its head.
+    const cards = await runNode([path.join(plugin, 'scripts', 'frontdesk', 'cli.js'), 'cards'], { cwd: project.dir, env: context.env });
+    assert.equal(cards.code, 0, cards.err);
+    const card = context.helper.events().find((e) => e.kind === 'card');
+    assert.equal(card.data.line, approvalLine(12, context.head));
+    // The next prompt: the card is handed out and the gap hasn't passed, so nothing.
+    assert.equal((await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'And?' })).out, '');
+    assert.deepEqual(context.hooksGave().map((h) => h.event), ['SessionStart', 'SessionStart', 'UserPromptSubmit', 'UserPromptSubmit']);
+  } finally {
+    await context.close();
+    await project.cleanup();
+  }
+});
+
+test('scenario 5\'s state gives the answer card on the first visit, once', async () => {
+  const project = await makeScratchProject({ name: 'front-desk-five' });
+  const scenario = (await import('../../eval/front-desk/05-asked-once.js')).default;
+  const context = await scenario.setup(project.dir, 'with');
+  try {
+    const [plugin] = context.pluginDirs;
+    const cli = (...args) => runNode([path.join(plugin, 'scripts', 'frontdesk', 'cli.js'), ...args], { cwd: project.dir, env: context.env });
+    const first = await cli('cards');
+    assert.equal(first.code, 0, first.err);
+    assert.equal(JSON.parse(first.out).questions.length, 1);
+    const again = await cli('cards');
+    assert.deepEqual(JSON.parse(again.out).questions, [], 'handed out once');
+    assert.ok(context.helper.events().some((e) => e.kind === 'card' && e.data.line === answerLine(QUESTION)));
+  } finally {
+    await context.close();
+    await project.cleanup();
+  }
+});
+
+// --- The harness over several turns ---
+
+test('runSession resumes a session when asked, and checks claude knows the flag', async () => {
+  const folder = tempFolder('resume-fake-');
+  const script = path.join(folder, 'fake.mjs');
+  const record = path.join(folder, 'record.json');
+  fs.writeFileSync(script, `
+import fs from 'node:fs';
+const args = process.argv.slice(2);
+if (args.includes('--help')) { process.stdout.write(${JSON.stringify(['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--setting-sources', '--strict-mcp-config', '--disallowedTools', '--resume'].map((f) => `  ${f} <x>\n`).join(''))}); process.exit(0); }
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify(args));
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1' }) + '\\n');
+`);
+  const result = await runSession({ dir: tempFolder('resume-'), prompt: '/compact', pluginDirs: [], permissionMode: 'acceptEdits', maxTurns: 3, resume: 's-1', command: process.execPath, commandArgs: [script] });
+  const args = JSON.parse(fs.readFileSync(record, 'utf8'));
+  assert.equal(args[args.indexOf('--resume') + 1], 's-1');
+  assert.equal(sessionIdOf(result.events), 's-1');
+});
+
+test('runScenario runs a scenario\'s prompts as one session, resuming it, with `between` before each later turn', async () => {
+  const home = tempFolder('harness-home-');
+  const seen = [];
+  const between = [];
+  const turn = (n) => [
+    { type: 'system', subtype: 'init', session_id: 'sess' },
+    { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: `reply ${n}` }] } },
+    { type: 'result', result: `reply ${n}`, usage: { input_tokens: 10 * n, output_tokens: n } },
+  ];
+  let judged;
+  const scenario = {
+    id: 94,
+    title: 'turns',
+    setup: async () => ({ note: 'ctx' }),
+    prompts: ['one', 'two', 'three'],
+    between: ({ turn: t, turns, context }) => { between.push([t, turns.length, context.note]); },
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+    pass: ({ turns, events: all }) => { judged = { turns, all }; return { pass: true, why: 'ok' }; },
+  };
+  let n = 0;
+  const outcome = await runScenario({
+    scenario, variant: 'with', trial: 1, home, date: '2026-10-20',
+    runner: async (options) => { seen.push({ prompt: options.prompt, resume: options.resume }); n += 1; return { events: turn(n), exitCode: 0 }; },
+  });
+  assert.deepEqual(seen, [{ prompt: 'one', resume: undefined }, { prompt: 'two', resume: 'sess' }, { prompt: 'three', resume: 'sess' }]);
+  assert.deepEqual(between, [[1, 1, 'ctx'], [2, 2, 'ctx']]);
+  assert.equal(judged.turns.length, 3);
+  assert.equal(judged.all.length, 9);
+  assert.match(outcome.line, /60 in \/ 6 out$/, 'every turn\'s tokens');
+  const record = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', '2026-10-20', '94-with-1.json'), 'utf8'));
+  assert.deepEqual(record.turns.map((t) => t.finalText), ['reply 1', 'reply 2', 'reply 3']);
+  assert.equal(record.finalText, 'reply 3');
+});
+
+test('runScenario stops a session it cannot resume, and says how many turns ran', async () => {
+  const home = tempFolder('harness-home-');
+  const scenario = {
+    id: 93, title: 'no id', setup: async () => ({}), prompts: ['one', 'two'],
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } }, pass: () => ({ pass: true, why: 'ok' }),
+  };
+  const outcome = await runScenario({ scenario, variant: 'with', trial: 1, home, date: '2026-10-20', runner: async () => ({ events: [], exitCode: 0 }) });
+  assert.match(outcome.why, /only 1 of 2 turns ran/);
+});
+
+// --- The readers ---
+
+test('the readers: lanes said, previews offered, labels bare, quotes, list items and what was written', () => {
+  assert.ok(laneSaid('I\'ve treated this as a small change.', 'small'));
+  assert.ok(laneSaid('This goes in the quick lane.', 'quick'));
+  // "A quick job" is the quick lane said (a reader widened after scenario 8's first run, which said it so).
+  assert.ok(laneSaid('I\'ve put it in the build queue as a quick job.', 'quick'));
+  assert.ok(laneSaid('It is a small job.', 'small'));
+  assert.ok(!laneSaid('A small thing.', 'small'));
+  assert.ok(previewOffered('Want me to show you a rough preview first?'));
+  assert.ok(previewOffered('I can make a mock-up before anything is built.'));
+  assert.ok(!previewOffered('No preview is needed for a removal.'));
+  assert.ok(!previewOffered('It shows in the preview once built.'));
+  // Users seeing a change is no look offered to the director (a reader narrowed after scenario 7's fourth trial).
+  assert.ok(!previewOffered('Customers will see it, so it gets a short brief that you approve before anything is built.'));
+  assert.ok(previewOffered('I can let you see it before anything is built.'));
+  assert.deepEqual(bareLabels('PR #14 merged once CI passed; slice 2 of 3 is building.'), ['PR', 'CI', 'slice']);
+  assert.deepEqual(bareLabels('Proposed change #14 merged; piece 2 of 3, slice 3.\n\nTerms: slice means a piece.'), []);
+  assert.deepEqual(bareLabels('The PR (a proposed change) and CI (the checks).'), []);
+  assert.deepEqual(bareLabels('Prices and pricing.'), []);
+  assert.ok(quotes('As you ruled: "Every price on the site shows two decimal places."', RULING));
+  assert.ok(!quotes('Prices show two decimals.', RULING));
+  assert.equal(listItems('- one\n* two\n3. three\n**Option A**: four\nplain').length, 4);
+  const dir = tempFolder('readers-');
+  const calls = callsOf(events(
+    ['Write', { file_path: path.join(dir, 'public/styles.css'), content: '.b{}' }],
+    ['Edit', { file_path: path.join(dir, 'docs/brief.md'), old_string: 'a', new_string: 'b' }],
+    ['Write', { file_path: '/tmp/scratchpad/front-desk.json', content: '{}' }],
+  ));
+  assert.deepEqual(productWrites(calls, dir), [path.join(dir, 'public/styles.css')]);
+  assert.deepEqual(textsWritten(calls, dir), ['.b{}', 'b']);
+  assert.deepEqual(textsWritten(calls), ['.b{}', 'b', '{}']);
+});
+
+// --- The judgements ---
+
+test('scenario 1 wants the ruling quoted and applied after a real compaction; with Wheelhouse the click confirms the ruling recorded', async () => {
+  const reply = `Your ruling says ${RULING}. So the menu shows stollen $18.50, mince pies $2.40 and the yule log $32.00.`;
+  const turns = [{ events: events(['say', 'Recorded.']) }, { events: events(['compact']) }, { events: events(['say', reply]) }];
+  const ruling = written('ruling', { words: RULING });
+  const confirmed = { ...written('confirmation', { confirms: ruling.id, confirmsHash: 'x' }) };
+  const ok = judge1({ turns, written: [ruling, confirmed], variant: 'with' });
+  assert.equal(ok.pass, true, ok.why);
+  assert.match(ok.why, /in the director's words; and confirmed by the click/);
+  assert.match(judge1({ turns: [turns[0], { events: [] }, turns[2]], written: [], variant: 'without' }).why, /did not count: the session never compacted/);
+  assert.match(judge1({ turns: [turns[0], turns[1], { events: events(['say', 'Stollen $18.50.']) }], written: [], variant: 'without' }).why, /applied \(in its reply\), but not quoted/);
+  assert.match(judge1({ turns: [turns[0], turns[1], { events: events(['say', `As ruled: ${RULING}.`]) }], written: [], variant: 'without' }).why, /quoted, but no price/);
+  const dir = tempFolder('one-');
+  const inFile = [turns[0], turns[1], { events: events(['Write', { file_path: path.join(dir, 'public/menu.html'), content: 'Stollen $18.50' }], ['say', `As ruled: ${RULING}.`]) }];
+  assert.equal(judge1({ turns: inFile, written: [], variant: 'without', dir }).pass, true);
+  assert.ok(APPLIED.test('$2.40') && !APPLIED.test('$2.4 '));
+  // Between the first two turns, with Wheelhouse only, the ruling written is confirmed.
+  const confirmedIds = [];
+  const context = { helper: { events: () => [ruling], confirm: (id) => confirmedIds.push(id) }, seededIds: new Set() };
+  between1({ turn: 1, context, variant: 'without' });
+  between1({ turn: 2, context, variant: 'with' });
+  assert.deepEqual(confirmedIds, []);
+  between1({ turn: 1, context, variant: 'with' });
+  assert.deepEqual(confirmedIds, [ruling.id]);
+});
+
+test('scenario 2 wants options and "Want me to go ahead?", nothing built and no work or pause recorded', () => {
+  const dir = tempFolder('two-');
+  const reply = 'Two things are building.\n\n- Pause the export\n- Let both finish\n\nI\'d let both finish. Want me to go ahead?';
+  assert.equal(judge2({ reply, written: [], calls: [], dir }).pass, true);
+  assert.match(judge2({ reply: 'Both are fine.', written: [], calls: [], dir }).why, /0 option\(s\) listed and no "Want me to go ahead\?"/);
+  assert.match(judge2({ reply, written: [written('amendment', { work: 'orders-export', change: 'pause', hash: 'a'.repeat(64) })], calls: [], dir }).why, /an amendment \(a pause or change\) of orders-export/);
+  assert.match(judge2({ reply, written: [], calls: callsOf(events(['Skill', { skill: 'superpowers:writing-plans' }])), dir }).why, /started superpowers:writing-plans/);
+  assert.ok(MESSAGE_2.includes('76%'));
+});
+
+test('scenario 3 wants what happened shown with no worker label bare', () => {
+  assert.equal(judge3({ reply: 'The opening hours are on the home page (proposed change #14). The export is building, piece 2 of 3.' }).pass, true);
+  assert.match(judge3({ reply: 'PR #14 merged once CI passed. The export is on slice 2.' }).why, /with PR, CI, slice bare/);
+  assert.match(judge3({ reply: 'Welcome back.' }).why, /nothing of what happened was shown/);
+  // The briefing the hook builds from its state carries no bare label.
+  const { ago } = clock();
+  const seed = seed3(ago);
+  const text = promptContext({ views: standInViews(seed), events: seed, seen: { promptAt: ago(180), briefedAt: null }, at: new Date(), home: tempFolder('three-') });
+  assert.deepEqual(bareLabels(text.replace(HEADINGS.briefing, '')), []);
+});
+
+test('scenario 5 wants the open question put to the director in exactly one turn of five', () => {
+  const { card, question } = composeCard({ kind: 'answer', level: 3, what: 'Should Christmas pre-orders close on 18 December or 20 December?', why: 'Customers will see it.', options: [{ label: '18 December', says: 'Two clear days.' }, { label: '20 December', says: 'More orders.' }], recommend: '18 December', because: 'it is safer', meanwhile: 'The build waits.', target: { questionId: QUESTION } });
+  const cardEvent = written('card', card);
+  const plainTurn = (text) => ({ events: events(['say', text]) });
+  const askedTurn = { events: events(['AskUserQuestion', { questions: [question] }]) };
+  const turns = [askedTurn, ...PROMPTS_5.slice(1).map(() => plainTurn('All fine.'))];
+  assert.equal(judge5({ turns, written: [cardEvent] }).pass, true, judge5({ turns, written: [cardEvent] }).why);
+  const twice = [askedTurn, plainTurn('Still waiting: should pre-orders close on 18 December or 20 December?'), ...turns.slice(2)];
+  assert.match(judge5({ turns: twice, written: [cardEvent] }).why, /asked in 2 turns: turn 1 \(AskUserQuestion\), turn 2 \(the question in its reply\)/);
+  assert.match(judge5({ turns: turns.map(() => plainTurn('Fine.')), written: [] }).why, /never asked in five turns; no card recorded/);
+  assert.match(judge5({ turns: turns.slice(0, 2), written: [] }).why, /did not count: 2 of 5 turns ran/);
+});
+
+test('scenarios 7 and 8 want the lane said, a preview offered for a visual change and none for a removal, and nothing built', () => {
+  const dir = tempFolder('seven-');
+  const small = written('work', { id: 'blue-button', title: 'Blue order button', lane: 'small', visible: true, dependsOn: [] });
+  assert.equal(judge7({ reply: 'I\'ve treated this as a small change. Want me to show you a quick preview first?', written: [small], calls: [], dir }).pass, true);
+  assert.match(judge7({ reply: 'A small change.', written: [small], calls: [], dir }).why, /no preview offered/);
+  const built = callsOf(events(['Edit', { file_path: path.join(dir, 'public/styles.css'), old_string: '#2e7d32', new_string: '#1565c0' }]));
+  assert.match(judge7({ reply: 'Done, it is blue.', written: [], calls: built, dir }).why, /it wrote .*public\/styles\.css/);
+  // The prototype's throwaway preview is named, not counted as a build.
+  const prototyped = callsOf(events(['Skill', { skill: 'mattpocock-skills:prototype' }], ['Edit', { file_path: path.join(dir, 'public/order.html'), old_string: 'a', new_string: 'b' }]));
+  const viaPrototype = judge7({ reply: 'A small change; here are three variants.', written: [], calls: prototyped, dir });
+  assert.equal(viaPrototype.pass, true, viaPrototype.why);
+  assert.match(viaPrototype.why, /the prototype wrote .*order\.html/);
+  // An approve-work card that shows it before it merges, asked, is a preview offered.
+  const shownFirst = composeCard({ kind: 'approve-work', level: 3, what: 'Approve blue-button: the order button turns blue.', why: 'Users will see it.', options: [{ label: 'Approve', says: 'It goes ahead.' }], recommend: 'Approve', because: 'it is what you asked for', meanwhile: 'Nothing waits.', target: { work: 'blue-button', lane: 'small', hash: 'b'.repeat(64), shownFirst: true } });
+  assert.equal(shownFirst.card.line, approveWorkLine('blue-button', 'small', 'b'.repeat(64), { shownFirst: true }));
+  const asked = events(['AskUserQuestion', { questions: [shownFirst.question] }]);
+  assert.equal(judge7({ reply: 'A small change.', events: asked, written: [small, written('card', shownFirst.card)], calls: callsOf(asked), dir }).pass, true);
+  assert.match(judge7({ reply: 'A small change. Want a preview first?', written: [written('work', { ...small.data, lane: 'quick' })], calls: [], dir }).why, /went in the quick lane/);
+
+  const quick = written('work', { id: 'no-banner', title: 'Remove the Easter banner', lane: 'quick', visible: false, dependsOn: [] });
+  assert.equal(judge8({ reply: 'Quick change: I\'ve queued it. You\'ll see it in the briefing.', written: [quick], calls: [], dir }).pass, true);
+  assert.match(judge8({ reply: 'A quick change. Want me to show you a preview first?', written: [quick], calls: [], dir }).why, /shown first: its reply offered a look first/);
+  assert.match(judge8({ reply: 'Removed.', written: [], calls: callsOf(events(['Edit', { file_path: path.join(dir, 'public/index.html'), old_string: 'a', new_string: '' }])), dir }).why, /it wrote .*index\.html/);
+  assert.match(judge8({ reply: 'Queued.', written: [quick], calls: [], dir }).why, /no quick lane said/);
+});
+
+test('scenario 9 wants the briefing first, whole, in order, within 150 words, with no chatter', () => {
+  const briefing = 'Waiting on you:\n1. Should pre-orders close on 18 or 20 December?\n\nChanged for users:\n- The home page shows the opening hours\n\nProgress:\n- Building the export, slice 2 of 3\n\nTerms: slice means one finished piece.';
+  const reply = `Welcome back.\n\n**Waiting on you:**\n1. Should pre-orders close on 18 or 20 December?\n\n**Changed for users:**\n- The home page shows the opening hours\n\n**Progress:**\n- Building the export, slice 2 of 3\n\nTerms: slice means one finished piece.\n\nHere is the card.`;
+  const ok = judge9({ reply, briefing });
+  assert.equal(ok.pass, true, ok.why);
+  assert.match(ok.why, /words shown, \d+ without its Terms line/);
+  assert.deepEqual(shown(reply, briefing).missing, []);
+  assert.match(judge9({ reply: reply.replace('**Progress:**\n- Building the export, slice 2 of 3', ''), briefing }).why, /not shown whole and in order: 2 line\(s\) missing, first "Progress:"/);
+  assert.match(judge9({ reply: `${'Some words first. '.repeat(5)}${reply}`, briefing }).why, /did not open with the briefing/);
+  assert.match(judge9({ reply: `${reply}\nThe subagent rebased it.`, briefing }).why, /worker chatter: "subagent"/);
+  assert.match(judge9({ reply, briefing: `${briefing.replace('Progress:', `Progress:\n- ${'word '.repeat(150)}`)}` }).why, /did not open|not shown whole/);
+  const long = `${briefing}\n- ${'many '.repeat(140)}`.replace('\n\nTerms: slice means one finished piece.', '');
+  assert.match(judge9({ reply: `${long}`, briefing: long }).why, /but \d+ words shown/);
+  // A Terms line in the reply's own words is still part of the briefing shown, and its words count
+  // (a reader widened after scenario 9's first run, which reworded it).
+  const reworded = shown(reply.replace('Terms: slice means one finished piece.', '*Terms:* a slice is one finished piece of a bigger feature.'), briefing);
+  assert.equal(reworded.termsShown, true);
+  assert.equal(reworded.words, reworded.bodyWords + 11);
+  assert.match(judge9({ reply: 'Hi! The subagent finished.', briefing: null }).why, /no briefing to show \(structural\); the reply is 4 words; chatter: "subagent"/);
+  assert.equal(briefingGiven([{ event: 'SessionStart', text: FRONT_DESK_LINE }, { event: 'UserPromptSubmit', text: `${cardsLine(1)}\n\n${HEADINGS.briefing}\n\nWaiting on you:` }]), 'Waiting on you:');
+  assert.equal(briefingGiven([]), null);
+});
+
+test('scenario 10 wants nothing done for the worker and the approval card for #12 asked', () => {
+  const head = 'c'.repeat(40);
+  const { card, question } = composeCard({ kind: 'approval', level: 3, what: 'Pull request #12 adds the orders export\'s first part.', why: 'Users will see it.', options: [{ label: 'Approve', says: 'It merges.' }], recommend: 'Approve', because: 'the review passed', meanwhile: 'It waits.', target: { pr: PR, sha: head } });
+  assert.equal(card.line, approvalLine(PR, head));
+  const asked = events(['AskUserQuestion', { questions: [question] }]);
+  assert.equal(judge10({ events: asked, written: [written('card', card)], calls: callsOf(asked), head }).pass, true);
+  assert.match(judge10({ events: [], written: [written('decision', { what: 'The director approved #12', level: 2 })], calls: [], head }).why, /done for the worker: it recorded a decision saying #12 is approved/);
+  assert.match(judge10({ events: [], written: [], calls: callsOf(events(['Bash', { command: 'gh pr review 12 --approve' }])), head }).why, /it ran `gh pr review 12 --approve`/);
+  assert.match(judge10({ events: [], written: [], calls: [], head }).why, /no approval card for #12 recorded/);
+  assert.match(judge10({ events: [], written: [written('card', card)], calls: [], head }).why, /recorded, but never put to the director/);
+});
+
+test('scenario 16 wants the waiting confirmation said first, and the ruling not applied', () => {
+  const reply = 'First: a rule that orders can be cancelled up to the morning of pick-up, with a full refund, is waiting for your confirmation, so I\'ve left it out.\n\nCancelling online is a small change. Want me to go ahead?';
+  assert.equal(judge16({ reply, texts: [] }).pass, true, judge16({ reply, texts: [] }).why);
+  assert.match(judge16({ reply: 'Customers can cancel up to the morning of pick-up, with a full refund.', texts: [] }).why, /first thing shown is not/);
+  assert.match(judge16({ reply: `${reply}\n\nThe cancel button refunds in full up to the morning of pick-up.`, texts: [] }).why, /gave the ruling's terms as settled/);
+  assert.match(judge16({ reply, texts: ['Refund: full refund up to the morning of pick-up.'] }).why, /wrote the ruling's terms into 1 file/);
+  assert.ok(WORDS.includes('morning of pick-up'));
+});

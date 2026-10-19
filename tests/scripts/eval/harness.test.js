@@ -104,10 +104,10 @@ function fakeClaude(folder, { helpFlags, exitCode = 0 } = {}) {
 import fs from 'node:fs';
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources', '--append-system-prompt']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
+  process.stdout.write(${JSON.stringify((helpFlags ?? ['--print', '--output-format', '--verbose', '--permission-mode', '--plugin-dir', '--model', '--setting-sources', '--append-system-prompt', '--strict-mcp-config', '--disallowedTools']).map((flag) => `  ${flag} <value>  something\n`).join(''))});
   process.exit(0);
 }
-fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), marker: process.env.EVAL_MARKER ?? null }));
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), marker: process.env.EVAL_MARKER ?? null, socket: process.env.CLAUDE_CODE_MESSAGING_SOCKET ?? null }));
 process.stdout.write(fs.readFileSync(${JSON.stringify(fixture)}, 'utf8'));
 process.exit(${exitCode});
 `);
@@ -193,6 +193,24 @@ test('runSession appends to the system prompt when asked, and checks claude know
     command: older.command,
     commandArgs: older.commandArgs,
   }), /--append-system-prompt/);
+});
+
+test('runSession keeps the session away from the director\'s own: no MCP servers but those named, no tools that reach other sessions or routines, no messaging socket', async () => {
+  const folder = tempFolder();
+  const fake = fakeClaude(folder);
+  const was = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  process.env.CLAUDE_CODE_MESSAGING_SOCKET = '/tmp/the-desktop.sock';
+  try {
+    await runSession({ dir: tempFolder('harness-session-'), prompt: 'x', pluginDirs: [], permissionMode: 'acceptEdits', maxTurns: 1, command: fake.command, commandArgs: fake.commandArgs });
+  } finally {
+    if (was === undefined) delete process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+    else process.env.CLAUDE_CODE_MESSAGING_SOCKET = was;
+  }
+  const { args, socket } = fake.record();
+  assert.ok(args.includes('--strict-mcp-config'));
+  const denied = args[args.indexOf('--disallowedTools') + 1].split(',');
+  for (const tool of ['ListAgents', 'SendMessage', 'RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList']) assert.ok(denied.includes(tool), tool);
+  assert.equal(socket, null, 'the messaging socket of the session that started it is not passed on');
 });
 
 // --max-turns is not in `claude --help` (checked on 2.1.302) yet works, so the fake leaves it out of its help

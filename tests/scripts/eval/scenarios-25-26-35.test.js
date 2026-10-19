@@ -140,8 +140,9 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
     assert.equal(context.appendSystemPrompt, undefined, 'no line in the system prompt stands in for the playbook');
     assert.equal(context.reload, FRONT_DESK_LINE);
     const hooks = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks', 'hooks.json'), 'utf8'));
-    assert.equal(hooks.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/hooks/reload.js"');
-    const start = await runNode([path.join(plugin, 'hooks', 'reload.js')], { cwd: project.dir });
+    assert.equal(hooks.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/hooks/context.js"');
+    assert.equal(hooks.hooks.UserPromptSubmit, undefined, 'no board context hook for the build loop\'s scenarios');
+    const start = await runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }) });
     assert.deepEqual(JSON.parse(start.out), { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: FRONT_DESK_LINE } });
     const allow = JSON.parse(fs.readFileSync(path.join(project.dir, '.claude', 'settings.local.json'), 'utf8')).permissions.allow;
     assert.ok(allow.includes(`Bash(node "${plugin}/scripts/frontdesk/cli.js":*)`), 'the front desk\'s own rule');
