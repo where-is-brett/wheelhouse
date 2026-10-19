@@ -44,7 +44,7 @@ import { recordRole } from '../../scripts/lib/role.js';
 import { run } from '../../scripts/lib/run.js';
 import { SETUP_STEPS } from '../../scripts/lib/setup-run.js';
 import { stopState } from '../../scripts/lib/stop.js';
-import { startRun, markStep } from '../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId } from '../../scripts/setup/journal.js';
 import { composeCard } from '../../scripts/cards/compose.js';
 import { replyCode, setLineOf } from '../../scripts/state/card-lines.js';
 import { listEvents, makeEvent } from '../../scripts/state/events.js';
@@ -521,8 +521,10 @@ test('a tick in a project still being set up answers setup, draws nothing and wa
   assert.equal(fs.existsSync(courierFile(PROJECT)), false, 'the courier never ran');
   assert.equal(fs.existsSync(watchFile(PROJECT)), false, 'nor did the watcher\'s check');
 
-  // Setup's last steps.
+  // Setup's last steps, and the health check's board found green, which finishes setup (setup's
+  // ruling R67).
   for (const { n } of SETUP_STEPS) markStep(run_.id, n, 'doneAt');
+  addChanges(run_.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date().toISOString() } }]);
   const after = await tick(c);
   assert.equal(after.role, 'front-desk');
   assert.equal(after.every, TICK_MS);

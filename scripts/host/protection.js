@@ -5,6 +5,7 @@
 // Errors name the step and the HTTP status, never GitLab's message text.
 import { projectPath } from './gitlab-key.js';
 import { scrub } from './adapter.js';
+import { toolPath } from '../lib/host-tools.js';
 
 const NO_ONE = 0;
 const DEVELOPERS = 30;
@@ -178,7 +179,7 @@ function ghApiFor(run, env) {
   return async (method, path, body) => {
     const args = ['api', path, '--method', method];
     if (body !== undefined) args.push('--input', '-');
-    const { code, stdout, stderr } = await run('gh', args, { env, input: body === undefined ? undefined : JSON.stringify(body) });
+    const { code, stdout, stderr } = await run(toolPath('gh'), args, { env, input: body === undefined ? undefined : JSON.stringify(body) });
     const text = String(stderr || '') + String(stdout || '');
     if (code === 0) {
       let parsed = null;

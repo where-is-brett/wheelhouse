@@ -3,6 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makeAdapter, detectHost } from '../../../scripts/host/adapter.js';
+import { tempFolder } from '../../helpers/homes.js';
+
+// gh and glab are run from Wheelhouse's tools folder when setup fetched them there
+// (scripts/lib/host-tools.js); these tests name the bare tools, so they run with an empty one.
+process.env.WHEELHOUSE_HOME = tempFolder('wh-host-tools-');
 
 const fixture = (host, name) => readFileSync(new URL(`../../fixtures/host/${host}/${name}`, import.meta.url), 'utf8');
 const gh = (name) => fixture('github', name);
@@ -589,6 +594,21 @@ test('GitLab hasCi throws when any lookup fails, while ciState keeps reading it 
         : { code: 1, stdout: '', stderr: 'glab: 500 Internal Server Error' }) });
   await assert.rejects(server.hasCi(GL_SHA, 'main'), /CI configuration/);
   await assert.rejects(adapter('gitlab').a.hasCi('nope', 'main'), /commit/);
+});
+
+// --- Closing a pull request (setup's step 10 closes its trial pull request) ---
+
+test('closePr closes the pull request on GitHub and the merge request on GitLab, and nothing else', async () => {
+  const hub = adapter('github', { stdout: '' });
+  assert.deepEqual(await hub.a.closePr(4), { number: 4 });
+  assert.deepEqual(hub.calls[0].args, ['pr', 'close', '4', '--repo', REPO]);
+  assert.equal(hub.calls[0].env, ENV);
+  const lab = adapter('gitlab', { stdout: '' });
+  assert.deepEqual(await lab.a.closePr(4), { number: 4 });
+  assert.deepEqual(lab.calls[0].args, ['mr', 'close', '4', '-R', REPO]);
+  await assert.rejects(hub.a.closePr(0), /whole number/);
+  const refused = adapter('github', { code: 1, stderr: 'boom ghs_FAKEKEY0123456789abcdef' });
+  await assert.rejects(refused.a.closePr(4), (error) => /gh pr close failed/.test(error.message) && !error.message.includes('ghs_FAKEKEY'));
 });
 
 // --- previews (front desk, Task 12) ---

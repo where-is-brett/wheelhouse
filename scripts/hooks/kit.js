@@ -54,6 +54,8 @@ import { projectForFolder, isInsideFolder } from '../lib/projects.js';
 import { lockedProjects, managedDir } from '../protection/managed.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { readJournal, firstUnfinished } from '../lib/setup-run.js';
+import { readSmallText, SMALL_FILE_BYTES } from '../lib/small-file.js';
+import { pluginOnIn } from '../lib/plugin-on.js';
 
 export { managedDir, lockedProjects };
 
@@ -83,32 +85,8 @@ export const answer = {
   block: (reason) => ({ decision: 'block', reason }),
 };
 
-// A small regular file's text, or null. The file is opened without waiting (O_NONBLOCK where
-// the platform has it; Windows has no FIFOs and no such flag) and read only when it is a
-// regular file of at most `max` bytes, so a FIFO, a device or a huge file planted in a folder
-// an agent controls can't hang or swamp a hook.
-const NONBLOCK = fs.constants.O_NONBLOCK ?? 0;
-export const SMALL_FILE_BYTES = 64 * 1024;
-export function readSmallText(file, max = SMALL_FILE_BYTES) {
-  let fd;
-  try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | NONBLOCK);
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > max) return null;
-    const buffer = Buffer.alloc(stat.size);
-    let got = 0;
-    while (got < stat.size) {
-      const n = fs.readSync(fd, buffer, got, stat.size - got, got);
-      if (n === 0) break;
-      got += n;
-    }
-    return buffer.subarray(0, got).toString('utf8');
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* already closed */ }
-  }
-}
+// A small regular file's text, or null, read without waiting (scripts/lib/small-file.js).
+export { readSmallText, SMALL_FILE_BYTES };
 const readText = (file) => readSmallText(file);
 
 // The main folder of the repository `cwd` is in, read from .git files with fs
@@ -166,25 +144,6 @@ export function registeredByPath(cwd) {
   }
 }
 
-const WHEELHOUSE_PLUGIN = /^wheelhouse@[^@\s]+$/;
-
-// Whether the folder's own Claude settings switch the Wheelhouse plugin on (installed for this
-// project, or for the director in it): `.claude/settings.local.json`, which wins where it names the
-// plugin, then `.claude/settings.json`. Small files only, read without waiting.
-function pluginOnIn(dir) {
-  const named = (name) => {
-    try {
-      const enabled = JSON.parse(readSmallText(path.join(dir, '.claude', name)) ?? 'null')?.enabledPlugins;
-      if (!enabled || typeof enabled !== 'object') return undefined;
-      const values = Object.entries(enabled).filter(([k]) => WHEELHOUSE_PLUGIN.test(k)).map(([, v]) => v);
-      return values.length === 0 ? undefined : values.includes(true);
-    } catch {
-      return undefined;
-    }
-  };
-  return (named('settings.local.json') ?? named('settings.json')) === true;
-}
-
 // The folder being set up that `cwd` lies in, or null. The hooks act only in a registered project,
 // and the folder setup is working on isn't one yet (the plan's builder check 3), so a folder in no
 // registered project counts as being set up when a setup run's folder holds it, or when its own
@@ -194,18 +153,21 @@ function pluginOnIn(dir) {
 // `journal: false`.
 // Setup's step 3 registers the folder, and step 7 makes its first commit, so for steps 4 to 10 the
 // folder is a registered one, with no .git until step 7. A registered folder still counts as being
-// set up while a run that holds it is unfinished, and only then: once every step is done it is a
-// project like any other, and a registered folder whose journal can't be read is left to the
-// project's own hooks. Never throws: a folder that can't be placed is null, and callers that guard
-// treat that as they already do. The guards ask projectOf and registeredByPath first, and act in
-// a registered folder by those.
+// set up while the latest run in the registered record's own folder is unfinished, and only then:
+// the product's folder exists from setup's step 1, and its run is there (ruling R34), so a run in
+// a folder above it, another product's setup, is never this project's (ruling R27). Once every
+// step is done it is a project like any other, and a registered folder whose journal can't be read
+// is left to the project's own hooks (the session start then holds the foreman back, as whether
+// setup finished isn't known). Never throws: a folder that can't be placed is null, and
+// callers that guard treat that as they already do. The guards ask projectOf and registeredByPath
+// first, and act in a registered folder by those.
 export function beingSetUp(cwd, { home = os.homedir() } = {}) {
   if (typeof cwd !== 'string' || cwd === '' || !path.isAbsolute(cwd)) return null;
   let real;
   let registered;
   try {
     real = fs.realpathSync.native(cwd);
-    registered = projectForFolder(real) !== null;
+    registered = projectForFolder(real);
   } catch {
     return null;
   }
@@ -215,14 +177,19 @@ export function beingSetUp(cwd, { home = os.homedir() } = {}) {
   } catch {
     return registered ? null : { folder: real, run: null, journal: false };
   }
-  const holding = runs.filter((r) => typeof r?.folder === 'string' && isInsideFolder(r.folder, real));
+  const named = runs.filter((r) => typeof r?.folder === 'string');
+  if (registered) {
+    const run = named.filter((r) => sameFolder(r.folder, registered.record.folder)).at(-1);
+    return run && firstUnfinished(run) !== null ? { folder: run.folder, run, journal: true } : null;
+  }
+  // A run at the home folder or above it is never one setup started (the engine refuses it), and
+  // would hold every folder under home.
+  const holding = named.filter((r) => isInsideFolder(r.folder, real) && !isInsideFolder(r.folder, home));
   if (holding.length > 0) {
     const nearest = Math.max(...holding.map((r) => r.folder.length));
     const run = holding.filter((r) => r.folder.length === nearest).at(-1);
-    if (registered && firstUnfinished(run) === null) return null;
     return { folder: run.folder, run, journal: true };
   }
-  if (registered) return null;
   const stop = path.resolve(home);
   for (let dir = real; dir !== stop && !sameFolder(dir, stop); dir = path.dirname(dir)) {
     if (pluginOnIn(dir)) return { folder: dir, run: null, journal: true };

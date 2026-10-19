@@ -109,6 +109,12 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       return { number };
     },
 
+    // Closes the merge request, unmerged; its branch is left (setup's step 10 deletes its own).
+    async closePr(number) {
+      await call(['mr', 'close', String(number), ...R]);
+      return { number };
+    },
+
     async prState(number) {
       const mr = await ask(['mr', 'view', String(number), ...R, '--output', 'json']);
       return { headSha: mr.sha, ...(typeof mr.source_branch === 'string' ? { headRef: mr.source_branch } : {}), ...(typeof mr.target_branch === 'string' ? { baseRef: mr.target_branch } : {}), mergeable: mergeable(mr.detailed_merge_status), state: STATE[mr.state] ?? 'unknown', ...(typeof mr.description === 'string' ? { body: mr.description } : {}) };

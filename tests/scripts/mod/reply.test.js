@@ -576,9 +576,11 @@ test('no reply lets a setup step go ahead: only the director\'s click on the car
   await withHome(async () => {
     const line = setupLine(1, 'fedcba9876543210'.repeat(4));
     await show(cardOf(line, 'Setup step 1, checking this computer, changes nothing on it.'), { options: ['Go ahead', 'Not now', 'Explain more'] });
+    // A setup card gets no shown record (ruling R36), so its code, even on a card written by hand,
+    // names no card.
     for (const label of ['Go ahead', 'Not now']) {
       const c = fake();
-      assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER }), { made: false, says: 'That option doesn\'t need a reply code' }, label);
+      assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER }), { made: false, says: 'No card has that code' }, label);
       assert.equal(c.calls.record.length + c.calls.profileRecord.length + c.calls.write.length, 0, label);
     }
   });

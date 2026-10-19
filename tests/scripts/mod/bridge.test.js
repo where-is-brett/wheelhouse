@@ -20,7 +20,7 @@ import { keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/path
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { courierFile } from '../../../scripts/mod/courier.js';
 
@@ -660,8 +660,13 @@ test('a session in a registered project whose setup run is unfinished is setup\'
   markStep(run.id, 10, 'doneAt', { now: at });
   assert.deepEqual(await handle(tickOf(repo), live({ watchTick })), SETUP_TICK);
 
-  // Once every step is done, the same session's next tick is the front desk's.
+  // Every step marked done is not yet the end: the health check counts once its board was green
+  // (setup's ruling R67).
   for (const { n } of SETUP_STEPS) markStep(run.id, n, 'doneAt', { now: at });
+  assert.deepEqual(await handle(tickOf(repo), live({ watchTick })), SETUP_TICK);
+
+  // Once every step is done and the board was green, the same session's next tick is the front desk's.
+  addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: at().toISOString() } }]);
   const after = await handle(tickOf(repo), live({ watchTick }));
   assert.equal(after.ok, true);
   assert.equal(after.role, 'front-desk');

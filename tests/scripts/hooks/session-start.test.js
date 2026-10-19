@@ -14,6 +14,7 @@ import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HE
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -22,11 +23,12 @@ import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { journalFile } from '../../../scripts/lib/setup-run.js';
 
 const P = 'owner__name';
 
@@ -639,6 +641,67 @@ test('in a Shape 1 project the session start starts the watcher when it isn\'t r
   });
 });
 
+// The foreman's start is the last thing setup does, once step 10's board is green (ruling R44):
+// a session start in a project setup is still finishing starts no watcher.
+test('the session start starts no watcher in a project setup is still finishing', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-finishing zoë '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const T = Date.parse('2026-10-19T03:00:00.000Z');
+    const setupRun = startRun({ folder, now: () => new Date(T) });
+    for (let n = 1; n <= 9; n += 1) markStep(setupRun.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    const start = (f) => decide({ cwd: folder, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true,
+    });
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.config = async () => shapeConfig(1);
+    await start(f);
+    assert.equal(watcherStarts(f).length, 0, 'not while step 10 is unfinished');
+    // Interrupted after step 10's apply, before the board went green (ruling R67): the session
+    // start resumes at step 10 and starts no watcher.
+    markStep(setupRun.id, 10, 'doneAt', { now: () => new Date(T + 10 * 60000) });
+    const resumed = await start(f);
+    assert.equal(watcherStarts(f).length, 0, 'not before the board is green');
+    assert.ok(text(resumed).split('\n').includes('Setup is part-way through: step 10, Health check, is next. Follow wheelhouse:setup.'), text(resumed));
+    addChanges(setupRun.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
+    await start(f);
+    assert.equal(watcherStarts(f).length, 1, 'a project setup has finished is started as any other');
+  });
+});
+
+// Whether setup has finished here isn't known while its journal can't be read, so the foreman,
+// the last thing setup starts, isn't started (rulings R44, R67); the rest of the session start
+// goes on as in any project.
+test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-unreadable journal '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const start = (f) => decide({ cwd: folder, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true,
+    });
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.config = async () => shapeConfig(1);
+    fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
+    fs.writeFileSync(journalFile(), 'not json');
+    assert.equal(beingSetUp(folder), null, 'the guards treat it as the project it is');
+    const unreadable = await start(f);
+    assert.equal(watcherStarts(f).length, 0, 'not while the journal can\'t be read');
+    // Readable again (no journal at all: setup never ran here), it is started, and the reload is the same.
+    fs.rmSync(journalFile());
+    const readable = await start(f);
+    assert.equal(watcherStarts(f).length, 1);
+    assert.equal(text(unreadable), text(readable));
+  });
+});
+
 test('the session start leaves the watcher alone in Shape 2, and fails open when the configuration can\'t be had', async () => {
   await withHome(async () => {
     const answers = [
@@ -974,8 +1037,13 @@ test('the guards act in a folder being set up', async () => {
     for (const folder of [withRun, switchedOn]) {
       assert.ok(denied(await stop({ ...call(folder, 'Write'), tool_input: { file_path: path.join(folder, 'a.txt') } })), folder);
       assert.ok(denied(await stop(bash(folder, 'npm install'))), folder);
-      for (const reading of ['status', 'plan 3', 'plan 10', 'resume']) assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
-      for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x']) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
+      // `health` with the trial lines the session printed is a reading form too (ruling R41).
+      const trialLine = '"read .env.local: refused / refused"';
+      for (const reading of ['status', 'plan 3', 'plan 10', 'resume', 'health', `health ${trialLine}`, `health ${trialLine} "merge with forged approval: refused / MERGED (unexpected)"`]) {
+        assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
+      }
+      for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x', 'health "not a line"', 'health status',
+        `health ${Array.from({ length: 13 }, () => trialLine).join(' ')}`]) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
       assert.equal(await stop(call(folder, 'Read')), undefined);
     }
     assert.equal(await stop({ ...call(stranger, 'Write'), tool_input: { file_path: path.join(stranger, 'a.txt') } }), undefined);
@@ -1016,6 +1084,7 @@ test('in a registered folder setup is still finishing, the session start resumes
       liftStop();
       // Once every step is done, the folder is a project like any other.
       for (let n = 4; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+      addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
       const g = fake();
       const after = await start(g, folder);
       if (git) {
@@ -1027,6 +1096,34 @@ test('in a registered folder setup is still finishing, the session start resumes
         assert.equal(g.calls.spawn.length, 0);
       }
     }
+  });
+});
+
+test('a run in a parent folder does not put a registered project below it in setup mode', async () => {
+  // Ruling R27: another product's setup, unfinished in a folder above a registered project, is
+  // not the project's. The project gets its front-desk line, and only a run in its own folder counts.
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const parent = fs.realpathSync.native(tempFolder('wh-parent zoë '));
+    const parentRun = startRun({ folder: parent });
+    const folder = path.join(parent, 'shop');
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(folder, 'web'));
+    writeProject('o__shop', { folder, remoteUrl: 'https://example.com/o/shop.git', host: 'github', repo: 'o/shop', connection: {} });
+    assert.equal(beingSetUp(folder), null);
+    assert.equal(beingSetUp(path.join(folder, 'web')), null);
+    const f = fake();
+    const out = await decide({ cwd: folder, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: managed, stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+    });
+    const lines = text(out).split('\n');
+    assert.ok(lines.includes(FRONT_DESK_LINE), lines.join('\n'));
+    assert.ok(!lines.some((l) => l.startsWith('Setup is part-way')), lines.join('\n'));
+    // The parent's own folder is still being set up, and a run in the project's own folder counts there.
+    assert.equal(beingSetUp(parent)?.run?.id, parentRun.id);
+    const own = startRun({ folder: fs.realpathSync.native(folder) });
+    assert.equal(beingSetUp(path.join(folder, 'web'))?.run?.id, own.id);
   });
 });
 

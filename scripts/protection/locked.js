@@ -99,7 +99,9 @@ function registeredDomains() {
 const filePath = (dir) => path.join(dir, 'managed-settings.json');
 const installedPath = (dir) => path.join(dir, 'wheelhouse', 'installed.json');
 const inPlace = (dir) => fs.existsSync(filePath(dir)) && fs.existsSync(installedPath(dir));
-const ownFile = (dir) => !fs.existsSync(filePath(dir)) || fs.existsSync(installedPath(dir));
+// Whether the computer-wide settings file in `dir` is Wheelhouse's to replace: absent, or put there
+// by Locked, with its record beside it.
+export const ownFile = (dir) => !fs.existsSync(filePath(dir)) || fs.existsSync(installedPath(dir));
 
 async function administrator(run, shell) {
   return run('osascript', ['-e', 'on run argv', '-e', 'do shell script (item 1 of argv) with administrator privileges', '-e', 'end run', '--', shell]);

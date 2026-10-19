@@ -40,18 +40,24 @@ const INPUTS = {
   'lift-incident': { ...common, kind: 'lift-incident', recommend: 'End it', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, kind: 'incident-fix', recommend: 'Merge the fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
   setup: { ...common, kind: 'setup', recommend: 'Go ahead', what: 'Setup step 1, checking this computer, changes nothing on it.', options: [says('Go ahead')], target: { step: 1, hash: DOC } },
+  'confirm-all': {
+    ...common, kind: 'confirm-all', recommend: 'Confirm all', what: 'Setup step 5 found 2 rules: 1) "Money is shown in dollars"; 2) "Never push to main".',
+    options: [says('Confirm all'), says('Let me correct some')], target: { count: 2, hash: DOC },
+  },
   baseline: { ...common, kind: 'baseline', recommend: 'Record these', what: 'The first version\'s figures from your note: US$100.00 for 4 merged pull requests.', options: [says('Record these')], target: { hash: DOC } },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 // The event data the state keeps for a composed card.
 const dataOf = (kind) => composeCard(INPUTS[kind]).card;
 const SET_LINE_KINDS = Object.keys(DECIDING);
-// A setup card gets no button: its step goes ahead only by the director's click on the very card
-// setup showed, which only the prompt record counts. Its note sends the director to the chat
-// where setup asked it. Nor does the baseline card, for that reason; its note is the plain one.
-const NO_BUTTON_KINDS = ['setup', 'baseline'];
+// A setup card, and setup's card of the rules found, get no button: the step goes ahead only by the
+// director's click on the very card setup showed, which only the prompt record counts. Its note
+// sends the director to the chat where setup asked it. Nor does the baseline card, for that
+// reason; its note is the plain one.
+const SETUP_KINDS = ['setup', 'confirm-all'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline'];
 const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
-const noButtonsFor = (kind) => (kind === 'setup' ? NO_BUTTONS : { buttons: [], note: CANT_ANSWER });
+const noButtonsFor = (kind) => (SETUP_KINDS.includes(kind) ? NO_BUTTONS : { buttons: [], note: CANT_ANSWER });
 
 test('each kind of card gets its own buttons, and only the options it offers', () => {
   for (const kind of SET_LINE_KINDS) {
@@ -138,7 +144,8 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
     const lines = data.question.split('\n');
     const broken = [
       lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
-      lines.filter((l) => !l.startsWith('Reply code:')).join('\n'),
+      // A setup card has no reply code line to take away (ruling R36).
+      ...(SETUP_KINDS.includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       data.question.replace(/^While you decide:.*$/m, 'While you decide:'),
@@ -148,7 +155,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       const got = cardButtons({ ...data, question });
       assert.equal(got.buttons.some((b) => b.does === 'record'), false, `${kind}: ${question}`);
       assert.deepEqual(got.buttons, NO_BUTTON_KINDS.includes(kind) ? [] : [{ label: 'Explain more', does: 'turn' }], kind);
-      assert.equal(got.note, kind === 'setup' ? SETUP_ANSWER : CANT_ANSWER, kind);
+      assert.equal(got.note, SETUP_KINDS.includes(kind) ? SETUP_ANSWER : CANT_ANSWER, kind);
     }
   }
 });
@@ -215,4 +222,17 @@ test('a setup card gets no button on the pane, whatever it offers and whatever k
   assert.deepEqual(cardButtons({ ...approval, kind: 'setup' }), NO_BUTTONS);
   assert.equal(isSetupCard(approval), false);
   for (const junk of [null, undefined, 5, 'text', [], {}]) assert.equal(isSetupCard(junk), false, String(junk));
+});
+
+test('setup\'s card of the rules found gets no button on the pane either, by its kind or by its line', () => {
+  const rules = dataOf('confirm-all');
+  assert.equal(isSetupCard(rules), true);
+  assert.deepEqual(rules.options, ['Confirm all', 'Let me correct some', 'Not now', 'Explain more']);
+  assert.equal(rules.code, null);
+  assert.deepEqual(cardButtons(rules), NO_BUTTONS);
+  for (const kind of ['approval', 'confirm', 'question', undefined]) {
+    assert.equal(isSetupCard({ ...rules, kind }), true, String(kind));
+    assert.deepEqual(cardButtons({ ...rules, kind }), NO_BUTTONS, String(kind));
+  }
+  assert.equal(isSetupCard({ ...dataOf('approval'), kind: 'confirm-all' }), true);
 });

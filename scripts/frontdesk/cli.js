@@ -29,7 +29,7 @@ import { composeCard, answerInput, PART_LABELS } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
-import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS } from '../settings/catalogue.js';
+import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
 import { CARD } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
@@ -341,6 +341,9 @@ export async function writeSetting({ client, cwd, data, words, makeId = () => cr
   if (definitionOf(data.key) === WINDOWS_BUILD_COMMANDS && data.value !== 'ask') {
     throw new CliError('Build commands on Windows are turned on only by a click on their own card; the front desk can set them back to ask');
   }
+  // The person's own GitHub App decides which app holds the narrow keys (ruling R56): only setup
+  // records it, from the app GitHub shows for it.
+  if (data.key === OWN_GITHUB_APP_KEY) throw new CliError('Your own GitHub App is recorded only by setup, from the app GitHub shows');
   const setting = { ...data, words: settingWords(data.key, data.value, data.until) };
   const answered = (got) => ({ id: got.id, pushed: got.pushed === true });
   const withCard = async (got) => {

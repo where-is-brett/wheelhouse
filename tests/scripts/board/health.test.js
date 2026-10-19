@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { healthLines, readHostFacts, QUICK_LINE } from '../../../scripts/board/health.js';
+import { healthLines, readHostFacts, QUICK_LINE, phonePushLine } from '../../../scripts/board/health.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
@@ -79,6 +79,27 @@ test('the lines come only in their own case', () => {
   assert.deepEqual(texts({ renewal: { due: true, on: '2026-12-25' } }), ['Protection: Standard', 'Renew the host key by 25 December 2026']);
   assert.deepEqual(texts({ profile: null }), ['Protection: Standard', NO_PROFILE]);
   assert.deepEqual(texts({ stop: { on: true } }), ['STOP is on', 'Protection: Standard']);
+});
+
+test('a push test that didn\'t reach the phone is a dated watch line saying why and what to check; one that did adds none', () => {
+  const line = phonePushLine('2026-10-20T05:00:00.000Z');
+  // It reads as a past result, with its date, day month year.
+  assert.match(line, /didn't reach your phone on 20 October 2026\./);
+  // A push is skipped while the director is at the computer (check 4), so the line says so, and
+  // names what to check: Remote Control, the second push option and the phone's permission.
+  assert.match(line, /at the computer/);
+  assert.match(line, /Remote Control/);
+  assert.match(line, /Push when actions required/);
+  assert.match(line, /phone allows Claude's notifications/);
+  // With no date that reads, the line says no date.
+  assert.match(phonePushLine(undefined), /didn't reach your phone\. /);
+  assert.match(phonePushLine('not a date'), /didn't reach your phone\. /);
+  assert.deepEqual(healthLines({ ...calm, phonePush: { arrived: false, at: '2026-10-20T05:00:00.000Z' } }), [
+    { level: 'ok', text: 'Protection: Standard' }, { level: 'watch', text: line },
+  ]);
+  for (const phonePush of [{ arrived: true }, null, undefined, {}, { arrived: 'no' }]) assert.deepEqual(texts({ phonePush }), ['Protection: Standard'], JSON.stringify(phonePush));
+  // Among the watch lines, before the profile's.
+  assert.deepEqual(texts({ phonePush: { arrived: false }, helperUp: false, profile: null }), ['Protection: Standard', NO_HELPER, phonePushLine(undefined), NO_PROFILE]);
 });
 
 test('on Windows the build-commands level comes right after the Windows line', () => {

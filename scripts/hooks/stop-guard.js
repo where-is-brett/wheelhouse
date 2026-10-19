@@ -14,6 +14,7 @@ import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
+import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite'];
 // They only halt work that is already running.
@@ -91,11 +92,16 @@ function isFrontDeskRead(command, pluginRoots, platform) {
 // Setup's commands that only read (scripts/setup/cli.js), by their exact words: `status`,
 // `plan <step>` and `resume`, which asks for the status and then the plan of the first step
 // neither done nor running, and so reads no more than those two. The helper answers both under STOP, changing nothing
-// a step lists. `apply` changes what its card lists, so it stays refused, as does every other form.
+// a step lists: `plan` writes only setup's own records, including a step settled on answers the
+// director already gave (ruling R52). `health`, followed by up to MOST_TRIAL_LINES lines each as
+// the safety trials print them (scripts/lib/trial-lines.js), reads step 10's board (ruling R41); under
+// STOP the helper neither starts anything nor removes anything for it. `apply` changes what its
+// card lists, so it stays refused, as does every other form.
 const SETUP_STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 function isSetupRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/setup/cli.js');
   if (args === null) return false;
+  if (args[0] === 'health') return args.length - 1 <= MOST_TRIAL_LINES && args.slice(1).every((l) => parseTrialLine(l) !== null);
   return (args.length === 1 && ['status', 'resume'].includes(args[0])) || (args.length === 2 && args[0] === 'plan' && SETUP_STEP.test(args[1]));
 }
 

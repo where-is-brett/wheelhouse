@@ -49,7 +49,7 @@ import {
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
-import { SETUP_STEPS, firstUnfinished } from '../lib/setup-run.js';
+import { SETUP_STEPS, firstUnfinished, readJournal } from '../lib/setup-run.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -293,7 +293,7 @@ function lineageCheck(found, input, version, { check, root, claudeHome, now }) {
 }
 
 // In a Shape 1 project, starts the watcher when it isn't running, as the
-// foreman's start script does (ruling R62). A watcher found running needs no
+// foreman's start script does (ruling R62), once setup has finished there (R44). A watcher found running needs no
 // configuration asked for. It informs, so anything that goes wrong is passed over.
 async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   try {
@@ -362,6 +362,16 @@ function firstKey(now) {
   } catch { /* no first click can be signed until a key is enrolled; setup's playbook says so */ }
 }
 
+// Whether setup's journal can be read (none at all reads as empty).
+function journalReadable() {
+  try {
+    readJournal();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Where setup stands in a folder being set up, as one line; null when every step is done.
 function setupNote(setup) {
   if (setup.journal === false) return JOURNAL_UNREADABLE;
@@ -410,6 +420,8 @@ export async function decide(input, deps = {}) {
   const end = Date.now() + totalMs;
   const left = withinBudget(end);
   const notes = [];
+  // Whether setup is still finishing here, read once: it holds back the watcher and adds its note.
+  const setup = beingSetUp(input.cwd);
   // Each call may take no longer than the budget that is left.
   const clientNow = () => given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
 
@@ -431,12 +443,16 @@ export async function decide(input, deps = {}) {
     if (synced?.ok !== true) notes.push(NOT_SYNCED);
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
-    await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
+    // Starting the foreman is the last thing setup does, once its health check's board is green
+    // (rulings R44, R67, scripts/setup/health.js): not while setup is finishing in this project,
+    // which it is until that board has been green, nor while setup's journal can't be read, when
+    // whether it has finished isn't known (beingSetUp counts such a folder as the project it is,
+    // so the rest of the session start goes on as in any project).
+    if (setup === null && journalReadable()) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
-  const setup = beingSetUp(input.cwd);
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
 

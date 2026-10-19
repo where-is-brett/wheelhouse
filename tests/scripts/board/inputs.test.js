@@ -12,6 +12,8 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
+import { phonePushLine } from '../../../scripts/board/health.js';
+import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
@@ -96,6 +98,31 @@ test('the inputs gather the views, events, settings, usage, sources and health f
     if (process.platform === 'darwin') assert.ok(lines.includes('This project has real users: Locked would protect it more'));
     assert.deepEqual(client.calls.sort(), ['health', 'lock']);
     assert.deepEqual(found.model.missing.filter((line) => /state|settings|sources|How the project stands/.test(line)), []);
+  });
+});
+
+// This computer's setup journal with step 9 settled on the push test's answer.
+const PUSH_LINE = phonePushLine('2026-10-19T01:00:00.000Z');
+function settledPushTest(arrived) {
+  put(journalFile(), { v: 1, runs: [{ id: 'run-1', folder: '/x', startedAt: '2026-10-19T00:00:00.000Z', steps: { 9: { doneAt: '2026-10-19T01:00:00.000Z' } },
+    changes: [{ id: 'chg-1', step: 9, kind: 'answer', target: 'step 9', before: null, after: { pushArrived: arrived } }] }] });
+}
+
+test('a push test that didn\'t reach the phone, in setup\'s journal, is on the board\'s health; one that did isn\'t', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    keepEverything();
+    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE), false, 'no journal');
+    settledPushTest(false);
+    assert.ok(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE));
+    settledPushTest(true);
+    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE), false);
+    // A journal that can't be read adds no line, and the board still comes.
+    put(journalFile(), 'not json');
+    const found = await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW });
+    assert.equal(texts(found).includes(PUSH_LINE), false);
+    assert.equal(found.project, P);
   });
 });
 
@@ -223,6 +250,7 @@ test('offline, only the files the glance needs are read: no other view, usage da
       path.join(stateDir(P), 'events', '2026', 'm2.json'),
       path.join(profileViewsDir(), 'settings.json'),
       path.join(sourcesDir(), 'report.json'),
+      journalFile(),
     ];
     for (const pipe of pipes) {
       fs.mkdirSync(path.dirname(pipe), { recursive: true });

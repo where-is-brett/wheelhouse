@@ -3,9 +3,45 @@
 // change is made here, and only after the director's signed click on a card listing exactly what
 // will change, named by the hash of that list (design section 15, the plan's call 2).
 //
-//   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }
+//   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }, or
+//                                            { ok, ask: { step, id, card } } (a question to ask), or
+//                                            { ok, wait, why } (nothing to ask yet), with
+//                                            `waitsFor`, the step it waits for, when it is that, or
+//                                            { ok, done: true } (the step settled on its answers)
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
-//   /setup/status { folder }              -> { ok, lines, next, ask }
+//   /setup/status { folder }              -> { ok, lines, next, ask }; a running step's latest
+//                                            line for the director (ctx.say, ruling R40) among them
+//   /setup/health { folder, lines? }      -> { ok, green, lines, board, trials }, and once green
+//                                            { started, briefing } too: step 10's checks joined
+//                                            with the session's trial lines (scripts/setup/health.js);
+//                                            green only once every other step is done too
+//
+// A step may name steps it waits for (`after`, rulings R47, R54 and R70): while they are
+// unfinished, its plan gives `{ wait, why, waitsFor }` in place of its question, its settling and
+// its Go-ahead card, and its apply is refused. `waitsFor` names the step it waits for, so the
+// playbook never takes the wait for one of the step's own (step 9's "push once it is over"). The
+// steps it names in `asksDuring`, among its `after`, are the exception for its questions alone,
+// which are asked while those are unfinished: step 3's while step 2's installers run, and its Go
+// ahead is shown once they have finished.
+//
+// A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
+// list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules?, writes? } }`: a question it
+// needs answered first, composed as a `question` card (no set line, no reply code), or, for a card
+// of kind `confirm-all`, as setup's card of the rules found, whose line names the hash of `rules`
+// (ruling R35), and recorded as asked in setup/asked/ with its `rules`, `writes` (what an answer
+// records in the project's state, which the prompt record signs: scripts/lib/setup-writes.js) and
+// `found` (what the step found, kept for the rest of its run: ruling R62), none holding a sign-in
+// in an address, which the card would show hidden; the
+// prompt record keeps the director's answer on that exact card, signed, and every step's plan reads
+// every answer of its run in ctx.answers, so the list a Go ahead's hash names already holds the
+// choices, and a later answer that changes it makes that Go ahead CHANGED.
+// `{ wait: ms, why }`: nothing to ask yet. `{ settled: { record } }`: every answer is in and the
+// step changes nothing outside setup's own records, so the record is kept in the journal as an
+// `answer` change and the step is done, with no Go ahead.
+//
+// Every card is cleaned of any sign-in in an address (scripts/lib/clean.js) before it is stored,
+// and the cleaned card is the one sent, so the card the director clicks is the card stored (R33).
+// The list is hashed as the step gave it.
 //
 // The helper works out each step's list itself, from the step's own plan, every time; it never
 // reads a list a caller sends, and a request that carries anything but the folder, the step and
@@ -18,22 +54,31 @@
 // nothing a step lists: plan starts the folder's run when there is none and records when the card
 // was shown, which the timed runs read. Under STOP they answer; apply is refused.
 //
-// Every route checks its folder (ruling R16): a full path, placed by its real path, under the
-// user's own ~/Projects, in a registered project's folder, or the folder of a setup run. A step
-// making the folder (step 3 for a new product) widens this in its own task (Task 8).
+// Every route checks its folder (rulings R16, R34): a full path, placed by its real path, under the
+// user's own ~/Projects, in a registered project's folder, the folder of a setup run, or a folder
+// whose own Claude settings switch the Wheelhouse plugin on. The product's folder exists from
+// step 1, with the plugin installed there, so no step makes it. The user's home folder, and any
+// folder holding it, is never one: its .claude/settings.json is Claude Code's user-scope settings,
+// where the plugin switched on is on everywhere, and a run there would hold every folder under home.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { wheelhouseHome } from '../lib/paths.js';
+import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
-import { readJournal, startRun, markStep, addChanges, applyJsonKey as journalKey } from './journal.js';
+import { hide, cleanDeep } from '../lib/clean.js';
+import { pluginOnIn } from '../lib/plugin-on.js';
+import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
+import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
-import { noteShown, shownFor, freshClicks, useClick, releaseClick } from './clicks.js';
+import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
+import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
+import { stepDone, healthGreen, HEALTH_STEP, SETUP_STEPS } from '../lib/setup-run.js';
+import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
 export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
@@ -41,8 +86,12 @@ export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url))
 export const OUTSIDE = 'the folder is not under ~/Projects, in a registered project or being set up, so setup does not act on it';
 export const NEEDS_CLICK = `this step needs the director's click on its card, from the last ${CLICK_FRESH_MS / 60000} minutes`;
 export const CHANGED = 'the list has changed since the card: ask for the plan again and show the new card';
+export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
 const APPLY_FIELDS = ['folder', 'step', 'hash'];
+const HEALTH_FIELDS = ['folder', 'lines'];
+// How long the playbook waits before asking again for a step whose Go ahead waits on another (R54).
+export const AFTER_WAIT_MS = 30 * 1000;
 const FULL_HASH = /^[0-9a-f]{64}$/;
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
 
@@ -59,11 +108,34 @@ const within = (base, target) => {
   return t.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
 };
 
+function realOrNull(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+}
+
+// Whether a folder is the user's home folder or holds it, by real paths where they can be had.
+function atOrAboveHome(folder, userHome) {
+  const home = realOrNull(userHome) ?? path.resolve(userHome);
+  const real = realOrNull(folder) ?? path.resolve(folder);
+  return keyOf(real) === keyOf(home) || within(real, home);
+}
+
 // The run setup is doing for this real path: the latest run of the nearest folder that is it or
 // holds it (case and accents folded as the system does), as kit.js's beingSetUp places a session,
 // so a session in a folder inside the one being set up carries on that run; null when none does.
-function runFor(real) {
-  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real)));
+// A run in a folder above a registered project's folder that holds the path is another product's
+// setup, never this one's (ruling R27), so it is passed over, as is a run at the user's home or
+// above it, which no route starts. (A run in a folder inside a registered project is carried on
+// here, though kit.js's beingSetUp counts only a run in the project's own folder; the playbook runs
+// in the project's own folder, so no such run is started.)
+function runFor(real, userHome) {
+  const project = projectForFolder(real);
+  const own = project === null ? null : realOrNull(project.record.folder);
+  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real))
+    && !(own !== null && within(r.folder, own)) && !atOrAboveHome(r.folder, userHome));
   if (holding.length === 0) return null;
   const nearest = Math.max(...holding.map((r) => keyOf(r.folder).length));
   return holding.filter((r) => keyOf(r.folder).length === nearest).at(-1);
@@ -81,27 +153,55 @@ export function admitFolder(folder, { userHome = os.homedir() } = {}) {
     refuse('the folder was not found');
   }
   if (!fs.statSync(real).isDirectory()) refuse('the folder given is not a folder');
+  if (atOrAboveHome(real, userHome)) refuse(HOME_FOLDER);
   let projects = null;
   try {
     projects = fs.realpathSync.native(path.join(userHome, 'Projects'));
   } catch { /* no ~/Projects on this computer */ }
   if (projects !== null && within(projects, real)) return real;
   if (projectForFolder(real) !== null) return real;
-  if (runFor(real) !== null) return real;
+  if (runFor(real, userHome) !== null) return real;
+  if (pluginOnIn(real)) return real;
   return refuse(OUTSIDE);
 }
 
-// The steps a module gives, checked: each with its number, title, plan and apply.
+// The steps a step must wait for before it is asked, settled or applied (rulings R47, R70): its
+// `after`, a list of other steps' numbers, or none. Throws for anything else.
+export function stepsBefore(step) {
+  const after = step?.after;
+  if (after === undefined) return [];
+  if (!Array.isArray(after) || !after.every((m) => Number.isInteger(m) && Object.hasOwn(SETUP_TITLES, m) && m !== step.n)) {
+    throw new Error(`Step ${step?.n}'s steps to wait for must be a list of other steps' numbers`);
+  }
+  return after;
+}
+
+// The steps among those a step waits for while which its questions are still asked (ruling R54):
+// its `asksDuring`, or none. Throws for anything but steps it waits for.
+export function asksDuring(step) {
+  const during = step?.asksDuring;
+  if (during === undefined) return [];
+  const before = stepsBefore(step);
+  if (!Array.isArray(during) || !during.every((m) => Number.isInteger(m) && before.includes(m))) {
+    throw new Error(`Step ${step?.n}'s steps to ask during must be among the steps it waits for`);
+  }
+  return during;
+}
+
+// The steps a module gives, checked: each with its number, title, plan and apply, and any steps it waits for.
 export async function loadSteps(modulePath) {
   const steps = (await import(pathToFileURL(modulePath).href)).STEPS;
   const good = Array.isArray(steps) && steps.every((s) => Number.isInteger(s?.n) && Object.hasOwn(SETUP_TITLES, s.n)
     && typeof s.title === 'string' && typeof s.plan === 'function' && typeof s.apply === 'function');
   if (!good) throw new Error('The setup steps could not be read');
+  steps.forEach(asksDuring);
   return steps;
 }
 
 const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
-const isDone = (run, n) => typeof run?.steps?.[n]?.doneAt === 'string';
+// Done: finished, and for the health check, its board green as well (ruling R67), so a red board
+// leaves step 10 to be run again by a fresh card.
+const isDone = (run, n) => stepDone(run, n);
 
 // Running: clicked, not done, not failed, and not past the time a step may take.
 function runningSince(entry, now) {
@@ -117,9 +217,13 @@ function runningSince(entry, now) {
 // uninstall to put back, and a retry never takes setup's own value for the director's. Changes
 // apply returns are recorded too, each once: one already recorded through ctx is not doubled.
 // `current`, a test of the step's journal entry, keeps the mark to this attempt: a newer attempt's
-// entry is never marked by an older one. Each change made is recorded whatever, since it was made.
+// entry is never marked by an older one. The ctx carries `say(line)` too, a line for the director
+// while the step runs (ruling R40), kept on the step's entry and shown by status. Each change made is recorded whatever, since it was made.
+// Once the step is done, the run's clicks and answers are copied into the project's state, when the
+// folder is a project whose state is cloned (`copy`, copyRunRecords; ruling R45); a copy that fails
+// never fails the step, and the next step's copies what is left.
 // Used by the helper for a short step and by scripts/setup/run-step.js for a long one.
-export async function runApply({ step, runId, changes, ctx, current }) {
+export async function runApply({ step, runId, changes, ctx, current, copy = copyRunRecords }) {
   const recorded = new Set();
   const record = (made) => {
     const given = Array.isArray(made) ? made : (made === undefined || made === null ? [] : [made]);
@@ -129,10 +233,17 @@ export async function runApply({ step, runId, changes, ctx, current }) {
     for (const c of list) recorded.add(c.id);
   };
   const applyJsonKey = (args) => journalKey({ ...args, step: step.n, record });
+  // A line for the director while the step runs, such as a sign-in code (ruling R40): kept on the
+  // step's journal entry for this attempt only, and shown, cleaned, by /setup/status.
+  // A line on several lines is put on one, and a long one cut to what the journal keeps, so what a
+  // step says never stops it.
+  const say = (line) => {
+    const one = String(line ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, SAY_CHARS);
+    if (one !== '') markStep(runId, step.n, 'say', { now: ctx.now, line: one, when: current });
+  };
   try {
-    record(await step.apply({ ...ctx, runId, record, applyJsonKey }, changes));
+    record(await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes));
     markStep(runId, step.n, 'doneAt', { now: ctx.now, when: current });
-    return { ok: true };
   } catch (error) {
     const reason = (error instanceof Error ? error.message : '') || 'the step did not finish';
     try {
@@ -140,6 +251,18 @@ export async function runApply({ step, runId, changes, ctx, current }) {
     } catch { /* the journal could not take it; the step reads as running until its time is up */ }
     return { ok: false, reason };
   }
+  try {
+    await copy(runId, ctx.folder);
+  } catch { /* copied by a later step */ }
+  return { ok: true };
+}
+
+// Copies a run's clicks and answers into the state of the project whose folder it is set up in,
+// once that project's state is cloned (step 3 on); before then, nothing (ruling R45).
+export async function copyRunRecords(runId, folder) {
+  const found = projectForFolder(folder);
+  if (found === null || !fs.existsSync(path.join(stateDir(found.project), '.git'))) return null;
+  return copySetupRecords(runId, found.project);
 }
 
 // The first step neither done nor running (`running(n)`), or null.
@@ -156,12 +279,15 @@ function statusLines(run, steps, running) {
   for (const { n } of [...steps].sort((a, b) => a.n - b.n)) {
     const entry = run.steps?.[n] ?? {};
     const name = `Step ${n}, ${SETUP_TITLES[n]}`;
-    if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
+    if (entry.doneAt && !stepDone(run, n)) lines.push(`${name}: its own checks finished at ${entry.doneAt}; the board isn't green yet`);
+    else if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
     else if (entry.failed) lines.push(`${name}: did not finish: ${entry.failed}`);
     else if (entry.clickedAt) {
       lines.push(running(n)
         ? `${name}: running since ${entry.clickedAt}`
         : `${name}: stuck: running since ${entry.clickedAt}, more than ${STEP_TIMEOUT_MS / 60000} minutes`);
+      // What the running step asks of the director now, such as a sign-in code (ruling R40).
+      if (running(n) && typeof entry.say?.line === 'string') lines.push(`  ${hide(entry.say.line, [])}`);
     } else if (entry.shownAt) lines.push(`${name}: card shown at ${entry.shownAt}, not clicked yet`);
     else lines.push(`${name}: not started`);
     for (const c of (run.changes ?? []).filter((x) => x.step === n)) {
@@ -175,10 +301,16 @@ function statusLines(run, steps, running) {
 
 // The routes' handlers, each taking the request's body and giving its answer. A refusal throws
 // SetupRefusal, which the helper sends as { ok: false, refused }. `mark` records a step's time in
-// the journal (journal.js's markStep; a test can make it fail).
+// the journal (journal.js's markStep; a test can make it fail). `health` joins step 10's checks with
+// the session's trial lines, and `finish` is the last thing setup does once the board is green
+// (scripts/setup/health.js's healthCheck and finishSetup; tests give their own); `closeTrial`
+// closes the trial pull request step 10 left open (closeOpenTrial); `copy` copies a run's clicks
+// and answers into its project's state (copyRunRecords, ruling R45).
 export function setupRoutes({
   now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
+  health = healthCheck, finish = (args) => finishSetup({ ...args, now }), closeTrial = (args) => closeOpenTrial(args),
+  copy = copyRunRecords,
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -201,14 +333,56 @@ export function setupRoutes({
     return step;
   }
 
-  const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform });
+  // Why a step waiting for step m may not go ahead yet (rulings R47, R54): while step m runs, the
+  // installers it started, by name (step 2), or that it is running; once it has failed, that it did
+  // not finish; otherwise that it is not done.
+  function waitingOn(run, m) {
+    const entry = run?.steps?.[m];
+    if (runningIn(run, m)) {
+      const tools = [...new Set((run.changes ?? []).filter((c) => c?.step === m && c.kind === 'process' && typeof c.after?.tool === 'string').map((c) => c.after.tool))];
+      return tools.length > 0
+        ? `step ${m} is still installing: ${tools.join(', ')}; this step goes ahead once it is done`
+        : `step ${m} (${SETUP_TITLES[m]}) is still running; this step goes ahead once it is done`;
+    }
+    if (entry?.failed) return `step ${m} (${SETUP_TITLES[m]}) did not finish; this step goes ahead once it has been run again`;
+    return `step ${m} (${SETUP_TITLES[m]}) is not done yet; this step goes ahead once it is`;
+  }
+  // The first step this one waits for that is not done, or null; those in `during` pass over.
+  const unfinishedBefore = (run, step, during = []) => stepsBefore(step).find((m) => !during.includes(m) && !isDone(run, m)) ?? null;
 
-  // A step's plan with its hash and its card, composed with the setup line.
+  // A step's ctx: with every answer the director has given to its run's questions (ruling R31).
+  const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform, answers: answersFor(runId) });
+
+  // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling.
   async function planned(step, ctx) {
     const got = await step.plan(ctx);
-    if (!got || !Array.isArray(got.changes)) throw new Error(`Step ${step.n}'s plan gave no list of changes`);
-    const hash = planHash(got.changes);
-    return { ...got, hash };
+    const bad = (what) => new Error(`Step ${step.n}'s plan gave ${what}`);
+    if (got?.ask !== undefined) {
+      const { id, card, typed, rules, writes, found } = got.ask ?? {};
+      if (typeof id !== 'string' || !SETUP_QUESTION_ID.test(id)) throw bad('a question without an id of up to 40 lowercase letters, digits and dashes');
+      if (!card || typeof card !== 'object') throw bad('a question without its card');
+      if (typed !== undefined && typeof typed !== 'boolean') throw bad('a question whose typed answer is neither allowed nor refused');
+      if (writes !== undefined && (writes === null || typeof writes !== 'object' || Array.isArray(writes))) throw bad('a question whose writes are not a record of them');
+      if (card.kind === 'confirm-all' && !(Array.isArray(rules) && rules.length > 0)) throw bad('a card of the rules found without its rules');
+      if (found !== undefined && !Array.isArray(found)) throw bad('a question whose list found is not a list');
+      // What a click on the card records is kept with it, so it must read as the card does: with no
+      // sign-in in an address, which the card would show hidden (ruling R33).
+      const kept = { rules, writes, found };
+      if (JSON.stringify(cleanDeep(kept, [])) !== JSON.stringify(kept)) throw bad('a question whose rules or writes hold a sign-in in an address, which its card would hide');
+      return { ask: { id, card, typed: typed === true, rules, writes, found } };
+    }
+    if (got?.wait !== undefined) {
+      if (!Number.isFinite(got.wait) || got.wait < 0 || typeof got.why !== 'string' || got.why === '') throw bad('a wait without its time and why');
+      return { wait: got.wait, why: got.why };
+    }
+    if (got?.settled !== undefined) {
+      const given = got.settled?.record;
+      if (given !== undefined && (given === null || typeof given !== 'object' || Array.isArray(given))) throw bad('a settling without its record');
+      const record = given ?? {};
+      return { settled: { record } };
+    }
+    if (!got || !Array.isArray(got.changes)) throw bad('no list of changes');
+    return { ...got, hash: planHash(got.changes) };
   }
 
   // A step done or running is not planned again: its card's shown time and record stay as they are.
@@ -218,20 +392,54 @@ export function setupRoutes({
   };
 
   // Answers under STOP, as status does (ruling R19): it writes only setup's own records (the run
-  // when the folder has none, the card's shownAt, the shown card), never anything a step lists.
+  // when the folder has none, the card's shownAt, the shown or asked card, and a settled step's
+  // answer and done mark), never anything a step lists. A step may settle under STOP (ruling R52):
+  // its done mark records answers the director already gave, and changes nothing a step lists.
   async function plan(body) {
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
-    let run = runFor(folder);
+    let run = runFor(folder, userHome);
     showable(run, step.n);
     const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
-    const { question } = composeCard({ ...got.card, kind: 'setup', target: { step: step.n, hash: got.hash } });
+    if (got.wait !== undefined) return { ok: true, wait: got.wait, why: got.why };
+    // Nothing is asked, settled or shown for a Go ahead while a step it waits for is unfinished
+    // (rulings R54, R70): apply would refuse the Go ahead, and the click would go stale; a settling
+    // would mark it done out of its order; and a question may speak of what that step does (step
+    // 9's card A of step 6's push option) or come while it needs the director (step 8's password
+    // window). Its questions alone are asked during the steps it names in `asksDuring`.
+    const before = unfinishedBefore(run, step, got.ask ? asksDuring(step) : []);
+    if (before !== null) return { ok: true, wait: AFTER_WAIT_MS, why: waitingOn(run, before), waitsFor: before };
+    // The card as the director will see it: its input cleaned before it is composed, so the
+    // composer judges the text that is sent (its length too), and the stored card is the one sent
+    // (the helper cleans what it sends again, which changes nothing). The set line holds no address.
+    let card = null;
+    // A question is composed as a `question` card, with no set line; the card of the rules found as
+    // a `confirm-all` card, whose line names how many rules it lists and the hash of that list,
+    // worked out here (ruling R35).
+    if (got.ask?.card.kind === 'confirm-all') {
+      const { rules } = got.ask;
+      card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'confirm-all', target: { count: rules.length, hash: planHash(rules) } }).question;
+    } else if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question' }).question;
+    else if (got.changes) card = composeCard({ ...cleanDeep(got.card, []), kind: 'setup', target: { step: step.n, hash: got.hash } }).question;
+    if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.
     if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now });
-    noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card: question, now });
+    if (got.ask) {
+      noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, found: got.ask.found, now });
+      return { ok: true, ask: { step: step.n, id: got.ask.id, card } };
+    }
+    if (got.settled) {
+      // R19 widened (R32): a done mark the director's signed answers earned, with no Go ahead. The
+      // step changes nothing outside setup's own records; what it settled on is kept as an
+      // `answer` change, which uninstall has nothing to put back for.
+      addChanges(run.id, [{ id: newId('chg'), step: step.n, kind: 'answer', target: `step ${step.n}`, before: null, after: got.settled.record }]);
+      mark(run.id, step.n, 'doneAt', { now, when: (entry) => !entry.doneAt });
+      return { ok: true, done: true };
+    }
+    noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card, now });
     mark(run.id, step.n, 'shownAt', { now });
-    return { ok: true, changes: got.changes, hash: got.hash, card: question, director: typeof got.director === 'string' ? got.director : '' };
+    return { ok: true, changes: got.changes, hash: got.hash, card, director: hide(typeof got.director === 'string' ? got.director : '', []) };
   }
 
   async function apply(body) {
@@ -240,17 +448,23 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     if (typeof body.hash !== 'string' || !FULL_HASH.test(body.hash)) refuse('the hash must be the full hash of the list on the card');
-    const run = runFor(folder);
+    const run = runFor(folder, userHome);
     if (run === null) refuse('this step\'s card has not been shown: ask for its plan first');
     const startable = (current) => {
       if (isDone(current, step.n)) refuse(`${title(step.n)} is already done`);
       if (runningIn(current, step.n)) refuse(`${title(step.n)} is already running`);
     };
     startable(run);
+    // A step that waits for others (ruling R47) is not applied before they are done, and its click
+    // is not used, so it still counts once they are; its plan and questions were asked meanwhile.
+    const before = unfinishedBefore(run, step);
+    if (before !== null) refuse(waitingOn(run, before));
     // The list as it is now, worked out by the helper: the request's hash must name it, and the
     // card this folder was shown for the step must have shown it.
     const ctx = ctxFor(run.folder, step.n, run.id);
     const fresh = await planned(step, ctx);
+    // A step that now asks, waits or settles has no list for a Go ahead to name.
+    if (!fresh.changes) refuse(CHANGED);
     // Nothing is awaited from here until the step is marked clicked, so of two requests in flight
     // together (two Go aheads on one card) only one starts the step: the journal is read again
     // here, and the other finds the step running, or done.
@@ -309,12 +523,73 @@ export function setupRoutes({
 
   async function status(body) {
     const folder = admitFolder(body.folder, { userHome });
-    const run = runFor(folder);
+    const run = runFor(folder, userHome);
     const all = await steps();
     const running = (n) => runningIn(run, n);
     if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running) };
     return { ok: true, ...statusLines(run, all, running) };
   }
 
-  return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status };
+  // Step 10's board (rulings R41, R44, R67, R68): the helper's checks, recorded by step 10's apply,
+  // joined with the trial lines the session ran in its sandbox and hands in, and the board's health
+  // lines. It reads, so it answers under STOP, as status does. Only when STOP is off, and only until
+  // the run's board has been green, does it do more: it removes a .env.local the session's trial
+  // left behind (holding only the trial's marker); once the session's lines are in, it closes the
+  // trial pull request and deletes its branch, recorded in the run; and the first time the board is
+  // green it records that in the run, which finishes setup (setup-run.js, healthGreen), copies the
+  // run's last clicks and answers into the project's state (`copy`, ruling R45: a copy that failed
+  // at step 10's apply has no later step to retry it), and does the last thing setup does,
+  // starting the foreman and giving the first briefing (`finish`). After that mark it only reads,
+  // so no caller can run setup's ending again, or move what it wrote. Setup's ending is the last
+  // thing it does (ruling R70): while any other step of the run is not done (a step 10 card asked
+  // out of order waits only for steps 7 to 9), the board is not green, nothing is marked or
+  // finished, and the trial pull request is left open, so the same lines can be handed in again
+  // once that step is done. One run's requests are taken one at a time, so two can't both finish it.
+  const healthQueue = new Map();
+  async function healthRoute(body) {
+    if (Object.keys(body).some((k) => !HEALTH_FIELDS.includes(k))) refuse('the health check takes the folder and the trial lines the session printed, nothing else');
+    const folder = admitFolder(body.folder, { userHome });
+    const lines = body.lines ?? [];
+    if (!Array.isArray(lines) || lines.length > MOST_TRIAL_LINES || !lines.every((l) => parseTrialLine(l) !== null)) {
+      refuse(`the lines must be the trial lines trials.js printed, as they are, at most ${MOST_TRIAL_LINES}`);
+    }
+    const found = runFor(folder, userHome);
+    if (found === null) refuse('setup has not started in this folder');
+    const before = healthQueue.get(found.id) ?? Promise.resolve();
+    const turn = before.catch(() => {}).then(async () => {
+      const read = (run) => health({ folder: run.folder, run, reported: lines, now });
+      const answerOf = (got) => ({ ok: true, green: got.green, lines: got.lines, board: got.board, trials: got.trials });
+      let run = runById(found.id);
+      if (healthGreen(run) || stopped()) return answerOf(await read(run));
+      removeTrialLeftover(run.folder);
+      const before = SETUP_STEPS.find((s) => s.n !== HEALTH_STEP && !stepDone(run, s.n));
+      if (before !== undefined) {
+        const got = await read(run);
+        return {
+          ...answerOf(got),
+          green: false,
+          lines: [`Not yet: step ${before.n} (${before.title}) isn't done, so setup can't finish. Run it, then hand in the same trial lines again.`, ...got.lines],
+        };
+      }
+      if (lines.length > 0) {
+        await closeTrial({ setupRun: run, record: (c) => addChanges(run.id, [{ ...c, step: HEALTH_STEP }]) });
+        run = runById(found.id);
+      }
+      const got = await read(run);
+      if (!got.green || got.project === null || stopped()) return answerOf(got);
+      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { green: now().toISOString() } }]);
+      try {
+        await copy(run.id, run.folder);
+      } catch { /* the records stay in setup's own folder; the ending goes on */ }
+      return { ...answerOf(got), ...(await finish({ project: got.project })) };
+    });
+    healthQueue.set(found.id, turn);
+    try {
+      return await turn;
+    } finally {
+      if (healthQueue.get(found.id) === turn) healthQueue.delete(found.id);
+    }
+  }
+
+  return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute };
 }

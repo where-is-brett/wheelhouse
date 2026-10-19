@@ -25,7 +25,18 @@ async function post({ url, fields, fetch, step }) {
     headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(fields).toString(),
   });
-  if (!response.ok) throw new Error(`GitHub answered ${response.status} to the ${step}`);
+  if (!response.ok) {
+    // GitHub may give its short error code with a refusal (device_flow_disabled, for one); only
+    // that code is repeated, never the rest of the answer.
+    let code = null;
+    try {
+      const body = await response.json();
+      if (typeof body?.error === 'string' && ERROR_CODE.test(body.error)) code = body.error;
+    } catch { /* no code to give */ }
+    const error = new Error(`GitHub answered ${response.status} to the ${step}${code ? ` (${code})` : ''}`);
+    if (code) error.code = code;
+    throw error;
+  }
   let body;
   try {
     body = await response.json();
