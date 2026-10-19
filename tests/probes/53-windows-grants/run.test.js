@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { judgeAllowed, judgeRefused, main, parseOptions, PROMPTS, summariseSession } from '../../../probes/53-windows-grants/run.js';
+import { judgeAllowed, judgeRefused, main, NOT_SIGNED_IN, parseOptions, PROMPTS, summariseSession } from '../../../probes/53-windows-grants/run.js';
 
 const events = (...list) => list.map((event) => JSON.stringify(event)).join('\n');
 const bashCall = (command) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
@@ -80,4 +80,12 @@ test('the stand-in runner notes its integrity and runs the command in its folder
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('NOT_SIGNED_IN matches sign-in phrases and not a stray 401 or 403', () => {
+  assert.match('Not logged in · Please run /login', NOT_SIGNED_IN);
+  assert.match('Invalid API key', NOT_SIGNED_IN);
+  assert.match('Authentication failed', NOT_SIGNED_IN);
+  assert.doesNotMatch('the test printed 403 items and 401 more', NOT_SIGNED_IN);
+  assert.doesNotMatch('DONE', NOT_SIGNED_IN);
 });

@@ -86,7 +86,7 @@ export function summariseSession(text) {
   };
 }
 
-export const NOT_SIGNED_IN = /not logged in|please run \/login|invalid api key|authentication|unauthori[sz]ed|\b40[13]\b/i;
+export const NOT_SIGNED_IN = /not logged in|please run \/login|invalid api key|oauth token|authentication (failed|error|required)|not authenticated/i;
 
 // Trial 1 and 4: the command should have been refused, and not have run.
 export function judgeRefused({ summary, timedOut, ran }) {

@@ -4,7 +4,27 @@
 
 What this finds out: whether a copy of Node.js labelled "low integrity" starts and keeps everything it starts at low; which writes Windows then refuses it (Wheelhouse's own files and hooks, the `.claude` folder, the Startup folder, the registry's Run key); what it can still read; whether a "no read up" label, which would hide the helper's keys folder from it, can be set with the tools Windows ships; whether `git commit` and `npm test` work from low, and how much slower; and whether a low process can start a normal one. The answers decide what the Guarded level's card says it holds and how Task 6 builds the runner.
 
-The script runs on Windows only, as a standard user in an ordinary terminal (not "Run as administrator"). Everything it makes is under the temporary folder and is removed when it ends or when you press Ctrl+C. Three things it asks Windows to make, to see whether the low process is refused, are named for the probe (`wheelhouse-probe-52-...`) and removed at the end by the normal-level script: a `.txt` file in your Startup folder, a value under the registry's `HKCU\...\Run` key, and a scheduled task (which is only created if the low process is allowed to, and is never left to run at its time). The "secret folders" it tries to read are marker files in a scratch folder: it never reads your own `~/.ssh`, `~/.wheelhouse` or credentials, and `git credential fill` runs only against an empty scratch configuration. It costs no tokens. The log (the lines below and the exact scripts it used) goes to `<home>\.wheelhouse-probes\52-low-integrity\`.
+The script runs on Windows only, as a standard user in an ordinary terminal (not "Run as administrator"). Everything it makes is under the temporary folder and is removed when it ends or when you press Ctrl+C. It never reads your own `~/.ssh`, `~/.wheelhouse` or credentials: the "secret folders" are marker files in a scratch folder, and `git credential fill` runs only against an empty scratch configuration. It costs no tokens. The log (the lines below and the exact scripts it used) goes to `<home>\.wheelhouse-probes\52-low-integrity\`.
+
+**Security software may flag this on a managed computer.** The script copies `node.exe`, changes its integrity label with `icacls`, and (when the PowerShell language mode allows it) compiles a small piece of C# with `Add-Type` to set a "no read up" label. That last trial is on by default, and so are the label changes. Security software that watches for tampering could raise an alert with IT for any of them. If that matters on the work computer, tell whoever looks after it before running, or run the personal computer first.
+
+**Three trials are off unless you ask for them,** because they ask Windows to keep something, which is the shape of what malware does. Add `--persistence-trials` to run them; whether to is the director's call, and without it each prints `SEEN <name>: skipped (--persistence-trials)` and the rest runs as usual:
+
+- `write-startup-folder`: a `.txt` file in your Startup folder, `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\wheelhouse-probe-52-<numbers and letters>.txt`.
+- `write-hkcu-run`: a value of that same name under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, holding `cmd.exe /c rem` (it does nothing).
+- `low-cannot-schedule-task`: a scheduled task of that same name (set for 23:59, never left to run; it is only created if the low process is allowed to, and then run once to see what level it has).
+
+The script prints the exact name on a `persistence-entry-name` line before it starts, and a normal-level step removes all three at the end, whatever the trials found. **If a run is killed before that (security software ending it, the computer shutting down), remove them by hand** from a normal terminal, using the name from that line or by looking for `wheelhouse-probe-52` in each place:
+
+```
+del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\wheelhouse-probe-52-*.txt"
+reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v <the name> /f
+schtasks /query /fo list | findstr wheelhouse-probe-52
+schtasks /delete /tn <the name> /f
+```
+
+(The `reg query` and `schtasks /query` lines only look; the other three remove.) A killed run also leaves its scratch folders in the temporary folder (`wheelhouse-probe-52-*`, `wheelhouse-probe-52-repo-*`); they are harmless and can be deleted.
 
 You need: the Wheelhouse checkout, Node.js 22 or newer (Node 26.1 or newer is better: it may have `node:ffi`), and Git for Windows.
 
@@ -18,6 +38,8 @@ You need: the Wheelhouse checkout, Node.js 22 or newer (Node 26.1 or newer is be
    ```
    node probes/52-low-integrity/run.js
    ```
+
+   Add `--persistence-trials` only if the director has said to (see above).
 
 3. It prints one line for each trial, `PASS <name>`, `FAIL <name>` or `SEEN <name>`, then the lines `LOCK_READS_ROUTE <icacls|powershell|ffi|none>` and (if a route held) `LOCK_READS_CALL <the exact call>`, and a final count and the log's path. Nothing to type. If it stops for more than a couple of minutes on one step, press Ctrl+C: it cleans up and leaves.
 4. If it says `low-node-refused-by-policy`, the computer's policy (AppLocker or App Control) stops a copied `node.exe` from starting, or stops the label. That is a result, not a fault: the remaining low trials are skipped and the line says why. Note whether it also says `applocker-policy-keys: present`.

@@ -11,13 +11,16 @@
 // route that held, `LOCK_READS_CALL <the exact call>`.
 //
 // What it makes: everything is under the temporary folder, removed at the end or on Ctrl+C,
-// except three uniquely named entries it asks Windows to make to see whether the low process
-// is refused: a .txt file in the Startup folder, a value under HKCU Run, and a scheduled task.
+// except, with --persistence-trials, three uniquely named entries it asks Windows to make to see
+// whether the low process is refused: a .txt file in the Startup folder, a value under HKCU Run, and a scheduled task.
 // A medium-level step removes each of them at the end, whatever happened.
 // It never reads your own secrets: the "secret folders" are markers in a scratch folder, and
 // `git credential fill` runs only against an empty scratch configuration.
 //
-// Usage: node probes/52-low-integrity/run.js
+// The three trials that ask Windows to keep something (a Startup file, a Run value, a scheduled task)
+// are off unless the script is given --persistence-trials, because security software on a managed
+// computer may flag them; without it each prints `SEEN <name>: skipped (--persistence-trials)`.
+// Usage: node probes/52-low-integrity/run.js [--persistence-trials]
 // Log (the trial lines and the exact scripts it used): <home>/.wheelhouse-probes/52-low-integrity/.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,6 +38,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // icacls spellings tried for a "no read up" label (the documentation shows a Level:policy form but not the read flag).
 export const ICACLS_LOCK_FORMS = ['(OI)(CI)M:NR', '(OI)(CI)M:NWNR', '(OI)(CI)M:(NR)', '(OI)(CI)M:NW,NR'];
 export const LOCK_ROUTES = ['icacls', 'powershell', 'ffi'];
+const SKIPPED = 'skipped (--persistence-trials)';
 
 // ------------------------------------------------------------------ running things
 
@@ -53,15 +57,20 @@ function makeContext() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const id = `wheelhouse-probe-52-${process.pid}-${Date.now().toString(36)}`;
   const log = path.join(probeLogDir('52-low-integrity'), `run-${stamp}.jsonl`);
-  return { id, log, lines: [], counts: { PASS: 0, FAIL: 0, SEEN: 0 }, cleanups: [], extraDirs: [] };
+  return { id, log, counts: { PASS: 0, FAIL: 0, SEEN: 0 }, cleanups: [], extraDirs: [] };
 }
 
 async function say(ctx, status, name, detail = '', extra = {}) {
   const line = reportLine(status, name, detail);
   console.log(line);
-  ctx.lines.push(line);
   ctx.counts[status] += 1;
   await appendJsonl(ctx.log, { at: new Date().toISOString(), status, name, detail, ...extra }).catch(() => {});
+}
+
+// A line that is not a trial result (LOCK_READS_ROUTE and LOCK_READS_CALL): printed and logged, not counted.
+async function emit(ctx, line, record = {}) {
+  console.log(line);
+  await appendJsonl(ctx.log, { at: new Date().toISOString(), line, ...record }).catch(() => {});
 }
 
 // Runs the helper through the low (or a normal) copy of node and returns what it printed.
@@ -267,16 +276,22 @@ async function writes(ctx) {
   await refusal('write-claude-settings-standin', 'an existing settings.json in a scratch .claude folder, standing in for ~/.claude/settings.json', await low(ctx, 'append', [path.join(ctx.dirs.claude, 'settings.json'), ' ']));
 
   const appdata = process.env.APPDATA;
-  if (appdata) {
+  if (!ctx.options.persistence) {
+    await say(ctx, 'SEEN', 'write-startup-folder', SKIPPED);
+  } else if (appdata) {
     ctx.startupFile = path.join(appdata, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', `${ctx.id}.txt`);
     await refusal('write-startup-folder', 'a .txt file named for this probe in the Startup folder', await low(ctx, 'append', [ctx.startupFile, 'probe 52, safe to delete']));
   } else {
     await say(ctx, 'SEEN', 'write-startup-folder', 'skipped: APPDATA is not set');
   }
 
-  ctx.runValue = ctx.id;
-  const reg = await low(ctx, 'exec', ['reg', 'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', ctx.runValue, '/t', 'REG_SZ', '/d', 'cmd.exe /c rem', '/f']);
-  await refusal('write-hkcu-run', 'a value under HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run, removed afterwards', reg);
+  if (!ctx.options.persistence) {
+    await say(ctx, 'SEEN', 'write-hkcu-run', SKIPPED);
+  } else {
+    ctx.runValue = ctx.id;
+    const reg = await low(ctx, 'exec', ['reg', 'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', ctx.runValue, '/t', 'REG_SZ', '/d', 'cmd.exe /c rem', '/f']);
+    await refusal('write-hkcu-run', 'a value under HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run, removed afterwards', reg);
+  }
 
   // Inside the worktree, where Wheelhouse keeps things at the normal level.
   await refusal('write-git-hooks', 'a new hooks/pre-commit in the repository\'s common folder', await low(ctx, 'append', [path.join(ctx.commonDir, 'hooks', 'pre-commit'), '#!/bin/sh\n']));
@@ -378,10 +393,8 @@ async function lockReads(ctx, mode) {
   }
 
   const winner = LOCK_ROUTES.find((route) => results[route].held) ?? 'none';
-  console.log(`LOCK_READS_ROUTE ${winner}`);
-  if (winner !== 'none') console.log(`LOCK_READS_CALL ${results[winner].call}`);
-  await appendJsonl(ctx.log, { at: new Date().toISOString(), lockReadsRoute: winner, call: results[winner]?.call ?? null, routes: results });
-  ctx.lines.push(`LOCK_READS_ROUTE ${winner}`);
+  await emit(ctx, `LOCK_READS_ROUTE ${winner}`, { lockReadsRoute: winner, call: results[winner]?.call ?? null, routes: results });
+  if (winner !== 'none') await emit(ctx, `LOCK_READS_CALL ${results[winner].call}`);
   return winner;
 }
 
@@ -417,6 +430,11 @@ async function gitAndNpm(ctx) {
 }
 
 async function startMedium(ctx) {
+  if (!ctx.options.persistence) {
+    await say(ctx, 'SEEN', 'low-cannot-schedule-task', SKIPPED);
+    await say(ctx, 'SEEN', 'low-starts-medium-through-explorer', 'not tried: explorer.exe would open a window');
+    return;
+  }
   ctx.taskName = ctx.id;
   const out = path.join(ctx.root, 'task-out.txt');
   const cmdFile = path.join(ctx.root, 'task-probe.cmd');
@@ -469,9 +487,10 @@ async function cleanup(ctx) {
 // ------------------------------------------------------------------ main
 
 export function parseOptions(argv) {
-  const options = { offWindows: false };
+  const options = { offWindows: false, persistence: false };
   for (const arg of argv) {
     if (arg === '--allow-off-windows') options.offWindows = true;
+    else if (arg === '--persistence-trials') options.persistence = true;
     else throw new Error(`Unknown option ${arg}`);
   }
   return options;
@@ -484,6 +503,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 2;
   }
   const ctx = makeContext();
+  ctx.options = options;
   console.log(`Check 52, the low-integrity runner, on ${process.platform} ${os.release()} with Node.js ${process.version}`);
   const interrupt = () => {
     console.error('\nInterrupted: removing what the probe made first');
@@ -494,6 +514,7 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     ctx.root = fs.mkdtempSync(path.join(os.tmpdir(), `${ctx.id}-`));
     assertUnderTmp(ctx.root);
+    if (options.persistence) await say(ctx, 'SEEN', 'persistence-entry-name', `${ctx.id} (the name of the Startup file, the Run value and the scheduled task; if the run is killed, remove them by hand as run.md says)`);
     ctx.helper = path.join(ctx.root, 'low-try.js');
     fs.copyFileSync(path.join(HERE, 'low-try.js'), ctx.helper);
     ctx.lowEnv = {};
@@ -521,8 +542,8 @@ export async function main(argv = process.argv.slice(2)) {
       await gitAndNpm(ctx);
       await startMedium(ctx);
     } else {
-      console.log('LOCK_READS_ROUTE none');
-      console.log('SEEN lock-reads: not tried, because there is no low copy to check a label against');
+      await emit(ctx, 'LOCK_READS_ROUTE none', { lockReadsRoute: 'none' });
+      await say(ctx, 'SEEN', 'lock-reads', 'not tried, because there is no low copy to check a label against');
     }
   } finally {
     await cleanup(ctx);

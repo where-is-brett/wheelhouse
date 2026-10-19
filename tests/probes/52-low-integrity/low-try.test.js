@@ -55,7 +55,9 @@ test('the probe refuses to run off Windows without being told to', async () => {
     console.error = original;
   }
   assert.match(errors.join('\n'), /Windows only/);
-  assert.deepEqual(parseOptions(['--allow-off-windows']), { offWindows: true });
+  assert.deepEqual(parseOptions([]), { offWindows: false, persistence: false });
+  assert.deepEqual(parseOptions(['--allow-off-windows']), { offWindows: true, persistence: false });
+  assert.deepEqual(parseOptions(['--persistence-trials']), { offWindows: false, persistence: true });
   assert.throws(() => parseOptions(['--nope']), /Unknown option/);
 });
 
