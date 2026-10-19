@@ -11,8 +11,9 @@
 //                        | { wait: ms, why: string } | { settled: { record } }>,
 //     apply(ctx, changes) -> Promise<Change[]>,
 //     long?: boolean,        runs in a detached child (scripts/setup/run-step.js)
-//     after?: number[],      steps that must be done before this one is applied (ruling R47);
-//                            its plan and questions are asked meanwhile
+//     after?: number[],      steps that must be done before this one is asked, settled or applied
+//                            (rulings R47, R70); its plan gives a wait naming the step meanwhile
+//     asksDuring?: number[], steps among `after` while which its questions are still asked (R54)
 //   }
 //   ctx = { folder, step, runId, now, userHome, platform, answers }, and for apply also
 //         applyJsonKey({ file, key, value, project? }), the journal's key edit, which records the

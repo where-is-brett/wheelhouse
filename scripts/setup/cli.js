@@ -5,8 +5,9 @@
 //                        with the list's hash: { step, title, hash, director, changes, card };
 //                        or a question the step asks first, its card to be asked exactly as given:
 //                        { step, title, ask: { step, id, card } }; or { step, title, wait, why },
-//                        nothing to ask for `wait` milliseconds; or { step, title, done: true },
-//                        the step settled on the director's answers
+//                        nothing to ask for `wait` milliseconds, with `waitsFor`, the step it waits
+//                        for, when it is waiting for another step to finish; or
+//                        { step, title, done: true }, the step settled on the director's answers
 //   apply <step> <hash>  asks the helper to apply the step, with the full hash `plan` gave; the
 //                        helper goes ahead only after the director's click on the card naming it
 //   status               where setup stands in this folder, as plain lines
@@ -23,8 +24,14 @@
 // The playbook (wheelhouse:setup) runs in the sandbox and only talks: every change is the
 // helper's, so every form is a request to its /setup/* routes, naming this folder, and nothing here
 // reads or writes a file. A request carries only the folder, the step and the hash; the helper
-// works out the list itself. `plan`, `status`, `resume` and `health` only read (resume asks for the
-// status, then one plan), and the STOP guard lets them through; `apply` is refused under STOP.
+// works out the list itself. `status` only reads. `plan` and `resume` (which asks for the status,
+// then one plan) change nothing a step lists: they write only setup's own records (the run, a
+// card's shown time, the card asked, and a step settled on answers already given). `health` only
+// reads under STOP; outside it, until the run's board has been green, it removes a .env.local the
+// trial left, closes the trial pull request and deletes its branch, and, once the board is green
+// with every other step done, records the green mark, copies the run's records into the project's
+// state and finishes setup (the foreman and the first briefing), once. The STOP guard lets these
+// four through; `apply` is refused under STOP.
 // Errors are one line on standard error.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -62,7 +69,7 @@ async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
   const named = { step, title: SETUP_TITLES[step] };
   if (got.ask !== undefined) return { ...named, ask: got.ask };
-  if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why };
+  if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why, ...(Number.isInteger(got.waitsFor) ? { waitsFor: got.waitsFor } : {}) };
   if (got.done === true) return { ...named, done: true };
   return { ...named, hash: got.hash, director: got.director, changes: got.changes, card: got.card };
 }

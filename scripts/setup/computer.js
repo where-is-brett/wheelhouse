@@ -25,7 +25,9 @@
 // Wheelhouse's) is refused at the plan, so no card offers it. Its
 // change is recorded as a `locked` change before the administrator step; leaving Locked asks for
 // the password again, so putting it back is uninstall's own (Task 15, ruling R13). Otherwise the
-// step settles with nothing to do (ruling R32).
+// step settles with nothing to do (ruling R32). The answer and what step 3 made must agree: the
+// project record's connection is marked Locked exactly when the answer is Locked, or the step is
+// refused, naming both, so the record and the computer never disagree (ruling R70).
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -269,16 +271,28 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
     after: [3, 7],
     async plan(ctx) {
       const platform = ctx.platform ?? process.platform;
-      if (ctx.answers?.['3.locked']?.label !== LEVELS.locked) return { settled: { record: { locked: false } } };
-      if (platform === 'win32') return { settled: { record: { locked: false, why: MAC_ONLY } } };
+      const answered = ctx.answers?.['3.locked'] ?? null;
+      const chosen = answered?.label === LEVELS.locked;
+      // Step 3 never offers Locked on Windows, so there is nothing to make or to agree with.
+      if (platform === 'win32') return { settled: { record: chosen ? { locked: false, why: MAC_ONLY } : { locked: false } } };
       const found = projectForFolder(ctx.folder);
       if (found === null) return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; Locked comes once it has` };
-      const mode = found.record.connection?.mode;
-      if (mode !== 'narrow') {
-        throw new Error(mode === 'quick'
-          ? `${NEEDS_NARROW}, and this project has the Quick connection: run step 3 again with the narrow connection`
-          : `${NEEDS_NARROW}, and this project has no connection yet: run step 3 first`);
+      if (chosen) {
+        const mode = found.record.connection?.mode;
+        if (mode !== 'narrow') {
+          throw new Error(mode === 'quick'
+            ? `${NEEDS_NARROW}, and this project has the Quick connection: run step 3 again with the narrow connection`
+            : `${NEEDS_NARROW}, and this project has no connection yet: run step 3 first`);
+        }
       }
+      // What step 3 made (its connection, marked Locked) and the latest answer must agree: an
+      // answer given again on a card shown again after step 3 changes nothing step 3 connected.
+      const connected = found.record.connection?.locked === true;
+      if (connected !== chosen) {
+        const said = answered === null ? 'its Locked question has no answer' : `the latest answer to its Locked question is ${answered.label ?? answered.text}`;
+        throw new Error(`Step 3 connected this project ${connected ? 'for Locked' : 'without Locked'}, but ${said}, so step 8 has not gone on: the two must agree`);
+      }
+      if (!chosen) return { settled: { record: { locked: false } } };
       // A change installLocked would refuse is never offered on a card.
       const where = dir ?? managedDir(platform);
       if (fs.existsSync(mdmPlist ?? MDM_PLIST)) throw new Error(HAS_MDM);

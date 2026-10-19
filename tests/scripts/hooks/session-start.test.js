@@ -28,6 +28,7 @@ import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { journalFile } from '../../../scripts/lib/setup-run.js';
 
 const P = 'owner__name';
 
@@ -668,6 +669,35 @@ test('the session start starts no watcher in a project setup is still finishing'
     addChanges(setupRun.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
     await start(f);
     assert.equal(watcherStarts(f).length, 1, 'a project setup has finished is started as any other');
+  });
+});
+
+// Whether setup has finished here isn't known while its journal can't be read, so the foreman,
+// the last thing setup starts, isn't started (rulings R44, R67); the rest of the session start
+// goes on as in any project.
+test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-unreadable journal '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const start = (f) => decide({ cwd: folder, session_id: 's1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true,
+    });
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.config = async () => shapeConfig(1);
+    fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
+    fs.writeFileSync(journalFile(), 'not json');
+    assert.equal(beingSetUp(folder), null, 'the guards treat it as the project it is');
+    const unreadable = await start(f);
+    assert.equal(watcherStarts(f).length, 0, 'not while the journal can\'t be read');
+    // Readable again (no journal at all: setup never ran here), it is started, and the reload is the same.
+    fs.rmSync(journalFile());
+    const readable = await start(f);
+    assert.equal(watcherStarts(f).length, 1);
+    assert.equal(text(unreadable), text(readable));
   });
 });
 

@@ -17,6 +17,7 @@ import { answersFor, noteAsked } from '../../../scripts/setup/clicks.js';
 import { planHash } from '../../../scripts/setup/steps.js';
 import { runStep } from '../../../scripts/setup/run-step.js';
 import { main as cli } from '../../../scripts/setup/cli.js';
+import { AFTER_WAIT_MS } from '../../../scripts/setup/engine.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
@@ -257,6 +258,46 @@ test('a settled step is marked done with its answer recorded, and needs no Go ah
       assert.match(refused.refused, /settling without its record/);
     }
     assert.equal(findRun(folder).steps[7]?.doneAt, undefined);
+  });
+});
+
+// The engine's one ordering (ruling R70): a step that waits for others is not asked, settled or
+// shown its Go ahead before they are done, and the wait names the step it waits for, so the
+// playbook never reads it as the step's own wait (step 9's "push once it is over"). Only the steps
+// it names in `asksDuring` let its questions be asked meanwhile (ruling R54: step 3's while step
+// 2's installers run).
+test('a step\'s questions and its settling wait for the steps it waits for, but for those it asks during', async () => {
+  await withSetup(async ({ client, home, folder }) => {
+    const world = { ask: { 5: [{ id: 'rules', options: ['Yes', 'No'] }] }, settle: [5], after: { 5: [4] } };
+    setWorld(home, world);
+    const waiting = await client.setup.plan({ folder, step: 5 });
+    assert.equal(waiting.ok, true, waiting.refused);
+    assert.equal(waiting.ask, undefined, 'not asked while step 4 is unfinished');
+    assert.equal(waiting.wait, AFTER_WAIT_MS);
+    assert.equal(waiting.waitsFor, 4);
+    assert.match(waiting.why, /^step 4 \(Three questions\) is not done yet/);
+    assert.deepEqual(files(home, 'asked'), []);
+    const printed = async (argv) => {
+      let out = '';
+      assert.equal(await cli(argv, { client, cwd: folder, out: (t) => { out += t; }, err: () => {} }), 0);
+      return JSON.parse(out);
+    };
+    assert.deepEqual(await printed(['plan', '5']), { step: 5, title: 'Rules found', wait: AFTER_WAIT_MS, why: waiting.why, waitsFor: 4 });
+
+    // Asked during step 4 when the step names it so.
+    setWorld(home, { ...world, asksDuring: { 5: [4] } });
+    const asked = await client.setup.plan({ folder, step: 5 });
+    assert.equal(asked.ask?.id, 'rules');
+    await choose(folder, asked.ask.card, 'Yes');
+    // Every answer is in, but it does not settle before step 4 is done.
+    const held = await client.setup.plan({ folder, step: 5 });
+    assert.equal(held.ok, true, held.refused);
+    assert.equal(held.done, undefined);
+    assert.equal(held.waitsFor, 4);
+    assert.equal(findRun(folder).steps[5]?.doneAt, undefined);
+    assert.equal(findRun(folder).changes.filter((c) => c.step === 5).length, 0);
+    markStep(findRun(folder).id, 4, 'doneAt', { now: () => T0 });
+    assert.deepEqual(await client.setup.plan({ folder, step: 5 }), { ok: true, done: true });
   });
 });
 

@@ -49,7 +49,7 @@ import {
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
-import { SETUP_STEPS, firstUnfinished } from '../lib/setup-run.js';
+import { SETUP_STEPS, firstUnfinished, readJournal } from '../lib/setup-run.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -361,6 +361,16 @@ function firstKey(now) {
   } catch { /* no first click can be signed until a key is enrolled; setup's playbook says so */ }
 }
 
+// Whether setup's journal can be read (none at all reads as empty).
+function journalReadable() {
+  try {
+    readJournal();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Where setup stands in a folder being set up, as one line; null when every step is done.
 function setupNote(setup) {
   if (setup.journal === false) return JOURNAL_UNREADABLE;
@@ -434,8 +444,10 @@ export async function decide(input, deps = {}) {
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
     // Starting the foreman is the last thing setup does, once its health check's board is green
     // (rulings R44, R67, scripts/setup/health.js): not while setup is finishing in this project,
-    // which it is until that board has been green.
-    if (setup === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
+    // which it is until that board has been green, nor while setup's journal can't be read, when
+    // whether it has finished isn't known (beingSetUp counts such a folder as the project it is,
+    // so the rest of the session start goes on as in any project).
+    if (setup === null && journalReadable()) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);

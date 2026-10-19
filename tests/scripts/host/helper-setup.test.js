@@ -15,7 +15,7 @@ import { CARD } from '../../../scripts/lib/front-desk.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { findRun, readJournal, markStep, reverseChange, addChanges, newId } from '../../../scripts/setup/journal.js';
-import { setupRoutes, stepsBefore } from '../../../scripts/setup/engine.js';
+import { setupRoutes, stepsBefore, asksDuring } from '../../../scripts/setup/engine.js';
 import { keepClick, clicksDir, answersFor } from '../../../scripts/setup/clicks.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { planHash } from '../../../scripts/setup/steps.js';
@@ -526,9 +526,10 @@ test('a card is cleaned before it is composed, so the card sent is within the co
 
 test('a step that waits for another asks its questions meanwhile, waits in place of its Go ahead, and is applied once that one is done', async () => {
   // Rulings R47 and R54: step 3 needs the git that step 2 installs, so no Go ahead for it is shown
-  // while step 2 is unfinished; its questions are asked meanwhile, and apply refuses as a backstop.
+  // while step 2 is unfinished; its questions are asked meanwhile, as it names step 2 in its
+  // `asksDuring`, and apply refuses as a backstop.
   await withSetup(async ({ client, home, folder }) => {
-    setWorld(home, { 3: [KEY(3)], after: { 3: [2] }, ask: { 3: [{ id: 'which', options: ['GitHub', 'GitLab'] }] } });
+    setWorld(home, { 3: [KEY(3)], after: { 3: [2] }, asksDuring: { 3: [2] }, ask: { 3: [{ id: 'which', options: ['GitHub', 'GitLab'] }] } });
     const asked = await client.setup.plan({ folder, step: 3 });
     assert.equal(asked.ok, true, asked.refused);
     assert.equal(asked.ask?.id, 'which', 'its question is asked while step 2 is unfinished');
@@ -564,8 +565,11 @@ test('a step that waits for another asks its questions meanwhile, waits in place
   });
 });
 
-test('the steps a step waits for must be other steps\' numbers', () => {
+test('the steps a step waits for must be other steps\' numbers, and those it asks during among them', () => {
   assert.deepEqual(stepsBefore({ n: 3 }), []);
   assert.deepEqual(stepsBefore({ n: 3, after: [2] }), [2]);
   for (const after of [[3], [11], ['2'], 2, null]) assert.throws(() => stepsBefore({ n: 3, after }), /other steps' numbers/, JSON.stringify(after));
+  assert.deepEqual(asksDuring({ n: 3, after: [2] }), []);
+  assert.deepEqual(asksDuring({ n: 3, after: [2], asksDuring: [2] }), [2]);
+  for (const during of [[4], [3], ['2'], 2, null]) assert.throws(() => asksDuring({ n: 3, after: [2], asksDuring: during }), /steps it waits for/, JSON.stringify(during));
 });

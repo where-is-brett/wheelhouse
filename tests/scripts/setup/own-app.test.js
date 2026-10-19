@@ -414,6 +414,19 @@ test('a recorded app is held to GitHub\'s owner: the record\'s and the project\'
   await assert.rejects(readOwnApp({ slug: OWN.slug, run: odd.run }), /a client ID setup can't read/);
 });
 
+test('the app the profile records is held to the project\'s account too: one GitHub says is another\'s is refused, not used', async () => {
+  // The record names the director's account and the client ID GitHub gives, but GitHub says the
+  // app belongs to someone else now.
+  const kept = { clientId: 'Iv23li.keptapp0001', slug: 'kept-app', owner: USER };
+  const gh = fakeGh({ apps: { [kept.slug]: { ...kept, owner: 'mallory' }, [OWN.slug]: { ...OWN } } });
+  await assert.rejects(ensureOwnApp({ account: USER, user: USER, recorded: kept, run: gh.run }), /The GitHub App kept-app belongs to mallory, not a-director, so setup has not used it/);
+  // GitHub's owner the account's: it is used, with no page opened.
+  const ours = fakeGh({ apps: { [kept.slug]: { ...kept } } });
+  const opened = [];
+  assert.equal((await ensureOwnApp({ account: USER, user: USER, recorded: kept, run: ours.run, open: async (u) => { opened.push(u); } })).slug, kept.slug);
+  assert.deepEqual(opened, []);
+});
+
 test('an organisation\'s app found by its name is refused plainly to a member who is not an owner', async () => {
   const acme = { clientId: 'Iv23li.acmeapp0001', slug: 'wheelhouse-acme', owner: 'acme', org: true };
   const opened = [];

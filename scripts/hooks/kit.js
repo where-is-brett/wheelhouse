@@ -157,7 +157,8 @@ export function registeredByPath(cwd) {
 // the product's folder exists from setup's step 1, and its run is there (ruling R34), so a run in
 // a folder above it, another product's setup, is never this project's (ruling R27). Once every
 // step is done it is a project like any other, and a registered folder whose journal can't be read
-// is left to the project's own hooks. Never throws: a folder that can't be placed is null, and
+// is left to the project's own hooks (the session start then holds the foreman back, as whether
+// setup finished isn't known). Never throws: a folder that can't be placed is null, and
 // callers that guard treat that as they already do. The guards ask projectOf and registeredByPath
 // first, and act in a registered folder by those.
 export function beingSetUp(cwd, { home = os.homedir() } = {}) {

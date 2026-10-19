@@ -246,6 +246,7 @@ test('step 3 is long, waits for step 2, and plans without failing while git and 
     const step = STEPS.find((s) => s.n === 3);
     assert.equal(step.long, true);
     assert.deepEqual(step.after, [2]);
+    assert.deepEqual(step.asksDuring, [2], 'its questions are asked while step 2\'s installers run (ruling R54)');
     const folder = productFolder();
     const nothingHere = async () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); };
     const bare = hostStep({ run: nothingHere, appFile: NO_APP });
@@ -741,7 +742,7 @@ test('the connection question names the repository, so an answer for one remote 
   });
 });
 
-// ---- Fix round 1 ----
+// ---- The profile's account, the Install page's wait, retries, refusals and their own app ----
 
 test('the profile repository goes on the director\'s own account, never the product\'s organisation or group', async () => {
   for (const [host, url, repo] of [
@@ -1084,7 +1085,7 @@ test('their own app on an organisation is made there only by an owner, and reach
   });
 });
 
-// ---- Fix round 1 (Task 8b) ----
+// ---- A recorded app held to GitHub's owner, and one app's keys per computer ----
 
 test('a recorded app whose owner on GitHub is not the record\'s is refused at use, before any code or key', async () => {
   await withHome(async () => {

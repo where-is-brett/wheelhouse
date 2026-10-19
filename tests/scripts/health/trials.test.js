@@ -361,7 +361,7 @@ test('a merge refused only because the pull request isn\'t open is no pass', asy
   assert.ok(lines.notes.some((n) => /open/.test(n) && /step 10/.test(n)));
 });
 
-// gh found where setup finds it: the fixed places, the tools folder, then by its bare name on the
+// gh found where setup finds it: the known places, the tools folder, then by its bare name on the
 // path, as toolPath runs it and step 2 accepted it (tools.js, onPath).
 test('a gh only on the path is run by its bare name, and only a missing one is not installed', async () => {
   const f = fakes();

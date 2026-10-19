@@ -5,18 +5,23 @@
 //
 //   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }, or
 //                                            { ok, ask: { step, id, card } } (a question to ask), or
-//                                            { ok, wait, why } (nothing to ask yet), or
+//                                            { ok, wait, why } (nothing to ask yet), with
+//                                            `waitsFor`, the step it waits for, when it is that, or
 //                                            { ok, done: true } (the step settled on its answers)
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask }; a running step's latest
 //                                            line for the director (ctx.say, ruling R40) among them
 //   /setup/health { folder, lines? }      -> { ok, green, lines, board, trials }, and once green
 //                                            { started, briefing } too: step 10's checks joined
-//                                            with the session's trial lines (scripts/setup/health.js)
+//                                            with the session's trial lines (scripts/setup/health.js);
+//                                            green only once every other step is done too
 //
-// A step may name steps it waits for (`after`, rulings R47 and R54): while they are unfinished, its
-// plan still asks its questions, but gives `{ wait, why }` in place of its Go-ahead card, and its
-// apply is refused, so step 3's questions are asked while step 2's installers run, and its Go
+// A step may name steps it waits for (`after`, rulings R47, R54 and R70): while they are
+// unfinished, its plan gives `{ wait, why, waitsFor }` in place of its question, its settling and
+// its Go-ahead card, and its apply is refused. `waitsFor` names the step it waits for, so the
+// playbook never takes the wait for one of the step's own (step 9's "push once it is over"). The
+// steps it names in `asksDuring`, among its `after`, are the exception for its questions alone,
+// which are asked while those are unfinished: step 3's while step 2's installers run, and its Go
 // ahead is shown once they have finished.
 //
 // A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
@@ -72,7 +77,7 @@ import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as jou
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
-import { stepDone, healthGreen, HEALTH_STEP } from '../lib/setup-run.js';
+import { stepDone, healthGreen, HEALTH_STEP, SETUP_STEPS } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -160,8 +165,8 @@ export function admitFolder(folder, { userHome = os.homedir() } = {}) {
   return refuse(OUTSIDE);
 }
 
-// The steps a step must wait for before it is applied (ruling R47): its `after`, a list of other
-// steps' numbers, or none. Throws for anything else.
+// The steps a step must wait for before it is asked, settled or applied (rulings R47, R70): its
+// `after`, a list of other steps' numbers, or none. Throws for anything else.
 export function stepsBefore(step) {
   const after = step?.after;
   if (after === undefined) return [];
@@ -171,13 +176,25 @@ export function stepsBefore(step) {
   return after;
 }
 
+// The steps among those a step waits for while which its questions are still asked (ruling R54):
+// its `asksDuring`, or none. Throws for anything but steps it waits for.
+export function asksDuring(step) {
+  const during = step?.asksDuring;
+  if (during === undefined) return [];
+  const before = stepsBefore(step);
+  if (!Array.isArray(during) || !during.every((m) => Number.isInteger(m) && before.includes(m))) {
+    throw new Error(`Step ${step?.n}'s steps to ask during must be among the steps it waits for`);
+  }
+  return during;
+}
+
 // The steps a module gives, checked: each with its number, title, plan and apply, and any steps it waits for.
 export async function loadSteps(modulePath) {
   const steps = (await import(pathToFileURL(modulePath).href)).STEPS;
   const good = Array.isArray(steps) && steps.every((s) => Number.isInteger(s?.n) && Object.hasOwn(SETUP_TITLES, s.n)
     && typeof s.title === 'string' && typeof s.plan === 'function' && typeof s.apply === 'function');
   if (!good) throw new Error('The setup steps could not be read');
-  steps.forEach(stepsBefore);
+  steps.forEach(asksDuring);
   return steps;
 }
 
@@ -287,11 +304,13 @@ function statusLines(run, steps, running) {
 // the journal (journal.js's markStep; a test can make it fail). `health` joins step 10's checks with
 // the session's trial lines, and `finish` is the last thing setup does once the board is green
 // (scripts/setup/health.js's healthCheck and finishSetup; tests give their own); `closeTrial`
-// closes the trial pull request step 10 left open (closeOpenTrial).
+// closes the trial pull request step 10 left open (closeOpenTrial); `copy` copies a run's clicks
+// and answers into its project's state (copyRunRecords, ruling R45).
 export function setupRoutes({
   now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
   health = healthCheck, finish = (args) => finishSetup({ ...args, now }), closeTrial = (args) => closeOpenTrial(args),
+  copy = copyRunRecords,
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -328,8 +347,8 @@ export function setupRoutes({
     if (entry?.failed) return `step ${m} (${SETUP_TITLES[m]}) did not finish; this step goes ahead once it has been run again`;
     return `step ${m} (${SETUP_TITLES[m]}) is not done yet; this step goes ahead once it is`;
   }
-  // The first step this one waits for that is not done, or null.
-  const unfinishedBefore = (run, step) => stepsBefore(step).find((m) => !isDone(run, m)) ?? null;
+  // The first step this one waits for that is not done, or null; those in `during` pass over.
+  const unfinishedBefore = (run, step, during = []) => stepsBefore(step).find((m) => !during.includes(m) && !isDone(run, m)) ?? null;
 
   // A step's ctx: with every answer the director has given to its run's questions (ruling R31).
   const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform, answers: answersFor(runId) });
@@ -383,10 +402,13 @@ export function setupRoutes({
     showable(run, step.n);
     const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
     if (got.wait !== undefined) return { ok: true, wait: got.wait, why: got.why };
-    // Its questions are asked whatever, but no Go ahead is shown while a step it waits for is
-    // unfinished (ruling R54): apply would refuse it, and the click would go stale.
-    const before = got.changes ? unfinishedBefore(run, step) : null;
-    if (before !== null) return { ok: true, wait: AFTER_WAIT_MS, why: waitingOn(run, before) };
+    // Nothing is asked, settled or shown for a Go ahead while a step it waits for is unfinished
+    // (rulings R54, R70): apply would refuse the Go ahead, and the click would go stale; a settling
+    // would mark it done out of its order; and a question may speak of what that step does (step
+    // 9's card A of step 6's push option) or come while it needs the director (step 8's password
+    // window). Its questions alone are asked during the steps it names in `asksDuring`.
+    const before = unfinishedBefore(run, step, got.ask ? asksDuring(step) : []);
+    if (before !== null) return { ok: true, wait: AFTER_WAIT_MS, why: waitingOn(run, before), waitsFor: before };
     // The card as the director will see it: its input cleaned before it is composed, so the
     // composer judges the text that is sent (its length too), and the stored card is the one sent
     // (the helper cleans what it sends again, which changes nothing). The set line holds no address.
@@ -514,10 +536,15 @@ export function setupRoutes({
   // the run's board has been green, does it do more: it removes a .env.local the session's trial
   // left behind (holding only the trial's marker); once the session's lines are in, it closes the
   // trial pull request and deletes its branch, recorded in the run; and the first time the board is
-  // green it records that in the run, which finishes setup (setup-run.js, healthGreen), and does
-  // the last thing setup does, starting the foreman and giving the first briefing (`finish`). After
-  // that mark it only reads, so no caller can run setup's ending again, or move what it wrote.
-  // One run's requests are taken one at a time, so two can't both finish it.
+  // green it records that in the run, which finishes setup (setup-run.js, healthGreen), copies the
+  // run's last clicks and answers into the project's state (`copy`, ruling R45: a copy that failed
+  // at step 10's apply has no later step to retry it), and does the last thing setup does,
+  // starting the foreman and giving the first briefing (`finish`). After that mark it only reads,
+  // so no caller can run setup's ending again, or move what it wrote. Setup's ending is the last
+  // thing it does (ruling R70): while any other step of the run is not done (a step 10 card asked
+  // out of order waits only for steps 7 to 9), the board is not green, nothing is marked or
+  // finished, and the trial pull request is left open, so the same lines can be handed in again
+  // once that step is done. One run's requests are taken one at a time, so two can't both finish it.
   const healthQueue = new Map();
   async function healthRoute(body) {
     if (Object.keys(body).some((k) => !HEALTH_FIELDS.includes(k))) refuse('the health check takes the folder and the trial lines the session printed, nothing else');
@@ -535,6 +562,15 @@ export function setupRoutes({
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));
       removeTrialLeftover(run.folder);
+      const before = SETUP_STEPS.find((s) => s.n !== HEALTH_STEP && !stepDone(run, s.n));
+      if (before !== undefined) {
+        const got = await read(run);
+        return {
+          ...answerOf(got),
+          green: false,
+          lines: [`Not yet: step ${before.n} (${before.title}) isn't done, so setup can't finish. Run it, then hand in the same trial lines again.`, ...got.lines],
+        };
+      }
       if (lines.length > 0) {
         await closeTrial({ setupRun: run, record: (c) => addChanges(run.id, [{ ...c, step: HEALTH_STEP }]) });
         run = runById(found.id);
@@ -542,6 +578,9 @@ export function setupRoutes({
       const got = await read(run);
       if (!got.green || got.project === null || stopped()) return answerOf(got);
       addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: `step ${HEALTH_STEP}`, before: null, after: { green: now().toISOString() } }]);
+      try {
+        await copy(run.id, run.folder);
+      } catch { /* the records stay in setup's own folder; the ending goes on */ }
       return { ...answerOf(got), ...(await finish({ project: got.project })) };
     });
     healthQueue.set(found.id, turn);

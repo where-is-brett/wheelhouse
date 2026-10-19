@@ -202,7 +202,8 @@ async function lookFor({ slug, run }) {
 // The person's own app on `account` (the account that holds the project): the one their profile
 // records (`recorded`, confirmed) when it is still there with that client ID; else the one named
 // `name` on GitHub; else made now, from the filled-in page, which setup waits for. `user` is the
-// director's own account. Each is read back and refused when it asks for more than the manifest.
+// director's own account. Each is read back and refused when it asks for more than the manifest,
+// and, whichever way it was found, when GitHub says it belongs to another account than `account`.
 // STOP is read in every wait (`halt`).
 export async function ensureOwnApp({
   account, user, name = appName(account), recorded = null, run = realRun, say = () => {}, open = async () => {},
@@ -214,12 +215,13 @@ export async function ensureOwnApp({
   if (org && !(await appAccounts({ run, user })).some((a) => a.kind === 'org' && sameLogin(a.login, account))) {
     throw new Error(`Only an owner of ${account} on GitHub can make or install a GitHub App there, so setup has not opened its pages: ask one of its owners to make you one, then ask again`);
   }
+  let found = null;
   if (recorded && sameLogin(recorded.owner, account)) {
-    const found = await lookFor({ slug: recorded.slug, run });
-    if (found !== null && found.clientId === recorded.clientId) return found;
+    const kept = await lookFor({ slug: recorded.slug, run });
+    if (kept !== null && kept.clientId === recorded.clientId) found = kept;
   }
   const slug = appSlug(name);
-  let found = await lookFor({ slug, run });
+  found ??= await lookFor({ slug, run });
   if (found === null) {
     say(`On the page that opens, GitHub's form for your app ${name} is filled in: tick Enable Device Flow, then click Create GitHub App`);
     await open(newAppUrl({ owner: org ? { kind: 'org', login: account } : { kind: 'user' }, name }));

@@ -267,7 +267,11 @@ function answerLocked(folder, label) {
   return run;
 }
 
-const narrow = (folder, mode = 'narrow') => writeProject(SLUG, { folder, remoteUrl: `https://github.com/${REPO}.git`, host: 'github', repo: REPO, connection: { host: 'github', mode, project: REPO } });
+// The project record as step 3 leaves it: the connection in `mode`, marked Locked when `locked`
+// (step 3 connects Locked only narrow).
+const narrow = (folder, mode = 'narrow', locked = mode === 'narrow') => writeProject(SLUG, {
+  folder, remoteUrl: `https://github.com/${REPO}.git`, host: 'github', repo: REPO, connection: { host: 'github', mode, project: REPO, ...(locked ? { locked: true } : {}) },
+});
 
 test('Locked is installed only after the narrow connection, and never on Windows', async () => {
   await withProject(async ({ folder, user, home }) => {
@@ -354,6 +358,30 @@ test('Locked is installed only after the narrow connection, and never on Windows
     assert.equal(failed.ok, false);
     assert.match(failed.reason, /cancelled/);
   });
+});
+
+test('step 8 goes by step 3\'s answer and the project record step 3 wrote, and refuses plainly when they disagree', async () => {
+  await withProject(async ({ folder, user }) => {
+    const step = lockedStep({ run: async () => { throw new Error('nothing is run'); }, dir: tempFolder('wh-managed-'), mdmPlist: NO_PLIST });
+    const ctxOf = (label) => ({ folder, step: 8, now: () => T0, userHome: user, platform: 'darwin', answers: label === null ? {} : { '3.locked': { label, text: null } } });
+    // Step 3 connected this project for Locked, but the latest answer says Standard: refused, not settled as not Locked.
+    narrow(folder, 'narrow', true);
+    await assert.rejects(step.plan(ctxOf(LEVELS.standard)), /^Error: Step 3 connected this project for Locked, but the latest answer to its Locked question is Standard, so step 8 has not gone on: the two must agree$/);
+    await assert.rejects(step.plan(ctxOf(null)), /^Error: Step 3 connected this project for Locked, but its Locked question has no answer, so step 8 has not gone on: the two must agree$/);
+    // The answer says Locked, but step 3 connected it without: refused.
+    narrow(folder, 'narrow', false);
+    await assert.rejects(step.plan(ctxOf(LEVELS.locked)), /^Error: Step 3 connected this project without Locked, but the latest answer to its Locked question is Locked, so step 8 has not gone on: the two must agree$/);
+    // Agreeing: settled as not Locked, or Locked's list.
+    assert.deepEqual(await step.plan(ctxOf(LEVELS.standard)), { settled: { record: { locked: false } } });
+    narrow(folder, 'narrow', true);
+    assert.equal((await step.plan(ctxOf(LEVELS.locked))).changes[0].kind, 'locked');
+  });
+  // Before step 3 has registered the project, there is no record to read: it waits.
+  await withProject(async ({ folder, user }) => {
+    const waiting = await lockedStep({ mdmPlist: NO_PLIST }).plan({ folder, step: 8, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
+    assert.ok(waiting.wait > 0);
+    assert.match(waiting.why, /step 3/);
+  }, { connected: false });
 });
 
 test('steps 6 and 8 are the filled ones in the steps list', () => {

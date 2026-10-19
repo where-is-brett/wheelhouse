@@ -39,8 +39,9 @@
 // Each change is recorded in the journal just before it is made. The step is long (ruling R40): it
 // runs in its own process, and says each thing the director must do (a code, the Install page) as
 // a line, through ctx.say, which /setup/status shows. It waits for step 2 (`after: [2]`, ruling
-// R47), since it needs git and the host's tool; its plan never fails while they are missing. STOP
-// stops it between its parts and in each of its waits.
+// R47), since it needs git and the host's tool, but its questions are asked while step 2's
+// installers run (`asksDuring: [2]`, ruling R54); its plan never fails while they are missing.
+// STOP stops it between its parts and in each of its waits.
 //
 // Setup's own git and host calls use the director's own sign-in, never the narrow key: `gh` or
 // `glab` as the director has it, and for git their tool as its credential helper, through the
@@ -941,6 +942,7 @@ export function hostStep({
     title: SETUP_TITLES[3],
     long: true,
     after: [2],
+    asksDuring: [2],
     async plan(ctx) {
       const platform = ctx.platform ?? process.platform;
       const answers = ctx.answers ?? {};

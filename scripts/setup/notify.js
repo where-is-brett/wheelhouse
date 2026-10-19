@@ -4,7 +4,10 @@
 // switches on Push when Claude decides, `agentPushNotifEnabled`) and the phone allowing Claude's
 // notifications, and Claude skips a push while the director is at the computer, so the test is
 // sent with the screen locked. Only a session can push, so the playbook sends it; the engine sees
-// only the answers and the wait. The step has no Go ahead (ruling R32):
+// only the answers and the wait. The step has no Go ahead (ruling R32). It waits for step 6, which
+// switches that push option on, and for step 8, whose password window card A's locked screen would
+// cover (`after: [6, 8]`, ruling R70): until both are done, nothing is asked or settled.
+//
 //
 // 1. With no Ready yet, it asks the card of plain steps, ending with the screen locked until the
 //    phone buzzes, or for PUSH_TEST_LOCK_MS if it doesn't (ruling R65): longer than the wait, so the
@@ -13,9 +16,9 @@
 //    R50), and asks the same card again when the step is next planned.
 // 2. With Ready answered less than PUSH_TEST_WAIT_MS ago, it waits for what is left; the playbook
 //    waits, then sends one test push with the session's push tool. The playbook (Task 16) knows
-//    this wait by its step, PUSH_TEST_STEP: a wait from step 9's plan means "push once it is
-//    over". It never reads that from `why`, which is words for the director's session, and the
-//    engine passes on nothing else with a wait.
+//    this wait by its step, PUSH_TEST_STEP: a wait from step 9's plan that names no step it waits
+//    for (`waitsFor`, the engine's wait for steps 6 and 8) means "push once it is over". It never
+//    reads that from `why`, which is words for the director's session.
 // 3. After that, it asks whether the test arrived: It arrived, or It didn't.
 // 4. With that answered, it settles on pushTestResult(label), kept in the journal as the step's
 //    `answer` change, however long ago Ready was; the board's health reads it
@@ -104,6 +107,7 @@ export function notifyStep() {
   return {
     n: PUSH_TEST_STEP,
     title: SETUP_TITLES[PUSH_TEST_STEP],
+    after: [6, 8],
     async plan(ctx) {
       const answers = ctx.answers ?? {};
       // An answer to card B settles, however old the Ready before it (ruling R66).

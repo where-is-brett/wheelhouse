@@ -38,12 +38,12 @@ const GREEN_CHECKS = Object.entries(HELPER_CHECKS).map(([name, c]) => ({ name, e
 
 const TRIAL_SHA = 'a'.repeat(40);
 
-// The run of this folder with steps 1 to `upTo` done, as if each had run; with `checks`, step 10's
-// record of the helper's part, for pull request 12, left open for the session's trials unless
-// `open` is false.
-function runWith(folder, { upTo = 10, checks, failed, open = true } = {}) {
+// The run of this folder with steps 1 to `upTo` done, as if each had run, but for those in `skip`;
+// with `checks`, step 10's record of the helper's part, for pull request 12, left open for the
+// session's trials unless `open` is false.
+function runWith(folder, { upTo = 10, checks, failed, open = true, skip = [] } = {}) {
   const run = startRun({ folder, now: () => T0 });
-  for (let n = 1; n <= upTo; n += 1) markStep(run.id, n, 'doneAt', { now: () => T0 });
+  for (let n = 1; n <= upTo; n += 1) if (!skip.includes(n)) markStep(run.id, n, 'doneAt', { now: () => T0 });
   if (failed) {
     markStep(run.id, 10, 'clickedAt', { now: () => T0 });
     markStep(run.id, 10, 'failed', { now: () => T0, reason: failed });
@@ -470,12 +470,15 @@ test('with the real board, STOP on the computer holds it', async () => {
 
 // ---- The helper's /setup/health route, and the end of setup (rulings R44, R67, R68) ----
 
-function routesFor(user, { stopped = () => false, load = OK_BOARD, finished = [], closes = [] } = {}) {
+// `copied` takes each copy of the run's records into the project's state (ruling R45); `copy`
+// stands in for that copy when given.
+function routesFor(user, { stopped = () => false, load = OK_BOARD, finished = [], closes = [], copied = [], copy } = {}) {
   return setupRoutes({
     now: () => T0, userHome: user, stopped,
     health: (args) => healthCheck({ ...args, load }),
     finish: async (args) => { finished.push(args); return { started: 'The foreman\'s watcher is started.', briefing: 'The briefing.' }; },
     closeTrial: closer(closes),
+    copy: copy ?? (async (runId, folder) => { copied.push([runId, folder]); return { copied: 0, skipped: 0, failed: 0 }; }),
   });
 }
 const runOf = (folder) => readJournal().runs.filter((r) => r.folder === folder).at(-1);
@@ -485,7 +488,8 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     runWith(folder, { checks: GREEN_CHECKS });
     const finished = [];
     const closes = [];
-    const route = routesFor(user, { finished, closes })['/setup/health'];
+    const copied = [];
+    const route = routesFor(user, { finished, closes, copied })['/setup/health'];
     // Asked with no lines, it names the trial for the session, and leaves it open.
     const asked = await route({ folder });
     assert.equal(asked.green, false);
@@ -502,6 +506,8 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.equal(green.briefing, 'The briefing.');
     assert.equal(healthGreen(runOf(folder)), true);
     assert.equal(firstUnfinished(runOf(folder)), null, 'setup is finished once the board is green');
+    // The run's last clicks and answers are copied into the project's state as it finishes (ruling R45).
+    assert.deepEqual(copied, [[runOf(folder).id, folder]]);
 
     // Asked again, green or with made-up lines: it only reads.
     const kept = JSON.stringify(readJournal());
@@ -511,7 +517,51 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.equal(madeUp.started, undefined);
     assert.equal(finished.length, 1, 'setup\'s ending runs once per run');
     assert.deepEqual(closes, [12]);
+    assert.equal(copied.length, 1);
     assert.equal(JSON.stringify(readJournal()), kept, 'nothing written after the green mark');
+  });
+});
+
+// Step 10's Go ahead waits only for steps 7 to 9, so a step 10 card asked out of order can be run
+// with an earlier step not done: its green board then neither marks setup finished nor runs its
+// ending, and the trial stays open for the same lines to be handed in again once that step is done.
+test('with step 5 or step 6 not done, a green board gives no green mark, no ending and no copy', async () => {
+  for (const missing of [5, 6]) {
+    await withProject(async ({ folder, user }) => {
+      const run = runWith(folder, { checks: GREEN_CHECKS, skip: [missing] });
+      const finished = [];
+      const closes = [];
+      const copied = [];
+      const route = routesFor(user, { finished, closes, copied })['/setup/health'];
+      const early = await route({ folder, lines: GREEN_LINES });
+      assert.equal(early.ok, true, early.refused);
+      assert.equal(early.green, false, `step ${missing} is not done`);
+      assert.ok(early.lines.some((l) => l.startsWith(`Not yet: step ${missing} (`)), early.lines.join('\n'));
+      assert.deepEqual([finished, copied, closes], [[], [], []]);
+      assert.equal(healthGreen(runOf(folder)), false);
+      assert.equal(firstUnfinished(runOf(folder)), missing);
+
+      // Once it is done, the same lines close the trial and finish setup, once.
+      markStep(run.id, missing, 'doneAt', { now: () => T0 });
+      const green = await route({ folder, lines: GREEN_LINES });
+      assert.equal(green.green, true, green.lines.join('\n'));
+      assert.deepEqual(closes, [12]);
+      assert.deepEqual(finished, [{ project: SLUG }]);
+      assert.deepEqual(copied, [[run.id, folder]]);
+      assert.equal(firstUnfinished(runOf(folder)), null);
+    });
+  }
+});
+
+test('a copy of the run\'s records that fails never stops setup\'s ending', async () => {
+  await withProject(async ({ folder, user }) => {
+    runWith(folder, { checks: GREEN_CHECKS });
+    const finished = [];
+    const route = routesFor(user, { finished, copy: async () => { throw new Error('the helper could not be reached'); } })['/setup/health'];
+    const green = await route({ folder, lines: GREEN_LINES });
+    assert.equal(green.green, true, green.lines.join('\n'));
+    assert.deepEqual(finished, [{ project: SLUG }]);
+    assert.equal(healthGreen(runOf(folder)), true);
   });
 });
 
