@@ -183,7 +183,7 @@ function questionWords(data) {
 // names that question alone by its answer line; and no report for the work came at or after it.
 // A Not now click is never a signed answer, so this is for the board's words only: a forged
 // card-answer makes the feature read as waiting, nothing more.
-function heldByNotNow(work, questions, events, reports) {
+export function heldByNotNow(work, questions, events, reports) {
   const asked = Object.entries(questions)
     .filter(([, entry]) => isRecord(entry) && isBuildQuestion(entry.question?.data) && entry.question.data.work === work && timeOf(entry.question.at))
     .sort(([, a], [, b]) => oldestFirst(a.question, b.question));

@@ -31,7 +31,7 @@ import { helperClient } from '../host/helper-client.js';
 import { composeCard, answerInput, PART_LABELS } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
-import { numberedWaiting } from '../board/model.js';
+import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS } from '../settings/catalogue.js';
 import { CARD } from '../lib/front-desk.js';
@@ -85,12 +85,14 @@ const said = (answer, otherwise) => answer?.refused ?? answer?.why ?? otherwise;
 
 // --- Asking the helper ---
 
-// The views, whether STOP is on, and with `cards` the card events the board numbers its list from.
-async function viewsOf(client, cwd, { cards = false } = {}) {
-  const got = await client.state.views({ cwd, ...(cards ? { cards: true } : {}) });
+// The views, whether STOP is on, with `cards` the card events the board numbers its list from, and
+// with `answers` the card-answer events.
+async function viewsOf(client, cwd, { cards = false, answers = false } = {}) {
+  const got = await client.state.views({ cwd, ...(cards ? { cards: true } : {}), ...(answers ? { answers: true } : {}) });
   if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
-  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [] };
+  if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
+  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [] };
 }
 
 // Writes a plain event through the helper and resolves with its answer, { ok, id, pushed }.
@@ -670,7 +672,7 @@ const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 // One view as short lines.
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
-  const { views, cards: events } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels' });
+  const { views, cards: events, answers } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels', answers: name === 'work' });
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
     return listed(rules.map((r) => `${flat(r.words)} (${r.status === 'accepted' ? 'in force' : 'waiting for the director to confirm it'})`), 'The rulebook is empty.');
@@ -687,22 +689,25 @@ export async function view({ client, cwd, name, now }) {
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
-  if (name === 'work') return workLines(views, await wordsOf(client, views, now));
+  if (name === 'work') return workLines(views, answers, await wordsOf(client, views, now));
   // settings: the project's over the director's own, over the defaults
   const profile = await client.profile.views({});
   const own = profile?.ok === true && isPlain(profile.views?.settings) ? profile.views.settings : {};
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
 }
 
-// Open work's step or state in words, and whether a feature runs for it: one that has started and
-// isn't paused or closed. A quick or bug feature has no plan, so it builds from its start. Work whose
-// feature closed before a `work` event queued it again hasn't started this time.
-function workState(entry, feature) {
+// Open work's step or state in words, and whether a feature runs for it: one that is writing its
+// plan or building. A quick or bug feature has no plan, so it builds from its start. A planned one
+// waits for the go-ahead, and one the director's Not now to its build commands holds (`held`, as the
+// board reads it) waits on them. Work whose feature closed before a `work` event queued it again
+// hasn't started this time.
+function workState(entry, feature, held) {
   const { lane, visible } = entry.work?.data ?? {};
   const step = isPlain(feature?.data) && !(feature.data.step === 'closed' && !since(feature, entry.work)) ? feature.data.step : null;
+  if (step !== null && step !== 'closed' && held) return { running: false, state: 'waiting for the director to allow its build commands' };
   if (step === 'building' || (step === 'started' && NO_PLAN.includes(lane))) return { running: true, state: 'building' };
   if (step === 'started') return { running: true, state: 'writing its plan' };
-  if (step === 'planned') return { running: true, state: 'planned, waiting for the go-ahead to build' };
+  if (step === 'planned') return { running: false, state: 'planned, waiting for the go-ahead to build' };
   if (step === 'paused') {
     const why = { director: 'for the director\'s change to it', 'five-hour': 'until the five-hour usage window has room' }[feature.data.pausedFor];
     return { running: false, state: why ? `paused ${why}` : 'paused' };
@@ -711,25 +716,39 @@ function workState(entry, feature) {
   return { running: false, state: approval ? 'waiting for the director\'s approval' : 'queued, not started yet' };
 }
 
-// The open work as the board's build tab gives a feature, running work first, each oldest first:
-// its id, title and lane, whether a feature runs for it, its step or state, the slice in hand and
-// the pull request the gate waits on or its latest report names. In the glossary's plain words, a
-// title's included: the front desk reads this to tell the director how things stand.
-function workLines(views, words) {
+// What each lane is, in words a sentence takes.
+const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a feature', bug: 'a bug fix' };
+
+// The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
+// runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
+// latest report names, either since the work was queued. `answers` are the card-answer events, for
+// the director's Not now. In the glossary's plain words, a title's included: the front desk reads
+// this to tell the director how things stand.
+function workLines(views, answers, words) {
   const features = isPlain(views.features) ? views.features : {};
+  const questions = isPlain(views.questions) ? views.questions : {};
+  const reports = Object.values(isPlain(views.reports) ? views.reports : {}).filter((r) => isPlain(r?.data));
+  const held = (id) => {
+    try {
+      return heldByNotNow(id, questions, answers.filter(isPlain), reports);
+    } catch {
+      return false;
+    }
+  };
   const asks = Object.values(isPlain(views.gateAsks) ? views.gateAsks : {}).filter((a) => isPlain(a?.data));
   const open = Object.entries(isPlain(views.work) ? views.work : {}).filter(([id, entry]) => isPlain(entry?.work?.data) && isOpen(views, id))
-    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id]) }))
-    .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at)));
+    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id)) }))
+    .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at))
+      || a.id.localeCompare(b.id));
   if (open.length === 0) return ['No work is open: nothing is running or waiting.'];
   const lines = open.map(({ id, entry, running, state }) => {
     const { title, lane } = entry.work.data;
     const slice = running ? features[id]?.data?.slice : undefined;
     const report = views.reports?.[id];
-    const pr = asks.filter((a) => a.data.work === id).sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1)?.data.pr
+    const pr = asks.filter((a) => a.data.work === id && since(a, entry.work)).sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1)?.data.pr
       ?? (since(report, entry.work) ? report?.data?.pr : undefined);
     return [
-      `${id}: ${flat(title) || id}${typeof lane === 'string' ? ` (${lane} lane)` : ''}: ${running ? 'running' : 'not running'}`,
+      `${id}: ${flat(title) || id}${Object.hasOwn(LANE_WORDS, lane) ? ` (${LANE_WORDS[lane]})` : ''}: ${running ? 'running' : 'not running'}`,
       state,
       ...(isPlain(slice) && Number.isInteger(slice.n) && Number.isInteger(slice.m) ? [`slice ${slice.n} of ${slice.m}`] : []),
       ...(Number.isSafeInteger(pr) && pr > 0 ? [`pull request #${pr}`] : []),

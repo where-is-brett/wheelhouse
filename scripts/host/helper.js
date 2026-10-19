@@ -2489,15 +2489,18 @@ export async function startHelper({
     // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
     // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
     // `review`, the delegation review worked out from the project's events, { due, since, proposals }
-    // (ruling F41), for the front desk's `review`, which can't list them. Read-only, so STOP lets it through.
-    '/state/views': stateRoute(async ({ project, cards, review }) => {
+    // (ruling F41), for the front desk's `review`, which can't list them. With `answers`, the
+    // card-answer events, for the front desk's `views work` to tell a feature the director's Not now
+    // holds. Read-only, so STOP lets it through.
+    '/state/views': stateRoute(async ({ project, cards, review, answers }) => {
       const views = await writeViews(project, { now });
-      const events = cards === true || review === true ? listEvents(stateDir(project), { report: () => {} }) : [];
+      const events = cards === true || review === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];
       return {
         ok: true,
         views,
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
+        ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
         ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     }),

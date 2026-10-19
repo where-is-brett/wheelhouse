@@ -30,6 +30,7 @@ import { plainWords, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { CLICK_MS } from '../../../scripts/lib/core-numbers.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -77,6 +78,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
           views: built,
           ...(stopped() ? { stop: true } : {}),
           ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
+          ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
           ...(body.review === true ? { review: delegationReview(held, { now: NOW, enrolled: readEnrolled(), views: built }) } : {}),
         };
       },
@@ -979,11 +981,17 @@ test('views work lists the running and waiting work in plain words, and leaves e
         feature('gift-cards', 'building', 11),
         report('gift-cards', 'blocked', 12, 15),
         feature('gift-cards', 'closed', 13),
-        // Closed, then queued again: open once more, its old report kept out of it.
+        // Closed, then queued again: open once more, its old report and gate click kept out of it.
         work('newsletter', 'A monthly newsletter sign-up', 'small', 14),
+        gateAsks({ ...APPROVE_ASK, work: 'newsletter', pr: 16 }, () => T(15)),
         feature('newsletter', 'closed', 15),
         report('newsletter', 'closed', 15, 16),
         work('newsletter', 'A monthly newsletter sign-up', 'small', 16),
+        // Building as its feature step says, but held by the director's Not now to its build commands.
+        work('gallery', 'A photo gallery', 'feature', 17),
+        feature('gallery', 'building', 18),
+        makeEvent({ kind: 'question', data: { id: 'q-gallery-1', work: 'gallery', what: 'Let the builder run its tests', why: 'w', options: BUILD_QUESTION_OPTIONS, recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'] }, now: () => T(19) }),
+        makeEvent({ kind: 'card-answer', data: { question: 'May the builder run npm test?\n\nAnswer question q-gallery-1', label: BUILD_QUESTION_LABELS.notNow }, now: () => T(20) }),
       ],
     });
     const out = await run(helper, ['views', 'work']);
@@ -992,18 +1000,19 @@ test('views work lists the running and waiting work in plain words, and leaves e
     const line = (id) => lines.find((l) => l.startsWith(`${id}: `)) ?? '';
     // Each as the board's build tab gives a feature: its title and lane, then whether a feature runs
     // for it, its step or state and its pull request.
-    assert.equal(line('export-csv'), 'export-csv: Export a report as a spreadsheet (feature process level): running, building, piece 2 of 3, proposed change #7');
+    assert.equal(line('export-csv'), 'export-csv: Export a report as a spreadsheet (a feature): running, building, piece 2 of 3, proposed change #7');
     // A worker label in a title is put in plain words; a term mentioned again stays, its meaning at the end.
-    assert.equal(line('ci-badge'), 'ci-badge: Show the automatic check run status on the PR page (quick lane): running, building');
-    assert.equal(line('menu-photos'), 'menu-photos: Photos on the menu (small lane): running, planned, waiting for the go-ahead to build');
-    assert.equal(line('loyalty'), 'loyalty: A loyalty stamp card (small lane): not running, paused until the five-hour usage window has room');
-    assert.equal(line('typo-fix'), 'typo-fix: Correct the spelling on the menu (bug lane): not running, queued, not started yet');
-    assert.equal(line('dark-theme'), 'dark-theme: A dark theme for the shop (small lane): not running, waiting for the director\'s approval');
-    assert.equal(line('newsletter'), 'newsletter: A monthly newsletter sign-up (small lane): not running, waiting for the director\'s approval');
+    assert.equal(line('ci-badge'), 'ci-badge: Show the automatic check run status on the PR page (quick work): running, building');
+    assert.equal(line('menu-photos'), 'menu-photos: Photos on the menu (small work): not running, planned, waiting for the go-ahead to build');
+    assert.equal(line('loyalty'), 'loyalty: A loyalty stamp card (small work): not running, paused until the five-hour usage window has room');
+    assert.equal(line('typo-fix'), 'typo-fix: Correct the spelling on the menu (a bug fix): not running, queued, not started yet');
+    assert.equal(line('dark-theme'), 'dark-theme: A dark theme for the shop (small work): not running, waiting for the director\'s approval');
+    assert.equal(line('newsletter'), 'newsletter: A monthly newsletter sign-up (small work): not running, waiting for the director\'s approval');
+    assert.equal(line('gallery'), 'gallery: A photo gallery (a feature): not running, waiting for the director to allow its build commands');
     for (const ended of ['opening-hours', 'gift-cards']) assert.equal(line(ended), '', ended);
-    // Running work first.
-    assert.deepEqual(lines.filter((l) => /^[a-z-]+: /.test(l)).map((l) => l.split(':')[0]), ['export-csv', 'ci-badge', 'menu-photos', 'loyalty', 'typo-fix', 'dark-theme', 'newsletter']);
-    assert.match(out.out, /\n\nTerms: lane means [^\n]*; pull request means [^\n]*\.\n$/);
+    // Running work first, each oldest first, then by id.
+    assert.deepEqual(lines.filter((l) => /^[a-z-]+: /.test(l)).map((l) => l.split(':')[0]), ['export-csv', 'ci-badge', 'loyalty', 'menu-photos', 'typo-fix', 'dark-theme', 'newsletter', 'gallery']);
+    assert.match(out.out, /\n\nTerms: pull request \(PR\) means [^\n]*\.\n$/);
     assert.deepEqual(helper.writes(), []);
 
     const none = await run(fakeHelper({ events: [work('opening-hours', 'Opening hours', 'quick', 1), report('opening-hours', 'merged', 2)] }), ['views', 'work']);
