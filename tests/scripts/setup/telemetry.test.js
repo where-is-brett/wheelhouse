@@ -66,7 +66,7 @@ test('telemetry by user settings, and by the launch environment, are each put ba
   fs.writeFileSync(file, text);
   const userSettings = JSON.parse(text);
   const fake = fakeLaunch();
-  const planned = await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings, file, userHome: dir });
+  const planned = await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings, file, userHome: dir, environment: {} });
   assert.deepEqual(planned.kept, []);
   assert.deepEqual(planned.changes, Object.entries(OURS).map(([k, v]) => ({ kind: 'json-key', target: file, key: ['env', k], after: v, what: 'telemetry' })));
   const ctx = recorder();
@@ -75,9 +75,10 @@ test('telemetry by user settings, and by the launch environment, are each put ba
   assert.deepEqual(written, { theme: 'dark', env: { FOO: 'bar', ...OURS } });
   assert.equal(ctx.made.length, 4);
   for (const c of ctx.made) assert.deepEqual([c.kind, c.before, c.absent], ['json-key', null, true]);
-  assert.equal(fake.calls.length, 0, 'the user settings route runs nothing');
+  // The user settings route only reads the launch environment, for a value of the director's own.
+  assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), JSON.stringify(fake.calls));
   // Planned again, nothing is left to change.
-  assert.deepEqual((await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings: written, file, userHome: dir })).changes, []);
+  assert.deepEqual((await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings: written, file, userHome: dir, environment: {} })).changes, []);
   for (const c of [...ctx.made].reverse()) assert.deepEqual(reverseChange(c), { put: true });
   assert.equal(fs.readFileSync(file, 'utf8'), text);
 
@@ -85,7 +86,7 @@ test('telemetry by user settings, and by the launch environment, are each put ba
   // and a login item that sets them again at each log-in.
   const home = tempFolder('wh-telemetry-home ');
   const mac = fakeLaunch({ PATH: '/usr/bin' });
-  const onMac = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'darwin', run: mac.run, userSettings: {}, file, userHome: home });
+  const onMac = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'darwin', run: mac.run, userSettings: {}, file, userHome: home, environment: {} });
   const item = loginItemFile(home);
   assert.equal(path.dirname(item), path.join(home, 'Library', 'LaunchAgents'));
   assert.deepEqual(onMac.changes.filter((c) => c.kind === 'env'), Object.entries(OURS).map(([k, v]) => ({ kind: 'env', target: k, after: v, what: 'telemetry' })));
@@ -111,7 +112,7 @@ test('telemetry by user settings, and by the launch environment, are each put ba
 
   // On Windows: the user's environment variables, by PowerShell, each read first; no login item.
   const win = fakeLaunch();
-  const onWin = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'win32', run: win.run, userSettings: {}, file, userHome: home });
+  const onWin = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'win32', run: win.run, userSettings: {}, file, userHome: home, environment: {} });
   assert.equal(onWin.changes.length, 4);
   assert.ok(onWin.changes.every((c) => c.kind === 'env'));
   const winCtx = recorder();
@@ -127,17 +128,52 @@ test('a telemetry setting the director already set to their own value is left as
   const file = path.join(dir, 'settings.json');
   const own = { env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector.example:4318' } };
   const fake = fakeLaunch();
-  const got = await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings: own, file, userHome: dir });
+  const got = await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings: own, file, userHome: dir, environment: {} });
   assert.deepEqual(got.changes, [], 'none of the four is written over the director\'s own collector');
   assert.deepEqual(got.kept, [{ name: 'OTEL_EXPORTER_OTLP_ENDPOINT', value: 'http://collector.example:4318' }]);
   // In the launch environment the same.
   const mac = fakeLaunch({ CLAUDE_CODE_ENABLE_TELEMETRY: '0' });
-  const onMac = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'darwin', run: mac.run, userSettings: {}, file, userHome: dir });
+  const onMac = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'darwin', run: mac.run, userSettings: {}, file, userHome: dir, environment: {} });
   assert.deepEqual(onMac.changes, []);
   assert.deepEqual(onMac.kept, [{ name: 'CLAUDE_CODE_ENABLE_TELEMETRY', value: '0' }]);
+  // On the user settings route, a value of the director's own in the launch environment, or in the
+  // environment setup runs in, is not overridden by a settings key either (check 36: settings `env`
+  // would win over it): none of the four is set, and theirs is named.
+  for (const platform of ['darwin', 'win32']) {
+    const launch = fakeLaunch({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector.example:4318' });
+    const byLaunch = await telemetryChanges({ port: PORT, route: 'user-settings', platform, run: launch.run, userSettings: {}, file, userHome: dir, environment: {} });
+    assert.deepEqual(byLaunch, { changes: [], kept: [{ name: 'OTEL_EXPORTER_OTLP_ENDPOINT', value: 'http://collector.example:4318' }] }, platform);
+  }
+  const byShell = await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings: {}, file, userHome: dir, environment: { OTEL_METRICS_EXPORTER: 'prometheus' } });
+  assert.deepEqual(byShell, { changes: [], kept: [{ name: 'OTEL_METRICS_EXPORTER', value: 'prometheus' }] });
+  const byShellToo = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'darwin', run: fake.run, userSettings: {}, file, userHome: dir, environment: { OTEL_METRICS_EXPORTER: 'prometheus' } });
+  assert.deepEqual(byShellToo.changes, []);
+  // Wheelhouse's own value there counts as set, not as the director's.
+  const ours = await telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fakeLaunch(OURS).run, userSettings: {}, file, userHome: dir, environment: OURS });
+  assert.deepEqual(ours.kept, []);
+  assert.equal(ours.changes.length, 4);
+
   // An `env` that isn't an object stops the plan, naming the file, and changes nothing.
-  await assert.rejects(telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings: { env: 'x' }, file, userHome: dir }), /settings\.json/);
-  await assert.rejects(telemetryChanges({ port: PORT, route: 'elsewhere', platform: 'darwin', run: fake.run, userSettings: {}, file, userHome: dir }), /route/);
+  await assert.rejects(telemetryChanges({ port: PORT, route: 'user-settings', platform: 'darwin', run: fake.run, userSettings: { env: 'x' }, file, userHome: dir, environment: {} }), /settings\.json/);
+  await assert.rejects(telemetryChanges({ port: PORT, route: 'elsewhere', platform: 'darwin', run: fake.run, userSettings: {}, file, userHome: dir, environment: {} }), /route/);
+});
+
+test('a launch variable the director set after the plan is not written over, and a retry still goes ahead', async () => {
+  const home = tempFolder('wh-telemetry-race-');
+  const file = path.join(home, 'settings.json');
+  const mac = fakeLaunch();
+  const { changes } = await telemetryChanges({ port: PORT, route: 'launch-env', platform: 'darwin', run: mac.run, userSettings: {}, file, userHome: home, environment: {} });
+  // Between the plan and the setting, the director sets their own endpoint.
+  mac.vars.set('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://collector.example:4318');
+  const ctx = recorder();
+  await assert.rejects(telemetryOn({ changes, platform: 'darwin', run: mac.run, applyJsonKey: ctx.applyJsonKey, record: ctx.record }), /OTEL_EXPORTER_OTLP_ENDPOINT/);
+  assert.equal(mac.vars.get('OTEL_EXPORTER_OTLP_ENDPOINT'), 'http://collector.example:4318');
+  assert.ok(!ctx.made.some((c) => c.target === 'OTEL_EXPORTER_OTLP_ENDPOINT'), 'nothing recorded for a variable left alone');
+  // A retry after a run that set some of them: setup's own value as the value before goes ahead.
+  const again = fakeLaunch(OURS);
+  const retry = recorder();
+  await telemetryOn({ changes, platform: 'darwin', run: again.run, applyJsonKey: retry.applyJsonKey, record: retry.record });
+  assert.deepEqual(retry.made.filter((c) => c.kind === 'env').map((c) => c.before), Object.values(OURS));
 });
 
 test('no telemetry change sets prompt or tool logging', async () => {
@@ -147,7 +183,7 @@ test('no telemetry change sets prompt or tool logging', async () => {
   const file = path.join(dir, 'settings.json');
   for (const [route, platform] of [['user-settings', 'darwin'], ['user-settings', 'win32'], ['launch-env', 'darwin'], ['launch-env', 'win32']]) {
     const fake = fakeLaunch();
-    const { changes } = await telemetryChanges({ port: PORT, route, platform, run: fake.run, userSettings: {}, file, userHome: dir });
+    const { changes } = await telemetryChanges({ port: PORT, route, platform, run: fake.run, userSettings: {}, file, userHome: dir, environment: {} });
     assert.ok(changes.length >= 4, `${route} ${platform}`);
     for (const c of changes) {
       assert.doesNotMatch(JSON.stringify(c.key ?? c.target), content);

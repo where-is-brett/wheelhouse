@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { computerStep, computerChanges, lockedStep, weakening } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
-import { runApply, setupRoutes, AFTER_WAIT_MS } from '../../../scripts/setup/engine.js';
+import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
 import { findRun, markStep, reverseChange, startRun } from '../../../scripts/setup/journal.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
@@ -24,7 +24,7 @@ import { setupLine } from '../../../scripts/state/card-lines.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { ownKey } from '../../../scripts/state/signing.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { NEEDS_NARROW } from '../../../scripts/protection/locked.js';
+import { NEEDS_NARROW, HAS_MDM, NOT_OURS } from '../../../scripts/protection/locked.js';
 import { LEVELS, REAL_USERS } from '../../../scripts/setup/host.js';
 import { withProject, SLUG, REPO, T0 } from '../../helpers/setup-answers.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -92,11 +92,15 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, /this computer only/);
     assert.match(text, /never your prompts or tool content/);
     assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\)`));
+    // Ruling R64: the card says what a shorter retention costs.
+    assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\); older ones are removed, and uninstall can't bring them back`));
+    assert.match(text, /uninstall puts each setting back, but not removed transcripts/);
+    assert.match(text, /These are Claude Code's own settings on this computer/);
     assert.match(text, /stable channel at version 2\.1\.100 or later/);
-    assert.match(text, /Wheelhouse itself never updates on its own/);
+    assert.match(text, /Wheelhouse never updates itself/);
     assert.match(text, /phone notifications on/);
     assert.ok(ownKey());
-    assert.match(text, /signing key, which signs your clicks, is already made/);
+    assert.match(text, /key for signing your clicks is already made/);
     assert.doesNotMatch(text, /weaken/, 'none of the director\'s settings weakens Standard here');
     assert.equal(planned.director, 'One click');
 
@@ -118,7 +122,7 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.equal(made.length, planned.changes.length);
     assert.equal(made.find((c) => c.key.join('.') === 'cleanupPeriodDays').before, 7);
     assert.ok(made.every((c) => c.kind === 'json-key' && c.target === file));
-    assert.equal(fake.calls.length, 0);
+    assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'it only reads the launch environment');
     assert.ok(!fs.existsSync(path.join(home, 'setup', 'clicks')) || fs.readdirSync(path.join(home, 'setup', 'clicks')).length === 0);
     // Planned again, nothing is left to change, and the card says so.
     const again = await step.plan(ctx);
@@ -141,6 +145,7 @@ test('by the launch environment, the card asks for a Desktop restart', async () 
     assert.match(text, /quit and reopen Claude Desktop/);
     assert.match(text, /login item/);
     assert.match(planned.director, /quit and reopen Claude Desktop/);
+    assert.match(text, /variables for your account and a login item/, 'the why line names what this route changes');
     assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'the plan only reads');
   });
 });
@@ -176,7 +181,7 @@ test('each weakening setting is named with what it does, and left as it is', asy
     const text = composed(planned, 6);
     for (const w of named) assert.ok(text.includes(w.says), `${w.says}\n${text}`);
     assert.match(text, /weaken Standard/);
-    assert.match(text, /leaves as they are/);
+    assert.match(text, /left as they are for you to decide/);
     // No change touches them.
     for (const c of planned.changes) assert.ok(!['sandbox', 'enabledPlugins', 'extraKnownMarketplaces'].includes(c.key[0]), c.key.join('.'));
     const run = startRun({ folder, now: () => T0 });
@@ -191,6 +196,51 @@ test('each weakening setting is named with what it does, and left as it is', asy
     const crowdedText = composed(crowded, 6);
     assert.match(crowdedText, /command-number-0/);
     assert.match(crowdedText, /more/);
+  });
+});
+
+test('a minimum version of the director\'s own at or above the floor is kept, and a lower one is named as it is raised', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const file = path.join(config, 'settings.json');
+    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
+    const keysOf = (p) => p.changes.filter((c) => c.what === 'updates').map((c) => c.key[0]);
+    for (const higher of ['2.3.0', '2.1.100', '2.1.101', '3.0.0']) {
+      fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: higher })}\n`);
+      const planned = await step.plan(ctx);
+      assert.deepEqual(keysOf(planned), ['autoUpdatesChannel'], higher);
+      assert.match(composed(planned, 6), new RegExp(`stable channel at version ${higher.replace(/\./g, '\\.')} or later \\(your own minimum, kept\\)`), higher);
+    }
+    for (const [lower, shown] of [['2.0.5', '2.0.5'], ['2.1.99', '2.1.99'], ['latest', '"latest"']]) {
+      fs.writeFileSync(file, `${JSON.stringify({ minimumVersion: lower })}\n`);
+      const planned = await step.plan(ctx);
+      assert.deepEqual(keysOf(planned), ['autoUpdatesChannel', 'minimumVersion'], lower);
+      assert.ok(composed(planned, 6).includes(`at version 2.1.100 or later (now ${shown})`), lower);
+    }
+  });
+});
+
+test('a telemetry variable set between the card and the click makes the Go ahead refused as changed', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    // The real steps' step 6 with a fake launch environment, through the helper's own routes.
+    const dir = tempFolder('wh-steps-');
+    const module = path.join(dir, 'steps.mjs');
+    const computer = new URL('../../../scripts/setup/computer.js', import.meta.url).href;
+    fs.writeFileSync(module, [
+      `import { computerStep } from ${JSON.stringify(computer)};`,
+      'const run = async () => ({ code: 0, stdout: \'\', stderr: \'\' });',
+      `export const STEPS = [computerStep({ run, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, manifest: ${JSON.stringify(MANIFEST)}, port: ${PORT} })];`,
+      '',
+    ].join('\n'));
+    const routes = setupRoutes({ now: () => T0, userHome: user, platform: 'darwin', stepsModule: module });
+    const shown = await routes['/setup/plan']({ folder, step: 6 });
+    assert.equal(shown.ok, true, shown.refused);
+    assert.equal(shown.changes.filter((c) => c.what === 'telemetry').length, 4);
+    // The director points telemetry at their own collector meanwhile.
+    const file = path.join(config, 'settings.json');
+    fs.writeFileSync(file, `${JSON.stringify({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector.example:4318' } })}\n`);
+    await assert.rejects(routes['/setup/apply']({ folder, step: 6, hash: shown.hash }), (error) => error.message === CHANGED);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector.example:4318' } });
   });
 });
 
@@ -245,7 +295,21 @@ test('Locked is installed only after the narrow connection, and never on Windows
 
     // Chosen on a Mac with the Quick connection: refused, nothing run.
     narrow(folder, 'quick');
-    await assert.rejects(step.plan(ctxOf('darwin', locked)), new RegExp(NEEDS_NARROW));
+    await assert.rejects(step.plan(ctxOf('darwin', locked)), new RegExp(`${NEEDS_NARROW}, and this project has the Quick connection`));
+    // With no connection recorded at all, the line says so.
+    writeProject(SLUG, { folder, remoteUrl: `https://github.com/${REPO}.git`, host: 'github', repo: REPO, connection: {} });
+    await assert.rejects(step.plan(ctxOf('darwin', locked)), new RegExp(`${NEEDS_NARROW}, and this project has no connection yet`));
+    assert.equal(fake.calls.length, 0);
+
+    // A change Locked would refuse is never offered: another managed policy for Claude Code, or a
+    // computer-wide settings file that is not Wheelhouse's.
+    narrow(folder);
+    const plist = path.join(tempFolder('wh-mdm-'), 'policy.plist');
+    fs.writeFileSync(plist, 'x');
+    await assert.rejects(lockedStep({ run: fake.run, dir, mdmPlist: plist }).plan(ctxOf('darwin', locked)), new RegExp(HAS_MDM.replace(/'/g, '.')));
+    const foreign = tempFolder('wh-managed-foreign-');
+    fs.writeFileSync(path.join(foreign, 'managed-settings.json'), '{}');
+    await assert.rejects(lockedStep({ run: fake.run, dir: foreign, mdmPlist: NO_PLIST }).plan(ctxOf('darwin', locked)), new RegExp(NOT_OURS.replace(/'/g, '.')));
     assert.equal(fake.calls.length, 0);
 
     // With the narrow connection: one change, Locked for this project, and a card naming the password prompt.
@@ -280,7 +344,7 @@ test('Locked is installed only after the narrow connection, and never on Windows
     assert.equal(fake.calls[0][0], 'osascript');
     const made = findRun(folder).changes.filter((c) => c.step === 8);
     assert.equal(made.length, 1);
-    assert.deepEqual([made[0].kind, made[0].target, made[0].before, made[0].after.project], ['locked', path.join(dir, 'managed-settings.json'), { inPlace: false, projects: [] }, SLUG]);
+    assert.deepEqual([made[0].kind, made[0].target, made[0].before, made[0].after.project], ['locked', path.join(dir, 'managed-settings.json'), { exists: false, ours: false, projects: [] }, SLUG]);
     // Leaving Locked asks for the password, so uninstall's reversal of it is its own (Task 15).
     assert.deepEqual(reverseChange(made[0]), { put: false, why: 'put back by its own step' });
 

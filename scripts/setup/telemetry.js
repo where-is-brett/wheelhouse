@@ -18,8 +18,13 @@
 //   their own step. The login item, a file setup made, it removes while it is as setup wrote it.
 //
 // A variable the director has already set to a value of their own (their own collector, say) is
-// never written over: then none of the four is set, so telemetry stays wholly as they have it,
-// and the card names theirs (check 36: "setup must not overwrite it").
+// never written over or overridden: then none of the four is set, so telemetry stays wholly as they
+// have it, and the card names theirs (check 36: "setup must not overwrite it"). Their own is looked
+// for wherever it would take effect: on either route the account's launch environment and the
+// environment setup runs in, and on the user-settings route the settings' `env` too (a settings
+// key would win over the other two for Claude Code, so writing one would override theirs). A
+// launch variable that holds a value of the director's own by the time it is set is refused, not
+// written over; setup's own value there (a retry) is set again.
 import fs from 'node:fs';
 import path from 'node:path';
 import { telemetryEnv } from '../telemetry/env.js';
@@ -93,9 +98,10 @@ async function setLaunchVar(name, value, { platform, run }) {
   if (got?.code !== 0) throw new Error(`${name} could not be set for this account${got?.stderr ? `: ${String(got.stderr).trim()}` : ''}`);
 }
 
-const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+export const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-function readText(file) {
+// A file's text, or null when there is none.
+export function readText(file) {
   try {
     return fs.readFileSync(file, 'utf8');
   } catch (error) {
@@ -107,35 +113,28 @@ function readText(file) {
 // The telemetry changes a plan lists, by `route`: { changes, kept }. `changes` sets each of the
 // four not already set to Wheelhouse's value; `kept` names the director's own values, and while
 // there is one, `changes` is empty. `userSettings` is the user's Claude settings as read, `file`
-// where they are; `run` reads the launch environment (it changes nothing). Each change carries
-// `what: 'telemetry'`, which step 6's card groups by.
-export async function telemetryChanges({ port, route, platform, run, userSettings, file, userHome }) {
+// where they are; `run` reads the launch environment (it changes nothing); `environment` is the
+// environment setup runs in. Each change carries `what: 'telemetry'`, which step 6's card groups by.
+export async function telemetryChanges({ port, route, platform, run, userSettings, file, userHome, environment = process.env }) {
+  if (!TELEMETRY_ROUTES.includes(route)) throw new Error(`The telemetry route is one of ${TELEMETRY_ROUTES.join(', ')}, not ${JSON.stringify(route)}`);
   const vars = contentFree(telemetryEnv(port));
+  const env = userSettings?.env;
+  if (route === 'user-settings' && env !== undefined && !isObject(env)) throw new Error(`${file} holds env that is not an object, so setup has left it as it was`);
   const changes = [];
   const kept = [];
-  if (route === 'user-settings') {
-    const env = userSettings?.env;
-    if (env !== undefined && !isObject(env)) throw new Error(`${file} holds env that is not an object, so setup has left it as it was`);
-    for (const [name, value] of Object.entries(vars)) {
-      const now = env?.[name];
-      if (now === value) continue;
-      if (now !== undefined) kept.push({ name, value: now });
-      else changes.push({ kind: 'json-key', target: file, key: ['env', name], after: value, what: 'telemetry' });
-    }
-  } else if (route === 'launch-env') {
-    for (const [name, value] of Object.entries(vars)) {
-      const now = await readLaunchVar(name, { platform, run });
-      if (now === value) continue;
-      if (now !== null) kept.push({ name, value: now });
-      else changes.push({ kind: 'env', target: name, after: value, what: 'telemetry' });
-    }
-    if (platform === 'darwin' && kept.length === 0) {
-      const item = loginItemFile(userHome);
-      const text = loginItem(vars);
-      if (readText(item) !== text) changes.push({ kind: 'file', target: item, after: text, what: 'telemetry' });
-    }
-  } else {
-    throw new Error(`The telemetry route is one of ${TELEMETRY_ROUTES.join(', ')}, not ${JSON.stringify(route)}`);
+  for (const [name, value] of Object.entries(vars)) {
+    const launch = await readLaunchVar(name, { platform, run });
+    const shell = typeof environment?.[name] === 'string' && environment[name] !== '' ? environment[name] : null;
+    const setting = route === 'user-settings' && env?.[name] !== undefined ? env[name] : null;
+    const theirs = [setting, launch, shell].find((v) => v !== null && v !== value);
+    if (theirs !== undefined) kept.push({ name, value: theirs });
+    else if (route === 'user-settings' && setting === null) changes.push({ kind: 'json-key', target: file, key: ['env', name], after: value, what: 'telemetry' });
+    else if (route === 'launch-env' && launch === null) changes.push({ kind: 'env', target: name, after: value, what: 'telemetry' });
+  }
+  if (route === 'launch-env' && platform === 'darwin' && kept.length === 0) {
+    const item = loginItemFile(userHome);
+    const text = loginItem(vars);
+    if (readText(item) !== text) changes.push({ kind: 'file', target: item, after: text, what: 'telemetry' });
   }
   return { changes: kept.length > 0 ? [] : changes, kept };
 }
@@ -152,7 +151,9 @@ export async function telemetryOn({ port, route, platform, run, userSettings, fi
       made.push(applyJsonKey({ file: c.target, key: c.key, value: c.after }));
     } else if (c.kind === 'env') {
       contentFree({ [c.target]: c.after });
-      const change = { id: newId('chg'), kind: 'env', target: c.target, before: await readLaunchVar(c.target, { platform, run }), after: c.after, where: platform === 'win32' ? 'user' : 'launchctl' };
+      const before = await readLaunchVar(c.target, { platform, run });
+      if (before !== null && before !== c.after) throw new Error(`${c.target} now holds a value of your own, so setup has left it as it was: ask for this step's plan again`);
+      const change = { id: newId('chg'), kind: 'env', target: c.target, before, after: c.after, where: platform === 'win32' ? 'user' : 'launchctl' };
       record(change);
       await setLaunchVar(c.target, c.after, { platform, run });
       made.push(change);
