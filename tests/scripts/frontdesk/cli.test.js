@@ -599,6 +599,17 @@ test('record works out the hash of the document a work or an amendment names, an
     const missing = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/none.md' } }), at);
     assert.equal(missing.code, 1);
     assert.match(missing.err, /docs\/bugs\/none\.md can't be read/);
+    // A hash given for a document that can't be read is never taken unchecked.
+    const unchecked = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/none.md', hash: DOC } }), at);
+    assert.equal(unchecked.code, 1);
+    assert.match(unchecked.err, /docs\/bugs\/none\.md can't be read/);
+    // A document over 1 MB says so.
+    write('docs/bugs/huge.md', 'x'.repeat(1024 * 1024 + 1));
+    for (const doc of [{ path: 'docs/bugs/huge.md' }, { path: 'docs/bugs/huge.md', hash: DOC }]) {
+      const huge = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc }), at);
+      assert.equal(huge.code, 1);
+      assert.match(huge.err, /docs\/bugs\/huge\.md is over 1 MB/);
+    }
 
     // An amendment: the changed document is the one file the work names, written in place.
     write('docs/bugs/total.md', 'The total leaves cancelled orders out, and says so.\n');
@@ -610,9 +621,17 @@ test('record works out the hash of the document a work or an amendment names, an
     const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', hash }), at);
     assert.equal(stale.code, 1);
     assert.match(stale.err, /is not the document's as it stands/);
-    const nameless = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'no-such-work', change: 'x' }), at);
+    // An amendment of work that isn't open is refused, with a hash or without.
+    for (const data of [{ work: 'no-such-work', change: 'x' }, { work: 'no-such-work', change: 'x', hash: DOC }]) {
+      const unknown = await run(helper, ['record', 'amendment'], JSON.stringify(data), at);
+      assert.equal(unknown.code, 1);
+      assert.match(unknown.err, /The work no-such-work isn't open, so there is nothing to amend/);
+    }
+    // Open work that names no document needs the changed document's hash.
+    await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'no-doc' }), at);
+    const nameless = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'no-doc', change: 'x' }), at);
     assert.equal(nameless.code, 1);
-    assert.match(nameless.err, /no-such-work names no document/);
+    assert.match(nameless.err, /no-doc names no document/);
     assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1, 'nothing refused was written');
   });
 });

@@ -40,6 +40,7 @@ import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, ID } from '../state/card-lines.js';
 import { countsAtOnce } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
+import { endedBy } from '../foreman/queue.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -468,19 +469,22 @@ export async function writeSetting({ client, cwd, data, words, makeId = () => cr
 
 // The hash of a document in the project, its text with line endings evened, as a work event or an
 // amendment names it: the front desk in the sandbox has no other way to work it out. A hash given
-// must be the document's as it stands. A document that can't be read is refused, unless a hash was
-// given and nothing can be checked against.
+// must be the document's as it stands; a document that can't be read, or is over INPUT_BYTES, is
+// refused, a hash given or not.
 function documentHash(cwd, file, given) {
-  let text = null;
+  let stat = null;
+  const full = path.resolve(cwd, file);
   try {
-    const full = path.resolve(cwd, file);
-    const stat = fs.statSync(full);
-    if (stat.isFile() && stat.size <= INPUT_BYTES) text = fs.readFileSync(full, 'utf8');
+    stat = fs.statSync(full);
   } catch {
-    text = null;
+    stat = null;
   }
-  if (text === null) {
-    if (typeof given === 'string') return given;
+  if (stat === null || !stat.isFile()) throw new CliError(`The document ${file} can't be read: write it first, then record it`);
+  if (stat.size > INPUT_BYTES) throw new CliError(`The document ${file} is over 1 MB, too long to record by its hash`);
+  let text;
+  try {
+    text = fs.readFileSync(full, 'utf8');
+  } catch {
     throw new CliError(`The document ${file} can't be read: write it first, then record it`);
   }
   const hash = briefHash(text);
@@ -488,14 +492,16 @@ function documentHash(cwd, file, given) {
   return hash;
 }
 
-// A work event's document, or an amendment of the one file the work names, with its hash worked out.
+// A work event's document, or an amendment of the one file open work names, with its hash worked out.
 async function withHash(client, cwd, kind, input) {
   if (kind === 'work' && isPlain(input.doc) && typeof input.doc.path === 'string') {
     return { ...input, doc: { ...input.doc, hash: documentHash(cwd, input.doc.path, input.doc.hash) } };
   }
   if (kind !== 'amendment') return input;
   const { views } = await viewsOf(client, cwd);
-  const file = views.work?.[input.work]?.work?.data?.doc?.path;
+  const entry = isPlain(views.work) ? views.work[input.work] : undefined;
+  if (!isPlain(entry) || endedBy(views.reports, input.work, entry.work)) throw new CliError(`The work ${input.work} isn't open, so there is nothing to amend`);
+  const file = entry.work?.data?.doc?.path;
   if (typeof file !== 'string') {
     if (input.hash !== undefined) return input;
     throw new CliError(`The work ${input.work} names no document, so give the changed document's hash`);

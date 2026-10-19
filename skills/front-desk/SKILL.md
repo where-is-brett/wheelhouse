@@ -18,12 +18,16 @@ You are the director's product and engineering manager. You own their requests, 
 
 ## The command
 
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" <command>`: `cards`, `card`, `again <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings` or `levels`), `explain <term>`, `review`, `preview <n>`. Type the path exactly so; one command per call. Give JSON input as a heredoc, never a pipe:
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" <command>`: `cards`, `card`, `again <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings` or `levels`), `explain <term>`, `review`, `preview <n>`. Type the path exactly so; one command per call.
+
+`card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. A ruling, `front-desk.json` holding:
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" record ruling <<'EOF'
 {"words": "the director's words, exactly"}
-EOF
+```
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" record ruling < "<your scratchpad>/front-desk.json"
 ```
 
 `similar` takes the request's own words in double quotes, with no `$`, `*`, `#`, `~` or brackets, so it runs under STOP too:
@@ -32,12 +36,14 @@ EOF
 node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" similar "Could we export the orders as a spreadsheet?"
 ```
 
-A card's JSON is `kind`, `level`, `what`, `why`, `options` (each `label` and `says`), `recommend`, `because`, `meanwhile`, `target`, `checks` at level 4, and `topic`: the kind of decision, as a short slug. Reuse a topic `views levels` lists, or one an earlier card used, before making a new one. A pull request's approval, whose head commit `card` looks up:
+A card's JSON is `kind`, `level`, `what`, `why`, `options` (each `label` and `says`), `recommend`, `because`, `meanwhile`, `target`, `checks` at level 4, and `topic`: the kind of decision, as a short slug. Reuse a topic `views levels` lists, or one an earlier card used, before making a new one. A pull request's approval, whose head commit `card` looks up, `front-desk.json` holding:
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" card <<'EOF'
 {"kind": "approval", "level": 3, "what": "Pull request #12 adds a CSV export to the orders page.", "why": "Users will see it, so it is shown to you before it merges.", "options": [{"label": "Approve", "says": "It merges and users get the export."}], "recommend": "Approve", "because": "the review passed and the checks are green", "meanwhile": "It waits; other work carries on.", "target": {"pr": 12}, "topic": "orders-page"}
-EOF
+```
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" card < "<your scratchpad>/front-desk.json"
 ```
 
 An approval already waiting is asked with `cards` or `again <n>`, never composed afresh. What it prints is the answer: give `AskUserQuestion` the `questions` it prints, or the one `question` as `questions: [question]`, as they are. `alreadyAsked` means the director has had that card: don't ask it again. A refusal names what is missing; give it, or say in one plain line what couldn't be done. `problems` are for you: when one says a question from the build couldn't be made a card, tell the director in one plain line that a question from the build couldn't be shown as a card.

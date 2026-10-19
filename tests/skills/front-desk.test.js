@@ -97,7 +97,7 @@ test('the playbook and the intake name only commands, views, record kinds and ca
     const words = commandWords(text);
     assert.ok(words.length > 0, file);
     for (const word of words) assert.ok(known.includes(word), `${file}: ${word}`);
-    for (const m of text.matchAll(/\brecord ([a-z]+)(?= <<|`)/g)) assert.ok(RECORD_KINDS.includes(m[1]), `${file}: record ${m[1]}`);
+    for (const m of text.matchAll(/\brecord ([a-z]+)(?= <|`)/g)) assert.ok(RECORD_KINDS.includes(m[1]), `${file}: record ${m[1]}`);
     for (const m of text.matchAll(/`([a-z-]+)` card\b/g)) assert.ok(CARD_KINDS.includes(m[1]), `${file}: ${m[1]} card`);
   }
   // The listed commands are cli.js's own, and the views those `views` takes.
@@ -108,10 +108,11 @@ test('the playbook and the intake name only commands, views, record kinds and ca
 });
 
 test('each example input in the playbook is accepted as written, the approval with its head commit looked up', async () => {
-  const blocks = [...playbook.matchAll(/```\nnode "([^"]*)" ([^\n<]*?) <<'EOF'\n([\s\S]*?)\nEOF\n```/g)];
+  // The JSON, then the command reading it from the file in the scratchpad (ruling F81).
+  const blocks = [...playbook.matchAll(/```\n(\{[^\n]*\})\n```\n\n```\nnode "([^"]*)" ([^\n<]*?) < "<your scratchpad>\/front-desk\.json"\n```/g)];
   assert.ok(blocks.length >= 2, 'a record and a card are shown');
   const seen = [];
-  for (const [, command, args, input] of blocks) {
+  for (const [, input, command, args] of blocks) {
     assert.equal(`node "${command.replaceAll(ROOT_VARIABLE, '/plugin')}"`, COMMAND);
     const h = helper();
     let out = '';
@@ -127,6 +128,21 @@ test('each example input in the playbook is accepted as written, the approval wi
     if (args === 'record ruling') assert.ok(answered.card.question.question.startsWith('What this is:'));
   }
   assert.deepEqual(seen.sort(), ['card', 'record ruling']);
+});
+
+test('the playbook gives JSON input from a file in the scratchpad, written with the Write tool, never a heredoc or a pipe (F81)', () => {
+  // Claude Code 2.1.302 refuses a heredoc holding a brace beside a quote whatever the allow rules
+  // say, and asks about a pipe; a file read with `<` runs under the command's allow rule.
+  assert.doesNotMatch(playbook, /<<'?EOF/);
+  assert.doesNotMatch(intake, /<<'?EOF|as a heredoc/);
+  const rule = playbook.split('\n').find((line) => line.startsWith('`card` and `record` read their JSON from a file')) ?? '';
+  assert.match(rule, /never a heredoc or a pipe/);
+  assert.match(rule, /with the Write tool to `front-desk\.json` in your scratchpad folder/);
+  assert.match(rule, /outside the project, so nothing reaches git/);
+  assert.match(intake, /JSON input from a file in your scratchpad folder/);
+  const commands = [...playbook.matchAll(/^node "[^"]*" (?:card|record [a-z]+)\b.*$/gm)].map((m) => m[0]);
+  assert.ok(commands.length >= 2);
+  for (const line of commands) assert.match(line, / < "<your scratchpad>\/front-desk\.json"$/);
 });
 
 test('the playbook\'s similar, with the request\'s words as arguments, runs, and runs under STOP', async () => {
@@ -184,6 +200,8 @@ test('the intake writes a changed approved document in place and marks it as cha
   assert.match(rule, /stays in git at the hash the approval names/);
   assert.match(rule, /`cli\.js record amendment` \(the work and the change; it works out the changed document's hash and prints it\)/);
   assert.match(rule, /`amend` card/);
+  // Nothing holds a build for an amendment waiting for its click (ruling F84).
+  assert.match(rule, /its meanwhile says the build keeps to the approved design until the click/);
   // The red flags say the same.
   assert.match(intake, /\n\| "[^"\n]*approval line[^"\n]*" \| Replace it: "Changed since the director's approval; the change card decides it\." \|\n/);
 });
