@@ -1,22 +1,25 @@
 // scripts/mod/bridge.js
 // What the mod runs: `node <plugin root>/scripts/mod/bridge.js` through `$.process.run`, with
-// one JSON request on standard input. It prints one JSON line, { ok, says? }, and exits 0
-// within BRIDGE_MS, whatever the request was. The mod signs nothing and runs no shell; this
-// script signs only because the mod's commands run outside the session's sandbox, where the
-// signing key can be read (check 32). Run inside the sandbox, by an agent, it can't read the
-// key, so it signs nothing and says so.
+// one JSON request on standard input. It prints one JSON line, { ok, says?, ... } with only the
+// fields lineOf lets through, and exits 0 within BRIDGE_MS of reading the request (a foreman's
+// tick, which runs the watcher's loop, gets WATCH_BRIDGE_MS), whatever the request was. The mod
+// signs nothing and runs no shell; this script signs only because the mod's commands run outside
+// the session's sandbox, where the signing key can be read (check 32). Run inside the sandbox, by
+// an agent, it can't read the key, so it signs nothing and says so.
 //
 // Nothing in a request is trusted beyond its `origin`, which the mod takes from Claude Code.
 // Only `composer` (typed) and `bridge` (phoned) are the director's; `sdk`, `peer` and every
 // other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
+//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'go', origin, cwd }                      /go: lifts STOP with a signed record
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop": sets STOP
 //
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { replyRecord as defaultReply } from './reply.js';
@@ -28,9 +31,13 @@ import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { recordModReading, recordSession } from '../usage/store.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
+import { sessionRole as defaultSessionRole } from '../lib/role.js';
+import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
+import { TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
+import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 
-// The whole run, from reading the request to the answer.
+// The whole run for most requests, from reading the request to the answer.
 export const BRIDGE_MS = 5000;
 // How long the helper is waited for, inside BRIDGE_MS.
 export const HELPER_MS = 3000;
@@ -68,12 +75,26 @@ const DEFAULTS = {
   stopState: defaultStopState,
   setStop: defaultSetStop,
   liftStop: defaultLiftStop,
+  sessionRole: defaultSessionRole,
+  paneModel: defaultPaneModel,
+  writePaneStatus: defaultWritePaneStatus,
+  env: process.env,
 };
 
 // The project a full path belongs to, or null.
 function placeOf(cwd, d) {
   try {
     return typeof cwd === 'string' && path.isAbsolute(cwd) ? d.projectOf(cwd)?.project ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+// The registered project a full path belongs to ({ project, record }), or null.
+function siteOf(cwd, d) {
+  try {
+    const found = typeof cwd === 'string' && path.isAbsolute(cwd) ? d.projectOf(cwd) : null;
+    return typeof found?.project === 'string' ? found : null;
   } catch {
     return null;
   }
@@ -158,7 +179,49 @@ async function stop(req, d) {
   return { ok: true, says: SAYS.stopOn };
 }
 
-const COMMANDS = { usage, reply, go, stop };
+// Whether the project's local settings name Wheelhouse's own status line (board-and-usage), which
+// the terminal then draws itself. Read from the file alone, and only read.
+function ownStatusLine(record) {
+  try {
+    if (typeof record?.folder !== 'string') return false;
+    const settings = JSON.parse(fs.readFileSync(path.join(record.folder, '.claude', 'settings.local.json'), 'utf8'));
+    return isRecord(settings) && isOwnStatusLine(settings.statusLine);
+  } catch {
+    return false;
+  }
+}
+
+// The role of the session that sent a request, as the board-context hook recorded it from the
+// first prompt, or WHEELHOUSE_ROLE. A role that can't be read is the front desk's, as anywhere.
+function roleOf(req, d) {
+  try {
+    return d.sessionRole({ sessionId: req.session, cwd: req.cwd, env: d.env });
+  } catch {
+    return 'front-desk';
+  }
+}
+
+// What the pane and the status line show now. Only the front desk, in a project's main folder,
+// has a pane: its model is kept as status.json before the answer goes. A feature session, a
+// foreman (until the watcher's half is added) and a folder outside a project get an `every` of
+// 0, which tells the mod to stop ticking. In the terminal, when Wheelhouse's own status line is
+// set, `status` is left out so the glance isn't shown twice.
+async function tick(req, d) {
+  const role = roleOf(req, d);
+  const found = siteOf(req.cwd, d);
+  if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
+  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now });
+  try {
+    d.writePaneStatus(found.project, pane);
+  } catch {
+    pane.missing = [...pane.missing, 'The pane\'s status file couldn\'t be kept'];
+  }
+  const answer = { ok: true, role, every: TICK_MS, pane, glance: pane.glance };
+  if (!(req.surface === 'terminal' && ownStatusLine(found.record))) answer.status = pane.glance;
+  return answer;
+}
+
+const COMMANDS = { usage, reply, go, stop, tick };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {
@@ -185,34 +248,63 @@ async function readCapped(stream, max) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function answerFor(stdin, deps) {
-  let request;
+// The request on the stream, as { request }, or the answer to give when it can't be read.
+async function requestFrom(stdin) {
   try {
     const text = await readCapped(stdin, MAX_REQUEST_BYTES);
-    if (text === null) return no(SAYS.unreadable);
-    request = JSON.parse(text);
+    return text === null ? no(SAYS.unreadable) : { request: JSON.parse(text) };
   } catch {
     return no(SAYS.unreadable);
   }
-  return handle(request, deps);
 }
 
-// The answer's one line: { ok } and `says` when there is one, nothing else.
-function lineOf(answer) {
+const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string');
+
+// The answer's one line: { ok } and `says` when there is one, then only the fields the mod reads
+// (role, every, pane, glance, status, submit, rows, text), each when it is present and of its
+// type. Nothing else a command put in its answer reaches the mod.
+export function lineOf(answer) {
   const out = { ok: answer?.ok === true };
   if (typeof answer?.says === 'string') out.says = answer.says;
+  if (typeof answer?.role === 'string') out.role = answer.role;
+  if (typeof answer?.every === 'number' && Number.isFinite(answer.every) && answer.every >= 0) out.every = answer.every;
+  if (isRecord(answer?.pane)) out.pane = answer.pane;
+  if (typeof answer?.glance === 'string') out.glance = answer.glance;
+  if (typeof answer?.status === 'string') out.status = answer.status;
+  if (typeof answer?.submit === 'string' || strings(answer?.submit)) out.submit = answer.submit;
+  if (Array.isArray(answer?.rows) && answer.rows.every(isRecord)) out.rows = answer.rows;
+  if (typeof answer?.text === 'string') out.text = answer.text;
   return JSON.stringify(out);
 }
 
-// runBridge({ stdin, limitMs, deps }) -> the answer's line. Never throws; answers when the
-// limit comes if the request isn't done by then.
-export async function runBridge({ stdin = process.stdin, limitMs = BRIDGE_MS, deps } = {}) {
+// How long a request may take once it is read: a foreman's tick runs the watcher's loop, which
+// needs longer than anything else.
+export function limitFor(request, { limitMs = BRIDGE_MS, watchMs = WATCH_BRIDGE_MS, deps } = {}) {
+  return isRecord(request) && request.cmd === 'tick' && roleOf(request, { ...DEFAULTS, ...deps }) === 'foreman' ? watchMs : limitMs;
+}
+
+// What `work` gives, or the late answer once `ms` have passed.
+async function within(work, ms) {
   let timer;
-  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(no(SAYS.late)), limitMs); });
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(no(SAYS.late)), ms); });
   try {
-    return lineOf(await Promise.race([answerFor(stdin, deps).catch(() => no(SAYS.failed)), late]));
+    return await Promise.race([work, late]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// runBridge({ stdin, limitMs, watchMs, deps }) -> the answer's line. Never throws. The request is
+// read within `limitMs`; the time to answer it starts once it is read, `watchMs` for a foreman's
+// tick and `limitMs` for anything else, and the late answer comes if it isn't done by then.
+export async function runBridge({ stdin = process.stdin, limitMs = BRIDGE_MS, watchMs = WATCH_BRIDGE_MS, deps } = {}) {
+  try {
+    const read = await within(requestFrom(stdin), limitMs);
+    if (!Object.hasOwn(read, 'request')) return lineOf(read);
+    const ms = limitFor(read.request, { limitMs, watchMs, deps });
+    return lineOf(await within(handle(read.request, deps).catch(() => no(SAYS.failed)), ms));
+  } catch {
+    return lineOf(no(SAYS.failed));
   }
 }
 

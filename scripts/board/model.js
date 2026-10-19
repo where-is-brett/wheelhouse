@@ -15,8 +15,8 @@ export const NO_STATE = 'There is no state for this project on this computer yet
 const NO_BUILD_LOOP = 'The build loop isn\'t running yet';
 const NO_USAGE = 'Usage counts aren\'t on yet';
 const NO_HEALTH = 'How the project stands couldn\'t be read';
-const NO_SETTINGS = 'The settings couldn\'t be read';
-const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
+export const NO_SETTINGS = 'The settings couldn\'t be read';
+export const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
 const NO_CLOCK = 'The board\'s clock couldn\'t be read';
 // A time as the state and usage scripts write it, in UTC. Any other text is no time.
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
@@ -145,20 +145,21 @@ function namesQuestion(card, id) {
 // card put off with Not now stays waiting is the front desk plan's change to that rule.) Then the
 // build loop's questions that nobody has answered and no card asked, waiting or not, names.
 // Oldest first, numbered from 1. Each item says where it came from: `card` is a waiting card's
-// id, `question` a build-loop question's id. The front desk numbers a card by this list.
+// id, `question` a build-loop question's id. The front desk numbers a card by this list. `id`
+// names the item whichever it is: the card's id, or `q:<question id>`.
 export function numberedWaiting(views, events) {
   const questions = isRecord(views?.work) && isRecord(views?.features) && isRecord(views?.questions) ? views.questions : {};
   const cards = list(views?.waiting);
   const named = [...cards, ...list(events).filter((e) => e.kind === 'card')];
-  const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), card: card.id }));
+  const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at), id: card.id, card: card.id }));
   for (const [id, entry] of Object.entries(questions)) {
     if (!isRecord(entry) || entry.answer || named.some((card) => namesQuestion(card, id))) continue;
-    items.push({ what: oneLine(entry.question?.data?.what) || 'A question from the build', since: timeOf(entry.question?.at), question: id });
+    items.push({ what: oneLine(entry.question?.data?.what) || 'A question from the build', since: timeOf(entry.question?.at), id: `q:${id}`, question: id });
   }
   return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));
 }
 
-const waitingList = (views, events) => numberedWaiting(views, events).map(({ n, what, since }) => ({ n, what, since }));
+const waitingList = (views, events) => numberedWaiting(views, events).map(({ n, id, what, since }) => ({ n, id, what, since }));
 
 function workInfo(work, id) {
   const data = isRecord(work[id]) && isRecord(work[id].work?.data) ? work[id].work.data : {};

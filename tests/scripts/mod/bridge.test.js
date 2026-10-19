@@ -6,7 +6,10 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { handle, runBridge, MAX_REQUEST_BYTES } from '../../../scripts/mod/bridge.js';
+import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES } from '../../../scripts/mod/bridge.js';
+import { readPaneStatus } from '../../../scripts/mod/status.js';
+import { recordRole } from '../../../scripts/lib/role.js';
+import { TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
@@ -322,4 +325,165 @@ for (const dir of ${JSON.stringify([work, main])}) console.log(String(featureSlu
   const slug = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home }, timeout: 15000 });
   assert.equal(slug.status, 0);
   assert.deepEqual(slug.stdout.trim().split('\n'), ['null', 'null']);
+}));
+
+// --- tick: what the pane and the status line show ---
+
+// A registered project whose main folder is `repo`, on `branch`.
+function registered(home, branch = 'main') {
+  const repo = path.join(home, 'repo');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.git', 'HEAD'), `ref: refs/heads/${branch}\n`);
+  writeProject(P, { folder: repo, remoteUrl: 'https://example.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {} });
+  return repo;
+}
+
+// The bridge's own dependencies, with the real project lookup and an environment with no role.
+const live = (extra = {}) => ({ now: () => NOW, env: {}, ...extra });
+const tickOf = (cwd, extra = {}) => ({ cmd: 'tick', session: 'sess-1', cwd, idle: false, surface: 'desktop', ...extra });
+
+test('the front desk\'s tick gives the pane, the glance and the status line, and ticks again', () => withHome(async (home) => {
+  const repo = registered(home);
+  const answer = await handle(tickOf(repo), live());
+  assert.equal(answer.ok, true);
+  assert.equal(answer.role, 'front-desk');
+  assert.equal(answer.every, TICK_MS);
+  assert.equal(answer.every, 15000);
+  assert.equal(answer.pane.v, 1);
+  assert.equal(answer.pane.project, P);
+  assert.equal(answer.glance, answer.pane.glance);
+  assert.equal(answer.status, answer.glance);
+  assert.ok(answer.glance.length <= 80);
+  assert.equal('submit' in answer, false);
+}));
+
+test('the model is written to status.json before the tick answers', () => withHome(async (home) => {
+  const repo = registered(home);
+  assert.equal(readPaneStatus(P), null);
+  const seen = [];
+  const answer = await handle(tickOf(repo), live({
+    writePaneStatus: (project, model) => {
+      seen.push([project, model.v]);
+      // Nothing has answered yet: the file is not there until this returns.
+      assert.equal(readPaneStatus(P), null);
+      fs.mkdirSync(path.join(home, 'projects', P), { recursive: true });
+      fs.writeFileSync(path.join(home, 'projects', P, 'status.json'), `${JSON.stringify(model)}\n`);
+    },
+  }));
+  assert.deepEqual(seen, [[P, 1]]);
+  assert.deepEqual(readPaneStatus(P), JSON.parse(JSON.stringify(answer.pane)));
+
+  // With the real writer, the file is the answer's pane.
+  fs.rmSync(path.join(home, 'projects', P, 'status.json'));
+  const again = await handle(tickOf(repo), live());
+  assert.deepEqual(readPaneStatus(P), JSON.parse(JSON.stringify(again.pane)));
+
+  // A file that can't be kept costs the file, never the answer, and the pane says so.
+  const failing = await handle(tickOf(repo), live({ writePaneStatus: () => { throw new Error('disk full'); } }));
+  assert.equal(failing.ok, true);
+  assert.ok(failing.pane.missing.includes('The pane\'s status file couldn\'t be kept'));
+}));
+
+test('STOP set from the phone shows in the next tick\'s model', () => withHome(async (home) => {
+  const repo = registered(home);
+  assert.equal((await handle(tickOf(repo), live())).pane.stop.on, false);
+  assert.deepEqual(await handle({ cmd: 'stop', origin: 'bridge', cwd: repo }, live()), { ok: true, says: 'STOP is on.' });
+  const next = await handle(tickOf(repo), live());
+  assert.deepEqual(next.pane.stop, { on: true, since: NOW.toISOString() });
+  assert.match(next.glance, /STOP on/);
+}));
+
+test('in the terminal with Wheelhouse\'s status line set, the tick gives no status', () => withHome(async (home) => {
+  const repo = registered(home);
+  const settings = path.join(repo, '.claude', 'settings.local.json');
+  const keep = (value) => {
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, typeof value === 'string' ? value : JSON.stringify(value));
+  };
+  const ownCommand = { statusLine: { type: 'command', command: '"/usr/bin/node" "/plugins/wheelhouse/scripts/statusline.js"' } };
+
+  assert.equal(typeof (await handle(tickOf(repo, { surface: 'terminal' }), live())).status, 'string', 'no local settings');
+  keep(ownCommand);
+  const terminal = await handle(tickOf(repo, { surface: 'terminal' }), live());
+  assert.equal(terminal.ok, true);
+  assert.equal('status' in terminal, false);
+  assert.equal(typeof terminal.glance, 'string');
+  assert.equal(typeof terminal.pane, 'object');
+  // The desktop app has no terminal status line to repeat.
+  assert.equal(typeof (await handle(tickOf(repo, { surface: 'desktop' }), live())).status, 'string');
+  // The director's own status line is not Wheelhouse's, and a damaged file names none.
+  keep({ statusLine: { type: 'command', command: 'theirs.sh' } });
+  assert.equal(typeof (await handle(tickOf(repo, { surface: 'terminal' }), live())).status, 'string');
+  keep('{ not json');
+  assert.equal(typeof (await handle(tickOf(repo, { surface: 'terminal' }), live())).status, 'string');
+  // The settings file is only read.
+  keep(ownCommand);
+  const before = fs.readFileSync(settings, 'utf8');
+  await handle(tickOf(repo, { surface: 'terminal' }), live());
+  assert.equal(fs.readFileSync(settings, 'utf8'), before);
+}));
+
+test('a feature session or a Shape 1 foreman is told to stop ticking', () => withHome(async (home) => {
+  // A feature session: its folder is on a feature branch.
+  const feature = registered(home, 'feature/login');
+  assert.deepEqual(await handle(tickOf(feature), live()), { ok: true, role: 'feature', every: 0 });
+
+  fs.writeFileSync(path.join(feature, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  // A foreman by the environment the session was started with.
+  assert.deepEqual(await handle(tickOf(feature), live({ env: { WHEELHOUSE_ROLE: 'foreman' } })), { ok: true, role: 'foreman', every: 0 });
+  // A foreman known from its first prompt, recorded by the board-context hook.
+  assert.equal(recordRole('sess-foreman', 'foreman'), true);
+  assert.deepEqual(await handle(tickOf(feature, { session: 'sess-foreman' }), live()), { ok: true, role: 'foreman', every: 0 });
+  // Nothing has been written for the project: no pane is made for them.
+  assert.equal(readPaneStatus(P), null);
+
+  // Outside a project, and for a request that names no folder.
+  const elsewhere = tempFolder('wh-bridge-outside-');
+  assert.deepEqual(await handle(tickOf(elsewhere), live()), { ok: true, role: 'front-desk', every: 0 });
+  assert.deepEqual(await handle({ cmd: 'tick', session: 'sess-1' }, live()), { ok: true, role: 'front-desk', every: 0 });
+}));
+
+test('the answer line carries only its own fields', () => {
+  const full = {
+    ok: true, says: 'x', role: 'front-desk', every: 15000, pane: { v: 1 }, glance: 'g', status: 's', submit: ['one', 'two'], rows: [{ key: 'k' }], text: 'digest',
+  };
+  assert.deepEqual(JSON.parse(lineOf({ ...full, secret: 'no', cards: [], watcher: 'running', nested: { x: 1 } })), full);
+  assert.deepEqual(JSON.parse(lineOf({ ...full, submit: 'one prompt' })).submit, 'one prompt');
+  // Each only when it is of its type.
+  assert.deepEqual(JSON.parse(lineOf({
+    ok: true, says: 5, role: 7, every: '15000', pane: [], glance: 1, status: {}, submit: [1], rows: ['x'], text: null,
+  })), { ok: true });
+  assert.deepEqual(JSON.parse(lineOf({ ok: true, every: -1 })), { ok: true });
+  assert.deepEqual(JSON.parse(lineOf({ ok: true, every: Infinity })), { ok: true });
+  assert.deepEqual(JSON.parse(lineOf({ ok: true, every: 0 })), { ok: true, every: 0 });
+  assert.deepEqual(JSON.parse(lineOf(null)), { ok: false });
+  assert.equal(lineOf({ ok: 'yes' }), '{"ok":false}');
+});
+
+test('the time to answer starts once the request is read: longer for a foreman\'s tick', () => {
+  const foreman = { env: { WHEELHOUSE_ROLE: 'foreman' } };
+  assert.equal(WATCH_BRIDGE_MS, 45000);
+  assert.equal(limitFor(tickOf('/work'), { deps: foreman }), WATCH_BRIDGE_MS);
+  assert.equal(limitFor(tickOf('/work'), { deps: { env: {} } }), BRIDGE_MS);
+  assert.equal(limitFor({ cmd: 'go', origin: 'composer', cwd: '/work' }, { deps: foreman }), BRIDGE_MS);
+  assert.equal(limitFor({ cmd: 'usage', session: 's', cwd: '/work' }, { deps: foreman }), BRIDGE_MS);
+  assert.equal(limitFor('junk', { deps: foreman }), BRIDGE_MS);
+  assert.equal(limitFor(null), BRIDGE_MS);
+  assert.equal(limitFor(tickOf('/work'), { limitMs: 70, watchMs: 90, deps: foreman }), 90);
+  assert.equal(limitFor(tickOf('/work'), { limitMs: 70, watchMs: 90, deps: { env: {} } }), 70);
+  // A role that can't be read is the front desk's.
+  assert.equal(limitFor(tickOf('/work'), { deps: { sessionRole: () => { throw new Error('x'); } } }), BRIDGE_MS);
+});
+
+test('runBridge answers a tick as a line, and reads a foreman\'s request before its longer limit starts', () => withHome(async (home) => {
+  const repo = registered(home);
+  const line = await runBridge({ stdin: Readable.from([JSON.stringify(tickOf(repo))]), deps: live() });
+  const parsed = JSON.parse(line);
+  assert.equal(parsed.role, 'front-desk');
+  assert.equal(parsed.every, TICK_MS);
+  assert.equal(parsed.pane.project, P);
+  // Standard input that never closes is answered at the reading limit, whatever the role.
+  const open = new Readable({ read() {} });
+  assert.deepEqual(JSON.parse(await runBridge({ stdin: open, limitMs: 50, watchMs: 5000, deps: live({ env: { WHEELHOUSE_ROLE: 'foreman' } }) })), { ok: false, says: 'Wheelhouse couldn\'t do that in time' });
+  open.destroy();
 }));
