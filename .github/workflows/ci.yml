@@ -45,9 +45,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      # Pins the version of Claude Code the mod's checks run on. The mod's bridge call lives in
-      # hooks/mod/ask.ts, which releases before 2.1.299 refuse to follow (check 40 has the table of
-      # releases), so this stays at 2.1.299 while lineage/manifest.json's claudeCode.floor is lower.
+      # Pins the version of Claude Code the mod's checks run on: the floor, lineage/manifest.json's
+      # claudeCode.floor. The mod's bridge call lives in hooks/mod/ask.ts, which releases before
+      # 2.1.299 refuse to follow (check 40 has the table of releases).
       - run: npm install --global @anthropic-ai/claude-code@2.1.299
       - run: npm run mod-check
 

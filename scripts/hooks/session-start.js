@@ -72,9 +72,10 @@ export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${ti
 export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
-// tool call. Claude Code reads that field from CLAUDE_CODE_FLOOR; an older one lets the call through.
+// tool call, which Claude Code reads from 2.1.295; the mod's files load from CLAUDE_CODE_FLOOR
+// (check 40). Older than the floor, the mod doesn't load and a guard that fails may let the call through.
 export const GUARD_FLOOR = CLAUDE_CODE_FLOOR.split('.').map(Number);
-export const OLD_CLAUDE_CODE = `This Claude Code is older than ${CLAUDE_CODE_FLOOR}, so a guard that fails does not stop a tool call: update Claude Code`;
+export const OLD_CLAUDE_CODE = `This Claude Code is older than ${CLAUDE_CODE_FLOOR}, so Wheelhouse's mod doesn't load and a guard that fails may not stop a tool call: update Claude Code`;
 
 // Claude Code's version as the newest transcript entry that carries one gives it, as three
 // numbers, or null when it is not known.
