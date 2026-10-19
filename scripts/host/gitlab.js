@@ -48,7 +48,7 @@ const PIPELINE = {
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
 const ISSUE_ADDRESS = /(https?:\/\/\S+\/-\/(?:issues|work_items)\/(\d+))/;
 
-export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle }) {
+export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly }) {
   const R = ['-R', repo];
   const project = `projects/${encodeURIComponent(repo)}`;
   const ask = async (args, input) => json(args, await call(args, input));
@@ -136,6 +136,16 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       const newest = Array.isArray(pipelines) ? pipelines[0] : undefined;
       if (newest) return { sha, state: PIPELINE[newest.status] ?? 'pending' };
       return { sha, state: await mergedResults(sha) };
+    },
+
+    // The project's successful deployments, newest first (GitLab can't list them by commit): the
+    // newest of this commit's gives its environment's address. One older than the last hundred
+    // deployments is not found, so it has no preview.
+    async previewUrl(sha) {
+      const deployments = await ask(['api', `${project}/deployments?status=success&order_by=id&sort=desc&per_page=100`]);
+      if (!Array.isArray(deployments)) throw new Error('GitLab did not list the project\'s deployments');
+      const newest = deployments.filter((d) => d?.sha === sha && d.status === 'success' && Number.isSafeInteger(d.id)).sort((a, b) => b.id - a.id)[0];
+      return newest ? httpsOnly(newest.environment?.external_url) : null;
     },
 
     // --auto-merge=false: otherwise, with a pipeline running, glab queues the

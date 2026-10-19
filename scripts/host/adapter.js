@@ -70,6 +70,18 @@ function refusalOf(output, fallback) {
   return fallback;
 }
 
+// A preview's address as the host gave it, or null unless it is an https address: the helper's
+// browser opens only the host's preview deployment, never a page on this computer.
+function httpsOnly(address) {
+  if (typeof address !== 'string') return null;
+  try {
+    const url = new URL(address);
+    return url.protocol === 'https:' && url.hostname !== '' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
 function hostOf(remoteUrl) {
@@ -153,7 +165,7 @@ export function makeAdapter({ host, repo, run, env }) {
     }
     return { merged: false, queued: true, reason: QUEUE_LINE };
   }
-  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf };
+  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly };
   const c = commands(tools);
 
   return {
@@ -172,6 +184,9 @@ export function makeAdapter({ host, repo, run, env }) {
     // is told from having looked and found nothing.
     hasCi: async (sha, branch) => c.hasCi(commit(sha), text(branch, 'branch')),
     branchHead: async (branch) => commit(await c.branchHead(text(branch, 'branch'))),
+    // The address of the commit's preview deployment, from the host's newest successful deployment
+    // of it, or null when there is none or its address is not https. A failed read is thrown.
+    previewUrl: async (sha) => c.previewUrl(commit(sha)),
     merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({

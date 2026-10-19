@@ -5,6 +5,7 @@
 // earlier commit still counts when the feature's own changes did not move.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { startHelper, patchIdOf, cleanUpdate } from '../../../scripts/host/helper.js';
@@ -431,27 +432,278 @@ test('a branch that changes a CI file is brought up to date with the director\'s
   } finally { pr.remote.cleanup(); }
 });
 
-test('an approval does not carry over until screenshots can be compared', async () => {
-  const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
+// --- an approval across an update: the screenshots (front desk plan, Task 12) ---
+
+// The project's configuration on the default branch, listing `pages` (none when left out).
+const configWith = (pages) => ({
+  '.claude/wheelhouse.json': `${JSON.stringify({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], ...(pages === undefined ? {} : { pages }) })}\n`,
+});
+const PAGES = ['/', '/pricing'];
+const BROWSER = '/fake/Google Chrome';
+const previewOf = (sha) => `https://preview-${short(sha)}.example.app/`;
+const screensDir = () => path.join(stateDir('o__p'), '..', 'screens');
+const keptFor = (sha) => {
+  try { return JSON.parse(fs.readFileSync(path.join(screensDir(), `${sha}.json`), 'utf8')); } catch { return null; }
+};
+const SIZES = ['1280x800', '390x844'];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The adapter with each commit's preview at an address of its own, as hosts give one per
+// deployment, unless `previews` names another (null for none). Each commit asked is listed.
+function previewing(adapter, previews = {}) {
+  const asked = [];
+  adapter.previewUrl = async (sha) => { asked.push(sha); return Object.hasOwn(previews, sha) ? previews[sha] : previewOf(sha); };
+  adapter.previewsAsked = asked;
+  return adapter;
+}
+
+// A stand-in for scripts/screens/shoot.js: a picture's hash is made from its page, its size and
+// what `look(url, size)` says ('same' unless told otherwise), so two commits look the same unless
+// `look` tells them apart. No browser runs; every picture asked for is listed.
+function fakeShoot(look = () => 'same') {
+  const shots = [];
+  const shoot = async ({ browser, url, size }) => {
+    shots.push({ browser, url, size: `${size.width}x${size.height}` });
+    const hash = crypto.createHash('sha256').update(`${new URL(url).pathname} ${size.width}x${size.height} ${look(url, size)}`).digest('hex');
+    return { ok: true, hash };
+  };
+  return { shoot, shots };
+}
+
+async function until(check, what) {
+  const end = Date.now() + 20 * 1000;
+  while (!check()) {
+    if (Date.now() > end) throw new Error(`waited too long for ${what}`);
+    await new Promise((resolve) => { setTimeout(resolve, 25); });
+  }
+}
+
+// Pull request 7 with a CLEAN review and the director's approval of its first head, brought up
+// to date after the default branch moved on. `base` is the default branch's first commit.
+async function approvedAndUpdated(base, { approve = true } = {}) {
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n', ...base }, change: { 'b.js': 'b\n' } });
+  const home = await project(pr.remote);
+  await as(home, () => { reviewed(pr.head); if (approve) approved(pr.head); });
+  await mainMoves(pr.work, { 'a.js': 'a\n' });
+  return { pr, home };
+}
+
+test('an approval carries over a clean update when every page looks the same', async () => {
+  const { pr, home } = await approvedAndUpdated(configWith(PAGES));
   try {
-    const home = await project(pr.remote);
-    await as(home, () => { reviewed(pr.head); approved(pr.head); });
-    await mainMoves(pr.work, { 'a.js': 'a\n' });
-    const adapter = fakeAdapter(pr.remote);
-    let head;
+    const adapter = previewing(fakeAdapter(pr.remote));
+    const { shoot, shots } = fakeShoot();
     await withHelper(home, adapter, async (client) => {
-      head = (await update(client)).head;
-      // The review carries over; the approval does not, so the director is asked again.
+      const { head } = await update(client);
+      // The watcher's read never weighs the approval, so it opens no browser.
+      assert.equal((await carried(client)).review, 'clean');
+      assert.deepEqual(shots, []);
+
+      assert.deepEqual(await merge(client, { approvalRequired: true }), { ok: true, merged: true, sha: head, ...NONE_FOUND });
+      // Every page at every size, at both commits, each on its own commit's preview, in the browser given.
+      assert.equal(shots.length, 8);
+      assert.ok(shots.every((s) => s.browser === BROWSER));
+      const urls = (sha) => PAGES.map((page) => new URL(page.slice(1), previewOf(sha)).href);
+      assert.deepEqual([...new Set(shots.map((s) => s.url))].sort(), [...urls(pr.head), ...urls(head)].sort());
+      // The pictures' hashes are kept beside the mirror, one file per commit.
+      for (const sha of [pr.head, head]) {
+        assert.deepEqual(Object.keys(keptFor(sha)).sort(), PAGES.flatMap((page) => SIZES.map((size) => `${page} ${size}`)).sort());
+      }
+    }, { screens: { shoot, browser: BROWSER } });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('one page looking different asks the director again', async () => {
+  const { pr, home } = await approvedAndUpdated(configWith(PAGES));
+  try {
+    const previews = {};
+    const adapter = previewing(fakeAdapter(pr.remote), previews);
+    let head;
+    const { shoot, shots } = fakeShoot((url, size) => (url.includes(short(head)) && size.width === 1280 ? 'changed' : 'same'));
+    const askedAgain = async (client) => {
       const answer = await merge(client, { approvalRequired: true });
       assert.deepEqual([answer.ok, answer.reasons], [false, [`no approval of ${short(head)}`]]);
-    });
-    // Once the front desk can compare the screenshots, and they match, it carries over too.
+    };
+    await withHelper(home, adapter, async (client) => {
+      ({ head } = await update(client));
+      await askedAgain(client);
+      // The first page's first size differs, so nothing more is photographed.
+      assert.equal(shots.length, 2);
+
+      // A head with no preview, or a preview at the address the approved commit had (one not
+      // its own commit's, such as a branch's), is no comparison either.
+      for (const preview of [null, previewOf(pr.head)]) {
+        fs.rmSync(screensDir(), { recursive: true, force: true });
+        previews[head] = preview;
+        await askedAgain(client);
+      }
+      assert.deepEqual(adapter.merges, []);
+    }, { screens: { shoot, browser: BROWSER } });
+  } finally { pr.remote.cleanup(); }
+});
+
+test('a project with no pages listed always asks again', async () => {
+  for (const base of [{}, configWith(undefined), configWith([])]) {
+    const { pr, home } = await approvedAndUpdated(base);
+    try {
+      const compared = [];
+      const { shoot, shots } = fakeShoot();
+      const adapter = previewing(fakeAdapter(pr.remote));
+      await withHelper(home, adapter, async (client) => {
+        const { head } = await update(client);
+        const answer = await merge(client, { approvalRequired: true });
+        assert.deepEqual([answer.ok, answer.reasons], [false, [`no approval of ${short(head)}`]], JSON.stringify(base));
+        // Nothing to compare: neither the comparison nor a browser is asked, nor any preview.
+        assert.equal(fs.existsSync(path.join(stateDir('o__p'), '..', 'screens')), false);
+      }, { screens: { shoot, browser: BROWSER } });
+      await withHelper(home, adapter, async (client) => {
+        assert.equal((await merge(client, { approvalRequired: true })).ok, false);
+      }, { screenshotsMatch: async (args) => { compared.push(args); return true; } });
+      assert.deepEqual([compared, shots, adapter.previewsAsked], [[], [], []]);
+    } finally { pr.remote.cleanup(); }
+  }
+});
+
+test('the comparison is asked with the project, both commits and the pages, and an error in it asks again', async () => {
+  const { pr, home } = await approvedAndUpdated(configWith(PAGES));
+  try {
+    const adapter = previewing(fakeAdapter(pr.remote));
+    let head;
+    await withHelper(home, adapter, async (client) => { ({ head } = await update(client)); });
+    const askedAgain = async (options) => withHelper(home, adapter, async (client) => {
+      const answer = await merge(client, { approvalRequired: true });
+      assert.deepEqual([answer.ok, answer.reasons], [false, [`no approval of ${short(head)}`]]);
+    }, options);
+    await askedAgain({ screenshotsMatch: async () => { throw new Error('the comparison failed'); } });
+    await askedAgain({ screenshotsMatch: async () => 'yes' });
+    await askedAgain({ screens: { shoot: async () => { throw new Error('the browser crashed'); }, browser: BROWSER } });
+    await askedAgain({ screens: { shoot: async () => ({ ok: false, why: 'the browser timed out' }), browser: BROWSER } });
+    // No browser on this computer: nothing can be photographed.
+    await askedAgain({ screens: { shoot: fakeShoot().shoot, browser: null } });
+    // The host can't say where the previews are.
+    const failing = { ...adapter, previewUrl: async () => { throw new Error('gh api failed'); } };
+    await withHelper(home, failing, async (client) => {
+      assert.equal((await merge(client, { approvalRequired: true })).ok, false);
+    }, { screens: { shoot: fakeShoot().shoot, browser: BROWSER } });
+    assert.deepEqual(adapter.merges, []);
+
     const compared = [];
-    const screenshotsMatch = async (from, to) => { compared.push([from, to]); return true; };
     await withHelper(home, adapter, async (client) => {
       assert.deepEqual(await merge(client, { approvalRequired: true }), { ok: true, merged: true, sha: head, ...NONE_FOUND });
-    }, { screenshotsMatch });
-    assert.deepEqual(compared, [[pr.head, head]]);
+    }, { screenshotsMatch: async (args) => { compared.push(args); return true; } });
+    assert.deepEqual(compared, [{ project: 'o__p', before: pr.head, after: head, pages: PAGES }]);
+  } finally { pr.remote.cleanup(); }
+});
+
+test('a page list the configuration can\'t hold makes it unreadable: nothing is photographed and the director is asked again', async () => {
+  const { pr, home } = await approvedAndUpdated(configWith(['pricing']));
+  try {
+    const { shoot, shots } = fakeShoot();
+    const adapter = previewing(fakeAdapter(pr.remote));
+    // update-branch reads the configuration too, and refuses, so the branch is brought up to date by hand.
+    await g(pr.work, 'merge', '-q', '--no-ff', '--no-edit', 'main');
+    await g(pr.work, 'push', '-q', 'origin', BRANCH);
+    const head = await g(pr.work, 'rev-parse', 'HEAD');
+    await withHelper(home, adapter, async (client) => {
+      const answer = await merge(client, { approvalRequired: true });
+      assert.equal(answer.ok, false);
+      assert.ok(answer.reasons.includes(`no approval of ${short(head)}`), JSON.stringify(answer));
+      assert.ok(answer.reasons.some((r) => /couldn't be read/.test(r)), JSON.stringify(answer));
+      assert.equal((await client.state.record({ project: 'o__p', event: makeEvent({ kind: 'approval', data: { pr: 7, commit: head } }) })).ok, true);
+    }, { screens: { shoot, browser: BROWSER } });
+    assert.deepEqual([shots, adapter.previewsAsked], [[], []]);
+  } finally { pr.remote.cleanup(); }
+});
+
+test('recording an approval photographs that commit\'s pages without delaying the answer', async () => {
+  const pr = await remoteWithPr({ base: { 'app.js': 'one\n', ...configWith(PAGES) }, change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    await as(home, () => reviewed(pr.head));
+    const previews = {};
+    const adapter = previewing(fakeAdapter(pr.remote), previews);
+    const { shoot: quick, shots } = fakeShoot();
+    let started = 0;
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const shoot = async (args) => { started += 1; await held; return quick(args); };
+    let main;
+    await withHelper(home, adapter, async (client) => {
+      // Pictures not touched for 30 days are cleared out first; newer ones are kept.
+      fs.mkdirSync(screensDir(), { recursive: true });
+      const [stale, recent] = ['a', 'b'].map((c) => path.join(screensDir(), `${c.repeat(40)}.json`));
+      for (const [file, days] of [[stale, 31], [recent, 29]]) {
+        fs.writeFileSync(file, '{}\n');
+        fs.utimesSync(file, new Date(Date.now() - days * DAY_MS), new Date(Date.now() - days * DAY_MS));
+      }
+
+      const answer = await client.state.record({ project: 'o__p', event: makeEvent({ kind: 'approval', data: { pr: 7, commit: pr.head } }) });
+      // Answered while the first picture is still being taken.
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+      await until(() => started === 1, 'the first picture');
+      assert.equal(shots.length, 0);
+      release();
+      await until(() => Object.keys(keptFor(pr.head) ?? {}).length === 4, 'the approved commit\'s pictures');
+      assert.deepEqual(shots.map((s) => s.url), PAGES.flatMap((page) => SIZES.map(() => new URL(page.slice(1), previewOf(pr.head)).href)));
+      assert.deepEqual([fs.existsSync(stale), fs.existsSync(recent)], [false, true]);
+
+      // The host takes the approved commit's preview down once the branch moves on: its pictures
+      // are kept, so only the new head is photographed.
+      previews[pr.head] = null;
+      main = await mainMoves(pr.work, { 'a.js': 'a\n' });
+      const { head } = await update(client);
+      assert.deepEqual(await merge(client, { approvalRequired: true }), { ok: true, merged: true, sha: head, ...NONE_FOUND });
+      assert.equal(shots.length, 8);
+      assert.ok(shots.slice(4).every((s) => s.url.startsWith(previewOf(head))));
+
+      // Under STOP nothing is photographed.
+      setStop({ by: 'prompt' });
+      await client.state.record({ project: 'o__p', event: makeEvent({ kind: 'approval', data: { pr: 7, commit: main } }) });
+    }, { screens: { shoot, browser: BROWSER } });
+    // Closing the helper waits for any photographing left.
+    assert.equal(shots.length, 8);
+    await as(home, () => assert.equal(keptFor(main), null));
+  } finally { pr.remote.cleanup(); }
+});
+
+test('photographing an approved commit is skipped when the project lists no pages', async () => {
+  const pr = await remoteWithPr({ change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    const { shoot, shots } = fakeShoot();
+    const adapter = previewing(fakeAdapter(pr.remote));
+    await withHelper(home, adapter, async (client) => {
+      const answer = await client.state.record({ project: 'o__p', event: makeEvent({ kind: 'approval', data: { pr: 7, commit: pr.head } }) });
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+    }, { screens: { shoot, browser: BROWSER } });
+    assert.deepEqual([shots, adapter.previewsAsked], [[], []]);
+    await as(home, () => assert.equal(fs.existsSync(screensDir()), false));
+  } finally { pr.remote.cleanup(); }
+});
+
+test('/pr/preview gives the head\'s preview, or null', async () => {
+  const pr = await remoteWithPr({ change: { 'b.js': 'b\n' } });
+  try {
+    const home = await project(pr.remote);
+    const previews = {};
+    await withHelper(home, previewing(fakeAdapter(pr.remote), previews), async (client) => {
+      assert.deepEqual(await client.preview({ project: 'o__p', number: 7 }), { ok: true, url: previewOf(pr.head) });
+      // From the front desk's folder, which the helper places, and under STOP, since it only reads.
+      const folder = path.join(home, 'work');
+      fs.mkdirSync(folder, { recursive: true });
+      setStop({ by: 'prompt' });
+      assert.deepEqual(await client.preview({ cwd: folder, number: 7 }), { ok: true, url: previewOf(pr.head) });
+      assert.equal((await client.preview({ cwd: home, number: 7 })).ok, false, 'a folder in no project');
+      previews[pr.head] = null;
+      assert.deepEqual(await client.preview({ cwd: folder, number: 7 }), { ok: true, url: null });
+      for (const number of [0, '7', 1.5]) assert.equal((await client.preview({ project: 'o__p', number })).ok, false);
+    });
+    // A pull request that isn't open has no preview to show.
+    for (const state of ['merged', 'closed', 'unknown']) {
+      await withHelper(home, previewing(fakeAdapter(pr.remote, { state })), async (client) => {
+        assert.deepEqual(await client.preview({ project: 'o__p', number: 7 }), { ok: true, url: null });
+      });
+    }
   } finally { pr.remote.cleanup(); }
 });
 

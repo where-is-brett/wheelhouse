@@ -49,6 +49,9 @@ import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
+import { SCREEN_SIZES } from '../lib/front-desk.js';
+import { cachedShooter, screenshotsMatch as compareShots } from '../screens/compare.js';
+import { findBrowser, shoot as shootPage } from '../screens/shoot.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -116,6 +119,10 @@ const PLUGIN_VERSION = (() => {
   }
 })();
 
+// A cache file of pictures' hashes not written for this long is cleared out of the project's cache
+// when an approved commit is next photographed.
+const SCREENS_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
+
 const FOLDER_MS = 60 * 1000;
 const HOST_MS = 5 * 60 * 1000;
 
@@ -182,6 +189,26 @@ async function blobAt(must, commit, file) {
 async function baseConfig(must) {
   const present = await must(['ls-tree', '-z', '--name-only', BASE_REF, '--', CONFIG_FILE], 'looking for the configuration');
   return readConfig(present === '' ? null : await must(['show', `${BASE_REF}:${CONFIG_FILE}`], 'reading the configuration'));
+}
+
+// The pages an approval's screenshots are compared on, from a configuration: none unless it lists some.
+const pagesOf = (config) => (Array.isArray(config?.pages) ? config.pages : []);
+
+// The project's cache of pictures' hashes: beside its mirror, outside the state repository, so
+// never committed or pushed.
+const screensDir = (project) => path.join(stateDir(project), '..', 'screens');
+
+// Removes the files in `dir` not modified for SCREENS_KEPT_MS. Best effort.
+function pruneScreens(dir, nowMs) {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    try {
+      const file = path.join(dir, name);
+      const stat = fs.lstatSync(file);
+      if (stat.isFile() && nowMs - stat.mtimeMs > SCREENS_KEPT_MS) fs.rmSync(file, { force: true });
+    } catch { /* left for next time */ }
+  }
 }
 
 // The paths a branch changes from the default branch (merge base to `sha`),
@@ -615,7 +642,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record'];
 // The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
-const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state'];
+const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview'];
 
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
@@ -690,10 +717,14 @@ function readBody(req, res) {
 
 export async function startHelper({
   address = helperAddress(), adapterFor, envFor, now = () => new Date(), run = realRun, onArrive = () => {}, fetch = globalThis.fetch, startWaitMs = 30 * 1000,
-  // Whether the preview's screenshots of every changed page are the same at two commits, for an
-  // approval to carry over (design section 12). It answers false until the front desk's plan
-  // builds the comparison, so the director is asked again meanwhile.
-  screenshotsMatch = async () => false,
+  // Whether the preview's screenshots of the configuration's pages are the same at two commits,
+  // for an approval to carry over an update (design section 12.3): given { project, before, after,
+  // pages }, true only when every page looks the same at every size. By default the helper's own
+  // comparison (scripts/screens/compare.js), photographing with `screens`; a test may give its own.
+  screenshotsMatch = null,
+  // How pictures are taken: `shoot` (scripts/screens/shoot.js's by default) and the browser's path
+  // (by default the one findBrowser finds when a picture is first needed; null for none).
+  screens = {},
   // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
   profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
   // The installed Wheelhouse, whose lineage/manifest.json the gate checks a pull request's provenance against.
@@ -1073,6 +1104,7 @@ export async function startHelper({
     if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     await freshViews(() => writeViews(project, { now }));
+    if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
   }
 
@@ -1453,11 +1485,100 @@ export async function startHelper({
         };
         const out = { upToDate: onTop.code === 0 };
         for (const [name, commit] of Object.entries(from)) out[name] = await holds(commit);
+        // An approval that still holds is compared on the pages the configuration at the default
+        // branch (fetched above) lists: none when it can't be read.
+        if (out.approval === true) {
+          try {
+            out.pages = pagesOf(await baseConfig(async (args, what) => {
+              const answer = await git(args);
+              if (answer.code !== 0) throw new Error(`${what} failed`);
+              return answer.stdout;
+            }));
+          } catch {
+            out.pages = [];
+          }
+        }
         return out;
       } finally {
         await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
       }
     }));
+  }
+
+  // --- screenshots (design section 12.3; front desk plan, Task 12) ---
+
+  // The browser, found when a picture is first needed.
+  let browserFound;
+  function browserPath() {
+    if (screens.browser !== undefined) return screens.browser;
+    if (browserFound === undefined) browserFound = findBrowser();
+    return browserFound;
+  }
+
+  // A shootAt(sha, page, size) for one request: the project's cache, and each commit's preview
+  // from the request's adapter, asked once per commit. The same address given for two commits is
+  // not either commit's own (a branch's address, say, shows whatever is newest), so neither has a
+  // preview then.
+  function shooterFor(project, ctx) {
+    const asked = new Map();
+    const addressOf = (sha) => {
+      if (!asked.has(sha)) asked.set(sha, ctx.adapter().then((adapter) => adapter.previewUrl(sha)).catch(() => null));
+      return asked.get(sha);
+    };
+    const previewUrl = async (sha) => {
+      const url = await addressOf(sha);
+      for (const [other, address] of asked) {
+        if (other !== sha && (await address) === url) return null;
+      }
+      return url;
+    };
+    return cachedShooter({ dir: screensDir(project), previewUrl, shoot: screens.shoot ?? shootPage, browser: browserPath(), run, fetch });
+  }
+
+  // Whether every page looks the same at both commits. No pages, no comparison: false, and no
+  // browser is opened. One comparison or photographing at a time per project, so pictures of an
+  // approved commit still being taken are in the cache before the gate looks.
+  async function pagesLookSame({ project, before, after, pages }, ctx) {
+    if (!Array.isArray(pages) || pages.length === 0) return false;
+    return oneAtATime(`screens:${project}`, async () => {
+      if (screenshotsMatch) return (await screenshotsMatch({ project, before, after, pages })) === true;
+      return (await compareShots({ before, after, pages, sizes: SCREEN_SIZES, shootAt: shooterFor(project, ctx) })) === true;
+    });
+  }
+
+  // The approved commit's pages, photographed at every size into the cache when its approval is
+  // recorded, so the pictures are there when an update comes, after the host may have taken that
+  // commit's preview down. In the background: the answer doesn't wait, and nothing is reported.
+  // Nothing under STOP, or when the configuration lists no pages or can't be read.
+  function photographApproved(project, commit, ctx) {
+    if (typeof commit !== 'string' || !FULL_SHA.test(commit)) return;
+    oneAtATime(`screens:${project}`, async () => {
+      if (stopped()) return;
+      const adapter = await ctx.adapter();
+      const defaultBranch = await defaultBranchOf(project, adapter);
+      const pages = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+        await defaultHistory(must, defaultBranch);
+        return pagesOf(await baseConfig(must));
+      }));
+      if (pages.length === 0 || stopped()) return;
+      pruneScreens(screensDir(project), now().getTime());
+      const shootAt = shooterFor(project, ctx);
+      for (const page of pages) {
+        for (const size of SCREEN_SIZES) await shootAt(commit, page, size);
+      }
+    }).catch(() => {});
+  }
+
+  // The preview of an open pull request's head, for the front desk's "Show me": its address, or
+  // null when the pull request isn't open or the host has no successful deployment of its head.
+  // Read-only, so STOP lets it through.
+  async function doPreview({ project, number }, ctx) {
+    if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
+    const adapter = await ctx.adapter();
+    const pr = await adapter.prState(number);
+    if (pr?.state !== 'open' || typeof pr.headSha !== 'string' || !FULL_SHA.test(pr.headSha)) return { ok: true, url: null };
+    const url = await adapter.previewUrl(pr.headSha);
+    return { ok: true, url: typeof url === 'string' ? url : null };
   }
 
   // The review and the approval the gate weighs, and whether the branch is up to date. Each is
@@ -1480,7 +1601,7 @@ export async function startHelper({
     } catch { /* not readable: not known whether it is up to date, and nothing carries */ }
     let shown = false;
     if (facts.approval === true) {
-      try { shown = (await screenshotsMatch(from.approval, headSha)) === true; } catch { /* not compared: asked again */ }
+      try { shown = await pagesLookSame({ project, before: from.approval, after: headSha, pages: facts.pages }, ctx); } catch { /* not compared: asked again */ }
     }
     return {
       upToDate: facts.upToDate === null ? null : facts.upToDate === true,
@@ -2289,6 +2410,8 @@ export async function startHelper({
         tidyAfterAnswer(body.project);
       }
     },
+    // Read-only, so STOP lets it through.
+    '/pr/preview': doPreview,
     // Read-only, so STOP lets it through.
     '/config': async (body, ctx) => {
       try {

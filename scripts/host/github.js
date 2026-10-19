@@ -16,10 +16,13 @@ const ROLLUP = { SUCCESS: 'success', PENDING: 'pending', EXPECTED: 'pending', FA
 
 const CI_QUERY = 'query($owner:String!,$name:String!,$sha:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$sha){... on Commit{oid statusCheckRollup{state}}}}}';
 
+// How many of a commit's deployments, newest first, are looked at for a successful one.
+const MOST_DEPLOYMENTS = 3;
+
 const PR_ADDRESS = /(https:\/\/\S+\/pull\/(\d+))/;
 const ISSUE_ADDRESS = /(https:\/\/\S+\/issues\/(\d+))/;
 
-export function githubCommands({ call, attempt, json, repo, fromAddress, refusal, settle }) {
+export function githubCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly }) {
   const [owner, name] = repo.split('/');
   const R = ['--repo', repo];
   const ask = async (args, input) => json(args, await call(args, input));
@@ -64,6 +67,21 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
 
     async ciState(sha) {
       return ciRead(sha);
+    },
+
+    // The commit's deployments come newest first; for each, the newest `success` status gives the
+    // address. A deployment still building, or never successful, is passed over for the one before.
+    async previewUrl(sha) {
+      const deployments = await ask(['api', `repos/${repo}/deployments?sha=${sha}`]);
+      if (!Array.isArray(deployments)) throw new Error('GitHub did not list the commit\'s deployments');
+      const newest = deployments.filter((d) => Number.isSafeInteger(d?.id) && d.id > 0).sort((a, b) => b.id - a.id);
+      for (const deployment of newest.slice(0, MOST_DEPLOYMENTS)) {
+        const statuses = await ask(['api', `repos/${repo}/deployments/${deployment.id}/statuses`]);
+        if (!Array.isArray(statuses)) throw new Error('GitHub did not list the deployment\'s statuses');
+        const done = statuses.filter((s) => s?.state === 'success' && Number.isSafeInteger(s.id)).sort((a, b) => b.id - a.id)[0];
+        if (done) return httpsOnly(done.environment_url);
+      }
+      return null;
     },
 
     async hasCi(sha, branch) {

@@ -146,3 +146,17 @@ test('readConfig: hotFiles and flagFiles are globs, with the defaults filled in'
     { flagFiles: 'x' }, { flagFiles: [null] }, { flagFiles: ['a/'] }, { flagFiles: [''] }, { flagFiles: null },
   ]) assert.throws(() => readConfig(JSON.stringify({ ...base, ...extra })), { message }, JSON.stringify(extra));
 });
+
+test('readConfig: pages are at most twenty plain paths on the preview, and any other list can\'t be read', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.equal(readConfig(JSON.stringify(base)).pages, undefined, 'no pages: an approval never carries over');
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, pages: ['/', '/pricing', '/about?tab=team'] })).pages, ['/', '/pricing', '/about?tab=team']);
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, pages: [] })).pages, []);
+  const twenty = Array.from({ length: 20 }, (_, i) => `/page-${i}`);
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, pages: twenty })).pages, twenty);
+  const message = "The project's Wheelhouse configuration can't be read";
+  for (const pages of [
+    '/', null, {}, [1], [''], ['pricing'], ['//evil.example'], ['/a b'], ['/a\\b'], ['/../secret'], ['/a/%2e%2e/b'],
+    ['https://evil.example/'], [...twenty, '/one-more'],
+  ]) assert.throws(() => readConfig(JSON.stringify({ ...base, pages })), { message }, JSON.stringify(pages));
+});

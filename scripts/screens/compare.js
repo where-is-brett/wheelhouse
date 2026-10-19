@@ -65,7 +65,7 @@ function writeCache(file, hashes) {
 
 // Whether `page` is a plain path: one leading slash, and no `.` or `..` segment before any query
 // or fragment.
-function isPage(page) {
+export function isPage(page) {
   if (typeof page !== 'string' || !PAGE.test(page)) return false;
   return !page.split(/[?#]/, 1)[0].split('/').some((segment) => DOTS.test(segment));
 }
