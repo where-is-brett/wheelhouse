@@ -321,6 +321,7 @@ test('budget shows the week and unusual use in its own unit; open incidents and 
   const texts = m.director.health.map((l) => l.text);
   assert.equal(texts[0], 'Protection: Standard');
   assert.ok(texts.includes('Incident leak is open, so nothing merges: Emails sent twice'));
+  assert.equal(m.director.health.find((l) => l.text.startsWith('Incident leak')).incident, 'leak');
   assert.ok(texts.includes('m-old, a model your projects use, retires on 1 November 2026'));
   assert.ok(texts.includes('A security advisory for owner/repo: Bad thing'));
   assert.ok(!texts.some((t) => t.includes('m-other')));

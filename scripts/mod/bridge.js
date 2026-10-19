@@ -43,14 +43,18 @@ import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
-import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus, readPaneStatus as defaultReadPaneStatus } from './status.js';
-import { needsYou, sessionOpening, courierWake as defaultCourierWake } from './courier.js';
+import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
+import { needsYou, courierWake as defaultCourierWake, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
 
 // The whole run for most requests, from reading the request to the answer.
 export const BRIDGE_MS = 5000;
 // How long the helper is waited for, inside BRIDGE_MS.
 export const HELPER_MS = 3000;
+// The time the courier needs inside BRIDGE_MS: its wait for courier.json's lock, and the file. A
+// front desk's tick with less left skips the courier, so a wake is never marked sent and then
+// lost to the late answer.
+export const COURIER_MS = LOCK_WAIT_MS + 500;
 export const MAX_REQUEST_BYTES = 64 * 1024;
 const DIRECTOR = ['composer', 'bridge'];
 // The director's press on the pane.
@@ -99,8 +103,9 @@ const DEFAULTS = {
   digestText: defaultDigest,
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
-  readPaneStatus: defaultReadPaneStatus,
   courierWake: defaultCourierWake,
+  // A clock for the time a request has taken.
+  elapsedClock: () => performance.now(),
   watchTick: defaultWatchTick,
   env: process.env,
 };
@@ -301,35 +306,25 @@ async function foremanTick(found, d) {
   return { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: strings(watched?.submit) ? watched.submit : [] };
 }
 
-// The courier's wake for this tick, or null (courier.js). `before` is the pane's model as last
-// kept, read before this tick's replaces it; presence and the quiet hours are the settings in
-// force. A courier that fails wakes for nothing this tick and says so in the pane; what it found
-// waits for the next tick.
-async function courier(found, before, pane, req, d) {
+// The courier's wake for this tick, or null (courier.js), from this tick's pane model; presence
+// and the quiet hours are the settings in force. A courier that fails wakes for nothing this tick
+// and says so in the pane; what it found waits for the next tick.
+async function courier(found, pane, req, d) {
   try {
     const effective = d.readEffective({ project: found.project, now: d.now });
     const { submit } = await d.courierWake({
       project: found.project,
-      items: needsYou({ before, after: pane }),
+      session: req.session,
+      items: needsYou({ after: pane }),
       presence: effective?.presence,
       quiet: effective?.notifications?.value?.quiet,
       idle: req.idle === true,
       now: d.now,
       timeZone: d.timeZone,
-      opening: sessionOpening(before, d.now),
     });
     return typeof submit === 'string' ? submit : null;
   } catch {
     pane.missing = [...pane.missing, SAYS.noCourier];
-    return null;
-  }
-}
-
-// The pane's model as last kept, or null.
-function lastPane(project, d) {
-  try {
-    return d.readPaneStatus(project);
-  } catch {
     return null;
   }
 }
@@ -346,15 +341,15 @@ async function tick(req, d) {
   const found = siteOf(req.cwd, d);
   if (found !== null && role === 'foreman') return foremanTick(found, d);
   if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
-  // The model as last kept, which the courier compares with, read before this tick replaces it.
-  const before = lastPane(found.project, d);
+  const started = d.elapsedClock();
   // The watch runs beside the pane, so the two share the time the tick has.
   const watched = watching(found, role, clientOf(d), d);
   // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
   const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d) });
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
-  const submit = await courier(found, before, pane, req, d);
+  // With too little of BRIDGE_MS left, the courier waits for the next tick, marking nothing.
+  const submit = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, req, d);
   try {
     d.writePaneStatus(found.project, pane);
   } catch {

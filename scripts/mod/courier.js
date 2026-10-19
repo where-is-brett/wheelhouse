@@ -3,7 +3,8 @@
 // presence and quiet hours (design section 13). The bridge's front-desk tick finds the items in
 // the pane's model and hands back the wake as the tick's `submit`. What has been sent is kept in
 // projects/<project>/mod/courier.json, under a start lock, so two front desks of one project wake
-// once for an item. The wake carries counts and card numbers, never an event's words.
+// once for an item, with the sessions that have ticked, so a session's first tick is known. The
+// wake carries counts and card numbers, never an event's words.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
@@ -14,7 +15,10 @@ import { hashOf } from './status.js';
 // How many sent ids courier.json keeps, beside every one still among the current items.
 export const SENT_KEPT = 500;
 // How long a tick waits for another session's courier before leaving its items for the next tick.
-const LOCK_WAIT_MS = 1000;
+export const LOCK_WAIT_MS = 500;
+// How many sessions courier.json remembers, the latest to tick last.
+export const SESSIONS_KEPT = 20;
+const BUSY = 'The courier is busy in another session';
 // A courier.json larger than this reads as nothing sent.
 const FILE_BYTES = 1024 * 1024;
 const ASK = 'Ask any new cards now, once, then send Claude\'s notification in one line.';
@@ -36,21 +40,25 @@ export function courierFile(project) {
   return path.join(stateDir(project), '..', 'mod', 'courier.json');
 }
 
-// needsYou({ before, after }) -> the needs-you items the pane's model `after` holds now, each
-// with an id that names it across ticks and sessions: STOP turned on (`stop:<since>`), an open
-// incident, a health line at its stop level (`health:<hash of its text>`), each waiting card
-// (`card:<id>`, with its number and whether it blocks) and each finished feature. `before`, the
-// model as last kept, only says whether the session is opening (sessionOpening); what has been
-// woken for is courier.json's to say, so an item held back wakes on a later tick.
+// needsYou({ after }) -> the needs-you items the pane's model `after` holds now, each with an id
+// that names it across ticks and sessions: STOP turned on (`stop:<since>`, only when its time can
+// be read), an open incident, a health line at its stop level (`health:<hash of its text>`) that
+// isn't STOP's or an incident's own, each waiting card (`card:<id>`, with its number and whether
+// it blocks) and each finished feature. What has been woken for is courier.json's to say, so an
+// item held back wakes on a later tick; the model as last kept isn't needed.
 export function needsYou({ after } = {}) {
   if (!isRecord(after)) return [];
   const items = [];
-  if (after.stop?.on === true) items.push({ id: `stop:${typeof after.stop.since === 'string' ? after.stop.since : 'on'}`, kind: 'stop' });
+  const since = after.stop?.since;
+  if (after.stop?.on === true && typeof since === 'string' && Number.isFinite(Date.parse(since))) items.push({ id: `stop:${since}`, kind: 'stop' });
   for (const id of Array.isArray(after.incidents) ? after.incidents : []) {
     if (typeof id === 'string' && id !== '') items.push({ id: `incident:${id}`, kind: 'incident' });
   }
   for (const line of list(after.health)) {
-    if (line.level === 'stop' && typeof line.text === 'string') items.push({ id: `health:${hashOf(line.text)}`, kind: 'health' });
+    // STOP's and an incident's own lines wake as STOP and the incident, once.
+    if (line.level === 'stop' && typeof line.text === 'string' && line.of !== 'stop' && line.of !== 'incident') {
+      items.push({ id: `health:${hashOf(line.text)}`, kind: 'health' });
+    }
   }
   for (const card of list(after.cards)) {
     if (typeof card.id === 'string' && Number.isInteger(card.n)) items.push({ id: `card:${card.id}`, kind: 'card', n: card.n, blocking: card.blocking === true });
@@ -67,14 +75,7 @@ const instantOf = (now) => {
   return (value instanceof Date ? value : new Date(value ?? Number.NaN)).getTime();
 };
 
-// Whether this tick opens the session: there is no model kept, or it is older than STALE_TICKS
-// ticks. Then what waits is marked sent and nothing wakes: the director has just opened the
-// session, and the visit asks what waits.
-export function sessionOpening(before, now) {
-  const at = typeof before?.at === 'string' ? Date.parse(before.at) : Number.NaN;
-  const t = instantOf(now);
-  return !isRecord(before) || !Number.isFinite(at) || !Number.isFinite(t) || t - at > STALE_TICKS * TICK_MS;
-}
+const isSession = (value) => typeof value === 'string' && value.length > 0 && value.length <= 200;
 
 // The minutes past midnight at `ms` in the time zone, or in UTC when the zone isn't known.
 function minutesAt(ms, timeZone) {
@@ -118,21 +119,22 @@ function readKept(project) {
   try {
     const file = courierFile(project);
     const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.size > FILE_BYTES) return { sent: [], lastWakeAt: null };
+    if (!stat.isFile() || stat.size > FILE_BYTES) return { sent: [], lastWakeAt: null, sessions: [] };
     const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
     return {
       sent: list(kept?.sent).filter((s) => typeof s.id === 'string'),
       lastWakeAt: typeof kept?.lastWakeAt === 'string' ? kept.lastWakeAt : null,
+      sessions: list(kept?.sessions).filter((s) => isSession(s.id) && typeof s.at === 'string'),
     };
   } catch {
-    return { sent: [], lastWakeAt: null };
+    return { sent: [], lastWakeAt: null, sessions: [] };
   }
 }
 
 // Writes courier.json whole through a temporary file. The sent ids keep their order, each once,
 // cut to the last SENT_KEPT, except that every id still among the current items is kept, so a
 // long-standing item (a feature finished long ago) never wakes again.
-function writeKept(project, { sent, lastWakeAt }, current) {
+function writeKept(project, { sent, lastWakeAt, sessions }, current) {
   const latest = new Map();
   for (const entry of sent) {
     latest.delete(entry.id);
@@ -144,7 +146,7 @@ function writeKept(project, { sent, lastWakeAt }, current) {
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(temp, `${JSON.stringify({ sent: kept, lastWakeAt })}\n`);
+    fs.writeFileSync(temp, `${JSON.stringify({ sent: kept, lastWakeAt, sessions })}\n`);
     fs.renameSync(temp, file);
   } catch (error) {
     fs.rmSync(temp, { force: true });
@@ -170,38 +172,60 @@ function whatOf(items) {
 
 const NOTHING = Object.freeze({ submit: null, sent: [] });
 
-// courierWake({ project, items, presence, quiet, idle, now, timeZone, opening }) -> { submit, sent }.
-// `items` are needsYou's; `presence` the effective presence ({ value, until }); `quiet` the
-// notifications' quiet hours ({ from, to }); `idle` false while a turn runs; `timeZone` the
-// computer's own. When the session is `opening`, every item is marked sent and nothing wakes.
+// courierWake({ project, session, items, presence, quiet, idle, now, timeZone }) -> { submit, sent }.
+// `session` is the ticking session's id; `items` are needsYou's; `presence` the effective
+// presence ({ value, until }); `quiet` the notifications' quiet hours ({ from, to }); `idle` false
+// while a turn runs; `timeZone` the computer's own.
+//
+// A session's first tick (an id courier.json hasn't seen) is its opening: the director has just
+// opened it, and the visit asks what waits, so nothing wakes. It marks every item sent, unless
+// another session ticked within STALE_TICKS ticks: that one is still waking for what it found, so
+// a second front desk's opening marks nothing and leaves those items to the next tick.
+//
 // Otherwise the items not yet sent that the presence lets through make one wake, unless a turn
 // runs or the last wake was under COURIER_GAP_MS ago (STOP and an incident wake inside the gap);
-// then nothing is marked sent and they wait for the next tick. `sent` names the items marked
-// sent by this call: each once the wake that carries it is handed back. Throws when courier.json
-// can't be locked or kept, so nothing is lost: the items wait for the next tick.
-export async function courierWake({ project, items, presence, quiet, idle, now = () => new Date(), timeZone, opening = false } = {}) {
+// then nothing is marked sent and they wait for the next tick, however long until it comes.
+// `sent` names the items marked sent by this call: each once the wake that carries it is handed
+// back. Another session holding courier.json past LOCK_WAIT_MS is a quiet wait for the next tick.
+// Throws when courier.json can't be kept, so nothing is lost.
+export async function courierWake({ project, session, items, presence, quiet, idle, now = () => new Date(), timeZone } = {}) {
   const t = instantOf(now);
-  if (!Number.isFinite(t)) return NOTHING;
+  if (!Number.isFinite(t) || !isSession(session)) return NOTHING;
   const found = list(items).filter((i) => typeof i.id === 'string');
-  const release = await takeStartLock(`${courierFile(project)}.lock`, { message: 'The courier is busy in another session', waitMs: LOCK_WAIT_MS });
+  let release;
+  try {
+    release = await takeStartLock(`${courierFile(project)}.lock`, { message: BUSY, waitMs: LOCK_WAIT_MS });
+  } catch (error) {
+    if (error?.message === BUSY) return NOTHING;
+    throw error;
+  }
   try {
     const kept = readKept(project);
+    const stamp = new Date(t).toISOString();
+    const opening = !kept.sessions.some((s) => s.id === session);
+    const othersTicking = kept.sessions.some((s) => s.id !== session && t - Date.parse(s.at) <= STALE_TICKS * TICK_MS);
+    const sessions = [...kept.sessions.filter((s) => s.id !== session), { id: session, at: stamp }].slice(-SESSIONS_KEPT);
     const sentIds = new Set(kept.sent.map((s) => s.id));
     const current = new Set(found.map((i) => i.id));
     const fresh = found.filter((i) => !sentIds.has(i.id) && sentIds.add(i.id));
-    const stamp = new Date(t).toISOString();
+    const mark = (marked, lastWakeAt) => writeKept(project, { sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp }))], lastWakeAt, sessions }, current);
+
     if (opening) {
-      if (fresh.length > 0) writeKept(project, { sent: [...kept.sent, ...fresh.map((i) => ({ id: i.id, at: stamp }))], lastWakeAt: kept.lastWakeAt }, current);
-      return { submit: null, sent: fresh.map((i) => i.id) };
+      const marked = othersTicking ? [] : fresh;
+      mark(marked, kept.lastWakeAt);
+      return { submit: null, sent: marked.map((i) => i.id) };
     }
     const lets = PRESENCE_LETS[presenceAt(presence, quiet, t, timeZone)];
     const waking = fresh.filter((i) => lets(i));
-    if (waking.length === 0 || idle !== true) return NOTHING;
     const last = kept.lastWakeAt === null ? Number.NaN : Date.parse(kept.lastWakeAt);
     const sinceLast = t - last;
     const inGap = Number.isFinite(sinceLast) && sinceLast >= 0 && sinceLast < COURIER_GAP_MS;
-    if (inGap && !waking.some((i) => AT_ONCE.includes(i.kind))) return NOTHING;
-    writeKept(project, { sent: [...kept.sent, ...waking.map((i) => ({ id: i.id, at: stamp }))], lastWakeAt: stamp }, current);
+    if (waking.length === 0 || idle !== true || (inGap && !waking.some((i) => AT_ONCE.includes(i.kind)))) {
+      // Only that this session ticked is kept.
+      mark([], kept.lastWakeAt);
+      return NOTHING;
+    }
+    mark(waking, stamp);
     return { submit: `${LEADS.courier} ${whatOf(waking)}. ${ASK}`, sent: waking.map((i) => i.id) };
   } finally {
     release();

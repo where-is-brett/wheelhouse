@@ -210,7 +210,8 @@ function unusualLines(unusual) {
 // projects use retiring soon, and security advisories for the repositories it builds on.
 function extraHealth(incidents, sources) {
   const lines = [];
-  for (const i of list(incidents?.open)) lines.push({ level: 'stop', text: cap(`Incident ${oneLine(i.id)} is open, so nothing merges: ${oneLine(i.what)}`) });
+  // Each incident's line names its incident, so the pane can tell it from other stop lines.
+  for (const i of list(incidents?.open)) lines.push({ level: 'stop', text: cap(`Incident ${oneLine(i.id)} is open, so nothing merges: ${oneLine(i.what)}`), incident: i.id });
   for (const r of list(sources?.retiring)) {
     if (r.routed === true && r.soon === true) lines.push({ level: 'watch', text: cap(`${oneLine(r.model)}, a model your projects use, retires on ${dayMonthYear(r.date) ?? oneLine(r.date)}`) });
   }

@@ -21,6 +21,7 @@ import { stopState } from '../lib/stop.js';
 import { listEvents } from '../state/events.js';
 import { CARD_HASH_CHARS, PANE_LINES } from '../lib/mod-numbers.js';
 import { importanceOf, IMPORTANCE } from '../cards/visit.js';
+import { STOP_LINE } from '../board/health.js';
 import { cardButtons, kindOf } from './buttons.js';
 
 const VERSION = 1;
@@ -32,6 +33,14 @@ const NO_INPUTS = 'The board\'s inputs couldn\'t be read this time';
 const NO_CLOCK = 'The pane\'s clock couldn\'t be read';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// Whose own line a health line is, read before its words are made plain: STOP's, as the glance
+// reads it, an open incident's, by the incident the board names on it, or neither (null).
+function ownLineOf(line) {
+  if (typeof line.incident === 'string') return 'incident';
+  const text = String(line.text);
+  return text === STOP_LINE || text.startsWith(`${STOP_LINE}, `) ? 'stop' : null;
+}
 const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
 
 function attempt(read, fallback) {
@@ -147,7 +156,7 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
 
   const health = part('health lines', () => list(model?.director?.health)
     .filter((l) => l.level === 'watch' || l.level === 'stop')
-    .map((l) => ({ level: l.level, text: plain(l.text) }))
+    .map((l) => ({ level: l.level, text: plain(l.text), of: ownLineOf(l) }))
     .filter((l) => l.text !== ''), []);
 
   const usage = part('usage line', () => (model === null ? null

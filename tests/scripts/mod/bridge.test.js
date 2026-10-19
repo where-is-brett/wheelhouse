@@ -6,13 +6,13 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELPER_MS } from '../../../scripts/mod/bridge.js';
+import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELPER_MS, COURIER_MS } from '../../../scripts/mod/bridge.js';
 import { readPaneStatus, hashOf } from '../../../scripts/mod/status.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
-import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
+import { COURIER_GAP_MS, FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
@@ -465,6 +465,25 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   assert.equal(failing.ok, true);
   assert.equal('submit' in failing, false);
   assert.ok(failing.pane.missing.includes('The courier couldn\'t run this time'));
+
+  // With too little of BRIDGE_MS left, the courier isn't asked: nothing is marked, and the third
+  // card wakes on a later tick.
+  let calls = 0;
+  const slow = () => { calls += 1; return calls === 1 ? 0 : BRIDGE_MS - COURIER_MS + 1; };
+  let asked = false;
+  const late = await handle(tickOf(repo, { idle: true }), live({ now: later(5), elapsedClock: slow, courierWake: async () => { asked = true; return { submit: 'x', sent: [] }; } }));
+  assert.equal(asked, false);
+  assert.equal('submit' in late, false);
+  assert.ok(!late.pane.missing.includes('The courier couldn\'t run this time'));
+  const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
+  assert.equal(woken3.submit, 'Wheelhouse courier: 1 new card (3). Ask any new cards now, once, then send Claude\'s notification in one line.');
+
+  // A second front desk opening now marks nothing and wakes for nothing.
+  waiting('c-old', 'c-new', 'c-third', 'c-fourth');
+  const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
+  assert.equal('submit' in second, false);
+  const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));
+  assert.equal(first.submit, 'Wheelhouse courier: 1 new card (4). Ask any new cards now, once, then send Claude\'s notification in one line.');
 }));
 
 test('the model is written to status.json before the tick answers', () => withHome(async (home) => {

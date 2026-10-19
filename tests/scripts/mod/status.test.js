@@ -155,7 +155,7 @@ test('a card\'s text is kept as written; the other lines are one line each, in p
     const loadInputs = async () => ({
       project: P,
       model: {
-        missing: [], director: { health: [{ level: 'ok', text: 'Protection: Standard' }, { level: 'watch', text: '## CI is red\n[see](https://example.test) and CI failed' }, { level: 'stop', text: 'STOP is on' }] },
+        missing: [], director: { health: [{ level: 'ok', text: 'Protection: Standard' }, { level: 'watch', text: '## CI is red\n[see](https://example.test) and CI failed' }, { level: 'stop', text: 'STOP is on' }, { level: 'stop', text: 'STOP is on, since 09:00' }, { level: 'stop', text: 'Incident i1 is open, so nothing merges: x', incident: 'i1' }] },
         build: { features },
       },
       usage: null,
@@ -166,7 +166,9 @@ test('a card\'s text is kept as written; the other lines are one line each, in p
     assert.equal(model.building.length, PANE_LINES);
     assert.equal(model.building[0], 'Building Speed up the automatic check run now, piece 1 of 3');
     assert.equal(model.building.at(-1), 'and 3 more building');
-    assert.deepEqual(model.health.map((h) => h.level), ['watch', 'stop']);
+    assert.deepEqual(model.health.map((h) => h.level), ['watch', 'stop', 'stop', 'stop']);
+    // STOP's own line and an incident's are marked, read before their words are made plain.
+    assert.deepEqual(model.health.map((h) => h.of), [null, 'stop', 'stop', 'incident']);
     for (const line of [...model.building, ...model.health.map((h) => h.text)]) {
       assert.doesNotMatch(line, /[\n<>[\]#]|https?:/, line);
     }
