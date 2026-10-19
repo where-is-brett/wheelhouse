@@ -60,7 +60,7 @@ import { composeCard } from '../cards/compose.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
-import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey } from './journal.js';
+import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor } from './clicks.js';
 
@@ -201,7 +201,12 @@ export async function runApply({ step, runId, changes, ctx, current }) {
   const applyJsonKey = (args) => journalKey({ ...args, step: step.n, record });
   // A line for the director while the step runs, such as a sign-in code (ruling R40): kept on the
   // step's journal entry for this attempt only, and shown, cleaned, by /setup/status.
-  const say = (line) => { markStep(runId, step.n, 'say', { now: ctx.now, line, when: current }); };
+  // A line on several lines is put on one, and a long one cut to what the journal keeps, so what a
+  // step says never stops it.
+  const say = (line) => {
+    const one = String(line ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, SAY_CHARS);
+    if (one !== '') markStep(runId, step.n, 'say', { now: ctx.now, line: one, when: current });
+  };
   try {
     record(await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes));
     markStep(runId, step.n, 'doneAt', { now: ctx.now, when: current });

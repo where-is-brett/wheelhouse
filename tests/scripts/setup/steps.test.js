@@ -404,9 +404,12 @@ test('a running step\'s line for the director is kept on its entry, shown cleane
     let saying;
     const said = new Promise((resolve) => { saying = resolve; });
     const step = { n: 3, title: SETUP_TITLES[3], plan: async () => ({ changes: [] }), apply: async (ctx) => {
+      ctx.say('two\nlines');
+      assert.equal(findRun(folder).steps[3].say.line, 'two lines', 'a line on several lines is put on one');
+      ctx.say('x'.repeat(900));
+      assert.equal(findRun(folder).steps[3].say.line.length, journal.SAY_CHARS, 'a long line is cut, never failing the step');
       ctx.say('Type WXYZ-1234 at https://github.com/login/device, then click Authorise');
       ctx.say('Then open https://someone:secret@example.com/page');
-      assert.throws(() => ctx.say('two\nlines'), /one line/);
       saying();
       await held;
       return [];

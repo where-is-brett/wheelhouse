@@ -25,9 +25,10 @@ export function withoutGitVars(env = process.env) {
 // bytes of each stream are kept while it runs. With `windowsVerbatimArguments` (Windows only), the
 // arguments are passed to the program as they are, without Node's quoting, for `cmd.exe /c`. With
 // `onOutput(text)`, each piece of output, from either stream, is also given as it comes, for a
-// program that shows something to read before it finishes (a sign-in code). Resolves with the exit code and the collected
+// program that shows something to read before it finishes (a sign-in code). With `signal`, an
+// AbortSignal, aborting it ends the program, and the call rejects. Resolves with the exit code and the collected
 // output; rejects only if the program cannot be started.
-export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, onOutput } = {}) {
+export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, onOutput, signal } = {}) {
   return new Promise((resolve, reject) => {
     const merged = { ...baseEnv, ...env };
     for (const name of Object.keys(merged)) if (merged[name] === undefined || merged[name] === null) delete merged[name];
@@ -38,6 +39,7 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
       windowsHide: true,
       windowsVerbatimArguments,
       stdio: ['pipe', 'pipe', 'pipe'],
+      ...(signal ? { signal } : {}),
     });
     const out = [];
     const err = [];

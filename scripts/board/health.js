@@ -12,10 +12,12 @@ import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
+import { QUICK_LINE } from '../lib/host-lines.js';
 
 // The STOP line starts with these words, alone or followed by ", since <date>".
 export const STOP_LINE = 'STOP is on';
-export const QUICK_LINE = 'Agents act with your full GitHub or GitLab access, across all your projects.';
+// The quick connection's line, shared with setup's step 3 (scripts/lib/host-lines.js).
+export { QUICK_LINE };
 
 // After a helper that did not answer in time, the next reading does not wait on it again for this long.
 const TRIED_FOR_MS = 10 * 60 * 1000;

@@ -30,6 +30,14 @@ test('run gives each piece of output to onOutput as it comes, and still collects
   assert.match(seen.join(''), /code: AB12-CD34\n[\s\S]*done/);
 });
 
+test('run ends a program when its signal is aborted, and rejects', async () => {
+  const controller = new AbortController();
+  const started = Date.now();
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(run(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { signal: controller.signal }), { name: 'AbortError' });
+  assert.ok(Date.now() - started < 10000);
+});
+
 test('run merges env over process.env', async () => {
   process.env.WH_RUN_TEST_KEPT = 'kept';
   try {

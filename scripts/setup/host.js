@@ -15,22 +15,27 @@
 //      is signed in (no account yet: the host's sign-up page first);
 //   2. for a new product, a private repository with a first commit on `main` (a README), and the
 //      product's folder, which exists from step 1, connected to it in place: git init -b main,
-//      remote add, fetch, reset origin/main, so the folder's own files stay as they were; an
-//      existing product keeps its repository;
-//   3. the private profile repository, wheelhouse-profile, while this computer has no profile
-//      (made only when the account has none), then ~/.wheelhouse/profile.json and the profile's
-//      clone;
+//      remote add, fetch, the branch named main and reset to origin/main, so the folder's own files
+//      stay as they were; an existing product keeps its repository, which must already hold a
+//      branch of the product's, or its state branch would become the default;
+//   3. the private profile repository, wheelhouse-profile, always on the director's own account
+//      (never the product's organisation or group), while this computer has no profile (made only
+//      when the account has none), then ~/.wheelhouse/profile.json and the profile's clone;
 //   4. the connection: Quick needs nothing more. Narrow on GitHub is a code typed on GitHub, then
 //      the app's Install page, where setup recommends the project and the profile, not All
-//      repositories; the installation is looked up and its reach read back and said. Narrow on
-//      GitLab is a project key at Developer level, made with the director's own sign-in; where
-//      GitLab refuses, the token page is opened and the token typed into the system's own box,
-//      straight to the keys file, never the chat;
+//      repositories; the installation is looked up and its reach read back and said. A later
+//      project, with the app's keys kept, needs no new code: a tick on the settings page, or the
+//      Install page an earlier attempt left. Narrow on GitLab is a project key at Developer level,
+//      made with the director's own sign-in; where GitLab refuses it (401 or 403), the token page
+//      is opened and the token typed into the system's own box, straight to the keys file, never
+//      the chat. Their own GitHub App is Task 8b's: until then, choosing it makes the plan wait,
+//      saying why;
 //   5. Wheelhouse's record of the project (writeProject), then its state clone (cloneState).
 // Each change is recorded in the journal just before it is made. The step is long (ruling R40): it
 // runs in its own process, and says each thing the director must do (a code, the Install page) as
 // a line, through ctx.say, which /setup/status shows. It waits for step 2 (`after: [2]`, ruling
-// R47), since it needs git and the host's tool; its plan never fails while they are missing.
+// R47), since it needs git and the host's tool; its plan never fails while they are missing. STOP
+// stops it between its parts and in each of its waits.
 //
 // Setup's own git and host calls use the director's own sign-in, never the narrow key: `gh` or
 // `glab` as the director has it, and for git their tool as its credential helper, through the
@@ -52,7 +57,7 @@ import { wheelhouseHome, profileDir, stateDir, projectSlug } from '../lib/paths.
 import { toolPath } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
-import { QUICK_LINE } from '../board/health.js';
+import { QUICK_LINE } from '../lib/host-lines.js';
 import { detectHost } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
@@ -72,6 +77,8 @@ import { readJournal, newId } from './journal.js';
 // registered (Card 1).
 export const APP_FILE = fileURLToPath(new URL('../host/app.json', import.meta.url));
 export const PROFILE_REPO = 'wheelhouse-profile';
+// Wheelhouse's own branches, which are never the product's.
+const WHEELHOUSE_BRANCHES = [STATE_BRANCH, 'wheelhouse-lock', PROFILE_BRANCH];
 const GITLAB_URL = 'https://gitlab.com';
 
 // The answers' labels: step 4 (Task 9) reads the first two from `3.real-users` and `3.locked`.
@@ -95,7 +102,12 @@ export const KEY_NAME = 'Wheelhouse agents';
 export const KEY_DAYS = 365;
 
 // Said when the person chose their own GitHub App and has none recorded: Task 8b builds that route.
-export const OWN_APP_LATER = 'Setup cannot make your own GitHub App yet: choose another way to connect on a fresh card, or wait for the Wheelhouse update that adds it';
+// Until then the step waits, with this line, rather than show a Go ahead that could only be refused.
+export const OWN_APP_LATER = 'Setup cannot make your own GitHub App yet: that comes with the next Wheelhouse update, and this step waits for it';
+export const OWN_APP_WAIT_MS = 10 * 60 * 1000;
+export const STOPPED = 'STOP came on, so setup stopped here; once STOP is lifted, a fresh Go ahead carries on';
+// How often the browser sign-in looks at STOP while it waits.
+export const STOP_LOOK_MS = 1000;
 export const HISTORY_LINE = 'This folder has its own git history but no GitHub or GitLab address, so setup has left it as it is: connect it to its repository (git remote add origin <address>), then ask again';
 
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
@@ -185,8 +197,9 @@ export function repoOf(remoteUrl) {
 // underscores, accents dropped, anything else a dash.
 export function repoName(folder) {
   const name = path.basename(folder).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-{2,}/g, '-').replace(/^[-.]+|[-.]+$/g, '');
-  return name === '' ? 'product' : name.slice(0, 50);
+    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-{2,}/g, '-').replace(/^[-.]+/, '')
+    .slice(0, 50).replace(/[-.]+$/, '');
+  return name === '' ? 'product' : name;
 }
 
 // Whether the folder's git has a commit on its current branch, read from its files (git may not be
@@ -350,8 +363,9 @@ export async function signInStatus({ host, run = realRun }) {
 }
 
 // The existing sign-in, with no browser step; otherwise the tool's own browser sign-in, run with the
-// director's environment, whose one-time code is said as it is shown.
-export async function signIn({ host, run = realRun, say = () => {} }) {
+// director's environment, whose one-time code is said as it is shown. STOP coming on while it waits
+// (`stopped`) ends it, and the step stops.
+export async function signIn({ host, run = realRun, say = () => {}, stopped = () => false }) {
   const before = await signInStatus({ host, run });
   if (before.signedIn) return before;
   say(`Sign in to ${NAME[host]} in the browser page that opens. No account yet? Make one first at ${SIGN_UP[host]}`);
@@ -366,7 +380,14 @@ export async function signIn({ host, run = realRun, say = () => {} }) {
   const args = host === 'github'
     ? ['auth', 'login', '--hostname', ADDRESS.github, '--git-protocol', 'https', '--web']
     : ['auth', 'login', '--hostname', ADDRESS.gitlab, '--git-protocol', 'https', '--web'];
-  await quietly(run, toolPath(TOOL[host]), args, { input: '\n', timeoutMs: SIGN_IN_WAIT_MS, onOutput });
+  const controller = new AbortController();
+  const watch = setInterval(() => { if (stopped()) controller.abort(); }, STOP_LOOK_MS);
+  try {
+    await quietly(run, toolPath(TOOL[host]), args, { input: '\n', timeoutMs: SIGN_IN_WAIT_MS, onOutput, signal: controller.signal });
+  } finally {
+    clearInterval(watch);
+  }
+  if (stopped()) throw new Error(STOPPED);
   const after = await signInStatus({ host, run });
   if (!after.signedIn) throw new Error(`Setup could not sign in to ${NAME[host]}: the sign-in in the browser was not finished. A fresh Go ahead tries again`);
   return after;
@@ -465,9 +486,11 @@ const madeBySetup = (target) => readJournal().runs.flatMap((r) => r?.changes ?? 
   .some((c) => c?.kind === 'host' && c.target === target && c.after?.made === true);
 
 // Connects the product's folder to its new repository in place (ruling R34): git init -b main when
-// it has no git, the remote added, fetched, and the branch reset to origin/main without touching the
-// folder's files; any of the repository's files the folder lacks (the README) are written out. Safe
-// to repeat.
+// it has no git, the remote added and fetched, the branch named main (whatever an unborn branch was
+// called) and reset to origin/main without touching the folder's files; any of the repository's
+// files the folder lacks (the README) are written out. The folder's .git is recorded once, when
+// setup adds the remote. Safe to repeat from any point: a retry finishes what an earlier attempt
+// left, and records nothing again.
 async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
   const git = (args) => run(gitPath, args, { cwd: folder, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
   const must = async (args, why) => {
@@ -478,19 +501,46 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
   const hadGit = fs.existsSync(path.join(folder, '.git'));
   const origin = originUrl(folder);
   if (origin !== null && !sameRemote(origin, remoteUrl)) throw new Error('This folder is connected to another repository, so setup has left it as it is');
-  if (origin !== null) {
-    const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
-    const theirs = await git(['rev-parse', '-q', '--verify', 'refs/remotes/origin/main']);
-    if (head.code === 0 && theirs.code === 0) return;
+  if (origin === null) {
+    record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: hadGit ? { origin: null } : null, after: { origin: remoteUrl, branch: 'main' } });
+    if (!hadGit) await must(['init', '-q', '-b', 'main'], 'git could not start in this folder');
+    await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the repository in this folder');
   }
-  record({ id: newId('chg'), kind: 'folder', target: path.join(folder, '.git'), before: hadGit ? { origin } : null, after: { origin: remoteUrl, branch: 'main' } });
-  if (!hadGit) await must(['init', '-q', '-b', 'main'], 'git could not start in this folder');
-  if (origin === null) await must(['remote', 'add', 'origin', remoteUrl], 'git could not name the repository in this folder');
   await must(['fetch', '-q', 'origin', 'main'], 'git could not fetch the new repository');
-  await must(['reset', '-q', 'origin/main'], 'git could not take the repository\'s first commit into this folder');
+  const theirs = (await must(['rev-parse', '--verify', 'refs/remotes/origin/main'], 'git could not read the new repository\'s main')).stdout.trim();
+  const head = await git(['rev-parse', '-q', '--verify', 'HEAD']);
+  if (head.code !== 0) {
+    // Unborn: whatever its branch was called (a default `git init` may say master), it is main.
+    await must(['symbolic-ref', 'HEAD', 'refs/heads/main'], 'git could not name this folder\'s branch main');
+    await must(['reset', '-q', 'origin/main'], 'git could not take the repository\'s first commit into this folder');
+  }
   await must(['branch', '-q', '--set-upstream-to=origin/main'], 'git could not link the folder\'s branch to the repository');
-  const missing = (await must(['ls-files', '--deleted', '-z'], 'git could not read the folder')).stdout.split('\0').filter(Boolean);
-  if (missing.length > 0) await must(['checkout', '-q', '--', ...missing], 'git could not write out the repository\'s files');
+  // The repository's files the folder lacks are written out while the folder is at the repository's
+  // first commit; once the director has gone on from it, a file missing is theirs to have removed.
+  if (head.code !== 0 || head.stdout.trim() === theirs) {
+    const missing = (await must(['ls-files', '--deleted', '-z'], 'git could not read the folder')).stdout.split('\0').filter(Boolean);
+    if (missing.length > 0) await must(['checkout', '-q', '--', ...missing], 'git could not write out the repository\'s files');
+  }
+}
+
+// Whether the profile's clone on this computer is whole: its branch's upstream set, the last thing
+// ensureProfileClone does. Read from its files.
+export function profileCloneWhole() {
+  const text = readText(path.join(profileDir(), '.git', 'config')) ?? '';
+  const section = new RegExp(`^\\s*\\[branch\\s+"${PROFILE_BRANCH}"\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`, 'm').exec(text)?.[1] ?? '';
+  return new RegExp(`^\\s*merge\\s*=\\s*refs/heads/${PROFILE_BRANCH}\\s*$`, 'm').test(section);
+}
+
+// Refuses an existing product whose repository has no branch of its own yet (an empty repository):
+// the state branch, pushed next, would become its default branch (ruling R34).
+async function productBranchOn({ host, repo, remoteUrl, gitPath, env, run }) {
+  const listed = await run(gitPath, ['ls-remote', '--heads', remoteUrl], { env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  if (listed.code !== 0) throw new Error(`${repo} on ${NAME[host]} could not be reached with your sign-in`);
+  const own = String(listed.stdout).split(/\r?\n/).map((line) => /\trefs\/heads\/(.+)$/.exec(line)?.[1]).filter(Boolean)
+    .filter((branch) => !WHEELHOUSE_BRANCHES.includes(branch));
+  if (own.length === 0) {
+    throw new Error(`${repo} on ${NAME[host]} has no branch of the product's yet, so Wheelhouse's state branch would become its default: push the product's main branch to it first, then ask again`);
+  }
 }
 
 function readText(file) {
@@ -527,12 +577,14 @@ function connectionFor({ host, mode, repo, id, locked = false }) {
 // Makes the repositories step 3 needs, each a `host` change recorded before it is made, so uninstall
 // can offer to remove it: a private repository for a new product (a first commit on main), with the
 // product's folder connected to it in place; then, while this computer has no profile, the private
-// profile repository on the director's own account (made only when the account has none), then
-// profile.json in the shape scripts/profile/store.js reads, and the profile's clone. An existing
-// product keeps its repository. `api` is GitLab's with the director's sign-in; `env` the director's
-// git environment; `hostUrl` gives a repository's address. Gives the changes made.
+// profile repository, always on the director's own account `user` (never the product's
+// organisation or group), made only when the account has none, then profile.json in the shape
+// scripts/profile/store.js reads, and the profile's clone, made again when an earlier attempt left
+// it part-way. An existing product keeps its repository. `owner` is the product's owner (for a new
+// product, `user`); `api` is GitLab's with the director's sign-in; `env` the director's git
+// environment; `hostUrl` gives a repository's address. Gives the changes made.
 export async function makeRepos({
-  host, owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {},
+  host, owner, user = owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {},
   hostUrl = httpsRemote, mode = 'quick',
 }) {
   const made = [];
@@ -540,8 +592,8 @@ export async function makeRepos({
     record(change);
     made.push(change);
   };
-  const ensure = async (repoName, readme) => {
-    const repo = `${owner}/${repoName}`;
+  const ensure = async (account, repoName, readme) => {
+    const repo = `${account}/${repoName}`;
     const target = `${host}:${repo}`;
     const found = await repoInfo({ host, repo, run, api });
     if (found !== null) {
@@ -551,19 +603,23 @@ export async function makeRepos({
       return found;
     }
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });
-    return createRepo({ host, owner, name: repoName, readme, run, api });
+    return createRepo({ host, owner: account, name: repoName, readme, run, api });
   };
   if (isNew) {
-    const info = await ensure(name, true);
+    if (owner !== user) throw new Error('A new product\'s repository is made on your own account');
+    const info = await ensure(user, name, true);
     await connectFolder({ folder, remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, run, record: keep });
   }
-  if (profileRemote() === null) {
-    const info = await ensure(PROFILE_REPO, false);
-    const profile = { remoteUrl: hostUrl({ host, repo: info.repo }), host, repo: info.repo, connection: connectionFor({ host, mode, repo: info.repo, id: info.id }) };
+  let profile = profileRemote();
+  if (profile === null) {
+    const info = await ensure(user, PROFILE_REPO, false);
+    profile = { remoteUrl: hostUrl({ host, repo: info.repo }), host, repo: info.repo, connection: connectionFor({ host, mode, repo: info.repo, id: info.id }) };
     const file = profileFile();
     const text = `${JSON.stringify(profile, null, 2)}\n`;
     keep({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: text });
     writeText(file, text);
+  }
+  if (!profileCloneWhole()) {
     keep({ id: newId('chg'), kind: 'folder', target: profileDir(), before: fs.existsSync(profileDir()) ? {} : null, after: { clone: profile.remoteUrl, branch: PROFILE_BRANCH } });
     await ensureProfileClone({ remote: profile, env });
   }
@@ -605,32 +661,51 @@ function keyKept(name) {
   }
 }
 
-// The app's keys this computer keeps, when they are for this app and know its installation: a later
-// project then needs only a tick on the installation's settings page (design section 15), no new
-// code sign-in. Null otherwise. Nothing of the keys is said.
-export function keptAppKeys(app) {
+// The app's keys this computer keeps, when they are for this app; null otherwise. Nothing of the
+// keys is said.
+function keysFor(app) {
   let kept = null;
   try {
     kept = readKey('github-app');
   } catch { /* a damaged file is signed in again */ }
-  const usable = kept && kept.clientId === app?.clientId && Number.isInteger(kept.installationId) && kept.installationId > 0
-    && typeof kept.accessToken === 'string' && kept.accessToken !== '';
-  return usable ? kept : null;
+  return kept && kept.clientId === app?.clientId && typeof kept.accessToken === 'string' && kept.accessToken !== '' ? kept : null;
 }
 
-// Narrow on GitHub: the code sign-in to the app, its keys kept, then its Install page opened with
-// the repositories to tick said, and the installation looked up and kept with the keys. Skipped
-// when this computer already keeps the app's keys and installation (`reuse`), unless they no longer
-// work. Then the installation's reach is read back and said as it is: a repository it can't reach
-// opens its settings page, where the director ticks it. One still out of reach after
-// INSTALL_WAIT_MS stops the step.
-async function connectGithubApp({ app, repos, reuse = false, fetch, say, open, sleep, now, record, halt = () => {} }) {
-  const until = now().getTime() + INSTALL_WAIT_MS;
-  const late = (what) => {
-    halt();
-    if (now().getTime() >= until) throw new Error(`${what} after ${INSTALL_WAIT_MS / 60000} minutes; a fresh Go ahead asks again`);
-  };
+// How far this computer is with the app (design section 15): 'installed', its keys kept with the
+// installation, so a later project needs only a tick on the installation's settings page;
+// 'signed-in', its keys kept without an installation (an Install page left unfinished), so the
+// Install page is next, with no new code; or null, a code sign-in first.
+export function appKeysState(app) {
+  const kept = keysFor(app);
+  if (kept === null) return null;
+  return Number.isInteger(kept.installationId) && kept.installationId > 0 ? 'installed' : 'signed-in';
+}
+
+// The app's keys this computer keeps, with the installation, or null.
+export function keptAppKeys(app) {
+  return appKeysState(app) === 'installed' ? keysFor(app) : null;
+}
+
+// An access key with more than this left is used for the Install page as it is; one nearer its end
+// is signed in afresh (the code sign-in), since only the helper's connection renews it.
+const FRESH_MS = 10 * 60 * 1000;
+
+// Narrow on GitHub. With the app's keys and installation kept, its reach is read at once. Otherwise:
+// the code sign-in, unless keys for the app are kept and fresh (an earlier attempt's, whose Install
+// page was not finished); the keys kept; then the Install page opened with the repositories to tick
+// said, and the installation looked up, for INSTALL_WAIT_MS from when the page opens, and kept with
+// the keys. Then the installation's reach is read back and said as it is: a repository it can't
+// reach opens its settings page, where the director ticks it, for INSTALL_WAIT_MS more. STOP is
+// read in every wait (`halt`), and once the code sign-in has returned, before anything is kept.
+async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, record, halt = () => {} }) {
   const named = repos.map((r) => `${r} on GitHub`).join(' and ');
+  const waitFrom = () => {
+    const until = now().getTime() + INSTALL_WAIT_MS;
+    return (what) => {
+      halt();
+      if (now().getTime() >= until) throw new Error(`${what} after ${INSTALL_WAIT_MS / 60000} minutes; a fresh Go ahead asks again`);
+    };
+  };
   const reach = async () => {
     const missing = [];
     let settingsUrl = null;
@@ -644,20 +719,32 @@ async function connectGithubApp({ app, repos, reuse = false, fetch, say, open, s
     return { missing, settingsUrl };
   };
   let first = null;
-  if (reuse && keptAppKeys(app) !== null) {
+  let keys = keysFor(app);
+  if (keys !== null && Number.isInteger(keys.installationId)) {
     try {
       first = await reach();
-    } catch { /* the kept keys no longer work: signed in again below */ }
+    } catch {
+      keys = null; // they no longer work: signed in again below
+    }
   }
   if (first === null) {
-    const code = await startDeviceSignIn({ clientId: app.clientId, fetch });
-    say(`Type ${code.userCode} at ${code.verificationUri}, then click Authorise`);
-    await open(code.verificationUri);
-    const keys = await waitForSignIn({ clientId: app.clientId, deviceCode: code.deviceCode, interval: code.interval, fetch, now, sleep: (s) => sleep(s * 1000) });
-    record({ id: newId('chg'), kind: 'host', target: 'key github-app', before: keyKept('github-app') ? { kept: true } : null, after: { key: 'github-app', clientId: app.clientId, app: app.slug } });
-    writeKey('github-app', { clientId: app.clientId, ...keys });
+    const fresh = keys !== null && (keys.accessExpiresAt == null || Date.parse(keys.accessExpiresAt) - now().getTime() > FRESH_MS);
+    if (!fresh) {
+      const code = await startDeviceSignIn({ clientId: app.clientId, fetch });
+      say(`Type ${code.userCode} at ${code.verificationUri}, then click Authorise`);
+      await open(code.verificationUri);
+      const signed = await waitForSignIn({
+        clientId: app.clientId, deviceCode: code.deviceCode, interval: code.interval, fetch, now,
+        sleep: async (seconds) => { halt(); await sleep(seconds * 1000); },
+      });
+      halt();
+      record({ id: newId('chg'), kind: 'host', target: 'key github-app', before: keyKept('github-app') ? { kept: true } : null, after: { key: 'github-app', clientId: app.clientId, app: app.slug } });
+      keys = { clientId: app.clientId, ...signed };
+      writeKey('github-app', keys);
+    }
     say(`On the app's Install page, choose Only select repositories, tick ${named} (not All repositories), then click Install`);
     await open(installUrl(app.slug));
+    const late = waitFrom();
     let installationId = null;
     for (;;) {
       installationId = await findInstallation({ accessToken: keys.accessToken, app, fetch });
@@ -665,40 +752,46 @@ async function connectGithubApp({ app, repos, reuse = false, fetch, say, open, s
       late('The app was not installed');
       await sleep(INSTALL_POLL_MS);
     }
-    writeKey('github-app', { clientId: app.clientId, installationId, ...keys });
+    halt();
+    writeKey('github-app', { ...keys, clientId: app.clientId, installationId });
     first = await reach();
   }
-  let { missing, settingsUrl } = first;
+  let { missing } = first;
   if (missing.length > 0) {
     say(`The app can't reach ${missing.map((r) => `${r} on GitHub`).join(' or ')} yet: tick it on the page that opens, then click Save`);
-    await open(settingsUrl);
-  }
-  while (missing.length > 0) {
-    late(`The app still can't reach ${missing.join(' or ')}`);
-    await sleep(INSTALL_POLL_MS);
-    ({ missing } = await reach());
+    await open(first.settingsUrl);
+    const late = waitFrom();
+    while (missing.length > 0) {
+      late(`The app still can't reach ${missing.join(' or ')}`);
+      await sleep(INSTALL_POLL_MS);
+      ({ missing } = await reach());
+    }
   }
   say(`The app can reach ${named}, and nothing else you didn't tick`);
 }
 
 // Narrow on GitLab: a project key at Developer level for each project, made with the director's own
-// sign-in. Where GitLab refuses one, its token page is opened and the token typed into the system's
-// own box, straight to the keys file for every project still without a key: never the chat, an
-// argument or a log. A project already holding a key is left as it is.
-async function connectGitlabKeys({ api, projects, owner, platform, say, open, askSecret, now, record }) {
+// sign-in. Where GitLab refuses one (it answers 401 or 403: the sign-in or the plan may not make
+// project keys), its token page is opened and the token typed into the system's own box, straight to
+// the keys file for every project still without a key: never the chat, an argument or a log. Any
+// other failure (GitLab not reached, the project not found, a server error) stops the step plainly.
+// A project already holding a key is left as it is.
+async function connectGitlabKeys({ api, projects, owner, platform, say, open, askSecret, now, record, halt = () => {} }) {
   const keyName = (p) => `gitlab-project-${p.id}`;
   const keep = (p, kind, value) => {
     record({ id: newId('chg'), kind: 'host', target: `key ${keyName(p)}`, before: keyKept(keyName(p)) ? { kept: true } : null, after: { key: keyName(p), project: p.repo, kind } });
     writeKey(keyName(p), value);
   };
+  let answered = null;
+  const watched = { ...api, post: async (...args) => { answered = null; const got = await api.post(...args); answered = got.status; return got; } };
   const waiting = projects.filter((p) => !keyKept(keyName(p)));
   let refused = false;
   for (const p of [...waiting]) {
     let key;
     try {
-      key = await makeProjectKey({ api, projectId: p.id, name: KEY_NAME, days: KEY_DAYS, now });
+      key = await makeProjectKey({ api: watched, projectId: p.id, name: KEY_NAME, days: KEY_DAYS, now });
     } catch (error) {
-      if (/^Could not reach GitLab|did not return/.test(error?.message ?? '')) throw error;
+      if (answered !== 401 && answered !== 403) throw error;
       refused = true;
       break;
     }
@@ -715,6 +808,7 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
     throw new Error('No GitLab token was given, so the narrow connection is not set up; a fresh Go ahead asks again');
   }
   if (typeof token !== 'string' || token.trim() === '') throw new Error('No GitLab token was given, so the narrow connection is not set up; a fresh Go ahead asks again');
+  halt();
   for (const p of waiting) keep(p, 'pasted-token', { kind: 'pasted-token', token: token.trim(), expiresAt: null });
 }
 
@@ -744,7 +838,7 @@ export async function switchOnAsDirector({ host, repo, run = realRun, api }) {
 
 // ---- Step 3 ----
 
-function cardFor({ host, changes, product, owner, user, way, app, signedIn, reuse }) {
+function cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys }) {
   const name = NAME[host];
   const parts = [];
   if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${SIGN_UP[host]})`);
@@ -756,7 +850,8 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, reus
   if (way === WAYS.quick) parts.push('Quick: your own sign-in, which reaches your whole account');
   else if (host === 'gitlab') parts.push('Developer project keys for the project and profile, or where GitLab refuses, a token typed in your computer\'s own box');
   else if (app === null) parts.push('your own GitHub App');
-  else if (reuse) parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked`);
+  else if (appKeys === 'installed') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked`);
+  else if (appKeys === 'signed-in') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick the project and profile on its Install page, not All repositories`);
   else parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}: a code on GitHub, then tick the project and profile on its Install page, not All repositories`);
   parts.push('the project\'s record and state branch');
   parts.push(protectionPlanLine(host));
@@ -775,11 +870,13 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, reus
   };
 }
 
-function directorFor({ signedIn, way, host, app, reuse }) {
+function directorFor({ signedIn, way, host, app, appKeys }) {
   const parts = ['One click'];
   if (!signedIn) parts.push('your sign-in in the browser');
   if (way !== WAYS.quick && host === 'github' && app !== null) {
-    parts.push(reuse ? 'a tick on the app\'s settings page, if the project is not ticked' : 'a code typed on GitHub, Authorise, and two ticks on the Install page');
+    if (appKeys === 'installed') parts.push('a tick on the app\'s settings page, if the project is not ticked');
+    else if (appKeys === 'signed-in') parts.push('two ticks on the app\'s Install page');
+    else parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page');
   }
   return parts.join(', then ');
 }
@@ -829,8 +926,11 @@ export function hostStep({
         const chosen = way === WAYS.own ? (own ? { ...own, own: true } : null) : (wheelhouse ? { ...wheelhouse, own: false } : null);
         app = chosen === null ? null : { clientId: chosen.clientId, slug: chosen.slug, own: chosen.own };
       }
-      // A later project with the app's keys already kept: a tick on its settings page, no new code.
-      const reuse = app !== null && keptAppKeys(app) !== null;
+      // Their own app, chosen before setup can make one (Task 8b): the step waits, with why, rather
+      // than show a Go ahead that apply could only refuse.
+      if (mode === 'narrow' && host === 'github' && app === null) return { wait: OWN_APP_WAIT_MS, why: OWN_APP_LATER };
+      // How far this computer is with the app: a later project needs no new code (design section 15).
+      const appKeys = app === null ? null : appKeysState(app);
       const { signedIn, user } = await signInStatus({ host, run });
       const owner = product.isNew ? user : product.repo.split('/').slice(0, -1).join('/');
       const repo = product.isNew ? (user ? `${user}/${product.name}` : null) : product.repo;
@@ -843,19 +943,20 @@ export function hostStep({
       if (profileRemote() === null) {
         changes.push({ kind: 'host', target: host, action: 'profile-repository', repo: user ? `${user}/${PROFILE_REPO}` : null });
         changes.push({ kind: 'file', target: profileFile(), action: 'profile' });
-        changes.push({ kind: 'folder', target: profileDir(), action: 'profile-clone' });
       }
+      // The profile's clone, also when an earlier attempt left it part-way.
+      if (profileRemote() === null || !profileCloneWhole()) changes.push({ kind: 'folder', target: profileDir(), action: 'profile-clone' });
       changes.push({
         kind: 'host', target: host, action: 'connection', mode, locked,
-        ...(mode === 'narrow' && host === 'github' ? { app: app ?? 'own-new', ...(reuse ? { reuse } : {}) } : {}),
+        ...(mode === 'narrow' && host === 'github' ? { app, ...(appKeys === null ? {} : { appKeys }) } : {}),
       });
       const slug = repo === null ? null : slugFor(repo);
       changes.push({ kind: 'file', target: slug === null ? path.join(wheelhouseHome(), 'projects') : projectFile(slug), action: 'project', repo });
       changes.push({ kind: 'folder', target: slug === null ? path.join(wheelhouseHome(), 'projects') : stateDir(slug), action: 'state', repo });
       return {
         changes,
-        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, reuse }),
-        director: directorFor({ signedIn, way, host, app, reuse }),
+        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys }),
+        director: directorFor({ signedIn, way, host, app, appKeys }),
       };
     },
 
@@ -865,15 +966,16 @@ export function hostStep({
       const say = typeof ctx.say === 'function' ? ctx.say : () => {};
       const { record } = ctx;
       // STOP stops the step between its parts and while it waits; what it made stays recorded.
+      const stopped = () => ctx.stopped?.() === true;
       const halt = () => {
-        if (ctx.stopped?.()) throw new Error('STOP came on, so setup stopped here; once STOP is lifted, a fresh Go ahead carries on');
+        if (stopped()) throw new Error(STOPPED);
       };
       halt();
       const opener = open ?? ((url) => openPage(url, { platform, run }));
       const connection = changes.find((c) => c.action === 'connection');
       if (!connection) throw new Error('Step 3\'s list names no connection');
       const host = connection.target;
-      if (connection.app === 'own-new') throw new Error(OWN_APP_LATER);
+      if (host === 'github' && connection.mode === 'narrow' && typeof connection.app?.clientId !== 'string') throw new Error(OWN_APP_LATER);
       // The product as the list names it, never read again from the folder, which this step changes.
       const made = changes.find((c) => c.action === 'repository') ?? null;
       const recorded = changes.find((c) => c.action === 'project');
@@ -881,7 +983,7 @@ export function hostStep({
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform });
-      const { user } = await signIn({ host, run, say });
+      const { user } = await signIn({ host, run, say, stopped });
       // A repository the card named on one account is never made on another.
       for (const c of changes.filter((x) => (x.action === 'repository' || x.action === 'profile-repository') && typeof x.repo === 'string')) {
         if (c.repo.split('/')[0] !== user) throw new Error(`You are signed in to ${NAME[host]} as ${user}, not the account the card named; ask for step 3's card again`);
@@ -889,8 +991,12 @@ export function hostStep({
       halt();
       const api = host === 'gitlab' ? await gitlab({ run, fetch }) : null;
       const projectRepo = made === null ? recorded.repo : `${user}/${made.name}`;
+      // An existing product's repository must hold a branch of its own before the state branch goes
+      // up, or the state branch would become its default (ruling R34).
+      if (made === null) await productBranchOn({ host, repo: projectRepo, remoteUrl: hostUrl({ host, repo: projectRepo }), gitPath: git.path, env: gitEnv, run });
+      // The product under its owner; the profile always on the director's own account.
       await makeRepos({
-        host, owner: made === null ? projectRepo.split('/').slice(0, -1).join('/') : user, name: projectRepo.split('/').at(-1), isNew: made !== null,
+        host, owner: made === null ? projectRepo.split('/').slice(0, -1).join('/') : user, user, name: projectRepo.split('/').at(-1), isNew: made !== null,
         run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, mode: connection.mode,
       });
       const project = await repoInfo({ host, repo: projectRepo, run, api });
@@ -904,14 +1010,14 @@ export function hostStep({
         if (host === 'github') {
           // The app the card named, by its client ID and name.
           const { app } = connection;
-          if (typeof app?.clientId !== 'string' || typeof app.slug !== 'string') throw new Error('Step 3\'s list names no GitHub App');
+          if (typeof app.slug !== 'string') throw new Error('Step 3\'s list names no GitHub App');
           await connectGithubApp({
-            app, repos: [project.repo, ...(withProfile ? [profile.repo] : [])], reuse: connection.reuse === true, fetch, say, open: opener, sleep, now, record, halt,
+            app, repos: [project.repo, ...(withProfile ? [profile.repo] : [])], fetch, say, open: opener, sleep, now, record, halt,
           });
         } else {
           const profileProject = withProfile ? await repoInfo({ host, repo: profile.repo, run, api }) : null;
           await connectGitlabKeys({
-            api, projects: [project, ...(profileProject ? [profileProject] : [])], owner: user, platform, say, open: opener, askSecret, now, record,
+            api, projects: [project, ...(profileProject ? [profileProject] : [])], owner: user, platform, say, open: opener, askSecret, now, record, halt,
           });
         }
       }

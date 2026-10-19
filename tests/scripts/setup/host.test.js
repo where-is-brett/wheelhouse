@@ -12,8 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
-  directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, OWN_APP_LATER, SIGN_UP,
-  PROFILE_REPO, APP_FILE, KEY_NAME,
+  directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, OWN_APP_LATER, OWN_APP_WAIT_MS, SIGN_UP,
+  PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED,
 } from '../../../scripts/setup/host.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { startRun, addChanges, findRun, readJournal } from '../../../scripts/setup/journal.js';
@@ -24,7 +24,8 @@ import { stateDir, profileDir, wheelhouseHome } from '../../../scripts/lib/paths
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
-import { QUICK_LINE } from '../../../scripts/board/health.js';
+import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
+import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -113,6 +114,8 @@ function standIn(state = {}) {
         return { status: 201, body: { id: made.id, path_with_namespace: `${USER}/${body.path}` } };
       }
       if (p.endsWith('/access_tokens')) {
+        if (w.keyAnswer === 'unreachable') throw new Error('Could not reach GitLab');
+        if (w.keyAnswer !== undefined) return { status: w.keyAnswer, body: { message: 'no' } };
         if (w.refuseKeys) return { status: 403, body: { message: 'forbidden' } };
         w.api.keys.push(body);
         return { status: 201, body: { id: 900 + w.api.keys.length, token: `glpat-project-key-${w.api.keys.length}`, expires_at: body.expires_at } };
@@ -129,7 +132,7 @@ function standIn(state = {}) {
 
 // `reach` is the list of repositories the installation reaches; a test adds to it as the director
 // would tick one.
-function github({ installedAfter = 1, reach = [] } = {}) {
+function github({ installedAfter = 1, reach = [], onSignedIn = () => {} } = {}) {
   const calls = [];
   let pending = 1;
   let installLooks = 0;
@@ -141,6 +144,7 @@ function github({ installedAfter = 1, reach = [] } = {}) {
     }
     if (url === 'https://github.com/login/oauth/access_token') {
       if (pending-- > 0) return reply(200, { error: 'authorization_pending' });
+      onSignedIn();
       return reply(200, { access_token: ACCESS, expires_in: 28800, refresh_token: 'ghr_renewalkeyfortests1', refresh_token_expires_in: 15811200 });
     }
     if (url.startsWith('https://api.github.com/user/installations?')) {
@@ -290,6 +294,7 @@ test('on GitHub the card offers the Wheelhouse app, their own app and Quick, and
   assert.equal(open.recommend, WAYS.wheelhouse);
   assert.match(open.what, /a-director\/shop on GitHub/);
   assert.ok(open.options.find((o) => o.label === WAYS.quick).says.startsWith(QUICK_LINE), 'Quick carries its cost');
+  assert.equal(BOARD_QUICK_LINE, QUICK_LINE, 'the board says the same line');
   assert.deepEqual(labels(connectionCard({ host: 'github', where, appFile: registered, locked: true })), [WAYS.wheelhouse, WAYS.own]);
   assert.deepEqual(labels(connectionCard({ host: 'gitlab', where })), [WAYS.narrow, WAYS.quick]);
   assert.deepEqual(labels(connectionCard({ host: 'gitlab', where, locked: true })), [WAYS.narrow]);
@@ -316,13 +321,17 @@ test('a Locked project with only their own app on offer still gets the card', as
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
     const card = planned.asked.at(-1).card;
+    // Making their own app is Task 8b's: until then the step waits, saying why, and shows no Go
+    // ahead that apply could only refuse.
+    assert.equal(planned.changes, undefined);
+    assert.deepEqual([planned.wait, planned.why], [OWN_APP_WAIT_MS, OWN_APP_LATER]);
     assert.deepEqual(card.options.map((o) => o.label), [WAYS.own], 'their own app, agreed to on the card, never by default');
     assert.match(card.what, /Quick is not offered/);
     const { question } = composeCard({ ...card, kind: 'question' });
     assert.deepEqual(question.options.map((o) => o.label), [WAYS.own, 'Explain more']);
-    assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true, app: 'own-new' });
-    // Making their own app is Task 8b's: until then the step stops before it makes anything.
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), { message: OWN_APP_LATER });
+    // A list naming no app is refused by apply too, before it makes anything.
+    const list = [{ kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true }, { kind: 'file', target: 'x', action: 'project', repo: `${USER}/shop` }];
+    await assert.rejects(applyStep(step, folder, list, { answers: planned.answers }), { message: OWN_APP_LATER });
     assert.deepEqual(readJournal().runs.flatMap((r) => r.changes), []);
     assert.ok(!w.calls.some((c) => c.args?.[0] === 'auth' && c.args[1] === 'login'));
   });
@@ -433,7 +442,7 @@ test('the longest Go-ahead card composes within the card\'s length, for each hos
   await withHome(async () => {
     const folder = productFolder('A product whose folder has a very long name indeed, Zoë');
     const registered = appFile(tempFolder('wh-app-'));
-    for (const [host, way] of [[HOST_LABELS.github, WAYS.wheelhouse], [HOST_LABELS.github, WAYS.own], [HOST_LABELS.github, WAYS.quick], [HOST_LABELS.gitlab, WAYS.narrow]]) {
+    for (const [host, way] of [[HOST_LABELS.github, WAYS.wheelhouse], [HOST_LABELS.github, WAYS.quick], [HOST_LABELS.gitlab, WAYS.narrow]]) {
       const w = standIn({ signedIn: { github: false, gitlab: false } });
       const planned = await answerAll(stepFor(w, { appFile: registered }), ctxFor(folder), choose({ realUsers: REAL_USERS.yes, host, way }));
       const hash = planHash(planned.changes);
@@ -551,7 +560,7 @@ test('narrow on GitHub: the code and the Install page are said, the installation
     await withOrigin(next, `https://github.com/${USER}/next.git`);
     opened.length = 0;
     const later = await answerAll(step, ctxFor(next), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
-    assert.equal(later.changes.find((c) => c.action === 'connection').reuse, true);
+    assert.equal(later.changes.find((c) => c.action === 'connection').appKeys, 'installed');
     assert.match(later.director, /a tick on the app's settings page/);
     assert.match(later.card.what, /tick this project on its settings page/);
     const codes = gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length;
@@ -721,4 +730,200 @@ test('the connection question names the repository, so an answer for one remote 
     await g(lone, 'commit', '-q', '-m', 'mine');
     assert.throws(() => productOf(lone), /its own git history but no GitHub or GitLab address/);
   });
+});
+
+// ---- Fix round 1 ----
+
+test('the profile repository goes on the director\'s own account, never the product\'s organisation or group', async () => {
+  for (const [host, url, repo] of [
+    ['github', 'https://github.com/acme/app.git', 'acme/app'],
+    ['gitlab', 'https://gitlab.com/acme/team/app.git', 'acme/team/app'],
+  ]) {
+    await withHome(async () => {
+      const w = standIn();
+      await w.add(repo);
+      const folder = productFolder('app');
+      await withOrigin(folder, url);
+      const step = stepFor(w);
+      const planned = await answerAll(step, ctxFor(folder), choose());
+      assert.equal(planned.changes.find((c) => c.action === 'profile-repository').repo, `${USER}/${PROFILE_REPO}`, host);
+      await applyStep(step, folder, planned.changes, { answers: planned.answers });
+      assert.equal(profileRemote().repo, `${USER}/${PROFILE_REPO}`, host);
+      assert.ok(w.repos[`${USER}/${PROFILE_REPO}`], `${host}: made on the director's account`);
+      assert.ok(!Object.keys(w.repos).some((r) => r.startsWith('acme/') && r.endsWith(PROFILE_REPO)), `${host}: none in the organisation`);
+      assert.equal(readProject(slugFor(repo)).repo, repo);
+    });
+  }
+});
+
+// A clock the step reads, which its waits move on.
+function clock(start = NOW) {
+  let at = start.getTime();
+  return { now: () => new Date(at), move: (ms) => { at += ms; }, sleep: async (ms) => { at += ms; } };
+}
+
+test('the Install page has its whole wait from when it opens, however long the code took', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const time = clock();
+    // The director takes 9 minutes over the code; the app is installed 7 minutes after its page opens.
+    const gh = github({ installedAfter: 84, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`], onSignedIn: () => time.move(9 * 60 * 1000) });
+    const step = stepFor(w, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch, sleep: time.sleep });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers, now: time.now });
+    assert.match(lines.at(-2), /The app can reach/);
+    assert.equal(readKey('github-app').installationId, 77);
+    assert.ok(INSTALL_WAIT_MS > 7 * 60 * 1000 && INSTALL_WAIT_MS < 9 * 60 * 1000 + 7 * 60 * 1000);
+  });
+});
+
+test('a retry after the Install page timed out goes straight to the Install page, with no second code', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const time = clock();
+    const gh = github({ installedAfter: Infinity, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
+    const opened = [];
+    const registered = appFile(tempFolder('wh-app-'));
+    const step = stepFor(w, { appFile: registered, fetch: gh.fetch, sleep: time.sleep, open: async (url) => { opened.push(url); } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, now: time.now }), /The app was not installed after 8 minutes/);
+    assert.equal(readKey('github-app').installationId, undefined, 'the keys are kept, with no installation');
+    // Planned again: no code this time, only the Install page.
+    const again = await answerAll(step, ctxFor(folder, { now: time.now }), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    assert.equal(again.changes.find((c) => c.action === 'connection').appKeys, 'signed-in');
+    assert.equal(again.director, 'One click, then two ticks on the app\'s Install page');
+    assert.match(again.card.what, /as signed in already: tick the project and profile on its Install page/);
+    const codes = gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length;
+    opened.length = 0;
+    const installed = github({ installedAfter: 0, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
+    const retry = stepFor(w, { appFile: registered, fetch: installed.fetch, sleep: time.sleep, open: async (url) => { opened.push(url); } });
+    const { lines } = await applyStep(retry, folder, again.changes, { answers: again.answers, now: time.now });
+    assert.equal(codes, 1);
+    assert.equal(installed.calls.filter((c) => c.url === 'https://github.com/login/device/code').length, 0, 'no second code sign-in');
+    assert.deepEqual(opened, ['https://github.com/apps/wheelhouse-test/installations/new']);
+    assert.match(lines[0], /On the app's Install page/);
+    assert.equal(readKey('github-app').installationId, 77);
+  });
+});
+
+test('an existing product whose repository is empty is refused before its state branch could become the default', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/empty`, { readme: false });
+    const folder = productFolder('empty');
+    await withOrigin(folder, `https://github.com/${USER}/empty.git`);
+    const step = stepFor(w);
+    const planned = await answerAll(step, ctxFor(folder), choose());
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }),
+      /a-director\/empty on GitHub has no branch of the product's yet, so Wheelhouse's state branch would become its default: push the product's main branch to it first/);
+    assert.deepEqual(readJournal().runs.flatMap((r) => r.changes), [], 'nothing was made');
+    assert.equal((await realRun('git', ['ls-remote', '--heads', w.hostUrl({ repo: `${USER}/empty` })])).stdout, '');
+    // With the product's branch pushed, it goes ahead, and main stays the default.
+    const work = tempFolder('wh-push-');
+    await g(work, 'init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(work, 'app.txt'), 'app\n');
+    await g(work, 'add', 'app.txt');
+    await g(work, 'commit', '-q', '-m', 'app');
+    await g(work, 'push', '-q', w.hostUrl({ repo: `${USER}/empty` }), 'main');
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(await g(w.hostUrl({ repo: `${USER}/empty` }), 'symbolic-ref', 'HEAD'), 'refs/heads/main');
+  });
+});
+
+test('STOP is read once the code sign-in returns, and while the browser sign-in waits', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    let stop = false;
+    const gh = github({ reach: [`${USER}/shop`], onSignedIn: () => { stop = true; } });
+    const opened = [];
+    const step = stepFor(w, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch, open: async (url) => { opened.push(url); } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, stopped: () => stop }), { message: STOPPED });
+    assert.equal(readKey('github-app'), null, 'no keys kept after STOP');
+    assert.deepEqual(opened, ['https://github.com/login/device'], 'the Install page was not opened');
+    // The browser sign-in: its program is given a signal that STOP aborts, and the step stops.
+    const out = standIn({ signedIn: { github: false } });
+    let signal = null;
+    const run = async (file, args, options) => {
+      if (args[1] === 'login') signal = options.signal;
+      return out.run(file, args, options);
+    };
+    await assert.rejects(signIn({ host: 'github', run, stopped: () => true }), { message: STOPPED });
+    assert.ok(signal instanceof AbortSignal);
+  });
+});
+
+test('a retry finishes what an attempt left: the README written out, the profile clone made, .git recorded once', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder();
+    const step = stepFor(w);
+    const planned = await answerAll(step, ctxFor(folder), choose());
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    // As if the attempt had stopped after the reset, before the README was written out.
+    fs.rmSync(path.join(folder, 'README.md'));
+    const { run } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(fs.readFileSync(path.join(folder, 'README.md'), 'utf8'), '# made by the host\n');
+    assert.ok(!run.changes.some((c) => c.target === path.join(folder, '.git')), '.git is not recorded again');
+    // A README the director removes after their own first commit stays removed.
+    await g(folder, 'rm', '-q', 'README.md');
+    await g(folder, 'commit', '-q', '-m', 'no readme');
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(fs.existsSync(path.join(folder, 'README.md')), false);
+    // A profile clone left part-way is listed by a later plan, and made.
+    fs.rmSync(profileDir(), { recursive: true, force: true });
+    const second = productFolder('second');
+    await withOrigin(second, `https://github.com/${USER}/second.git`);
+    await w.add(`${USER}/second`);
+    const next = await answerAll(step, ctxFor(second), choose());
+    assert.deepEqual(next.changes.filter((c) => c.action?.startsWith('profile')).map((c) => c.action), ['profile-clone']);
+    await applyStep(step, second, next.changes, { answers: next.answers });
+    assert.ok(fs.existsSync(path.join(profileDir(), '.git')));
+    assert.deepEqual((await answerAll(step, ctxFor(second), choose())).changes.filter((c) => c.action?.startsWith('profile')), []);
+  });
+});
+
+test('a folder whose git has an unborn branch of another name ends up on main', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder();
+    await g(folder, 'init', '-q', '-b', 'master');
+    const step = stepFor(w);
+    const planned = await answerAll(step, ctxFor(folder), choose());
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(await g(folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.equal(await g(folder, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+  });
+});
+
+test('only a GitLab refusal opens the token page: a project not found or GitLab not reached stops plainly', async () => {
+  for (const [answer, message] of [[404, /could not find the project/], [500, /HTTP 500/], ['unreachable', /Could not reach GitLab/]]) {
+    await withHome(async () => {
+      const w = standIn({ keyAnswer: answer });
+      await w.add(`${USER}/shop`);
+      const folder = productFolder('shop');
+      await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+      const opened = [];
+      const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async () => { throw new Error('no box should open'); } });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+      await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), message, String(answer));
+      assert.deepEqual(opened, [], `${answer}: no token page`);
+    });
+  }
+});
+
+test('a new product\'s repository name never ends in a dash or a dot', () => {
+  assert.equal(repoName(`/x/${'a'.repeat(49)} b`), 'a'.repeat(49));
+  assert.equal(repoName(`/x/${'a'.repeat(48)}..b`), 'a'.repeat(48));
+  assert.equal(repoName('/x/--Shop--'), 'Shop');
+  assert.equal(repoName('/x/***'), 'product');
 });
