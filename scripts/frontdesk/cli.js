@@ -45,7 +45,8 @@ const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 // Every run of line breaks, to put each answered line on one line.
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 // The checks line of a level 4 question's card when the build didn't say what answering does to the checks (ruling F18).
-export const CHECKS_UNSAID = 'The build didn\'t say. Choose Explain more and I\'ll find out before you answer.';
+// A card with four options of its own has no Explain more button, so the line also says it can be typed.
+export const CHECKS_UNSAID = 'The build didn\'t say. Choose or type Explain more and I\'ll find out before you answer.';
 const HEAD = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);

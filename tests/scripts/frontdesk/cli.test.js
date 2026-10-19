@@ -189,7 +189,15 @@ test('a level 4 question becomes a card too, with what it does to the checks or 
     assert.deepEqual(cards.map((c) => [c.line, c.level]), [[answerLine('q-export-csv-1'), 4], [answerLine('q-export-csv-2'), 4]]);
     assert.match(cards[0].question, /^What this does to the checks: The export check stops running on this page\.$/m);
     assert.ok(cards[1].question.includes(`What this does to the checks: ${CHECKS_UNSAID}`));
-    assert.equal(CHECKS_UNSAID, 'The build didn\'t say. Choose Explain more and I\'ll find out before you answer.');
+    assert.equal(CHECKS_UNSAID, 'The build didn\'t say. Choose or type Explain more and I\'ll find out before you answer.');
+    // With four options of its own the card has no Explain more button, and it still composes with that line.
+    const four = { ...QUESTION, id: 'q-export-csv-3', level: 4, options: ['Comma', 'Tab', 'Semicolon', 'Pipe'].map((label) => ({ label, says: `${label} between values.` })) };
+    const full = fakeHelper({ events: [questionEvent(four)] });
+    const asked = await run(full, ['cards']);
+    assert.equal(asked.json.problems, undefined);
+    const [fourCard] = full.writes().filter((w) => w.kind === 'card').map((w) => w.data);
+    assert.deepEqual(fourCard.options, ['Comma', 'Tab', 'Semicolon', 'Pipe']);
+    assert.ok(fourCard.question.includes(`What this does to the checks: ${CHECKS_UNSAID}`));
     // The work is named by its title; a question for work with no title, by the work's id.
     assert.match(cards[0].question, /^My recommendation: Tab, because the session building Export a report as a spreadsheet recommends it\.$/m);
     const untitled = fakeHelper({ events: [questionEvent()] });
