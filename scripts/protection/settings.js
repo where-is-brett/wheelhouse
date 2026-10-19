@@ -53,7 +53,8 @@ import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js'
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'];
-const HOST_TOOLS = ['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe'];
+// The deploy and hosting tools Standard's deny rules name; the install survey looks for the same ones.
+export const HOST_TOOLS = ['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe'];
 // Each tool, with the names its package has on npm where they differ.
 const RUNNERS = ['npx', 'npm exec', 'pnpm dlx', 'bunx', 'yarn dlx'];
 const PACKAGE_NAMES = ['netlify-cli', '@railway/cli'];
