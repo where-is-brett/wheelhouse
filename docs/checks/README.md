@@ -2,7 +2,7 @@
 
 # Design checks
 
-The answers to the checks in section 20 of the design, and to checks 24 to 30 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run: it was needed only for the watcher's fallback, and Shape 1 was taken on check 27's Mac half.
+The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run: it was needed only for the watcher's fallback, and Shape 1 was taken on check 27's Mac half.
 
 | # | Check | Answer | Note |
 |---|---|---|---|
