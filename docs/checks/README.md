@@ -37,3 +37,4 @@ The answers to the checks in section 20 of the design, one note per check.
 | 30 | The undo | Partly | [30-undo.md](30-undo.md) |
 | 31 | The safety checks tried live | Yes, with three changes | [31-safety-live.md](31-safety-live.md) |
 | 32 | The mod's commands and the sandbox | Yes | [32-mod-sandbox.md](32-mod-sandbox.md) |
+| 40 | The mod without a screen | Yes, with three changes | [40-mod-headless.md](40-mod-headless.md) |

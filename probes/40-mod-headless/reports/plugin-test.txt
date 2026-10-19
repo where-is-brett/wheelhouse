@@ -1,0 +1,20 @@
+$ claude auth status   (HOME set to an empty folder)
+{
+  "loggedIn": false,
+  "authMethod": "none",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": false,
+  "projectsDirectory": "<scratch>/.claude/projects",
+  "configDirectory": "<scratch>/.claude"
+}
+
+$ claude plugin test <scratch copy of the probe>   (HOME set to the same empty folder)
+probe.test.ts:
+(pass) the digest command answers its text [26.82ms]
+(pass) a prompt beginning probe-drop: is dropped; another passes [14.25ms]
+
+ 2 pass
+ 0 fail
+Ran 2 tests across 1 file. [0.18s]
+
+exit 0

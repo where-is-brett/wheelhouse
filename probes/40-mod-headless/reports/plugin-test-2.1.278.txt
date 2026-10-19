@@ -1,0 +1,14 @@
+$ claude plugin test <scratch copy of the probe>   (2.1.278, HOME set to an empty folder)
+error: unknown command 'test'
+(Did you mean list?)
+exit 1
+
+$ CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test <scratch copy of the probe>   (2.1.278, HOME set to an empty folder)
+probe.test.ts:
+(pass) the digest command answers its text [25.67ms]
+(pass) a prompt beginning probe-drop: is dropped; another passes [13.22ms]
+
+ 2 pass
+ 0 fail
+Ran 2 tests across 1 file. [0.18s]
+exit 0
