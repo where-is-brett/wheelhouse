@@ -1,10 +1,16 @@
 // tests/scripts/eval/stand-in-helper.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
+import { decide } from '../../../scripts/hooks/prompt-record.js';
+import { CARRIES_BASELINE } from '../../../scripts/lib/measures-clicks.js';
+import { NEEDS_CLICK } from '../../../scripts/measures/baseline.js';
+import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { g } from '../../helpers/git-fixture.js';
-import { shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
 async function repo() {
   const dir = tempFolder('stand-in-repo-');
@@ -41,5 +47,125 @@ test('the stand-in helper answers a feature session\'s commands and records each
     assert.equal(records[8].unanswered, true);
   } finally {
     await helper.close();
+  }
+});
+
+// Every file under `dir`, as full paths.
+function filesUnder(dir) {
+  const out = [];
+  if (!fs.existsSync(dir)) return out;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...filesUnder(full));
+    else if (entry.isFile()) out.push(full);
+  }
+  return out;
+}
+
+// Made-up figures, distinctive enough to search a home and the records for.
+const COUNTED = 'Counted by the heron-teapot tally of every builder session in the note';
+const FIGURES = { usd: 5321.75, merges: 41, from: '2026-08-03', to: '2026-09-28', counted: COUNTED };
+const MARKS = ['5321.75', 'heron-teapot'];
+
+test('the stand-in helper refuses a write that carries the baseline, as the real one does', async () => {
+  const home = shortHome();
+  const helper = await startStandInHelper({ address: testAddress(home), home });
+  try {
+    const client = helperClient({ address: helper.address });
+    assert.deepEqual(await client.state.write({ cwd: home, kind: 'note', data: { kind: 'baseline', text: 'the note' } }), { ok: false, refused: CARRIES_BASELINE });
+    const ordinary = await client.state.write({ cwd: home, kind: 'note', data: { text: 'an ordinary note' } });
+    assert.equal(ordinary.ok, true);
+    assert.deepEqual(helper.events().map((e) => e.data.text), ['an ordinary note'], 'the refused event is not kept');
+    const refused = helper.records().find((r) => r.refused);
+    assert.deepEqual(refused, { at: refused.at, route: 'state/write', kind: 'note', refused: true, carriesBaseline: true }, 'nor is its data recorded');
+  } finally {
+    await helper.close();
+  }
+});
+
+test('the stand-in helper reads the baseline back on a card, and records it only after the director\'s click, in its own home', async () => {
+  const runnerHome = shortHome();
+  const home = shortHome();
+  await as(runnerHome, async () => {
+    // The session's home, where the prompt record keeps the director's click, has this
+    // computer's signing key enrolled.
+    await as(home, async () => {
+      const { computer, publicKey } = makeSigningKey();
+      enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    });
+    const helper = await startStandInHelper({ address: testAddress(home), home });
+    try {
+      const client = helperClient({ address: helper.address });
+      const shown = await client.measures.baseline(FIGURES);
+      assert.equal(shown.ok, true, shown.refused);
+      assert.deepEqual(shown.card.options.map((o) => o.label), ['Record these', 'Not now']);
+      assert.ok(fs.existsSync(path.join(home, 'measures', 'pending.json')), 'the figures wait in the session\'s home');
+      assert.deepEqual(filesUnder(runnerHome), [], 'never in the home of the process running the evaluation');
+
+      // While they wait, a write holding a figure is refused.
+      const holding = await client.state.write({ cwd: home, kind: 'note', data: { text: 'The first version cost $5,321.75.' } });
+      assert.deepEqual(holding, { ok: false, refused: CARRIES_BASELINE });
+
+      // No click yet: nothing is recorded.
+      const early = await client.measures.baseline({ confirm: shown.hash });
+      assert.deepEqual(early, { ok: false, refused: NEEDS_CLICK });
+      assert.equal(fs.existsSync(path.join(home, 'measures', 'baseline.json')), false);
+
+      // The director clicks Record these on the card as composed; the prompt record keeps the click.
+      await as(home, () => decide({
+        cwd: tempFolder('wh-desk '), hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+        tool_input: { questions: [shown.card], answers: { [shown.card.question]: 'Record these' } },
+        tool_response: { answers: { [shown.card.question]: 'Record these' } },
+      }, { client: { state: { write: async () => ({ ok: true }), record: async () => ({ ok: true }) }, profile: { record: async () => ({ ok: true }) }, prState: async () => ({ ok: true }) }, projectOf: () => null }));
+      assert.deepEqual(await client.measures.baseline({ confirm: shown.hash }), { ok: true, recorded: true });
+      const recorded = JSON.parse(fs.readFileSync(path.join(home, 'measures', 'baseline.json'), 'utf8'));
+      assert.equal(recorded.merges, 41);
+      assert.deepEqual(filesUnder(runnerHome), []);
+
+      // The records say which form was asked for and the answer, never the figures or the card.
+      const asked = helper.records().filter((r) => r.route === 'measures/baseline');
+      assert.deepEqual(asked.map((r) => [r.form, r.ok]), [['show', true], ['confirm', false], ['confirm', true]]);
+      const text = JSON.stringify(helper.records());
+      for (const mark of MARKS) assert.ok(!text.includes(mark), mark);
+    } finally {
+      await helper.close();
+    }
+  });
+});
+
+test('without a home given, the stand-in keeps the baseline\'s files in a scratch folder of its own', async () => {
+  const runnerHome = shortHome();
+  await as(runnerHome, async () => {
+    const helper = await startStandInHelper({ address: testAddress(shortHome()) });
+    try {
+      const shown = await helperClient({ address: helper.address }).measures.baseline(FIGURES);
+      assert.equal(shown.ok, true, shown.refused);
+      assert.deepEqual(filesUnder(runnerHome), []);
+    } finally {
+      await helper.close();
+    }
+  });
+});
+
+test('a stand-in that cannot listen leaves no scratch home of its own behind', async () => {
+  const home = shortHome();
+  const first = await startStandInHelper({ address: testAddress(home), home });
+  // The stand-in makes its own home under the temporary folder; point that at an empty one.
+  const scratch = tempFolder('stand-in-tmp-');
+  // On Windows the pipe already taken stops it. On a Unix socket the stand-in removes a stale
+  // socket file first, so a folder in the way at the address stops it there.
+  const blocked = process.platform === 'win32' ? first.address : path.join(tempFolder('stand-in-blocked-'), 'helper.sock');
+  if (process.platform !== 'win32') fs.mkdirSync(blocked);
+  const names = ['TMPDIR', 'TMP', 'TEMP'];
+  const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) process.env[name] = scratch;
+    await assert.rejects(startStandInHelper({ address: blocked }));
+    assert.deepEqual(fs.readdirSync(scratch), []);
+  } finally {
+    for (const name of names) {
+      if (before[name] === undefined) delete process.env[name]; else process.env[name] = before[name];
+    }
+    await first.close();
   }
 });

@@ -139,7 +139,7 @@ export async function setUpFrontDesk(dir, variant, { files = {}, seed = [], appr
     }
 
     const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
-    helper = await startStandInHelper({ address, state: { events: seed, approved } });
+    helper = await startStandInHelper({ address, home, state: { events: seed, approved } });
     const seededIds = new Set(seed.map((e) => e.id));
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
     return { env: { WHEELHOUSE_HOME: home }, pluginDirs, appendSystemPrompt, helper, seededIds, evidence, close };

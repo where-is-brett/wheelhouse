@@ -7,6 +7,11 @@
 // on the same kind of socket the real helper uses, records each one, and
 // answers as a helper with a host behind it would. Its state is a list of
 // events in memory, not a state branch.
+// Like the real helper, it refuses a write carrying the baseline card, its click or the private
+// note's figures (scripts/state/events.js, carriesBaseline), and answers /measures/baseline with
+// the real route (scripts/measures/baseline.js). The baseline's files live in the session's
+// scratch WHEELHOUSE_HOME (`home`), or in a scratch folder of the stand-in's own: never in the
+// home of the process running the evaluation, whose WHEELHOUSE_HOME is the director's.
 // It reaches no host and signs nothing. A scenario starts it in its setup,
 // points the session at it through WHEELHOUSE_HOME, and reads its records in
 // its pass. Never used by the product, and not run by `npm test` except in its
@@ -17,11 +22,14 @@
 // not be running on the same computer while an evaluation runs there.
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { PLAIN_KINDS } from '../state/events.js';
+import { PLAIN_KINDS, carriesBaseline } from '../state/events.js';
 import { buildViews } from '../state/views.js';
+import { baselineRoutes } from '../measures/baseline.js';
+import { CARRIES_BASELINE } from '../lib/measures-clicks.js';
 
 // The commit `ref` names in the repository at `dir`, or null.
 function commitOf(dir, ref) {
@@ -82,8 +90,26 @@ export function standInViews(events, approved = {}) {
 // { address, records(), events(), close() }: records() gives every request in the
 // order it came, as { at, route, ...what it asked, ...what was answered };
 // events() gives the state's events, those the state started with and those written since.
-export async function startStandInHelper({ address, answers = {}, state = {} } = {}) {
+// `home` is the session's scratch WHEELHOUSE_HOME, where the baseline's files are kept and the
+// director's clicks are read; without it the stand-in keeps them in a scratch folder of its own,
+// removed on close.
+export async function startStandInHelper({ address, answers = {}, state = {}, home } = {}) {
   if (typeof address !== 'string' || address === '') throw new Error('The stand-in helper needs an address');
+  const ownHome = typeof home === 'string' && home !== '' ? null : fs.mkdtempSync(path.join(os.tmpdir(), 'wh-stand-in-'));
+  const baselineHome = ownHome ?? home;
+  // Runs fn, which must not wait on anything, with WHEELHOUSE_HOME at the baseline's home, putting
+  // the old value back afterwards. The baseline's code reads the home from the environment.
+  const inHome = (fn) => {
+    const before = process.env.WHEELHOUSE_HOME;
+    process.env.WHEELHOUSE_HOME = baselineHome;
+    try {
+      return fn();
+    } finally {
+      if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
+    }
+  };
+  // The real route. STOP is off in an evaluation, as /lineage/provenance answers.
+  const measures = baselineRoutes({ stopped: () => false });
   const records = [];
   const events = [...(state.events ?? [])];
   const approved = { ...(state.approved ?? {}) };
@@ -143,6 +169,12 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
         return { ok: false, refused: PLAIN_KINDS.includes(kind) ? 'the event\'s data must be an object' : 'that kind of event is not known here' };
       }
       const event = plainEvent(kind, data);
+      // As the real helper's writeEvent: the baseline never enters the state. Its data is not
+      // recorded, since it may hold the figures.
+      if (inHome(() => carriesBaseline(event))) {
+        record({ route: 'state/write', kind, refused: true, carriesBaseline: true });
+        return { ok: false, refused: CARRIES_BASELINE };
+      }
       events.push(event);
       record({ route: 'state/write', kind, data, id: event.id });
       return { ok: true, id: event.id, pushed: true };
@@ -151,6 +183,20 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
     'POST /state/views': () => {
       record({ route: 'state/views' });
       return { ok: true, views: standInViews(events, approved) };
+    },
+    // measures/cli.js baseline: the figures -> the card reading them back; or { confirm: hash } ->
+    // recorded, only after the director's click on that card. The record names the form asked for
+    // and the answer, never the figures or the card; a refusal comes back as the real helper sends it.
+    'POST /measures/baseline': (body) => {
+      const form = Object.hasOwn(body, 'confirm') ? 'confirm' : 'show';
+      let answer;
+      try {
+        answer = inHome(() => measures['/measures/baseline'](body));
+      } catch (error) {
+        answer = { ok: false, refused: error instanceof Error && error.message ? error.message : 'the request failed' };
+      }
+      record({ route: 'measures/baseline', form, ok: answer.ok === true, ...(answer.refused ? { refused: answer.refused } : {}) });
+      return answer;
     },
     // cli.js report: { cwd, session? }. No provenance on this computer, and STOP is off.
     'POST /lineage/provenance': (body) => {
@@ -174,23 +220,32 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
     res.end(text);
   });
 
-  if (process.platform !== 'win32') {
-    fs.mkdirSync(path.dirname(address), { recursive: true });
-    fs.rmSync(address, { force: true });
+  try {
+    if (process.platform !== 'win32') {
+      fs.mkdirSync(path.dirname(address), { recursive: true });
+      fs.rmSync(address, { force: true });
+    }
+    await new Promise((resolve, reject) => {
+      server.once('error', (error) => reject(error.code === 'EADDRINUSE'
+        ? new Error(`Something already answers on ${address}: stop the real helper before an evaluation run`)
+        : error));
+      server.listen(address, resolve);
+    });
+  } catch (error) {
+    // It could not start: its own scratch home goes with it.
+    if (ownHome) fs.rmSync(ownHome, { recursive: true, force: true });
+    throw error;
   }
-  await new Promise((resolve, reject) => {
-    server.once('error', (error) => reject(error.code === 'EADDRINUSE'
-      ? new Error(`Something already answers on ${address}: stop the real helper before an evaluation run`)
-      : error));
-    server.listen(address, resolve);
-  });
 
   return {
     address,
     records: () => records.map((entry) => ({ ...entry })),
     events: () => events.map((event) => structuredClone(event)),
     close: () => new Promise((resolve) => {
-      server.close(() => resolve());
+      server.close(() => {
+        if (ownHome) fs.rmSync(ownHome, { recursive: true, force: true });
+        resolve();
+      });
       server.closeAllConnections?.();
     }),
   };
