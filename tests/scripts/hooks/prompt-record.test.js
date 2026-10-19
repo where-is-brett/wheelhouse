@@ -166,6 +166,19 @@ test('Explain more and Not now record only the answer', async () => {
   });
 });
 
+test('Keep as is on a proposal\'s confirm card records only the answer, and signs nothing', async () => {
+  await withHome(async () => {
+    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }, now: () => NOW });
+    keepEvent(setting, profileDir());
+    const c = fake();
+    const options = ['Confirm', 'Not now', 'Explain more', 'Keep as is'].map((label) => ({ label }));
+    await decide(input({ [confirmLine(setting)]: 'Keep as is' }, { options }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.deepEqual(c.calls.write.map((w) => w.data), [{ question: confirmLine(setting), label: 'Keep as is' }]);
+  });
+});
+
 test('Lift STOP while STOP is off records only the answer', async () => {
   await withHome(async () => {
     const c = fake();

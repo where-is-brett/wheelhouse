@@ -2,12 +2,15 @@
 // A card that decides something carries a reply code, so the director can answer it with a
 // typed or phoned message that is just the code and an option ("K7QD Approve"). Such a reply
 // counts as the click: it earns exactly the signed record the click would have, through the
-// prompt record's own code, and nothing else. A plain "yes" never counts, and no reply turns on
-// or confirms the Windows build-commands setting (Turn on (dangerous), Use Guarded or Confirm),
-// which only a click on its own card sets; nor
-// does a reply allow a build-command question's commands from any computer but the one that asked
-// it. The bridge, run by the mod outside the sandbox, calls replyRecord. The message's text is only
-// parsed: it is never written anywhere, and only the card's own spelling of the option is used.
+// prompt record's own code, and the plain card-answer the prompt record writes beside every click
+// (ruling F44), so the card closes in the project's views even when its record goes to the
+// director's profile. A plain "yes" never counts, and no reply turns on or confirms the Windows
+// build-commands setting (Turn on (dangerous), Use Guarded or Confirm), which only a click on its
+// own card sets; nor does a reply allow a build-command question's commands from any computer but
+// the one that asked it. The bridge, run by the mod outside the sandbox, calls replyRecord. The
+// message's text is only parsed: it is never written anywhere, and only the card's own spelling of
+// the option is used. A record or an answer the helper doesn't take is kept in pending/, as the
+// prompt record keeps them.
 //
 // A code is good once. The shown view is built here from the state clone, which the helper
 // writes each record into, so a record taken a moment ago spends its card at once; a signed
@@ -17,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-record.js';
-import { withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
+import { withinBudget, pendingDir, keep, taken, BUDGET_MS } from '../hooks/pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift } from '../lib/stop.js';
 import { computerId, profileDir, stateDir } from '../lib/paths.js';
@@ -129,6 +132,18 @@ function allowsElsewhere(project, id, label) {
   }
 }
 
+// Writes the plain answer the click would have written beside its record, keeping it in pending/
+// when the helper doesn't take it, as the prompt record does. Never throws.
+async function writeAnswer(api, left, project, question, label, now) {
+  const body = { project, kind: 'card-answer', data: { question, label } };
+  try {
+    const result = await left(api.state.write(body));
+    if (!taken(result)) keep(project, 'write', body, now);
+  } catch {
+    // As the prompt record: a failure here is a failure to write the file too.
+  }
+}
+
 // Claims the card for this reply: the marker's path when this reply made it, null when
 // another reply made it first.
 function claim(project, id) {
@@ -147,7 +162,8 @@ function claim(project, id) {
 // replyRecord({ project, text, client, now, liftStop, stopState, budget }) -> { made, says }
 // Finds the code in the shown view built from the state clone, refuses it when it is unknown,
 // used, out of date, held by two cards or answered with an option its card didn't offer, claims
-// the card, then signs, keeps and sends what a click on that option would have earned.
+// the card, then signs, keeps and sends what a click on that option would have earned, and the
+// plain answer the click would have written.
 export async function replyRecord({ project, text, client, now = () => new Date(), liftStop = defaultLift, stopState, budget = BUDGET_MS } = {}) {
   const reply = parseReply(text);
   if (!reply) return no('That isn\'t a reply code and an option, so nothing was recorded');
@@ -209,6 +225,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
     kept = keepEarned(project, got, { now, liftStop });
     const what = recordedAs(got.made, card.question);
     const sent = await sendKept(api, left, kept);
+    await writeAnswer(api, left, project, card.question, label, now);
     return { made: true, says: sent ? `Recorded: ${what}` : `Recorded: ${what} (kept until the helper takes it)` };
   } catch {
     if (kept) return { made: true, says: 'Recorded, and kept until the helper takes it' };

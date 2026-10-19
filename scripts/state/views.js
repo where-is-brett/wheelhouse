@@ -1,17 +1,18 @@
 // scripts/state/views.js
 import fs from 'node:fs';
 import path from 'node:path';
-import { wheelhouseHome, stateDir } from '../lib/paths.js';
+import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
-import { PUT_OFF } from '../lib/front-desk.js';
+import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
 // The computer whose key signed a verified record, when that is the computer the record names;
 // otherwise null. A record signed by one computer that names another was made on neither.
 const signedOn = (e) => (typeof e?.computer === 'string' && e.sig?.computer === e.computer ? e.computer : null);
+const uniqueIds = (ids) => [...new Set(ids.filter(isPlainKey))];
 
 // The latest event per key, in the sorted order the caller supplies.
 function latestPerKey(events, keyOf) {
@@ -44,6 +45,103 @@ export function latestFor(viewsMap, pr) {
   const all = Object.values(commits).sort(byOrder);
   return all.length > 0 ? all[all.length - 1] : null;
 }
+
+// The events with an id no other event carries, in order, and a line for each repeated one: an id
+// carried by more than one event is damage, so every copy is left out and listed.
+function uniqueSorted(events) {
+  const counts = new Map();
+  for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
+  const repeated = [...events].filter((e) => counts.get(e.id) > 1).sort(byOrder)
+    .map((e) => `an event with a repeated id: ${e.id} (${e.kind}, ${e.at})`);
+  return { sorted: events.filter((e) => counts.get(e.id) === 1).sort(byOrder), repeated };
+}
+
+// A confirmation counts only for a ruling, level or setting whose id it names and whose content
+// hash it names, so it confirms that exact event alone. { confirmed: ids, confirmations: [{ target, event }] }.
+function confirmationsOf(sorted, enrolled) {
+  const byId = new Map(sorted.map((e) => [e.id, e]));
+  const confirmed = new Set();
+  const confirmations = [];
+  for (const e of sorted) {
+    if (e.kind !== 'confirmation' || typeof e.data?.confirms !== 'string' || typeof e.data?.confirmsHash !== 'string') continue;
+    const target = byId.get(e.data.confirms);
+    if (!target || !CONFIRMABLE_KINDS.includes(target.kind) || !verify(e, enrolled)) continue;
+    let hash;
+    try {
+      hash = eventHash(target);
+    } catch {
+      continue;
+    }
+    if (hash === e.data.confirmsHash) {
+      confirmed.add(target.id);
+      confirmations.push({ target, event: e });
+    }
+  }
+  return { confirmed, confirmations };
+}
+
+// The kind and id a confirm line in `text` names, or null; and the first confirmation of exactly
+// that event after `record`, or undefined. A waiting card and a shown card are spent by the same rule.
+const confirmNamed = (text) => /Confirm ([a-z-]+) (\S+): "/.exec(text);
+const confirmedAfter = (confirmations, record, named) => (named === null ? undefined : confirmations.find((c) => byOrder(record, c.event) < 0
+  && c.target.id === named[2] && c.target.kind === named[1]));
+
+// The verified approvals and actions that carry the question they were clicked on.
+const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
+
+// The time each ruling, level or setting came into force by a verified confirmation of its own
+// hash: id -> the time of the first such confirmation.
+export function confirmationTimes(events, enrolled) {
+  const { confirmations } = confirmationsOf(uniqueSorted(events).sorted, enrolled);
+  const out = new Map();
+  for (const { target, event } of confirmations) if (!out.has(target.id)) out.set(target.id, event.at);
+  return out;
+}
+
+// How each card was decided (ruling F33), one entry per card in order: { card, answers, decided, explained }.
+// An answer names its card by id (data.card) or, as the prompt record writes it, quotes the
+// question shown (data.question): that matches a card's question, or its title when it has none.
+// Two cards asking the same question both close on one answer. A card is decided by an answer
+// whose label is one of its options other than Not now, Explain more and Show me (Keep as is
+// decides, signing nothing), or by a verified signed record after it that carries its question or
+// confirms the event its confirm line names, which is what a reply code earns. `decided` is the
+// first of these, { at, label }: a signed record's label is the one it carries (an answer's), or
+// null when it carries none (an approval, a confirmation). It is null while the card waits. A card
+// written before cards carried options has none to check, so any label but those three decides it.
+// `answers` are all its answers, in order; `explained` the times of its Explain more answers.
+function outcomesOf(sorted, { confirmations, answeredBy }) {
+  const answers = sorted.filter((e) => e.kind === 'card-answer');
+  const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
+  const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string' ? a.data.card === card.id
+    : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
+  const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
+  const signedFor = (card) => {
+    const question = questionOf(card);
+    const carried = answeredBy.find((e) => byOrder(card, e) < 0 && e.data.question === question);
+    const confirmed = confirmedAfter(confirmations, card, confirmNamed(typeof card.data?.line === 'string' ? card.data.line : question))?.event;
+    return [carried, confirmed].filter(Boolean).sort(byOrder)[0];
+  };
+  return sorted.filter((e) => e.kind === 'card').map((card) => {
+    const mine = answersTo(card);
+    const answered = mine.find((a) => decides(card, a.data?.label));
+    const signed = signedFor(card);
+    const first = [answered, signed].filter(Boolean).sort(byOrder)[0];
+    const label = typeof first?.data?.label === 'string' ? first.data.label : null;
+    const decided = first === undefined ? null : { at: first.at, label };
+    return { card, answers: mine, decided, explained: mine.filter((a) => a.data?.label === 'Explain more').map((a) => a.at) };
+  });
+}
+
+// cardOutcomes(events, enrolled) -> how each card among the events was decided, as outcomesOf
+// says, judged as the waiting view judges it.
+export function cardOutcomes(events, enrolled) {
+  const { sorted } = uniqueSorted(events);
+  return outcomesOf(sorted, { confirmations: confirmationsOf(sorted, enrolled).confirmations, answeredBy: answeredByOf(sorted, enrolled) });
+}
+
+// A `known:<concept>` setting of false counts without a confirmation: it only makes explanations
+// longer, so forgetting a concept fails safe (design section 5.3).
+export const countsAtOnce = (e) => e.kind === 'setting' && typeof e.data?.key === 'string' && e.data.key.startsWith('known:') && e.data.value === false;
 
 // The build loop's views: work and its approvals, features, questions and incidents.
 // Every approval, answer, amendment and lift here is read from a verified action,
@@ -145,39 +243,15 @@ function buildLoopViews(sorted, enrolled) {
   return { work, features, reports, questions, incidents: { open: [...open.values()] } };
 }
 
-export function buildViews(events, enrolled, { damaged = [], now = () => new Date() } = {}) {
-  // An id carried by more than one event is damage: every copy is left out and listed.
-  const counts = new Map();
-  for (const e of events) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
-  const repeated = [...events].filter((e) => counts.get(e.id) > 1).sort(byOrder)
-    .map((e) => `an event with a repeated id: ${e.id} (${e.kind}, ${e.at})`);
-  const sorted = events.filter((e) => counts.get(e.id) === 1).sort(byOrder);
-
-  // A confirmation counts only for a ruling, level or setting whose id it names
-  // and whose content hash it names, so it confirms that exact event alone.
-  const byId = new Map(sorted.map((e) => [e.id, e]));
-  const confirmed = new Set();
-  const confirmations = [];
-  // The kind and id a confirm line in `text` names, or null; and whether a confirmation of exactly
-  // that event came after `record`. A waiting card and a shown card are spent by the same rule.
-  const confirmNamed = (text) => /Confirm ([a-z-]+) (\S+): "/.exec(text);
-  const confirmedAfter = (record, named) => named !== null && confirmations.some((c) => byOrder(record, c.event) < 0
-    && c.target.id === named[2] && c.target.kind === named[1]);
-  for (const e of sorted) {
-    if (e.kind !== 'confirmation' || typeof e.data?.confirms !== 'string' || typeof e.data?.confirmsHash !== 'string') continue;
-    const target = byId.get(e.data.confirms);
-    if (!target || !CONFIRMABLE_KINDS.includes(target.kind) || !verify(e, enrolled)) continue;
-    let hash;
-    try {
-      hash = eventHash(target);
-    } catch {
-      continue;
-    }
-    if (hash === e.data.confirmsHash) {
-      confirmed.add(target.id);
-      confirmations.push({ target, event: e });
-    }
-  }
+// `profile` is the profile's events, when these are a project's: a confirm card in the project for a
+// profile setting closes on the profile's verified confirmation, whichever project's card was
+// clicked (ruling F47). The project's levels, settings and unconfirmed stay its own.
+export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [] } = {}) {
+  const { sorted, repeated } = uniqueSorted(events);
+  const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
+  const fromProfile = confirmationsOf(uniqueSorted(profile).sorted, enrolled).confirmations;
+  const closing = [...confirmations, ...fromProfile].sort((a, b) => byOrder(a.event, b.event));
+  const answeredBy = answeredByOf(sorted, enrolled);
 
   // Rulebook
   const rulings = sorted.filter((e) => e.kind === 'ruling');
@@ -195,7 +269,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     status: superseded.has(r.id) ? 'superseded' : confirmed.has(r.id) ? 'accepted' : 'proposed',
   }));
 
-  // Levels and settings: accepted value per key, plus proposals newer than it
+  // Levels and settings: accepted value per key, plus proposals newer than it. A `known:*` setting
+  // of false counts as accepted without a confirmation.
   const unconfirmed = rulebook.filter((r) => r.status === 'proposed')
     .map((r) => ({ kind: 'ruling', id: r.id, at: r.at, data: rulings.find((x) => x.id === r.id).data }));
   // The latest confirmation of each event, in time order.
@@ -203,8 +278,9 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const accepted = (kind) => {
     const out = {};
     const all = sorted.filter((e) => e.kind === kind && isPlainKey(e.data?.key));
+    const accepts = (e) => confirmed.has(e.id) || countsAtOnce(e);
     for (const e of all) {
-      if (!confirmed.has(e.id)) continue;
+      if (!accepts(e)) continue;
       const entry = { key: e.data.key, id: e.id, at: e.at, value: e.data.value };
       if (kind === 'setting') {
         // A setting may end on its own (until) and remembers the accepted value it replaced.
@@ -214,9 +290,10 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
         // The computer its event was written on, the computer that signed its latest confirmation
         // (null when that isn't the computer the confirmation names), and the card line that
         // confirmation carries, if any: build commands on Windows count a level only where the
-        // click was made, and Unattended only from its own line.
+        // click was made, and Unattended only from its own line. A setting counted without a
+        // confirmation (countsAtOnce) has neither.
         const last = lastConfirmation.get(e.id);
-        const line = last.data.line;
+        const line = last?.data?.line;
         entry.computer = e.computer;
         entry.confirmedOn = signedOn(last);
         entry.line = typeof line === 'string' ? line : null;
@@ -224,7 +301,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
       out[e.data.key] = entry;
     }
     for (const e of all) {
-      if (confirmed.has(e.id)) continue;
+      if (accepts(e)) continue;
       const kept = out[e.data.key];
       if (!kept || byOrder(kept, e) < 0) unconfirmed.push({ kind, id: e.id, at: e.at, key: e.data.key, data: e.data });
     }
@@ -239,39 +316,26 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const ideas = latestPerKey(sorted.filter((e) => e.kind === 'idea'), keyOrId);
   const rejections = latestPerKey(sorted.filter((e) => e.kind === 'rejection'), keyOrId);
 
-  // An answer names its card by id (data.card) or, as the prompt record writes it, quotes the
-  // question shown (data.question): that matches a card's question, or its title when it has none.
-  // Two cards asking the same question both close on one answer. A card closes on an answer whose
-  // label is one of its options other than Not now, Explain more and Show me, or on a verified
-  // signed record after it that carries its question or confirms the event its confirm line names.
-  // Any other answer leaves it waiting, and the latest of them is what `asked` marks, unless an
-  // `asked` record naming the card came after it: a visit handed the card out, and it may have been
-  // dismissed with no answer at all, so `asked` is then that record's time with no label. A card
-  // written before cards carried options has none to check, so any label but those three decides it.
-  const answers = sorted.filter((e) => e.kind === 'card-answer');
-  const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
-  const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string' ? a.data.card === card.id
-    : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
-  const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
-  // The verified approvals and actions that carry the question they were clicked on.
-  const answeredBy = sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
-  const closedBySigned = (card) => {
-    const question = questionOf(card);
-    if (answeredBy.some((e) => byOrder(card, e) < 0 && e.data.question === question)) return true;
-    const named = confirmNamed(typeof card.data?.line === 'string' ? card.data.line : question);
-    return confirmedAfter(card, named);
-  };
+  // A card waits until it is decided (outcomesOf). The latest of its answers is what `asked` marks,
+  // unless an `asked` record naming the card came after it: a visit handed the card out, and it may
+  // have been dismissed with no answer at all, so `asked` is then that record's time with no label.
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
+  const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   const waiting = [];
-  for (const card of sorted.filter((e) => e.kind === 'card')) {
-    const mine = answersTo(card);
-    if (mine.some((a) => decides(card, a.data?.label)) || closedBySigned(card)) continue;
+  for (const { card, answers: mine, decided } of outcomes) {
+    if (decided !== null) continue;
     const last = mine.at(-1);
     const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
     const asked = shown && (!last || byOrder(last, shown) < 0) ? { at: shown.at, label: null }
       : last ? { at: last.at, label: last.data?.label ?? null } : null;
     waiting.push({ id: card.id, at: card.at, data: card.data, asked });
   }
+
+  // The proposals whose confirm card here was decided by Keep as is, by the id its confirm line
+  // names, a profile setting's among them (ruling F49). They stay unconfirmed, but the lists of
+  // what waits for the director's confirmation (the board's first part, the session start) leave them out.
+  const keptAsIs = uniqueIds(outcomes.filter(({ decided }) => decided?.label === KEEP_AS_IS)
+    .map(({ card }) => confirmNamed(typeof card.data?.line === 'string' ? card.data.line : card.data?.question ?? '')?.[2]));
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
@@ -289,7 +353,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     && typeof e.data?.code === 'string' && typeof e.data?.question === 'string' && Array.isArray(e.data?.options));
   const spentBy = (shownEvent) => {
     if (answeredBy.some((e) => byOrder(shownEvent, e) < 0 && e.data.question === shownEvent.data.question)) return true;
-    return confirmedAfter(shownEvent, confirmNamed(shownEvent.data.question));
+    return confirmedAfter(confirmations, shownEvent, confirmNamed(shownEvent.data.question)) !== undefined;
   };
   // Only live records take part: not spent, and younger than REPLY_CODE_DAYS. The latest live
   // record holds its code, and two live records with different questions clash. A code with no
@@ -329,6 +393,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     risks,
     decisions,
     shown,
+    keptAsIs,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,
@@ -342,14 +407,26 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   };
 }
 
+// The profile's events, or none when there is no profile or it can't be read.
+function profileEvents() {
+  try {
+    return listEvents(profileDir(), { report: () => {} });
+  } catch {
+    return [];
+  }
+}
+
 // Reads the clone and writes views/*.json beside it, outside the clone. `dir` and `out`
-// name another clone of events and its views folder, such as the profile's.
+// name another clone of events and its views folder, such as the profile's. A project's views
+// count the profile's confirmations when closing its confirm cards (buildViews); the profile's
+// own (no project) are built from the profile alone.
 export async function writeViews(project, {
   now = () => new Date(), dir = stateDir(project), out = path.join(wheelhouseHome(), 'projects', project, 'views'),
+  profile = project === undefined ? [] : profileEvents(),
 } = {}) {
   const damaged = [];
   const events = listEvents(dir, { report: () => {}, skipped: damaged });
-  const views = buildViews(events, readEnrolled(), { damaged, now });
+  const views = buildViews(events, readEnrolled(), { damaged, now, profile });
   // Built whole in a new folder, which then takes the old one's place. The old folder is
   // renamed aside first because Windows will not rename over a folder that has files in it.
   // Between the two renames there is no `views` folder, only `views.old` (a reader that

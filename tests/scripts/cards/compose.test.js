@@ -99,6 +99,8 @@ test("each kind's card carries the five parts in order, its set line and its rep
     assert.equal(card.level, 3);
     assert.deepEqual(card.options, question.options.map((o) => o.label));
     assert.deepEqual(card.descriptions, question.options.map((o) => o.description));
+    // The card keeps the option it recommended, so the delegation review can tell a choice made as recommended.
+    assert.equal(card.recommend, INPUTS[kind].recommend, kind);
     // The state accepts the card data as composed.
     assert.doesNotThrow(() => makeEvent({ kind: 'card', data: card, now: () => NOW }), kind);
   }
@@ -181,6 +183,34 @@ test('decision cards offer the deciding label, Not now, Explain more and Show me
   refused({ options: [{ label: 'Not now', says: 'Wait.' }] }, /options.*Approve/);
   refused({ recommend: 'Delete everything' }, /recommend/);
   refused({ options: [says('Approve'), says('Approve')] }, /options.*twice|options.*Approve/);
+});
+
+test('a confirm card for a proposal offers Keep as is in place of Show me; any other confirm card keeps its four', () => {
+  const proposal = (kind, data) => makeEvent({ kind, data, now: () => NOW });
+  const learnt = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it three times' });
+  const level = proposal('level', { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose it five times' });
+  for (const event of [learnt, level]) {
+    const { question, card } = composeCard(input('confirm', { what: `A change: ${event.data.words}`, target: { event } }));
+    assert.deepEqual(question.options.map((o) => o.label), ['Confirm', 'Not now', 'Explain more', 'Keep as is'], event.kind);
+    assert.deepEqual(card.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
+    assert.match(question.options[3].description, /as they are/);
+    assert.match(question.options[3].description, /isn't asked again for a while/);
+    assert.ok(lines(question.question)[2].includes('Keep as is'));
+    // What Keep as is says may be given, as a put-off button's may.
+    const given = composeCard(input('confirm', { what: `A change: ${event.data.words}`, target: { event }, options: [says('Confirm'), { label: 'Keep as is', says: 'It stays.' }] }));
+    assert.equal(given.question.options[3].description, 'It stays.');
+  }
+  // A setting the director asked for, a ruling and a level without a reason are no proposals.
+  const asked = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' });
+  const bare = proposal('level', { key: 'copy-changes', value: 2, words: '"copy-changes": level 2', because: '  ' });
+  const ruling = proposal('ruling', { words: 'Money is shown in dollars', because: 'it is how we do it' });
+  for (const event of [asked, bare, ruling]) {
+    const { question } = composeCard(input('confirm', { what: `A change: ${event.data.words}`, target: { event } }));
+    assert.deepEqual(question.options.map((o) => o.label), ['Confirm', 'Not now', 'Explain more', 'Show me'], event.kind);
+    refused({ what: `A change: ${event.data.words}`, target: { event }, options: [says('Confirm'), says('Keep as is')] }, /options.*Keep as is/, 'confirm');
+  }
+  // Any other kind of card can't offer it either.
+  refused({ options: [says('Approve'), says('Keep as is')] }, /options.*Keep as is/);
 });
 
 test('an answer card carries up to three of its own options and Explain more, or four without it; five are refused', () => {

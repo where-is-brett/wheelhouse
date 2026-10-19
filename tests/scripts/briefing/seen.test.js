@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { withHome } from '../../helpers/homes.js';
-import { readSeen, markSeen, seenFile } from '../../../scripts/briefing/seen.js';
+import { readSeen, markSeen, readVisits, seenFile, BOARD_ASKS } from '../../../scripts/briefing/seen.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const none = { promptAt: null, briefedAt: null, weeklyAt: null };
@@ -53,4 +53,33 @@ test('the last briefing that showed the weekly lines is kept beside the others',
   assert.deepEqual(readSeen('demo', { now: NOW }), { promptAt: null, briefedAt: '2026-10-19T11:00:00.000Z', weeklyAt: '2026-10-19T09:00:00.000Z' });
   markSeen('demo', { weeklyAt: 'not a time' });
   assert.equal(readSeen('demo', { now: NOW }).weeklyAt, '2026-10-19T09:00:00.000Z');
+}));
+
+test('visits and board commands are kept beside the times, the last ten commands only, read by the same rules', () => withHome(() => {
+  assert.deepEqual(readVisits('demo', { now: NOW }), { visitAt: null, boardAsks: [] });
+  markSeen('demo', { promptAt: '2026-10-19T10:00:00.000Z', visitAt: '2026-10-19T10:00:00.000Z' });
+  markSeen('demo', { boardAsk: { at: new Date('2026-10-19T10:05:00.000Z'), tab: 'build', visit: '2026-10-19T10:00:00.000Z' } });
+  markSeen('demo', { boardAsk: { at: '2026-10-19T10:06:00.000Z', visit: '2026-10-19T10:00:00.000Z' } });
+  // Neither is a board command: a tab that isn't one, a visit that isn't a time.
+  markSeen('demo', { boardAsk: { at: '2026-10-19T10:07:00.000Z', tab: 'other', visit: '2026-10-19T10:00:00.000Z' } });
+  markSeen('demo', { boardAsk: { at: '2026-10-19T10:08:00.000Z', tab: 'build', visit: 'today' } });
+  assert.deepEqual(readVisits('demo', { now: NOW }), {
+    visitAt: '2026-10-19T10:00:00.000Z',
+    boardAsks: [{ at: '2026-10-19T10:05:00.000Z', tab: 'build', visit: '2026-10-19T10:00:00.000Z' }, { at: '2026-10-19T10:06:00.000Z', tab: null, visit: '2026-10-19T10:00:00.000Z' }],
+  });
+  // The times are kept as they were, and a later time write keeps the commands.
+  assert.deepEqual(readSeen('demo', { now: NOW }), { promptAt: '2026-10-19T10:00:00.000Z', briefedAt: null, weeklyAt: null });
+  markSeen('demo', { briefedAt: '2026-10-19T10:00:00.000Z' });
+  assert.equal(readVisits('demo', { now: NOW }).boardAsks.length, 2);
+  // Only the last ten are kept.
+  for (let i = 0; i < 12; i += 1) markSeen('demo', { boardAsk: { at: `2026-10-19T11:${String(i).padStart(2, '0')}:00.000Z`, tab: 'director', visit: '2026-10-19T10:00:00.000Z' } });
+  const { boardAsks } = readVisits('demo', { now: NOW });
+  assert.equal(BOARD_ASKS, 10);
+  assert.equal(boardAsks.length, BOARD_ASKS);
+  assert.equal(boardAsks[0].at, '2026-10-19T11:02:00.000Z');
+  // One after now is left out, as a time after now is.
+  assert.equal(readVisits('demo', { now: new Date('2026-10-19T11:05:30.000Z') }).boardAsks.length, 4);
+  // A damaged list reads as none.
+  fs.writeFileSync(seenFile('demo'), JSON.stringify({ visitAt: 'soon', boardAsks: 'many' }));
+  assert.deepEqual(readVisits('demo', { now: NOW }), { visitAt: null, boardAsks: [] });
 }));

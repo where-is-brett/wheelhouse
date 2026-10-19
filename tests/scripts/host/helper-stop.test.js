@@ -143,6 +143,10 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
         const views = await client.state.views(base);
         assert.equal(views.ok, true);
         assert.equal(views.stop, true);
+        // The delegation review is read-only, so it is worked out under STOP too.
+        const reviewed = await client.state.views({ ...base, review: true });
+        assert.equal(reviewed.ok, true);
+        assert.deepEqual(reviewed.review.proposals, []);
         assert.equal((await client.lock.read(base)).ok, true);
         assert.equal((await client.state.sync(base)).ok, true);
         assert.equal((await client.state.clone(base)).ok, true);

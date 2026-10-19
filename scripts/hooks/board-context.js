@@ -2,7 +2,8 @@
 // What the director asks Wheelhouse to show, added to the turn as context. Agents can't read
 // ~/.wheelhouse/, so this hook, which runs outside the sandbox, reads it for them: the board, the
 // briefing, the settings or the changed sources when the prompt is one of the plugin's commands,
-// and the briefing on the first prompt after a gap of `briefingGapHours`.
+// and the briefing on the first prompt after a gap of `briefingGapHours`. The briefing says when the
+// delegation review is due, worked out here from the project's events, since the front desk can't.
 //
 // In a project's main folder only: never in a feature worktree, never for the foreman, never
 // outside a Wheelhouse project. It records each session's role from its first prompt (sessionRole),
@@ -19,6 +20,15 @@
 // `cli.js cards` gives them (cardsLine). Under STOP the line names the one Lift STOP card, the only
 // card `cli.js cards` gives then.
 //
+// It keeps the director's visits in seen.json: when a visit began (the first prompt of any kind
+// after a gap since the last one seen) and the board commands with their tabs. On a visit's first
+// prompt that is no command, it runs learning (scripts/frontdesk/learning.js) before the cards are
+// counted, within LEARN_WAIT_MS and never under STOP (ruling F32): a concept set to false is written
+// to the profile at once, and each other proposal is written with its confirm card, waiting, so it
+// is asked with this visit's cards. A setting or a level waiting for its confirmation whose card
+// wasn't written gets it then too (rulings F37, F45). Learning adds no text, and a failure or a
+// late helper leaves the rest for next visit.
+//
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
@@ -29,7 +39,7 @@ import { loadBoardInputs } from '../board/inputs.js';
 import { renderBoard, unlinked } from '../board/render.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { briefingParts } from '../briefing/text.js';
-import { readSeen, markSeen } from '../briefing/seen.js';
+import { readSeen, markSeen, readVisits } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
 import { KNOWN, SETTINGS } from '../settings/catalogue.js';
@@ -39,12 +49,20 @@ import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { existingCard } from '../cards/visit.js';
 import { questionProblem } from '../cards/compose.js';
-import { answerLine } from '../state/card-lines.js';
+import { answerLine, confirmLine } from '../state/card-lines.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { helperClient } from '../host/helper-client.js';
+import { clickOutcomes, conceptProposals, conceptSetting, reviewDue, settingProposals } from '../frontdesk/learning.js';
+import { levelCard, settingCard, writeSetting } from '../frontdesk/cli.js';
+import { profileDir, stateDir } from '../lib/paths.js';
 import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 
 export const WAIT_MS = 2000;
+// How long learning may take on a visit's first prompt; with WAIT_MS it stays well inside the hook's 10 s.
+export const LEARN_WAIT_MS = 3000;
 // How long the board's inputs wait on the helper, so a helper that hangs leaves time to finish
 // with what is on disk (the host facts' cache among it) inside WAIT_MS.
 export const INPUTS_WAIT_MS = HELPER_WAIT_MS - 500;
@@ -194,6 +212,60 @@ async function within(start, ms) {
   }
 }
 
+// Learning for the visit (ruling F32): the proposals worked out from the project's events, the
+// profile's and the board commands, written through the helper. A profile setting, or a level of
+// this project, still waiting for its confirmation, with the words a card names it by, whose
+// confirm line no card in this project carries gets its card first (rulings F37, F45): one whose
+// card wasn't written, learnt, recorded by the front desk or proposed by the delegation review.
+// Each write that fails is left for the next visit, which works it out again.
+async function learn({ project, cwd, client, at, boardAsks }) {
+  const events = listEvents(stateDir(project), { report: () => {} });
+  const own = attempt(() => readProfileViews()) ?? {};
+  const views = attempt(() => localViews(project, ['settings', 'unconfirmed'])) ?? {};
+  const settings = effectiveSettings({
+    project: isRecord(views.settings) ? views.settings : {}, profile: isRecord(own.settings) ? own.settings : {}, now: at,
+  });
+  const unconfirmed = Array.isArray(own.unconfirmed) ? own.unconfirmed.filter(isRecord) : [];
+  const profile = { events: attempt(() => listEvents(profileDir(), { report: () => {} }), []), settings, unconfirmed };
+  const enrolled = readEnrolled();
+  const words = wordsOf(project, settings, null);
+  const asker = client ?? helperClient({ timeout: LEARN_WAIT_MS });
+  const tried = async (write) => {
+    try {
+      await write();
+    } catch {
+      // Worked out again next visit.
+    }
+  };
+
+  const lines = new Set(events.filter((e) => e.kind === 'card').map((e) => e.data?.line));
+  const levels = Array.isArray(views.unconfirmed) ? views.unconfirmed.filter((u) => isRecord(u) && u.kind === 'level') : [];
+  for (const entry of [...unconfirmed.filter((u) => u.kind === 'setting'), ...levels]) {
+    if (typeof entry.id !== 'string' || !isRecord(entry.data) || typeof entry.data.words !== 'string') continue;
+    const event = { kind: entry.kind, id: entry.id, data: entry.data };
+    if (lines.has(confirmLine(event))) continue;
+    await tried(async () => {
+      const { card } = entry.kind === 'level' ? levelCard(event, words) : settingCard(event, words);
+      const got = await asker.state.write({ cwd, kind: 'card', data: card });
+      if (got?.ok !== true) throw new Error('not written');
+    });
+  }
+  const outcomes = clickOutcomes(events, profile, { enrolled });
+  const proposals = [
+    ...conceptProposals(events, profile, { now: at, enrolled, outcomes }).map(conceptSetting),
+    ...settingProposals(events, profile, { now: at, outcomes, boardAsks }),
+  ];
+  for (const data of proposals) await tried(() => writeSetting({ client: asker, cwd, data, words }));
+}
+
+// Whether the delegation review is due (ruling F43), from the project's events on disk and the
+// `delegationReviewDays` in force: { due, days }, or null when the state can't be read.
+function reviewOf(project, settings, at) {
+  const value = settings?.delegationReviewDays?.value;
+  const days = Number.isInteger(value) && value > 0 ? value : SETTINGS.delegationReviewDays.default;
+  return attempt(() => ({ due: reviewDue({ events: listEvents(stateDir(project), { report: () => {} }), now: at, days }), days }));
+}
+
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
 async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
@@ -212,7 +284,7 @@ async function build(want, { project, cwd, at, client, load, command, since, wee
   } else if (want === 'sources') {
     body = isRecord(sources) ? (sourcesText(sources) || NONE_CHANGED) : NOT_CHECKED;
   } else {
-    const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at });
+    const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review: reviewOf(project, settings, at) });
     const length = settings?.briefing?.value;
     const words = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
     const parts = briefingParts(briefing, { words });
@@ -231,7 +303,7 @@ async function build(want, { project, cwd, at, client, load, command, since, wee
 export async function decide(input, deps = {}) {
   try {
     const {
-      dir, now = () => new Date(), env = process.env, client, load = loadBoardInputs, waitMs = WAIT_MS,
+      dir, now = () => new Date(), env = process.env, client, load = loadBoardInputs, waitMs = WAIT_MS, learnWaitMs = LEARN_WAIT_MS,
       briefingModel = realBriefingModel, markRaised = realMarkRaised,
     } = deps;
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
@@ -245,8 +317,19 @@ export async function decide(input, deps = {}) {
     const { project } = found;
     const at = clockOf(now);
     const seen = readSeen(project, { now: at });
+    const visits = attempt(() => readVisits(project, { now: at }), { visitAt: null, boardAsks: [] });
     const command = commandOf(input.prompt);
-    const want = command?.name ?? (gapPassed(project, seen.promptAt, at) ? 'briefing' : null);
+    const due = gapPassed(project, seen.promptAt, at);
+    const want = command?.name ?? (due ? 'briefing' : null);
+    // A visit begins with the first prompt of any kind after a gap since the last one seen: the last
+    // message, the last board command or the visit's own start.
+    const lastSeen = [seen.promptAt, visits.visitAt, visits.boardAsks.at(-1)?.at].filter((t) => typeof t === 'string').sort().at(-1) ?? null;
+    const visit = gapPassed(project, lastSeen, at) ? at : visits.visitAt;
+    if (visit === at) attempt(() => markSeen(project, { visitAt: at }));
+    if (command?.name === 'board') attempt(() => markSeen(project, { boardAsk: { at, tab: command.tab ?? null, visit } }));
+    if (!command && due && !attempt(() => stopState().on, true)) {
+      await within(() => learn({ project, cwd: input.cwd, client, at, boardAsks: visits.boardAsks }), learnWaitMs);
+    }
     const count = attempt(() => cardsToAsk(project), 0);
     const cards = count > 0 ? cardsLine(count) : null;
     const reserve = cards === null ? 0 : cards.length + 2;

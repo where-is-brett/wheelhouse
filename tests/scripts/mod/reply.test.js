@@ -181,8 +181,10 @@ test('a reply earns exactly the record the click would have', async () => {
       assert.equal(reply.calls.record.length, 1, label);
       assert.ok(reply.calls.record[0].event.sig);
       assert.equal(reply.calls.record[0].event.at, LATER.toISOString());
-      // Nothing else: no plain answer, and the typed text is written nowhere.
-      assert.equal(reply.calls.write.length, 0);
+      // Nothing else but the plain answer the click writes too, in the card's own spelling of the
+      // option: the typed text is written nowhere.
+      assert.deepEqual(reply.calls.write, click.calls.write, label);
+      assert.deepEqual(reply.calls.write, [{ project: P, kind: 'card-answer', data: { question, label } }], label);
       assert.equal(lifted, label === 'Lift STOP' ? 1 : 0);
     }
 
@@ -195,8 +197,12 @@ test('a reply earns exactly the record the click would have', async () => {
     assert.match(out.says, /^Recorded: Runbook step 2/);
     const folder = path.join(stateDir(P), '..', 'pending');
     const kept = fs.readdirSync(folder).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')));
-    assert.deepEqual(kept.map((k) => [k.route, k.body.event.data.action, k.body.event.data.step]), [['record', 'runbook', 2]]);
-    assert.deepEqual(kept[0].body.event.data, { action: 'runbook', step: 2, question: cardOf(line), label: 'Do it' });
+    // The signed record and the plain answer, each kept until the helper takes it.
+    const record = kept.filter((k) => k.route === 'record');
+    assert.deepEqual(record.map((k) => [k.body.event.data.action, k.body.event.data.step]), [['runbook', 2]]);
+    assert.deepEqual(record[0].body.event.data, { action: 'runbook', step: 2, question: cardOf(line), label: 'Do it' });
+    assert.deepEqual(kept.filter((k) => k.route === 'write').map((k) => k.body), [{ project: P, kind: 'card-answer', data: { question: cardOf(line), label: 'Do it' } }]);
+    assert.equal(kept.length, 2);
   });
 });
 
@@ -393,7 +399,7 @@ test('a reply earns the record the click would have on each of the build loop\'s
       assert.equal(signed(click).length, 1, label);
       assert.deepEqual(signed(reply), signed(click), label);
       assert.ok(reply.calls.record[0].event.sig);
-      assert.equal(reply.calls.write.length, 0);
+      assert.deepEqual(reply.calls.write, click.calls.write, label);
       assert.equal(reply.calls.prState.length, 0);
       // A code is good once.
       const again = fake();
@@ -532,5 +538,36 @@ test('a reply allows a build-command question\'s commands only on the computer t
     const { out, signed: made } = await reply('q-export-csv-1', 'Allow for this feature');
     assert.deepEqual(out, { made: true, says: 'Recorded: Answer: Allow for this feature' });
     assert.deepEqual(made.map((r) => [r.data.action, r.data.questionId, r.data.label]), [['answer', 'q-export-csv-1', 'Allow for this feature']]);
+  });
+});
+
+test('a reply-code Confirm on a profile setting\'s card closes the card in the project\'s waiting view', async () => {
+  await withHome(async () => {
+    // The setting is in the director's profile; its confirm card is in the project's state.
+    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' }, now: () => NOW });
+    const inProfile = path.join(profileDir(), eventPath(setting));
+    fs.mkdirSync(path.dirname(inProfile), { recursive: true });
+    fs.writeFileSync(inProfile, JSON.stringify(setting));
+    const line = confirmLine(setting);
+    const question = cardOf(line);
+    const options = ['Confirm', 'Not now', 'Explain more', 'Show me'];
+    const cardEvent = makeEvent({ kind: 'card', data: { question, header: 'Confirm', options, kind: 'confirm', level: 3, line }, now: () => NOW });
+    keepEvent(cardEvent);
+    await show(question, { options });
+    assert.deepEqual((await writeViews(P, { now: () => NOW })).waiting.map((w) => w.id), [cardEvent.id]);
+
+    // The helper, as it would: the confirmation goes into the profile, the plain answer into the state clone.
+    const c = fake();
+    c.profile.record = async (b) => { c.calls.profileRecord.push(b); return { ok: true }; };
+    c.state.write = async (b) => {
+      c.calls.write.push(b);
+      keepEvent(makeEvent({ kind: b.kind, data: b.data, now: () => LATER }));
+      return { ok: true };
+    };
+    const out = await replyRecord({ project: P, text: `${replyCode(line)} confirm`, client: c, now: () => LATER });
+    assert.deepEqual(out, { made: true, says: 'Recorded: Confirm the setting' });
+    assert.deepEqual(c.calls.profileRecord.map((r) => r.event.data.confirms), [setting.id]);
+    assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label: 'Confirm' } }]);
+    assert.deepEqual((await writeViews(P, { now: () => LATER })).waiting, []);
   });
 });

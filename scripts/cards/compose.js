@@ -7,7 +7,7 @@ import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
   liftIncidentLine, incidentFixLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
+import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
@@ -52,12 +52,22 @@ export const MEANWHILE = 'that feature waits; the others carry on';
 // A card with four options of its own has no Explain more button, so the line also says it can be typed.
 export const CHECKS_UNSAID = 'The build didn\'t say. Choose or type Explain more and I\'ll find out before you answer.';
 
-// What the buttons that put a card off do.
+// A confirm card for a proposal offers Keep as is in place of Show me (ruling F48); learning.js
+// holds the proposal back for TURNED_DOWN_DAYS after it.
+export { KEEP_AS_IS };
+
+// What the buttons that put a card off do, and what Keep as is does.
 const PUT_OFF_SAYS = Object.freeze({
   'Not now': 'Leave this waiting; nothing changes yet.',
   'Explain more': 'I explain it in plainer words, with an everyday example, and ask again.',
   'Show me': 'I show you what it looks like, then ask again.',
+  [KEEP_AS_IS]: 'Things stay as they are, and this isn\'t asked again for a while.',
 });
+
+// Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
+// for: a setting or a level carrying `because`, its one-line reason (learning, the delegation review).
+export const isProposal = (event) => isPlain(event) && (event.kind === 'setting' || event.kind === 'level')
+  && typeof event.data?.because === 'string' && event.data.because.trim() !== '';
 
 const HEX = /^[0-9a-f]{12,64}$/;
 const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
@@ -182,8 +192,9 @@ function sameThing(kind, what, target) {
 }
 
 // The buttons a card offers, each { label, says }, in the order they are shown. `build` says the
-// card answers a build-command question (one that names its `commands`).
-function offered(kind, given, build = false) {
+// card answers a build-command question (one that names its `commands`). A confirm card for a
+// proposal (its `target`) offers Keep as is in place of Show me.
+function offered(kind, given, { build = false, target } = {}) {
   if (!Array.isArray(given) || given.length === 0) fail(kind, 'options');
   const seen = new Set();
   const list = given.map((o) => {
@@ -192,7 +203,7 @@ function offered(kind, given, build = false) {
     if (seen.has(label)) fail(kind, 'options', `names ${label} twice`);
     seen.add(label);
     // A put-off button may leave out what it says: the card then uses the usual words.
-    const optional = PUT_OFF.includes(label) && kind !== 'answer' && kind !== 'question';
+    const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question';
     return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says) };
   });
   if (kind === 'answer' || kind === 'question') {
@@ -202,7 +213,8 @@ function offered(kind, given, build = false) {
     return [...list, ...(list.length < CARD.options ? [{ label: 'Explain more', says: PUT_OFF_SAYS['Explain more'] }] : [])];
   }
   const deciding = DECIDING[kind];
-  const allowed = [deciding, ...PUT_OFF];
+  const proposal = kind === 'confirm' && isProposal(target?.event);
+  const allowed = [deciding, ...PUT_OFF.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
   if (!list.some((o) => o.label === deciding)) fail(kind, 'options', `must describe ${deciding}`);
   return allowed.map((label) => ({ label, says: list.find((o) => o.label === label)?.says ?? PUT_OFF_SAYS[label] }));
@@ -238,7 +250,7 @@ export function composeCard(input) {
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
   const build = Array.isArray(input.commands) && input.commands.length > 0;
-  const buttons = offered(kind, input.options, build);
+  const buttons = offered(kind, input.options, { build, target: input.target });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null ? null : replyCode(line);
@@ -271,6 +283,8 @@ export function composeCard(input) {
     level,
     line,
     code,
+    // The option recommended, so the delegation review can tell a choice made as recommended.
+    recommend,
     ...(input.importance === undefined ? {} : { importance: input.importance }),
     ...(topic === undefined ? {} : { topic }),
     concepts: [...(input.concepts ?? termsIn(explained.join('\n'), input.glossary ?? glossaryOf({})))],

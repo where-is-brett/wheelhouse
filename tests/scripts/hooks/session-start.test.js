@@ -128,6 +128,22 @@ test('the reload lists ids and titles, not whole files', async () => {
   });
 });
 
+test('the reload leaves out a proposal kept as is on its card', async () => {
+  await withHome(async () => {
+    const f = fake({ views: {
+      ...VIEWS,
+      unconfirmed: [
+        { kind: 'level', id: 'l1', key: 'copy-changes', data: { words: '"copy-changes": level 2' } },
+        { kind: 'ruling', id: 'r9', data: { words: 'Do it this way' } },
+      ],
+      keptAsIs: ['l1'],
+    } });
+    const t = text(await run(f));
+    assert.match(t, /Changed without the director's confirmation:\n- r9 \(ruling\): Do it this way/);
+    assert.doesNotMatch(t, /l1 \(level/);
+  });
+});
+
 test('the reload stays under the context limit however much there is', async () => {
   await withHome(async () => {
     const long = 'x'.repeat(5000);
