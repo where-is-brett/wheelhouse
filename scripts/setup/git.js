@@ -1,11 +1,15 @@
 // scripts/setup/git.js
-// How setup runs git (ruling R109): every call shuts out git's global and system config, so
+// How setup runs git (rulings R109, R110): every call shuts out git's global and system config, so
 // nothing in ~/.gitconfig or the system's config reaches it, and passes by environment only the
 // settings it needs: the director's own sign-in as git's credential helper, when it uses it; hooks
-// pointed at the null file; and no file-system monitor. Before each call it refuses, naming what it
-// found, when the repository's own config declares a hook (`hook.<name>.*`), which git runs
-// whatever core.hooksPath says: no hook an agent can write runs in setup's name or with the
-// director's sign-in. Identity is given by each commit as it makes it.
+// pointed at the null file; no file-system monitor; and, as a second fence, inert values for the
+// core settings that name a program (core.sshCommand, core.askPass, core.editor, core.pager).
+// Before each call it refuses, naming the key, when the repository's own config (with what it
+// includes, and its worktree config) holds any setting that makes git run a program or send
+// elsewhere: a hook (`hook.*`, which git runs whatever core.hooksPath says), a filter, a diff or
+// merge driver, an ssh command, an editor, a pager, a credential helper, a gpg program, a URL
+// rewrite, a remote's own programs or proxy, an HTTP proxy. No program an agent can name runs in
+// setup's name or with the director's sign-in. Identity is given by each commit as it makes it.
 //
 // What is left out with the global and system config: a proxy or certificate setting kept there
 // (proxies still come from the environment). A director who needs one sees setup's git fail,
@@ -18,8 +22,22 @@ import { toolPath } from '../lib/host-tools.js';
 export const NULL_FILE = '/dev/null';
 const TOOL = { github: 'gh', gitlab: 'glab' };
 const GIT_WAIT_MS = 5 * 60 * 1000;
-// What every call carries, by environment, besides the sign-in.
-const FENCE = [['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false']];
+// What every call carries, by environment, besides the sign-in: hooks and the monitor off, and the
+// core settings that name a program set to ones that do nothing (a failing `false`, or `cat`).
+const FENCE = [
+  ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'],
+  ['core.sshCommand', 'false'], ['core.askPass', 'false'], ['core.editor', 'false'], ['core.pager', 'cat'],
+];
+
+// The repository settings that make git run a program or send elsewhere (ruling R110), as the
+// lower-case names `git config --name-only` gives (the section and the key in lower case, a
+// subsection as written).
+const RUNS_OR_SENDS = [
+  /^hook\./i, /^filter\./i, /^diff\.external$/i, /^diff\..+\.(?:command|textconv)$/i, /^merge\..+\.driver$/i,
+  /^core\.(?:sshcommand|fsmonitor|editor|pager|askpass|gitproxy)$/i, /^credential\./i, /^gpg\./i, /^sequence\.editor$/i,
+  /^url\..+\.(?:insteadof|pushinsteadof)$/i, /^remote\..+\.(?:uploadpack|receivepack|proxy|vcs)$/i, /^http\.(?:.+\.)?proxy$/i,
+];
+export const runsOrSends = (key) => RUNS_OR_SENDS.some((pattern) => pattern.test(key));
 
 // The settings an environment passes to git by GIT_CONFIG_COUNT, as [key, value] pairs.
 function pairsOf(env) {
@@ -61,32 +79,34 @@ export function setupGitEnv({ host = null, gitPath = 'git', env = process.env, p
   return isolated({ ...signIn, ...(dir === null ? {} : { [pathKey]: `${dir}${paths.delimiter}${env[pathKey] ?? ''}` }) });
 }
 
-// Said when the repository's own config declares a hook, or can't be read.
-export const configHookLine = (keys) => `git's config in this repository declares a hook (${keys.join(', ')}), which setup never runs, so it stopped: remove it from the repository's .git/config, then a fresh Go ahead tries again`;
-export const CONFIG_UNREAD = 'git\'s config in this repository could not be read, so setup did not run git there: a fresh Go ahead tries again';
+// Said when the repository's own config holds a setting that would run a program or send elsewhere,
+// or can't be read.
+export const commandSettingLine = (keys) => `git's settings in this folder's repository would run a program or send elsewhere (${keys.join(', ')}), so setup can't go on here with your sign-in: remove ${keys.length === 1 ? 'that setting' : 'those settings'} from the repository's .git/config, then a fresh Go ahead tries again`;
+export const CONFIG_UNREAD = 'git\'s settings in this folder\'s repository could not be read, so setup did not run git there: a fresh Go ahead tries again';
 
-// Refuses, naming them, when the config git would read in `cwd` (the repository's own, and what
-// it includes) declares any hook.*. Nothing found, or no repository there, passes.
-export async function refuseConfigHooks({ run = realRun, gitPath = 'git', env = {}, cwd }) {
+// Refuses, naming them, when the config git would read in `cwd` (the repository's own, what it
+// includes and its worktree config: the global and system config are shut out, and the call's own
+// settings are left off for the look) holds any setting that would run a program or send elsewhere.
+// Nothing found, or no repository there, passes.
+export async function refuseCommandSettings({ run = realRun, gitPath = 'git', cwd }) {
+  const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE };
   let got;
   try {
-    got = await run(gitPath, ['config', '--includes', '--name-only', '--get-regexp', '^hook\\.'], { cwd, env: isolated(env), baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
+    got = await run(gitPath, ['config', '--includes', '--name-only', '--list', '-z'], { cwd, env, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   } catch {
     throw new Error(CONFIG_UNREAD);
   }
-  if (got.code === 1) return;
-  const keys = String(got.stdout ?? '').split(/\r?\n/).map((k) => k.trim()).filter(Boolean);
-  if (got.code === 0 && keys.length === 0) return;
-  if (got.code === 0) throw new Error(configHookLine([...new Set(keys)]));
-  throw new Error(CONFIG_UNREAD);
+  if (got.code !== 0) throw new Error(CONFIG_UNREAD);
+  const keys = [...new Set(String(got.stdout ?? '').split('\0').map((k) => k.trim()).filter(runsOrSends))];
+  if (keys.length > 0) throw new Error(commandSettingLine(keys));
 }
 
-// git for setup in `cwd` (or none): `git(args, options)` gives run's answer, after refusing a hook
-// the repository's config declares; every call isolated as above.
+// git for setup in `cwd` (or none): `git(args, options)` gives run's answer, after refusing a
+// setting of the repository's that would run a program or send elsewhere; every call isolated as above.
 export function setupGit({ run = realRun, gitPath = 'git', env = {}, cwd, timeoutMs = GIT_WAIT_MS } = {}) {
   const fenced = isolated(env);
   return async (args, options = {}) => {
-    await refuseConfigHooks({ run, gitPath, env: fenced, cwd });
+    await refuseCommandSettings({ run, gitPath, cwd });
     return run(gitPath, args, { cwd, env: fenced, baseEnv: withoutGitVars(), timeoutMs, ...options });
   };
 }

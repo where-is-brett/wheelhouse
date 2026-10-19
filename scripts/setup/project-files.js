@@ -94,7 +94,7 @@ import { protectionStatus as realProtectionStatus } from '../host/protection.js'
 import { projectPath } from '../host/gitlab-key.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
-import { isolated, refuseConfigHooks } from './git.js';
+import { isolated, refuseCommandSettings } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA } from './questions.js';
 import { newId, readJournal } from './journal.js';
@@ -389,11 +389,11 @@ export async function commitAuthor({ host, run = realRun }) {
 // shut out, hooks pointed at the null file, and a hook the folder's own config declares refused
 // before every call (ruling R109, scripts/setup/git.js): `out(args)` its trimmed output or null,
 // `raw(args)` its output as it is or null, `ok(args)` whether it went through, `must(args, doing)`
-// its output or a throw naming only what was being done. A declared hook throws, naming it.
+// its output or a throw naming only what was being done. A setting that would run a program throws, naming it.
 function gitIn({ run, gitPath, host, platform, folder }) {
   const env = directorGitEnv({ host, gitPath, platform });
   const call = async (args) => {
-    await refuseConfigHooks({ run, gitPath, env, cwd: folder });
+    await refuseCommandSettings({ run, gitPath, cwd: folder });
     return quietly(run, gitPath, args, { cwd: folder, env: isolated(env), baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   };
   return {

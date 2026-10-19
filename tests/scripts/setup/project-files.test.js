@@ -486,7 +486,7 @@ test('Claude Code\'s rewrite of the settings during the installs is put back key
   });
 });
 
-test('a hook declared in the project folder\'s git config stops step 7, named, before setup\'s git runs with the director\'s sign-in (ruling R109)', async () => {
+test('a hook declared in the project folder\'s git config stops step 7, named, before setup\'s git runs with the director\'s sign-in (rulings R109, R110)', async () => {
   await withHome(async () => {
     const w = await world();
     const planned = await w.plan();
@@ -495,7 +495,7 @@ test('a hook declared in the project folder\'s git config stops step 7, named, b
     await g(w.folder, 'config', 'hook.planted.command', `echo ran >> "${mark}"`);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, false);
-    assert.match(done.reason, /declares a hook \(hook\.planted\.event, hook\.planted\.command\)/);
+    assert.match(done.reason, /would run a program or send elsewhere \(hook\.planted\.event, hook\.planted\.command\)/);
     assert.equal(fs.existsSync(mark), false);
     assert.equal(await g(w.bare, 'rev-list', '--count', 'main'), '1', 'nothing pushed');
     // Every git call setup made ran with the global and system config shut out and hooks off.
@@ -503,9 +503,26 @@ test('a hook declared in the project folder\'s git config stops step 7, named, b
     for (const c of w.gitCalls) {
       assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1');
       assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null');
+      // The look at the repository's own settings runs without the call's settings, to see only the repository's.
+      if (c.args.join(' ') === 'config --includes --name-only --list -z') continue;
       const pairs = Array.from({ length: Number(c.env.GIT_CONFIG_COUNT) }, (_, i) => `${c.env[`GIT_CONFIG_KEY_${i}`]}=${c.env[`GIT_CONFIG_VALUE_${i}`]}`);
       assert.ok(pairs.includes('core.hooksPath=/dev/null') && pairs.includes('core.fsmonitor=false'), pairs.join(' '));
     }
+  });
+});
+
+test('a clean filter in the project folder\'s git config stops step 7, named, before setup\'s commit adds anything (ruling R110)', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    const mark = path.join(w.user, 'filter-ran');
+    fs.writeFileSync(path.join(w.folder, '.git', 'info', 'attributes'), '* filter=planted\n');
+    await g(w.folder, 'config', 'filter.planted.clean', `sh -c 'echo ran >> "${mark}"; cat'`);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, false);
+    assert.match(done.reason, /would run a program or send elsewhere \(filter\.planted\.clean\)/);
+    assert.equal(fs.existsSync(mark), false);
+    assert.equal(await g(w.bare, 'rev-list', '--count', 'main'), '1', 'nothing pushed');
   });
 });
 

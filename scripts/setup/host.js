@@ -107,7 +107,7 @@ import {
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
 import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
-import { setupGit, setupGitEnv, refuseConfigHooks } from './git.js';
+import { setupGit, setupGitEnv, refuseCommandSettings } from './git.js';
 
 // The Wheelhouse organisation's GitHub App: null fields until the organisation is made and the app
 // registered (Card 1).
@@ -623,9 +623,10 @@ function outsideAny() {
 }
 
 // Refuses, as every setup git call does, when a clone of Wheelhouse's own that git is about to run
-// in (scripts/state/, scripts/profile/) declares a hook in its config (ruling R109).
-async function refuseHooksIn({ dir, run, gitPath, env }) {
-  if (fs.existsSync(path.join(dir, '.git'))) await refuseConfigHooks({ run, gitPath, env, cwd: dir });
+// in (scripts/state/, scripts/profile/) holds a setting that would run a program or send
+// elsewhere (rulings R109, R110).
+async function refuseSettingsIn({ dir, run, gitPath }) {
+  if (fs.existsSync(path.join(dir, '.git'))) await refuseCommandSettings({ run, gitPath, cwd: dir });
 }
 
 // A repository on the host as the director's sign-in sees it: { repo, id, defaultBranch }, or null
@@ -901,7 +902,7 @@ export async function makeRepos({
   }
   if (!profileCloneWhole()) {
     keep({ id: newId('chg'), kind: 'folder', target: profileDir(), before: fs.existsSync(profileDir()) ? {} : null, after: { clone: profile.remoteUrl, branch: PROFILE_BRANCH } });
-    await refuseHooksIn({ dir: profileDir(), run, gitPath, env });
+    await refuseSettingsIn({ dir: profileDir(), run, gitPath });
     await ensureProfileClone({ remote: profile, env });
   }
   return made;
@@ -1430,7 +1431,7 @@ export function hostStep({
       const remoteUrl = hostUrl({ host, repo: project.repo });
       const cloneRecords = async () => {
         record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { clone: remoteUrl, branch: STATE_BRANCH } });
-        await refuseHooksIn({ dir: stateDir(slug), run, gitPath: git.path, env: gitEnv });
+        await refuseSettingsIn({ dir: stateDir(slug), run, gitPath: git.path });
         await cloneState({ project: slug, remoteUrl, env: gitEnv });
       };
       // A joining computer clones the project's state before anything is connected or registered,

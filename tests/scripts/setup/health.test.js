@@ -324,7 +324,7 @@ test('a git command that fails names its subcommand, never a setting\'s value', 
   });
 });
 
-test('step 10\'s git shuts out git\'s global and system config, with hooks off, and looks for a declared hook before each call (ruling R109)', async () => {
+test('step 10\'s git shuts out git\'s global and system config, with hooks off, and looks for a setting that would run a program before each call (rulings R109, R110)', async () => {
   await withProject(async ({ folder }) => {
     const { remote } = await productOnRemote(folder);
     const { adapter } = standIn(remote);
@@ -337,13 +337,15 @@ test('step 10\'s git shuts out git\'s global and system config, with hooks off, 
     const step = stepWith(adapter, merges(REFUSED).client, { run });
     const { ctx } = ctxFor(folder, remote);
     await step.apply(ctx, (await step.plan({ folder })).changes).catch(() => {});
-    const CHECK = 'config --includes --name-only --get-regexp ^hook\\.';
+    const CHECK = 'config --includes --name-only --list -z';
     const own = gits.filter((c) => c.args.join(' ') !== CHECK);
     assert.ok(own.some((c) => c.args.includes('commit-tree')));
-    assert.equal(gits.length, own.length * 2, 'each call after a look for a declared hook');
+    assert.equal(gits.length, own.length * 2, 'each call after a look at the repository\'s settings');
     for (const c of gits) {
       assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1');
       assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    }
+    for (const c of own) {
       const pairs = Array.from({ length: Number(c.env.GIT_CONFIG_COUNT) }, (_, i) => `${c.env[`GIT_CONFIG_KEY_${i}`]}=${c.env[`GIT_CONFIG_VALUE_${i}`]}`);
       assert.ok(pairs.includes('core.hooksPath=/dev/null') && pairs.includes('core.fsmonitor=false'), pairs.join(' '));
     }

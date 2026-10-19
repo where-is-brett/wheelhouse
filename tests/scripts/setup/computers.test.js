@@ -384,8 +384,9 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       // Every call in a scratch repository of setup's own, with no hooks and no file-system monitor,
       // never in the helper's profile clone; the scratch is gone afterwards.
       const scratch = path.join(wheelhouseHome(), 'setup');
-      // Each of its own calls comes after a look for a hook declared in the scratch's config (R109).
-      const CHECK = ['config', '--includes', '--name-only', '--get-regexp', '^hook\\.'];
+      // Each of its own calls comes after a look for a setting in the scratch's config that would run
+      // a program or send elsewhere (rulings R109, R110).
+      const CHECK = ['config', '--includes', '--name-only', '--list', '-z'];
       const calls = git.calls.filter((c) => c.args.join(' ') !== CHECK.join(' '));
       assert.equal(git.calls.length, calls.length * 2);
       git.calls.forEach((c, i) => { if (i % 2 === 0) assert.deepEqual(c.args, CHECK); });
@@ -394,6 +395,8 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       for (const c of git.calls) {
         assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1');
         assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null');
+      }
+      for (const c of calls) {
         const pairs = Array.from({ length: Number(c.env.GIT_CONFIG_COUNT) }, (_, i) => `${c.env[`GIT_CONFIG_KEY_${i}`]}=${c.env[`GIT_CONFIG_VALUE_${i}`]}`);
         assert.ok(pairs.includes('core.hooksPath=/dev/null') && pairs.includes('core.fsmonitor=false'), pairs.join(' '));
       }
