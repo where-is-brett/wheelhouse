@@ -279,3 +279,9 @@ test('the playbook records the private note\'s figures only by the baseline comm
     assert.ok(playbook.includes(words), words);
   }
 });
+
+test('under a courier\'s wake with no AskUserQuestion, the cards are said to be on the board, not put in the reply (merge review of 63d5ceb)', () => {
+  const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
+  assert.ok(courier, 'the courier\'s rule');
+  assert.match(courier, /When `AskUserQuestion` can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the board\./);
+});
