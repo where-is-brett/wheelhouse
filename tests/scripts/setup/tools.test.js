@@ -359,8 +359,8 @@ test('with everything here, the list is only the allow rule, written by key besi
     markStep(run.id, 2, 'clickedAt', { now: () => NOW });
     assert.deepEqual(await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id }) }), { ok: true });
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)', SETUP_RULE] }, theirs: 1 });
-    // Planned again, nothing is left to change.
-    assert.deepEqual((await step.plan(ctxFor(folder))).changes, []);
+    // Planned again, nothing is left to change, so the step settles with no Go ahead (ruling R75).
+    assert.deepEqual(await step.plan(ctxFor(folder)), { settled: { record: { nothing: true } } });
     const [change] = findRun(folder).changes;
     assert.deepEqual(reverseChange(change), { put: true });
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)'] }, theirs: 1 });

@@ -24,6 +24,10 @@
 //    `answer` change, however long ago Ready was; the board's health reads it
 //    (scripts/lib/setup-run.js, phonePushResult) and, when it didn't arrive, says so with what to do.
 //
+// Phone notifications belong to the computer: when an earlier run on it recorded that the test push
+// arrived (phonePushResult), the step settles at once with { pushArrived: true, from: <that run> },
+// asking nothing and sending no push (ruling R75). One that didn't arrive asks again, as above.
+//
 // A Ready older than PUSH_TEST_WAIT_MS + CLICK_FRESH_MS, with card B unanswered, is a setup that
 // stopped during the wait and resumed later, so no push may have been sent: it asks card A again
 // (ruling R66), never card B, so a push never sent is never recorded as not arrived. The card asked
@@ -31,7 +35,7 @@
 // then the newest answer under that id, so the wait starts again from it.
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../lib/setup-numbers.js';
-import { PUSH_TEST_STEP } from '../lib/setup-run.js';
+import { PUSH_TEST_STEP, phonePushResult } from '../lib/setup-run.js';
 
 export const READY_ID = 'phone-ready';
 export const ARRIVED_ID = 'push-arrived';
@@ -103,7 +107,8 @@ export function pushTestResult(label) {
   throw new Error(`The push test's answer must be ${ARRIVED.yes} or ${ARRIVED.no}`);
 }
 
-export function notifyStep() {
+// Step 9. `pushResult` reads what this computer's journal last recorded of the test push (for tests).
+export function notifyStep({ pushResult = () => phonePushResult() } = {}) {
   return {
     n: PUSH_TEST_STEP,
     title: SETUP_TITLES[PUSH_TEST_STEP],
@@ -113,6 +118,9 @@ export function notifyStep() {
       // An answer to card B settles, however old the Ready before it (ruling R66).
       const arrived = answers[`${PUSH_TEST_STEP}.${ARRIVED_ID}`];
       if (arrived) return { settled: { record: pushTestResult(arrived.label) } };
+      // The push already reached the phone in an earlier run on this computer (ruling R75).
+      const earlier = pushResult();
+      if (earlier?.arrived === true && earlier.run !== ctx.runId) return { settled: { record: { pushArrived: true, from: earlier.run } } };
       const ready = answers[`${PUSH_TEST_STEP}.${READY_ID}`];
       if (ready?.label !== READY.ready) return { ask: readyAsk() };
       // From the Ready answer's own time; one that reads as later than now waits the whole time.

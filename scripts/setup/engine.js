@@ -24,6 +24,12 @@
 // which are asked while those are unfinished: step 3's while step 2's installers run, and its Go
 // ahead is shown once they have finished.
 //
+// A run has its own list of steps (scripts/lib/setup-run.js, stepsFor; ruling R74): every step, or
+// for a computer joining a project set up on another, steps 1, 2, 3, 6, 7, 8 and 9. A step not on
+// the run's list is neither planned nor applied, status names only the run's steps, a step waiting
+// for one the run doesn't have goes ahead, and a run without the health check is finished once its
+// own steps are done, with no green mark and no ending (/setup/health refuses it).
+//
 // A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
 // list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules?, writes? } }`: a question it
 // needs answered first, composed as a `question` card (no set line, no reply code), or, for a card
@@ -77,7 +83,7 @@ import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as jou
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
-import { stepDone, healthGreen, HEALTH_STEP, SETUP_STEPS } from '../lib/setup-run.js';
+import { stepDone, healthGreen, stepsFor, onRunList, HEALTH_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -200,8 +206,16 @@ export async function loadSteps(modulePath) {
 
 const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
 // Done: finished, and for the health check, its board green as well (ruling R67), so a red board
-// leaves step 10 to be run again by a fresh card.
+// leaves step 10 to be run again by a fresh card. A step the run doesn't have reads as done
+// (ruling R74), so a step waiting for it (`after`) counts only the steps on the run's list.
 const isDone = (run, n) => stepDone(run, n);
+
+// Why a step the run doesn't have is neither planned nor applied (ruling R74): a computer joining
+// a project set up on another has only some of the steps.
+export const notOnList = (run, n) => `${title(n)} is not one of this run's steps: a computer joining a project set up on another runs only steps ${stepsFor(run).map((s) => s.n).join(', ')}`;
+
+// The steps given that the run has, in their order (ruling R74).
+const runSteps = (run, steps) => steps.filter((s) => onRunList(run, s.n));
 
 // Running: clicked, not done, not failed, and not past the time a step may take.
 function runningSince(entry, now) {
@@ -350,8 +364,9 @@ export function setupRoutes({
   // The first step this one waits for that is not done, or null; those in `during` pass over.
   const unfinishedBefore = (run, step, during = []) => stepsBefore(step).find((m) => !during.includes(m) && !isDone(run, m)) ?? null;
 
-  // A step's ctx: with every answer the director has given to its run's questions (ruling R31).
-  const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform, answers: answersFor(runId) });
+  // A step's ctx: with every answer the director has given to its run's questions (ruling R31),
+  // and when the run started (step 1 reads the session's first message from then, ruling R76).
+  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, answers: answersFor(runId) });
 
   // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling.
   async function planned(step, ctx) {
@@ -386,7 +401,9 @@ export function setupRoutes({
   }
 
   // A step done or running is not planned again: its card's shown time and record stay as they are.
+  // Nor is a step the run doesn't have (ruling R74).
   const showable = (run, n) => {
+    if (!onRunList(run, n)) refuse(notOnList(run, n));
     if (isDone(run, n)) refuse(`${title(n)} is already done`);
     if (runningIn(run, n)) refuse(`${title(n)} is already running`);
   };
@@ -400,7 +417,9 @@ export function setupRoutes({
     const step = await stepOf(body.step);
     let run = runFor(folder, userHome);
     showable(run, step.n);
-    const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
+    // A run started by this plan starts when the plan does, so the step reads the time its run has.
+    const startedAt = run?.startedAt ?? now().toISOString();
+    const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id, startedAt));
     if (got.wait !== undefined) return { ok: true, wait: got.wait, why: got.why };
     // Nothing is asked, settled or shown for a Go ahead while a step it waits for is unfinished
     // (rulings R54, R70): apply would refuse the Go ahead, and the click would go stale; a settling
@@ -424,7 +443,7 @@ export function setupRoutes({
     if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.
     if (run) showable(runById(run.id), step.n);
-    run ??= startRun({ folder, now });
+    run ??= startRun({ folder, now: () => new Date(startedAt) });
     if (got.ask) {
       noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, found: got.ask.found, now });
       return { ok: true, ask: { step: step.n, id: got.ask.id, card } };
@@ -451,6 +470,7 @@ export function setupRoutes({
     const run = runFor(folder, userHome);
     if (run === null) refuse('this step\'s card has not been shown: ask for its plan first');
     const startable = (current) => {
+      if (!onRunList(current, step.n)) refuse(notOnList(current, step.n));
       if (isDone(current, step.n)) refuse(`${title(step.n)} is already done`);
       if (runningIn(current, step.n)) refuse(`${title(step.n)} is already running`);
     };
@@ -461,7 +481,7 @@ export function setupRoutes({
     if (before !== null) refuse(waitingOn(run, before));
     // The list as it is now, worked out by the helper: the request's hash must name it, and the
     // card this folder was shown for the step must have shown it.
-    const ctx = ctxFor(run.folder, step.n, run.id);
+    const ctx = ctxFor(run.folder, step.n, run.id, run.startedAt);
     const fresh = await planned(step, ctx);
     // A step that now asks, waits or settles has no list for a Go ahead to name.
     if (!fresh.changes) refuse(CHANGED);
@@ -524,7 +544,8 @@ export function setupRoutes({
   async function status(body) {
     const folder = admitFolder(body.folder, { userHome });
     const run = runFor(folder, userHome);
-    const all = await steps();
+    // Only the steps the run has (ruling R74).
+    const all = runSteps(run, await steps());
     const running = (n) => runningIn(run, n);
     if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running) };
     return { ok: true, ...statusLines(run, all, running) };
@@ -555,6 +576,8 @@ export function setupRoutes({
     }
     const found = runFor(folder, userHome);
     if (found === null) refuse('setup has not started in this folder');
+    // A joining computer has no health check (ruling R74): nothing here marks it green or ends it.
+    if (!onRunList(found, HEALTH_STEP)) refuse(notOnList(found, HEALTH_STEP));
     const before = healthQueue.get(found.id) ?? Promise.resolve();
     const turn = before.catch(() => {}).then(async () => {
       const read = (run) => health({ folder: run.folder, run, reported: lines, now });
@@ -562,7 +585,7 @@ export function setupRoutes({
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));
       removeTrialLeftover(run.folder);
-      const before = SETUP_STEPS.find((s) => s.n !== HEALTH_STEP && !stepDone(run, s.n));
+      const before = stepsFor(run).find((s) => s.n !== HEALTH_STEP && !stepDone(run, s.n));
       if (before !== undefined) {
         const got = await read(run);
         return {

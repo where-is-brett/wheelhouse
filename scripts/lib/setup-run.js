@@ -73,15 +73,45 @@ export function healthGreen(run) {
     .some((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string');
 }
 
-// Whether step n of a run is done: finished, and for the health check, green as well.
+// The step whose `answer` change says this computer is joining a project already set up on
+// another, and the steps such a run has (design section 15, ruling R74): no rules found or three
+// questions, which the project already holds, and no health check, so no green mark and no ending.
+export const JOIN_STEP = 3;
+export const JOINING_STEPS = Object.freeze(SETUP_STEPS.filter((s) => [1, 2, 3, 6, 7, 8, 9].includes(s.n)));
+
+// The project's repository a run joins, '<owner/name>', as step 3 recorded it (its `answer` change
+// { joined }); null for a run setting up a project of its own.
+export function joinedRepo(run) {
+  const joined = (Array.isArray(run?.changes) ? run.changes : [])
+    .filter((c) => c?.step === JOIN_STEP && c.kind === 'answer' && typeof c.after?.joined === 'string' && c.after.joined !== '').at(-1);
+  return joined ? joined.after.joined : null;
+}
+
+// The steps a run has (ruling R74): every step, or for a computer joining a project, JOINING_STEPS.
+// A folder with no run yet has every step.
+export function stepsFor(run) {
+  return joinedRepo(run) === null ? SETUP_STEPS : JOINING_STEPS;
+}
+
+// Whether step n is one the run has.
+export function onRunList(run, n) {
+  return stepsFor(run).some((s) => s.n === n);
+}
+
+// Whether step n of a run is done: finished, and for the health check, green as well. A step the
+// run doesn't have (stepsFor) is never one it waits for, so it reads as done: a joining computer is
+// finished once its own steps are, and a step waiting for one it doesn't have goes ahead.
 export function stepDone(run, n) {
+  if (!onRunList(run, n)) return true;
   return typeof run?.steps?.[n]?.doneAt === 'string' && (n !== HEALTH_STEP || healthGreen(run));
 }
 
-// The lowest step of a run not yet done, or null when every step is; 1 when there is no run.
+// The lowest of the run's steps not yet done, or null when every step is; 1 when there is no run.
+// `steps` narrows the steps looked at; a step not on the run's own list is never unfinished.
 // A step that ran after it (a long step's next cards are asked while it runs) doesn't count.
-// Setup is finished only once the health check's board has been green (ruling R67).
-export function firstUnfinished(run, steps = SETUP_STEPS) {
+// Setup of a project of its own is finished only once the health check's board has been green
+// (ruling R67); a joining computer's once its own steps are done (R74).
+export function firstUnfinished(run, steps = stepsFor(run)) {
   return steps.map((s) => s.n).sort((a, b) => a - b).find((n) => !stepDone(run, n)) ?? null;
 }
 
@@ -89,9 +119,10 @@ export function firstUnfinished(run, steps = SETUP_STEPS) {
 export const PUSH_TEST_STEP = 9;
 
 // Whether the test push reached the director's phone, as this computer's journal last recorded it:
-// { arrived, at } from the run whose step 9 settled last on the director's answer (its `answer`
-// change, { pushArrived }), `at` when it settled; null when no run's step 9 has. Phone
-// notifications belong to the computer, so any project's run counts. The board's health reads it.
+// { arrived, at, run } from the run whose step 9 settled last on the director's answer, or on an
+// earlier run's (its `answer` change, { pushArrived }), `at` when it settled and `run` its id; null
+// when no run's step 9 has. Phone notifications belong to the computer, so any project's run
+// counts. The board's health reads it, and a later run's step 9 settles on an arrival (R75).
 export function phonePushResult(journal = readJournal()) {
   let found = null;
   for (const run of Array.isArray(journal?.runs) ? journal.runs : []) {
@@ -99,7 +130,7 @@ export function phonePushResult(journal = readJournal()) {
     if (typeof at !== 'string' || Number.isNaN(Date.parse(at))) continue;
     const answer = (Array.isArray(run.changes) ? run.changes : [])
       .filter((c) => c?.step === PUSH_TEST_STEP && c.kind === 'answer' && typeof c.after?.pushArrived === 'boolean').at(-1);
-    if (answer && (found === null || Date.parse(at) > Date.parse(found.at))) found = { arrived: answer.after.pushArrived, at };
+    if (answer && (found === null || Date.parse(at) > Date.parse(found.at))) found = { arrived: answer.after.pushArrived, at, run: run.id };
   }
   return found;
 }

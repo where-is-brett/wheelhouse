@@ -16,7 +16,9 @@
 // - phone notifications (`agentPushNotifEnabled: true`, check 4).
 // It also names, without changing it, this computer's signing key (made when setup started, Task
 // 6), and each of the director's own settings that weakens Standard (`weakening`), so the director
-// decides; a later card can switch one off.
+// decides; a later card can switch one off. With every setting already as Wheelhouse needs (a
+// computer set up for another project), the step settles with nothing to do, with no Go ahead
+// (ruling R75).
 //
 // Step 8 installs Locked (scripts/protection/locked.js), with the system's own password prompt,
 // only when the director chose Locked (step 3's answer, ruling R37), only on a Mac, and only once
@@ -227,6 +229,8 @@ export function computerStep({ run = realRun, env = process.env, route = TELEMET
     title: SETUP_TITLES[6],
     async plan(ctx) {
       const { platform, userSettings, floor, kept, changes } = await world(ctx);
+      // Every setting already as Wheelhouse needs settles the step, with no Go ahead (ruling R75).
+      if (changes.length === 0) return { settled: { record: { nothing: true } } };
       const card = computerCard({ changes, userSettings, kept, route, platform, floor });
       const restart = changes.some((c) => c.kind === 'env');
       return { changes, card, director: restart ? 'One click, then quit and reopen Claude Desktop' : 'One click' };

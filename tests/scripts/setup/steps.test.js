@@ -39,27 +39,6 @@ test('the ten steps are numbered 1 to 10 in the design\'s order, with its titles
   }
 });
 
-test('until its task fills it, each step lists no changes and its card composes with the setup line', async () => {
-  // Step 2, the tools, is filled (tests/scripts/setup/tools.test.js), step 3, the host
-  // (tests/scripts/setup/host.test.js), and steps 4 and 5, the questions and the rules found
-  // (tests/scripts/setup/questions.test.js, rules.test.js), and steps 6 and 8, the changes to this
-  // computer and Locked (tests/scripts/setup/computer.test.js), step 7, the project's files, pins and
-  // protection (tests/scripts/setup/project-files.test.js), step 9, phone notifications
-  // (tests/scripts/setup/notify.test.js), and step 10, the health check (tests/scripts/setup/health.test.js).
-  for (const step of STEPS.filter((s) => ![2, 3, 4, 5, 6, 7, 8, 9, 10].includes(s.n))) {
-    const ctx = { folder: '/tmp/x', step: step.n, now: () => NOW };
-    const planned = await step.plan(ctx);
-    assert.deepEqual(planned.changes, []);
-    assert.equal(typeof planned.director, 'string');
-    const hash = planHash(planned.changes);
-    const { question, card } = composeCard({ ...planned.card, target: { step: step.n, hash } });
-    assert.equal(setLineOf(question.question), setupLine(step.n, hash));
-    assert.equal(card.kind, 'setup');
-    assert.ok(question.question.includes(step.title), question.question);
-    assert.deepEqual(await step.apply(ctx, planned.changes), []);
-  }
-});
-
 test('a list\'s hash is the SHA-256 of its canonical JSON: key order does not change it, a value does', () => {
   const a = [{ kind: 'json-key', target: '/x/y.json', key: ['a'], after: 1 }];
   const b = [{ after: 1, key: ['a'], target: '/x/y.json', kind: 'json-key' }];

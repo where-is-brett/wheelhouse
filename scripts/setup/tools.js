@@ -23,7 +23,8 @@
 //
 // The step also writes one allow rule into the project's .claude/settings.local.json, by key, for
 // setup's own command (ruling R43), so the playbook's calls before step 7 are not asked about
-// each time.
+// each time. With everything here and the rule in, nothing is listed, and the step settles with
+// no Go ahead (ruling R75).
 //
 // pickArchive, archWord, versionOf and parseChecksums are copied from probes/38-host-tools/run.js
 // (ruling R47): a probe is frozen evidence, not a module the plugin loads.
@@ -490,6 +491,7 @@ function directorFor(changes, platform) {
   return 'One click';
 }
 
+// The card of a list with something on it: an empty list settles the step (ruling R75).
 function cardFor(changes, status, platform) {
   const lines = [];
   for (const c of changes.filter((x) => x.kind === 'process')) {
@@ -501,20 +503,18 @@ function cardFor(changes, status, platform) {
   }
   if (changes.some((c) => c.kind === 'json-key')) lines.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
-  const what = changes.length === 0
-    ? `Setup step 2, ${SETUP_TITLES[2]}: ${here.join(', ')} ${here.length === 1 ? 'is' : 'are'} already here, so nothing changes.`
-    : `Setup step 2, ${SETUP_TITLES[2]}: ${lines.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`;
+  const what = `Setup step 2, ${SETUP_TITLES[2]}: ${lines.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`;
   return {
     kind: 'setup',
     level: 3,
     what,
     why: 'Wheelhouse keeps the project on GitHub or GitLab through git and the host\'s own tool.',
     options: [
-      { label: SETUP_LABEL, says: changes.length === 0 ? 'Setup marks this step done and moves on.' : 'Setup starts what is listed and moves on to its questions while it runs.' },
+      { label: SETUP_LABEL, says: 'Setup starts what is listed and moves on to its questions while it runs.' },
       { label: 'Not now', says: 'Setup waits at this step; nothing is installed.' },
     ],
     recommend: SETUP_LABEL,
-    because: changes.length === 0 ? 'nothing changes' : 'each comes from its official source, and setup needs them for the next steps',
+    because: 'each comes from its official source, and setup needs them for the next steps',
     meanwhile: 'Setup waits at this step; nothing is installed.',
   };
 }
@@ -571,6 +571,8 @@ export function toolsStep({
         const allow = allowRules(file);
         if (!allow.includes(rule)) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, rule] });
       }
+      // Nothing to do settles the step, with no Go ahead (ruling R75).
+      if (changes.length === 0) return { settled: { record: { nothing: true } } };
       return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };
     },
     // Starts every installer at once, first, and fetches the host tools meanwhile; writes the rule

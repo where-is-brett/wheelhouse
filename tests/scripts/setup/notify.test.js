@@ -13,7 +13,7 @@ import { notifyStep, pushTestResult, READY, ARRIVED, READY_ID, ARRIVED_ID } from
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { answersFor } from '../../../scripts/setup/clicks.js';
-import { findRun, readJournal, startRun, markStep } from '../../../scripts/setup/journal.js';
+import { findRun, readJournal, startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { noteAsked } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
 import { makeEvent } from '../../../scripts/state/events.js';
@@ -229,11 +229,46 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       assert.deepEqual(changes.map((c) => [c.kind, c.target, c.before, c.after]), [['answer', 'step 9', null, pushTestResult(label)]]);
       assert.equal(fs.existsSync(path.join(home, 'setup', 'shown')), false, 'no Go-ahead card');
       // What the board reads from the journal.
-      assert.deepEqual(phonePushResult(), { arrived, at: run.steps[9].doneAt });
+      assert.deepEqual(phonePushResult(), { arrived, at: run.steps[9].doneAt, run: run.id });
       // Done: not planned again.
       await assert.rejects(planLater(), /already done/);
     });
   }
+});
+
+// Phone notifications belong to the computer (ruling R75): a push that arrived in an earlier run
+// settles step 9 at once; one that didn't asks again.
+test('step 9 settles at once when an earlier run on this computer recorded the push arrived, and asks when it didn\'t', async () => {
+  for (const arrived of [true, false]) {
+    await withProject(async ({ folder, user, home }) => {
+      const other = path.join(user, 'Projects', 'Earlier');
+      fs.mkdirSync(other, { recursive: true });
+      const earlier = startRun({ folder: other, now: () => T0 });
+      addChanges(earlier.id, [{ id: newId('chg'), step: 9, kind: 'answer', target: 'step 9', before: null, after: { pushArrived: arrived } }]);
+      markStep(earlier.id, 9, 'doneAt', { now: () => new Date(T0.getTime() - 60 * 60 * 1000) });
+      const run = readyFor9(folder);
+      const routes = setupRoutes({ now: () => T0, userHome: user });
+      const got = await routes['/setup/plan']({ folder, step: 9 });
+      if (!arrived) {
+        assert.equal(got.ask?.id, READY_ID, 'a push that didn\'t arrive is tested again');
+        return;
+      }
+      assert.deepEqual(got, { ok: true, done: true });
+      const mine = readJournal().runs.find((r) => r.id === run.id);
+      assert.deepEqual(mine.changes.filter((c) => c.step === 9).map((c) => [c.kind, c.after]), [['answer', { pushArrived: true, from: earlier.id }]]);
+      assert.equal(fs.existsSync(path.join(home, 'setup', 'asked')), false, 'nothing asked');
+      // The board reads this run's result now, still arrived.
+      assert.deepEqual(phonePushResult(), { arrived: true, at: mine.steps[9].doneAt, run: run.id });
+    });
+  }
+  // Directly: only another run's arrival counts, and this run's own answer comes first.
+  const result = { arrived: true, at: T0.toISOString(), run: 'run-0000000001' };
+  const step = notifyStep({ pushResult: () => result });
+  assert.deepEqual(await step.plan({ runId: 'run-0000000002', answers: {}, now: () => T0 }), { settled: { record: { pushArrived: true, from: 'run-0000000001' } } });
+  assert.equal((await step.plan({ runId: 'run-0000000001', answers: {}, now: () => T0 })).ask.id, READY_ID);
+  assert.equal((await notifyStep({ pushResult: () => null }).plan({ runId: 'run-0000000002', answers: {}, now: () => T0 })).ask.id, READY_ID);
+  const own = { [`9.${ARRIVED_ID}`]: { label: ARRIVED.no, text: null, at: T0.toISOString() } };
+  assert.deepEqual(await step.plan({ runId: 'run-0000000002', answers: own, now: () => T0 }), { settled: { record: { pushArrived: false } } });
 });
 
 test('the push test\'s result names whether it arrived, and only for one of the card\'s two answers', () => {
@@ -287,6 +322,6 @@ test('the board reads the latest settled push test of this computer\'s journal, 
       { id: 'c4', step: 9, kind: 'answer', target: 'step 9', before: null, after: {} },
     ] },
   ] };
-  assert.deepEqual(phonePushResult(journal), { arrived: true, at: '2026-10-20T05:00:00.000Z' });
+  assert.deepEqual(phonePushResult(journal), { arrived: true, at: '2026-10-20T05:00:00.000Z', run: 'r1' });
   assert.equal(phonePushResult({ v: 1, runs: [] }), null);
 });

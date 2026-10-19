@@ -64,7 +64,7 @@ export async function runStep([modulePath, folder, stepText, hash, runId, clicke
     const step = (await loadSteps(modulePath)).find((s) => s.n === n);
     if (!step) return fail(`there is no setup step ${n}`);
     if (stopState().on) return fail('STOP is on');
-    const ctx = { folder, step: n, runId, now, userHome, platform: process.platform, answers: answersFor(runId), stopped: () => stopState().on };
+    const ctx = { folder, step: n, runId, startedAt: run.startedAt, now, userHome, platform: process.platform, answers: answersFor(runId), stopped: () => stopState().on };
     const got = await step.plan(ctx);
     if (!Array.isArray(got?.changes) || planHash(got.changes) !== hash) return fail('the list changed before the step began, so nothing was changed');
     if (expired) return 1;

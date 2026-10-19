@@ -124,10 +124,8 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.ok(made.every((c) => c.kind === 'json-key' && c.target === file));
     assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'it only reads the launch environment');
     assert.ok(!fs.existsSync(path.join(home, 'setup', 'clicks')) || fs.readdirSync(path.join(home, 'setup', 'clicks')).length === 0);
-    // Planned again, nothing is left to change, and the card says so.
-    const again = await step.plan(ctx);
-    assert.deepEqual(again.changes, []);
-    assert.match(composed(again, 6), /already as Wheelhouse needs/i);
+    // Planned again, nothing is left to change, so the step settles with no Go ahead (ruling R75).
+    assert.deepEqual(await step.plan(ctx), { settled: { record: { nothing: true } } });
     // Uninstall puts every key back.
     for (const c of [...made].reverse()) assert.deepEqual(reverseChange(c), { put: true });
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), own);
