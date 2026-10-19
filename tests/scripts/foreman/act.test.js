@@ -12,6 +12,7 @@ import {
   main, FOREMAN_QUESTIONS, extraPlanId, unattendedCardData, unattendedCardFault,
 } from '../../../scripts/foreman/act.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
+import { briefingLine } from '../../../scripts/lineage/release.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
 import {
@@ -1276,6 +1277,41 @@ test('merge brings the pull request up to date, then merges it, or waits for CI 
 
   views.features.nopr = featureView('nopr', { step: 'building', worktree: worktree(checkout, 'nopr') });
   refusedInOneLine(await act(['merge', 'nopr'], { client: ok.client }));
+}));
+
+test('a merged pins-only release records its briefing line once, as the merge\'s words for users (F73)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12 } });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  const current = { ok: true, updated: false, head: 'c'.repeat(40) };
+  const merges = (writes) => writes.filter((w) => w.kind === 'merge').map((w) => w.data);
+  const line = briefingLine('v1.4.0');
+  const release = { ok: true, merged: true, sha: 'c'.repeat(40), guardrailPaths: ['.claude/settings.json'], criticalAreas: [], release: { kind: 'pins-only', ref: 'v1.4.0', sha: 'a'.repeat(40) }, briefing: line };
+
+  // Without a briefing line, a merge records nothing for the briefing.
+  const plain = fakeClient({ views, answers: { updateBranch: current } });
+  assert.equal((await act(['merge', 'mine'], { client: plain.client })).code, 0);
+  assert.deepEqual(merges(plain.writes), []);
+
+  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 12 }));
+  const first = fakeClient({ views, answers: { updateBranch: current, merge: release } });
+  const r = await act(['merge', 'mine'], { client: first.client });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^Merged pull request #12 for mine at cccccccccccc; its status reads [\w-]+\.\n$/);
+  assert.deepEqual(merges(first.writes), [{ pr: 12, commit: 'c'.repeat(40), forUsers: line }]);
+  everyWriteHandledFirst(first.writes);
+
+  // A retry after it merged finds the pull request merged, and records nothing more.
+  const retry = fakeClient({ views, answers: { prState: { ok: true, result: { state: 'merged' } } } });
+  assert.equal((await act(['merge', 'mine'], { client: retry.client })).code, 0);
+  assert.deepEqual(retry.writes, []);
+  // Nor does one the host answers with the line again: the record is found.
+  fs.writeFileSync(featurePaths(wt).pr, JSON.stringify({ pr: 12 }));
+  const again = fakeClient({ views, answers: { updateBranch: current, merge: release } });
+  assert.equal((await act(['merge', 'mine'], { client: again.client })).code, 0);
+  assert.deepEqual(merges(again.writes), []);
 }));
 
 test('a merge that waits only for the director\'s click records what it waits for, once, and asks nothing (R117)', () => withHome(async () => {

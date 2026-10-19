@@ -170,8 +170,9 @@ export async function checkRelease({ ref, sha, mirror, git, url = WHEELHOUSE_URL
   }
 }
 
-// The line the front desk adds to the briefing when a pins-only release merges.
-export const briefingLine = (ref) => `Wheelhouse ${ref} was merged with a review and without your approval: it only moves the pinned kits, and its checks passed.`;
+// The line the briefing shows when a pins-only release merges: the foreman records it from the
+// merge's answer (ruling F73).
+export { briefingLine } from '../lib/release-line.js';
 
 // --- The reinstall (check 30's route) ---
 

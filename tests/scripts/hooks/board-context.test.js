@@ -17,6 +17,7 @@ import { profileDir, profileViewsDir, sourcesDir, stateDir, wheelhouseHome } fro
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
+import { briefingLine } from '../../../scripts/lineage/release.js';
 import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { LEADS } from '../../../scripts/lib/mod-numbers.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
@@ -283,6 +284,25 @@ test('the board and the briefing come through the glossary', async () => {
     assert.match(sources, /The proposed change was combined into main/);
     // A setting's name is how the director finds it, so it is kept.
     assert.match(contextOf(await run(repo, '/wheelhouse:settings', NOW)), /\nReview round cap: 3 \(the default\)\n/);
+  });
+});
+
+test('a pins-only release\'s line is in what changed, word for word, once (F73)', async () => {
+  await withProject(async ({ repo }) => {
+    waitingOn('Nothing');
+    const line = briefingLine('v1.4.0');
+    const event = makeEvent({ kind: 'merge', data: { pr: 31, commit: 'c'.repeat(40), forUsers: line }, now: at('2026-10-19T09:00:00.000Z') });
+    put(path.join(stateDir(P), eventPath(event)), event);
+    const briefing = contextOf(await run(repo, 'Hello', NOW));
+    assert.ok(briefing.includes(`\nChanged for users:\n- ${line}\n`), briefing);
+    assert.doesNotMatch(briefing, /Terms:/);
+    // The board shows it as written too.
+    const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
+    assert.ok(board.includes(`- ${line} (19 October 2026)\n`), board);
+    // The next briefing starts from this one, so the line isn't said again.
+    const next = contextOf(await run(repo, 'Hello again', '2026-10-19T15:00:00.000Z'));
+    assert.ok(next.startsWith(`${HEADINGS.briefing}\n\n`), next);
+    assert.ok(!next.includes(line), next);
   });
 });
 

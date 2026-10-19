@@ -51,6 +51,7 @@ import { effectiveSettings, settingsText } from '../settings/effective.js';
 import { KNOWN, SETTINGS } from '../settings/catalogue.js';
 import { sourcesText } from '../sources/check.js';
 import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
+import { isBriefingLine } from '../lib/release-line.js';
 import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { existingCard } from '../cards/visit.js';
@@ -172,13 +173,19 @@ function titlesOf(model) {
   return [...out];
 }
 
+// The lines a release's merge gave for users (ruling F73), which stay as written.
+function releaseLinesOf(model) {
+  const changed = Array.isArray(model?.director?.changed) ? model.director.changed : [];
+  return changed.map((c) => c?.what).filter(isBriefingLine);
+}
+
 // The words every text it adds goes through: the starter glossary with the project's over it, the
 // explanations setting, the concepts the director knows, and what stays as written: the settings'
-// names and the titles of the work. What can't be read gives the defaults.
+// names, the titles of the work and a release's line. What can't be read gives the defaults.
 function wordsOf(project, settings, model) {
   const view = attempt(() => localViews(project, ['glossary'])?.glossary);
   return {
-    protect: [...LABELS, ...attempt(() => titlesOf(model), [])],
+    protect: [...LABELS, ...attempt(() => titlesOf(model), []), ...attempt(() => releaseLinesOf(model), [])],
     glossary: attempt(() => glossaryOf(isRecord(view) ? view : {}), attempt(() => glossaryOf({}), {})),
     explanations: settings?.explanations?.value,
     known: attempt(() => knownConcepts(settings), []),
