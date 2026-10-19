@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
-  directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, OWN_APP_LATER, OWN_APP_WAIT_MS, SIGN_UP,
+  directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED,
 } from '../../../scripts/setup/host.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
@@ -92,6 +92,12 @@ function standIn(state = {}) {
       const found = w.repos[repo];
       return found ? answer(JSON.stringify({ full_name: repo, id: found.id, default_branch: 'main' })) : answer('', 1, 'gh: Not Found (HTTP 404)');
     }
+    if (args[0] === 'api' && args[1].startsWith('apps/')) {
+      const app = w.apps?.[args[1].slice('apps/'.length)];
+      if (!app) return answer('', 1, 'gh: Not Found (HTTP 404)');
+      return answer(JSON.stringify({ slug: app.slug, client_id: app.clientId, owner: { login: app.owner, type: app.org ? 'Organization' : 'User' }, permissions: app.permissions }));
+    }
+    if (args[0] === 'api' && args[1].startsWith('user/memberships/orgs')) return answer(JSON.stringify(w.memberships ?? []));
     if (args[0] === 'repo' && args[1] === 'create') {
       await w.add(args[2], { readme: args.includes('--add-readme') });
       return answer(`https://github.com/${args[2]}\n`);
@@ -132,14 +138,19 @@ function standIn(state = {}) {
 
 // `reach` is the list of repositories the installation reaches; a test adds to it as the director
 // would tick one.
-function github({ installedAfter = 1, reach = [], onSignedIn = () => {} } = {}) {
+// `app` is the app installed; `flowOff` how many times GitHub first answers that its device flow is
+// switched off.
+function github({ installedAfter = 1, reach = [], onSignedIn = () => {}, app = { clientId: CLIENT_ID, slug: 'wheelhouse-test' }, flowOff = 0 } = {}) {
   const calls = [];
   let pending = 1;
   let installLooks = 0;
+  let codes = 0;
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   const fetch = async (url, init = {}) => {
     calls.push({ url, auth: init.headers?.Authorization ?? null });
     if (url === 'https://github.com/login/device/code') {
+      codes += 1;
+      if (codes <= flowOff) return reply(200, { error: 'device_flow_disabled' });
       return reply(200, { device_code: 'dev-1', user_code: 'WXYZ-1234', verification_uri: 'https://github.com/login/device', interval: 1, expires_in: 900 });
     }
     if (url === 'https://github.com/login/oauth/access_token') {
@@ -149,7 +160,7 @@ function github({ installedAfter = 1, reach = [], onSignedIn = () => {} } = {}) 
     }
     if (url.startsWith('https://api.github.com/user/installations?')) {
       installLooks += 1;
-      return reply(200, { installations: installLooks > installedAfter ? [{ id: 77, client_id: CLIENT_ID, app_slug: 'wheelhouse-test' }] : [{ id: 5, client_id: 'Iv1.someoneelse', app_slug: 'other' }] });
+      return reply(200, { installations: installLooks > installedAfter ? [{ id: 77, client_id: app.clientId, app_slug: app.slug }] : [{ id: 5, client_id: 'Iv1.someoneelse', app_slug: 'other' }] });
     }
     if (url.startsWith('https://api.github.com/user/installations/77/repositories')) {
       return reply(200, { repositories: reach.map((full_name) => ({ full_name })) });
@@ -276,13 +287,13 @@ test('the Wheelhouse app is not offered while it is not registered', async () =>
   assert.deepEqual(JSON.parse(fs.readFileSync(APP_FILE, 'utf8')), { clientId: null, slug: null, owner: null });
   assert.equal(wheelhouseApp(), null);
   assert.equal(wheelhouseAppOffered(), false);
-  assert.equal(appFor(), null, 'no app of their own is recorded before Task 8b, and Wheelhouse\'s is not registered');
+  assert.equal(appFor({ views: () => null }), null, 'no app of their own is recorded, and Wheelhouse\'s is not registered');
   assert.equal(narrowOffered('github'), true);
   assert.equal(narrowOffered('gitlab'), true);
   assert.deepEqual(connectionCard({ host: 'github', where: `${USER}/shop on GitHub` }).options.map((o) => o.label), [WAYS.own, WAYS.quick]);
   const registered = appFile(tempFolder('wh-app-'));
   assert.equal(wheelhouseAppOffered({ appFile: registered }), true);
-  assert.deepEqual(appFor({ appFile: registered }), { clientId: CLIENT_ID, slug: 'wheelhouse-test', owner: 'wheelhouse-org', own: false });
+  assert.deepEqual(appFor({ appFile: registered, views: () => null }), { clientId: CLIENT_ID, slug: 'wheelhouse-test', owner: 'wheelhouse-org', own: false });
 });
 
 test('on GitHub the card offers the Wheelhouse app, their own app and Quick, and a Locked project is never offered Quick', async () => {
@@ -321,17 +332,15 @@ test('a Locked project with only their own app on offer still gets the card', as
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
     const card = planned.asked.at(-1).card;
-    // Making their own app is Task 8b's: until then the step waits, saying why, and shows no Go
-    // ahead that apply could only refuse.
-    assert.equal(planned.changes, undefined);
-    assert.deepEqual([planned.wait, planned.why], [OWN_APP_WAIT_MS, OWN_APP_LATER]);
+    // Their own app is made at apply, from the card's Go ahead.
+    assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
     assert.deepEqual(card.options.map((o) => o.label), [WAYS.own], 'their own app, agreed to on the card, never by default');
     assert.match(card.what, /Quick is not offered/);
     const { question } = composeCard({ ...card, kind: 'question' });
     assert.deepEqual(question.options.map((o) => o.label), [WAYS.own, 'Explain more']);
     // A list naming no app is refused by apply too, before it makes anything.
     const list = [{ kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true }, { kind: 'file', target: 'x', action: 'project', repo: `${USER}/shop` }];
-    await assert.rejects(applyStep(step, folder, list, { answers: planned.answers }), { message: OWN_APP_LATER });
+    await assert.rejects(applyStep(step, folder, list, { answers: planned.answers }), { message: NO_APP_LISTED });
     assert.deepEqual(readJournal().runs.flatMap((r) => r.changes), []);
     assert.ok(!w.calls.some((c) => c.args?.[0] === 'auth' && c.args[1] === 'login'));
   });
@@ -442,7 +451,7 @@ test('the longest Go-ahead card composes within the card\'s length, for each hos
   await withHome(async () => {
     const folder = productFolder('A product whose folder has a very long name indeed, Zoë');
     const registered = appFile(tempFolder('wh-app-'));
-    for (const [host, way] of [[HOST_LABELS.github, WAYS.wheelhouse], [HOST_LABELS.github, WAYS.quick], [HOST_LABELS.gitlab, WAYS.narrow]]) {
+    for (const [host, way] of [[HOST_LABELS.github, WAYS.wheelhouse], [HOST_LABELS.github, WAYS.own], [HOST_LABELS.github, WAYS.quick], [HOST_LABELS.gitlab, WAYS.narrow]]) {
       const w = standIn({ signedIn: { github: false, gitlab: false } });
       const planned = await answerAll(stepFor(w, { appFile: registered }), ctxFor(folder), choose({ realUsers: REAL_USERS.yes, host, way }));
       const hash = planHash(planned.changes);
@@ -926,4 +935,151 @@ test('a new product\'s repository name never ends in a dash or a dot', () => {
   assert.equal(repoName(`/x/${'a'.repeat(48)}..b`), 'a'.repeat(48));
   assert.equal(repoName('/x/--Shop--'), 'Shop');
   assert.equal(repoName('/x/***'), 'product');
+});
+
+// ---- Their own GitHub App (Task 8b) ----
+
+const OWN = { clientId: 'Iv23li.ownapp0001', slug: 'wheelhouse-a-director', owner: USER };
+const MANIFEST_PERMISSIONS = { contents: 'write', pull_requests: 'write', issues: 'write', metadata: 'read' };
+
+// The profile as the helper's routes give it, in memory: `accept` stands for the director's Confirm.
+function memoryProfile(settings = {}) {
+  const writes = [];
+  const state = { settings: { ...settings }, unconfirmed: [] };
+  return {
+    writes,
+    write: async ({ kind, data }) => {
+      writes.push({ kind, data });
+      state.unconfirmed.push({ kind, id: `ev-${writes.length}`, key: data.key, data });
+      return { ok: true, id: `ev-${writes.length}`, pushed: true };
+    },
+    views: async () => structuredClone(state),
+  };
+}
+
+test('narrow on GitHub is always offered, through their own app when Wheelhouse\'s is not registered', async () => {
+  await withHome(async () => {
+    const folder = productFolder();
+    const w = standIn();
+    const step = stepFor(w);
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    assert.deepEqual(planned.asked.at(-1).card.options.map((o) => o.label), [WAYS.own, WAYS.quick]);
+    assert.equal(planned.asked.at(-1).card.recommend, WAYS.own, 'narrow is recommended for a product with real users');
+    // A Go ahead, not a wait: their own app is made on the director's account at apply.
+    assert.equal(planned.wait, undefined);
+    assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
+    assert.deepEqual(planned.changes.find((c) => c.action === 'connection').app, { own: true, account: USER, name: `Wheelhouse ${USER}` });
+    assert.match(planned.card.what, /your own GitHub App Wheelhouse a-director on a-director, filled in from Wheelhouse's: tick Enable Device Flow, click Create/);
+    assert.match(planned.director, /Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub/);
+    const hash = planHash(planned.changes);
+    composeCard({ ...planned.card, target: { step: 3, hash } });
+    // Not signed in yet: the account is named once the director is.
+    const out = standIn({ signedIn: { github: false, gitlab: false } });
+    const unnamed = await answerAll(stepFor(out), ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    assert.deepEqual(unnamed.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: null, name: null });
+    composeCard({ ...unnamed.card, target: { step: 3, hash: planHash(unnamed.changes) } });
+  });
+});
+
+test('their own app is made from the filled-in page, its device flow ticked, signed in, installed and recorded in the profile', async () => {
+  await withHome(async () => {
+    const w = standIn({ apps: {} });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const gh = github({ app: OWN, flowOff: 1, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
+    const opened = [];
+    // The director clicks Create on the filled-in page.
+    const open = async (url) => {
+      opened.push(url);
+      if (url.startsWith('https://github.com/settings/apps/new?')) w.apps[OWN.slug] = { ...OWN, permissions: MANIFEST_PERMISSIONS };
+    };
+    const profile = memoryProfile();
+    const step = stepFor(w, { fetch: gh.fetch, open, profileRoutes: profile, views: () => null });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    const { lines, run } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.match(lines[0], /GitHub's form for your app Wheelhouse a-director is filled in: tick Enable Device Flow, then click Create GitHub App/);
+    assert.match(lines[1], /^Tick Enable Device Flow on your app's page/);
+    assert.match(lines[2], /^Type WXYZ-1234 at https:\/\/github\.com\/login\/device/);
+    assert.match(lines[3], /tick a-director\/shop on GitHub and a-director\/wheelhouse-profile on GitHub/);
+    assert.match(new URL(opened[0]).searchParams.get('public'), /^false$/);
+    assert.deepEqual(opened.slice(1), [
+      'https://github.com/settings/apps/wheelhouse-a-director', 'https://github.com/login/device', 'https://github.com/apps/wheelhouse-a-director/installations/new',
+    ]);
+    assert.equal(readKey('github-app').clientId, OWN.clientId, 'the sign-in\'s keys are for their app');
+    assert.equal(readKey('github-app').installationId, 77);
+    // Recorded in the profile once connected, with its value before, for uninstall.
+    assert.deepEqual(profile.writes.map((x) => x.data.value), [OWN]);
+    const kept = run.changes.find((c) => c.target === 'profile own-github-app');
+    assert.deepEqual([kept.kind, kept.before, kept.after], ['host', null, OWN]);
+    assert.ok(run.changes.findIndex((c) => c.target === 'key github-app') < run.changes.indexOf(kept));
+    // Read back when it was found, and again before its code sign-in.
+    assert.ok(w.calls.filter((c) => c.args?.[1] === `apps/${OWN.slug}`).length >= 2);
+    assert.equal(profileRemote().connection.mode, 'narrow');
+  });
+});
+
+test('a second computer uses the app the profile records, and refuses its code sign-in once its permissions grew', async () => {
+  await withHome(async () => {
+    const w = standIn({ apps: { [OWN.slug]: { ...OWN, permissions: MANIFEST_PERMISSIONS } } });
+    await w.add(`${USER}/shop`);
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const confirmed = { settings: { 'own-github-app': { key: 'own-github-app', value: OWN } }, unconfirmed: [] };
+    const gh = github({ app: OWN, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
+    const profile = memoryProfile(confirmed.settings);
+    const step = stepFor(w, { fetch: gh.fetch, profileRoutes: profile, views: () => confirmed, appFile: appFile(tempFolder('wh-app-')) });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    assert.deepEqual(planned.changes.find((c) => c.action === 'connection').app, { ...OWN, own: true });
+    assert.ok(!planned.changes.some((c) => c.action === 'own-app'), 'nothing to make or record');
+    // Its owner widened it on GitHub since: the sign-in stops before any code, naming what grew.
+    w.apps[OWN.slug].permissions = { ...MANIFEST_PERMISSIONS, workflows: 'write', administration: 'read' };
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /asks for more than Wheelhouse's: Workflows \(write\), Administration \(read\)/);
+    assert.equal(gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length, 0);
+    assert.equal(readKey('github-app'), null);
+    // Set back: it signs in, and nothing more is recorded in the profile.
+    w.apps[OWN.slug].permissions = MANIFEST_PERMISSIONS;
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(readKey('github-app').clientId, OWN.clientId);
+    assert.deepEqual(profile.writes, []);
+    // An app the profile records for another account than the project's: the step waits, saying why.
+    const other = productFolder('app');
+    await withOrigin(other, 'https://github.com/acme/app.git');
+    await w.add('acme/app');
+    const elsewhere = await answerAll(step, ctxFor(other), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    assert.equal(elsewhere.changes, undefined);
+    assert.match(elsewhere.why, /Your own GitHub App, wheelhouse-a-director, belongs to a-director, .* so it can't reach acme\/app on GitHub/);
+  });
+});
+
+test('their own app on an organisation is made there only by an owner, and reaches the project but not the profile', async () => {
+  await withHome(async () => {
+    const acme = { clientId: 'Iv23li.acmeapp0001', slug: 'wheelhouse-acme', owner: 'acme', org: true, permissions: MANIFEST_PERMISSIONS };
+    const w = standIn({ apps: {}, memberships: [{ role: 'member', state: 'active', organization: { login: 'acme' } }] });
+    await w.add('acme/app');
+    const folder = productFolder('app');
+    await withOrigin(folder, 'https://github.com/acme/app.git');
+    const gh = github({ app: acme, reach: ['acme/app'] });
+    const opened = [];
+    const open = async (url) => {
+      opened.push(url);
+      if (url.startsWith('https://github.com/organizations/acme/settings/apps/new?')) w.apps[acme.slug] = acme;
+    };
+    const profile = memoryProfile();
+    const step = stepFor(w, { fetch: gh.fetch, open, profileRoutes: profile, views: () => null });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: 'acme', name: 'Wheelhouse acme' });
+    // A member, not an owner: refused before its page opens.
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /Only an owner of acme on GitHub can make a GitHub App there/);
+    assert.ok(!opened.some((u) => u.includes('/apps/new')));
+    // An owner: the organisation's page; the profile on their own account is reached Quick.
+    w.memberships = [{ role: 'admin', state: 'active', organization: { login: 'acme' } }];
+    const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.ok(opened.some((u) => u.startsWith('https://github.com/organizations/acme/settings/apps/new?')));
+    assert.match(lines.find((l) => l.includes('Install page')), /tick acme\/app on GitHub \(not All repositories\)/);
+    assert.equal(profileRemote().connection.mode, 'quick');
+    assert.deepEqual(readProject(slugFor('acme/app')).connection, { host: 'github', mode: 'narrow', project: 'acme/app' });
+    assert.deepEqual(profile.writes.map((x) => x.data.value), [{ clientId: acme.clientId, slug: acme.slug, owner: 'acme' }]);
+  });
 });
