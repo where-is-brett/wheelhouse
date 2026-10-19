@@ -3,9 +3,10 @@
 // when it is not answering, sends any records a hook kept, syncs the state,
 // starts the watcher when the project's shape is 1 and it isn't running
 // (ruling R62), checks the installed upstream skills against Wheelhouse's
-// manifest (holding edits and commands on a mismatch) and records the
-// session's provenance, and adds a short reload as context. The reload names things;
-// it never pastes whole files (design section 19.1, point 5).
+// manifest (holding edits and commands on a mismatch, and recording the hold
+// in the state once) and records the session's provenance, and adds a short
+// reload as context. The reload names things; it never pastes whole files
+// (design section 19.1, point 5).
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
 // five of them waiting for the helper to start, the rest for the records, the
@@ -17,7 +18,7 @@ import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText } from './kit.js';
-import { sendPending, withinBudget } from './pending.js';
+import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
@@ -27,7 +28,8 @@ import { startBackground } from '../lib/background.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
-import { checkLineage, warningLines, writeProvenance } from '../lineage/check.js';
+import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
+import { claudeCodeOf } from '../lineage/provenance.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -50,14 +52,8 @@ export const OLD_CLAUDE_CODE = `This Claude Code is older than ${CLAUDE_CODE_FLO
 // Claude Code's version as the newest transcript entry that carries one gives it, as three
 // numbers, or null when it is not known.
 export function claudeCodeVersion(transcriptPath) {
-  const entries = readTailEntries(transcriptPath) ?? [];
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const version = entries[i]?.version;
-    if (typeof version !== 'string') continue;
-    const m = /^(\d+)\.(\d+)\.(\d+)(?![0-9])/.exec(version);
-    return m ? m.slice(1, 4).map(Number) : null;
-  }
-  return null;
+  const version = claudeCodeOf(readTailEntries(transcriptPath) ?? []);
+  return version === null ? null : version.split('.').map(Number);
 }
 
 function olderThan(version, floor) {
@@ -219,20 +215,35 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
   return null;
 }
 
+// A hold just written becomes one plain lineage-hold event (ruling R146), for the front desk
+// to put to the director: a held session can't ask, and nothing else reads the hold file. Once
+// per mismatch set: while the same set stands, the hold file says it is recorded. It is kept
+// with the records a hook keeps, and sent with them below or at a later start. It informs, so
+// a failure is passed over, and the hold still stands.
+function recordHold(project, result, now) {
+  if (result.ok || result.kept !== true || result.recorded === true || typeof result.set !== 'string') return;
+  try {
+    keep(project, 'write', { project, kind: 'lineage-hold', data: holdEvent(now().toISOString(), result.mismatches) }, now);
+    markRecorded(project, result.set);
+  } catch { /* the hold stands without it */ }
+}
+
 // The lineage check (scripts/lineage/check.js) for the project's folder: writes the hold file on
-// a mismatch and removes it on a match, and records this session's provenance. Gives the
-// warning lines. It informs, so anything that goes wrong is passed over.
+// a mismatch and removes it on a match, records the hold in the state, and records this
+// session's provenance. Gives the warning lines. It informs, so anything that goes wrong is
+// passed over.
 function lineageCheck(found, input, version, { check, root, claudeHome, now }) {
   try {
     const folder = found.record?.folder ?? readProject(found.project)?.folder;
     const result = check({ project: found.project, projectDir: folder, root, claudeHome, now });
+    recordHold(found.project, result, now);
     try {
       writeProvenance({
         project: found.project, sessionId: input.session_id, root, upstreams: result.upstreams, ok: result.ok,
         claudeCode: version === null ? null : version.join('.'), transcript: input.transcript_path,
       });
     } catch { /* the session carries on without it */ }
-    return result.ok ? [] : warningLines(result.mismatches);
+    return result.ok ? [] : warningLines(result.mismatches, { kept: result.kept !== false });
   } catch {
     return [];
   }

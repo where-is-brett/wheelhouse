@@ -42,7 +42,8 @@ export function scriptArguments(command, pluginRoots, platform, script) {
   return pluginRoots.some((root) => fold(parts[1]) === fold(`${root}/${script}`)) ? parts.slice(2) : null;
 }
 
-function isRunbook(command, pluginRoots, platform) {
+// The runbook's one command with a step: `node <pluginRoot>/scripts/runbook/runbook.js <step> …`.
+export function isRunbook(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/runbook/runbook.js');
   return args !== null && args.length > 0;
 }

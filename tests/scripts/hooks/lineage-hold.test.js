@@ -6,9 +6,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { decide, HELD } from '../../../scripts/hooks/lineage-hold.js';
-import { READ_TOOLS } from '../../../scripts/hooks/stop-guard.js';
+import { HALT_TOOLS, READ_TOOLS } from '../../../scripts/hooks/stop-guard.js';
 import { hookMain, projectOf } from '../../../scripts/hooks/kit.js';
-import { holdFile, main as check } from '../../../scripts/lineage/check.js';
+import { MATCHED, checkLineage, holdFile, main as check } from '../../../scripts/lineage/check.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { lineageFixture } from '../../helpers/lineage.js';
@@ -46,18 +46,20 @@ const bash = (cwd, command) => call(cwd, 'Bash', { command });
 const deps = (home, extra = {}) => ({ dir: path.join(home, 'managed'), pluginRoot: PLUGIN, platform: 'linux', ...extra });
 const denied = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny' && out.hookSpecificOutput.permissionDecisionReason === HELD;
 
-test('while held, Edit, Write and Bash are refused and Read is not', async () => {
+test('while held, Edit, Write and Bash are refused, and reading and halting are not', async () => {
   await withHome(async (home) => {
     const main = makeProject();
     for (const tool of ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit', 'PowerShell', 'Agent', 'mcp__github__create_issue']) {
       assert.equal(await decide(call(main, tool), deps(home)), undefined, `${tool} before the hold`);
     }
     hold();
-    for (const tool of ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit', 'PowerShell', 'Agent', 'TaskStop', 'mcp__github__create_issue', 'Unknown']) {
+    for (const tool of ['Edit', 'Write', 'Bash', 'MultiEdit', 'NotebookEdit', 'PowerShell', 'Agent', 'mcp__github__create_issue', 'Unknown']) {
       assert.ok(denied(await decide(call(main, tool), deps(home))), tool);
     }
     assert.equal(HELD, 'Wheelhouse is holding edits and commands: the installed skills differ from its manifest');
     for (const tool of READ_TOOLS) assert.equal(await decide(call(main, tool), deps(home)), undefined, tool);
+    // As under STOP, work already running can still be halted.
+    for (const tool of HALT_TOOLS) assert.equal(await decide(call(main, tool), deps(home)), undefined, tool);
     // In a folder deeper in the project, and when a rewritten .git file hides the project.
     const deeper = path.join(main, 'src');
     fs.mkdirSync(deeper);
@@ -106,7 +108,7 @@ test('a folder with only .claude/wheelhouse.json and no registration is neither 
   });
 });
 
-test('the check command is let through, and clears the hold once the files match', async () => {
+test('the check command and the runbook are let through; the check only reads, and the next session start clears the hold once the files match', async () => {
   await withHome(async (home) => {
     const main = makeProject();
     hold();
@@ -118,6 +120,9 @@ test('the check command is let through, and clears the hold once the files match
       `node '${script}' '${main}'`,
       `node ${script} .`,
       `node\t${script}`,
+      // The runbook, as STOP lets it through: each step but STOP needs the director's click.
+      `node ${PLUGIN}/scripts/runbook/runbook.js 1`,
+      `node ${PLUGIN}/scripts/runbook/runbook.js 3 merge 12`,
     ]) assert.equal(await decide(bash(main, ok), deps(home)), undefined, ok);
     for (const no of [
       `node ${script} && rm -rf x`,
@@ -134,37 +139,50 @@ test('the check command is let through, and clears the hold once the files match
       `node ${script} ""`,
       'node /other/root/scripts/lineage/check.js',
       `node ${PLUGIN}/scripts/lineage/manifest.js write`,
-      `node ${PLUGIN}/scripts/runbook/runbook.js status`,
+      `node ${PLUGIN}/scripts/runbook/runbook.js`,
+      `node ${PLUGIN}/scripts/runbook/runbook.js 1 && rm -rf x`,
       `nodejs ${script}`,
       `sh -c "node ${script}"`,
     ]) assert.ok(denied(await decide(bash(main, no), deps(home))), no);
     // Only through Bash.
     assert.ok(denied(await decide(call(main, 'PowerShell', { command: `node ${script}` }), deps(home))));
 
-    // The check itself: a copy that still differs keeps the hold and says what differs.
+    // The check itself only reads (ruling R145): a copy that still differs says what differs,
+    // and the hold file is left as it is.
     const fixture = lineageFixture(main);
     fixture.put({ 'skills/brainstorming/SKILL.md': 'changed\n' });
     const lines = [];
     const write = (text) => lines.push(text);
+    const before = fs.readFileSync(holdFile(P), 'utf8');
     assert.equal(check([main], { write, root: fixture.root, claudeHome: fixture.claudeHome }), 1);
-    assert.equal(lines.join(''), 'These installed files still differ from Wheelhouse\'s manifest. Edits and commands stay held.\n- superpowers: skills/brainstorming\n');
-    assert.ok(fs.existsSync(holdFile(P)));
-    assert.deepEqual(JSON.parse(fs.readFileSync(holdFile(P), 'utf8')).mismatches.map((m) => m.path), ['skills/brainstorming']);
-    // Put right, it lifts the hold; the folder defaults to the one it runs in.
+    assert.equal(lines.join(''), 'These installed files still differ from Wheelhouse\'s manifest, so edits and commands stay held. Once they match, the hold lifts at the next session start.\n- superpowers: skills/brainstorming\n');
+    assert.equal(fs.readFileSync(holdFile(P), 'utf8'), before);
+    // Put right, it says so and still changes nothing. The folder defaults to the one it runs
+    // in, and a folder inside the project (a feature's worktree) checks the project's installs.
     fixture.restore();
-    lines.length = 0;
-    assert.equal(check([], { cwd: path.join(main, '.git'), write, root: fixture.root, claudeHome: fixture.claudeHome }), 0);
-    assert.equal(lines.join(''), 'The installed skills match Wheelhouse\'s manifest. The hold is lifted.\n');
+    for (const cwd of [path.join(main, '.git'), main]) {
+      lines.length = 0;
+      assert.equal(check([], { cwd, write, root: fixture.root, claudeHome: fixture.claudeHome }), 0, cwd);
+      assert.equal(lines.join(''), `${MATCHED}\n`);
+    }
+    assert.equal(MATCHED, 'The installed skills match Wheelhouse\'s manifest. A hold lifts at the next session start, whose check finds them matching; this command changes nothing.');
+    assert.equal(fs.readFileSync(holdFile(P), 'utf8'), before);
+    assert.ok(denied(await decide(call(main, 'Edit'), deps(home))), 'still held');
+    // The next session start's check finds them matching and lifts the hold.
+    assert.equal(checkLineage({ project: P, projectDir: main, root: fixture.root, claudeHome: fixture.claudeHome }).ok, true);
     assert.equal(fs.existsSync(holdFile(P)), false);
     assert.equal(await decide(call(main, 'Edit'), deps(home)), undefined);
-    // Outside a registered project there is nothing to check.
+    // A folder with nothing installed for it, inside or above it: not installed.
     lines.length = 0;
     assert.equal(check([tempFolder('wh-elsewhere-')], { write, root: fixture.root, claudeHome: fixture.claudeHome }), 1);
-    assert.match(lines.join(''), /not in a registered Wheelhouse project/);
+    assert.match(lines.join(''), /- superpowers: not installed\n$/);
+    lines.length = 0;
+    assert.equal(check([path.join(main, 'gone')], { write, root: fixture.root, claudeHome: fixture.claudeHome }), 1);
+    assert.equal(lines.join(''), 'That folder can\'t be found, so there is nothing to check.\n');
   });
 });
 
-test('the check script runs on its own and names what is missing', async () => {
+test('the check script runs on its own, names what is missing, and writes nothing', async () => {
   await withHome(async (home) => {
     const main = makeProject();
     const claudeHome = tempFolder('wh-claude-none-');
@@ -172,7 +190,7 @@ test('the check script runs on its own and names what is missing', async () => {
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stdout, /^These installed files still differ/);
     assert.match(result.stdout, /- superpowers: not installed\n- mattpocock-skills: not installed\n$/);
-    assert.ok(fs.existsSync(holdFile(P)), 'a mismatch found by the check holds too');
+    assert.equal(fs.existsSync(holdFile(P)), false, 'the check holds nothing: only a session start does');
   });
 });
 
@@ -212,11 +230,13 @@ test('a hold hook that throws refuses', async () => {
   });
 });
 
-test('a check that can\'t read Wheelhouse\'s records says so, and keeps the hold', async () => {
+test('the check needs nothing from the Wheelhouse home, which a sandboxed command can\'t read', async () => {
   await withHome(async (home) => {
+    const main = fs.realpathSync.native(tempFolder('wh-hold-unread-'));
+    const fixture = lineageFixture(main);
     fs.writeFileSync(path.join(home, 'projects'), 'not a folder');
     const lines = [];
-    assert.equal(check([home], { write: (t) => lines.push(t) }), 1);
-    assert.equal(lines.join(''), 'Wheelhouse\'s records can\'t be read from here, so the hold stays until the next session start checks again.\n');
+    assert.equal(check([main], { write: (t) => lines.push(t), root: fixture.root, claudeHome: fixture.claudeHome }), 0);
+    assert.equal(lines.join(''), `${MATCHED}\n`);
   });
 });

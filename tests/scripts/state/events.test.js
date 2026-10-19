@@ -389,6 +389,23 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
   });
 });
 
+test('a lineage-hold record says when a session start held the project, and which upstreams and paths differ (R146)', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('lineage-hold'), true);
+    assert.equal(PROTECTED_KINDS.includes('lineage-hold'), false);
+    const data = { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'skills/brainstorming' }, { upstream: null, path: 'lineage/manifest.json' }] };
+    const event = makeEvent({ kind: 'lineage-hold', data });
+    assert.equal(event.sig, undefined);
+    assert.deepEqual(event.data, data);
+    const [m] = data.mismatches;
+    for (const bad of [
+      null, { mismatches: data.mismatches }, { at: data.at }, { ...data, extra: 1 }, { ...data, at: 'yesterday' }, { ...data, at: 7 },
+      { ...data, mismatches: [] }, { ...data, mismatches: 'skills/brainstorming' }, { ...data, mismatches: [{ ...m, want: 'a' }] },
+      { ...data, mismatches: [{ upstream: 'superpowers' }] }, { ...data, mismatches: [{ ...m, path: '' }] }, { ...data, mismatches: [{ ...m, upstream: 'Not One' }] },
+    ]) assert.throws(() => makeEvent({ kind: 'lineage-hold', data: bad }), /lineage-hold event/, JSON.stringify(bad));
+  });
+});
+
 test('a work id that is not a short slug is refused', async () => {
   await withHome(() => {
     const ok = (id) => makeEvent({ kind: 'work', data: { ...SHAPES.work, id } });

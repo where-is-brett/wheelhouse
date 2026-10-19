@@ -9,7 +9,8 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE } from '../../../scripts/hooks/session-start.js';
 import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
-import { checkLineage, holdFile, MANIFEST_UNREADABLE } from '../../../scripts/lineage/check.js';
+import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HELD } from '../../../scripts/lineage/check.js';
+import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
@@ -31,7 +32,7 @@ function withHome(fn) {
 const VIEWS = { rulebook: [], levels: {}, waiting: [], unconfirmed: [], damaged: [] };
 
 function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync = { ok: true } } = {}) {
-  const calls = { spawn: [], health: 0, sync: 0, views: 0, unref: 0 };
+  const calls = { spawn: [], health: 0, sync: 0, views: 0, unref: 0, writes: [] };
   let started = false;
   return {
     calls,
@@ -40,7 +41,7 @@ function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync =
       state: {
         sync: async () => { calls.sync += 1; return sync; },
         views: async () => { calls.views += 1; return { ok: true, views }; },
-        write: async () => ({ ok: true }),
+        write: async (body) => { calls.writes.push(body); return { ok: true }; },
         record: async () => ({ ok: true }),
       },
     },
@@ -489,7 +490,7 @@ test('the session start leaves the watcher alone in Shape 2, and fails open when
 
 // --- Lineage: the installed upstream skills against Wheelhouse's manifest ---
 
-const LINEAGE_LINE = (paths) => `Lineage: the installed superpowers files differ from Wheelhouse's manifest (${paths}). Edits and commands are held. Raise this with the director as a card.`;
+const LINEAGE_LINE = (paths) => `Lineage: the installed superpowers files differ from Wheelhouse's manifest (${paths}). Edits and commands are held until a session starts with matching files. Raise this with the director as a card.`;
 
 // A session start in a project whose folder is `folder`, checked against the fixture's manifest.
 const lineageRun = (f, fixture, folder, extra = {}, input = {}) => run(f, {
@@ -530,6 +531,76 @@ test('an installed Superpowers file that differs raises the warning and writes t
     assert.equal(text(await lineageRun(f, fixture, tempFolder('wh-ss-other-'))).split('\n')[0], LINEAGE_LINE('not installed'));
     assert.equal(text(await lineageRun(f, { ...fixture, root: tempFolder('wh-ss-empty-root-') }, folder)).split('\n')[0], MANIFEST_UNREADABLE);
     assert.ok(fs.existsSync(holdFile(P)));
+  });
+});
+
+test('a hold is recorded in the state once for each set of mismatches, through the kept records (R146)', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    const at = (time) => ({ now: () => new Date(time) });
+    const f = fake();
+    const holds = () => f.calls.writes.filter((w) => w.kind === 'lineage-hold');
+
+    fixture.put({ LICENSE: 'another licence\n' });
+    await lineageRun(f, fixture, folder, at('2026-10-19T02:00:00.000Z'));
+    assert.deepEqual(holds(), [{
+      project: P, kind: 'lineage-hold', data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] },
+    }]);
+    // The same set at the next starts: not recorded again, and the hold still stands.
+    await lineageRun(f, fixture, folder, at('2026-10-19T03:00:00.000Z'));
+    await lineageRun(f, fixture, folder, at('2026-10-19T04:00:00.000Z'));
+    assert.equal(holds().length, 1);
+    assert.ok(fs.existsSync(holdFile(P)));
+    // Another set is recorded; so is the same set again once a matching start has lifted the hold.
+    fixture.put({ 'skills/brainstorming/SKILL.md': 'changed\n' });
+    await lineageRun(f, fixture, folder, at('2026-10-19T05:00:00.000Z'));
+    assert.deepEqual(holds()[1].data.mismatches, [{ upstream: 'superpowers', path: 'skills/brainstorming' }, { upstream: 'superpowers', path: 'LICENSE' }]);
+    fixture.restore();
+    await lineageRun(f, fixture, folder, at('2026-10-19T06:00:00.000Z'));
+    assert.equal(fs.existsSync(holdFile(P)), false);
+    fixture.put({ LICENSE: 'another licence\n' });
+    await lineageRun(f, fixture, folder, at('2026-10-19T07:00:00.000Z'));
+    assert.equal(holds().length, 3);
+    assert.equal(holds()[2].data.at, '2026-10-19T07:00:00.000Z');
+
+    // With no helper, the record is kept and sent by a later start; the hold stands meanwhile.
+    fixture.restore();
+    await lineageRun(f, fixture, folder);
+    fixture.put({ 'skills/writing-plans/SKILL.md': 'changed\n' });
+    const down = fake({ answersAfterStart: false });
+    const text1 = text(await lineageRun(down, fixture, folder, at('2026-10-19T08:00:00.000Z')));
+    assert.match(text1, /Lineage: the installed superpowers files differ/);
+    assert.equal(fs.readdirSync(pendingDir(P)).filter((n) => n.endsWith('.json')).length, 1);
+    assert.ok(fs.existsSync(holdFile(P)));
+    await lineageRun(f, fixture, folder, at('2026-10-19T09:00:00.000Z'));
+    assert.equal(holds().length, 4);
+    assert.equal(holds()[3].data.at, '2026-10-19T08:00:00.000Z', 'the kept one, not a second');
+    assert.equal(fs.readdirSync(pendingDir(P)).filter((n) => n.endsWith('.json')).length, 0);
+  });
+});
+
+test('a hold that could not be written is not called one, and a record that could not be kept leaves the hold standing', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    const f = fake();
+    // The hold's folder is a file, so the hold can't be written.
+    const lineageFolder = path.dirname(holdFile(P));
+    fs.mkdirSync(path.dirname(lineageFolder), { recursive: true });
+    fs.writeFileSync(lineageFolder, 'not a folder');
+    const first = text(await lineageRun(f, fixture, folder)).split('\n')[0];
+    assert.equal(first, 'Lineage: the installed superpowers files differ from Wheelhouse\'s manifest (LICENSE). The hold could not be written, so edits and commands are not held. Raise this with the director as a card.');
+    assert.equal(text(await lineageRun(f, { ...fixture, root: tempFolder('wh-ss-empty-root-') }, folder)).split('\n')[0], MANIFEST_UNREADABLE_NOT_HELD);
+    assert.equal(f.calls.writes.filter((w) => w.kind === 'lineage-hold').length, 0, 'no hold, so none recorded');
+    fs.rmSync(lineageFolder);
+    // The kept records' folder is a file, so the record can't be kept: the hold still stands and the session starts.
+    fs.mkdirSync(path.dirname(pendingDir(P)), { recursive: true });
+    fs.writeFileSync(pendingDir(P), 'not a folder');
+    assert.equal(text(await lineageRun(f, fixture, folder)).split('\n')[0], LINEAGE_LINE('LICENSE'));
+    assert.ok(fs.existsSync(holdFile(P)));
+    assert.equal(JSON.parse(fs.readFileSync(holdFile(P), 'utf8')).recorded, undefined, 'not marked, so a later start tries again');
   });
 });
 
