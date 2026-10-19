@@ -12,7 +12,9 @@ import { main, FOREMAN_QUESTIONS, extraPlanId, unattendedCardData } from '../../
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
-import { BUILD_QUESTION_OPTIONS, UNATTENDED_CARD, settingKey } from '../../../scripts/protection/windows-builds.js';
+import {
+  BUILD_QUESTION_OPTIONS, GUARDED_SETTING_WORDS, UNATTENDED_CARD, settingKey,
+} from '../../../scripts/protection/windows-builds.js';
 import { earned } from '../../../scripts/hooks/prompt-record.js';
 import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { branchOf } from '../../../scripts/hooks/session-start.js';
@@ -820,7 +822,7 @@ test('question offers the Unattended card on a feature\'s third build-command qu
 test('the Unattended card passes the card check and fits the card, with and without Use Guarded', () => withHome(async () => {
   const computer = computerId();
   const setting = recordInState('setting', { key: settingKey(computer), value: 'unattended' }, T0);
-  const guarded = recordInState('setting', { key: settingKey(computer), value: 'guarded' }, T0 + 1);
+  const guarded = recordInState('setting', { key: settingKey(computer), value: 'guarded', words: GUARDED_SETTING_WORDS }, T0 + 1);
   for (const [guardedReady, readsHeld] of [[false, false], [true, false], [true, true]]) {
     const name = `guardedReady ${guardedReady}, readsHeld ${readsHeld}`;
     const words = UNATTENDED_CARD({ guardedReady, readsHeld });
@@ -830,6 +832,8 @@ test('the Unattended card passes the card check and fits the card, with and with
     assert.ok(data.question.includes(words.risk), 'the design\'s words on the risk, as they are');
     assert.deepEqual(data.options, words.options.map((o) => o.label));
     assert.equal(data.question.split('\n').includes(unattendedBuildsLine(setting.id, computer)), true, name);
+    // No reply code answers it, so it says a click is needed.
+    assert.ok(data.question.includes('While you decide: Builders keep asking; answer by a click only.'), name);
     assert.doesNotThrow(() => makeEvent({ kind: 'card', data, now: () => new Date(T0) }));
     // A Turn on (dangerous) click on it still confirms the Unattended setting event, with its line.
     const click = await earned({ project: P, question: data.question, label: 'Turn on (dangerous)' });
@@ -845,7 +849,7 @@ test('the Unattended card passes the card check and fits the card, with and with
     const use = words.options.find((o) => o.label === 'Use Guarded');
     assert.equal(words.recommend, 'guarded');
     assert.match(use.says, /network/);
-    assert.match(use.says, readsHeld ? /keys folder is shut/ : /keys folder stay open/);
+    assert.match(use.says, readsHeld ? /keys folder shut/ : /keys folder open/);
     assert.ok(data.question.includes(`Use Guarded: ${use.says.replace(/\.$/, '')}`), name);
     assert.deepEqual(data.question.split('\n').slice(-2), [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))]);
     const used = await earned({ project: P, question: data.question, label: 'Use Guarded' });
@@ -868,7 +872,8 @@ test('question offers Use Guarded where this computer\'s self-test passed, propo
   everyWriteHandledFirst(fake.writes);
   const [unattended, guarded, card] = fake.writes.slice(3);
   assert.deepEqual(unattended.data, { key: settingKey(computer), value: 'unattended' });
-  assert.deepEqual(guarded.data, { key: settingKey(computer), value: 'guarded' });
+  assert.deepEqual(guarded.data, { key: settingKey(computer), value: 'guarded', words: GUARDED_SETTING_WORDS });
+  assert.ok(card.data.question.includes(`Confirm setting ${guarded.id}: "${GUARDED_SETTING_WORDS}"`), 'the line reads as words');
   const words = UNATTENDED_CARD({ guardedReady: true, readsHeld: false });
   assert.deepEqual(card.data.options, ['Keep asking', 'Turn on (dangerous)', 'Use Guarded']);
   assert.equal(card.data.descriptions[2], `Recommended: ${words.options[2].says}`);

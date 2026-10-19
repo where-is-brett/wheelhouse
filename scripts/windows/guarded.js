@@ -5,10 +5,12 @@
 // low, this process runs at low integrity, and so does everything it starts, so Windows stops
 // the command changing anything at the normal level: nearly everything outside the worktree.
 //
-// Before anything, it checks its own token really is low (`whoami /groups` shows the Mandatory
-// Label S-1-16-4096) and runs nothing otherwise (exit 3). Low integrity doesn't hold the network,
-// so it refuses the forms that fetch and run new code (exit 4) and tells the session to ask for
-// them. It points npm's cache and the temporary folders inside the worktree, where a low process
+// Before anything, it checks its own token really is low (`whoami /groups`, System32's own, shows
+// the Mandatory Label S-1-16-4096) and runs nothing otherwise (exit 3), nor when Windows' folder
+// can't be known to find whoami by. Low integrity doesn't hold the network, so it refuses the
+// forms that fetch and run new code (exit 4) and tells the session to ask for them. It refuses
+// local git the same way: the worktree's git folders aren't labelled low (scripts/windows/low.js,
+// PLAN_GIT_LOW_LABELS), so local git is asked for and runs at the normal level. It points npm's cache and the temporary folders inside the worktree, where a low process
 // can write, runs the command, ends it and everything it started with `taskkill /T /F` after 30
 // minutes, and exits with the command's code.
 //
@@ -35,11 +37,14 @@ export const EXIT = Object.freeze({ usage: 2, notLow: 3, fetches: 4, notFound: 1
 
 const LOW_LABEL = 'S-1-16-4096';
 
-// A program Windows keeps in System32, by its full path where Windows says it is, so a program of
-// the same name earlier on the PATH can't stand in for it.
+// A program Windows keeps in System32, by its full path where Windows says it is (SystemRoot, a
+// full path from a drive letter), so a program of the same name found by a search can't stand in
+// for it. Null when SystemRoot isn't such a path: the caller then refuses rather than searching.
 export function windowsTool(name, env = process.env) {
-  const root = typeof env?.SystemRoot === 'string' && env.SystemRoot !== '' ? env.SystemRoot : null;
-  return root === null ? name : path.win32.join(root, 'System32', `${name}.exe`);
+  const key = Object.keys(env ?? {}).find((k) => k.toLowerCase() === 'systemroot');
+  const root = key === undefined ? null : env[key];
+  if (typeof root !== 'string' || !/^[A-Za-z]:[\\/][^"%\r\n]*$/.test(root)) return null;
+  return path.win32.join(root, 'System32', `${name}.exe`);
 }
 
 // Whether `whoami /groups` shows a low token: its one Mandatory Label is S-1-16-4096, Low
@@ -61,7 +66,7 @@ const FETCHING = Object.freeze({
 const ALWAYS_FETCHING = ['npx', 'pnpx', 'bunx'];
 
 // The program's own name: its last path part, in lower case, without a Windows extension.
-const programOf = (word) => String(word ?? '').split(/[\\/]/).pop().toLowerCase().replace(/\.(cmd|exe|bat|com|ps1)$/, '');
+export const programOf = (word) => String(word ?? '').split(/[\\/]/).pop().toLowerCase().replace(/\.(cmd|exe|bat|com|ps1)$/, '');
 
 // Whether the command fetches new code: a fetching program, or a package manager given one of its
 // fetching forms as any of its words (so a flag before it doesn't hide it). Bare `yarn` installs.
@@ -114,7 +119,9 @@ function resolveCommand(words, { platform, env, exists }) {
   const line = [found, ...rest].map((w) => ({ w, q: cmdWord(w) }));
   const bad = line.find((x) => x.q === null);
   if (bad) return { refused: bad.w };
-  return { file: windowsTool('cmd', env), args: ['/d', '/s', '/c', `"${line.map((x) => x.q).join(' ')}"`], verbatim: true };
+  const cmd = windowsTool('cmd', env);
+  if (cmd === null) return { missing: true };
+  return { file: cmd, args: ['/d', '/s', '/c', `"${line.map((x) => x.q).join(' ')}"`], verbatim: true };
 }
 
 // Starts a program with the runner's own input and output.
@@ -134,8 +141,10 @@ function runToEnd(child, { run, env, timeoutMs }) {
       resolve(value);
     };
     const timer = setTimeout(async () => {
+      const taskkill = windowsTool('taskkill', env);
       try {
-        await run(windowsTool('taskkill', env), ['/pid', String(child.pid), '/T', '/F']);
+        if (taskkill === null) child.kill?.('SIGKILL');
+        else await run(taskkill, ['/pid', String(child.pid), '/T', '/F']);
       } catch { /* it may have ended already */ }
       child.unref?.(); // the runner exits now, whatever is left of it
       finish({ timedOut: true });
@@ -177,8 +186,9 @@ export async function guarded(words, {
   timeoutMs = GUARDED_TIMEOUT_MS, exists = fs.existsSync, say = (line) => process.stderr.write(`${line}\n`), out = (line) => process.stdout.write(`${line}\n`),
 } = {}) {
   let low = false;
+  const whoami = windowsTool('whoami', env);
   try {
-    const who = await run(windowsTool('whoami', env), ['/groups']);
+    const who = whoami === null ? null : await run(whoami, ['/groups']);
     low = who?.code === 0 && isLowToken(who.stdout);
   } catch { /* not known to be low */ }
   if (!low) {
@@ -198,6 +208,10 @@ export async function guarded(words, {
   }
   if (fetchesCode(words)) {
     say(`The runner won't run ${words.join(' ')}: it fetches new code, which low integrity doesn't hold. ${ASK_INSTEAD}`);
+    return EXIT.fetches;
+  }
+  if (programOf(words[0]) === 'git') {
+    say(`The runner doesn't run git: local git runs at the normal level, outside the runner. ${ASK_INSTEAD}`);
     return EXIT.fetches;
   }
   const resolved = resolveCommand(words, { platform, env, exists });

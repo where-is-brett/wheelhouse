@@ -8,6 +8,8 @@
 //   append <file> <text>        append text to a file (creating it)
 //   read <file>                 read the first 80 characters of a file
 //   list <folder>               list a folder
+//   remove <path>               remove a file, or a folder and what is in it
+//   rename <from> <to>          rename a file or folder
 //   exec <program> [args...]    run a program, no shell
 //   exec-stdin <text> <program> [args...]   the same, with the text (\n for a newline) on its standard input
 //   shell <command line>        run a command line in a shell, timed, in the folder it was started in
@@ -46,6 +48,12 @@ try {
     say({ ok: true });
   } else if (operation === 'read') {
     say({ ok: true, text: fs.readFileSync(args[0], 'utf8').slice(0, 80) });
+  } else if (operation === 'remove') {
+    fs.rmSync(args[0], { recursive: true });
+    say({ ok: true });
+  } else if (operation === 'rename') {
+    fs.renameSync(args[0], args[1]);
+    say({ ok: true });
   } else if (operation === 'list') {
     say({ ok: true, names: fs.readdirSync(args[0]).slice(0, 20) });
   } else if (operation === 'exec') {

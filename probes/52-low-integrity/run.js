@@ -429,6 +429,62 @@ async function gitAndNpm(ctx) {
   await say(ctx, 'SEEN', 'npm-test-time', `normal ${timings.filter((t) => t.name === 'normal').map((t) => seconds(t.ms)).join(', ')}; low ${lowRuns.map((t) => seconds(t.ms)).join(', ')} (first and second run of each; the first warms caches)`, { timings });
 }
 
+// The entries Wheelhouse keeps at the normal level inside the low worktree, each tried from low
+// by renaming it away and by removing it, which Windows may allow through the low folder they
+// sit in even where it refuses a write to them. Whatever got through is put back, at the normal
+// level, so the trials after this one see the worktree as it was.
+export const PROTECTED_ENTRIES = Object.freeze([
+  ['worktree-git-file', '.git', 'M'],
+  ['worktree-claude', '.claude', '(OI)(CI)M'],
+  ['worktree-mcp-json', '.mcp.json', 'M'],
+  ['worktree-vscode', '.vscode', '(OI)(CI)M'],
+]);
+
+// What is in a file or folder, kept to put it back: { file: text } or { folder: { name: text } }.
+function keepCopy(target) {
+  const stat = fs.lstatSync(target);
+  if (!stat.isDirectory()) return { file: fs.readFileSync(target) };
+  return { folder: Object.fromEntries(fs.readdirSync(target).filter((n) => fs.lstatSync(path.join(target, n)).isFile()).map((n) => [n, fs.readFileSync(path.join(target, n))])) };
+}
+
+async function putBack(ctx, target, kept, spec) {
+  fs.rmSync(target, { recursive: true, force: true });
+  if (kept.file !== undefined) fs.writeFileSync(target, kept.file);
+  else {
+    fs.mkdirSync(target);
+    for (const [name, body] of Object.entries(kept.folder)) fs.writeFileSync(path.join(target, name), body);
+  }
+  await icacls(ctx, target, spec, { recurse: ctx.recurse });
+}
+
+async function removals(ctx) {
+  const wt = ctx.worktree;
+  for (const [id, name, spec] of PROTECTED_ENTRIES) {
+    const target = path.join(wt, name);
+    if (!fs.existsSync(target)) {
+      await say(ctx, 'SEEN', `rename-${id}`, `${name} is not there`);
+      continue;
+    }
+    const kept = keepCopy(target);
+    const moved = `${target}.probe-moved`;
+    const renamed = judgeAccess(await low(ctx, 'rename', [target, moved]));
+    if (renamed === 'allowed') {
+      await say(ctx, 'FAIL', `rename-${id}`, `the low process renamed ${name} away, so it could put a low one in its place`);
+      fs.rmSync(moved, { recursive: true, force: true });
+      await putBack(ctx, target, kept, spec);
+    } else {
+      await say(ctx, renamed === 'refused' ? 'PASS' : 'SEEN', `rename-${id}`, renamed === 'refused' ? `refused (renaming ${name})` : `inconclusive, failed another way (renaming ${name})`);
+    }
+    const removed = judgeAccess(await low(ctx, 'remove', [target]));
+    if (removed === 'allowed' || !fs.existsSync(target)) {
+      await say(ctx, 'FAIL', `remove-${id}`, `the low process removed ${name}, so it could put a low one in its place`);
+      await putBack(ctx, target, kept, spec);
+    } else {
+      await say(ctx, removed === 'refused' ? 'PASS' : 'SEEN', `remove-${id}`, removed === 'refused' ? `refused (removing ${name})` : `inconclusive, failed another way (removing ${name})`);
+    }
+  }
+}
+
 async function startMedium(ctx) {
   if (!ctx.options.persistence) {
     await say(ctx, 'SEEN', 'low-cannot-schedule-task', SKIPPED);
@@ -540,6 +596,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (lowStarts) {
       await lockReads(ctx, mode);
       await gitAndNpm(ctx);
+      await removals(ctx);
       await startMedium(ctx);
     } else {
       await emit(ctx, 'LOCK_READS_ROUTE none', { lockReadsRoute: 'none' });

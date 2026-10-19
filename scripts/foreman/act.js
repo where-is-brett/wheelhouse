@@ -131,7 +131,9 @@ import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.j
 import { canonicalJson } from '../lib/canonical.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram, withoutGitVars } from '../lib/run.js';
-import { UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
+import {
+  GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
+} from '../protection/windows-builds.js';
 import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../state/card-lines.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
@@ -737,7 +739,7 @@ function unattendedQuestion(card, settingId, computer, guarded) {
     `Why it's coming to you: ${card.why}`,
     `Options: ${card.options.map((o) => `${o.label}: ${o.says.replace(/[.!?]+$/, '')}`).join('; ')}`,
     `My recommendation: ${named(card.recommend).label}`,
-    `While you decide: ${named('keep-asking').says}`,
+    `While you decide: ${card.meanwhile}`,
     unattendedBuildsLine(settingId, computer),
     ...(offersGuarded ? [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))] : []),
   ].join('\n');
@@ -793,7 +795,7 @@ async function offerUnattended(ctx, views, work, asked) {
       guardedEvent = events.filter((e) => e.kind === 'setting' && e.computer === computer && e.data?.key === key
         && e.data?.value === 'guarded' && localDay(e.at) === today).at(-1) ?? null;
       if (guardedEvent === null) {
-        const data = { key, value: 'guarded' };
+        const data = { key, value: 'guarded', words: GUARDED_SETTING_WORDS };
         guardedEvent = { kind: 'setting', id: await ctx.write('setting', data), data };
       }
     }

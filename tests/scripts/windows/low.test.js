@@ -9,8 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { tempFolder } from '../../helpers/homes.js';
 import {
-  lowNode, lowNodePath, labelWorktree, lockReads, LOCK_READS_ROUTE, guardedCommand, selfTest, readSelfTest, guardedReady,
-  selfTestFile, needsSelfTest, SELF_TEST_MS,
+  lowNode, lowNodePath, lowNodeReady, copyLowNode, labelWorktree, lockReads, LOCK_READS_ROUTE, PLAN_GIT_LOW_LABELS, guardedCommand,
+  selfTest, readSelfTest, guardedReady, selfTestFile, needsSelfTest, SELF_TEST_MS,
 } from '../../../scripts/windows/low.js';
 import { featureAllowRules } from '../../../scripts/protection/settings.js';
 
@@ -38,41 +38,68 @@ function fakeNode(size = 64) {
   return file;
 }
 
-test('the low copy is made once and labelled low', async () => {
+// Windows' own folder, where icacls is found.
+const WIN = { SystemRoot: 'C:\\Windows' };
+
+test('the low copy is made once, outside any budget, and labelled low', async () => {
   const home = path.join(tempFolder('wh-low-'), 'home');
   const source = fakeNode(64);
   const fake = fakeRun();
-  const copy = await lowNode({ run: fake.run, home, execPath: source, env: {} });
+  // No copy yet: nothing to label, and nothing is copied here.
+  assert.equal(lowNodeReady({ home, execPath: source }), false);
+  await assert.rejects(lowNode({ run: fake.run, home, execPath: source, env: WIN }), /no complete copy/);
+  assert.equal(fs.existsSync(lowNodePath(home)), false);
+  assert.deepEqual(fake.calls, []);
+
+  const copy = copyLowNode({ home, execPath: source, now: at(T0) });
   assert.equal(copy, path.join(home, 'windows', 'low-node', 'node.exe'));
   assert.equal(copy, lowNodePath(home));
   assert.deepEqual(fs.readFileSync(copy), fs.readFileSync(source));
-  // Only the copy is labelled, never its folder, so a low process can't add files beside it.
+  assert.equal(lowNodeReady({ home, execPath: source }), true);
+  assert.equal(await lowNode({ run: fake.run, home, execPath: source, env: WIN }), copy);
+  // Only the copy is labelled, never its folder, so a low process can't add files beside it, and
+  // icacls is Windows' own, from System32.
   assert.deepEqual(fake.icacls(), [[copy, '/setintegritylevel', 'L']]);
+  assert.equal(fake.calls[0].file, 'C:\\Windows\\System32\\icacls.exe');
 
-  // Made once: a copy of the same size is kept, and labelled again.
+  // Made once: a copy of the same size is kept.
   fs.writeFileSync(copy, Buffer.alloc(64, 1));
-  await lowNode({ run: fake.run, home, execPath: source, env: {} });
+  copyLowNode({ home, execPath: source, now: at(T0) });
   assert.deepEqual(fs.readFileSync(copy), Buffer.alloc(64, 1), 'not copied again');
-  assert.equal(fake.icacls().length, 2);
-  // A Node.js of a different size (another version) is copied again.
+  // A Node.js of a different size (another version) is copied again, and until it is there the
+  // copy isn't ready.
   fs.writeFileSync(source, Buffer.alloc(80, 9));
-  await lowNode({ run: fake.run, home, execPath: source, env: {} });
+  assert.equal(lowNodeReady({ home, execPath: source }), false);
+  copyLowNode({ home, execPath: source, now: at(T0) });
   assert.deepEqual(fs.readFileSync(copy), Buffer.alloc(80, 9));
   assert.deepEqual(fs.readdirSync(path.dirname(copy)), ['node.exe'], 'no temporary copy left behind');
 
-  // icacls is Windows' own, from System32, where Windows says it is.
-  const sys = fakeRun();
-  await lowNode({ run: sys.run, home, execPath: source, env: { SystemRoot: 'C:\\Windows' } });
-  assert.equal(sys.calls[0].file, 'C:\\Windows\\System32\\icacls.exe');
+  // Temporary copies left by a copy that stopped part-way are cleared; a fresh one, which may be
+  // another copy still running, is left alone.
+  const dir = path.dirname(copy);
+  const old = path.join(dir, 'node.exe.0a1b2c.tmp');
+  const fresh = path.join(dir, 'node.exe.3d4e5f.tmp');
+  fs.writeFileSync(old, 'part');
+  fs.writeFileSync(fresh, 'part');
+  fs.utimesSync(old, new Date(T0 - HOUR), new Date(T0 - HOUR));
+  fs.utimesSync(fresh, new Date(T0), new Date(T0));
+  copyLowNode({ home, execPath: source, now: at(T0 + 60 * 1000) });
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['node.exe', 'node.exe.3d4e5f.tmp']);
 
   // A label Windows refuses is no low copy.
   const refused = fakeRun({ icacls: () => ({ code: 5, stdout: '', stderr: 'Access is denied.' }) });
-  await assert.rejects(lowNode({ run: refused.run, home, execPath: source, env: {} }), /icacls/);
+  await assert.rejects(lowNode({ run: refused.run, home, execPath: source, env: WIN }), /icacls/);
+  // With no SystemRoot to find icacls by, nothing is run.
+  const none = fakeRun();
+  for (const env of [{}, { SystemRoot: 'Windows' }, { SystemRoot: '' }]) {
+    await assert.rejects(lowNode({ run: none.run, home, execPath: source, env }), /SystemRoot/, JSON.stringify(env));
+  }
+  assert.deepEqual(none.calls, []);
 });
 
 // A main checkout's .git folder and a linked worktree of it, as git makes them, with the files
 // Wheelhouse protects.
-function repository({ vscode = true } = {}) {
+function repository({ vscode = true, claude = true, mcp = true } = {}) {
   const root = fs.realpathSync(tempFolder('wh-repo-'));
   const common = path.join(root, 'main', '.git');
   const admin = path.join(common, 'worktrees', 'wt-one');
@@ -81,9 +108,12 @@ function repository({ vscode = true } = {}) {
   }
   fs.writeFileSync(path.join(common, 'config'), '[core]\n');
   const worktree = path.join(root, 'wt');
-  fs.mkdirSync(path.join(worktree, '.claude'), { recursive: true });
-  fs.writeFileSync(path.join(worktree, '.claude', 'settings.json'), '{}\n');
-  fs.writeFileSync(path.join(worktree, '.mcp.json'), '{}\n');
+  fs.mkdirSync(worktree, { recursive: true });
+  if (claude) {
+    fs.mkdirSync(path.join(worktree, '.claude'));
+    fs.writeFileSync(path.join(worktree, '.claude', 'settings.json'), '{}\n');
+  }
+  if (mcp) fs.writeFileSync(path.join(worktree, '.mcp.json'), '{}\n');
   if (vscode) fs.mkdirSync(path.join(worktree, '.vscode'));
   fs.writeFileSync(path.join(worktree, '.git'), `gitdir: ${admin}\n`);
   fs.writeFileSync(path.join(admin, 'gitdir'), `${path.join(worktree, '.git')}\n`);
@@ -92,40 +122,67 @@ function repository({ vscode = true } = {}) {
   return { root, common, admin, worktree };
 }
 
+const labels = (fake) => fake.icacls().filter((a) => a[1] === '/setintegritylevel');
+
 test('a worktree is labelled low, with its .git file, .claude and .mcp.json put back at the normal level', async () => {
-  const { common, admin, worktree } = repository();
+  const { common, worktree } = repository();
   const fake = fakeRun();
-  await labelWorktree(worktree, { run: fake.run, commonDir: common, env: {} });
+  await labelWorktree(worktree, { run: fake.run, commonDir: common, env: WIN });
+  // .mcp.json's label is looked at first, then the labels go on.
+  assert.deepEqual(fake.icacls()[0], [path.join(worktree, '.mcp.json')]);
+  assert.deepEqual(labels(fake), [
+    [worktree, '/setintegritylevel', '(OI)(CI)L'],
+    [path.join(worktree, '.git'), '/setintegritylevel', 'M'],
+    [path.join(worktree, '.mcp.json'), '/setintegritylevel', 'M'],
+    [path.join(worktree, '.claude'), '/setintegritylevel', '(OI)(CI)M'],
+    [path.join(worktree, '.vscode'), '/setintegritylevel', '(OI)(CI)M'],
+  ]);
+
+  // A label Windows refuses fails the labelling, so the run gets the Ask rules.
+  let n = 0;
+  const refused = fakeRun({ icacls: () => { n += 1; return n === 3 ? { code: 5, stdout: '', stderr: 'Access is denied.' } : ICACLS_OK; } });
+  await assert.rejects(labelWorktree(worktree, { run: refused.run, commonDir: common, env: WIN }), /icacls/);
+  // With no SystemRoot to find icacls by, nothing is labelled.
+  const none = fakeRun();
+  await assert.rejects(labelWorktree(worktree, { run: none.run, commonDir: common, env: {} }), /SystemRoot/);
+  assert.deepEqual(none.calls, []);
+});
+
+test('a worktree with no .claude, .vscode or .mcp.json gets the two folders, empty and at the normal level', async () => {
+  const { common, worktree } = repository({ vscode: false, claude: false, mcp: false });
+  const fake = fakeRun();
+  await labelWorktree(worktree, { run: fake.run, commonDir: common, env: WIN });
+  for (const name of ['.claude', '.vscode']) {
+    assert.ok(fs.statSync(path.join(worktree, name)).isDirectory(), name);
+    assert.deepEqual(fs.readdirSync(path.join(worktree, name)), [], `${name} is empty`);
+  }
+  assert.equal(fs.existsSync(path.join(worktree, '.mcp.json')), false, 'no .mcp.json is made');
   assert.deepEqual(fake.icacls(), [
     [worktree, '/setintegritylevel', '(OI)(CI)L'],
     [path.join(worktree, '.git'), '/setintegritylevel', 'M'],
     [path.join(worktree, '.claude'), '/setintegritylevel', '(OI)(CI)M'],
-    [path.join(worktree, '.mcp.json'), '/setintegritylevel', 'M'],
     [path.join(worktree, '.vscode'), '/setintegritylevel', '(OI)(CI)M'],
-    // So local git works at low: the worktree's own admin folder, with the files that say where
-    // the repository is kept at the normal level, the objects and the feature branches' refs.
-    [admin, '/setintegritylevel', '(OI)(CI)L'],
-    [path.join(admin, 'commondir'), '/setintegritylevel', 'M'],
-    [path.join(admin, 'gitdir'), '/setintegritylevel', 'M'],
-    [path.join(common, 'objects'), '/setintegritylevel', '(OI)(CI)L'],
-    [path.join(common, 'refs', 'heads', 'feature'), '/setintegritylevel', '(OI)(CI)L'],
-    [path.join(common, 'logs', 'refs', 'heads', 'feature'), '/setintegritylevel', '(OI)(CI)L'],
   ]);
+});
 
-  // Only those that exist are put back.
-  const bare = repository({ vscode: false });
-  fs.rmSync(path.join(bare.worktree, '.mcp.json'));
-  const second = fakeRun();
-  await labelWorktree(bare.worktree, { run: second.run, commonDir: bare.common, env: {} });
-  const targets = second.icacls().map((a) => a[0]);
-  assert.ok(!targets.includes(path.join(bare.worktree, '.vscode')));
-  assert.ok(!targets.includes(path.join(bare.worktree, '.mcp.json')));
-  assert.ok(targets.includes(path.join(bare.worktree, '.claude')));
-
-  // A label Windows refuses fails the labelling, so the run gets the Ask rules.
-  let n = 0;
-  const refused = fakeRun({ icacls: () => { n += 1; return n === 2 ? { code: 5, stdout: '', stderr: 'Access is denied.' } : ICACLS_OK; } });
-  await assert.rejects(labelWorktree(worktree, { run: refused.run, commonDir: common, env: {} }), /icacls/);
+test('a .mcp.json found labelled low is put back at the normal level, and that run asks', async () => {
+  const { common, worktree } = repository();
+  const mcp = path.join(worktree, '.mcp.json');
+  const shown = (low) => ({
+    code: 0,
+    stdout: `${mcp} BUILTIN\\Users:(I)(RX)\r\n    Mandatory Label\\${low ? 'Low' : 'Medium'} Mandatory Level:(NW)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`,
+    stderr: '',
+  });
+  const low = fakeRun({ icacls: (args) => (args.length === 1 ? shown(true) : ICACLS_OK) });
+  await assert.rejects(labelWorktree(worktree, { run: low.run, commonDir: common, env: WIN }), /\.mcp\.json was labelled low/);
+  assert.ok(labels(low).some((a) => a[0] === mcp && a[2] === 'M'), 'put back at the normal level all the same');
+  // At the normal level, the labelling goes through.
+  const medium = fakeRun({ icacls: (args) => (args.length === 1 ? shown(false) : ICACLS_OK) });
+  await labelWorktree(worktree, { run: medium.run, commonDir: common, env: WIN });
+  // One whose label can't be read fails the labelling.
+  const unread = fakeRun({ icacls: (args) => (args.length === 1 ? { code: 5, stdout: '', stderr: 'Access is denied.' } : ICACLS_OK) });
+  await assert.rejects(labelWorktree(worktree, { run: unread.run, commonDir: common, env: WIN }), /icacls/);
+  assert.deepEqual(labels(unread), [], 'nothing labelled');
 });
 
 test('a worktree whose .git doesn\'t point into the common folder\'s worktrees is never labelled', async () => {
@@ -140,28 +197,21 @@ test('a worktree whose .git doesn\'t point into the common folder\'s worktrees i
   for (const [name, spoil] of cases) {
     spoil();
     const fake = fakeRun();
-    await assert.rejects(labelWorktree(worktree, { run: fake.run, commonDir: common, env: {} }), /worktree/, name);
+    await assert.rejects(labelWorktree(worktree, { run: fake.run, commonDir: common, env: WIN }), /worktree/, name);
     assert.deepEqual(fake.calls, [], name);
   }
-  await assert.rejects(labelWorktree('relative/wt', { run: fakeRun().run, commonDir: common, env: {} }), /worktree/);
+  await assert.rejects(labelWorktree('relative/wt', { run: fakeRun().run, commonDir: common, env: WIN }), /worktree/);
 });
 
-test('the common folder\'s hooks and config are never labelled', async () => {
-  const { common, admin, worktree } = repository();
-  // Even a hooks folder and a config inside the worktree's own admin folder stay as they are.
-  fs.mkdirSync(path.join(admin, 'hooks'));
-  fs.writeFileSync(path.join(admin, 'config.worktree'), '[core]\n');
+test('only the worktree is labelled: nothing in the common folder, its hooks and config included', async () => {
+  const { common, worktree } = repository();
   const fake = fakeRun();
-  await labelWorktree(worktree, { run: fake.run, commonDir: common, env: {} });
+  await labelWorktree(worktree, { run: fake.run, commonDir: common, env: WIN });
   const targets = fake.icacls().map((a) => a[0]);
-  for (const kept of [path.join(common, 'hooks'), path.join(common, 'config'), common]) {
-    assert.ok(!targets.some((t) => t === kept || t.startsWith(`${path.join(common, 'hooks')}${path.sep}`)), kept);
-  }
-  // A config.worktree, which git would read, goes back to the normal level with the rest.
-  assert.ok(fake.icacls().some((a) => a[0] === path.join(admin, 'config.worktree') && a[2] === 'M'));
-  // Nothing is labelled low but the worktree and the folders git writes to.
-  const low = fake.icacls().filter((a) => a[2].endsWith('L')).map((a) => a[0]);
-  assert.deepEqual(low, [worktree, admin, path.join(common, 'objects'), path.join(common, 'refs', 'heads', 'feature'), path.join(common, 'logs', 'refs', 'heads', 'feature')]);
+  assert.ok(targets.every((t) => t === worktree || t.startsWith(`${worktree}${path.sep}`)), targets.join(' '));
+  assert.ok(!targets.some((t) => t.startsWith(common)));
+  // The plan's git labels are kept, applied nowhere, until check 52 settles them.
+  assert.deepEqual(PLAN_GIT_LOW_LABELS.commonFolders, [['objects'], ['refs', 'heads', 'feature'], ['logs', 'refs', 'heads', 'feature']]);
 });
 
 test('with no route to a "no read up" label, nothing is locked and nothing is run', async () => {
@@ -172,11 +222,15 @@ test('with no route to a "no read up" label, nothing is locked and nothing is ru
   // Once check 52 names a route, each folder gets its call, and the lock holds only if every one did.
   const route = { file: 'icacls', args: (p) => [p, '/setintegritylevel', '(OI)(CI)M:NWNR'] };
   const ok = fakeRun();
-  assert.deepEqual(await lockReads(['/a', '/b'], { run: ok.run, route, env: {} }), { held: true });
+  assert.deepEqual(await lockReads(['/a', '/b'], { run: ok.run, route, env: WIN }), { held: true });
   assert.deepEqual(ok.icacls(), [['/a', '/setintegritylevel', '(OI)(CI)M:NWNR'], ['/b', '/setintegritylevel', '(OI)(CI)M:NWNR']]);
   const one = fakeRun({ icacls: (args) => (args[0] === '/b' ? { code: 5, stdout: '', stderr: 'no' } : ICACLS_OK) });
-  assert.deepEqual(await lockReads(['/a', '/b'], { run: one.run, route, env: {} }), { held: false });
-  assert.deepEqual(await lockReads([], { run: ok.run, route, env: {} }), { held: false });
+  assert.deepEqual(await lockReads(['/a', '/b'], { run: one.run, route, env: WIN }), { held: false });
+  assert.deepEqual(await lockReads([], { run: ok.run, route, env: WIN }), { held: false });
+  // With no SystemRoot to find the program by, nothing is run and nothing is locked.
+  const none = fakeRun();
+  assert.deepEqual(await lockReads(['/a'], { run: none.run, route, env: {} }), { held: false });
+  assert.deepEqual(none.calls, []);
 });
 
 test('the runner\'s command is the low copy and the runner, each in an allow rule\'s form', () => {
@@ -193,9 +247,10 @@ test('the runner\'s command is the low copy and the runner, each in an allow rul
 function selfTestScene(seen) {
   const home = path.join(tempFolder('wh-self-'), 'home');
   const execPath = fakeNode();
+  copyLowNode({ home, execPath });
   const fake = fakeRun({ low: (args) => seen(args) });
   const go = (over = {}) => selfTest({
-    run: fake.run, home, worktree: home, now: at(T0), pluginRoot: '/plugins/wheelhouse', execPath, env: {}, homeDir: home, ...over,
+    run: fake.run, home, worktree: home, now: at(T0), pluginRoot: '/plugins/wheelhouse', execPath, env: WIN, homeDir: home, ...over,
   });
   return { home, fake, go };
 }
@@ -262,8 +317,16 @@ test('a self-test that can\'t finish in its time, or whose low copy can\'t be ma
   // A label refused (policy, or icacls missing) is not ready, and nothing is started.
   const home = path.join(tempFolder('wh-self-'), 'home');
   const refused = fakeRun({ icacls: () => ({ code: 5, stdout: '', stderr: 'Access is denied.' }) });
-  const result = await selfTest({ run: refused.run, home, worktree: home, now: at(T0), pluginRoot: '/p', execPath: fakeNode(), env: {}, homeDir: home });
+  const execPath = fakeNode();
+  copyLowNode({ home, execPath });
+  const result = await selfTest({ run: refused.run, home, worktree: home, now: at(T0), pluginRoot: '/p', execPath, env: WIN, homeDir: home });
   assert.equal(result.lowStarts, false);
   assert.ok(refused.calls.every((c) => nameOf(c.file) === 'icacls'));
   assert.equal(guardedReady({ home, now: at(T0 + HOUR), platform: 'win32' }), false);
+  // No complete copy yet: not ready, and nothing is run.
+  const bare = path.join(tempFolder('wh-self-'), 'home');
+  const nothing = fakeRun();
+  const early = await selfTest({ run: nothing.run, home: bare, worktree: bare, now: at(T0), pluginRoot: '/p', execPath, env: WIN, homeDir: bare });
+  assert.equal(early.lowStarts, false);
+  assert.deepEqual(nothing.calls, []);
 });

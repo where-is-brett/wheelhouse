@@ -128,10 +128,13 @@ const GUARDED_SAYS = GUARDED_LINE;
 // still says the network stays open, and whether this computer's self-test found the helper's keys
 // folder readable (`readsHeld`), since the click turns Guarded on at once.
 const guardedShort = (readsHeld) => (readsHeld === true
-  ? 'Low integrity: no changes outside the project, and the helper\'s keys folder is shut, but the network stays open.'
-  : 'Low integrity: no changes outside the project, but the network and the helper\'s keys folder stay open.');
-const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'Builders ask before each build command, as now.' };
+  ? 'Low integrity: no changes outside the project, the helper\'s keys folder shut, network open.'
+  : 'Low integrity: no changes outside the project; network and the helper\'s keys folder open.');
+const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'Builders ask first, as now.' };
 export const USE_GUARDED = 'Use Guarded';
+// The words of the setting event that Use Guarded confirms, which its confirm line quotes and the
+// card's first part names.
+export const GUARDED_SETTING_WORDS = 'Use Guarded on this Windows computer';
 
 // The card that turns Unattended on. Use Guarded is offered, and recommended, only where this
 // computer's self-test passed (`guardedReady`); `readsHeld` is whether that self-test found the
@@ -139,12 +142,16 @@ export const USE_GUARDED = 'Use Guarded';
 export function UNATTENDED_CARD({ guardedReady, readsHeld } = {}) {
   const offered = guardedReady === true;
   return {
-    what: 'Let builders on this Windows computer run build steps with no prompt, in this project.',
+    what: offered
+      ? `Let builders run build steps with no prompt in this project, or ${GUARDED_SETTING_WORDS}.`
+      : 'Let builders on this Windows computer run build steps with no prompt, in this project.',
     why: 'While you are away, a builder stops at its first build command.',
+    // No reply code answers this card (scripts/mod/reply.js), so it says a click is needed.
+    meanwhile: 'Builders keep asking; answer by a click only.',
     risk: UNATTENDED_RISK,
     options: [
       KEEP_ASKING,
-      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Until you turn it off, a builder can do whatever your account can.' },
+      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Until turned off, builders can do whatever your account can.' },
       ...(offered ? [{ name: 'guarded', label: USE_GUARDED, says: guardedShort(readsHeld) }] : []),
     ],
     recommend: offered ? 'guarded' : 'keep-asking',

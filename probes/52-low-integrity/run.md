@@ -50,6 +50,7 @@ You need: the Wheelhouse checkout, Node.js 22 or newer (Node 26.1 or newer is be
 
 - `PASS` means the protective thing held: a write was refused, a lock held, git worked at low. `FAIL` means it did not. `SEEN` is an observation with no right answer (what could be read, a time, a language mode).
 - `write-...` trials: PASS means Windows refused the low process. The two controls are `write-inside-worktree` (should be allowed) and `medium-copy-starts`.
+- `rename-...` and `remove-...` trials: PASS means Windows refused the low process renaming or removing the worktree's `.git` file, `.claude`, `.mcp.json` or `.vscode`, which are kept at the normal level inside the low worktree. A FAIL says the entry was put back afterwards.
 - `read-...` trials are `SEEN`: they say whether the low process could read a marker in an ordinary scratch folder.
 - `lock-reads-...` lines are the "no read up" attempts by each route; `LOCK_READS_ROUTE` is the first one that held (low can neither list nor read, and the probe itself still can).
 - `git-label-worktree`, `git-add-low`, `git-commit-low`: the labelling Task 6 will do, then git from low.

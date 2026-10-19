@@ -60,7 +60,7 @@ const PLUGIN_ROOT = '/plugin/root';
 const MATCHED = () => ({ ok: true, mismatches: [], manifest: true, upstreams: {}, kept: true });
 const run = (f, extra = {}, input = {}) => decide(
   { cwd: '/x', session_id: 's1', ...input },
-  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, guardedSelfTest: async () => null, ...extra },
+  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, guardedSelfTest: async () => null, startLowNodeCopy: () => true, ...extra },
 );
 const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
 const call = (cwd, tool) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {} });
@@ -206,8 +206,16 @@ test('on Windows the session start runs the Guarded self-test when there is no r
       f.client.health = async () => ({ ok: true });
       return f;
     };
-    const go = (f, extra = {}, input = {}) => run(f, { platform: 'win32', now: () => NOW, guardedSelfTest, ...extra }, { cwd: '/x/wt', ...input });
+    let copies = 0;
+    const go = (f, extra = {}, input = {}) => run(f, {
+      platform: 'win32', now: () => NOW, guardedSelfTest, lowNodeReady: () => true, startLowNodeCopy: () => { copies += 1; return true; }, ...extra,
+    }, { cwd: '/x/wt', ...input });
+    // With no whole copy of Node.js, the copy is started in the background and nothing waits for it.
+    await go(up(), { lowNodeReady: () => false }, { session_id: 's0' });
+    assert.equal(copies, 1);
+    assert.equal(tried.length, 0, 'no self-test without the copy');
     await go(up());
+    assert.equal(copies, 1, 'a whole copy is not made again');
     assert.equal(tried.length, 1, 'no result yet');
     assert.equal(tried[0].home, wheelhouseHome());
     assert.equal(tried[0].worktree, '/x/wt');

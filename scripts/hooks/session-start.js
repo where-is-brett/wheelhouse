@@ -12,7 +12,8 @@
 // five of them waiting for the helper to start, the rest for the records, the
 // sync, the views and the watcher, which is last and gets what is left. On Windows the Guarded
 // self-test (scripts/windows/low.js) runs after them, within its own 3 seconds or what is left,
-// when the level would be Guarded or the last result is missing or over a day old. Context added by a hook is capped at 10,000 characters
+// when the level would be Guarded or the last result is missing or over a day old, and only once
+// the copy of Node.js it needs is whole; the copy itself is made in the background, never here. Context added by a hook is capped at 10,000 characters
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
 import fs from 'node:fs';
@@ -30,13 +31,15 @@ import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
-import { startBackground } from '../lib/background.js';
+import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
 import { run as runProgram } from '../lib/run.js';
-import { guardedReady, needsSelfTest, selfTest, SELF_TEST_MS } from '../windows/low.js';
+import {
+  LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
+} from '../windows/low.js';
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 
@@ -331,8 +334,10 @@ export async function decide(input, deps = {}) {
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS, totalMs = TOTAL_MS, pause = sleep,
     background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome, env = process.env,
-    guardedSelfTest = selfTest, run = runProgram,
+    guardedSelfTest = selfTest, run = runProgram, lowNodeReady: copyReady = lowNodeReady,
   } = deps;
+  // Makes the copy of Node.js the Guarded runner starts from, detached, outside this budget.
+  const startLowNodeCopy = deps.startLowNodeCopy ?? (() => startDetached(spawn, path.join(pluginRoot, LOW_NODE_SCRIPT)));
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
   const { project, locked } = found;
@@ -369,15 +374,19 @@ export async function decide(input, deps = {}) {
   const stateRoot = stateDir(project);
   // The Guarded self-test, on Windows, when the level read as if it passed would be Guarded, or
   // the last result is missing, over a day old or ran out of time, so the level and the
-  // Unattended card's Use Guarded go by a result under a day old. It informs, so anything that
-  // fails is passed over: the session goes on, and Guarded reads Ask.
+  // Unattended card's Use Guarded go by a result under a day old. It needs a whole copy of
+  // Node.js: with none, the copy is started in the background and the self-test waits for a
+  // later session start. It informs, so anything that fails is passed over: the session goes on,
+  // and Guarded reads Ask.
   let ready = false;
   if (platform === 'win32') {
     try {
       const home = wheelhouseHome();
+      const copied = copyReady({ home });
+      if (!copied) startLowNodeCopy();
       const wouldGuard = buildsShown({ views, computer: computerId(), locked, guardedReady: true }).level === 'guarded';
       const timeoutMs = Math.min(SELF_TEST_MS, end - Date.now());
-      if ((wouldGuard || needsSelfTest({ home, now })) && timeoutMs > 0) {
+      if (copied && (wouldGuard || needsSelfTest({ home, now })) && timeoutMs > 0) {
         await guardedSelfTest({ run, home, worktree: input.cwd, now, pluginRoot, timeoutMs });
       }
       ready = guardedReady({ home, now, platform });

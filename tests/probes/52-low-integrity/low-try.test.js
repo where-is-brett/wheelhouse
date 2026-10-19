@@ -32,6 +32,26 @@ test('the helper appends, reads and lists, and says what failed', () => {
   }
 });
 
+test('the helper renames and removes a file or a folder, and says what failed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-test-low-try-'));
+  try {
+    const folder = path.join(dir, '.claude');
+    fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, 'settings.json'), '{}');
+    assert.deepEqual(tryOp('rename', folder, `${folder}.moved`), { ok: true });
+    assert.ok(fs.existsSync(path.join(`${folder}.moved`, 'settings.json')));
+    assert.deepEqual(tryOp('remove', `${folder}.moved`), { ok: true });
+    assert.equal(fs.existsSync(`${folder}.moved`), false);
+    const file = path.join(dir, '.mcp.json');
+    fs.writeFileSync(file, '{}');
+    assert.deepEqual(tryOp('remove', file), { ok: true });
+    assert.equal(tryOp('remove', file).code, 'ENOENT');
+    assert.equal(tryOp('rename', file, `${file}.x`).code, 'ENOENT');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the helper runs a program, with input, and a shell command', () => {
   const echo = tryOp('exec', process.execPath, '-e', 'console.log(21*2)');
   assert.equal(echo.ok, true);

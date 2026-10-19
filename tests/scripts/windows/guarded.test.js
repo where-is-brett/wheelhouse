@@ -26,6 +26,7 @@ const groups = (sid, name) => [
 ].join('\r\n');
 const LOW = groups('S-1-16-4096', 'Low');
 const MEDIUM = groups('S-1-16-8192', 'Medium');
+const WIN_ENV = { PATH: '/bin', SystemRoot: 'C:\\Windows' };
 const nameOf = (file) => path.win32.basename(path.basename(file)).toLowerCase().replace(/\.exe$/, '');
 
 // A stand-in for scripts/lib/run.js answering whoami and taskkill, and one for starting the
@@ -55,7 +56,7 @@ function scene({ whoami = () => ({ code: 0, stdout: LOW, stderr: '' }), code = 0
   };
   const worktree = fs.realpathSync(tempFolder('wh-wt-'));
   fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: elsewhere\n');
-  const go = (words, over = {}) => guarded(words, { run, start, cwd: worktree, env: { PATH: '/bin' }, platform: 'darwin', say: (line) => said.push(line), ...over });
+  const go = (words, over = {}) => guarded(words, { run, start, cwd: worktree, env: WIN_ENV, platform: 'darwin', say: (line) => said.push(line), ...over });
   return { calls, started, said, worktree, go };
 }
 
@@ -81,8 +82,21 @@ test('the runner refuses to run when its token is not low', async () => {
   assert.deepEqual(s.calls[0].args, ['/groups']);
   // whoami is Windows' own, from System32.
   const sys = scene();
-  await sys.go(['npm', 'test'], { env: { SystemRoot: 'C:\\Windows', PATH: '/bin' } });
+  await sys.go(['npm', 'test']);
   assert.equal(sys.calls[0].file, 'C:\\Windows\\System32\\whoami.exe');
+  // With no SystemRoot, or one that isn't a full path from a drive letter, whoami is never looked
+  // for by a search: the runner refuses, as it does when not low.
+  for (const env of [{ PATH: '/bin' }, { PATH: '/bin', SystemRoot: '' }, { PATH: '/bin', SystemRoot: 'Windows' }, { PATH: '/bin', SystemRoot: '\\\\server\\share' }, { PATH: '/bin', SystemRoot: '%WINDIR%' }]) {
+    const none = scene();
+    assert.equal(await none.go(['npm', 'test'], { env }), EXIT.notLow, JSON.stringify(env));
+    assert.deepEqual(none.said, [NOT_LOW]);
+    assert.deepEqual(none.calls, [], 'nothing is run');
+    assert.deepEqual(none.started, []);
+  }
+  // Its name in any case, as Windows keeps it.
+  const lower = scene();
+  await lower.go(['npm', 'test'], { env: { PATH: '/bin', SYSTEMROOT: 'D:\\Win' } });
+  assert.equal(lower.calls[0].file, 'D:\\Win\\System32\\whoami.exe');
 
   assert.equal(isLowToken(LOW), true);
   for (const other of [MEDIUM, '', null, 'S-1-16-40960', groups('S-1-16-12288', 'High')]) assert.equal(isLowToken(other), false, String(other));
@@ -112,6 +126,16 @@ test('the runner refuses the fetching forms and says to ask', async () => {
   }
 });
 
+test('the runner leaves local git to run at the normal level, and says to ask for it', async () => {
+  for (const words of [['git', 'commit', '-m', 'x'], ['git', 'status'], ['git.exe', 'add', '.'], ['C:/Program Files/Git/cmd/git', 'diff']]) {
+    const s = scene();
+    assert.equal(await s.go(words), EXIT.fetches, words.join(' '));
+    assert.ok(s.said[0].endsWith(ASK_INSTEAD), s.said[0]);
+    assert.match(s.said[0], /git/);
+    assert.deepEqual(s.started, []);
+  }
+});
+
 test('the runner points npm\'s cache and the temporary folders inside the worktree', async () => {
   const s = scene({ code: 7 });
   const sub = path.join(s.worktree, 'packages', 'a');
@@ -136,14 +160,14 @@ test('the runner points npm\'s cache and the temporary folders inside the worktr
 
 test('on Windows the runner starts an .exe itself and a .cmd through cmd.exe, quoting each word', async () => {
   const bin = fs.realpathSync(tempFolder('wh-bin-'));
-  fs.writeFileSync(path.join(bin, 'git.exe'), '');
+  fs.writeFileSync(path.join(bin, 'node.exe'), '');
   fs.writeFileSync(path.join(bin, 'npm.cmd'), '');
   const env = { Path: bin, PATHEXT: '.COM;.EXE;.BAT;.CMD', SystemRoot: 'C:\\Windows' };
   const exists = (file) => fs.existsSync(file);
   const s = scene();
-  assert.equal(await s.go(['git', 'commit', '-m', 'a "quoted" message'], { platform: 'win32', env, exists }), 0);
-  assert.equal(s.started[0].file, path.join(bin, 'git.exe'));
-  assert.deepEqual(s.started[0].args, ['commit', '-m', 'a "quoted" message'], 'an .exe gets its words as they are');
+  assert.equal(await s.go(['node', '-e', 'console.log("a %quoted% word")'], { platform: 'win32', env, exists }), 0);
+  assert.equal(s.started[0].file, path.join(bin, 'node.exe'));
+  assert.deepEqual(s.started[0].args, ['-e', 'console.log("a %quoted% word")'], 'an .exe gets its words as they are');
   assert.equal(await s.go(['npm', 'run', 'build', 'a b&c'], { platform: 'win32', env, exists }), 0);
   const viaCmd = s.started[1];
   assert.equal(viaCmd.file, 'C:\\Windows\\System32\\cmd.exe');
