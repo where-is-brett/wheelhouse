@@ -149,6 +149,79 @@ test('under STOP, a feature session may read an answer and check its report, and
   });
 });
 
+test('under STOP, the front desk\'s reading commands run by their exact words, and its writing ones do not', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const cli = `${PLUGIN}/scripts/frontdesk/cli.js`;
+      for (const ok of [
+        `node ${cli} cards`,
+        `node "${cli}" cards`,
+        `node '${cli}' again 3`,
+        `node "${cli}" again 12`,
+        ...['rulebook', 'waiting', 'ideas', 'glossary', 'settings'].map((name) => `node "${cli}" views ${name}`),
+        `node "${cli}" explain merge`,
+        `node "${cli}" explain pull request`,
+        `node "${cli}" explain "pull request"`,
+        `node "${cli}" explain the-done-contract`,
+        `node "${cli}" similar`,
+        // The request's words as plain arguments, quoted or not: nothing a shell would expand.
+        `node "${cli}" similar export the orders to a spreadsheet`,
+        `node "${cli}" similar "Could we export the orders, as a spreadsheet?"`,
+        `node "${cli}" similar "can't sign in on the phone"`,
+        `node "${cli}" preview 7`,
+      ]) assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
+      for (const bad of [
+        `node ${cli}`,
+        `node "${cli}" card`,
+        `node "${cli}" record ruling`,
+        `node "${cli}" record idea`,
+        `node "${cli}" cards extra`,
+        `node "${cli}" cards --all`,
+        `node "${cli}" again`,
+        `node "${cli}" again 0`,
+        `node "${cli}" again 03`,
+        `node "${cli}" again -1`,
+        `node "${cli}" again 1 2`,
+        `node "${cli}" again x`,
+        `node "${cli}" views`,
+        `node "${cli}" views secrets`,
+        `node "${cli}" views rulebook extra`,
+        `node "${cli}" explain`,
+        `node "${cli}" explain --help`,
+        `node "${cli}" explain ../x`,
+        `node "${cli}" explain ${'word '.repeat(6).trim()}`,
+        `node "${cli}" similar "$HOME"`,
+        `node "${cli}" similar export *`,
+        `node "${cli}" similar "a {b}"`,
+        `node "${cli}" similar --help`,
+        `node "${cli}" similar ~/notes`,
+        `node "${cli}" similar fix #12 now`,
+        `node "${cli}" similar "a [b]"`,
+        `node "${cli}" preview`,
+        `node "${cli}" preview x`,
+        `node "${cli}" preview 7 8`,
+        `node "${cli}" cards; rm -rf x`,
+        `node "${cli}" cards && ls`,
+        `echo hi | node "${cli}" similar`,
+        `node "${cli}" similar < request.txt`,
+        `node "${cli}" cards > out`,
+        `node "${cli}" views $(id)`,
+        `node "${cli}" cards\nls`,
+        `node "${cli}" cards &`,
+        'node /elsewhere/scripts/frontdesk/cli.js cards',
+        `node ${PLUGIN}-x/scripts/frontdesk/cli.js cards`,
+        `bash ${cli} cards`,
+        `node /other/x.js ${cli} cards`,
+        `node ${PLUGIN}/scripts/frontdesk/glossary.js cards`,
+      ]) assert.ok(denied(await guard(bash(main, bad), deps(base))), bad);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('under STOP, the foreman may read a wake and record it done, and nothing more of its commands', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();

@@ -25,6 +25,7 @@ import { stopState } from '../lib/stop.js';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { startBackground } from '../lib/background.js';
+import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
@@ -43,6 +44,8 @@ const LINE_CHARS = 200;
 export const NO_HELPER = 'The host helper isn\'t running, so nothing can be pushed or merged';
 export const NOT_SYNCED = 'State was not synced with the host this time';
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
+// In the project's main folder, for any session that isn't the foreman's: the front desk's playbook.
+export const FRONT_DESK_LINE = 'This is the front desk. Follow wheelhouse:front-desk.';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call. Claude Code reads that field from CLAUDE_CODE_FLOOR; an older one lets the call through.
@@ -261,12 +264,13 @@ async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   } catch { /* the session carries on without it */ }
 }
 
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows }) {
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, frontDesk = false }) {
   const lines = [];
   if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
   const damaged = Array.isArray(views?.damaged) ? views.damaged.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))) : [];
   lines.push(...section('Damaged state:', damaged));
+  if (frontDesk) lines.push(FRONT_DESK_LINE);
   lines.push(...notes);
   const title = (d) => show(d?.title ?? d?.question ?? d?.words ?? d?.value ?? '');
   const unconfirmed = (views?.unconfirmed ?? []).map((u) => `${u.id} (${u.kind}${u.key ? ` ${u.key}` : ''}): ${title(u.data)}`);
@@ -291,7 +295,7 @@ export async function decide(input, deps = {}) {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS, totalMs = TOTAL_MS, pause = sleep,
-    background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome,
+    background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome, env = process.env,
   } = deps;
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
@@ -330,6 +334,7 @@ export async function decide(input, deps = {}) {
   const text = reload({
     views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot,
     windows: platform === 'win32' && firstForSession(project, input.session_id, now),
+    frontDesk: featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

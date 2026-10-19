@@ -54,7 +54,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     updatePr: post('/pr/update'), // { project, number, title?, body?, session }: a new body is stamped as openPr's is; a session with no provenance on this computer is refused
     updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts?, ciPush?: { branch, sha } }: merges the default branch in; refused under STOP; ciPush names the merge commit the director's CI card must approve
     carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate, earlier }: the gate's carry-over rule, read-only, answered under STOP; with no CLEAN review to weigh, 'none' and upToDate false, unread; earlier: a CLEAN review of an earlier commit is on record
-    prState: post('/pr/state'), //   { project, number }
+    prState: post('/pr/state'), //   { project, number } (or `cwd` for `project`, as the runbook's)
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project } -> { ok, config }: the default branch's, read-only, answered under STOP
@@ -67,10 +67,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     state: {
       clone: post('/state/clone'), //   { project }
-      write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold)
+      write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
       record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
-      views: post('/state/views'), //   { project } -> { ok, views }
+      views: post('/state/views'), //   { project, cards? } -> { ok, views, cards? }: with cards: true, the card events too; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
     },

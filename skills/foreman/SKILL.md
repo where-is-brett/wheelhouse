@@ -31,7 +31,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 
 ## Asking the director
 
-`act ask W --what '…' --why '…' --option '<label>=<says>'` (two or more) `--recommend <label> --level 3`
+`act ask W --what '…' --why '…' --option '<label>=<says>'` (two to four, none called Not now, Explain more or Show me: the director answers on a card) `--recommend <label> --level 3`
 
 - **Single quotes again,** for the same reason.
 - **Each option's `says`** is one whole command, written as the wake writes them after `Next:` (`act merge W`, say), or the word `waiting`.

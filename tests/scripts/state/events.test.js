@@ -497,3 +497,100 @@ test('each new action needs its own fields and refuses others', async () => {
     ]) assert.throws(() => makeEvent({ kind: 'action', data: bad }), /action event/, JSON.stringify(bad));
   });
 });
+
+// --- cards and reversals ---
+
+const CARD_DATA = {
+  question: 'What this is: a pull request.', header: 'Approve', options: ['Approve', 'Not now', 'Explain more', 'Show me'],
+  kind: 'approval', line: 'Approve pull request #7 at commit abcdef123456', code: 'K7M2', level: 3, importance: 5,
+};
+
+test('a card event needs its kind, options and level', async () => {
+  await withHome(() => {
+    const make = (data) => makeEvent({ kind: 'card', data, now: at(1) });
+    assert.equal(make(CARD_DATA).kind, 'card');
+    // A card with no line or code (a product question), and the optional topic and concepts.
+    make({ ...CARD_DATA, kind: 'question', line: null, code: null, topic: 'colours', concepts: ['pull request'] });
+    // The words on each button, one for each option, so the card can be asked again as composed.
+    make({ ...CARD_DATA, descriptions: ['Approve it.', 'Wait.', 'Say it plainer.', 'Show it.'] });
+    for (const kind of ['approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'question']) {
+      make({ ...CARD_DATA, kind });
+    }
+    for (const k of ['question', 'header', 'options', 'kind', 'level']) {
+      const { [k]: _gone, ...without } = CARD_DATA;
+      assert.throws(() => make(without), /card event.*needs/, `without ${k}`);
+    }
+    const bad = (data) => assert.throws(() => make({ ...CARD_DATA, ...data }), /card event/, JSON.stringify(data));
+    bad({ kind: 'bogus' });
+    bad({ options: [] });
+    bad({ options: ['Only'] });
+    bad({ options: ['a', 'b', 'c', 'd', 'e'] });
+    bad({ options: ['a', 3] });
+    bad({ options: 'Approve' });
+    bad({ level: 0 });
+    bad({ level: 5 });
+    bad({ level: '3' });
+    bad({ question: '' });
+    bad({ header: 7 });
+    bad({ line: 7 });
+    bad({ code: 7 });
+    bad({ importance: 'high' });
+    bad({ descriptions: ['Approve it.'] });
+    bad({ descriptions: ['a', 'b', 'c', ''] });
+    bad({ descriptions: 'Approve it.' });
+    bad({ topic: '' });
+    bad({ concepts: 'pull request' });
+    bad({ concepts: [3] });
+    bad({ title: 'extra' });
+    assert.throws(() => make(undefined), /card event/);
+    assert.throws(() => make([]), /card event/);
+  });
+});
+
+test('a reversal is accepted as a plain kind', async () => {
+  await withHome(() => {
+    assert.ok(PLAIN_KINDS.includes('reversal'));
+    const made = makeEvent({ kind: 'reversal', data: { topic: 'colours', what: 'The director undid the colour change' }, now: at(1) });
+    assert.equal(made.sig, undefined);
+    makeEvent({ kind: 'reversal', data: { topic: 'colours', what: 'Undid it', of: 'r001' }, now: at(1) });
+    const bad = (data) => assert.throws(() => makeEvent({ kind: 'reversal', data }), /reversal event/, JSON.stringify(data));
+    bad(undefined);
+    bad({ what: 'x' });
+    bad({ topic: 'x' });
+    bad({ topic: '', what: 'x' });
+    bad({ topic: 'x', what: 'x', of: '' });
+    bad({ topic: 'x', what: 'x', of: 3 });
+    bad({ topic: 'x', what: 'x', extra: 1 });
+  });
+});
+
+test('an asked record names the cards a visit handed out, one to four of them', async () => {
+  await withHome(() => {
+    assert.ok(PLAIN_KINDS.includes('asked'));
+    const made = makeEvent({ kind: 'asked', data: { cards: ['c1', 'c2'] }, now: at(1) });
+    assert.equal(made.sig, undefined);
+    const bad = (data) => assert.throws(() => makeEvent({ kind: 'asked', data }), /asked event/, JSON.stringify(data));
+    bad(undefined);
+    bad({});
+    bad({ cards: [] });
+    bad({ cards: 'c1' });
+    bad({ cards: ['c1', ''] });
+    bad({ cards: ['c1', 2] });
+    bad({ cards: ['a', 'b', 'c', 'd', 'e'] });
+    bad({ cards: ['c1'], label: 'Approve' });
+  });
+});
+
+test('a question may say what answering it does to the checks, on one line', async () => {
+  await withHome(() => {
+    const question = {
+      id: 'q-export-csv-1', work: 'export-csv', what: 'Which check?', why: 'It changes a guardrail.',
+      options: [{ label: 'Keep it', says: 'The check stays.' }, { label: 'Drop it', says: 'The check goes.' }], recommendation: 'Keep it', level: 4,
+    };
+    makeEvent({ kind: 'question', data: question, now: at(1) });
+    assert.equal(makeEvent({ kind: 'question', data: { ...question, checks: 'One check stops running.' }, now: at(1) }).data.checks, 'One check stops running.');
+    for (const checks of ['', 'Two\nlines', 'Two\u2028lines', 3, null]) {
+      assert.throws(() => makeEvent({ kind: 'question', data: { ...question, checks }, now: at(1) }), /question event/, JSON.stringify(checks));
+    }
+  });
+});

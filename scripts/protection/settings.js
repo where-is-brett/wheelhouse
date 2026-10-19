@@ -210,15 +210,41 @@ export function directorStatusLine({ claudeHome, projectDir }) {
   return null;
 }
 
+// The command that runs the front desk's script (scripts/frontdesk/cli.js), as its allow rule and
+// its playbook write it: `node`, then the script's full path in double quotes. On Windows the path
+// has forward slashes after its drive letter, which node and Git Bash both take, and which the
+// STOP guard reads as the same path. Null when the plugin's folder isn't a full path, or holds a
+// character that could end the quotes or change what the rule matches (a quote, `*`, a
+// parenthesis, `$`, a backtick, a backslash or a control character): that folder gets no rule, and
+// the command is asked about each time.
+export function frontDeskCommand(pluginRoot, { platform = process.platform } = {}) {
+  if (typeof pluginRoot !== 'string') return null;
+  let root = pluginRoot;
+  if (platform === 'win32') {
+    if (!/^[A-Za-z]:[\\/]/.test(root)) return null;
+    root = root.replaceAll('\\', '/');
+  } else if (!root.startsWith('/')) {
+    return null;
+  }
+  if (/["*()$`\\\p{Cc}]/u.test(root)) return null;
+  return `node "${root.replace(/\/+$/, '')}/scripts/frontdesk/cli.js"`;
+}
+
 // The socket's path names this computer's home folder, so it stays out of the
 // shared file. The status line is added only when `node` and `pluginRoot` are given and the
 // director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
-// stays and the share comes from the mod alone.
-export function localSettings({ address, node, pluginRoot, ownStatusLine = null }) {
+// stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command is
+// allowed by its full path, so the director's session isn't asked each time it composes a card or
+// records a decision; the path names this computer's folders too.
+export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   if (node && pluginRoot && !ownStatusLine) {
     settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
   }
+  const frontDesk = pluginRoot ? frontDeskCommand(pluginRoot, { platform }) : null;
+  // In this file's `Bash(x:*)` form, the same as `Bash(x *)`. Written on Windows too, unlike the build
+  // commands' rules: it reaches only Wheelhouse's own cli.js, by its full path, never `node` itself.
+  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk}:*)`] };
   return settings;
 }
 

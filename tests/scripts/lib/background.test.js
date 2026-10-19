@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startBackground as startWithBackground, weeklyDue } from '../../../scripts/lib/background.js';
+import { recordRole } from '../../../scripts/lib/role.js';
 
 const ROOT = '/plugin/root';
 // The weekly jobs are not due unless a test says so, whatever the home holds.
@@ -58,6 +59,11 @@ test('a session in a feature worktree is recorded as feature work, with its slug
     const part = recorded(home, 's-feature');
     assert.equal(part.role, 'feature');
     assert.equal(part.work, 'gift-cards');
+    // A front-desk role recorded for the session earlier doesn't make feature work the front desk's.
+    recordRole('s-recorded', 'front-desk');
+    await startBackground({ pluginRoot: ROOT, session: 's-recorded', cwd: tree, project: 'owner__name', env: {}, spawn: r.spawn, now: () => NOW, health: r.health });
+    assert.equal(recorded(home, 's-recorded').role, 'feature');
+    assert.equal(recorded(home, 's-recorded').work, 'gift-cards');
     assert.equal(part.project, 'owner__name');
     assert.equal(part.at, NOW.toISOString());
   });

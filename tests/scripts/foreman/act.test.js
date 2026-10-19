@@ -735,6 +735,25 @@ test('ask records the foreman\'s own question with an id the feature can never u
   assert.equal(fake.writes.at(-1).data.options[0].says.length, 300);
 }));
 
+test('ask refuses a question the director\'s card could not carry, in the composer\'s words, and writes nothing', () => withHome(async () => {
+  const { views } = await questionScene();
+  const fake = fakeClient({ views });
+  const options = (labels) => labels.flatMap((label) => ['--option', `${label}=waiting`]);
+  for (const [name, rest, why] of [
+    ['five options', [...options(['a', 'b', 'c', 'd', 'e']), '--recommend', 'a'], /at most 4/],
+    ['a put-off label', [...options(['a', 'Show me']), '--recommend', 'a'], /Show me/],
+  ]) {
+    const r = await act(['ask', 'mine', '--what', 'x', '--why', 'y', ...rest, '--level', '2'], { client: fake.client });
+    refusedInOneLine(r);
+    assert.match(r.err, why, name);
+    assert.match(r.err, /can't be put to the director as a card/, name);
+  }
+  const long = await act(['ask', 'mine', '--what', 'w'.repeat(1200), '--why', 'y', ...options(['a', 'b']), '--recommend', 'a', '--level', '2'], { client: fake.client });
+  refusedInOneLine(long);
+  assert.match(long.err, /1200 characters/);
+  assert.deepEqual(fake.writes, []);
+}));
+
 // --- amend ---
 
 // The director's signed amend click, and the amendment it names, in the state clone.

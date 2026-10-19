@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
@@ -365,13 +366,42 @@ test('each /state/write and /state/record it takes rewrites the project\'s views
   try {
     await c.as(async () => {
       const viewsOf = (name) => JSON.parse(fs.readFileSync(path.join(stateDir(PROJECT), '..', 'views', `${name}.json`), 'utf8'));
-      const card = await c.client.state.write({ project: PROJECT, kind: 'card', data: { title: 'Pick a colour' } });
+      const card = await c.client.state.write({ project: PROJECT, kind: 'card', data: { question: 'Pick a colour?', header: 'Colour', options: ['Blue', 'Green'], kind: 'question', level: 3 } });
       assert.equal(card.ok, true);
       assert.deepEqual(viewsOf('waiting').map((w) => w.id), [card.id]);
       const review = makeEvent({ kind: 'review', data: { pr: 7, commit: 'abc1234', verdict: 'CLEAN' }, now: at(5000) });
       assert.equal((await c.client.state.record({ project: PROJECT, event: review })).ok, true);
       assert.equal(viewsOf('reviews')['7'].abc1234.id, review.id);
       assert.equal(viewsOf('status').lastEventAt, review.at);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('the front desk names its folder, and the helper places the project from it', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const inside = path.join(readProject(PROJECT).folder, 'src');
+      fs.mkdirSync(inside, { recursive: true });
+      const card = { question: 'Pick a colour?', header: 'Colour', options: ['Blue', 'Green'], kind: 'question', level: 3 };
+      const wrote = await c.client.state.write({ cwd: inside, kind: 'card', data: card });
+      assert.equal(wrote.ok, true, wrote.refused);
+      // The views, and with `cards` the card events the board numbers its list from.
+      const views = await c.client.state.views({ cwd: inside, cards: true });
+      assert.equal(views.ok, true, views.refused);
+      assert.deepEqual(views.views.waiting.map((w) => w.id), [wrote.id]);
+      assert.deepEqual(views.cards.map((e) => [e.id, e.kind, e.data.question]), [[wrote.id, 'card', 'Pick a colour?']]);
+      assert.equal((await c.client.state.views({ project: PROJECT })).cards, undefined, 'only when asked for');
+      assert.equal((await c.client.state.views({ project: PROJECT })).stop, undefined, 'STOP is off');
+      assert.deepEqual(await c.client.prState({ cwd: inside, number: 7 }), { ok: true, result: { state: 'closed' } });
+      // A folder outside every project, or one that isn't a full path, is refused, and nothing is written.
+      for (const cwd of [os.tmpdir(), 'src']) {
+        const lost = await c.client.state.write({ cwd, kind: 'idea', data: { key: 'x', title: 'x' } });
+        assert.equal(lost.ok, false, cwd);
+      }
+      assert.match((await c.client.state.views({ cwd: os.tmpdir() })).refused, /not inside a Wheelhouse project/);
+      assert.deepEqual((await c.client.state.views({ project: PROJECT })).views.waiting.map((w) => w.id), [wrote.id]);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
