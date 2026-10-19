@@ -7,7 +7,9 @@ import path from 'node:path';
 import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
+import {
+  decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
+} from '../../../scripts/hooks/session-start.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
 import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HELD } from '../../../scripts/lineage/check.js';
@@ -675,30 +677,59 @@ test('the session start starts no watcher in a project setup is still finishing'
 
 // Whether setup has finished here isn't known while its journal can't be read, so the foreman,
 // the last thing setup starts, isn't started (rulings R44, R67); the rest of the session start
-// goes on as in any project.
-test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher', async () => {
+// goes on as in any project, and the reload says why, naming what to do (ruling R72).
+test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher and says why', async () => {
   await withHome(async (home) => {
+    assert.equal(FOREMAN_HELD_NEWER, 'The foreman wasn\'t started because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Update Wheelhouse.');
+    assert.equal(FOREMAN_HELD_UNREADABLE, 'The foreman wasn\'t started because setup\'s journal couldn\'t be read. Follow wheelhouse:setup.');
     const folder = fs.realpathSync.native(tempFolder('wh-unreadable journal '));
     fs.mkdirSync(path.join(folder, '.git'));
     writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
     const start = (f) => decide({ cwd: folder, session_id: 's1' }, {
       pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
       pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
-      guardedSelfTest: async () => null, startLowNodeCopy: () => true,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true, env: {},
     });
     const f = fake();
     f.client.health = async () => ({ ok: true });
     f.client.config = async () => shapeConfig(1);
+    const held = [FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE, JOURNAL_UNREADABLE];
+    const heldLines = (out) => text(out).split('\n').filter((l) => held.includes(l));
     fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
-    fs.writeFileSync(journalFile(), 'not json');
-    assert.equal(beingSetUp(folder), null, 'the guards treat it as the project it is');
-    const unreadable = await start(f);
-    assert.equal(watcherStarts(f).length, 0, 'not while the journal can\'t be read');
-    // Readable again (no journal at all: setup never ran here), it is started, and the reload is the same.
+    // Not JSON, a journal of another shape, and one a newer Wheelhouse wrote.
+    const cases = [
+      ['not json', FOREMAN_HELD_UNREADABLE],
+      ['{"v":1,"runs":{}}', FOREMAN_HELD_UNREADABLE],
+      ['[]', FOREMAN_HELD_UNREADABLE],
+      ['{"v":2,"runs":[]}', FOREMAN_HELD_NEWER],
+      ['{"v":3}', FOREMAN_HELD_NEWER],
+    ];
+    for (const [journal, line] of cases) {
+      fs.writeFileSync(journalFile(), journal);
+      assert.equal(beingSetUp(folder), null, 'the guards treat it as the project it is');
+      const out = await start(f);
+      assert.equal(watcherStarts(f).length, 0, `not while the journal can't be read: ${journal}`);
+      assert.deepEqual(heldLines(out), [line], journal);
+      // The rest of the reload is a project's: the front desk's line is there too.
+      assert.ok(text(out).split('\n').includes(FRONT_DESK_LINE), journal);
+      // Nothing rewrites the journal.
+      assert.equal(fs.readFileSync(journalFile(), 'utf8'), journal);
+    }
+    // Held back with the helper down too, and still said.
+    const down = fake({ startsUp: false });
+    down.client.config = async () => shapeConfig(1);
+    const unhelped = await start(down);
+    assert.equal(watcherStarts(down).length, 0);
+    assert.deepEqual(heldLines(unhelped), [FOREMAN_HELD_NEWER]);
+    // Readable again (no journal at all: setup never ran here), it is started, and the reload
+    // has no such line.
     fs.rmSync(journalFile());
     const readable = await start(f);
     assert.equal(watcherStarts(f).length, 1);
-    assert.equal(text(unreadable), text(readable));
+    assert.deepEqual(heldLines(readable), []);
+    // A readable journal whose runs are elsewhere, too.
+    fs.writeFileSync(journalFile(), JSON.stringify({ v: 1, runs: [] }));
+    assert.deepEqual(heldLines(await start(fake())), []);
   });
 });
 
@@ -982,6 +1013,22 @@ test('a fresh computer gets a signing key and enrols it once', async () => {
     await setupStart(fake(), fs.realpathSync.native(tempFolder('wh-stranger-')));
     assert.equal(fs.existsSync(path.join(keysDir(), 'signing.pem')), false);
     assert.deepEqual(readEnrolled(), []);
+  });
+});
+
+// A folder with no project record, with a journal that can't be read, is counted as being set up
+// (kit.js's beingSetUp): its reload has setup's own line for it, and not the project's as well.
+test('in a folder being set up, a journal that can\'t be read gives setup\'s line alone', async () => {
+  await withHome(async () => {
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-unread-setup ')));
+    fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
+    for (const journal of ['not json', '{"v":2,"runs":[]}']) {
+      fs.writeFileSync(journalFile(), journal);
+      const f = fake();
+      f.client.health = async () => ({ ok: true });
+      const out = await setupStart(f, folder);
+      assert.equal(text(out), JOURNAL_UNREADABLE, journal);
+    }
   });
 });
 

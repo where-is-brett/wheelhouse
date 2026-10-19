@@ -11,6 +11,7 @@ import {
   CLICK_FRESH_MS, NODE_FLOOR, PUSH_TEST_WAIT_MS, RETENTION_DAYS, STEP_TIMEOUT_MS, TARGET_MINUTES,
 } from '../../../scripts/lib/setup-numbers.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { journalTrouble, NEWER_JOURNAL, NOT_A_JOURNAL } from '../../../scripts/lib/setup-run.js';
 
 const at = (iso) => () => new Date(iso);
 const readText = (file) => fs.readFileSync(file, 'utf8');
@@ -198,6 +199,38 @@ test('a journal that is not JSON is refused, naming it, and never replaced', () 
     // A journal of another shape is refused too.
     fs.writeFileSync(journalFile(), '{"v":2,"runs":[]}');
     assert.throws(() => readJournal(), (error) => error.message.includes(journalFile()));
+  });
+});
+
+// Why the journal can't be read, for the session start's line and the mod's hold on the watcher
+// (ruling R72): a journal a newer Wheelhouse wrote, or anything else; told by the refusal's code.
+test('a journal that can\'t be read says why, by its refusal\'s code, and is left as it was', () => {
+  withHome(() => {
+    assert.equal(journalTrouble(), null, 'none at all reads as empty');
+    fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
+    const cases = [
+      ['{"v":1,"runs":[]}', null, null],
+      ['{"v":1,"runs":[', NOT_A_JOURNAL, 'unreadable'],
+      ['null', NOT_A_JOURNAL, 'unreadable'],
+      ['[]', NOT_A_JOURNAL, 'unreadable'],
+      ['{"runs":[]}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":1,"runs":{}}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":0,"runs":[]}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":"2","runs":[]}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":2,"runs":[]}', NEWER_JOURNAL, 'newer'],
+      ['{"v":7}', NEWER_JOURNAL, 'newer'],
+    ];
+    for (const [text, code, trouble] of cases) {
+      fs.writeFileSync(journalFile(), text);
+      if (code === null) assert.doesNotThrow(() => readJournal(), text);
+      else assert.throws(() => readJournal(), (error) => error.code === code && error.message.includes(journalFile()), text);
+      assert.equal(journalTrouble(), trouble, text);
+      assert.equal(readText(journalFile()), text);
+    }
+    // A journal that can't be opened is unreadable too.
+    fs.rmSync(journalFile());
+    fs.mkdirSync(journalFile());
+    assert.equal(journalTrouble(), 'unreadable');
   });
 });
 

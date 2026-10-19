@@ -49,7 +49,7 @@ import {
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
-import { SETUP_STEPS, firstUnfinished, readJournal } from '../lib/setup-run.js';
+import { SETUP_STEPS, firstUnfinished, journalTrouble } from '../lib/setup-run.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -70,6 +70,10 @@ export const FRONT_DESK_LINE = 'This is the front desk. Follow wheelhouse:front-
 export const NOT_SET_UP = 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.';
 export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. Follow wheelhouse:setup.`;
 export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
+// In a project, when setup's journal can't be read, whether setup has finished isn't known, so the
+// foreman isn't started (ruling R72): a journal a newer Wheelhouse wrote, or anything else.
+export const FOREMAN_HELD_NEWER = 'The foreman wasn\'t started because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Update Wheelhouse.';
+export const FOREMAN_HELD_UNREADABLE = 'The foreman wasn\'t started because setup\'s journal couldn\'t be read. Follow wheelhouse:setup.';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call, which Claude Code reads from 2.1.295; the mod's files load from CLAUDE_CODE_FLOOR
@@ -362,16 +366,6 @@ function firstKey(now) {
   } catch { /* no first click can be signed until a key is enrolled; setup's playbook says so */ }
 }
 
-// Whether setup's journal can be read (none at all reads as empty).
-function journalReadable() {
-  try {
-    readJournal();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // Where setup stands in a folder being set up, as one line; null when every step is done.
 function setupNote(setup) {
   if (setup.journal === false) return JOURNAL_UNREADABLE;
@@ -422,6 +416,9 @@ export async function decide(input, deps = {}) {
   const notes = [];
   // Whether setup is still finishing here, read once: it holds back the watcher and adds its note.
   const setup = beingSetUp(input.cwd);
+  // Why setup's journal can't be read, when it can't, in a folder not being set up (beingSetUp
+  // counts such a folder as the project it is): it holds back the watcher and adds its note.
+  const trouble = setup === null ? journalTrouble() : null;
   // Each call may take no longer than the budget that is left.
   const clientNow = () => given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
 
@@ -447,14 +444,15 @@ export async function decide(input, deps = {}) {
     // (rulings R44, R67, scripts/setup/health.js): not while setup is finishing in this project,
     // which it is until that board has been green, nor while setup's journal can't be read, when
     // whether it has finished isn't known (beingSetUp counts such a folder as the project it is,
-    // so the rest of the session start goes on as in any project).
-    if (setup === null && journalReadable()) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
+    // so the rest of the session start goes on as in any project, and a line says why: R72).
+    if (setup === null && trouble === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
+  if (trouble !== null) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
   const stateRoot = stateDir(project);
   // The Guarded self-test, on Windows, when the level read as if it passed would be Guarded, or

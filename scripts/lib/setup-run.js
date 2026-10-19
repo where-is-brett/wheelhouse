@@ -13,8 +13,13 @@ export function journalFile() {
   return path.join(wheelhouseHome(), 'setup', 'journal.json');
 }
 
-function refuse(why) {
-  return new Error(`The setup journal ${journalFile()} ${why}; it has been left as it was`);
+// The code on readJournal's refusal of a journal of a later version than this copy reads, which a
+// newer Wheelhouse wrote, and on its refusal of any other file that is not a journal it reads.
+export const NEWER_JOURNAL = 'WHEELHOUSE_NEWER_JOURNAL';
+export const NOT_A_JOURNAL = 'WHEELHOUSE_NOT_A_JOURNAL';
+
+function refuse(why, code) {
+  return Object.assign(new Error(`The setup journal ${journalFile()} ${why}; it has been left as it was`), { code });
 }
 
 // The journal; the empty one when there is none yet. A file that is not a journal this
@@ -31,12 +36,26 @@ export function readJournal() {
   try {
     journal = JSON.parse(text);
   } catch {
-    throw refuse('is not JSON');
+    throw refuse('is not JSON', NOT_A_JOURNAL);
   }
   if (!journal || typeof journal !== 'object' || journal.v !== 1 || !Array.isArray(journal.runs)) {
-    throw refuse('is not a journal this version of Wheelhouse can read');
+    const newer = Number.isInteger(journal?.v) && journal.v > 1;
+    throw refuse('is not a journal this version of Wheelhouse can read', newer ? NEWER_JOURNAL : NOT_A_JOURNAL);
   }
   return journal;
+}
+
+// Why setup's journal can't be read, without throwing: null when it can (none at all reads as
+// empty), 'newer' when it is a journal of a later version than this copy reads (a newer
+// Wheelhouse's: updating Wheelhouse reads it), and 'unreadable' for anything else. While it can't
+// be read, whether setup has finished isn't known, so the watcher is held back (ruling R72).
+export function journalTrouble() {
+  try {
+    readJournal();
+    return null;
+  } catch (error) {
+    return error?.code === NEWER_JOURNAL ? 'newer' : 'unreadable';
+  }
 }
 
 // Setup's steps by number and title, in order: what scripts/setup/steps.js numbers its STEPS by.
