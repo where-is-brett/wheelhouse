@@ -5,10 +5,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
-import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, dataHash, confirmationFor } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
-import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
+import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -162,6 +163,19 @@ test('Explain more and Not now record only the answer', async () => {
     await decide(input({ [approvalLine(7, FULL)]: 'Explain more', [LIFT_STOP]: 'Not now' }), deps(c));
     assert.equal(c.calls.write.length, 2);
     assert.equal(c.calls.record.length, 0);
+  });
+});
+
+test('Keep as is on a proposal\'s confirm card records only the answer, and signs nothing', async () => {
+  await withHome(async () => {
+    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }, now: () => NOW });
+    keepEvent(setting, profileDir());
+    const c = fake();
+    const options = ['Confirm', 'Not now', 'Explain more', 'Keep as is'].map((label) => ({ label }));
+    await decide(input({ [confirmLine(setting)]: 'Keep as is' }, { options }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.deepEqual(c.calls.write.map((w) => w.data), [{ question: confirmLine(setting), label: 'Keep as is' }]);
   });
 });
 
@@ -438,6 +452,128 @@ test('a Confirm line that matches events in both the state and the profile recor
   });
 });
 
+// --- the Unattended card for build commands on Windows ---
+
+const UNATTENDED = ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'].map((label) => ({ label }));
+const unattendedSetting = (computer, data = {}) => makeEvent({
+  kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended', ...data }, now: () => NOW,
+});
+
+test('Turn on (dangerous) on the Unattended card records a confirmation carrying its line', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    const line = unattendedBuildsLine(on.id, me);
+    const c = fake();
+    await decide(input({ [`${UNATTENDED_CARD().risk}\n${line}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(kinds(c), ['confirmation']);
+    const [rec] = c.calls.record;
+    assert.deepEqual(rec.event.data, { ...confirmationFor(on).data, line });
+    assert.ok(rec.event.sig);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 1);
+  });
+});
+
+test('Turn on (dangerous) records nothing without the line, for another computer\'s event, or for two events', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const c = fake();
+    // A question without the line.
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    await decide(input({ [`${confirmLine(on)}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // Another computer's event, under its own key or under this computer's.
+    const theirs = { ...unattendedSetting('deadbeef'), computer: 'deadbeef' };
+    keepEvent(theirs);
+    await decide(input({ [unattendedBuildsLine(theirs.id, 'deadbeef')]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    const forged = { ...unattendedSetting(me), computer: 'deadbeef' };
+    keepEvent(forged);
+    await decide(input({ [unattendedBuildsLine(forged.id, me)]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // A value other than unattended.
+    const guarded = unattendedSetting(me, { value: 'guarded' });
+    keepEvent(guarded);
+    await decide(input({ [unattendedBuildsLine(guarded.id, me)]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // A question naming two events.
+    const second = unattendedSetting(me);
+    keepEvent(second);
+    await decide(input({ [`${unattendedBuildsLine(on.id, me)} and ${unattendedBuildsLine(second.id, me)}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // The line clicked with another label.
+    await decide(input({ [unattendedBuildsLine(on.id, me)]: 'Keep asking' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 6);
+  });
+});
+
+test('Turn on (dangerous) records nothing from a card without the design\'s words on the risk', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    const line = unattendedBuildsLine(on.id, me);
+    const c = fake();
+    await decide(input({ [`Let builders run their tests.\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    const cut = UNATTENDED_CARD().risk.slice(0, -40);
+    await decide(input({ [`${cut}\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 2);
+    // With them, as the foreman's card writes them, it confirms.
+    await decide(input({ [`What this is: ${UNATTENDED_CARD().what} ${UNATTENDED_CARD().risk}\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(c.calls.record.map((r) => r.event.kind), ['confirmation']);
+  });
+});
+
+test('Use Guarded on the Unattended card records an ordinary confirmation of its Guarded setting event', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW });
+    keepEvent(on);
+    keepEvent(guarded);
+    const card = `What this is: ${UNATTENDED_CARD({ guardedReady: true }).what}\n${unattendedBuildsLine(on.id, me)}\n${confirmLine(guarded)}`;
+    const c = fake();
+    await decide(input({ [card]: 'Use Guarded' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(kinds(c), ['confirmation']);
+    const [rec] = c.calls.record;
+    assert.deepEqual(rec.event.data, confirmationFor(guarded).data, 'no line: Guarded counts from an ordinary confirmation');
+    assert.ok(rec.event.sig);
+  });
+});
+
+test('Use Guarded records nothing without exactly one confirm line for this computer\'s own Guarded event', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const c = fake();
+    const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW });
+    keepEvent(guarded);
+    const unattended = unattendedSetting(me);
+    keepEvent(unattended);
+    const theirs = { ...makeEvent({ kind: 'setting', data: { key: settingKey('deadbeef'), value: 'guarded' }, now: () => NOW }), computer: 'deadbeef' };
+    keepEvent(theirs);
+    const forged = { ...makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW }), computer: 'deadbeef' };
+    keepEvent(forged);
+    const other = makeEvent({ kind: 'setting', data: { key: 'compactPrepare', value: 150000 }, now: () => NOW });
+    keepEvent(other);
+    for (const question of [
+      'Use Guarded for build commands?', // no line
+      confirmLine(unattended), // a setting event for Unattended
+      confirmLine(theirs), // another computer's
+      confirmLine(forged), // this computer's key, written elsewhere
+      confirmLine(other), // another setting
+      `${confirmLine(guarded)}\n${confirmLine(other)}`, // two lines
+      `Confirm setting ${guarded.id}: "something else"`, // the event's id with other words
+    ]) {
+      await decide(input({ [question]: 'Use Guarded' }, { options: UNATTENDED }), deps(c));
+    }
+    // The line clicked with another label confirms nothing either.
+    await decide(input({ [confirmLine(guarded)]: 'Keep asking' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 8);
+  });
+});
+
 // --- the build loop's clicks ---
 
 const DOC = 'fedcba9876543210'.repeat(4);
@@ -534,15 +670,46 @@ test('a shown record the helper cannot take is kept pending like every signed re
   });
 });
 
-// The build loop's own labels earn records from a click only: their lines aren't set lines yet.
-const CLICK_ONLY = ['Change it', 'End it', 'Merge the fix'];
+// Unattended for build commands on Windows is set only by a click on its own card.
+const CLICK_ONLY = ['Turn on (dangerous)'];
 
-test('every label the prompt record can sign for is in SIGNED_LABELS, or one the build loop answers by click only', () => {
+test('every label the prompt record can sign for is in SIGNED_LABELS, or one answered by click only', () => {
   const source = fs.readFileSync(new URL('../../../scripts/hooks/prompt-record.js', import.meta.url), 'utf8');
   const handled = [...source.matchAll(/label === '([^']+)'/g)].map((m) => m[1]);
   assert.ok(handled.length >= 5);
   assert.deepEqual([...new Set(handled)].filter((l) => !CLICK_ONLY.includes(l)).sort(), [...SIGNED_LABELS].sort());
-  assert.ok(CLICK_ONLY.every((l) => handled.includes(l)));
+  assert.ok(CLICK_ONLY.every((l) => handled.includes(l) && !SIGNED_LABELS.includes(l)));
+  assert.ok(['Change it', 'End it', 'Merge the fix'].every((l) => SIGNED_LABELS.includes(l)));
+  // Deciding labels only: never one that asks for more or puts a card off.
+  assert.ok(['Explain more', 'Not now', 'Show me'].every((l) => !SIGNED_LABELS.includes(l)));
+});
+
+test('a card with one of the build loop\'s lines and its code becomes a signed shown record', async () => {
+  await withHome(async () => {
+    const lines = [
+      approveWorkLine('export-csv', 'feature', DOC),
+      approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true }),
+      answerLine('q-export-csv-1'),
+      amendLine('export-csv', NEW_DOC),
+      liftIncidentLine('bad-total'),
+      incidentFixLine('bad-total', 31),
+    ];
+    const questions = lines.map((line) => `What this is.\n${line}\n${replyCodeLine(replyCode(line))}`);
+    const c = fake();
+    await decide(coded(Object.fromEntries(questions.map((q) => [q, 'Not now']))), deps(c));
+    const shown = c.calls.record.filter((r) => r.event.kind === 'shown');
+    assert.deepEqual(shown.map((r) => r.event.data), questions.map((question, i) => ({ code: replyCode(lines[i]), question, options: CODED.map((b) => b.label) })));
+    assert.ok(shown.every((r) => r.event.sig));
+    // A near miss earns none: a short hash, an unknown lane, two lines.
+    const near = [
+      `${approveWorkLine('export-csv', 'feature', DOC).replace(DOC.slice(0, 12), DOC.slice(0, 7))}\nReply code: AAAA`,
+      `${approveWorkLine('export-csv', 'huge', DOC)}\nReply code: ${replyCode(approveWorkLine('export-csv', 'huge', DOC))}`,
+      `${liftIncidentLine('a')}\n${incidentFixLine('a', 3)}\n${replyCodeLine(replyCode(liftIncidentLine('a')))}`,
+    ];
+    const none = fake();
+    await decide(coded(Object.fromEntries(near.map((q) => [q, 'Not now']))), deps(none));
+    assert.equal(none.calls.record.length, 0);
+  });
 });
 
 test('Approve on a work card records nothing when the work, its lane or its document is not what the card says', async () => {
@@ -593,6 +760,12 @@ test('a click on an answer card records the label; Explain more and Not now reco
     await decide(input({ [q]: 'Explain more', [`${q} again`]: 'Not now' }, { options: OPTIONS }), deps(other));
     assert.equal(other.calls.record.length, 0);
     assert.equal(other.calls.write.length, 2);
+
+    // Show me puts a card off too, even when the question holds an option of that name.
+    keepEvent(makeEvent({ kind: 'question', data: { ...QUESTION, options: [...QUESTION.options, { label: 'Show me', says: 'A sample' }] }, now: () => new Date(NOW.getTime() + 1000) }));
+    const sample = fake();
+    await decide(input({ [q]: 'Show me' }, { options: [...OPTIONS, { label: 'Show me' }] }), deps(sample));
+    assert.equal(sample.calls.record.length, 0);
   });
 });
 

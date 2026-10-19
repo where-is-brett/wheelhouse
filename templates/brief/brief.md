@@ -36,6 +36,13 @@ Turn each line into a test before any code. When those tests pass, the work is d
 - **Builders and reviewers.** Builders are `wheelhouse:builder` and reviews are done by `wheelhouse:reviewer`, each with the model named under "Models by role". Never dispatch a general-purpose subagent for either.
 - **Dispatching a reviewer.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the reviewer that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.
 - **Fix rounds.** A fix and its re-review is one round. After {{fixRounds}} rounds, put what is still open to the director with `ask`.
+<!-- builds:ask -->
+- **Build commands on Windows.** {{buildsAskWhen}}, ask for every one you will need at once with `{{cli}} ask --kind build-command --command "<command>" …`, then end your turn. A refused command means the grant has ended: ask again. Give `--command` once for each command and `--why` to say what they are for; Wheelhouse writes the rest of the question. On **Not now** the feature waits until the director answers: end your turn and wait to be woken.
+<!-- builds:guarded -->
+- **Build commands on Windows.** Run every build command through `{{guardedCommand}}`, for example `{{guardedCommand}} npm test`, except local git. Local git (`git status`, `git add`, `git commit` and the rest) doesn't go through it, and nor does a command that fetches new code: each is asked for like any build command. Before your first one, ask for every one you will need at once with `{{cli}} ask --kind build-command --command "<command>" …`, then end your turn; once granted, run it directly, not through the runner. If the runner says it isn't at low integrity, stop using it, and ask for every build command you will need in the same way.
+<!-- builds:session -->
+- **Build commands on Windows.** Here a build command is allowed only by a click in this session itself, so no card can grant one. Before your first build command, ask once with the `ask` below, naming the commands and telling the director to open this session ({{work}}) and click Allow there when it asks; then end your turn. When woken, run them, and never ask again for a command you have asked about.
+<!-- builds:end -->
 
 # How to ask the director
 
@@ -45,7 +52,7 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 {{cli}} ask --what "<what this is>" --why "<why it comes to the director>" --option "<label>=<what it means>" --option "<label>=<what it means>" --recommend <label> --level <1 to 4>
 ```
 
-- Give two or more options and say which you recommend. A matter at decision level 3 or 4 is always a question.
+- Give two to four options and say which you recommend. The director answers on a card, so `ask` refuses a question a card can't carry: more than four options, an option called Not now, Explain more or Show me, or words too long for one card. A matter at decision level 3 or 4 is always a question.
 - After you ask, stop work on that matter and end your turn. The answer wakes you. Then read it with `{{cli}} answer <questionId>`; the id is the one `ask` printed.
 - Report, never ask for a permission: if a tool or an action is refused to you, do not ask for it in chat. Write a question that says what you need and why, and pause.
 - When the plan's scope check splits off a part that is separate work, hand its plan back with `{{cli}} ask --kind extra-plan --plan <path> --what "<the part>" --why "<why it is separate>" --option "queue=Queue it as its own work" --option "drop=Leave it out" --recommend queue --level 2`.

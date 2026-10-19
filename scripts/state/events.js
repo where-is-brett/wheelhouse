@@ -10,11 +10,12 @@ import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET } from './card-lines.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
+import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
-  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'gate-asks',
+  'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
@@ -96,10 +97,16 @@ function questionIdOf(id) {
 const PLAIN_SHAPES = {
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: [] },
+  // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts'] },
+  // The director undid something decided at level 2.
+  reversal: { must: ['topic', 'what'], may: ['of'] },
+  // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
+  asked: { must: ['cards'], may: [] },
   // The click the merge gate waits for (ruling R117): the director's approval of a pull request's
   // head, or their CI push of the update merge `sha` to `branch`. Recorded by the foreman's merge.
   'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch'] },
@@ -152,6 +159,11 @@ function checkPlain(kind, data) {
       bad('needs options, each with a label and what it says');
     }
     if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
+    // A build-command question names the commands it asks for.
+    if (data.commands !== undefined && !(Array.isArray(data.commands) && data.commands.length > 0 && data.commands.every(isText))) {
+      bad('has commands that are not a list of commands');
+    }
+    if (data.checks !== undefined && (!isText(data.checks) || /[\r\n\v\f\u0085\u2028\u2029]/.test(data.checks))) bad('has checks that are not one line of text');
   } else if (kind === 'report') {
     slug('work');
     if (!REPORT_OUTCOMES.includes(data.outcome)) bad('needs its outcome to be merged, closed or blocked');
@@ -166,6 +178,31 @@ function checkPlain(kind, data) {
     slug('work');
     text('change');
     if (typeof data.hash !== 'string' || !HASH.test(data.hash)) bad('needs the hash of the changed document');
+  } else if (kind === 'card') {
+    // The question and its header as AskUserQuestion takes them; composing keeps them within CARD's limits.
+    text('question');
+    text('header');
+    if (!CARD_KINDS.includes(data.kind)) bad('needs its kind to be one the front desk knows');
+    if (!Array.isArray(data.options) || data.options.length < 2 || data.options.length > CARD.options || !data.options.every(isText)) {
+      bad(`needs two to ${CARD.options} options, each text`);
+    }
+    if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
+    if (data.descriptions !== undefined && !(Array.isArray(data.descriptions) && data.descriptions.length === data.options.length && data.descriptions.every(isText))) {
+      bad('has descriptions that are not one text for each option');
+    }
+    for (const k of ['line', 'code']) if (data[k] !== undefined && data[k] !== null && !isText(data[k])) bad(`has a ${k} that is neither text nor null`);
+    if (data.importance !== undefined && !Number.isFinite(data.importance)) bad('has an importance that is not a number');
+    optionalText('topic');
+    optionalText('recommend');
+    if (data.concepts !== undefined && !(Array.isArray(data.concepts) && data.concepts.every(isText))) bad('has concepts that are not a list of text');
+  } else if (kind === 'reversal') {
+    text('topic');
+    text('what');
+    optionalText('of');
+  } else if (kind === 'asked') {
+    if (!Array.isArray(data.cards) || data.cards.length === 0 || data.cards.length > CARD.questions || !data.cards.every(isText)) {
+      bad(`needs cards to be a list of one to ${CARD.questions} card ids`);
+    }
   } else if (kind === 'gate-asks') {
     slug('work');
     if (!Number.isInteger(data.pr) || data.pr < 1) bad('needs the pull request number');

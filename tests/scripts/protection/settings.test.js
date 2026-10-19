@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
@@ -164,6 +164,32 @@ test('the local settings name the status line only when the director has none of
   assert.deepEqual(localSettings(base).sandbox, { network: { allowUnixSockets: [address] } });
 });
 
+test('the local settings allow the command by its full path', () => {
+  const address = '/h/.wheelhouse/helper.sock';
+  const root = '/plugins/Zoë wheel house';
+  // The file's own rule form: `Bash(x:*)` is `Bash(x *)`.
+  const rule = `Bash(node "${root}/scripts/frontdesk/cli.js":*)`;
+  assert.equal(frontDeskCommand(root, { platform: 'darwin' }), `node "${root}/scripts/frontdesk/cli.js"`);
+  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule] });
+  // With the status line or without it, and beside the socket.
+  const full = localSettings({ address, node: '/usr/local/bin/node', pluginRoot: root, ownStatusLine: { type: 'command', command: 'x' }, platform: 'linux' });
+  assert.deepEqual(full.permissions, { allow: [rule] });
+  assert.deepEqual(full.sandbox, { network: { allowUnixSockets: [address] } });
+  // On Windows the path is written with forward slashes after its drive letter, as node and Git Bash take it.
+  assert.deepEqual(localSettings({ address, pluginRoot: 'C:\\Users\\Zoë\\wheelhouse', platform: 'win32' }).permissions,
+    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)'] });
+  // A folder a rule can't hold as it is gets no rule: the command is then asked about each time.
+  for (const bad of ['/x"y', '/x*y', '/x(y', '/x)y', '/x\ny', 'relative/root', '/x`y', '/x$y']) {
+    assert.equal(localSettings({ address, pluginRoot: bad, platform: 'linux' }).permissions, undefined, bad);
+    assert.equal(frontDeskCommand(bad, { platform: 'linux' }), null, bad);
+  }
+  // Merged into settings the director already has, their own rules stay first.
+  const merged = mergeSettings({ permissions: { allow: ['Bash(ls:*)'] } }, localSettings({ address, pluginRoot: root, platform: 'darwin' }));
+  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule]);
+  // The shared project settings never name it: the path is this computer's.
+  assert.ok(!strings(projectSettings(config)).some((x) => x.includes('frontdesk')));
+});
+
 test('the director\'s own status line is found in their user, project or local settings, and Wheelhouse\'s own is not theirs', () => {
   const root = tempFolder('wh-statusline-settings-');
   const claudeHome = path.join(root, 'home', '.claude');
@@ -240,6 +266,55 @@ test('on Windows, where no sandbox runs, the build commands get no allow rules',
   assert.deepEqual(featureAllowRules(config, { platform: 'darwin' }), ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
   assert.deepEqual(featureAllowRules(config, { platform: 'linux' }), ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
   assert.throws(() => featureAllowRules({ ...config, buildCommands: ['rm *'] }, { platform: 'win32' }), /build command/, 'still checked');
+});
+
+const WIN = { platform: 'win32' };
+const GIT_RULES = ['Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git restore:*)', 'Bash(git rm:*)', 'Bash(git mv:*)'];
+const grant = (commands, scope = 'run', questionId = 'q-login-page-1') => ({ questionId, commands, scope });
+
+test('on Windows, ask with no grant gives no allow rules', () => {
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'ask' }), []);
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'ask', grants: [] }), []);
+  // An unknown level is ask.
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'always' }), []);
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'always', grants: [grant(['npm test'])] }), ['Bash(npm test:*)']);
+});
+
+test('on Windows, ask gives one rule for each granted command that is still configured', () => {
+  const grants = [grant(['npm test', 'git status']), grant(['npm run build', 'npm test'], 'feature', 'q-login-page-2')];
+  assert.deepEqual(featureAllowRules(config, { ...WIN, grants }), ['Bash(npm test:*)', 'Bash(git status:*)', 'Bash(npm run build:*)']);
+  // A command the question named but the configuration doesn't hold, or one no rule can hold, gives nothing.
+  const odd = [grant(['curl example.com', 'npm testing', 'git push', 'git status && curl x', 'rm *', 'make check', 7]), { questionId: 'q-login-page-3' }, null];
+  assert.deepEqual(featureAllowRules(config, { ...WIN, grants: odd }), []);
+  assert.deepEqual(featureAllowRules({ ...config, buildCommands: ['make check'] }, { ...WIN, grants: [grant(['make check', 'npm test'])] }), ['Bash(make check:*)']);
+});
+
+test('unattended gives every configured command and local git on Windows', () => {
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'unattended' }), ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)', ...GIT_RULES]);
+  assert.deepEqual(featureAllowRules({ ...config, buildCommands: ['pytest'] }, { ...WIN, level: 'unattended', grants: [grant(['npm test'])] }), ['Bash(pytest:*)', ...GIT_RULES]);
+});
+
+test('guarded gives the runner\'s rule, and the director\'s grants as at ask', () => {
+  const runner = 'node guarded.js';
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: runner }), ['Bash(node guarded.js:*)']);
+  // A command the runner refuses (one that fetches new code) still asks, so a grant still counts.
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: runner, grants: [grant(['npm test', 'curl x'])] }), ['Bash(node guarded.js:*)', 'Bash(npm test:*)']);
+  // With no runner to name, guarded gives the grants alone.
+  for (const none of [null, '', 'a\nb', 7]) {
+    assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: none }), [], String(none));
+    assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: none, grants: [grant(['git status'])] }), ['Bash(git status:*)'], String(none));
+  }
+});
+
+test('off Windows the level and grants change nothing', () => {
+  const today = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)'];
+  for (const platform of ['darwin', 'linux']) {
+    for (const level of ['ask', 'guarded', 'unattended', 'always']) {
+      for (const grants of [[], [grant(['git status', 'npm run build'])]]) {
+        assert.deepEqual(featureAllowRules(config, { platform, level, grants, guardedCommand: 'node guarded.js' }), today, `${platform} ${level}`);
+      }
+    }
+  }
 });
 
 test('a build command a rule cannot hold safely is refused, not allowed', () => {

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
-  outboxFile, runningFile, sessionFile, PROMPTS, MAX_RUN_MS, STARTING_MS,
+  outboxFile, runningFile, sessionFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf,
 } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
@@ -16,6 +16,11 @@ import { PLUGIN_ROOT, foremanCommands } from '../../../scripts/foreman/tools.js'
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, settingKey } from '../../../scripts/protection/windows-builds.js';
+import { confirmationFor, dataHash, eventPath, makeEvent } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
+import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
 
 const unix = process.platform !== 'win32';
 const P = 'o__p';
@@ -552,6 +557,184 @@ test('on Windows a feature session gets no build-command allow rules', () => wit
   const w = waker(fake, { platform: 'win32' });
   await w.startFeature({ work: 'login-page', worktree: worktree() });
   assert.ok(!fake.calls[0].args.includes('--allowedTools'));
+}));
+
+const runGrant = { questionId: 'q-login-page-1', commands: ['npm test'], scope: 'run' };
+const featureGrant = { questionId: 'q-login-page-2', commands: ['git status'], scope: 'feature' };
+const allowedOf = (call) => (call.args.includes('--allowedTools') ? call.args.slice(call.args.indexOf('--allowedTools') + 1) : []);
+
+test('allow this time gives the rule for one run only', () => withHome(async () => {
+  checkout();
+  const dir = worktree();
+  const fake = fakeRun({ exits: true });
+  // The answer the state gives stays the same until the director clicks again: the waker itself keeps the run grant from a second run.
+  const asked = [];
+  const w = waker(fake, {
+    platform: 'win32', locate: () => dir, windowsBuilds: (work) => { asked.push(work); return { level: 'ask', grants: [runGrant, featureGrant], guardedCommand: null }; },
+  });
+  const { pid } = await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.deepEqual(asked, ['login-page']);
+  assert.deepEqual(allowedOf(fake.calls[0]), ['Bash(npm test:*)', 'Bash(git status:*)']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(grantsUsedFile(P), 'utf8')), { used: ['q-login-page-1'] });
+  assert.equal(path.dirname(grantsUsedFile(P)), watcherDir(P), 'kept in the watcher\'s own folder');
+  fake.end(pid, 0);
+  await flush();
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'f1')));
+  assert.equal(fake.calls.length, 2);
+  assert.deepEqual(allowedOf(fake.calls[1]), ['Bash(git status:*)'], 'the feature grant stays; the run grant has gone');
+  assert.deepEqual(JSON.parse(fs.readFileSync(grantsUsedFile(P), 'utf8')), { used: ['q-login-page-1'] });
+}));
+
+test('allow this time is used up by a run at every level', () => withHome(async () => {
+  checkout();
+  for (const [n, level] of ['unattended', 'guarded', 'ask'].entries()) {
+    const fake = fakeRun();
+    const grant = { ...runGrant, questionId: `q-login-page-${n + 10}` };
+    const w = waker(fake, { platform: 'win32', windowsBuilds: () => ({ level, grants: [grant], guardedCommand: null }) });
+    await w.startFeature({ work: `feature-${n}`, worktree: worktree() });
+    assert.ok(JSON.parse(fs.readFileSync(grantsUsedFile(P), 'utf8')).used.includes(grant.questionId), level);
+  }
+  // A grant used up while Unattended was on gives no rule once the level is back to Ask.
+  const fake = fakeRun();
+  await waker(fake, { platform: 'win32', windowsBuilds: () => ({ level: 'ask', grants: [{ ...runGrant, questionId: 'q-login-page-10' }], guardedCommand: null }) })
+    .startFeature({ work: 'feature-3', worktree: worktree() });
+  assert.deepEqual(allowedOf(fake.calls[0]), []);
+}));
+
+test('a record of used grants that can\'t be read counts every run grant as used', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const w = waker(fake, { platform: 'win32', windowsBuilds: () => ({ level: 'ask', grants: [runGrant, featureGrant], guardedCommand: null }) });
+  fs.mkdirSync(watcherDir(P), { recursive: true });
+  for (const [n, text] of ['not json', '{"used":"q-login-page-2"}', '[]'].entries()) {
+    fs.writeFileSync(grantsUsedFile(P), text);
+    await w.startFeature({ work: `feature-${n}`, worktree: worktree() });
+    assert.deepEqual(allowedOf(fake.calls.at(-1)), ['Bash(git status:*)'], text);
+    assert.equal(fs.readFileSync(grantsUsedFile(P), 'utf8'), text, 'left as it was');
+  }
+}));
+
+test('on Windows the waker passes its level to the allow rules, and a failing reading is ask', () => withHome(async () => {
+  checkout();
+  const fake = fakeRun();
+  const start = (windowsBuilds, work) => waker(fake, { platform: 'win32', windowsBuilds }).startFeature({ work, worktree: worktree() });
+  await start(() => ({ level: 'unattended', grants: [], guardedCommand: null }), 'a');
+  assert.deepEqual(allowedOf(fake.calls.at(-1)), [...ALLOWED, 'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git restore:*)', 'Bash(git rm:*)', 'Bash(git mv:*)']);
+  await start(() => { throw new Error('views gone'); }, 'b');
+  assert.deepEqual(allowedOf(fake.calls.at(-1)), []);
+  await start(() => null, 'c');
+  assert.deepEqual(allowedOf(fake.calls.at(-1)), []);
+  // Off Windows the answer is never asked for.
+  await waker(fake, { platform: 'darwin', windowsBuilds: () => { throw new Error('not asked'); } }).startFeature({ work: 'd', worktree: worktree() });
+  assert.deepEqual(allowedOf(fake.calls.at(-1)), ALLOWED);
+}));
+
+test('the waker\'s own reading of the state grants a signed click made on this computer', () => withHome(async () => {
+  checkout();
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+  const keep = (event) => {
+    const file = path.join(stateDir(P), eventPath(event));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(event)}\n`);
+  };
+  const dir = worktree();
+  const t = (n) => () => new Date(T0 - (10 - n) * MIN);
+  const data = {
+    id: 'q-login-page-1', work: 'login-page', what: 'Let this feature\'s builder run: npm test.', why: 'w', options: BUILD_QUESTION_OPTIONS,
+    recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'],
+  };
+  keep(makeEvent({ kind: 'feature', data: { work: 'login-page', step: 'building', worktree: dir }, now: t(1) }));
+  keep(makeEvent({ kind: 'question', data, now: t(2) }));
+  // A fresh stand-in each time, so the run before has ended.
+  const started = async () => {
+    const fake = fakeRun();
+    await waker(fake, { platform: 'win32' }).startFeature({ work: 'login-page', worktree: dir });
+    return allowedOf(fake.calls[0]);
+  };
+  assert.deepEqual(await started(), [], 'no answer yet');
+  const click = makeEvent({
+    kind: 'action', data: { action: 'answer', questionId: data.id, questionHash: dataHash(data), question: data.what, label: BUILD_QUESTION_LABELS.feature }, now: t(3),
+  });
+  const { sig, ...unsigned } = click;
+  keep(unsigned);
+  assert.deepEqual(await started(), [], 'an unsigned click grants nothing');
+  keep(click); // in the unsigned one's place
+  assert.deepEqual(await started(), ['Bash(npm test:*)']);
+}));
+
+const RUNNER = "'C:/h/windows/low-node/node.exe' 'C:/p/scripts/windows/guarded.js'";
+
+test('at guarded the worktree is labelled before each run, which gets the runner\'s rule and the grants', () => withHome(async () => {
+  checkout();
+  const dir = worktree();
+  keepSession('login-page', dir);
+  const fake = fakeRun({ exits: true });
+  const labelled = [];
+  const w = waker(fake, {
+    platform: 'win32', locate: () => dir, labelGuarded: async (wt) => { labelled.push([wt, fake.calls.length]); },
+    windowsBuilds: () => ({ level: 'guarded', grants: [featureGrant], guardedCommand: RUNNER }),
+  });
+  const { pid } = await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.deepEqual(labelled, [[dir, 0]], 'labelled before the session started');
+  assert.deepEqual(allowedOf(fake.calls[0]), [`Bash(${RUNNER}:*)`, 'Bash(git status:*)']);
+  fake.end(pid, 0);
+  await flush();
+  // And again on each wake.
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'g1')));
+  assert.deepEqual(labelled, [[dir, 0], [dir, 1]]);
+  assert.deepEqual(allowedOf(fake.calls[1]), [`Bash(${RUNNER}:*)`, 'Bash(git status:*)']);
+}));
+
+test('a worktree that can\'t be labelled, or no runner to name, gets the Ask rules, and the log says so', () => withHome(async () => {
+  checkout();
+  const errors = [];
+  const fake = fakeRun();
+  const start = (over, work) => waker(fake, { platform: 'win32', onError: (m) => errors.push(m), ...over }).startFeature({ work, worktree: worktree() });
+  await start({
+    labelGuarded: async () => { throw new Error('icacls refused to label x'); },
+    windowsBuilds: () => ({ level: 'guarded', grants: [featureGrant], guardedCommand: RUNNER }),
+  }, 'a');
+  assert.deepEqual(allowedOf(fake.calls.at(-1)), ['Bash(git status:*)']);
+  assert.match(errors.at(-1), /a worktree couldn't be made ready for Guarded, so this run asks for build commands: icacls refused/);
+  let asked = false;
+  await start({
+    labelGuarded: async () => { asked = true; },
+    windowsBuilds: () => ({ level: 'guarded', grants: [], guardedCommand: null }),
+  }, 'b');
+  assert.equal(asked, false, 'nothing is labelled for no runner');
+  assert.deepEqual(allowedOf(fake.calls.at(-1)), []);
+  assert.match(errors.at(-1), /b worktree/);
+  // At any other level nothing is labelled.
+  await start({ labelGuarded: async () => { asked = true; }, windowsBuilds: () => ({ level: 'unattended', grants: [], guardedCommand: RUNNER }) }, 'c');
+  await start({ labelGuarded: async () => { asked = true; }, windowsBuilds: () => ({ level: 'ask', grants: [], guardedCommand: RUNNER }) }, 'd');
+  assert.equal(asked, false);
+}));
+
+test('the waker reads Guarded only while this computer\'s self-test passes', () => withHome(async () => {
+  checkout();
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+  const keep = (event) => {
+    const file = path.join(stateDir(P), eventPath(event));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(event)}\n`);
+  };
+  const setting = makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'guarded' }, now: () => new Date(T0 - 5 * MIN) });
+  keep(setting);
+  keep(makeEvent({ kind: 'confirmation', data: confirmationFor(setting).data, now: () => new Date(T0 - 4 * MIN) }));
+  const read = () => windowsBuildsOf(P, { now: () => new Date(T0), platform: 'win32', pluginRoot: '/p' })('login-page');
+  assert.equal(read().level, 'ask', 'no self-test yet');
+  fs.mkdirSync(path.dirname(selfTestFile(wheelhouseHome())), { recursive: true });
+  fs.writeFileSync(selfTestFile(wheelhouseHome()), JSON.stringify({ at: new Date(T0 - 60 * MIN).toISOString(), lowStarts: true, writeHeld: true, keysReadHeld: false }));
+  assert.equal(read().level, 'guarded');
+  // The runner's command, where this home can be written into a rule (a Windows path on Windows).
+  let expected = null;
+  try { expected = guardedCommand({ home: wheelhouseHome(), pluginRoot: '/p', platform: 'win32' }); } catch { /* not on this system */ }
+  assert.equal(read().guardedCommand, expected);
+  fs.writeFileSync(selfTestFile(wheelhouseHome()), JSON.stringify({ at: new Date(T0 - 60 * MIN).toISOString(), lowStarts: true, writeHeld: false, keysReadHeld: true }));
+  assert.equal(read().level, 'ask', 'a write that got through');
+  assert.equal(windowsBuildsOf(P, { now: () => new Date(T0), platform: 'darwin' })('login-page').level, 'ask', 'never off Windows');
 }));
 
 test('Shape 2 prints one line per wake, naming each session\'s own copy, and starts nothing itself', () => withHome(async () => {

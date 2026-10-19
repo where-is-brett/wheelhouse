@@ -6,16 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.js';
-import { listEvents, makeEvent, confirmationFor, eventHash, dataHash } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -35,6 +35,13 @@ async function withHome(fn) {
 const base = () => listEvents(fixtures, { report: () => {} });
 const ev = (kind, n, data) => makeEvent({ kind, data, now: at(n) });
 const r001 = () => base().find((e) => e.id === 'r001');
+
+// A card as it was written before cards carried a kind, options and a level; makeEvent no longer takes one.
+const legacyCard = (id, n, data) => ({ v: 1, id, at: T(n), computer: 'aaaaaaaa', kind: 'card', data });
+const cardData = (question, extra = {}) => ({
+  question, header: 'Approve', options: ['Approve', 'Not now', 'Explain more', 'Show me'], kind: 'approval',
+  line: null, code: null, level: 3, importance: 5, ...extra,
+});
 // A signed confirmation of `target`, naming its id and content hash.
 const conf = (n, target) => {
   const { kind, data } = confirmationFor(target);
@@ -278,7 +285,7 @@ test('a confirmation counts only with the confirmed event\'s hash, and only for 
     assert.equal(data.confirmsHash, eventHash(r1));
 
     // A signed confirmation pointing at an event of another kind confirms nothing.
-    const card = ev('card', 3, { key: 'k', value: 1 });
+    const card = ev('card', 3, cardData('Pick a colour?'));
     assert.throws(() => confirmationFor(card), /ruling, a level or a setting/);
     const forCard = makeEvent({ kind: 'confirmation', data: { confirms: card.id, confirmsHash: eventHash(card) }, now: at(4) });
     const v = build([card, forCard]);
@@ -348,9 +355,9 @@ test('views are replaced all at once', async () => {
 
 test('a card-answer with no card id closes the card whose question it quotes', async () => {
   await withHome(() => {
-    const asked = ev('card', 10, { title: 'Pick a size', question: 'Approve pull request #7 at commit abcdef123456?' });
-    const titled = ev('card', 11, { title: 'Pick a shape' });
-    const other = ev('card', 12, { title: 'Pick a sound', question: 'Which sound?' });
+    const asked = ev('card', 10, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const titled = legacyCard('t001', 11, { title: 'Pick a shape' });
+    const other = ev('card', 12, cardData('Which sound?', { options: ['Bell', 'Chime', 'Not now'] }));
     const answers = [
       // The prompt record's shape: the question as shown, and the label clicked.
       ev('card-answer', 20, { question: 'Approve pull request #7 at commit abcdef123456?', label: 'Approve' }),
@@ -477,16 +484,44 @@ test('an accepted setting keeps its until and the accepted value it replaced', a
     const s4 = ev('setting', 7, { key: 'quiet', value: 'never confirmed' });
     const v1 = build([s1, conf(2, s1)]);
     assert.deepEqual(v1.settings.quiet, {
-      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null,
+      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, confirmedOn: s1.computer, line: null,
     });
     const v2 = build([s1, conf(2, s1), s2, conf(4, s2)]);
     assert.deepEqual(v2.settings.quiet, {
-      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' },
+      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, confirmedOn: s2.computer, line: null,
     });
     const v3 = build([s1, conf(2, s1), s2, conf(4, s2), s3, conf(6, s3), s4]);
     assert.deepEqual(v3.settings.quiet.before, { value: false });
     assert.equal(v3.settings.quiet.until, '2026-12-01T00:00:00.000Z');
     assert.equal(v3.settings.quiet.id, s3.id);
+  });
+});
+
+test('an accepted setting carries its event\'s computer and the card line of its latest confirmation', async () => {
+  await withHome(() => {
+    const s1 = ev('setting', 1, { key: 'quiet', value: true });
+    const withLine = (n, line) => makeEvent({ kind: 'confirmation', data: { ...confirmationFor(s1).data, line }, now: at(n) });
+    assert.equal(build([s1, withLine(2, 'The card\'s own line')]).settings.quiet.line, 'The card\'s own line');
+    assert.equal(build([s1, withLine(2, 'The card\'s own line'), conf(3, s1)]).settings.quiet.line, null);
+    assert.equal(build([s1, withLine(2, 7)]).settings.quiet.line, null);
+    assert.equal(build([s1, conf(2, s1)]).settings.quiet.computer, s1.computer);
+    // The computer that signed the latest confirmation, only where it is the one the confirmation names.
+    assert.equal(build([s1, conf(2, s1)]).settings.quiet.confirmedOn, s1.computer);
+    const elsewhere = sign({ ...conf(2, s1), computer: 'deadbeef' });
+    assert.equal(build([s1, elsewhere]).settings.quiet.value, true, 'still accepted');
+    assert.equal(build([s1, elsewhere]).settings.quiet.confirmedOn, null);
+    // A level carries neither.
+    const l1 = ev('level', 1, { key: 'ui', value: 2 });
+    assert.deepEqual(Object.keys(build([l1, conf(2, l1)]).levels.ui).sort(), ['at', 'id', 'key', 'value']);
+  });
+});
+
+test('a known:* setting of false, accepted with no confirmation, carries no signer and no line', async () => {
+  await withHome(() => {
+    const s1 = ev('setting', 1, { key: 'known:branch', value: false });
+    assert.deepEqual(build([s1]).settings['known:branch'], {
+      key: 'known:branch', id: s1.id, at: s1.at, value: false, before: null, computer: s1.computer, confirmedOn: null, line: null,
+    });
   });
 });
 
@@ -628,12 +663,12 @@ test('a question is answered only by a verified answer action', async () => {
     assert.equal(build([q, ...noise]).questions['q-export-csv-1'].answer, null);
     assert.equal(buildViews([q, answer(5, 'Comma')], [], { now }).questions['q-export-csv-1'].answer, null);
     const done = build([q, ...noise, answer(6, 'Tab')]).questions['q-export-csv-1'];
-    assert.deepEqual(done.answer, { label: 'Tab', at: T(6) });
+    assert.deepEqual(done.answer, { label: 'Tab', at: T(6), computer: computerId() });
     // An answer to a question nobody asked is not a question.
     assert.deepEqual(Object.keys(build([answer(6, 'Tab')]).questions), []);
     // A question the foreman records again, word for word, is still one question and keeps its answer.
     assert.deepEqual(Object.keys(build([q, answer(6, 'Tab'), question(7)]).questions), ['q-export-csv-1']);
-    assert.deepEqual(build([q, answer(6, 'Tab'), question(7)]).questions['q-export-csv-1'].answer, { label: 'Tab', at: T(6) });
+    assert.deepEqual(build([q, answer(6, 'Tab'), question(7)]).questions['q-export-csv-1'].answer, { label: 'Tab', at: T(6), computer: computerId() });
     // A label the question does not offer, or an answer naming another question hash, answers nothing.
     assert.equal(build([q, answer(6, 'Semicolon')]).questions['q-export-csv-1'].answer, null);
     assert.equal(build([q, answer(6, 'Tab', { questionHash: 'e'.repeat(64) })]).questions['q-export-csv-1'].answer, null);
@@ -650,7 +685,7 @@ test('a question rewritten after it was answered needs a fresh answer', async ()
     assert.equal(v.answer, null, 'the earlier answer was for the question as it was');
     // An answer that names the new content counts; the old one still does not replace it.
     const fresh = answer(8, 'Semicolon', { questionHash: dataHash(rewritten.data) });
-    assert.deepEqual(build([q, early, rewritten, fresh]).questions['q-export-csv-1'].answer, { label: 'Semicolon', at: T(8) });
+    assert.deepEqual(build([q, early, rewritten, fresh]).questions['q-export-csv-1'].answer, { label: 'Semicolon', at: T(8), computer: computerId() });
     // A rewritten question that kept the label but changed the words still asks again.
     const reworded = question(7, { what: 'Which delimiter?' });
     assert.equal(build([q, early, reworded]).questions['q-export-csv-1'].answer, null);
@@ -727,5 +762,164 @@ test('work remembers when it was first recorded', async () => {
     assert.equal(v.work['export-csv'].since, T(2));
     assert.equal(v.work['export-csv'].work.at, T(5), 'the latest event is still the work');
     assert.equal(v.work.login.since, T(3));
+  });
+});
+
+// --- a card stays waiting until it is answered ---
+
+
+test('Not now, Explain more and Show me keep a card waiting, marked asked', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const plain = (n, label) => ev('card-answer', n, { card: card.id, label });
+    const asked = (n, label) => ({ at: T(n), label });
+    assert.equal(build([card]).waiting[0].asked, null);
+    for (const label of ['Not now', 'Explain more', 'Show me']) {
+      const v = build([card, plain(2, label)]);
+      assert.deepEqual(v.waiting.map((c) => c.id), [card.id], label);
+      assert.deepEqual(v.waiting[0].asked, asked(2, label), label);
+      assert.equal(v.status.waitingCount, 1);
+    }
+    // The latest answer that didn't close it is the one marked; an answer quoting the question counts too.
+    const quoted = ev('card-answer', 5, { question: card.data.question, label: 'Explain more' });
+    const v = build([card, plain(2, 'Not now'), plain(3, 'Show me'), quoted, plain(4, 'Not now')]);
+    assert.deepEqual(v.waiting[0].asked, asked(5, 'Explain more'));
+    // A label the card didn't offer is no decision either.
+    const other = build([card, plain(2, 'Something else')]);
+    assert.deepEqual(other.waiting.map((c) => c.id), [card.id]);
+    assert.deepEqual(other.waiting[0].asked, asked(2, 'Something else'));
+  });
+});
+
+test('a card a visit handed out is marked asked until a later answer says more', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const other = ev('card', 2, cardData('Pick a shape', { kind: 'question', options: ['Round', 'Square'] }));
+    const handed = (n, cards) => ev('asked', n, { cards });
+    // Shown and dismissed: no answer, but it isn't offered again.
+    const v = build([card, other, handed(3, [card.id])]);
+    assert.deepEqual(v.waiting.map((c) => [c.id, c.asked]), [[card.id, { at: T(3), label: null }], [other.id, null]]);
+    // An answer after it is what the card is marked with; an asked record after the answer marks it again.
+    const answered = ev('card-answer', 4, { card: card.id, label: 'Explain more' });
+    assert.deepEqual(build([card, handed(3, [card.id]), answered]).waiting[0].asked, { at: T(4), label: 'Explain more' });
+    assert.deepEqual(build([card, answered, handed(5, [card.id, other.id])]).waiting[0].asked, { at: T(5), label: null });
+    // It never closes a card, and an answer that decides still does.
+    assert.deepEqual(build([card, handed(3, [card.id]), ev('card-answer', 4, { card: card.id, label: 'Approve' })]).waiting, []);
+  });
+});
+
+test('an option that decides closes the card, even after it was asked about', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Approve pull request #7 at commit abcdef123456?'));
+    const v = build([card, ev('card-answer', 2, { card: card.id, label: 'Not now' }), ev('card-answer', 3, { card: card.id, label: 'Approve' })]);
+    assert.deepEqual(v.waiting, []);
+    const quoted = build([card, ev('card-answer', 2, { question: card.data.question, label: 'Approve' })]);
+    assert.deepEqual(quoted.waiting, []);
+    // Two cards asking the same question both close on one answer.
+    const twin = ev('card', 4, cardData(card.data.question));
+    assert.deepEqual(build([card, twin, ev('card-answer', 5, { question: card.data.question, label: 'Approve' })]).waiting, []);
+  });
+});
+
+test('a signed record carrying the card\'s question closes it', async () => {
+  await withHome(() => {
+    const question = 'Approve pull request #7 at commit abcdef123456?';
+    const card = ev('card', 1, cardData(question));
+    const signed = (kind, n, data) => ev(kind, n, data);
+    const approval = signed('approval', 3, { pr: 7, commit: 'abcdef123456', words: 'Approve', question });
+    assert.deepEqual(build([card, approval]).waiting, []);
+    const action = signed('action', 3, { action: 'lift-stop', question, label: 'Lift STOP' });
+    assert.deepEqual(build([card, action]).waiting, []);
+    // Not a record from before the card, one for another question, or one from a key that isn't enrolled.
+    const early = signed('approval', 0, { pr: 7, commit: 'abcdef123456', words: 'Approve', question });
+    const elsewhere = signed('approval', 3, { pr: 8, commit: 'abcdef123456', words: 'Approve', question: 'Another?' });
+    const stranger = { ...approval, id: 'stranger', sig: { ...approval.sig, computer: 'ffffffff' } };
+    const unsigned = { ...approval, id: 'unsigned', sig: undefined };
+    assert.deepEqual(build([card, early, elsewhere, stranger, unsigned]).waiting.map((c) => c.id), [card.id]);
+  });
+});
+
+test('a confirmation closes the card whose confirm line names the event, as it spends a shown card', async () => {
+  await withHome(() => {
+    const ruling = ev('ruling', 1, { words: 'Totals to the cent', reason: 'Money', scope: 'all' });
+    const line = confirmLine(ruling);
+    const card = ev('card', 2, cardData(`What this is: a rule.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more'], line }));
+    const bare = ev('card', 2, cardData(`Confirm the rule?\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now'], line: null }));
+    assert.deepEqual(build([ruling, card, bare]).waiting.map((c) => c.id), [card.id, bare.id].sort());
+    const done = build([ruling, card, bare, conf(5, ruling)]);
+    assert.deepEqual(done.waiting, []);
+    // A confirmation from before the card, or of another event, leaves it waiting.
+    const later = ev('card', 9, cardData(`What this is: a rule.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now'], line }));
+    assert.deepEqual(build([ruling, conf(5, ruling), later]).waiting.map((c) => c.id), [later.id]);
+    const other = ev('ruling', 3, { words: 'Another', reason: 'x', scope: 'all' });
+    assert.deepEqual(build([ruling, other, card, conf(5, other)]).waiting.map((c) => c.id), [card.id]);
+  });
+});
+
+test('Keep as is closes a proposal\'s confirm card, and its proposal stays unconfirmed', async () => {
+  await withHome(() => {
+    const level = ev('level', 1, { key: 'copy-changes', value: 2, words: '"copy-changes": level 2', because: 'you chose it' });
+    const line = confirmLine(level);
+    const card = ev('card', 2, cardData(`What this is: a level.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line }));
+    const putOff = build([level, card, ev('card-answer', 3, { card: card.id, label: 'Not now' })]);
+    assert.deepEqual(putOff.waiting.map((c) => c.id), [card.id]);
+    assert.deepEqual(putOff.keptAsIs, []);
+    const kept = build([level, card, ev('card-answer', 3, { card: card.id, label: 'Keep as is' })]);
+    assert.deepEqual(kept.waiting, []);
+    assert.deepEqual(kept.unconfirmed.map((u) => u.id), [level.id]);
+    assert.deepEqual(kept.levels, {});
+    // keptAsIs names it (ruling F49), so the lists of what waits for the director's confirmation leave it out.
+    assert.deepEqual(kept.keptAsIs, [level.id]);
+    // A profile setting's card kept as is here names the profile's event, which this project's state doesn't hold.
+    const setting = { ...ev('setting', 4, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }), id: 'profile-setting' };
+    const own = ev('card', 5, cardData(`What this is: a setting.\n${confirmLine(setting)}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line: confirmLine(setting) }));
+    assert.deepEqual(build([level, card, own, ev('card-answer', 6, { card: own.id, label: 'Keep as is' })]).keptAsIs, ['profile-setting']);
+  });
+});
+
+test('a project\'s confirm card for a profile setting closes once the profile holds its confirmation', async () => {
+  await withHome(async (home) => {
+    // A profile setting with a card in project B; the director confirmed it from project A's card,
+    // so the confirmation is in the profile and B's state holds no answer.
+    const setting = ev('setting', 1, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' });
+    const line = confirmLine(setting);
+    const card = ev('card', 2, cardData(`What this is: a setting.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line }));
+    const confirmation = conf(3, setting);
+    assert.deepEqual(build([card]).waiting.map((c) => c.id), [card.id]);
+    const closed = build([card], { profile: [setting, confirmation] });
+    assert.deepEqual(closed.waiting, []);
+    // The project's own settings, levels and unconfirmed stay its own.
+    assert.deepEqual(closed.settings, {});
+    assert.deepEqual(closed.unconfirmed, []);
+    // A confirmation the enrolled keys don't verify, or one of another event, closes nothing.
+    const stranger = { ...confirmation, id: 'stranger', sig: { ...confirmation.sig, computer: 'ffffffff' } };
+    assert.deepEqual(build([card], { profile: [setting, stranger] }).waiting.map((c) => c.id), [card.id]);
+    const other = ev('setting', 1, { key: 'briefing', value: 'short', words: 'Briefing: short' });
+    assert.deepEqual(build([card], { profile: [setting, other, conf(3, other)] }).waiting.map((c) => c.id), [card.id]);
+
+    // writeViews reads the profile's events, so the views on disk agree; the profile's own views
+    // are built from the profile alone.
+    const keep = (event, dir) => {
+      const file = path.join(dir, eventPath(event));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(event));
+    };
+    keep(card, stateDir('o__b'));
+    assert.deepEqual((await writeViews('o__b', { now })).waiting.map((c) => c.id), [card.id]);
+    keep(setting, profileDir());
+    keep(confirmation, profileDir());
+    assert.deepEqual((await writeViews('o__b', { now })).waiting, []);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'projects', 'o__b', 'views', 'waiting.json'), 'utf8'));
+    assert.deepEqual(onDisk, []);
+    const own = await writeViews(undefined, { now, dir: profileDir(), out: path.join(home, 'profile-views') });
+    assert.equal(own.settings.boardTab.value, 'build');
+  });
+});
+
+test('a card written before cards carried options closes on any answer but a put-off', async () => {
+  await withHome(() => {
+    const old = legacyCard('t002', 1, { title: 'Pick a shape' });
+    assert.deepEqual(build([old, ev('card-answer', 2, { question: 'Pick a shape', label: 'Not now' })]).waiting.map((c) => c.id), [old.id]);
+    assert.deepEqual(build([old, ev('card-answer', 2, { question: 'Pick a shape', label: 'Round' })]).waiting, []);
   });
 });

@@ -1,0 +1,94 @@
+// scripts/hooks/card-check.js
+// Refuses a question card in the wrong form before the director sees it. A card has its five
+// labelled parts; a card with a set line has that one line, its own reply code line, and a
+// first part that names what the set line names and no other pull request or commit. The
+// prompt record is what refuses a wrong click, so this only informs: it refuses nothing it
+// can't read, and a failure of its own lets the card through. A card that doesn't come from
+// scripts/cards/compose.js can fail it; one that does cannot.
+import { pathToFileURL } from 'node:url';
+import { runAndExit, answer, projectOf } from './kit.js';
+import { PART_LABELS, whatProblem } from '../cards/compose.js';
+import {
+  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, ID, LANES,
+} from '../state/card-lines.js';
+
+const SHA12 = '([0-9a-f]{12})';
+const FIVE = PART_LABELS.slice(0, 5);
+const REPLY_CODE = 'Reply code:';
+
+// The kind a set line is, and the target the composer would have made it from, so the card
+// check and the composer judge a first part by one function. The commit stays the twelve
+// characters the line holds.
+function targetOf(line) {
+  let m;
+  if (line === LIFT_STOP) return { kind: 'lift-stop', target: {} };
+  if ((m = new RegExp(`^Approve pull request #([1-9][0-9]*) at commit ${SHA12}$`).exec(line))) return { kind: 'approval', target: { pr: Number(m[1]), sha: m[2] } };
+  if ((m = /^Confirm [a-z-]+ \S+: "(.*)"$/.exec(line))) return { kind: 'confirm', target: { event: { data: { words: m[1] } } } };
+  if ((m = new RegExp(`^Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in$`).exec(line))) return { kind: 'ci-push', target: { branch: m[1], sha: m[2] } };
+  for (const step of Object.keys(RUNBOOK_TITLES).map(Number)) {
+    if (!line.startsWith(runbookLine(step))) continue;
+    return { kind: 'runbook', target: { step, sha: new RegExp(`, to commit ${SHA12}$`).exec(line)?.[1] } };
+  }
+  if ((m = new RegExp(`^Approve (${ID}) \\((?:${LANES}) lane\\) as written, ${SHA12}`).exec(line))) return { kind: 'approve-work', target: { work: m[1], hash: m[2] } };
+  if (/^Answer question /.test(line)) return { kind: 'answer', target: {} };
+  if ((m = new RegExp(`^Change the approved (${ID}) to this, ${SHA12}$`).exec(line))) return { kind: 'amend', target: { work: m[1], hash: m[2] } };
+  if ((m = new RegExp(`^End incident (${ID}) and let merges carry on$`).exec(line))) return { kind: 'lift-incident', target: { incident: m[1] } };
+  if ((m = new RegExp(`^Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})$`).exec(line))) return { kind: 'incident-fix', target: { incident: m[2], pr: Number(m[1]) } };
+  return null;
+}
+
+// What is wrong with one question's form, each as a clause that follows "the card"; an empty
+// list when it is right. The hook refuses on any, and the mod's side pane shows the same.
+export function cardProblems(question) {
+  const text = typeof question === 'string' ? question : '';
+  const lines = text.split(new RegExp('\\r\\n|[\\n\\r\\v\\f\\u0085\\u2028\\u2029]'));
+  const problems = [];
+  const starts = FIVE.map((label) => lines.findIndex((l) => l.startsWith(label)));
+  FIVE.forEach((label, i) => {
+    if (starts[i] < 0) problems.push(`lacks its "${label}" part`);
+    else if (lines[starts[i]].slice(label.length).trim() === '') problems.push(`has nothing after "${label}"`);
+  });
+
+  const set = setLinesOf(text);
+  if (set.length === 0) return problems;
+  if (set.length > 1) return [...problems, `carries ${set.length} set lines, and a card carries one set line`];
+  const line = set[0];
+  const expected = replyCodeLine(replyCode(line));
+  const codes = lines.filter((l) => l.startsWith(REPLY_CODE));
+  if (codes.length === 0) problems.push(`carries a set line without its reply code line, "${expected}"`);
+  else if (codes.some((c) => c !== expected)) problems.push(`carries the wrong reply code line for its set line: it should be "${expected}"`);
+  else if (codes.length > 1) problems.push('carries its reply code line more than once');
+
+  // The first part runs from its label to the next part, the set line or the reply code line.
+  if (starts[0] >= 0) {
+    const first = [lines[starts[0]].slice(FIVE[0].length)];
+    for (const l of lines.slice(starts[0] + 1)) {
+      if (PART_LABELS.some((label) => l.startsWith(label)) || l === line || l.startsWith(REPLY_CODE)) break;
+      first.push(l);
+    }
+    const found = targetOf(line);
+    const why = found === null ? null : whatProblem(found.kind, first.join(' ').trim(), found.target, { abbreviated: true });
+    if (why !== null) problems.push(`has a first part that ${why}`);
+  }
+  return problems;
+}
+
+const REFUSAL_END = 'Ask each question again exactly as `cli.js card` or `cli.js cards` returns it; do not write or change a card by hand.';
+
+export async function decide(input, { projectOf: find = projectOf, dir } = {}) {
+  if (input.tool_name !== 'AskUserQuestion') return undefined;
+  if (!find(input.cwd, { dir })) return undefined;
+  const questions = input.tool_input?.questions;
+  if (!Array.isArray(questions)) return undefined;
+  const faults = questions.flatMap((q, i) => {
+    if (typeof q?.question !== 'string') return [];
+    const name = typeof q.header === 'string' && q.header !== '' ? `Question ${i + 1} ("${q.header}")` : `Question ${i + 1}`;
+    return cardProblems(q.question).map((problem) => `${name} ${problem}.`);
+  });
+  if (faults.length === 0) return undefined;
+  return answer.deny(`The director has not seen this card, which is not in the form their cards take. ${faults.join(' ')} ${REFUSAL_END}`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runAndExit(decide, { failClosed: false, event: 'PreToolUse' });
+}

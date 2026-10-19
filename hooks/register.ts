@@ -18,13 +18,20 @@ const BRIDGE_MS = 5000
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
 // kept in step by tests/scripts/mod/validate.test.js. The bridge refuses every other option.
-const LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it']
+const LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix']
 // The code alphabet of scripts/state/card-lines.js, kept in step by the same test.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789'
 // A reply is four characters from the code alphabet and one of those labels, in any case, with
 // any spacing and one closing full stop; the bridge does the real parse. So an ordinary message
 // that starts with a four-letter word sends nothing.
 const REPLY = new RegExp(`^[${CODE_ALPHABET}]{4}\\s+(?:${LABELS.map((l) => l.split(' ').join('\\s+')).join('|')})\\s*\\.?$`, 'i')
+// A reply to a question card names one of the question's own options, which the mod can't know.
+// So a message whose first word is a code as a card shows it (four capitals from the alphabet),
+// then a space and an option of at most OPTION_CHARS characters with no control characters, is
+// sent too, the way scripts/mod/reply.js parseReply reads it. An ordinary message can look like
+// this, so the bridge's refusal is never shown for it.
+const OPTION_CHARS = 80
+const CODED = new RegExp(`^[${CODE_ALPHABET}]{4} (.+)$`)
 // "stop" as the stop-word hook (scripts/hooks/stop-word.js) reads it: the word, in any case,
 // with any closing full stops or exclamation marks.
 const STOP = /^stop[.!]*$/i
@@ -49,9 +56,13 @@ async function ask($: EngineInterface, request: Record<string, unknown>): Promis
 }
 
 // A request the director made from a message: the bridge's words are a toast, and so is a
-// failure.
-async function send($: EngineInterface, request: Record<string, unknown>) {
+// failure. A `quiet` request is one an ordinary message could be: only a record made is shown.
+async function send($: EngineInterface, request: Record<string, unknown>, quiet: boolean) {
   const answer = await ask($, request)
+  if (quiet) {
+    if (answer?.ok === true && answer.says !== undefined) $.ui.toast(answer.says)
+    return
+  }
   if (answer?.says !== undefined) $.ui.toast(answer.says)
   else if (answer === null || !answer.ok) $.ui.toast(FAILED)
 }
@@ -74,14 +85,25 @@ async function sendUsage($: EngineInterface, rateLimits: readonly SessionRateLim
   }
 }
 
-// What a submitted message asks of the bridge, or null for nothing.
-function requestFor(e: PromptSubmitInput): Record<string, unknown> | null {
+// Whether the message is a code and an option, as parseReply reads it: whitespace folded, one
+// closing full stop dropped, the option short and free of control characters.
+function codedReply(text: string): boolean {
+  let words = text.replace(/\s+/g, ' ').trim()
+  if (words.endsWith('.')) words = words.slice(0, -1).trimEnd()
+  const option = CODED.exec(words)?.[1]
+  return option !== undefined && option.length <= OPTION_CHARS && !/[\p{Cc}\p{Cf}]/u.test(option)
+}
+
+// What a submitted message asks of the bridge, or null for nothing. A `quiet` request is shown
+// only when it made a record.
+function requestFor(e: PromptSubmitInput): { request: Record<string, unknown>, quiet: boolean } | null {
   const origin = e.origin.kind
   if (!DIRECTOR.includes(origin) || e.isMeta || e.command) return null
   const text = e.text.trim()
   // A typed "stop" is the stop-word hook's; only a phoned one is sent.
-  if (STOP.test(text)) return origin === 'bridge' ? { cmd: 'stop', origin } : null
-  if (REPLY.test(text)) return { cmd: 'reply', origin, text: e.text }
+  if (STOP.test(text)) return origin === 'bridge' ? { request: { cmd: 'stop', origin }, quiet: false } : null
+  if (REPLY.test(text)) return { request: { cmd: 'reply', origin, text: e.text }, quiet: false }
+  if (codedReply(text)) return { request: { cmd: 'reply', origin, text: e.text }, quiet: true }
   return null
 }
 
@@ -110,12 +132,12 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    const request = requestFor(e)
-    if (request !== null) {
+    const asked = requestFor(e)
+    if (asked !== null) {
       try {
-        await send($, { ...request, cwd: await $.session.root() })
+        await send($, { ...asked.request, cwd: await $.session.root() }, asked.quiet)
       } catch {
-        $.ui.toast(FAILED)
+        if (!asked.quiet) $.ui.toast(FAILED)
       }
     }
     return next(e)

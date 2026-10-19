@@ -11,6 +11,7 @@ import { receiverPort } from '../telemetry/main.js';
 import { recordSession } from '../usage/store.js';
 import { weeklyDue } from '../jobs/weekly.js';
 import { takeStartLock } from './start-lock.js';
+import { sessionRole } from './role.js';
 import { usageDir, wheelhouseHome } from './paths.js';
 
 export const BACKGROUND_MS = 1000;
@@ -50,13 +51,16 @@ function within(ms, promise, fallback) {
 
 function recordPart({ session, project, cwd, env, now }) {
   try {
-    const feature = env?.WHEELHOUSE_ROLE === 'foreman' ? null : featureSlug(cwd);
-    const role = env?.WHEELHOUSE_ROLE === 'foreman' ? 'foreman' : feature ? 'feature' : 'front-desk';
-    recordSession({ session, project, role, ...(feature ? { work: feature } : {}), at: now() });
+    const role = sessionRole({ sessionId: session, env, cwd });
+    // A session in a feature worktree is feature work, whatever role was recorded, unless it is the foreman.
+    const feature = role === 'foreman' ? null : featureSlug(cwd);
+    recordSession({ session, project, role: feature ? 'feature' : role, ...(feature ? { work: feature } : {}), at: now() });
   } catch { /* a session that can't be recorded is still a session */ }
 }
 
-function startDetached(spawn, script) {
+// Starts `node <script>` detached in Wheelhouse's home, with no window and no output kept; true
+// when it started.
+export function startDetached(spawn, script) {
   try {
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });

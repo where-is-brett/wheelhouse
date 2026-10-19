@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -23,7 +24,6 @@ test('a reply code is four characters from the alphabet, the same for the same l
 test('setLineOf finds one set line and refuses a card with two', () => {
   const ruling = { kind: 'ruling', id: '0b9f2c1e-0000-4000-8000-000000000001', data: { words: 'Money is shown in dollars' } };
   const sets = [approvalLine(12, FULL), confirmLine(ruling), LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), runbookLine(3, FULL)];
-  assert.equal(SET_LINES.length, 5);
   for (const line of sets) {
     assert.equal(setLineOf(`Here is what changed.\n${line}\nReply code: ${replyCode(line)}`), line);
     assert.equal(setLineOf(line), line);
@@ -38,4 +38,57 @@ test('setLineOf finds one set line and refuses a card with two', () => {
   assert.equal(setLineOf(`${approvalLine(12, FULL)}\n${LIFT_STOP}`), null);
   assert.equal(setLineOf(`${LIFT_STOP}\n${LIFT_STOP}`), null);
   assert.equal(setLineOf(undefined), null);
+});
+
+const BUILD_LINES = [
+  approveWorkLine('export-csv', 'feature', FULL),
+  approveWorkLine('fix-1', 'bug', FULL, { shownFirst: true }),
+  approveWorkLine('tweak', 'quick', FULL),
+  approveWorkLine('add-it', 'small', FULL),
+  answerLine('q-export-csv-1'),
+  amendLine('export-csv', FULL),
+  liftIncidentLine('bad-total'),
+  incidentFixLine('bad-total', 31),
+];
+
+test('each line the build loop writes is found by setLineOf, and matches exactly one set line pattern', () => {
+  for (const line of BUILD_LINES) {
+    assert.equal(setLineOf(`What this is.\n${line}\nReply code: ${replyCode(line)}`), line, line);
+    assert.equal(setLineOf(line), line, line);
+    assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1, line);
+  }
+  // Every set line pattern is used by a line function's output.
+  const all = [
+    ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
+    LIFT_STOP, ciPushLine('main', FULL), runbookLine(1),
+  ];
+  for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
+});
+
+test('a near miss of a build loop line is not a set line', () => {
+  const near = [
+    'Approve export-csv (feature lane) as written, abcdef1',
+    'Approve export-csv (feature lane) as written, ABCDEF123456',
+    'Approve export-csv (huge lane) as written, abcdef123456',
+    'Approve export-csv (feature lane) as written, abcdef123456, and show it to me',
+    'Approve export-csv (feature lane) as written, abcdef123456 now',
+    `Approve ${'a'.repeat(41)} (feature lane) as written, abcdef123456`,
+    'Approve Export (feature lane) as written, abcdef123456',
+    'Answer question export-csv-1',
+    'Answer question q-export-csv',
+    'Answer question q-export-csv-1 please',
+    'Answer question q--x',
+    'Change the approved export-csv to this, abcdef1',
+    'Change the approved export-csv to this, abcdef123456 today',
+    'End incident bad-total and let merges carry on, please',
+    'End incident Bad_Total and let merges carry on',
+    'Merge pull request #031 as the fix for incident bad-total',
+    'Merge pull request #31 as the fix for incident bad-total now',
+    'Merge pull request #31 as the fix for incident',
+  ];
+  for (const line of near) assert.equal(setLineOf(line), null, line);
+  // Two lines are none.
+  assert.equal(setLineOf(`${answerLine('q-a-1')}\n${answerLine('q-a-2')}`), null);
+  assert.equal(setLineOf(`${liftIncidentLine('a')}\n${incidentFixLine('a', 3)}`), null);
+  assert.equal(setLineOf(`${approveWorkLine('a', 'bug', FULL)}\n${approvalLine(3, FULL)}`), null);
 });

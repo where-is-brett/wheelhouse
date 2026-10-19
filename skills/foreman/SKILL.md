@@ -31,12 +31,22 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 
 ## Asking the director
 
-`act ask W --what '…' --why '…' --option '<label>=<says>'` (two or more) `--recommend <label> --level 3`
+`act ask W --what '…' --why '…' --option '<label>=<says>'` (two to four, none called Not now, Explain more or Show me: the director answers on a card) `--recommend <label> --level 3`
 
 - **Single quotes again,** for the same reason.
 - **Each option's `says`** is one whole command, written as the wake writes them after `Next:` (`act merge W`, say), or the word `waiting`.
 - **Never offer `act pause`:** only the director's own amendment pauses work.
 - **When the answer comes,** it prints "which says: …": run that, or nothing for `waiting`.
+
+## Build-command questions
+
+On Windows a feature session asks for its build commands (to run its tests, say) with a build-command question. Its wake line is `Next: act question …`, as for any question: run it. The director sees the question as a card that names the commands from the question's `commands`, with its `what` beside them as the explanation, and its three options:
+
+- **Allow this time:** for the builder's next run only.
+- **Allow for this feature:** until the feature ends. The card says that for as long as this lasts, the builder can do whatever your account can.
+- **Not now:** no answer is recorded, so the feature waits and the question stays on the director's waiting list, which the next briefing shows. Nothing for you to run.
+
+When a feature's third build-command question that day is recorded, `act question` offers the Unattended card itself, once that day: after the question, never in its place. It prints "Offered the director the Unattended card". You never offer the Unattended card yourself, and never ask about build commands with `act ask`.
 
 ## Rules
 

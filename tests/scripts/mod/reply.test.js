@@ -9,8 +9,9 @@ import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { writeViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine } from '../../../scripts/state/card-lines.js';
-import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { computerId, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { BUILD_QUESTION_OPTIONS, settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -180,8 +181,10 @@ test('a reply earns exactly the record the click would have', async () => {
       assert.equal(reply.calls.record.length, 1, label);
       assert.ok(reply.calls.record[0].event.sig);
       assert.equal(reply.calls.record[0].event.at, LATER.toISOString());
-      // Nothing else: no plain answer, and the typed text is written nowhere.
-      assert.equal(reply.calls.write.length, 0);
+      // Nothing else but the plain answer the click writes too, in the card's own spelling of the
+      // option: the typed text is written nowhere.
+      assert.deepEqual(reply.calls.write, click.calls.write, label);
+      assert.deepEqual(reply.calls.write, [{ project: P, kind: 'card-answer', data: { question, label } }], label);
       assert.equal(lifted, label === 'Lift STOP' ? 1 : 0);
     }
 
@@ -194,8 +197,12 @@ test('a reply earns exactly the record the click would have', async () => {
     assert.match(out.says, /^Recorded: Runbook step 2/);
     const folder = path.join(stateDir(P), '..', 'pending');
     const kept = fs.readdirSync(folder).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')));
-    assert.deepEqual(kept.map((k) => [k.route, k.body.event.data.action, k.body.event.data.step]), [['record', 'runbook', 2]]);
-    assert.deepEqual(kept[0].body.event.data, { action: 'runbook', step: 2, question: cardOf(line), label: 'Do it' });
+    // The signed record and the plain answer, each kept until the helper takes it.
+    const record = kept.filter((k) => k.route === 'record');
+    assert.deepEqual(record.map((k) => [k.body.event.data.action, k.body.event.data.step]), [['runbook', 2]]);
+    assert.deepEqual(record[0].body.event.data, { action: 'runbook', step: 2, question: cardOf(line), label: 'Do it' });
+    assert.deepEqual(kept.filter((k) => k.route === 'write').map((k) => k.body), [{ project: P, kind: 'card-answer', data: { question: cardOf(line), label: 'Do it' } }]);
+    assert.equal(kept.length, 2);
   });
 });
 
@@ -351,5 +358,216 @@ test('a line that repeats gets a working code on each new card, and two waiting 
     await show(cardOf(step, 'Harm is live again.'));
     const two = await replyRecord({ project: P, text: `${replyCode(step)} Do it`, client: fake(), now: () => LATER });
     assert.match(two.says, /two cards/);
+  });
+});
+
+// --- the build loop's cards ---
+
+const DOC = 'fedcba9876543210'.repeat(4);
+const NEW_DOC = '0123456789abcdef'.repeat(4);
+const QUESTION = { id: 'q-export-csv-1', work: 'export-csv', what: 'Which separator?', why: 'It changes the file', options: [{ label: 'Comma', says: 'Commas' }, { label: 'Tab', says: 'Tabs' }, { label: 'Show me', says: 'A sample' }], recommendation: 'Comma', level: 2 };
+// The options each card offers (a card holds two to four).
+const WORK_OPTIONS = ['Approve', 'Show me', 'Explain more', 'Not now'];
+const ASK_OPTIONS = ['Comma', 'Tab', 'Semicolon', 'Show me', 'Explain more'];
+
+function buildState() {
+  keepEvent(makeEvent({ kind: 'work', data: { id: 'export-csv', title: 'Export', lane: 'feature', doc: { path: 'd.md', hash: DOC }, visible: true, dependsOn: [] }, now: () => NOW }));
+  keepEvent(makeEvent({ kind: 'amendment', data: { work: 'export-csv', change: 'CSV, not Excel', hash: NEW_DOC }, now: () => NOW }));
+  keepEvent(makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: () => NOW }));
+  keepEvent(makeEvent({ kind: 'question', data: QUESTION, now: () => NOW }));
+}
+
+test('a reply earns the record the click would have on each of the build loop\'s cards', async () => {
+  await withHome(async () => {
+    buildState();
+    const cases = [
+      [approveWorkLine('export-csv', 'feature', DOC), 'Approve', 'Recorded: Approve export-csv', WORK_OPTIONS],
+      [approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true }), 'Approve', 'Recorded: Approve export-csv', WORK_OPTIONS],
+      [amendLine('export-csv', NEW_DOC), 'Change it', 'Recorded: Change export-csv', ['Change it', 'Explain more', 'Not now']],
+      [liftIncidentLine('bad-total'), 'End it', 'Recorded: End incident bad-total', ['End it', 'Explain more', 'Not now']],
+      [incidentFixLine('bad-total', 31), 'Merge the fix', 'Recorded: Merge pull request #31 as the fix', ['Merge the fix', 'Explain more', 'Not now']],
+      [answerLine('q-export-csv-1'), 'Tab', 'Recorded: Answer: Tab', ASK_OPTIONS],
+    ];
+    for (const [line, label, says, options] of cases) {
+      const question = cardOf(line);
+      await show(question, { options });
+      const click = fake();
+      await decide(card(question, label, options), deps(click));
+      const reply = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(line).toLowerCase()} ${label.toLowerCase()}`, client: reply, now: () => LATER });
+      assert.deepEqual(out, { made: true, says });
+      assert.equal(signed(click).length, 1, label);
+      assert.deepEqual(signed(reply), signed(click), label);
+      assert.ok(reply.calls.record[0].event.sig);
+      assert.deepEqual(reply.calls.write, click.calls.write, label);
+      assert.equal(reply.calls.prState.length, 0);
+      // A code is good once.
+      const again = fake();
+      const second = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: again, now: () => LATER });
+      assert.deepEqual(second, { made: false, says: 'That code has been used' }, label);
+      assert.equal(again.calls.record.length, 0, label);
+    }
+  });
+});
+
+test('a reply on an approve-work card earns the work approval with its full hash and lane', async () => {
+  await withHome(async () => {
+    buildState();
+    const line = approveWorkLine('export-csv', 'feature', DOC, { shownFirst: true });
+    const question = cardOf(line);
+    await show(question, { options: WORK_OPTIONS });
+    const c = fake();
+    await replyRecord({ project: P, text: `${replyCode(line)} Approve`, client: c, now: () => LATER });
+    assert.deepEqual(signed(c), [{ kind: 'action', data: { action: 'approve-work', work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true, question, label: 'Approve' } }]);
+  });
+});
+
+test('a reply on an answer card counts for the question\'s own options, never Explain more, Show me or one it lacks', async () => {
+  await withHome(async () => {
+    buildState();
+    const line = answerLine('q-export-csv-1');
+    const question = cardOf(line);
+    await show(question, { options: ASK_OPTIONS });
+    // Semicolon is on the card but not in the question's options.
+    for (const label of ['Explain more', 'Show me', 'Semicolon']) {
+      const c = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER });
+      assert.equal(out.made, false, label);
+      assert.equal(c.calls.record.length + c.calls.write.length, 0, label);
+    }
+    // The card stays good after those. A code is good once.
+    const c = fake();
+    const out = await replyRecord({ project: P, text: `${replyCode(line)} comma`, client: c, now: () => LATER });
+    assert.deepEqual(out, { made: true, says: 'Recorded: Answer: Comma' });
+    assert.deepEqual(signed(c).map((r) => [r.data.action, r.data.questionId, r.data.label]), [['answer', 'q-export-csv-1', 'Comma']]);
+    const again = fake();
+    assert.equal((await replyRecord({ project: P, text: `${replyCode(line)} Tab`, client: again, now: () => LATER })).made, false);
+  });
+});
+
+test('a reply on a build loop card whose record can\'t be earned records nothing and lets the card go', async () => {
+  await withHome(async () => {
+    // No incident was declared, and the work has moved on to another document.
+    keepEvent(makeEvent({ kind: 'work', data: { id: 'export-csv', title: 'Export', lane: 'feature', doc: { path: 'd.md', hash: NEW_DOC }, visible: true, dependsOn: [] }, now: () => NOW }));
+    for (const [line, label] of [[liftIncidentLine('bad-total'), 'End it'], [approveWorkLine('export-csv', 'feature', DOC), 'Approve']]) {
+      await show(cardOf(line), { options: WORK_OPTIONS });
+      const c = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER });
+      assert.equal(out.made, false, label);
+      assert.equal(c.calls.record.length, 0, label);
+    }
+  });
+});
+
+test('no reply turns on Unattended or confirms a Windows build-commands setting: only a click on its own card does', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const setting = (value) => makeEvent({ kind: 'setting', data: { key: settingKey(me), value, words: `Run build commands: ${value}` }, now: () => NOW });
+    const on = setting('unattended');
+    const guarded = setting('guarded');
+    keepEvent(on);
+    keepEvent(guarded);
+    const tried = [];
+    const reply = async (text) => {
+      const c = fake();
+      const out = await replyRecord({ project: P, text, client: c, now: () => LATER });
+      tried.push(c);
+      return out;
+    };
+    // The Unattended card's line is no set line, so the card has no reply code at all.
+    const line = unattendedBuildsLine(on.id, me);
+    await show(`${UNATTENDED_CARD().risk}\n${line}\n${replyCodeLine(replyCode(line))}`, { options: ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'] });
+    assert.deepEqual(await reply(`${replyCode(line)} Turn on (dangerous)`), { made: false, says: 'No card has that code' });
+    // A card that carries the Unattended line beside the setting's confirm line: neither its
+    // Turn on (dangerous) nor its Confirm can be answered by a reply.
+    const both = cardOf(confirmLine(on), `${UNATTENDED_CARD().risk}\n${line}`);
+    await show(both, { options: ['Turn on (dangerous)', 'Confirm', 'Not now'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(on))} Turn on (dangerous)`), { made: false, says: 'That option doesn\'t need a reply code' });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(on))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    // The Unattended card offering Use Guarded carries Guarded's confirm line and its code, and
+    // Use Guarded, which confirms that event, is a click only too.
+    const proposed = setting('guarded');
+    keepEvent(proposed);
+    const offered = `What this is: ${UNATTENDED_CARD({ guardedReady: true }).what} ${UNATTENDED_CARD().risk}\n${line}\n${confirmLine(proposed)}\n${replyCodeLine(replyCode(confirmLine(proposed)))}`;
+    await show(offered, { options: ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(proposed))} Use Guarded`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(proposed))} Turn on (dangerous)`), { made: false, says: 'That option doesn\'t need a reply code' });
+    // Guarded's card confirms through the setting's confirm line, by a click only.
+    await show(cardOf(confirmLine(guarded)), { options: ['Confirm', 'Not now'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(guarded))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    // Nor from the director's profile.
+    const profiled = { ...setting('guarded') };
+    fs.mkdirSync(path.join(profileDir(), path.dirname(eventPath(profiled))), { recursive: true });
+    fs.writeFileSync(path.join(profileDir(), eventPath(profiled)), JSON.stringify(profiled));
+    await show(cardOf(confirmLine(profiled)), { options: ['Confirm', 'Not now'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(profiled))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    for (const c of tried) assert.equal(c.calls.record.length + c.calls.profileRecord.length + c.calls.write.length, 0);
+    // Another setting's confirm card still takes a reply.
+    const tab = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Open the board on its build tab' }, now: () => NOW });
+    keepEvent(tab);
+    await show(cardOf(confirmLine(tab)), { options: ['Confirm', 'Not now'] });
+    assert.equal((await reply(`${replyCode(confirmLine(tab))} Confirm`)).made, true);
+  });
+});
+
+test('a reply allows a build-command question\'s commands only on the computer that recorded the question', async () => {
+  await withHome(async () => {
+    const asked = (n) => ({
+      id: `q-export-csv-${n}`, work: 'export-csv', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
+      options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })), recommendation: 'Allow this time', level: 3, commands: ['npm test'],
+    });
+    const options = [...BUILD_QUESTION_OPTIONS.map((o) => o.label), 'Explain more'];
+    const here = makeEvent({ kind: 'question', data: asked(1), now: () => NOW });
+    const elsewhere = { ...makeEvent({ kind: 'question', data: asked(2), now: () => NOW }), computer: 'deadbeef' };
+    const unknown = { ...makeEvent({ kind: 'question', data: asked(3), now: () => NOW }), computer: undefined };
+    for (const e of [here, elsewhere, unknown]) keepEvent(e);
+    const reply = async (id, label) => {
+      const c = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(answerLine(id))} ${label}`, client: c, now: () => LATER });
+      return { out, signed: signed(c) };
+    };
+    const ELSEWHERE = { made: false, says: 'Build commands are allowed only on the Windows computer that asked: answer the card there' };
+    for (const id of ['q-export-csv-2', 'q-export-csv-3']) {
+      await show(cardOf(answerLine(id)), { options });
+      for (const label of ['Allow this time', 'Allow for this feature']) assert.deepEqual(await reply(id, label), { out: ELSEWHERE, signed: [] }, `${id} ${label}`);
+      // Not now by reply stays as it is: it needs no reply code.
+      assert.deepEqual((await reply(id, 'Not now')).out, { made: false, says: 'That option doesn\'t need a reply code' });
+    }
+    // On the computer that recorded the question, the reply answers it as a click would.
+    await show(cardOf(answerLine('q-export-csv-1')), { options });
+    const { out, signed: made } = await reply('q-export-csv-1', 'Allow for this feature');
+    assert.deepEqual(out, { made: true, says: 'Recorded: Answer: Allow for this feature' });
+    assert.deepEqual(made.map((r) => [r.data.action, r.data.questionId, r.data.label]), [['answer', 'q-export-csv-1', 'Allow for this feature']]);
+  });
+});
+
+test('a reply-code Confirm on a profile setting\'s card closes the card in the project\'s waiting view', async () => {
+  await withHome(async () => {
+    // The setting is in the director's profile; its confirm card is in the project's state.
+    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' }, now: () => NOW });
+    const inProfile = path.join(profileDir(), eventPath(setting));
+    fs.mkdirSync(path.dirname(inProfile), { recursive: true });
+    fs.writeFileSync(inProfile, JSON.stringify(setting));
+    const line = confirmLine(setting);
+    const question = cardOf(line);
+    const options = ['Confirm', 'Not now', 'Explain more', 'Show me'];
+    const cardEvent = makeEvent({ kind: 'card', data: { question, header: 'Confirm', options, kind: 'confirm', level: 3, line }, now: () => NOW });
+    keepEvent(cardEvent);
+    await show(question, { options });
+    assert.deepEqual((await writeViews(P, { now: () => NOW })).waiting.map((w) => w.id), [cardEvent.id]);
+
+    // The helper, as it would: the confirmation goes into the profile, the plain answer into the state clone.
+    const c = fake();
+    c.profile.record = async (b) => { c.calls.profileRecord.push(b); return { ok: true }; };
+    c.state.write = async (b) => {
+      c.calls.write.push(b);
+      keepEvent(makeEvent({ kind: b.kind, data: b.data, now: () => LATER }));
+      return { ok: true };
+    };
+    const out = await replyRecord({ project: P, text: `${replyCode(line)} confirm`, client: c, now: () => LATER });
+    assert.deepEqual(out, { made: true, says: 'Recorded: Confirm the setting' });
+    assert.deepEqual(c.calls.profileRecord.map((r) => r.event.data.confirms), [setting.id]);
+    assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label: 'Confirm' } }]);
+    assert.deepEqual((await writeViews(P, { now: () => LATER })).waiting, []);
   });
 });

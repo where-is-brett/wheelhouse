@@ -9,7 +9,7 @@
 //                             `verified` for a signed action
 //     features: Record<work, {
 //       status: Status | null,
-//       questions: string[],          ids of `question` lines in the questions file
+//       questions: string[],          ids of `question` and `build-command` lines in the questions file
 //       extraPlans: string[],         ids of `extra-plan` lines
 //       skipped: number,              malformed question lines skipped
 //       briefHash: string | null,     the brief file's hash as it is now (null: no file)

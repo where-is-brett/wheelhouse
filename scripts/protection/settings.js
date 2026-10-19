@@ -50,6 +50,7 @@ import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
+import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
 
 const PLATFORMS = ['darwin', 'linux', 'win32'];
 const HOST_TOOLS = ['vercel', 'netlify', 'flyctl', 'fly', 'wrangler', 'heroku', 'railway', 'aws', 'gcloud', 'az', 'doctl', 'supabase', 'neonctl', 'stripe'];
@@ -84,15 +85,31 @@ export function credentialRules() {
 // deny rule still wins over any of them. They are passed only with the Shape 1
 // starter's --allowedTools, never written into the project's settings: that
 // file is shared by every computer, Windows ones too, so an interactive
-// session asks. On Windows there are none: the sandbox does not run there, so
-// a rule such as `Bash(node:*)` would let a session run anything unasked. The
-// commands are still checked there.
-export function featureAllowRules(config, { platform = process.platform } = {}) {
+// session asks. The commands are checked on every system.
+//
+// On Windows (design section 12.2) the sandbox does not run, so a rule such as
+// `Bash(node:*)` would let a session run anything unasked: the rules follow
+// the level of build commands on this computer (windows-builds.js). At
+// `unattended`, one for each configured command and each local git command;
+// at `ask`, and at any level not known, one for each command the director
+// granted (`grants`, from buildGrants) that is still configured or local git;
+// at `guarded`, the rule for the runner, `guardedCommand` (scripts/windows/low.js),
+// with the granted ones as at `ask`, since a command the runner refuses (one that
+// fetches new code) still asks. Elsewhere the level and grants change nothing.
+export function featureAllowRules(config, { platform = process.platform, level = 'ask', grants = [], guardedCommand = null } = {}) {
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
   if (!Array.isArray(commands)) throw new Error('The build commands are not a list');
   for (const c of commands) if (!isBuildCommand(c)) throw new Error(`This build command can't be made into an allow rule: ${JSON.stringify(c)}`);
-  if (platform === 'win32') return [];
-  return unique(commands.map((c) => `Bash(${c}:*)`));
+  const rules = (list) => unique(list.map((c) => `Bash(${c}:*)`));
+  if (platform !== 'win32') return rules(commands);
+  if (level === 'unattended') return rules([...commands, ...GIT_LOCAL]);
+  const granted = (Array.isArray(grants) ? grants : []).flatMap((g) => (Array.isArray(g?.commands) ? g.commands : []));
+  const asked = granted.filter((c) => isConfiguredBuildCommand(c, commands));
+  if (level === 'guarded') {
+    const runner = typeof guardedCommand === 'string' && guardedCommand !== '' && !/[\r\n]/.test(guardedCommand) ? [guardedCommand] : [];
+    return rules([...runner, ...asked]);
+  }
+  return rules(asked);
 }
 
 // The copies of the pinned kits that must stay off in a project (check 24): Anthropic's
@@ -221,15 +238,41 @@ export function directorStatusLine({ claudeHome, projectDir }) {
   return null;
 }
 
+// The command that runs the front desk's script (scripts/frontdesk/cli.js), as its allow rule and
+// its playbook write it: `node`, then the script's full path in double quotes. On Windows the path
+// has forward slashes after its drive letter, which node and Git Bash both take, and which the
+// STOP guard reads as the same path. Null when the plugin's folder isn't a full path, or holds a
+// character that could end the quotes or change what the rule matches (a quote, `*`, a
+// parenthesis, `$`, a backtick, a backslash or a control character): that folder gets no rule, and
+// the command is asked about each time.
+export function frontDeskCommand(pluginRoot, { platform = process.platform } = {}) {
+  if (typeof pluginRoot !== 'string') return null;
+  let root = pluginRoot;
+  if (platform === 'win32') {
+    if (!/^[A-Za-z]:[\\/]/.test(root)) return null;
+    root = root.replaceAll('\\', '/');
+  } else if (!root.startsWith('/')) {
+    return null;
+  }
+  if (/["*()$`\\\p{Cc}]/u.test(root)) return null;
+  return `node "${root.replace(/\/+$/, '')}/scripts/frontdesk/cli.js"`;
+}
+
 // The socket's path names this computer's home folder, so it stays out of the
 // shared file. The status line is added only when `node` and `pluginRoot` are given and the
 // director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
-// stays and the share comes from the mod alone.
-export function localSettings({ address, node, pluginRoot, ownStatusLine = null }) {
+// stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command is
+// allowed by its full path, so the director's session isn't asked each time it composes a card or
+// records a decision; the path names this computer's folders too.
+export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   if (node && pluginRoot && !ownStatusLine) {
     settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
   }
+  const frontDesk = pluginRoot ? frontDeskCommand(pluginRoot, { platform }) : null;
+  // In this file's `Bash(x:*)` form, the same as `Bash(x *)`. Written on Windows too, unlike the build
+  // commands' rules: it reaches only Wheelhouse's own cli.js, by its full path, never `node` itself.
+  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk}:*)`] };
   return settings;
 }
 

@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startHelper } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
-import { decide as boardContext, HEADINGS } from '../../scripts/hooks/board-context.js';
+import { decide as boardContext, HEADINGS, cardsLine } from '../../scripts/hooks/board-context.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
 import { pendingDir } from '../../scripts/hooks/pending.js';
 import { runBridge, SAYS } from '../../scripts/mod/bridge.js';
@@ -164,7 +164,12 @@ async function prompt(c, text) {
 }
 
 // The briefing's own text, without the hook's heading, and its words.
-const bodyOf = (context) => context.slice(context.indexOf('\n\n') + 2);
+// The text shown, without its heading or the "cards to ask" line that follows it when cards wait unasked.
+// The text under the heading, without the "cards to ask" line that comes before it.
+const bodyOf = (context) => {
+  const text = context.replace(/^Cards to ask this visit: \d+\. [^\n]*\n\n/, '');
+  return text.slice(text.indexOf('\n\n') + 2);
+};
 const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 const numbered = (text) => text.split('\n').filter((line) => /^\d+\. /.test(line));
 
@@ -189,6 +194,8 @@ async function write(c, kind, data) {
   assert.equal(written.ok, true, JSON.stringify(written));
   return written;
 }
+// A card event asking `question`, as the front desk writes one.
+const cardOf = (question) => ({ question, header: 'Question', options: ['Yes', 'No'], kind: 'question', line: null, code: null, level: 3, importance: 1 });
 const eventsOf = (kind, dir = stateDir(PROJECT)) => listEvents(dir, { report: () => {} }).filter((e) => e.kind === kind);
 
 function freePort() {
@@ -399,7 +406,7 @@ test('a profile setting confirmed by a click changes the briefing\'s length; a p
     // A second apart, so they are oldest first as asked.
     for (const [i, title] of titles.entries()) {
       c.time(MINUTE + i * 1000);
-      await write(c, 'card', { title });
+      await write(c, 'card', cardOf(title));
     }
     c.time(HOUR);
 
@@ -484,7 +491,7 @@ test('under STOP, /go from the bridge lifts it and the board shows STOP off', as
     assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'bridge', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
     assert.deepEqual(await c.act(() => stopState()), { on: true, by: 'mod', at: new Date(T0 + MINUTE).toISOString() });
     // The board still answers under STOP, and says so.
-    assert.match(await prompt(c, '/wheelhouse:board'), /\n- STOP is on, since 19 October 2026\n/);
+    assert.match(await prompt(c, '/wheelhouse:board'), /\n- STOP \(the emergency stop\) is on, since 19 October 2026\n/);
 
     // /go run by anything but the director leaves STOP on.
     c.time(10 * MINUTE);
@@ -523,7 +530,7 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     const titles = Array.from({ length: 14 }, (_, i) => `Pick the wording for message ${i + 1} on the sign-in page`);
     for (const [i, title] of titles.entries()) {
       c.time(90 * MINUTE + (i + 1) * 1000);
-      await write(c, 'card', { title });
+      await write(c, 'card', cardOf(title));
     }
     await write(c, 'merge', { pr: 5, forUsers: 'Sign-in now remembers you for thirty days' });
     await c.act(() => {
@@ -535,9 +542,11 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     // Two hours after the last prompt, the next brings the briefing.
     c.time(3 * HOUR + 5 * MINUTE);
     const context = await prompt(c, 'What happened?');
-    assert.ok(context.startsWith(`${HEADINGS.briefing}\n\n`), context);
+    // The cards waiting unasked are named before the briefing, never inside it.
+    assert.ok(context.startsWith(`${cardsLine(4)}\n\n${HEADINGS.briefing}\n\n`), context);
     const body = bodyOf(context);
     assert.ok(wordsIn(body) <= BRIEFING_WORDS.standard, `${wordsIn(body)} words:\n${body}`);
+    assert.ok(!body.includes('Cards to ask'), body);
 
     const parts = body.split('\n\n');
     assert.deepEqual(parts.map((part) => part.split('\n')[0]), [
@@ -548,7 +557,7 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     assert.deepEqual(waiting.slice(0, -1), titles.slice(0, waiting.length - 1).map((title, i) => `${i + 1}. ${title}`), 'oldest first, numbered');
     assert.equal(waiting.at(-1), `and ${titles.length - (waiting.length - 1)} more`);
     assert.deepEqual(parts[2].split('\n').slice(1), ['- Sign-in now remembers you for thirty days']);
-    assert.deepEqual(parts[3].split('\n').slice(1), ['- 1 pull request merged']);
+    assert.deepEqual(parts[3].split('\n').slice(1), ['- 1 proposed change added to the product']);
     assert.match(parts[4], /\n- Agents act with your full GitHub or GitLab access, across all your projects\./);
   } finally {
     await c.close();

@@ -34,6 +34,7 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { readEnrolled, verify } from '../state/signing.js';
+import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
@@ -595,7 +596,7 @@ function placeFolder(cwd) {
 // Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
 // call. Those commands, like runbook.js, run inside the sandbox, which cannot read
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
-const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/push'];
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/config', '/push'];
 
 const NOT_MAIN_CHECKOUT = 'the foreman\'s commands run only in the project\'s main checkout';
 
@@ -631,6 +632,11 @@ function placed(body) {
 // removed the narrow key: reading a pull request, and recording a signed click, so the
 // director's approval of the restore pull request can still be read and kept.
 const FALL_BACK_ROUTES = ['/pr/state', '/state/record'];
+
+// The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
+// ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
+// helper places the project from it.
+const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state'];
 
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
@@ -2208,7 +2214,22 @@ export async function startHelper({
     '/state/sync': stateRoute(async ({ project }, ctx) => ({
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
-    '/state/views': stateRoute(async ({ project }) => ({ ok: true, views: await writeViews(project, { now }) })),
+    // With `cards`, the card events too, every one the state holds: the board numbers its list
+    // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
+    // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
+    // `review`, the delegation review worked out from the project's events, { due, since, proposals }
+    // (ruling F41), for the front desk's `review`, which can't list them. Read-only, so STOP lets it through.
+    '/state/views': stateRoute(async ({ project, cards, review }) => {
+      const views = await writeViews(project, { now });
+      const events = cards === true || review === true ? listEvents(stateDir(project), { report: () => {} }) : [];
+      return {
+        ok: true,
+        views,
+        ...(stopped() ? { stop: true } : {}),
+        ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
+        ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
+      };
+    }),
     // The label of a question's verified answer, from the views alone, else null. Read-only, so STOP lets it through.
     '/state/answer': stateRoute(async ({ project, questionId }) => {
       if (typeof questionId !== 'string' || questionId === '') refuse('the question id must be text');
@@ -2365,9 +2386,9 @@ export async function startHelper({
     let ctx = null;
     try {
       const runbookRoute = url.pathname.startsWith('/runbook/');
-      // runbook.js and a feature session's commands run inside the sandbox, which cannot read
-      // ~/.wheelhouse: they send their folder, and the project is placed here.
-      if ((runbookRoute || FOLDER_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = placed(body);
+      // runbook.js, a feature session's commands and the front desk run inside the sandbox, which
+      // cannot read ~/.wheelhouse: they send their folder, and the project is placed here.
+      if ((runbookRoute || FOLDER_ROUTES.includes(url.pathname) || PLACED_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = placed(body);
       // The foreman's commands send their folder, which must be the main checkout (ruling R156).
       if (url.pathname === '/foreman/run') body = { ...body, project: placeMainCheckout(body.folder) };
       // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
