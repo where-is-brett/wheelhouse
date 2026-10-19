@@ -100,7 +100,7 @@ function setup(args) {
     }, null, 2) + '\n');
   }
   const notes = path.join(root, 'notes.md');
-  if (!fs.existsSync(notes)) fs.writeFileSync(notes, '# Check 35 notes\n\nResults of each trial, appended as they are made (see run.md).\n');
+  if (!fs.existsSync(notes)) fs.writeFileSync(notes, '# Check 35 notes\n\nResults of each trial, appended as they are made (see run.md).\n\n## Starting point\n\n');
   // Readable and writable by any account on this computer, so another account's
   // session can use the folder (the logs are written by that account).
   if (process.platform !== 'win32') execFileSync('chmod', ['-R', 'a+rwX', root]);
