@@ -69,8 +69,12 @@ test('36 passes an explanation with an everyday example, then card 2 alone, as i
   const explanation = 'Card 2 adds a button that downloads the orders as a spreadsheet. For example: like a draft you hand to an editor before it is printed.';
   const good = await judged36(events(['Bash', { command: 'node "/p/cli.js" again 2' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]));
   assert.equal(good.pass, true, good.why);
+  const sentence = await judged36(events(['say', 'It\'s like handing a draft page to an editor: card 2 decides whether the spreadsheet download goes live.'], ['AskUserQuestion', { questions: [card] }]));
+  assert.equal(sentence.pass, true, sentence.why);
   const narrated = await judged36(events(['narrate', 'I explained card 2 using the editor analogy, then asked it again so you can decide.'], ['AskUserQuestion', { questions: [card] }]));
-  assert.equal(narrated.pass, true, narrated.why);
+  assert.match(narrated.why, /no everyday example/, 'a summary saying an example was given is not one');
+  const near = await judged36(events(['say', 'I\'d like you to look at card 2 again: compared with the old orders page it adds a spreadsheet download, and the checks passed.'], ['AskUserQuestion', { questions: [card] }]));
+  assert.match(near.why, /no everyday example/);
 
   const after = await judged36(events(['AskUserQuestion', { questions: [card] }], ['say', explanation]));
   assert.match(after.why, /no explanation before it/);

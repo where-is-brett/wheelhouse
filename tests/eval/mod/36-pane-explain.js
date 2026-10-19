@@ -57,11 +57,9 @@ const README = `# Shop
 An online shop: the catalogue, the basket, checkout and the orders page.
 `;
 
-// An everyday example, in the words people use to give one. Prose the session writes between
-// tool calls reaches the stream only as the server's summary of it (a narration block,
-// front-desk-playbook.js), which may say an example was given ("using the editor analogy",
-// "comparing it to a draft") rather than give it, so those words count too.
-export const EXAMPLE = /\banalog(?:y|ies)\b|\bcompar(?:e|es|ed|ing|ison)\b|\bfor example\b|\bfor instance\b|\be\.g\.|\bimagine\b|\bthink of\b|\bpicture\b|\bit'?s like\b|\blike (?:a|an|when|the|how|your)\b|\bjust as\b|\bthe same way\b|\bsay you\b|\bsuppose\b/i;
+// An everyday example, in the playbook's own form ("It's like …") or the few set phrases that
+// open one; "I'd like" or "compared with the old page" don't count.
+export const EXAMPLE = /\b(?:it'?s|it is|that'?s)\s+(?:a bit\s+|rather\s+|just\s+)?like\b|\bfor example\b|\bfor instance\b|\bimagine\b|\bthink of it as\b/i;
 
 // The pass, from the main session's calls and text and what it wrote.
 export function judge({ calls, texts, forbidden, asked, approval, others }) {
