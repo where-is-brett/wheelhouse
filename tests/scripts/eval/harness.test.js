@@ -380,7 +380,7 @@ test('runScenario records a failing judgement and a session that did not exit cl
     trial: 1,
     home,
     date: '2026-10-18',
-    runner: async () => ({ events: [], exitCode: 2, usage: { input: 0, output: 0 } }),
+    runner: async () => ({ events, exitCode: 2, usage: usageOf(events) }),
   });
   assert.equal(outcome.pass, false);
   assert.match(outcome.line, /^98 with: fail \(it asked; claude exited 2\)/);
