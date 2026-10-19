@@ -11,6 +11,9 @@ export const NODE_FLOOR = [22, 0, 0];
 export const RETENTION_DAYS = 30;
 // How long the test push waits for the host to answer, in milliseconds.
 export const PUSH_TEST_WAIT_MS = 2 * 60 * 1000;
+// How long the director is asked to keep the screen locked for the test push, at most: longer
+// than PUSH_TEST_WAIT_MS, so the push goes out while it is still locked (ruling R65).
+export const PUSH_TEST_LOCK_MS = 3 * 60 * 1000;
 // How long one setup step may run before it is reported as stuck, in milliseconds.
 export const STEP_TIMEOUT_MS = 20 * 60 * 1000;
 // How setup switches telemetry on for this computer (check 36, ruling R63): 'user-settings', the

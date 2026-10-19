@@ -12,7 +12,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
-import { PHONE_PUSH_LINE } from '../../../scripts/board/health.js';
+import { phonePushLine } from '../../../scripts/board/health.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
@@ -102,6 +102,7 @@ test('the inputs gather the views, events, settings, usage, sources and health f
 });
 
 // This computer's setup journal with step 9 settled on the push test's answer.
+const PUSH_LINE = phonePushLine('2026-10-19T01:00:00.000Z');
 function settledPushTest(arrived) {
   put(journalFile(), { v: 1, runs: [{ id: 'run-1', folder: '/x', startedAt: '2026-10-19T00:00:00.000Z', steps: { 9: { doneAt: '2026-10-19T01:00:00.000Z' } },
     changes: [{ id: 'chg-1', step: 9, kind: 'answer', target: 'step 9', before: null, after: { pushArrived: arrived } }] }] });
@@ -112,15 +113,15 @@ test('a push test that didn\'t reach the phone, in setup\'s journal, is on the b
   await as(home, async () => {
     const repo = register(home);
     keepEverything();
-    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PHONE_PUSH_LINE), false, 'no journal');
+    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE), false, 'no journal');
     settledPushTest(false);
-    assert.ok(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PHONE_PUSH_LINE));
+    assert.ok(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE));
     settledPushTest(true);
-    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PHONE_PUSH_LINE), false);
+    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE), false);
     // A journal that can't be read adds no line, and the board still comes.
     put(journalFile(), 'not json');
     const found = await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW });
-    assert.equal(texts(found).includes(PHONE_PUSH_LINE), false);
+    assert.equal(texts(found).includes(PUSH_LINE), false);
     assert.equal(found.project, P);
   });
 });

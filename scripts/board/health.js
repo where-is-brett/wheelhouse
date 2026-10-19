@@ -19,9 +19,14 @@ export const STOP_LINE = 'STOP is on';
 // The quick connection's line, shared with setup's step 3 (scripts/lib/host-lines.js).
 export { QUICK_LINE };
 
-// Setup's push test didn't reach the phone (step 9, ruling R39). Claude skips a push while the
-// director is at the computer (check 4), so the line says so, with what to check.
-export const PHONE_PUSH_LINE = 'Setup\'s test notification didn\'t reach your phone. Claude doesn\'t send one while you are at the computer, so lock the screen when you step away, and check Remote Control is on in Claude Desktop and your phone allows Claude\'s notifications';
+// Setup's push test didn't reach the phone (step 9, ruling R39), on the day it was recorded, `at`
+// (none when it doesn't read as a date). Claude skips a push while the director is at the
+// computer (check 4), so the line says so, with what to check, the second push option among it.
+export function phonePushLine(at) {
+  const on = dayMonthYear(at);
+  return `Setup's test notification didn't reach your phone${on ? ` on ${on}` : ''}. `
+    + 'Claude skips one while you are at the computer; check Remote Control, Push when actions required, and that your phone allows Claude\'s notifications';
+}
 
 // After a helper that did not answer in time, the next reading does not wait on it again for this long.
 const TRIED_FOR_MS = 10 * 60 * 1000;
@@ -160,7 +165,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');
   }
-  if (phonePush?.arrived === false) add('watch', PHONE_PUSH_LINE);
+  if (phonePush?.arrived === false) add('watch', phonePushLine(phonePush.at));
   if (!profile) add('watch', 'Your profile isn\'t backed up off this computer yet');
   return lines;
 }

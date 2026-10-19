@@ -1,8 +1,10 @@
 // tests/scripts/setup/notify.test.js
 // Step 9, Phone notifications (design section 15, check 4, ruling R39): a card of plain steps
-// ending "Lock your screen for two minutes", answered Ready or Later; after Ready, a wait of
-// PUSH_TEST_WAIT_MS, while the session sends one test push; then a card asking whether it arrived;
-// with that answered, the step settles with the result in the journal, which the board reads.
+// ending with the screen locked until the phone buzzes, or for three minutes (ruling R65),
+// answered Ready or Later; after Ready, a wait of PUSH_TEST_WAIT_MS, while the session sends one
+// test push inside the lock; then a card asking whether it arrived; with that answered, the step
+// settles with the result in the journal, which the board reads. A Ready too old for its push to
+// have been sent asks the first card again (ruling R66).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +15,7 @@ import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { answersFor } from '../../../scripts/setup/clicks.js';
 import { findRun, readJournal } from '../../../scripts/setup/journal.js';
 import { phonePushResult } from '../../../scripts/lib/setup-run.js';
-import { PUSH_TEST_WAIT_MS } from '../../../scripts/lib/setup-numbers.js';
+import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
@@ -38,7 +40,7 @@ test('step 9 is filled by notify.js, keeping its number and title', () => {
   assert.equal(step.long, undefined);
 });
 
-test('with no answer, step 9 asks the card of plain steps, ending with the screen locked for two minutes', async () => {
+test('with no answer, step 9 asks the card of plain steps, ending with the screen locked until the phone buzzes', async () => {
   const got = await notifyStep().plan({ answers: {}, now: () => T0 });
   assert.equal(got.ask.id, READY_ID);
   const { card } = got.ask;
@@ -53,7 +55,13 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   assert.match(card.what, /step 6/);
   assert.match(card.what, /phone/);
   assert.match(card.what, /allow/i);
-  assert.match(card.what, /Lock your screen for two minutes\.$/);
+  // Locked past the push (ruling R65): until the phone buzzes, or three minutes, longer than the
+  // wait before the push is sent, so it goes out while the screen is still locked.
+  assert.ok(PUSH_TEST_LOCK_MS > PUSH_TEST_WAIT_MS);
+  assert.equal(PUSH_TEST_LOCK_MS, 3 * 60 * 1000);
+  assert.match(card.what, /Lock your screen, and leave it locked until your phone buzzes, or for three minutes if it doesn't\.$/);
+  assert.doesNotMatch(card.what, /for two minutes/);
+  assert.match(card.options[0].says, /two minutes/);
   // Nor is Later a put-off button the composer would refuse on a question: it is a kept answer.
   const composed = composeCard({ ...card, kind: 'question' }).question;
   assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.later, 'Explain more']);
@@ -66,7 +74,7 @@ test('through the helper, the card is a question with no set line, and Ready wai
     assert.equal(asked.ask.step, 9);
     assert.equal(asked.ask.id, READY_ID);
     assert.equal(setLineOf(asked.ask.card.question), null);
-    assert.ok(asked.ask.card.question.includes('Lock your screen for two minutes.'));
+    assert.ok(asked.ask.card.question.includes('leave it locked until your phone buzzes, or for three minutes'));
 
     // Ready, kept signed; a minute later, a minute is left.
     await answer(asked.ask.card, READY.ready);
@@ -96,6 +104,44 @@ test('the wait counts from the Ready answer\'s own time, and never more than the
   assert.equal(asked.ask.id, ARRIVED_ID);
 });
 
+test('a Ready too old for its push to have been sent asks the first card again, and a fresh Ready restarts the wait', async () => {
+  const step = notifyStep();
+  const ready = { [`9.${READY_ID}`]: { label: READY.ready, text: null, at: T0.toISOString() } };
+  const at = (ms) => () => new Date(T0.getTime() + ms);
+  const STALE = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
+  // Up to the wait plus the time a click stays good: card B, which the playbook asks once the wait ends.
+  assert.equal((await step.plan({ answers: ready, now: at(STALE) })).ask.id, ARRIVED_ID);
+  // Older than that: a session resumed long after Ready, with no push sent, gets card A.
+  const again = await step.plan({ answers: ready, now: at(STALE + 1) });
+  assert.equal(again.ask.id, READY_ID);
+  assert.equal(again.ask.card.what, (await step.plan({ answers: {}, now: at(0) })).ask.card.what);
+  // An answer to card B settles, however old the Ready before it.
+  for (const [label, arrived] of [[ARRIVED.yes, true], [ARRIVED.no, false]]) {
+    const answered = { ...ready, [`9.${ARRIVED_ID}`]: { label, text: null, at: T0.toISOString() } };
+    assert.deepEqual(await step.plan({ answers: answered, now: at(24 * 60 * 60 * 1000) }), { settled: { record: { pushArrived: arrived } } });
+  }
+
+  // Through the helper and the prompt record: Ready, then setup resumed an hour later.
+  await withProject(async ({ folder, plan, answer, user }) => {
+    await answer((await plan(9)).ask.card, READY.ready);
+    const hourLater = new Date(ANSWERED.getTime() + 60 * 60 * 1000);
+    const resumed = setupRoutes({ now: () => hourLater, userHome: user });
+    const a = await resumed['/setup/plan']({ folder, step: 9 });
+    assert.equal(a.ask.id, READY_ID, 'card A, not card B');
+    // Ready on it now is the newest answer, so the wait starts again from it.
+    await answerAt(folder, a.ask.card, READY.ready, hourLater);
+    assert.equal((await resumed['/setup/plan']({ folder, step: 9 })).wait, PUSH_TEST_WAIT_MS);
+    const afterWait = setupRoutes({ now: () => new Date(hourLater.getTime() + PUSH_TEST_WAIT_MS), userHome: user });
+    const b = await afterWait['/setup/plan']({ folder, step: 9 });
+    assert.equal(b.ask.id, ARRIVED_ID);
+    // Answered long after: it still settles.
+    await answerAt(folder, b.ask.card, ARRIVED.yes, new Date(hourLater.getTime() + 60 * 60 * 1000));
+    const dayLater = setupRoutes({ now: () => new Date(hourLater.getTime() + 24 * 60 * 60 * 1000), userHome: user });
+    assert.deepEqual(await dayLater['/setup/plan']({ folder, step: 9 }), { ok: true, done: true });
+    assert.equal(phonePushResult().arrived, true);
+  });
+});
+
 test('after the wait, step 9 asks whether the test arrived, and either answer settles it in the journal', async () => {
   for (const [label, arrived] of [[ARRIVED.yes, true], [ARRIVED.no, false]]) {
     await withProject(async ({ folder, plan, answer, user, home }) => {
@@ -107,6 +153,8 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       assert.equal(b.ask.id, ARRIVED_ID);
       assert.deepEqual(b.ask.card.options.map((o) => o.label), [ARRIVED.yes, ARRIVED.no, 'Explain more']);
       assert.match(b.ask.card.question, /locked/);
+      // A question of fact: the card recommends answering what was seen, not either answer as such.
+      assert.match(b.ask.card.question, /answer what you saw/);
       assert.equal(setLineOf(b.ask.card.question), null);
 
       // Explain more is no answer: the card is asked again.
