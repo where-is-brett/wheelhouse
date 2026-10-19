@@ -1,9 +1,9 @@
 // scripts/board/health.js
 // How a project stands, in lines the board and the briefing show: STOP, the
 // protection level, the connection, the build-commands level on Windows, CI, the
-// lock, the helper, the key's renewal and the profile. What only the host knows
-// (protection, CI) comes from a cache kept for a day, so reading never waits on
-// the host.
+// lock, the helper, the key's renewal, setup's push test when it didn't reach the
+// phone, and the profile. What only the host knows (protection, CI) comes from a
+// cache kept for a day, so reading never waits on the host.
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
@@ -18,6 +18,10 @@ import { QUICK_LINE } from '../lib/host-lines.js';
 export const STOP_LINE = 'STOP is on';
 // The quick connection's line, shared with setup's step 3 (scripts/lib/host-lines.js).
 export { QUICK_LINE };
+
+// Setup's push test didn't reach the phone (step 9, ruling R39). Claude skips a push while the
+// director is at the computer (check 4), so the line says so, with what to check.
+export const PHONE_PUSH_LINE = 'Setup\'s test notification didn\'t reach your phone. Claude doesn\'t send one while you are at the computer, so lock the screen when you step away, and check Remote Control is on in Claude Desktop and your phone allows Claude\'s notifications';
 
 // After a helper that did not answer in time, the next reading does not wait on it again for this long.
 const TRIED_FOR_MS = 10 * 60 * 1000;
@@ -129,7 +133,9 @@ export async function readHostFacts(project, { client, address, now = () => new 
 
 // The lines for the board, in order. Each is { level: 'ok' | 'watch' | 'stop', text }. `builds` is
 // buildsShown's reading for this computer, { level, lockedUnattended }; missing, it shows nothing.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds } = {}) {
+// `phonePush` is setup's push test as this computer's journal last recorded it, { arrived, at }
+// (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds, phonePush } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -154,6 +160,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');
   }
+  if (phonePush?.arrived === false) add('watch', PHONE_PUSH_LINE);
   if (!profile) add('watch', 'Your profile isn\'t backed up off this computer yet');
   return lines;
 }

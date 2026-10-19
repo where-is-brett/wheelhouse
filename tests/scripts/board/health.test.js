@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { healthLines, readHostFacts, QUICK_LINE } from '../../../scripts/board/health.js';
+import { healthLines, readHostFacts, QUICK_LINE, PHONE_PUSH_LINE } from '../../../scripts/board/health.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
@@ -79,6 +79,19 @@ test('the lines come only in their own case', () => {
   assert.deepEqual(texts({ renewal: { due: true, on: '2026-12-25' } }), ['Protection: Standard', 'Renew the host key by 25 December 2026']);
   assert.deepEqual(texts({ profile: null }), ['Protection: Standard', NO_PROFILE]);
   assert.deepEqual(texts({ stop: { on: true } }), ['STOP is on', 'Protection: Standard']);
+});
+
+test('a push test that didn\'t reach the phone is a watch line saying why and what to do; one that did adds none', () => {
+  // A push is skipped while the director is at the computer (check 4), so the line says so.
+  assert.match(PHONE_PUSH_LINE, /phone/);
+  assert.match(PHONE_PUSH_LINE, /at the computer/);
+  assert.match(PHONE_PUSH_LINE, /Remote Control/);
+  assert.deepEqual(healthLines({ ...calm, phonePush: { arrived: false, at: '2026-10-20T05:00:00.000Z' } }), [
+    { level: 'ok', text: 'Protection: Standard' }, { level: 'watch', text: PHONE_PUSH_LINE },
+  ]);
+  for (const phonePush of [{ arrived: true }, null, undefined, {}, { arrived: 'no' }]) assert.deepEqual(texts({ phonePush }), ['Protection: Standard'], JSON.stringify(phonePush));
+  // Among the watch lines, before the profile's.
+  assert.deepEqual(texts({ phonePush: { arrived: false }, helperUp: false, profile: null }), ['Protection: Standard', NO_HELPER, PHONE_PUSH_LINE, NO_PROFILE]);
 });
 
 test('on Windows the build-commands level comes right after the Windows line', () => {
