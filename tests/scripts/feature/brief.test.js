@@ -296,8 +296,8 @@ test('an amended brief says what changed and has a new hash', () => {
 
 const CLI = `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
 const ASK_WORDS = `Before your first build command, ask for every one you will need at once with \`${CLI} ask --kind build-command --command "<command>" …\`, then end your turn. A refused command means the grant has ended: ask again.`;
-const RUNNER = 'node "C:\\Users\\me\\.wheelhouse\\runner\\low.js"';
-const GUARDED_WORDS = `Run every build command through \`${RUNNER}\`, for example \`${RUNNER} npm test\`. It refuses commands that fetch new code; ask for those with \`ask --kind build-command\`.`;
+const RUNNER = "'C:/Users/me/.wheelhouse/windows/low-node/node.exe' 'C:/plugins/wheelhouse/scripts/windows/guarded.js'";
+const GUARDED_WORDS = `Run every build command through \`${RUNNER}\`, for example \`${RUNNER} npm test\`, local git included. It refuses commands that fetch new code: ask for those with \`${CLI} ask --kind build-command --command "<command>" …\`, all at once, then end your turn. If it says it isn't at low integrity, stop using it, and ask for every build command you will need in the same way.`;
 const windows = (windowsBuilds, lane = 'small') => renderBrief({ fields: fields(lane), pluginRoot, windowsBuilds });
 
 test('a Windows brief at ask tells the session to ask for its build commands at once', () => {

@@ -91,10 +91,11 @@ export function credentialRules() {
 // `Bash(node:*)` would let a session run anything unasked: the rules follow
 // the level of build commands on this computer (windows-builds.js). At
 // `unattended`, one for each configured command and each local git command;
-// at `guarded`, the one rule for the runner, `guardedCommand`; at `ask`, and
-// at any level not known, one for each command the director granted
-// (`grants`, from buildGrants) that is still configured or local git.
-// Elsewhere the level and grants change nothing.
+// at `ask`, and at any level not known, one for each command the director
+// granted (`grants`, from buildGrants) that is still configured or local git;
+// at `guarded`, the rule for the runner, `guardedCommand` (scripts/windows/low.js),
+// with the granted ones as at `ask`, since a command the runner refuses (one that
+// fetches new code) still asks. Elsewhere the level and grants change nothing.
 export function featureAllowRules(config, { platform = process.platform, level = 'ask', grants = [], guardedCommand = null } = {}) {
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
   if (!Array.isArray(commands)) throw new Error('The build commands are not a list');
@@ -102,11 +103,13 @@ export function featureAllowRules(config, { platform = process.platform, level =
   const rules = (list) => unique(list.map((c) => `Bash(${c}:*)`));
   if (platform !== 'win32') return rules(commands);
   if (level === 'unattended') return rules([...commands, ...GIT_LOCAL]);
-  if (level === 'guarded') {
-    return typeof guardedCommand === 'string' && guardedCommand !== '' && !/[\r\n]/.test(guardedCommand) ? rules([guardedCommand]) : [];
-  }
   const granted = (Array.isArray(grants) ? grants : []).flatMap((g) => (Array.isArray(g?.commands) ? g.commands : []));
-  return rules(granted.filter((c) => isConfiguredBuildCommand(c, commands)));
+  const asked = granted.filter((c) => isConfiguredBuildCommand(c, commands));
+  if (level === 'guarded') {
+    const runner = typeof guardedCommand === 'string' && guardedCommand !== '' && !/[\r\n]/.test(guardedCommand) ? [guardedCommand] : [];
+    return rules([...runner, ...asked]);
+  }
+  return rules(asked);
 }
 
 // The copies of the pinned kits that must stay off in a project (check 24): Anthropic's

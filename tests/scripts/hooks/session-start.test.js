@@ -16,7 +16,8 @@ import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
-import { helperAddress, computerId, stateDir } from '../../../scripts/lib/paths.js';
+import { helperAddress, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
@@ -59,7 +60,7 @@ const PLUGIN_ROOT = '/plugin/root';
 const MATCHED = () => ({ ok: true, mismatches: [], manifest: true, upstreams: {}, kept: true });
 const run = (f, extra = {}, input = {}) => decide(
   { cwd: '/x', session_id: 's1', ...input },
-  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, ...extra },
+  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, guardedSelfTest: async () => null, ...extra },
 );
 const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
 const call = (cwd, tool) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {} });
@@ -186,6 +187,47 @@ test('the Windows line appears once per session', async () => {
 // The settings view as buildViews makes it, holding Unattended on `computer` from a click on its own card.
 const unattendedOn = (computer, value = 'unattended') => ({
   [settingKey(computer)]: { key: settingKey(computer), id: 'e-1', at: '2026-10-19T01:00:00.000Z', value, computer, confirmedOn: computer, line: unattendedBuildsLine('e-1', computer) },
+});
+
+test('on Windows the session start runs the Guarded self-test when there is no recent result or the level would be Guarded', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const NOW = new Date('2026-10-19T09:00:00.000Z');
+    const tried = [];
+    const guardedSelfTest = async (options) => {
+      tried.push(options);
+      const result = { at: NOW.toISOString(), lowStarts: true, writeHeld: true, keysReadHeld: false };
+      fs.mkdirSync(path.dirname(selfTestFile(options.home)), { recursive: true });
+      fs.writeFileSync(selfTestFile(options.home), JSON.stringify(result));
+      return result;
+    };
+    const up = (settings = {}) => {
+      const f = fake({ views: { ...VIEWS, settings } });
+      f.client.health = async () => ({ ok: true });
+      return f;
+    };
+    const go = (f, extra = {}, input = {}) => run(f, { platform: 'win32', now: () => NOW, guardedSelfTest, ...extra }, { cwd: '/x/wt', ...input });
+    await go(up());
+    assert.equal(tried.length, 1, 'no result yet');
+    assert.equal(tried[0].home, wheelhouseHome());
+    assert.equal(tried[0].worktree, '/x/wt');
+    assert.ok(tried[0].timeoutMs > 0 && tried[0].timeoutMs <= 3000, String(tried[0].timeoutMs));
+    assert.equal(typeof tried[0].run, 'function');
+    // A result under a day old is kept, unless the level would be Guarded.
+    await go(up(), {}, { session_id: 's2' });
+    assert.equal(tried.length, 1);
+    const guarded = { [settingKey(me)]: { key: settingKey(me), id: 'e-g', at: '2026-10-19T01:00:00.000Z', value: 'guarded', computer: me, confirmedOn: me, line: null } };
+    await go(up(guarded), {}, { session_id: 's3' });
+    assert.equal(tried.length, 2);
+    // A day later it runs again.
+    await go(up(), { now: () => new Date(NOW.getTime() + 25 * 60 * 60 * 1000) }, { session_id: 's4' });
+    assert.equal(tried.length, 3);
+    // Never off Windows, and a self-test that fails leaves the session start as it was.
+    await go(up(guarded), { platform: 'darwin' }, { session_id: 's5' });
+    assert.equal(tried.length, 3);
+    const out = await go(up(guarded), { guardedSelfTest: async () => { throw new Error('icacls'); } }, { session_id: 's6' });
+    assert.match(text(out), new RegExp(WINDOWS_LINE.replace(/[.]/g, '\\.')));
+  });
 });
 
 test('while Unattended is on, the Windows line is followed by the Unattended line', async () => {

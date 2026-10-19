@@ -14,10 +14,11 @@ import { CARD } from '../../../scripts/lib/front-desk.js';
 import { briefHash, featurePaths, parseBrief } from '../../../scripts/feature/files.js';
 import { BUILD_QUESTION_OPTIONS, UNATTENDED_CARD, settingKey } from '../../../scripts/protection/windows-builds.js';
 import { earned } from '../../../scripts/hooks/prompt-record.js';
-import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { branchOf } from '../../../scripts/hooks/session-start.js';
 import { words } from '../../../scripts/hooks/shell-words.js';
-import { computerId, stateDir } from '../../../scripts/lib/paths.js';
+import { computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { selfTestFile } from '../../../scripts/windows/low.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
@@ -819,20 +820,90 @@ test('question offers the Unattended card on a feature\'s third build-command qu
 test('the Unattended card passes the card check and fits the card, with and without Use Guarded', () => withHome(async () => {
   const computer = computerId();
   const setting = recordInState('setting', { key: settingKey(computer), value: 'unattended' }, T0);
-  for (const guardedReady of [false, true]) {
-    const words = UNATTENDED_CARD({ guardedReady });
-    const data = unattendedCardData(words, setting.id, computer);
-    assert.deepEqual(cardProblems(data.question), [], `guardedReady ${guardedReady}`);
-    assert.ok(data.question.length <= CARD.chars, `guardedReady ${guardedReady}: ${data.question.length} characters`);
+  const guarded = recordInState('setting', { key: settingKey(computer), value: 'guarded' }, T0 + 1);
+  for (const [guardedReady, readsHeld] of [[false, false], [true, false], [true, true]]) {
+    const name = `guardedReady ${guardedReady}, readsHeld ${readsHeld}`;
+    const words = UNATTENDED_CARD({ guardedReady, readsHeld });
+    const data = unattendedCardData(words, setting.id, computer, guardedReady ? guarded : null);
+    assert.deepEqual(cardProblems(data.question), [], name);
+    assert.ok(data.question.length <= CARD.chars, `${name}: ${data.question.length} characters`);
     assert.ok(data.question.includes(words.risk), 'the design\'s words on the risk, as they are');
     assert.deepEqual(data.options, words.options.map((o) => o.label));
-    assert.equal(data.question.split('\n').at(-1), unattendedBuildsLine(setting.id, computer));
+    assert.equal(data.question.split('\n').includes(unattendedBuildsLine(setting.id, computer)), true, name);
     assert.doesNotThrow(() => makeEvent({ kind: 'card', data, now: () => new Date(T0) }));
-    // A Turn on (dangerous) click on it still confirms the setting event, with its line.
+    // A Turn on (dangerous) click on it still confirms the Unattended setting event, with its line.
     const click = await earned({ project: P, question: data.question, label: 'Turn on (dangerous)' });
-    assert.equal(click?.made?.data?.line, unattendedBuildsLine(setting.id, computer), `guardedReady ${guardedReady}`);
+    assert.equal(click?.made?.data?.confirms, setting.id, name);
+    assert.equal(click?.made?.data?.line, unattendedBuildsLine(setting.id, computer), name);
+    if (!guardedReady) {
+      assert.ok(!data.question.includes('Use Guarded'), name);
+      assert.ok(!data.question.includes('Confirm setting'), name);
+      continue;
+    }
+    // Use Guarded is recommended, says the network stays open and what the self-test found of
+    // the keys folder, and its click confirms the Guarded event with no line.
+    const use = words.options.find((o) => o.label === 'Use Guarded');
+    assert.equal(words.recommend, 'guarded');
+    assert.match(use.says, /network/);
+    assert.match(use.says, readsHeld ? /keys folder is shut/ : /keys folder stay open/);
+    assert.ok(data.question.includes(`Use Guarded: ${use.says.replace(/\.$/, '')}`), name);
+    assert.deepEqual(data.question.split('\n').slice(-2), [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))]);
+    const used = await earned({ project: P, question: data.question, label: 'Use Guarded' });
+    assert.equal(used?.made?.kind, 'confirmation', name);
+    assert.equal(used.made.data.confirms, guarded.id);
+    assert.equal(used.made.data.line, undefined, 'an ordinary confirmation');
   }
 }));
+
+test('question offers Use Guarded where this computer\'s self-test passed, proposing both levels, once', () => withHome(async () => {
+  const computer = computerId();
+  const result = { at: new Date(T0 - 60 * 60 * 1000).toISOString(), lowStarts: true, writeHeld: true, keysReadHeld: false };
+  fs.mkdirSync(path.dirname(selfTestFile(wheelhouseHome())), { recursive: true });
+  fs.writeFileSync(selfTestFile(wheelhouseHome()), JSON.stringify(result));
+  const { views } = await buildScene(4);
+  const fake = fakeClient({ views });
+  const run = (n) => act(['question', 'mine', `q-mine-${n}`], { client: fake.client, ...onWindows });
+  for (const n of [1, 2, 3]) assert.equal((await run(n)).code, 0);
+  assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'setting', 'card']);
+  everyWriteHandledFirst(fake.writes);
+  const [unattended, guarded, card] = fake.writes.slice(3);
+  assert.deepEqual(unattended.data, { key: settingKey(computer), value: 'unattended' });
+  assert.deepEqual(guarded.data, { key: settingKey(computer), value: 'guarded' });
+  const words = UNATTENDED_CARD({ guardedReady: true, readsHeld: false });
+  assert.deepEqual(card.data.options, ['Keep asking', 'Turn on (dangerous)', 'Use Guarded']);
+  assert.equal(card.data.descriptions[2], `Recommended: ${words.options[2].says}`);
+  assert.ok(card.data.question.includes('My recommendation: Use Guarded'));
+  assert.deepEqual(cardProblems(card.data.question), []);
+  const lines = card.data.question.split('\n');
+  assert.ok(lines.includes(unattendedBuildsLine(unattended.id, computer)));
+  assert.ok(lines.includes(confirmLine({ kind: 'setting', id: guarded.id, data: guarded.data })));
+
+  // The helper keeps the two events, and a click on Use Guarded confirms the Guarded one.
+  const click = await earned({ project: P, question: card.data.question, label: 'Use Guarded' });
+  assert.equal(click?.made?.data?.confirms, guarded.id);
+
+  // A fourth question that day offers nothing more.
+  assert.equal((await run(4)).out, 'Recorded question q-mine-4 for the director.\n');
+  assert.equal(fake.writes.length, 7);
+}));
+
+test('a self-test over a day old, or one where a write got through, offers no Use Guarded', async () => {
+  for (const result of [
+    { at: new Date(T0 - 25 * 60 * 60 * 1000).toISOString(), lowStarts: true, writeHeld: true, keysReadHeld: true },
+    { at: new Date(T0).toISOString(), lowStarts: true, writeHeld: false, keysReadHeld: true },
+    { at: new Date(T0).toISOString(), lowStarts: false, writeHeld: true, keysReadHeld: true },
+  ]) {
+    await withHome(async () => {
+      fs.mkdirSync(path.dirname(selfTestFile(wheelhouseHome())), { recursive: true });
+      fs.writeFileSync(selfTestFile(wheelhouseHome()), JSON.stringify(result));
+      const { views } = await buildScene(3);
+      const fake = fakeClient({ views });
+      for (const n of [1, 2, 3]) await act(['question', 'mine', `q-mine-${n}`], { client: fake.client, ...onWindows });
+      assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'card'], JSON.stringify(result));
+      assert.deepEqual(fake.writes.at(-1).data.options, ['Keep asking', 'Turn on (dangerous)']);
+    });
+  }
+});
 
 test('question offers no Unattended card off Windows, in a Locked project, at Unattended or for other questions', async () => {
   const cases = [

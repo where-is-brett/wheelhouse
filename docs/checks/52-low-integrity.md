@@ -58,4 +58,4 @@ One Windows sitting, about 20 minutes together with check 53, as a standard user
 - **The agent running the sitting** starts `node probes/52-low-integrity/run.js` on the computer, reads the lines, pastes them into this note's Evidence, sets the Answer and writes the card text for Tasks 2 and 6.
 - **Only the director** can be at the computer, in an ordinary (not elevated) terminal, signed in as themselves.
 
-Until then the Answer stays Deferred; Task 6 is not started, and Guarded is not offered on any computer.
+Until then the Answer stays Deferred. Task 6 is built for the design's expected answers, with what this check settles held in named constants in `scripts/windows/low.js` (`LOCK_READS_ROUTE`, null for now, `GIT_LOW_FOLDERS` and `LABEL_EXISTING`), each pointing back here. Guarded is offered only on a computer whose own self-test passes: the runner starts at low and a write outside the worktree is refused.

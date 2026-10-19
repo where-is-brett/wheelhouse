@@ -478,6 +478,14 @@ test('no reply turns on Unattended or confirms a Windows build-commands setting:
     await show(both, { options: ['Turn on (dangerous)', 'Confirm', 'Not now'] });
     assert.deepEqual(await reply(`${replyCode(confirmLine(on))} Turn on (dangerous)`), { made: false, says: 'That option doesn\'t need a reply code' });
     assert.deepEqual(await reply(`${replyCode(confirmLine(on))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    // The Unattended card offering Use Guarded carries Guarded's confirm line and its code, and
+    // Use Guarded, which confirms that event, is a click only too.
+    const proposed = setting('guarded');
+    keepEvent(proposed);
+    const offered = `What this is: ${UNATTENDED_CARD({ guardedReady: true }).what} ${UNATTENDED_CARD().risk}\n${line}\n${confirmLine(proposed)}\n${replyCodeLine(replyCode(confirmLine(proposed)))}`;
+    await show(offered, { options: ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(proposed))} Use Guarded`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(proposed))} Turn on (dangerous)`), { made: false, says: 'That option doesn\'t need a reply code' });
     // Guarded's card confirms through the setting's confirm line, by a click only.
     await show(cardOf(confirmLine(guarded)), { options: ['Confirm', 'Not now'] });
     assert.deepEqual(await reply(`${replyCode(confirmLine(guarded))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });

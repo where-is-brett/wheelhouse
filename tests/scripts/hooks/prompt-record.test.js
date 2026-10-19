@@ -512,6 +512,55 @@ test('Turn on (dangerous) records nothing from a card without the design\'s word
   });
 });
 
+test('Use Guarded on the Unattended card records an ordinary confirmation of its Guarded setting event', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW });
+    keepEvent(on);
+    keepEvent(guarded);
+    const card = `What this is: ${UNATTENDED_CARD({ guardedReady: true }).what}\n${unattendedBuildsLine(on.id, me)}\n${confirmLine(guarded)}`;
+    const c = fake();
+    await decide(input({ [card]: 'Use Guarded' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(kinds(c), ['confirmation']);
+    const [rec] = c.calls.record;
+    assert.deepEqual(rec.event.data, confirmationFor(guarded).data, 'no line: Guarded counts from an ordinary confirmation');
+    assert.ok(rec.event.sig);
+  });
+});
+
+test('Use Guarded records nothing without exactly one confirm line for this computer\'s own Guarded event', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const c = fake();
+    const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW });
+    keepEvent(guarded);
+    const unattended = unattendedSetting(me);
+    keepEvent(unattended);
+    const theirs = { ...makeEvent({ kind: 'setting', data: { key: settingKey('deadbeef'), value: 'guarded' }, now: () => NOW }), computer: 'deadbeef' };
+    keepEvent(theirs);
+    const forged = { ...makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW }), computer: 'deadbeef' };
+    keepEvent(forged);
+    const other = makeEvent({ kind: 'setting', data: { key: 'compactPrepare', value: 150000 }, now: () => NOW });
+    keepEvent(other);
+    for (const question of [
+      'Use Guarded for build commands?', // no line
+      confirmLine(unattended), // a setting event for Unattended
+      confirmLine(theirs), // another computer's
+      confirmLine(forged), // this computer's key, written elsewhere
+      confirmLine(other), // another setting
+      `${confirmLine(guarded)}\n${confirmLine(other)}`, // two lines
+      `Confirm setting ${guarded.id}: "something else"`, // the event's id with other words
+    ]) {
+      await decide(input({ [question]: 'Use Guarded' }, { options: UNATTENDED }), deps(c));
+    }
+    // The line clicked with another label confirms nothing either.
+    await decide(input({ [confirmLine(guarded)]: 'Keep asking' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 8);
+  });
+});
+
 // --- the build loop's clicks ---
 
 const DOC = 'fedcba9876543210'.repeat(4);

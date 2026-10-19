@@ -26,7 +26,10 @@
 //     and the director's grants (design section 12.2, settings.js): an Allow
 //     this time grant goes to one run only, and is recorded as used in
 //     projects/<p>/watcher/grants-used.json before that run starts, so no
-//     later run gets it again. Its mode may not be `auto`.
+//     later run gets it again. At Guarded the worktree is labelled for the low
+//     runner (scripts/windows/low.js) before each run starts; a run whose
+//     worktree can't be labelled gets the Ask rules, and the watcher's log
+//     says so. Its mode may not be `auto`.
 //     One process runs at a time for each session: a wake that falls due while
 //     its session runs waits, and goes when the process has ended. Several that
 //     waited together go as one wake listing them all (`merged`).
@@ -83,7 +86,7 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../gate/guardrails.js';
 import { SLUG } from '../lib/build-loop.js';
 import { invocation, resolveClaude, withoutHostVariables } from '../lib/claude.js';
-import { computerId, stateDir } from '../lib/paths.js';
+import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -95,6 +98,7 @@ import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.j
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
+import { guardedCommand, guardedReady, labelWorktree } from '../windows/low.js';
 
 // A path as one shell word the foreman can type as it is: bare when it holds
 // only plain characters, otherwise in single quotes, which bash reads
@@ -243,20 +247,26 @@ function recordGrantsUsed(project, ids) {
 }
 
 // The level of build commands on this computer and the director's grants to
-// the feature `work`, read from the views as locateFeature reads them. Guarded
-// waits for its self-test, so it isn't ready yet. Anything that can't be read
-// is Ask with no grants.
-export function windowsBuildsOf(project) {
+// the feature `work`, read from the views as locateFeature reads them, with
+// the Guarded runner's command. Guarded counts only while this computer's
+// self-test passes (guardedReady). Anything that can't be read is Ask with no
+// grants.
+export function windowsBuildsOf(project, { pluginRoot = PLUGIN_ROOT, now = () => new Date(), platform = process.platform } = {}) {
   return (work) => {
     try {
       const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
       const computer = computerId();
       const checkout = readProject(project)?.folder;
       const locked = typeof checkout === 'string' ? lockedByPath(checkout) : true;
+      const home = wheelhouseHome();
+      let runner = null;
+      try {
+        runner = guardedCommand({ home, pluginRoot, platform });
+      } catch { /* no runner to name: Guarded gives the grants alone */ }
       return {
-        level: buildsLevel({ views, computer, locked, guardedReady: false }),
+        level: buildsLevel({ views, computer, locked, guardedReady: guardedReady({ home, now, platform }) }),
         grants: buildGrants({ views, work, used: readGrantsUsed(project), computer }),
-        guardedCommand: null,
+        guardedCommand: runner,
       };
     } catch {
       return { level: 'ask', grants: [], guardedCommand: null };
@@ -597,7 +607,8 @@ export function makeWaker({
   bootedAt = bootTime,
   stopped = () => stopState().on,
   locate = locateFeature(project),
-  windowsBuilds = windowsBuildsOf(project),
+  windowsBuilds = null,
+  labelGuarded = null,
   claude = null,
   baseEnv = process.env,
   platform = process.platform,
@@ -616,6 +627,7 @@ export function makeWaker({
     throw new Error("The foreman's tools are a list of tool rules");
   }
   watcherDir(project); // a project name that is not a folder name throws here
+  const buildsOf = windowsBuilds ?? windowsBuildsOf(project, { pluginRoot, now, platform });
   // Start times, asked of this system for every running pid at once and kept a minute.
   const startTimes = makeStartTimes({ now });
   const timeOf = startTimeOf ?? ((pid, others, options) => startTimes.get(pid, others, options));
@@ -787,7 +799,7 @@ export function makeWaker({
   const windowsAnswer = (work) => {
     let answer;
     try {
-      answer = windowsBuilds(work);
+      answer = buildsOf(work);
     } catch {
       answer = null;
     }
@@ -797,15 +809,30 @@ export function makeWaker({
       guardedCommand: typeof answer?.guardedCommand === 'string' ? answer.guardedCommand : null,
     };
   };
-  // The feature session's arguments for `work`, and the Allow this time grants they give,
-  // which are recorded as used before the run starts (Windows only). The record is read
-  // again here, so a grant goes to one run whatever windowsBuilds answers.
-  const featureArgs = (work) => {
+  // Labels the worktree for the low runner: by default with Windows' own icacls, the common
+  // folder being the main checkout's .git.
+  const label = labelGuarded ?? ((worktree) => labelWorktree(worktree, { run: runProgram, commonDir: path.join(checkoutOf(), '.git') }));
+  // The feature session's arguments for `work` in `worktree`, and the Allow this time grants they
+  // give, which are recorded as used before the run starts (Windows only). The record is read
+  // again here, so a grant goes to one run whatever windowsBuilds answers. At Guarded the worktree
+  // is labelled first; if it can't be, the run gets the Ask rules (failing closed) and says so.
+  const featureArgs = async (work, worktree) => {
     const model = modelOf(config, 'builder');
     let allowed;
     let runs = [];
     if (platform === 'win32') {
-      const { level, grants, guardedCommand } = windowsAnswer(work);
+      const answer = windowsAnswer(work);
+      const { grants, guardedCommand } = answer;
+      let { level } = answer;
+      if (level === 'guarded') {
+        try {
+          if (guardedCommand === null) throw new Error('the runner\'s command can\'t be given');
+          await label(worktree);
+        } catch (error) {
+          onError(`The ${work} worktree couldn't be made ready for Guarded, so this run asks for build commands: ${error instanceof Error ? error.message : 'unknown error'}`);
+          level = 'ask';
+        }
+      }
       const used = readGrantsUsed(project);
       const given = grants.filter((g) => g.scope !== 'run' || (used !== null && !used.includes(g.questionId)));
       allowed = featureAllowRules(config, { platform, level, grants: given, guardedCommand });
@@ -956,7 +983,11 @@ export function makeWaker({
             target, cwd, prompt: PROMPTS.foreman(copy, wakeCommand), args: foremanArgs(), env: { ...sessionEnv(baseEnv), [ROLE_VARIABLE]: 'foreman' }, file: gathered.entry.file, entries: [gathered.entry.id],
           });
         } else {
-          const feature = featureArgs(work);
+          const feature = await featureArgs(work, cwd);
+          if (stopped()) {
+            settle([gathered.entry.id], 'again');
+            return delivered;
+          }
           feature.recordUsed();
           pid = await launch({
             target, cwd, prompt: PROMPTS.feature(copy), args: ['--resume', session, ...feature.args], env: sessionEnv(baseEnv), file: gathered.entry.file, entries: [gathered.entry.id],
@@ -1009,7 +1040,8 @@ export function makeWaker({
         watcherFolder(project, 'sessions');
         writeJsonFile(sessionFile(project, work), { sessionId, worktree, at: now().toISOString() });
         if (stopped()) throw new Error('STOP is on: no session is started');
-        const feature = featureArgs(work);
+        const feature = await featureArgs(work, worktree);
+        if (stopped()) throw new Error('STOP is on: no session is started');
         feature.recordUsed();
         const pid = await launch({
           target, cwd: worktree, prompt: PROMPTS.start, args: ['--session-id', sessionId, ...feature.args], env: sessionEnv(baseEnv), file: brief,

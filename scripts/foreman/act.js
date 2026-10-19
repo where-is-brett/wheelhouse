@@ -129,14 +129,15 @@ import { branchOf } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { computerId } from '../lib/paths.js';
+import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram, withoutGitVars } from '../lib/run.js';
 import { UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
-import { unattendedBuildsLine } from '../state/card-lines.js';
+import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../state/card-lines.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { makeWaker, sessionFile } from '../watcher/waker.js';
+import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 
 // The first number of the foreman's own question ids.
 export { FOREMAN_QUESTIONS };
@@ -675,17 +676,34 @@ async function question(ctx, work, rest) {
 // --- Build commands on Windows (design section 12.2) ---
 
 // The level of build commands on this computer, in the terms renderBrief takes: null off
-// Windows, else `{ level, guardedCommand, shape }`. Guarded needs this computer's self-test, so it
-// is never read here yet; anything that fails reads Ask. At watcher Shape 2 the waker gives a
-// feature session no allow rules (ruling 4), so the brief tells it to ask for a click in the
-// session itself, whatever the level.
+// Windows, else `{ level, guardedCommand, shape }`, with the Guarded runner's command where it can
+// be given. Anything that fails reads Ask. At watcher Shape 2 the waker gives a feature session no
+// allow rules (ruling 4), so the brief tells it to ask for a click in the session itself, whatever
+// the level.
 function windowsBuildsOf(ctx, views, config) {
   if (ctx.platform !== 'win32') return null;
   const shape = config?.watcherShape === 2 ? 2 : 1;
+  let runner = null;
   try {
-    return { level: buildsHere(ctx, views).level, guardedCommand: null, shape };
+    runner = guardedCommand({ home: wheelhouseHome(), pluginRoot: ctx.pluginRoot, platform: ctx.platform });
+  } catch { /* no runner to name: the brief gives the Ask words */ }
+  try {
+    return { level: buildsHere(ctx, views).level, guardedCommand: runner, shape };
   } catch {
-    return { level: 'ask', guardedCommand: null, shape };
+    return { level: 'ask', guardedCommand: runner, shape };
+  }
+}
+
+// This computer's Guarded self-test (scripts/windows/low.js): `ready`, a result under a day old
+// found the runner low and a write outside the worktree refused; `readsHeld`, it found the helper's
+// keys folder unreadable. Anything that can't be read is not ready.
+function guardedHere(ctx) {
+  try {
+    const result = readSelfTest({ home: wheelhouseHome(), now: ctx.now, platform: ctx.platform });
+    const { writesHeld, readsHeld } = guardedCardInput(result);
+    return { ready: writesHeld, readsHeld };
+  } catch {
+    return { ready: false, readsHeld: false };
   }
 }
 
@@ -696,7 +714,7 @@ function buildsHere(ctx, views) {
   try {
     locked = ctx.isLocked(checkoutOf(ctx.project)) !== false;
   } catch { /* read as Locked */ }
-  return { locked, level: buildsLevel({ views, computer: computerId(), locked, guardedReady: false }) };
+  return { locked, level: buildsLevel({ views, computer: computerId(), locked, guardedReady: guardedHere(ctx).ready }) };
 }
 
 // The computer's own date for a time, as "<year>-<month>-<day>", or null.
@@ -708,9 +726,12 @@ function localDay(at) {
 // The Unattended card's question: the five parts, each with its words on its label's own line
 // as the composer writes them (the card-check hook refuses a card otherwise), the design's words
 // on the risk as they are, and the line that a Turn on (dangerous) click confirms the setting
-// event `settingId` by, on its own last line.
-function unattendedQuestion(card, settingId, computer) {
+// event `settingId` by. Where Use Guarded is offered, `guarded` is the setting event proposing
+// Guarded, and its confirm line and that line's reply code line follow (ruling 22): a Use Guarded
+// click confirms that event, and the card check asks a card with a set line for its code.
+function unattendedQuestion(card, settingId, computer, guarded) {
   const named = (name) => card.options.find((o) => o.name === name);
+  const offersGuarded = guarded !== null && card.options.some((o) => o.name === 'guarded');
   return [
     `What this is: ${card.what} ${card.risk}`,
     `Why it's coming to you: ${card.why}`,
@@ -718,16 +739,18 @@ function unattendedQuestion(card, settingId, computer) {
     `My recommendation: ${named(card.recommend).label}`,
     `While you decide: ${named('keep-asking').says}`,
     unattendedBuildsLine(settingId, computer),
+    ...(offersGuarded ? [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))] : []),
   ].join('\n');
 }
 
 // The Unattended card as a card event holds it, for the front desk to ask as it is: its question,
 // its own options with what each says (the recommendation marked, as the composer marks it), and
-// no set line or reply code, since only a click on Turn on (dangerous) sets Unattended.
-export function unattendedCardData(card, settingId, computer) {
+// no set line or reply code of its own, since only a click on Turn on (dangerous) or Use Guarded
+// sets the level. `guarded` is the setting event Use Guarded confirms, where it is offered.
+export function unattendedCardData(card, settingId, computer, guarded = null) {
   const recommended = card.options.find((o) => o.name === card.recommend);
   return {
-    question: unattendedQuestion(card, settingId, computer),
+    question: unattendedQuestion(card, settingId, computer, guarded),
     header: 'Unattended',
     options: card.options.map((o) => o.label),
     descriptions: card.options.map((o) => (o === recommended ? `Recommended: ${o.says}` : o.says)),
@@ -740,9 +763,10 @@ export function unattendedCardData(card, settingId, computer) {
 
 // After a feature's third build-command question recorded in a day (the computer's own date),
 // on Windows, outside a Locked project and below Unattended: a setting event proposing
-// Unattended for this computer, then the Unattended card that confirms it, once a day. Read
-// from state, so running it again offers nothing more, and an offer whose card wasn't written
-// gets its card. `asked` is the question as recorded, with its time.
+// Unattended for this computer, and where this computer's Guarded self-test passed one proposing
+// Guarded, then the Unattended card that confirms either, once a day. Read from state, so running
+// it again offers nothing more, and an offer whose card wasn't written gets its card. `asked` is
+// the question as recorded, with its time.
 async function offerUnattended(ctx, views, work, asked) {
   if (ctx.platform !== 'win32' || !isBuildQuestion(asked)) return;
   try {
@@ -763,7 +787,18 @@ async function offerUnattended(ctx, views, work, asked) {
       && e.data.question.includes(unattendedBuildsLine(id, computer)));
     if (offers.some((e) => carded(e.id))) return;
     const settingId = offers.at(-1)?.id ?? await ctx.write('setting', { key, value: 'unattended' });
-    await ctx.write('card', unattendedCardData(UNATTENDED_CARD({ guardedReady: false }), settingId, computer));
+    const guarded = guardedHere(ctx);
+    let guardedEvent = null;
+    if (guarded.ready) {
+      guardedEvent = events.filter((e) => e.kind === 'setting' && e.computer === computer && e.data?.key === key
+        && e.data?.value === 'guarded' && localDay(e.at) === today).at(-1) ?? null;
+      if (guardedEvent === null) {
+        const data = { key, value: 'guarded' };
+        guardedEvent = { kind: 'setting', id: await ctx.write('setting', data), data };
+      }
+    }
+    const card = UNATTENDED_CARD({ guardedReady: guarded.ready, readsHeld: guarded.readsHeld });
+    await ctx.write('card', unattendedCardData(card, settingId, computer, guardedEvent));
     ctx.say('Offered the director the Unattended card for build commands on this computer.');
   } catch (error) {
     ctx.say(`The Unattended card wasn't offered: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}. It is offered with the next build-command question.`);

@@ -287,11 +287,16 @@ test('unattended gives every configured command and local git on Windows', () =>
   assert.deepEqual(featureAllowRules({ ...config, buildCommands: ['pytest'] }, { ...WIN, level: 'unattended', grants: [grant(['npm test'])] }), ['Bash(pytest:*)', ...GIT_RULES]);
 });
 
-test('guarded gives only the runner\'s rule', () => {
+test('guarded gives the runner\'s rule, and the director\'s grants as at ask', () => {
   const runner = 'node guarded.js';
-  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: runner, grants: [grant(['npm test'])] }), ['Bash(node guarded.js:*)']);
-  // With no runner to name, guarded gives nothing.
-  for (const none of [null, '', 'a\nb', 7]) assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: none }), [], String(none));
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: runner }), ['Bash(node guarded.js:*)']);
+  // A command the runner refuses (one that fetches new code) still asks, so a grant still counts.
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: runner, grants: [grant(['npm test', 'curl x'])] }), ['Bash(node guarded.js:*)', 'Bash(npm test:*)']);
+  // With no runner to name, guarded gives the grants alone.
+  for (const none of [null, '', 'a\nb', 7]) {
+    assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: none }), [], String(none));
+    assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: none, grants: [grant(['git status'])] }), ['Bash(git status:*)'], String(none));
+  }
 });
 
 test('off Windows the level and grants change nothing', () => {

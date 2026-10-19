@@ -10,7 +10,9 @@
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
 // five of them waiting for the helper to start, the rest for the records, the
-// sync, the views and the watcher, which is last and gets what is left. Context added by a hook is capped at 10,000 characters
+// sync, the views and the watcher, which is last and gets what is left. On Windows the Guarded
+// self-test (scripts/windows/low.js) runs after them, within its own 3 seconds or what is left,
+// when the level would be Guarded or the last result is missing or over a day old. Context added by a hook is capped at 10,000 characters
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
 import fs from 'node:fs';
@@ -33,6 +35,8 @@ import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
+import { run as runProgram } from '../lib/run.js';
+import { guardedReady, needsSelfTest, selfTest, SELF_TEST_MS } from '../windows/low.js';
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 
@@ -327,6 +331,7 @@ export async function decide(input, deps = {}) {
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
     self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS, totalMs = TOTAL_MS, pause = sleep,
     background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome, env = process.env,
+    guardedSelfTest = selfTest, run = runProgram,
   } = deps;
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
@@ -362,13 +367,29 @@ export async function decide(input, deps = {}) {
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   const stateRoot = stateDir(project);
+  // The Guarded self-test, on Windows, when the level read as if it passed would be Guarded, or
+  // the last result is missing, over a day old or ran out of time, so the level and the
+  // Unattended card's Use Guarded go by a result under a day old. It informs, so anything that
+  // fails is passed over: the session goes on, and Guarded reads Ask.
+  let ready = false;
+  if (platform === 'win32') {
+    try {
+      const home = wheelhouseHome();
+      const wouldGuard = buildsShown({ views, computer: computerId(), locked, guardedReady: true }).level === 'guarded';
+      const timeoutMs = Math.min(SELF_TEST_MS, end - Date.now());
+      if ((wouldGuard || needsSelfTest({ home, now })) && timeoutMs > 0) {
+        await guardedSelfTest({ run, home, worktree: input.cwd, now, pluginRoot, timeoutMs });
+      }
+      ready = guardedReady({ home, now, platform });
+    } catch { /* not ready */ }
+  }
   const windows = platform === 'win32' && firstForSession(project, input.session_id, now);
-  // Guarded waits for its self-test, so in Part 1 only Unattended is shown. Anything that fails
-  // here, the computer's id included, shows Ask and leaves the rest of the reload as it is.
+  // Anything that fails here, the computer's id included, shows Ask and leaves the rest of the
+  // reload as it is.
   let builds = 'ask';
   if (windows) {
     try {
-      builds = buildsShown({ views, computer: computerId(), locked, guardedReady: false }).level;
+      builds = buildsShown({ views, computer: computerId(), locked, guardedReady: ready }).level;
     } catch { /* shown as Ask */ }
   }
   const text = reload({

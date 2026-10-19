@@ -3,7 +3,8 @@
 // typed or phoned message that is just the code and an option ("K7QD Approve"). Such a reply
 // counts as the click: it earns exactly the signed record the click would have, through the
 // prompt record's own code, and nothing else. A plain "yes" never counts, and no reply turns on
-// or confirms the Windows build-commands setting, which only a click on its own card sets; nor
+// or confirms the Windows build-commands setting (Turn on (dangerous), Use Guarded or Confirm),
+// which only a click on its own card sets; nor
 // does a reply allow a build-command question's commands from any computer but the one that asked
 // it. The bridge, run by the mod outside the sandbox, calls replyRecord. The message's text is only
 // parsed: it is never written anywhere, and only the card's own spelling of the option is used.
@@ -26,7 +27,7 @@ import { readEnrolled } from '../state/signing.js';
 import { CODE_ALPHABET, RUNBOOK_TITLES, confirmLine, setLineOf, replyCode } from '../state/card-lines.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
-import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
+import { BUILD_QUESTION_LABELS, USE_GUARDED, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 // Longer than any option a card offers; a longer message is not a reply.
@@ -184,8 +185,9 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   // On an answer card the question's own options answer it; earned checks the label is one of them
   // and repeats the PUT_OFF check.
   const answers = line.startsWith('Answer question ') && !PUT_OFF.includes(label);
+  // Use Guarded, on the Unattended card, confirms the build-commands setting: a click only.
+  if (label === USE_GUARDED || (label === 'Confirm' && confirmsBuilds(project, card.question))) return no('That setting is changed only by a click on its own card');
   if (!SIGNED_LABELS.includes(label) && !answers) return no('That option doesn\'t need a reply code');
-  if (label === 'Confirm' && confirmsBuilds(project, card.question)) return no('That setting is changed only by a click on its own card');
   if (answers && allowsElsewhere(project, line.slice('Answer question '.length), label)) {
     return no('Build commands are allowed only on the Windows computer that asked: answer the card there');
   }

@@ -123,31 +123,37 @@ const UNATTENDED_RISK = 'Builders on this computer will run their tests and buil
   + 'A builder writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, '
   + 'change Wheelhouse\'s own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and STOP still hold.';
 const GUARDED_SAYS = GUARDED_LINE;
-// Use Guarded on the Unattended card, in fewer words, so the card with all three options keeps
-// within the card's length (CARD.chars) beside the design's words on the risk.
-const GUARDED_SHORT = 'They run at low integrity, so they can\'t change files outside the project.';
-const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'A builder asks you before it runs a build command, as now.' };
+// Use Guarded on the Unattended card, in fewer words, so the card with all three options and both
+// its lines keeps within the card's length (CARD.chars) beside the design's words on the risk. It
+// still says the network stays open, and whether this computer's self-test found the helper's keys
+// folder readable (`readsHeld`), since the click turns Guarded on at once.
+const guardedShort = (readsHeld) => (readsHeld === true
+  ? 'Low integrity: no changes outside the project, and the helper\'s keys folder is shut, but the network stays open.'
+  : 'Low integrity: no changes outside the project, but the network and the helper\'s keys folder stay open.');
+const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'Builders ask before each build command, as now.' };
+export const USE_GUARDED = 'Use Guarded';
 
 // The card that turns Unattended on. Use Guarded is offered, and recommended, only where this
-// computer's self-test passed.
-export function UNATTENDED_CARD({ guardedReady } = {}) {
+// computer's self-test passed (`guardedReady`); `readsHeld` is whether that self-test found the
+// helper's keys folder unreadable to a build.
+export function UNATTENDED_CARD({ guardedReady, readsHeld } = {}) {
   const offered = guardedReady === true;
   return {
-    what: 'Let builders on this Windows computer run their tests and build steps with no prompt and no sandbox, in this project.',
-    why: 'While you are away, a builder stops at its first build command until you answer.',
+    what: 'Let builders on this Windows computer run build steps with no prompt, in this project.',
+    why: 'While you are away, a builder stops at its first build command.',
     risk: UNATTENDED_RISK,
     options: [
       KEEP_ASKING,
-      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Unattended until you turn it off: a builder can do whatever your account can.' },
-      ...(offered ? [{ name: 'guarded', label: 'Use Guarded', says: GUARDED_SHORT }] : []),
+      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Until you turn it off, a builder can do whatever your account can.' },
+      ...(offered ? [{ name: 'guarded', label: USE_GUARDED, says: guardedShort(readsHeld) }] : []),
     ],
     recommend: offered ? 'guarded' : 'keep-asking',
   };
 }
 
-// The card that turns Guarded on, from this computer's self-test (Task 6 produces it):
-// `writesHeld`, the runner was refused a write outside the worktree; `readsHeld`, it was
-// refused a read of the helper's keys folder. Null where the write wasn't refused, since
+// The card that turns Guarded on, from this computer's self-test (scripts/windows/low.js,
+// guardedCardInput): `writesHeld`, the runner started at low and was refused a write outside the
+// worktree; `readsHeld`, it was refused a read of the helper's keys folder. Null where the write wasn't refused, since
 // Guarded is offered only where it works.
 export function GUARDED_CARD(selfTest) {
   if (selfTest?.writesHeld !== true) return null;
