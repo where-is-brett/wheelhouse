@@ -11,6 +11,8 @@ import { stateDir } from '../lib/paths.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { numberedWaiting, oneLine, NO_SETTINGS, NO_SOURCES } from '../board/model.js';
 import { glanceLine } from '../board/render.js';
+import { NO_HELPER } from '../hooks/session-start.js';
+import { sayTime } from '../settings/effective.js';
 import { briefingModel } from '../briefing/model.js';
 import { HEADERS } from '../cards/compose.js';
 import { glossaryOf, plainWords } from '../frontdesk/glossary.js';
@@ -23,7 +25,8 @@ import { cardButtons, kindOf } from './buttons.js';
 const VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the front desk will ask it';
 // The views the pane reads: the glance's, and the reports and glossary.
-const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary'];
+const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status'];
+const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
 const NO_INPUTS = 'The board\'s inputs couldn\'t be read this time';
 const NO_CLOCK = 'The pane\'s clock couldn\'t be read';
 
@@ -80,8 +83,11 @@ function clockOf(now) {
 // paneModel({ project, cwd, now }) -> Promise<PaneModel>. Reads files only and never throws: what
 // can't be read becomes a line of `missing`. A card's text is kept exactly as written, for the
 // mod to draw as plain text; every other line from an event is one line of plain words.
-// `loadInputs` is for tests.
-export async function paneModel({ project, cwd, now = () => new Date(), loadInputs = loadBoardInputs } = {}) {
+// `helperUp` is whether the host helper answered the caller (true, false, or undefined when it
+// wasn't asked). The inputs are read from files alone, so the cards and lines come from the last
+// sync; when the helper is down the model says so, and when that sync was, so old figures are
+// never taken for current ones. `loadInputs` is for tests.
+export async function paneModel({ project, cwd, now = () => new Date(), helperUp, loadInputs = loadBoardInputs } = {}) {
   const clock = clockOf(now);
   const missing = [];
   if (clock === null) missing.push(NO_CLOCK);
@@ -94,6 +100,12 @@ export async function paneModel({ project, cwd, now = () => new Date(), loadInpu
   }
 
   const views = attempt(() => localViews(project, PANE_VIEWS), null);
+  if (helperUp === false) {
+    missing.push(NO_HELPER);
+    const builtAt = views?.status?.builtAt;
+    missing.push(typeof builtAt === 'string' && !Number.isNaN(Date.parse(builtAt))
+      ? `The state shown was last synced on ${sayTime(builtAt)}` : NEVER_SYNCED);
+  }
   const glossary = attempt(() => glossaryOf(views?.glossary), glossaryOf({}));
   // One line of plain words, whatever it was written as.
   const plain = (text) => oneLine(plainWords(oneLine(text), glossary).text);

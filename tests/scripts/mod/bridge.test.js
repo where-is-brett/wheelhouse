@@ -6,9 +6,10 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES } from '../../../scripts/mod/bridge.js';
+import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELPER_MS } from '../../../scripts/mod/bridge.js';
 import { readPaneStatus } from '../../../scripts/mod/status.js';
 import { recordRole } from '../../../scripts/lib/role.js';
+import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { TICK_MS, WATCH_BRIDGE_MS } from '../../../scripts/lib/mod-numbers.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
@@ -31,10 +32,11 @@ function folderOn(branch) {
   return dir;
 }
 
-function fakeClient({ takes = true } = {}) {
+function fakeClient({ takes = true, up = true } = {}) {
   const calls = { record: [], write: [], profileRecord: [] };
   return {
     calls,
+    health: async () => (up ? { ok: true } : { ok: false }),
     state: {
       record: async (b) => { calls.record.push(b); return takes ? { ok: true } : { ok: false, refused: 'no' }; },
       write: async (b) => { calls.write.push(b); return { ok: true }; },
@@ -339,7 +341,7 @@ function registered(home, branch = 'main') {
 }
 
 // The bridge's own dependencies, with the real project lookup and an environment with no role.
-const live = (extra = {}) => ({ now: () => NOW, env: {}, ...extra });
+const live = (extra = {}) => ({ now: () => NOW, env: {}, client: fakeClient(), ...extra });
 const tickOf = (cwd, extra = {}) => ({ cmd: 'tick', session: 'sess-1', cwd, idle: false, surface: 'desktop', ...extra });
 
 test('the front desk\'s tick gives the pane, the glance and the status line, and ticks again', () => withHome(async (home) => {
@@ -486,4 +488,48 @@ test('runBridge answers a tick as a line, and reads a foreman\'s request before 
   const open = new Readable({ read() {} });
   assert.deepEqual(JSON.parse(await runBridge({ stdin: open, limitMs: 50, watchMs: 5000, deps: live({ env: { WHEELHOUSE_ROLE: 'foreman' } }) })), { ok: false, says: 'Wheelhouse couldn\'t do that in time' });
   open.destroy();
+}));
+
+test('a FIFO planted as the local settings file doesn\'t hold the bridge, and counts as no status line', { skip: !unix }, () => withHome(async (home) => {
+  const repo = registered(home);
+  fs.mkdirSync(path.join(repo, '.claude'));
+  execFileSync('mkfifo', [path.join(repo, '.claude', 'settings.local.json')]);
+  // In a process of its own, so a hang shows as a timeout.
+  const result = spawnSync(process.execPath, [BRIDGE], {
+    input: JSON.stringify(tickOf(repo, { surface: 'terminal' })), encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home, WHEELHOUSE_ROLE: '' }, timeout: 15000,
+  });
+  assert.equal(result.status, 0);
+  const lines = result.stdout.split('\n').filter(Boolean);
+  assert.equal(lines.length, 1);
+  const answer = JSON.parse(lines[0]);
+  assert.equal(answer.ok, true);
+  assert.equal(answer.every, TICK_MS);
+  assert.equal(typeof answer.status, 'string');
+}));
+
+test('a tick says when the helper is down, and when the views were last synced', () => withHome(async (home) => {
+  const repo = registered(home);
+  const up = await handle(tickOf(repo), live({ client: fakeClient({ up: true }) }));
+  assert.ok(!up.pane.missing.includes(NO_HELPER));
+  assert.ok(!up.pane.missing.some((line) => line.startsWith('The state shown was last synced')));
+
+  const viewsFolder = path.join(home, 'projects', P, 'views');
+  fs.mkdirSync(viewsFolder, { recursive: true });
+  fs.writeFileSync(path.join(viewsFolder, 'status.json'), JSON.stringify({ builtAt: '2026-10-18T18:00:00.000Z' }));
+  const down = await handle(tickOf(repo), live({ client: fakeClient({ up: false }) }));
+  assert.ok(down.pane.missing.includes(NO_HELPER));
+  assert.ok(down.pane.missing.includes('The state shown was last synced on 18 October 2026, 18:00 UTC'));
+  // A helper that errors, or answers something else, is down too.
+  for (const health of [async () => { throw new Error('refused'); }, async () => 'yes', async () => null]) {
+    const got = await handle(tickOf(repo), live({ client: { ...fakeClient(), health } }));
+    assert.ok(got.pane.missing.includes(NO_HELPER));
+  }
+}));
+
+test('a helper that never answers is waited for no longer than HELPER_MS', () => withHome(async (home) => {
+  const repo = registered(home);
+  const started = Date.now();
+  const got = await handle(tickOf(repo), live({ client: { ...fakeClient(), health: () => new Promise(() => {}) } }));
+  assert.ok(Date.now() - started < HELPER_MS + 1500);
+  assert.ok(got.pane.missing.includes(NO_HELPER));
 }));

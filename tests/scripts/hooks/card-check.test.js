@@ -241,7 +241,6 @@ test('the refusal tells the front desk where a right card comes from', async () 
   assert.match(reason(await decide(call(q), inProject)), /cli\.js card/);
 });
 
-
 test('the card check hook and cardProblems agree on every composed card', async () => {
   for (const kind of Object.keys(INPUTS)) {
     const card = cardOf(kind);

@@ -19,13 +19,12 @@
 //
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
-import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { replyRecord as defaultReply } from './reply.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
-import { projectOf as defaultProjectOf } from '../hooks/kit.js';
+import { projectOf as defaultProjectOf, readSmallText } from '../hooks/kit.js';
 import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
@@ -180,11 +179,13 @@ async function stop(req, d) {
 }
 
 // Whether the project's local settings name Wheelhouse's own status line (board-and-usage), which
-// the terminal then draws itself. Read from the file alone, and only read.
+// the terminal then draws itself. Read from the file alone, and only read: the folder is one an
+// agent controls, so the file is read as a small regular file, which a FIFO planted there is not.
 function ownStatusLine(record) {
   try {
     if (typeof record?.folder !== 'string') return false;
-    const settings = JSON.parse(fs.readFileSync(path.join(record.folder, '.claude', 'settings.local.json'), 'utf8'));
+    const text = readSmallText(path.join(record.folder, '.claude', 'settings.local.json'));
+    const settings = text === null ? null : JSON.parse(text);
     return isRecord(settings) && isOwnStatusLine(settings.statusLine);
   } catch {
     return false;
@@ -201,6 +202,19 @@ function roleOf(req, d) {
   }
 }
 
+// Whether the host helper answers its health check within HELPER_MS. Never throws.
+async function helperAnswers(d) {
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(false), HELPER_MS); });
+  try {
+    return await Promise.race([Promise.resolve().then(() => clientOf(d).health()).then((got) => got?.ok === true, () => false), late]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
 // has a pane: its model is kept as status.json before the answer goes. A feature session, a
 // foreman (until the watcher's half is added) and a folder outside a project get an `every` of
@@ -210,7 +224,8 @@ async function tick(req, d) {
   const role = roleOf(req, d);
   const found = siteOf(req.cwd, d);
   if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
-  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now });
+  // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
+  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d) });
   try {
     d.writePaneStatus(found.project, pane);
   } catch {

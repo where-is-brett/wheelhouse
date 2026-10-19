@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { paneModel, paneStatusFile, writePaneStatus, readPaneStatus, QUESTION_WAITS } from '../../../scripts/mod/status.js';
 import { CARD_HASH_CHARS, PANE_LINES } from '../../../scripts/lib/mod-numbers.js';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
@@ -178,6 +179,20 @@ test('no state, no helper and no usage still give a model naming what is missing
   const outside = await paneModel({ project: P, cwd: tempFolder('wh-elsewhere-'), now: () => NOW });
   assert.deepEqual(outside.missing, ['This folder isn\'t part of a Wheelhouse project']);
   assert.equal(outside.glance, 'Wheelhouse');
+  // The helper being down is said plainly, with the time of the last sync the views come from.
+  const asked = await paneModel({ project: P, cwd: repo, now: () => NOW, helperUp: true });
+  assert.ok(!asked.missing.includes(NO_HELPER));
+  const never = await paneModel({ project: P, cwd: repo, now: () => NOW, helperUp: false });
+  assert.ok(never.missing.includes(NO_HELPER));
+  assert.ok(never.missing.includes('Nothing has been synced to this computer yet, so nothing below is current'));
+  view('status', { builtAt: '2026-10-18T18:00:00.000Z', waitingCount: 0 });
+  const synced = await paneModel({ project: P, cwd: repo, now: () => NOW, helperUp: false });
+  assert.ok(synced.missing.includes(NO_HELPER));
+  assert.ok(synced.missing.includes('The state shown was last synced on 18 October 2026, 18:00 UTC'));
+  view('status', { builtAt: 'yesterday' });
+  assert.ok((await paneModel({ project: P, cwd: repo, now: () => NOW, helperUp: false })).missing.some((l) => l.startsWith('Nothing has been synced')));
+  fs.rmSync(path.join(viewsDir(), 'status.json'));
+
   const broken = await paneModel({ project: P, cwd: repo, now: () => NOW, loadInputs: async () => { throw new Error('no'); } });
   assert.deepEqual(broken.missing, ['The board\'s inputs couldn\'t be read this time']);
   const noClock = await paneModel({ project: P, cwd: repo, now: () => 'not a time' });
