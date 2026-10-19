@@ -36,7 +36,7 @@ const logDir = probeLogDir(CHECK);
 const resultsFile = path.join(logDir, 'results.jsonl');
 const claudeBin = execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
 const CI_VERSION = '2.1.278';
-const CI_SCAN = ['2.1.278', '2.1.280', '2.1.284', '2.1.288', '2.1.292', '2.1.296', '2.1.299', '2.1.302'];
+const CI_SCAN = ['2.1.278', '2.1.280', '2.1.284', '2.1.288', '2.1.292', '2.1.295', '2.1.296', '2.1.299', '2.1.302'];
 
 const asked = process.argv.slice(2);
 const wants = (part) => asked.length === 0 || asked.includes(part);

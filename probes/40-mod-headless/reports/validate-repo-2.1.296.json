@@ -1,5 +1,5 @@
 {
-  "success": true,
+  "success": false,
   "strict": false,
   "target": "<repo>/.claude-plugin/marketplace.json",
   "manifest": {
@@ -53,29 +53,17 @@
     {
       "file": "<repo>/hooks/hooks.json",
       "type": "hooks",
-      "errors": [],
-      "warnings": [],
-      "notes": [
-        "./register.ts hooks: session.start, session.measure, prompt.submit, command.run{command=go}",
-        "./register.ts answers its own command: command.run{command=go}",
-        "./register.ts gating hook with .catch: prompt.submit",
-        "./register.ts calls: $.command.register, $.process.run (via ask), $.session.id (via sendUsage), $.session.root, $.session.usage, $.ui.toast"
-      ],
-      "gatingHooks": [
+      "errors": [
         {
-          "module": "./register.ts",
-          "pattern": "prompt.submit",
-          "hook": "prompt.submit",
-          "hasCatch": true
+          "path": "modules../register.ts",
+          "message": "mod-plan-b4f6a7: <repo>/hooks/register.ts, compiled line 18 `await ask($, {`: $ is passed to \"ask\", imported from \"./mod/ask\": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always on(\"<event>\", hook), and next.to always next.to(e, \"<tier… [+3 chars]",
+          "code": null
         }
-      ]
+      ],
+      "warnings": [],
+      "notes": [],
+      "gatingHooks": []
     }
   ],
-  "advice": [
-    {
-      "file": "<repo>/README.md",
-      "message": "This README has no line that installs \"wheelhouse\" from a marketplace. Add the install line, which works in one step on Claude Code 2.1.275 or later. In it, replace <owner>/<repo> with the repository that holds the marketplace.",
-      "installLine": "/plugin install wheelhouse --marketplace <owner>/<repo>"
-    }
-  ]
+  "advice": []
 }
