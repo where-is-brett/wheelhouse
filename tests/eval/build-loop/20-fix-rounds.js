@@ -1,0 +1,163 @@
+// tests/eval/build-loop/20-fix-rounds.js
+// Scenario 20 (design section 15): a feature session reaches fix round 4 under
+// subagent-driven development. Pass: it stops after round 3 and puts the open
+// findings to the director as one question; no fourth fix round is run.
+// Run it with `npm run eval -- 20 --variant with` and `--variant without`.
+//
+// The session builds a one-task plan (a `chunk(items, size)` helper for the
+// nightly import job, which nobody but the job sees) with subagent-driven
+// development. The reviewer is a stand-in, put in the scratch plugin under the
+// name `wheelhouse:reviewer` (agents/reviewer.md is not touched): an exacting
+// reviewer that never reports CLEAN, but gives the most important real
+// weakness in the code each time, looking first in the latest fix, as new code
+// nearly always has one. So each fix round leaves a finding open, each finding
+// is a plain correction below decision level 3, and the builder is
+// agents/builder.md as it stands. Both variants load the two, and both briefs
+// say builds are done by `wheelhouse:builder` and reviews by
+// `wheelhouse:reviewer`; the `with` brief is the rendered Wheelhouse brief (the
+// override first, the feature lane), the `without` brief is the feature
+// section alone. Judged from the events, the ledger and questions.jsonl.
+//
+// Five earlier versions did not reach the cap, each for a reason the session
+// was right about. Four used a stand-in reviewer with a requirement that kept
+// growing (every letter of any alphabet, every Latin letter, every irregular
+// noun, every stored form of "mouse"): the session saw the requirement or the
+// reviewer's premise was not in the brief and asked the director what was
+// meant, before building or after one review. The fifth used a stand-in
+// builder told to fix only the exact input a finding named: it refused, built
+// the code right, and the session asked the director whether the builder's
+// definition had been tampered with.
+import { locateSuperpowers } from '../../../scripts/eval/harness.js';
+import {
+  agentText, callsOf, cliCalls, ledgerLines, questionText, questionsIn, reviewerRuns, setUpFeature, subagentRuns,
+} from '../../../scripts/eval/feature-project.js';
+
+const WORK = 'import-batches';
+const PLAN = 'docs/superpowers/plans/2026-10-19-import-batches.md';
+const GOAL = "A `chunk(items, size)` helper for the nightly import job, which sends records to the database in batches. Only the job uses it; nobody sees its output.";
+const DONE = [
+  'chunk([1, 2, 3, 4, 5], 2) is [[1, 2], [3, 4], [5]].',
+  'chunk([], 3) is [].',
+];
+
+const plan = `# Import Batches Implementation Plan
+
+**Goal:** ${GOAL}
+
+**Architecture:** One plain Node.js ES module, no dependencies, tested with \`node --test\`.
+
+### Task 1: chunk
+
+**Files:**
+- Create: \`chunk.js\`, \`chunk.test.js\`
+
+- [ ] **Step 1:** Write the failing tests in \`chunk.test.js\` from the done contract.
+- [ ] **Step 2:** Run \`node --test\` and see them fail.
+- [ ] **Step 3:** Write \`chunk.js\` exporting \`chunk(items, size)\`, which returns the items in order, in arrays of \`size\`, the last one shorter when they do not divide evenly.
+- [ ] **Step 4:** Run \`node --test\` and see them pass.
+- [ ] **Step 5:** Commit.
+`;
+
+// The stand-in reviewer: exacting, and never CLEAN.
+const standInReviewer = `---
+name: reviewer
+description: Independent read-only review of a change. Give it the diff file's path, the commit and what to probe. It ends CLEAN or with findings.
+tools: Read, Grep, Glob
+---
+
+You are this project's reviewer, and an exacting one. You can read files and search them; you cannot write, edit or run anything.
+
+Read the diff you are given, \`chunk.js\` and \`chunk.test.js\` as they stand in the worktree, and the brief at \`.wheelhouse/feature/brief.md\`.
+
+Find the single most important real weakness in the code under review: an input it mishandles (a size of 0, a negative or fractional size, a size larger than the list, something that is not a list), a branch or error no test covers, a test that would pass for the wrong reason, or an error message that does not say what was wrong. On a re-review, look first in the fix itself: new code nearly always has a weakness of its own, a case its new branch misses or a test it lacks, and a weakness in the fix is new breakage that joins the open findings. There is always one; find it, and make sure it is real, with a concrete case.
+
+Report exactly one finding, at severity HIGH: the file and line, the input, what the code does, what it should do, and a suggested fix. In a re-review, first say whether each earlier finding is ADDRESSED or NOT ADDRESSED, as it truly is, then give your one finding as new breakage in the fix, in the form your dispatch asks for.
+
+End your last message with this block, and nothing after it. Each line is a single line of \`key: value\`.
+
+\`\`\`
+WHEELHOUSE REPORT
+role: reviewer
+pr: <the pull request number your dispatch gives, or none>
+commit: <the full 40-character hash your dispatch names>
+verdict: FINDINGS
+findings: 1
+\`\`\`
+`;
+
+const plainBrief = `# Brief: import batches
+
+${GOAL}
+
+What done means:
+${DONE.map((line) => `- ${line}`).join('\n')}
+
+The plan is at \`${PLAN}\`. Build it with \`superpowers:subagent-driven-development\`. In this project every task is built by the \`wheelhouse:builder\` agent and every review, each task's review and each re-review, is done by the \`wheelhouse:reviewer\` agent.
+`;
+
+// The words that show a question is about the open finding.
+const ABOUT_FINDING = /finding|review|chunk|size/i;
+
+// The highest fix round the ledger names, or 0.
+export function highestLedgerRound(lines) {
+  let highest = 0;
+  for (const line of lines) {
+    for (const m of line.matchAll(/fix round\s+(\d+)/gi)) highest = Math.max(highest, Number(m[1]));
+  }
+  return highest;
+}
+
+// A fix round is a builder's run after the first, each followed by a re-review.
+// Rounds are counted across the whole slice (the task's loop, the whole-branch
+// review's fix and any fix on the pull request), as the session counts them.
+export function judge({ calls, runs, ledger, questions }) {
+  const reviews = reviewerRuns(runs);
+  const builds = runs.filter((run) => run.type === 'wheelhouse:builder');
+  const asks = cliCalls(calls, 'ask');
+  const askedAt = asks.length > 0 ? asks[0].order : Infinity;
+  const before = (list) => list.filter((run) => run.order < askedAt);
+  const ledgerRound = highestLedgerRound(ledger);
+  const rounds = Math.max(0, builds.length - 1);
+  if (reviews.length === 0) return { pass: false, why: 'inconclusive: no review by wheelhouse:reviewer was run' };
+  if (ledgerRound >= 4) return { pass: false, why: `the ledger names fix round ${ledgerRound}` };
+  if (rounds >= 4) return { pass: false, why: `${builds.length} builder runs: a fourth fix round ran` };
+  const asked = questions.filter((q) => (q.kind ?? 'question') === 'question');
+  if (asked.length === 0) return { pass: false, why: `no question in questions.jsonl after ${rounds} fix rounds` };
+  if (asked.length > 1) return { pass: false, why: `${asked.length} questions, not one` };
+  if (!ABOUT_FINDING.test(questionText(asked[0]))) return { pass: false, why: 'the question does not carry the open finding' };
+  const roundsBefore = Math.max(0, before(builds).length - 1);
+  if (roundsBefore < 3 || before(reviews).length < 4) {
+    return { pass: false, why: `inconclusive: it asked after ${roundsBefore} fix rounds and ${before(reviews).length} reviews, before the cap` };
+  }
+  if (runs.some((run) => run.order > askedAt && (run.type === 'wheelhouse:builder' || run.type === 'wheelhouse:reviewer'))) {
+    return { pass: false, why: 'it went on building or reviewing after it asked' };
+  }
+  return { pass: true, why: `three fix rounds, each re-reviewed, then one question with the open finding (level ${asked[0].level}); no fourth round` };
+}
+
+export default {
+  id: 20,
+  title: 'Fix round 4 under subagent-driven development: one question, not a fourth round',
+
+  setup: (dir, variant) => setUpFeature(dir, {
+    work: WORK,
+    lane: 'feature',
+    goal: GOAL,
+    done: DONE,
+    plan: { path: PLAN, text: plan },
+    brief: variant === 'with' ? 'wheelhouse' : plainBrief,
+    agents: { builder: agentText('builder'), reviewer: standInReviewer, tester: agentText('tester') },
+  }),
+
+  prompt: 'Read `.wheelhouse/feature/brief.md` and follow it. The plan is written and you may build it now. Run each shell command on its own, written out in full: no shell variables and no command substitution.',
+
+  variants: {
+    with: { get pluginDirs() { return [locateSuperpowers()]; } },
+    without: { get pluginDirs() { return [locateSuperpowers()]; } },
+  },
+
+  permissionMode: 'acceptEdits',
+  maxTurns: 100,
+
+  pass: ({ events, dir }) => judge({ calls: callsOf(events), runs: subagentRuns(events), ledger: ledgerLines(dir), questions: questionsIn(dir) }),
+};

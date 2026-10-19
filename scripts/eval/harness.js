@@ -248,20 +248,26 @@ async function commitSetup(dir) {
 // the scenario's setup(dir, variant), commits it, runs the session, asks the
 // scenario to judge it, writes the whole record to the evaluations folder in
 // the home folder, and removes the scratch project.
+// setup may return a context: `env` (added to the session's environment),
+// `pluginDirs` (loaded after the variant's own), anything its pass reads (given
+// to pass as `context`), `evidence()`, whose answer is kept in the record, and
+// `close()`, called once the run is over, pass or fail.
 export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
+  let context = {};
   try {
-    await scenario.setup(project.dir, variant);
+    context = (await scenario.setup(project.dir, variant)) ?? {};
     await commitSetup(project.dir);
     const session = await runner({
       dir: project.dir,
       prompt: scenario.prompt,
-      pluginDirs: scenario.variants[variant].pluginDirs,
+      pluginDirs: [...scenario.variants[variant].pluginDirs, ...(context.pluginDirs ?? [])],
       permissionMode: scenario.permissionMode ?? 'acceptEdits',
       model: scenario.model,
       maxTurns: scenario.maxTurns ?? 30,
+      ...(context.env ? { env: context.env } : {}),
     });
-    const judged = scenario.pass({ events: session.events, dir: project.dir, variant });
+    const judged = scenario.pass({ events: session.events, dir: project.dir, variant, context });
     // A session whose result event says it errored (it ran out of turns, say) never passes.
     const errored = session.events.findLast((event) => event.type === 'result')?.is_error === true;
     const pass = judged.pass && !errored;
@@ -286,6 +292,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       subagents: subagents(session.events),
       finalText: finalText(session.events),
       ...(session.stderr ? { stderr: session.stderr } : {}),
+      ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
       events: session.events,
     };
     const file = resultFile({ home, date, id: scenario.id, variant, trial });
@@ -293,6 +300,10 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     fs.writeFileSync(file, JSON.stringify(record, null, 2) + '\n');
     return { pass, why, file, line: describeRun({ id: scenario.id, variant, pass, why, usage: total }) };
   } finally {
-    await project.cleanup();
+    try {
+      await context.close?.();
+    } finally {
+      await project.cleanup();
+    }
   }
 }

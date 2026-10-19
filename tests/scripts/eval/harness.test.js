@@ -374,3 +374,49 @@ test('runScenario never passes a session whose result event is an error', async 
   assert.equal(outcome.pass, false);
   assert.match(outcome.line, /result event is an error/);
 });
+
+test('runScenario passes a context from setup to the session and to pass, and closes it afterwards', async () => {
+  const home = tempFolder('harness-home-');
+  let sessionSaw;
+  let passSaw;
+  let closed = 0;
+  const scenario = {
+    id: 96,
+    title: 'a stand-in',
+    setup: async () => ({ env: { EXTRA: 'yes' }, pluginDirs: ['/p/extra'], records: ['r'], evidence: () => ({ seen: 1 }), close: async () => { closed += 1; } }),
+    prompt: 'x',
+    variants: { with: { pluginDirs: ['/p/with'] }, without: { pluginDirs: [] } },
+    pass: ({ context }) => { passSaw = context; return { pass: true, why: 'ok' }; },
+  };
+  await runScenario({
+    scenario,
+    variant: 'with',
+    trial: 1,
+    home,
+    date: '2026-10-18',
+    runner: async (options) => { sessionSaw = options; return { events, exitCode: 0, usage: usageOf(events) }; },
+  });
+  assert.deepEqual(sessionSaw.pluginDirs, ['/p/with', '/p/extra']);
+  assert.deepEqual(sessionSaw.env, { EXTRA: 'yes' });
+  assert.deepEqual(passSaw.records, ['r']);
+  assert.equal(closed, 1);
+  const written = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', '2026-10-18', '96-with-1.json'), 'utf8'));
+  assert.deepEqual(written.evidence, { seen: 1 });
+});
+
+test('runScenario closes the context even when the session fails to start', async () => {
+  const home = tempFolder('harness-home-');
+  let closed = 0;
+  const scenario = {
+    id: 95,
+    title: 'a stand-in',
+    setup: async () => ({ close: () => { closed += 1; } }),
+    prompt: 'x',
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+    pass: () => ({ pass: true, why: 'ok' }),
+  };
+  await assert.rejects(runScenario({
+    scenario, variant: 'with', trial: 1, home, date: '2026-10-18', runner: async () => { throw new Error('no claude'); },
+  }), /no claude/);
+  assert.equal(closed, 1);
+});
