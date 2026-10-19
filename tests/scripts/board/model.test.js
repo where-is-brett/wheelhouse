@@ -1,7 +1,7 @@
 // tests/scripts/board/model.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boardModel, oneLine } from '../../../scripts/board/model.js';
+import { boardModel, numberedWaiting, oneLine } from '../../../scripts/board/model.js';
 import { LINE_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, settingKey } from '../../../scripts/protection/windows-builds.js';
 
@@ -116,10 +116,24 @@ test('waiting lists cards and unasked build-loop questions once each, numbered',
   views.waiting = [askedCard, other].map((e) => ({ id: e.id, at: e.at, data: e.data }));
   const m = model({ views, events });
   assert.deepEqual(m.director.waiting, [
-    { n: 1, what: 'Email or phone sign-in?', since: at(8) },
-    { n: 2, what: 'Name the app', since: at(11) },
-    { n: 3, what: 'Pick a colour', since: at(12) },
+    { n: 1, id: 'q:q-login-2', what: 'Email or phone sign-in?', since: at(8) },
+    { n: 2, id: other.id, what: 'Name the app', since: at(11) },
+    { n: 3, id: askedCard.id, what: 'Pick a colour', since: at(12) },
   ]);
+});
+
+test('the board\'s waiting items carry ids, and numberedWaiting numbers them the same way', () => {
+  const card = ev('card', at(12), { title: 'Pick a colour', question: 'Pick a colour?' });
+  const questions = [
+    { ...ev('question', at(8), { id: 'q-login-2', work: 'login', what: 'Email or phone sign-in?', why: '', options: [], recommendation: '', level: 3 }) },
+  ];
+  const views = { ...emptyViews(), ...buildLoop({ questions }), waiting: [{ id: card.id, at: card.at, data: card.data }] };
+  const m = model({ views, events: [card] });
+  const items = numberedWaiting(views, [card]);
+  assert.deepEqual(m.director.waiting.map((w) => [w.n, w.id]), items.map((i) => [i.n, i.id]));
+  assert.deepEqual(items.map((i) => i.id), ['q:q-login-2', card.id]);
+  assert.equal(items[0].question, 'q-login-2');
+  assert.equal(items[1].card, card.id);
 });
 
 test('a Windows build-commands proposal is not listed as not yet confirmed: only its own card confirms it', () => {
@@ -147,9 +161,9 @@ test('a build-command question waiting is named by its commands, with what it sa
   ];
   const m = model({ views: { ...emptyViews(), ...buildLoop({ questions }) } });
   assert.deepEqual(m.director.waiting, [
-    { n: 1, what: 'Run npm test, npm run build: Run the tests', since: at(8) },
-    { n: 2, what: 'Run npm test, npm run build', since: at(9) },
-    { n: 3, what: 'Anything at all', since: at(10) },
+    { n: 1, id: 'q:q-login-1', what: 'Run npm test, npm run build: Run the tests', since: at(8) },
+    { n: 2, id: 'q:q-login-2', what: 'Run npm test, npm run build', since: at(9) },
+    { n: 3, id: 'q:q-login-3', what: 'Anything at all', since: at(10) },
   ]);
 });
 
@@ -401,6 +415,7 @@ test('budget shows the week and unusual use in its own unit; open incidents and 
   const texts = m.director.health.map((l) => l.text);
   assert.equal(texts[0], 'Protection: Standard');
   assert.ok(texts.includes('Incident leak is open, so nothing merges: Emails sent twice'));
+  assert.equal(m.director.health.find((l) => l.text.startsWith('Incident leak')).incident, 'leak');
   assert.ok(texts.includes('m-old, a model your projects use, retires on 1 November 2026'));
   assert.ok(texts.includes('A security advisory for owner/repo: Bad thing'));
   assert.ok(!texts.some((t) => t.includes('m-other')));
@@ -416,7 +431,7 @@ test('event times reach the model only as strict UTC times', () => {
   assert.deepEqual(m.director.rulings, [{ what: 'B', at: at(5) }, { what: 'A', at: null }]);
   assert.ok(m.build.decisions.every((d) => d.at === null || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(d.at)));
   assert.equal(m.build.decisions.find((d) => d.what === 'R').at, null);
-  assert.deepEqual(m.director.waiting, [{ n: 1, what: 'T', since: null }]);
+  assert.deepEqual(m.director.waiting, [{ n: 1, id: 'c1', what: 'T', since: null }]);
   assert.deepEqual(m.director.changed, []);
   assert.equal(m.director.budget.week.from, null);
 

@@ -1,0 +1,43 @@
+{
+  "success": true,
+  "strict": false,
+  "target": "<repo>/.claude-plugin/plugin.json",
+  "manifest": {
+    "file": "<repo>/.claude-plugin/plugin.json",
+    "type": "plugin",
+    "errors": [],
+    "warnings": [
+      {
+        "path": "author",
+        "message": "No author information provided. Consider adding author details for plugin attribution",
+        "code": null
+      }
+    ],
+    "notes": []
+  },
+  "contents": [
+    {
+      "file": "<repo>/CLAUDE.md",
+      "type": "plugin",
+      "errors": [],
+      "warnings": [
+        {
+          "path": "root",
+          "message": "CLAUDE.md at the plugin root is not loaded as project context. To ship context with your plugin, use a skill (skills/<name>/SKILL.md) instead.",
+          "code": null
+        }
+      ],
+      "notes": []
+    },
+    {
+      "file": "<repo>/hooks/hooks.json",
+      "type": "hooks",
+      "errors": [],
+      "warnings": [],
+      "notes": [
+        "./register.ts hooks: session.start, session.measure, prompt.submit, command.run{command=go}",
+        "./register.ts calls: $.command.register, $.process.run (via ask), $.session.id (via sendUsage), $.session.root, $.session.usage, $.ui.toast"
+      ]
+    }
+  ]
+}

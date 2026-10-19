@@ -758,6 +758,27 @@ test('Shape 2 prints one line per wake, naming each session\'s own copy, and sta
   assert.deepEqual(w.waiting(), []);
 }));
 
+test('the waker prints Shape 2\'s lines through the printer it is given', () => withHome(async () => {
+  checkout();
+  const dir = worktree();
+  const lines = [];
+  // The mod's bridge answers on stdout, so with a printer given nothing else may reach it.
+  const write = process.stdout.write;
+  const written = [];
+  process.stdout.write = (chunk, ...rest) => { written.push(String(chunk)); return write.call(process.stdout, chunk, ...rest); };
+  try {
+    const w = waker(fakeRun(), { shape: 2, print: (line) => lines.push(line), locate: () => dir });
+    await w.wakeForeman(writeWake(P, bundle('e1')));
+    await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
+    await w.startFeature({ work: 'login-page', worktree: dir });
+  } finally {
+    process.stdout.write = write;
+  }
+  assert.deepEqual(lines.map((line) => line.split(' ').slice(0, 2).join(' ')), ['WAKE foreman', 'WAKE feature', 'START feature']);
+  assert.equal(lines[2], `START feature login-page ${dir}`);
+  assert.deepEqual(written.filter((text) => /WAKE|START/.test(text)), []);
+}));
+
 test('the foreman, and only the foreman, is told it is the foreman; no session gets the host session\'s variables', () => withHome(async () => {
   checkout();
   const host = { PATH: '/bin', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_lower: 'y', ANTHROPIC_BASE_URL: 'http://gateway', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept' };
