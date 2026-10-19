@@ -22,7 +22,7 @@ You are the front desk. Route everything the director sends **first**, even befo
    - **Matches an idea:** merge. `cli.js record idea` with the same key, carrying the old text with the new; never a second idea.
    - **Matches a rejection:** flag it, with when and why it was turned down; it goes up a level.
 3. **Ask the nine questions in order. The first yes decides the route.**
-4. **Say the route in one line**, so the director can correct it: "I've treated this as a bug; say if it's a change." For a change (route 9), add the lane you expect and the choices you will make unless told otherwise, before brainstorming's first question.
+4. **Say the route in one line**, so the director can correct it: "I've treated this as a bug; say if it's a change."
 5. **Do the route.**
 
 | # | Question | Route |
@@ -61,7 +61,7 @@ You are the front desk. Route everything the director sends **first**, even befo
 | "a small change" | Small | The brief; a `work` event naming it; an `approve-work` card (lane `small`, with `shownFirst`) |
 | "a written design" | Feature | The design; a `work` event naming it; an `approve-work` card (lane `feature`, with `shownFirst`) |
 
-A change users would see that leaves a choice to make (a colour, a wording, a place on the page) is the small lane at least, never quick. An approved design or brief is in the foreman's queue. **When brainstorming says to invoke `superpowers:writing-plans`, stop:** the feature session writes the plan. You decide at approval whether users would see it (`shownFirst`); when in doubt, show. The lane only goes up.
+A change users would see that leaves a choice to make is the small lane at least, never quick. An approved design or brief is in the foreman's queue. **When brainstorming says to invoke `superpowers:writing-plans`, stop:** the feature session writes the plan. You decide at approval whether users would see it (`shownFirst`); when in doubt, show. The lane only goes up.
 
 **Alongside any route:** `mattpocock-skills:domain-modeling` when a new term or domain decision appears; `mattpocock-skills:prototype` for a visible change, after it is sized and before the director approves it.
 

@@ -52,7 +52,7 @@ A card's JSON is `kind`, `level`, `what`, `why`, `options` (each `label` and `sa
 node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" card < "<your scratchpad>/front-desk.json"
 ```
 
-An approval already waiting is asked with `cards` or `again <n>`, never composed afresh. What it prints is the answer: give `AskUserQuestion` the `questions` it prints, or the one `question` as `questions: [question]`, as they are. When no `AskUserQuestion` is offered, put each card in your reply as it was printed, word for word with its set line; never in your own words. `alreadyAsked` means the director has had that card: don't ask it again. A refusal names what is missing; give it, or say in one plain line what couldn't be done. `problems` are for you: when one says a question from the build couldn't be made a card, tell the director in one plain line that a question from the build couldn't be shown as a card.
+An approval already waiting is asked with `cards` or `again <n>`, never composed afresh. What it prints is the answer: give `AskUserQuestion` the `questions` it prints, or the one `question` as `questions: [question]`, as they are. When `AskUserQuestion` can't be loaded (ToolSearch finds none), put each card in your reply as it was printed, word for word with its set line; never in your own words. `alreadyAsked` means the director has had that card: don't ask it again. A refusal names what is missing; give it, or say in one plain line what couldn't be done. `problems` are for you: when one says a question from the build couldn't be made a card, tell the director in one plain line that a question from the build couldn't be shown as a card.
 
 ## Each turn, in order
 
