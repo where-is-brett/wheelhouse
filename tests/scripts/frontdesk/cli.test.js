@@ -841,12 +841,34 @@ test('card gives back a waiting card no visit has asked, and records it as asked
   });
 });
 
+test('preview gives the address of a pull request\'s preview, or says in a sentence that there is none', async () => {
+  const asked = [];
+  const answers = [
+    { ok: true, url: 'https://product-4f2a91c.example.app/' },
+    { ok: true, url: null },
+    { ok: false, refused: 'the host helper could not be reached: is it running?' },
+  ];
+  const helper = { client: { preview: async (body) => { asked.push(body); return answers.shift(); } } };
+  assert.deepEqual(await run(helper, ['preview', '7']), { code: 0, out: 'https://product-4f2a91c.example.app/\n', err: '', json: undefined });
+  assert.deepEqual(asked, [{ cwd: CWD, number: 7 }]);
+  const none = await run(helper, ['preview', '7']);
+  assert.deepEqual([none.code, none.out], [0, 'Pull request #7 has no preview to show: it isn\'t open, or the host has no finished preview of its latest commit.\n']);
+  const away = await run(helper, ['preview', '7']);
+  assert.deepEqual([away.code, away.err], [1, 'the host helper could not be reached: is it running?\n']);
+  // Nothing else is asked for: one pull request's number.
+  for (const argv of [['preview'], ['preview', '0'], ['preview', '7', '8'], ['preview', '#7'], ['preview', '-1']]) {
+    const refused = await run(helper, argv);
+    assert.deepEqual([refused.code, refused.err], [1, 'Give the pull request\'s number: preview <n>\n'], argv.join(' '));
+  }
+  assert.equal(asked.length, 3);
+});
+
 test('an unknown command, or a helper that can\'t be reached, is one line on standard error', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
-    const unknown = await run(helper, ['preview', '7']);
+    const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, record, similar, views, explain, review\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, record, similar, views, explain, review, preview\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -906,6 +928,6 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, record, similar, views, explain, review\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, record, similar, views, explain, review, preview\n');
   assert.equal(done.stdout, '');
 });

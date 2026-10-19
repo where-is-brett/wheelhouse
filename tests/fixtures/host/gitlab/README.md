@@ -21,3 +21,9 @@ The recorded merge request carries `detailed_merge_status` and no `merge_status`
 - `pipelines.json`, `issue-list.json`: GitLab's documented pipeline and issue shapes.
 - `mr-create.txt`, `mr-update.txt`, `issue-create.txt`, `issue-update.txt`: these commands print the merge request or issue with its web address.
 - `merge-refused.txt`: the error when `--sha` does not match the head of the source branch.
+
+**Previews (front desk, Task 12), from documentation**, read on 19 October 2026: written to the shape of GitLab's "Deployments API" list, because the test project deploys nothing (nothing was recorded). Only the fields that matter are kept; users, IDs and addresses are made up.
+
+- `deployments.json`: `glab api projects/<project>/deployments?status=success&order_by=id&sort=desc&per_page=100`, newest first: two review-app deployments of one commit, with a production deployment of another between them. Each carries its `environment` with the `external_url`.
+- `deployments-none.json`: the same, with no successful deployment.
+- `deployments-superseded.json` (added 19 October 2026, same page): the commit's review-app deployment, then a newer one of another commit to the same environment (`environment.id` 77), which the environment now shows.

@@ -590,3 +590,84 @@ test('GitLab hasCi throws when any lookup fails, while ciState keeps reading it 
   await assert.rejects(server.hasCi(GL_SHA, 'main'), /CI configuration/);
   await assert.rejects(adapter('gitlab').a.hasCi('nope', 'main'), /commit/);
 });
+
+// --- previews (front desk, Task 12) ---
+
+test('a commit\'s preview address comes from its latest successful deployment', async () => {
+  // GitHub: the newest deployment is still building, so the one before it gives the address.
+  const github = adapter('github', { stdout: gh('deployments.json') }, { stdout: gh('deployment-statuses-pending.json') }, { stdout: gh('deployment-statuses.json') });
+  assert.equal(await github.a.previewUrl(SHA), 'https://product-4f2a91c-a-director.example.app/');
+  assert.deepEqual(github.calls.map((c) => c.args), [
+    ['api', `repos/${REPO}/deployments?sha=${SHA}`],
+    ['api', `repos/${REPO}/deployments/1002/statuses`],
+    ['api', `repos/${REPO}/deployments/1001/statuses`],
+  ]);
+  assert.equal(github.calls[0].env, ENV);
+  // The newest success counts, whatever order the statuses come in.
+  const statuses = JSON.parse(gh('deployment-statuses.json'));
+  const later = { ...statuses[0], id: 2009, environment_url: 'https://later.example.app/' };
+  const shuffled = adapter('github', { stdout: gh('deployments.json') }, { stdout: JSON.stringify([...statuses, later]) });
+  assert.equal(await shuffled.a.previewUrl(SHA), 'https://later.example.app/');
+
+  // GitLab: the newest successful deployment of that commit, and its environment's address.
+  const gitlab = adapter('gitlab', { stdout: gl('deployments.json') });
+  assert.equal(await gitlab.a.previewUrl(GL_SHA), 'https://feature-welcome-page-3f6c1a9e.review.example.org/');
+  assert.deepEqual(gitlab.calls[0].args, ['api', 'projects/a-director%2Fproduct/deployments?status=success&order_by=id&sort=desc&per_page=100']);
+  assert.equal(gitlab.calls[0].file, 'glab');
+});
+
+test('a commit with no deployment has no preview', async () => {
+  const none = adapter('github', { stdout: gh('deployments-none.json') });
+  assert.equal(await none.a.previewUrl(SHA), null);
+  assert.equal(none.calls.length, 1);
+  // Deployments that never succeeded give none either.
+  const building = adapter('github', { stdout: gh('deployments.json') }, { stdout: gh('deployment-statuses-pending.json') }, { stdout: gh('deployment-statuses-pending.json') });
+  assert.equal(await building.a.previewUrl(SHA), null);
+  assert.equal(await adapter('gitlab', { stdout: gl('deployments-none.json') }).a.previewUrl(GL_SHA), null);
+  // Another commit's deployments are not this one's.
+  assert.equal(await adapter('gitlab', { stdout: gl('deployments.json') }).a.previewUrl('0'.repeat(40)), null);
+});
+
+test('a deployment the host has since superseded is no preview', async () => {
+  // GitHub marks a deployment inactive once another to the same environment succeeds: its newest
+  // status, of any state, must be success.
+  const github = adapter('github', { stdout: gh('deployments.json') }, { stdout: gh('deployment-statuses-pending.json') }, { stdout: gh('deployment-statuses-inactive.json') });
+  assert.equal(await github.a.previewUrl(SHA), null);
+  assert.equal(github.calls.length, 3);
+  // GitLab's address is the environment's, which shows its newest deployment: the commit's must be it.
+  assert.equal(await adapter('gitlab', { stdout: gl('deployments-superseded.json') }).a.previewUrl(GL_SHA), null);
+  // An older deployment of the commit, still the newest in its own environment, counts.
+  const both = JSON.parse(gl('deployments.json'));
+  const superseded = JSON.parse(gl('deployments-superseded.json'));
+  assert.equal(await adapter('gitlab', { stdout: JSON.stringify([superseded[0], ...both]) }).a.previewUrl(GL_SHA), 'https://old-name.review.example.org/');
+  // A deployment whose environment can't be told apart from another's is not taken as current.
+  const unnamed = both.map(({ environment, ...rest }) => ({ ...rest, environment: { external_url: environment.external_url } }));
+  assert.equal(await adapter('gitlab', { stdout: JSON.stringify(unnamed) }).a.previewUrl(GL_SHA), null);
+});
+
+test('only an https address counts as a preview, a failed read is thrown, and the commit must be whole', async () => {
+  const statuses = JSON.parse(gh('deployment-statuses.json'));
+  // Nor is an address on this computer or its local network (ruling F68).
+  const local = ['https://localhost:3000/', 'https://shop.localhost/', 'https://127.0.0.1/', 'https://10.1.2.3/', 'https://172.20.0.5/', 'https://192.168.0.2/', 'https://169.254.169.254/', 'https://0.0.0.0/', 'https://[::1]/', 'https://[fd00::5]/', 'https://[fe80::1]/', 'https://[::]/'];
+  for (const environmentUrl of ['http://product.example.app', '', 'javascript:alert(1)', 'file:///etc/passwd', null, ...local]) {
+    const plain = adapter('github', { stdout: '[{"id":7}]' }, { stdout: JSON.stringify([{ ...statuses[0], environment_url: environmentUrl }]) });
+    assert.equal(await plain.a.previewUrl(SHA), null, String(environmentUrl));
+    const deployments = JSON.parse(gl('deployments.json'));
+    deployments[0].environment.external_url = environmentUrl;
+    assert.equal(await adapter('gitlab', { stdout: JSON.stringify(deployments) }).a.previewUrl(GL_SHA), null, String(environmentUrl));
+  }
+  // A deployment without a whole-number id is not asked about.
+  const odd = adapter('github', { stdout: '[{"id":"1/../../x"}]' });
+  assert.equal(await odd.a.previewUrl(SHA), null);
+  assert.equal(odd.calls.length, 1);
+
+  await assert.rejects(adapter('github', { code: 1, stderr: 'HTTP 502' }).a.previewUrl(SHA), /gh api/);
+  await assert.rejects(adapter('github', { stdout: gh('deployments.json') }, { code: 1, stderr: 'HTTP 502' }).a.previewUrl(SHA), /gh api/);
+  await assert.rejects(adapter('gitlab', { code: 1, stderr: '500' }).a.previewUrl(GL_SHA), /glab api/);
+  await assert.rejects(adapter('github', { stdout: '{"message":"Not Found"}' }).a.previewUrl(SHA), /deployments/);
+  for (const sha of ['abc1234', SHA.toUpperCase(), undefined, `${SHA}&sha=x`]) {
+    const { a, calls } = adapter('github');
+    await assert.rejects(a.previewUrl(sha), /full commit ID/);
+    assert.equal(calls.length, 0);
+  }
+});

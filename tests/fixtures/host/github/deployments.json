@@ -1,0 +1,36 @@
+[
+  {
+    "url": "https://api.github.com/repos/a-director/product/deployments/1002",
+    "id": 1002,
+    "sha": "46322a2e182ab8e1bcace1b058b1818f5c93f61f",
+    "ref": "feature/welcome-page",
+    "task": "deploy",
+    "payload": {},
+    "original_environment": "Preview",
+    "environment": "Preview",
+    "description": null,
+    "created_at": "2026-10-18T03:12:40Z",
+    "updated_at": "2026-10-18T03:12:41Z",
+    "statuses_url": "https://api.github.com/repos/a-director/product/deployments/1002/statuses",
+    "repository_url": "https://api.github.com/repos/a-director/product",
+    "transient_environment": false,
+    "production_environment": false
+  },
+  {
+    "url": "https://api.github.com/repos/a-director/product/deployments/1001",
+    "id": 1001,
+    "sha": "46322a2e182ab8e1bcace1b058b1818f5c93f61f",
+    "ref": "feature/welcome-page",
+    "task": "deploy",
+    "payload": {},
+    "original_environment": "Preview",
+    "environment": "Preview",
+    "description": null,
+    "created_at": "2026-10-18T03:02:11Z",
+    "updated_at": "2026-10-18T03:04:52Z",
+    "statuses_url": "https://api.github.com/repos/a-director/product/deployments/1001/statuses",
+    "repository_url": "https://api.github.com/repos/a-director/product",
+    "transient_environment": false,
+    "production_environment": false
+  }
+]

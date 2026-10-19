@@ -1,0 +1,16 @@
+[
+  {
+    "url": "https://api.github.com/repos/a-director/product/deployments/1002/statuses/2004",
+    "id": 2004,
+    "state": "in_progress",
+    "description": "Building",
+    "environment": "Preview",
+    "target_url": "",
+    "created_at": "2026-10-18T03:12:41Z",
+    "updated_at": "2026-10-18T03:12:41Z",
+    "deployment_url": "https://api.github.com/repos/a-director/product/deployments/1002",
+    "repository_url": "https://api.github.com/repos/a-director/product",
+    "environment_url": "",
+    "log_url": ""
+  }
+]

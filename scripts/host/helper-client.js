@@ -59,6 +59,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts?, ciPush?: { branch, sha } }: merges the default branch in; refused under STOP; ciPush names the merge commit the director's CI card must approve
     carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate, earlier }: the gate's carry-over rule, read-only, answered under STOP; with no CLEAN review to weigh, 'none' and upToDate false, unread; earlier: a CLEAN review of an earlier commit is on record
     prState: post('/pr/state'), //   { project, number } (or `cwd` for `project`, as the runbook's)
+    preview: post('/pr/preview'), // { project | cwd, number } -> { ok, url: address | null }: the preview of the open pull request's head, for the front desk's Show me; null when it isn't open or has none; read-only, answered under STOP
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project | cwd } -> { ok, config }: the default branch's, read-only, answered under STOP
