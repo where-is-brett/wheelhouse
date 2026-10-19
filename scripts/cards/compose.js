@@ -5,7 +5,8 @@
 // The front desk asks only what this returns (`cli.js card`), never a card it wrote itself.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
+  SETUP_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
@@ -29,6 +30,7 @@ export const HEADERS = Object.freeze({
   amend: 'Change work',
   'lift-incident': 'End incident',
   'incident-fix': 'Incident fix',
+  setup: 'Setup',
   question: 'Question',
 });
 
@@ -44,6 +46,7 @@ export const DECIDING = Object.freeze({
   amend: 'Change it',
   'lift-incident': 'End it',
   'incident-fix': 'Merge the fix',
+  setup: SETUP_LABEL,
 });
 
 // What an answer card says happens while the director decides.
@@ -144,6 +147,12 @@ function lineFor(kind, target) {
     if (!slug(t.incident)) bad('needs an incident id');
     return liftIncidentLine(t.incident);
   }
+  if (kind === 'setup') {
+    if (!Number.isInteger(t.step) || !Object.hasOwn(SETUP_TITLES, t.step) || !HEX.test(t.hash)) {
+      bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length} and the hash of its list of changes`);
+    }
+    return setupLine(t.step, t.hash);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -151,8 +160,8 @@ function lineFor(kind, target) {
 
 // The first part must name what the set line names, for every kind that names something: the
 // pull request (and the incident), the work, the incident, the runbook step's title, the branch,
-// the ruling's words. It names no other pull request or commit than the set line's. An answer
-// card, a lift-STOP card and a product question name nothing more.
+// the ruling's words, setup's step. It names no other pull request or commit than the set line's.
+// An answer card, a lift-STOP card and a product question name nothing more.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
 // right. The card check judges a card by this too, from the set line alone: with `abbreviated`,
 // the target's commit is the twelve characters the set line holds, so a longer name for the same
@@ -175,6 +184,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'runbook') need = [names(RUNBOOK_TITLES[target.step]), `the step's title, "${RUNBOOK_TITLES[target.step]}"`];
   if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
   if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];
+  if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return null;

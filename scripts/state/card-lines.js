@@ -46,6 +46,29 @@ export function runbookLine(step, sha) {
   return sha === undefined || sha === null ? base : `${base}, to commit ${sha12(sha)}`;
 }
 
+// Setup's steps, numbered as setup runs them (design section 15), with the titles their cards use.
+export const SETUP_TITLES = Object.freeze({
+  1: 'Install',
+  2: 'Tools',
+  3: 'The host and the connection',
+  4: 'Three questions',
+  5: 'Rules found',
+  6: 'Changes to this computer',
+  7: 'The project\'s files, pins and protection',
+  8: 'Locked',
+  9: 'Phone notifications',
+  10: 'Health check',
+});
+
+// The label whose click on a setup card lets its step go ahead.
+export const SETUP_LABEL = 'Go ahead';
+
+// The line on a setup step's card: the step and the first twelve characters of the hash of the
+// list of changes the card shows, so a click stands for that list and no other.
+export function setupLine(step, hash) {
+  return `Set up step ${step} as listed, ${sha12(hash)}`;
+}
+
 // How the build loop's lines spell a work or incident id, a lane and a question id.
 // The prompt record builds its own patterns from these, so the two agree.
 export const ID = '[a-z0-9-]{1,40}';
@@ -97,8 +120,9 @@ export const replyCodeLine = (code) => `Reply code: ${code}`;
 const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // The lines a card's choice is set by, each matching a whole line of the question: the
-// approval, confirmation, lift-STOP, CI-push and runbook lines, and the build loop's five:
-// approve work, answer a question, change approved work, end an incident and merge its fix.
+// approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
+// approve work, answer a question, change approved work, end an incident and merge its fix,
+// and setup's line for a step.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
@@ -110,6 +134,7 @@ export const SET_LINES = [
   new RegExp(`^Change the approved ${ID} to this, [0-9a-f]{12}$`, 'm'),
   new RegExp(`^End incident ${ID} and let merges carry on$`, 'm'),
   new RegExp(`^Merge pull request #[1-9][0-9]* as the fix for incident ${ID}$`, 'm'),
+  new RegExp(`^Set up step (?:${Object.keys(SETUP_TITLES).join('|')}) as listed, [0-9a-f]{12}$`, 'm'),
 ];
 
 // Every set line a question carries, in the order the patterns are listed.
