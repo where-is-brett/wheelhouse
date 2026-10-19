@@ -41,25 +41,24 @@ function anyHeld() {
   });
 }
 
-// The registered project the folder is in: by its repository, else by its path alone, so a
-// rewritten .git file cannot step out of the hold. Undefined when the folder cannot be placed.
-function projectAt(cwd, find, dir) {
-  const found = find(cwd, { dir });
-  if (found) return found.project;
+// Whether the folder is held. Both the project its repository names and the project its path
+// lies in count, so a .git file pointed at another project's repository cannot step out of
+// the hold. A folder whose path cannot be placed is held while any project is.
+function heldAt(cwd, find, dir) {
+  const byRepository = find(cwd, { dir })?.project;
+  if (byRepository && isHeld(byRepository)) return true;
   let real;
   try {
     real = fs.realpathSync.native(cwd);
   } catch {
-    return undefined;
+    return anyHeld();
   }
-  return projectForFolder(real)?.project ?? null;
+  const byPath = projectForFolder(real)?.project;
+  return Boolean(byPath) && isHeld(byPath);
 }
 
 export async function decide(input, { dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform } = {}) {
-  const project = projectAt(input.cwd, find, dir);
-  if (project === null) return undefined;
-  const held = project === undefined ? anyHeld() : isHeld(project);
-  if (!held) return undefined;
+  if (!heldAt(input.cwd, find, dir)) return undefined;
   if (READ_TOOLS.includes(input.tool_name)) return undefined;
   if (input.tool_name === 'Bash' && isCheck(input.tool_input?.command, pluginRoots(dir, self, pluginRoot), platform)) return undefined;
   return answer.deny(HELD);

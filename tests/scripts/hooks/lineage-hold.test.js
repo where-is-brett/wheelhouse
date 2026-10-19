@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { decide, HELD } from '../../../scripts/hooks/lineage-hold.js';
 import { READ_TOOLS } from '../../../scripts/hooks/stop-guard.js';
-import { hookMain } from '../../../scripts/hooks/kit.js';
+import { hookMain, projectOf } from '../../../scripts/hooks/kit.js';
 import { holdFile, main as check } from '../../../scripts/lineage/check.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -63,6 +63,25 @@ test('while held, Edit, Write and Bash are refused and Read is not', async () =>
     fs.mkdirSync(deeper);
     assert.ok(denied(await decide(call(deeper, 'Edit'), deps(home))));
     assert.ok(denied(await decide(call(main, 'Edit'), deps(home, { projectOf: () => null }))), 'placed by its path');
+    // A .git file inside the held project that leads to another, unheld project's repository.
+    const other = fs.realpathSync.native(tempFolder('wh-hold-other-'));
+    fs.mkdirSync(path.join(other, '.git'));
+    writeProject('owner__other', { folder: other, remoteUrl: 'https://example.com/owner/other.git', host: 'github', repo: 'owner/other', connection: {} });
+    const worktree = path.join(main, '.claude', 'worktrees', 'x');
+    fs.mkdirSync(worktree, { recursive: true });
+    assert.ok(denied(await decide(call(worktree, 'Edit'), deps(home))), 'an ordinary folder in the project');
+    const fake = tempFolder('wh-hold-fake-gitdir-');
+    fs.writeFileSync(path.join(fake, 'commondir'), path.join(other, '.git'));
+    fs.writeFileSync(path.join(worktree, '.git'), `gitdir: ${fake}\n`);
+    assert.equal(projectOf(worktree, { dir: path.join(home, 'managed') })?.project, 'owner__other', 'the repository names the other project');
+    assert.ok(denied(await decide(call(worktree, 'Edit'), deps(home))), 'the path still holds it');
+    assert.equal(await decide(call(other, 'Edit'), deps(home)), undefined, 'the other project is not held');
+    // And the other way round: a folder outside every project whose .git leads into the held one.
+    const outside = fs.realpathSync.native(tempFolder('wh-hold-outside-'));
+    const intoHeld = tempFolder('wh-hold-into-gitdir-');
+    fs.writeFileSync(path.join(intoHeld, 'commondir'), path.join(main, '.git'));
+    fs.writeFileSync(path.join(outside, '.git'), `gitdir: ${intoHeld}\n`);
+    assert.ok(denied(await decide(call(outside, 'Edit'), deps(home))), 'the repository holds it');
     // A folder that can't be placed is held while any project is.
     assert.ok(denied(await decide(call(path.join(main, 'gone', 'away'), 'Edit'), deps(home, { projectOf: () => null }))));
     fs.rmSync(holdFile(P));
