@@ -13,7 +13,7 @@ import type { EngineInterface, RenderInput, SessionStartInput, TurnStartInput, T
 import { ask, type Answer, type PaneModel } from './ask'
 import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS } from './numbers'
 import { drawCard, drawStop, pressingNow, releaseAll } from './cards'
-import { drawSettings, showSettings } from './settings'
+import { drawSettings, forgetAsks, showSettings } from './settings'
 
 // Whether every button, STOP included, is held back while a turn runs. Buttons stay live during a
 // turn, since each press says at once that it was taken (design section 17.1); check 41 turns this
@@ -175,6 +175,7 @@ export async function startPane($: EngineInterface, e: SessionStartInput) {
   }
   try {
     await releaseAll($)
+    await forgetAsks($)
   } catch {
     // The buttons stay as they were.
   }
@@ -253,7 +254,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box flexDirection="column">
         {stale !== null && <Text bold>{stale}</Text>}
         {top}
-        {drawSettings($, e, (await $.state.get(SETTINGS)).value, pressing, live)}
+        {await drawSettings($, e, (await $.state.get(SETTINGS)).value, pressing, live)}
       </Box>
     )
   }

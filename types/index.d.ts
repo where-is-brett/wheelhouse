@@ -85,6 +85,10 @@ declare module 'claude-code' {
       // The settings view's rows as the bridge last answered them, its line under them, and
       // whether the last read failed; null while they are being read.
       settings: { rows: WheelhouseSettingsRow[]; text: string | null; failed: boolean } | null;
+      // The keys of the settings rows whose Ask the front desk has been handed over since the
+      // settings view was last opened. Each is drawn as plain text until the view is opened again,
+      // so a double click asks once.
+      asked: string[];
     };
   }
 }

@@ -17,6 +17,7 @@ type Choice = NonNullable<Row['choices']>[number]
 
 const VIEW = { plugin: 'wheelhouse', key: 'view' } as const
 const SETTINGS = { plugin: 'wheelhouse', key: 'settings' } as const
+const ASKED = { plugin: 'wheelhouse', key: 'asked' } as const
 
 const READING = 'Reading the settings…'
 const NOT_READ = 'Wheelhouse couldn\'t read the settings'
@@ -41,9 +42,11 @@ export async function readSettings($: EngineInterface) {
   }
 }
 
-// Settings on the board view: the view changes at once and the rows are read.
+// Settings on the board view: the view changes at once and the rows are read. Each row's Ask the
+// front desk is live again.
 export async function showSettings($: EngineInterface) {
   await $.state.set(SETTINGS, null)
+  await $.state.set(ASKED, [])
   await $.state.set(VIEW, 'settings')
   await readSettings($)
 }
@@ -60,25 +63,59 @@ async function pressChoice($: EngineInterface, key: string, rowLabel: string, ch
   await carry($, { cmd: 'setting', origin: 'pane', key, choice: id }, taken, () => release($), () => readSettings($))
 }
 
+// A session's start, a reload's included: every row's Ask the front desk is live again.
+export async function forgetAsks($: EngineInterface) {
+  await $.state.set(ASKED, [])
+}
+
+// Marks a row asked, or unmarks it. Written at the version read, again on a miss, so a row
+// another press marked meanwhile is kept. True when the write landed.
+async function markAsked($: EngineInterface, key: string, on: boolean): Promise<boolean> {
+  for (let tries = 0; tries < 3; tries += 1) {
+    const held = await $.state.get(ASKED)
+    const asked = held.value ?? []
+    if (on && asked.includes(key)) return false
+    const next = on ? [...asked, key] : asked.filter((k) => k !== key)
+    if ((await $.state.set(ASKED, next, { ifVersion: held.version })).isSet) return true
+  }
+  return false
+}
+
 // Ask the front desk: a prompt naming the row, in the pane's own words. It goes to the front
-// desk, not the bridge, so it carries no origin of its own. The press is released once the prompt
-// is handed over, not once its turn starts, so the buttons stay live while a turn runs.
+// desk, not the bridge, so it carries no origin of its own. The row is marked asked while the
+// press is held, so its Ask is plain text until the settings view is opened again and a double
+// click, however far apart, asks once. The press itself is released once the prompt is handed
+// over, not once its turn starts, so the other buttons stay live while a turn runs. A prompt that
+// can't be handed unmarks the row, so it can be asked again.
 async function askFrontDesk($: EngineInterface, key: string, rowLabel: string) {
   if (!(await claim($, { on: `setting:${key}`, label: 'ask' }))) return
-  const handed = submitAll($, [`${PANE_LEAD} the director wants to change ${rowLabel}.`])
+  let marked = false
+  try {
+    marked = await markAsked($, key, true)
+  } catch {
+    marked = false
+  }
+  const handed = marked ? submitAll($, [`${PANE_LEAD} the director wants to change ${rowLabel}.`]) : Promise.resolve(true)
   try {
     await release($)
   } catch {
     // The next session start releases it.
   }
-  await handed
+  if (!(await handed)) {
+    try {
+      await markAsked($, key, false)
+    } catch {
+      // Opening the settings view again unmarks it.
+    }
+  }
 }
 
 // The settings view: the rows, the bridge's line under them, then Board. `live` is false while
 // pane.tsx's HIDE_WHILE_BUSY holds every button back.
-export function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, settings: Settings | undefined, pressing: Pressing, live: boolean) {
+export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, settings: Settings | undefined, pressing: Pressing, live: boolean) {
   const { Box, Text, Button } = $.ui.resolve(e)
   if (settings === null || settings === undefined) return <Text>{READING}</Text>
+  const asked = (await $.state.get(ASKED)).value ?? []
   const rows = settings.rows.filter((row) => isRecord(row) && typeof row.key === 'string' && typeof row.label === 'string')
 
   // A choice's button, or what stands in its place while a press is recorded.
@@ -94,7 +131,7 @@ export function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, setting
 
   const askOf = (key: string, rowLabel: string) => {
     if (pressing?.on === `setting:${key}` && pressing.label === 'ask') return <Text>{RECORDING}</Text>
-    if (pressing !== null) return <Text dimColor>{ASK}</Text>
+    if (pressing !== null || asked.includes(key)) return <Text dimColor>{ASK}</Text>
     return <Button key={`setting:${key}:ask`} label={ASK} onPress={() => askFrontDesk($, key, rowLabel)} />
   }
 

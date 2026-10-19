@@ -229,6 +229,28 @@ test('a double press sends once', async ($, on) => {
   }
 })
 
+test('a double click on a card button, a moment apart, sends once', async ($, on) => {
+  let reply: Reply = { ok: true }
+  const { seen, clear, start, clock } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    // The bridge takes a second; the second click comes 200 ms after the first, once the pane has
+    // redrawn the button as Recording.
+    reply = { hold: 1000, then: { ok: true, says: 'Approved' } }
+    const pressed = ui.press({ key: cardKey('card-1', 'Approve') })
+    await clock.advance(200)
+    await ui.redraw()
+    expect(await ui.find({ key: cardKey('card-1', 'Approve') })).toBeUndefined()
+    await expect(ui.press({ key: cardKey('card-1', 'Approve') })).rejects.toThrow()
+    await clock.advance(800)
+    await pressed
+    expect(seen.requests).toHaveLength(1)
+    await ui.unmount()
+  }
+})
+
 test('a press whose answer holds a prompt submits it', async ($, on) => {
   const prompts = ['Wheelhouse pane: the director pressed Explain more on card 1 (card-1).', 'Wheelhouse pane: a second prompt.']
   let reply: object = { ok: true, says: 'Asking the front desk', submit: [prompts[0]] }

@@ -54,16 +54,18 @@ export async function releaseAll($: EngineInterface) {
 }
 
 // Hands the front desk each prompt, in order, once. A prompt that can't be handed is a toast,
-// and the ones after it aren't handed either, so they never arrive out of order.
-export async function submitAll($: EngineInterface, prompts: readonly string[]) {
+// and the ones after it aren't handed either, so they never arrive out of order. True when every
+// prompt was handed over.
+export async function submitAll($: EngineInterface, prompts: readonly string[]): Promise<boolean> {
   for (const text of prompts) {
     try {
       await $.prompt.submit({ text })
     } catch {
       $.ui.toast(NOT_HANDED)
-      return
+      return false
     }
   }
+  return true
 }
 
 // A press once taken: said at once, sent with the session's folder, the bridge's words said (or

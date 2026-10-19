@@ -51,6 +51,8 @@ function world(on: any, bridge: (request: any) => Reply) {
   const current = { session: SESSION }
   let sessions = 0
   const seen = { requests: [] as any[], ticks: [] as any[], toasts: [] as string[], submits: [] as any[] }
+  // Set to make the engine refuse the next prompts the mod submits.
+  const control = { refuseSubmit: false }
   on('session.id', () => ({ value: current.session }))
   on('session.root', () => ({ value: ROOT }))
   on('session.usage', () => ({ value: { startedAt: 0, context: CONTEXT, rateLimits: [], cost: undefined } }))
@@ -79,7 +81,11 @@ function world(on: any, bridge: (request: any) => Reply) {
     if (got.exitCode !== undefined) return { value: { ...RUN_RESULT, exitCode: got.exitCode, stdout: '' } }
     return { value: { ...RUN_RESULT, stdout: `${JSON.stringify(got)}\n` } }
   })
-  on('prompt.submit', ($: any, e: any) => { seen.submits.push(e); return { text: e.text, origin: e.origin } })
+  on('prompt.submit', ($: any, e: any) => {
+    if (control.refuseSubmit) throw new Error('the session took no prompt')
+    seen.submits.push(e)
+    return { text: e.text, origin: e.origin }
+  })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.run', () => ({ text: 'the engine ran it' }))
   const clear = () => { for (const list of Object.values(seen)) list.length = 0 }
@@ -90,7 +96,7 @@ function world(on: any, bridge: (request: any) => Reply) {
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
   }
-  return { seen, clear, start, clock }
+  return { seen, clear, start, clock, control }
 }
 
 const mount = ($: any, surface: string) => $.ui.mount({ plugin: 'wheelhouse', surface, component: 'Pane', requestId: PANE_ID, props: PANE_PROPS })
@@ -168,6 +174,46 @@ test('a row that changes in the chat offers only Ask the front desk', async ($, 
     expect(seen.submits.map((p: any) => p.text)).toEqual(['Wheelhouse pane: the director wants to change Notifications.'])
     // It asks the front desk, not the bridge, and so carries no origin of its own.
     expect(seen.requests).toEqual([])
+    await ui.press({ key: 'board' })
+    await ui.unmount()
+  }
+})
+
+test('a double click on Ask the front desk, a moment apart, asks once', async ($, on) => {
+  const { seen, clear, start, clock, control } = world(on, (request) => (request.cmd === 'settings' ? { ok: true, rows: rowsWith('balanced'), text: ADVANCED } : { ok: false }))
+  const asked = 'Wheelhouse pane: the director wants to change Notifications.'
+  for (const surface of SURFACES) {
+    control.refuseSubmit = false
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'settings' })
+    clear()
+    await ui.press({ key: choiceKey('notifications', 'ask') })
+    // The second click comes 200 ms later, after the prompt was handed over and the pane redrawn:
+    // the row's Ask is plain text, so there is nothing to press.
+    await clock.advance(200)
+    await ui.redraw()
+    expect(await ui.find({ key: choiceKey('notifications', 'ask') })).toBeUndefined()
+    expect(await texts(ui)).toContain('Ask the front desk')
+    await expect(ui.press({ key: choiceKey('notifications', 'ask') })).rejects.toThrow()
+    expect(seen.submits.map((p: any) => p.text)).toEqual([asked])
+    // The other buttons are live meanwhile.
+    expect((await ui.find({ key: choiceKey('pace', '1') }))?.type).toBe('Button')
+
+    // Opening the settings view again makes it live again.
+    await ui.press({ key: 'board' })
+    await ui.press({ key: 'settings' })
+    expect((await ui.find({ key: choiceKey('notifications', 'ask') }))?.type).toBe('Button')
+
+    // A prompt the engine doesn't take is a toast, and the row can be asked again.
+    clear()
+    control.refuseSubmit = true
+    await ui.press({ key: choiceKey('notifications', 'ask') })
+    expect(seen.toasts).toEqual(['Wheelhouse couldn\'t hand that to the front desk'])
+    expect((await ui.find({ key: choiceKey('notifications', 'ask') }))?.type).toBe('Button')
+    control.refuseSubmit = false
+    await ui.press({ key: choiceKey('notifications', 'ask') })
+    expect(seen.submits.map((p: any) => p.text)).toEqual([asked])
     await ui.press({ key: 'board' })
     await ui.unmount()
   }
