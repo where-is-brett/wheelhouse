@@ -182,6 +182,16 @@ test('the playbook says what to do under STOP, with a card already asked, and wi
   assert.match(intake, /`cli\.js again <n>`/);
 });
 
+test('the playbook looks at the work before it says how things stand or what was in progress', () => {
+  // "How's it going?" reads `views work` (or sends the director to the board), and never says
+  // nothing is running without having looked; under STOP, what was in progress comes from it too.
+  const going = playbook.split('\n').find((line) => line.startsWith('| "How\'s it going?"')) ?? '';
+  assert.match(going, /`views work`/);
+  assert.match(going, /`\/wheelhouse:board`/);
+  assert.match(going, /[Nn]ever say nothing is running/);
+  assert.match(playbook, /\*\*STOP:\*\*[^\n]*`views work`/);
+});
+
 test('the playbook decides a level 2 question itself, and puts the review before the visit\'s other cards', () => {
   // A question card on a topic at level 2 is decided by its recommendation and told in the briefing,
   // never for a kind a signed click decides, and never when a raising trigger applies.

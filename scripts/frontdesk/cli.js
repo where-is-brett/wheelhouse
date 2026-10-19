@@ -11,7 +11,8 @@
 //                   for a work event's document and an amendment, it works out the hash and prints it
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
-//   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings or levels
+//   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels or
+//                   work (the open work, running and waiting, in the glossary's plain words)
 //   explain <term>  the glossary's plain words for a term, with its example
 //   review          the delegation review: each proposal as a level waiting for the director, with
 //                   its confirm card, as AskUserQuestion's input; then records the review as done
@@ -39,7 +40,7 @@ import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, ID } from '../state/card-lines.js';
 import { countsAtOnce } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
-import { endedBy, since } from '../foreman/queue.js';
+import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 // An error whose message is said to the session as it is.
@@ -51,7 +52,7 @@ export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
   'work', 'amendment', 'incident', 'note',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels']);
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work']);
 const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'explain', 'review', 'preview'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
@@ -492,6 +493,16 @@ function documentHash(cwd, file, given) {
   return hash;
 }
 
+// Whether `id` names open work, as the queue reads it: no report has ended it, and its feature
+// hasn't closed since it was queued (scripts/foreman/queue.js).
+function isOpen(views, id) {
+  const entry = isPlain(views.work) ? views.work[id] : undefined;
+  if (!isPlain(entry)) return false;
+  const feature = isPlain(views.features) ? views.features[id] : undefined;
+  const closed = feature?.data?.step === 'closed' && since(feature, entry.work);
+  return !closed && !endedBy(views.reports, id, entry.work);
+}
+
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
 async function withHash(client, cwd, kind, input) {
   if (kind === 'work' && isPlain(input.doc) && typeof input.doc.path === 'string') {
@@ -499,12 +510,8 @@ async function withHash(client, cwd, kind, input) {
   }
   if (kind !== 'amendment') return input;
   const { views } = await viewsOf(client, cwd);
-  const entry = isPlain(views.work) ? views.work[input.work] : undefined;
-  // Open as the queue reads it: no report has ended it, and its feature hasn't closed since it was queued.
-  const feature = isPlain(views.features) ? views.features[input.work] : undefined;
-  const closed = feature?.data?.step === 'closed' && since(feature, entry.work);
-  if (!isPlain(entry) || closed || endedBy(views.reports, input.work, entry.work)) throw new CliError(`The work ${input.work} isn't open, so there is nothing to amend`);
-  const file = entry.work?.data?.doc?.path;
+  if (!isOpen(views, input.work)) throw new CliError(`The work ${input.work} isn't open, so there is nothing to amend`);
+  const file = views.work[input.work].work?.data?.doc?.path;
   if (typeof file !== 'string') {
     if (input.hash !== undefined) return input;
     throw new CliError(`The work ${input.work} names no document, so give the changed document's hash`);
@@ -680,10 +687,56 @@ export async function view({ client, cwd, name, now }) {
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
+  if (name === 'work') return workLines(views, await wordsOf(client, views, now));
   // settings: the project's over the director's own, over the defaults
   const profile = await client.profile.views({});
   const own = profile?.ok === true && isPlain(profile.views?.settings) ? profile.views.settings : {};
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
+}
+
+// Open work's step or state in words, and whether a feature runs for it: one that has started and
+// isn't paused or closed. A quick or bug feature has no plan, so it builds from its start. Work whose
+// feature closed before a `work` event queued it again hasn't started this time.
+function workState(entry, feature) {
+  const { lane, visible } = entry.work?.data ?? {};
+  const step = isPlain(feature?.data) && !(feature.data.step === 'closed' && !since(feature, entry.work)) ? feature.data.step : null;
+  if (step === 'building' || (step === 'started' && NO_PLAN.includes(lane))) return { running: true, state: 'building' };
+  if (step === 'started') return { running: true, state: 'writing its plan' };
+  if (step === 'planned') return { running: true, state: 'planned, waiting for the go-ahead to build' };
+  if (step === 'paused') {
+    const why = { director: 'for the director\'s change to it', 'five-hour': 'until the five-hour usage window has room' }[feature.data.pausedFor];
+    return { running: false, state: why ? `paused ${why}` : 'paused' };
+  }
+  const approval = (!STARTS_UNAPPROVED.includes(lane) || visible === true) && entry.approved !== true;
+  return { running: false, state: approval ? 'waiting for the director\'s approval' : 'queued, not started yet' };
+}
+
+// The open work as the board's build tab gives a feature, running work first, each oldest first:
+// its id, title and lane, whether a feature runs for it, its step or state, the slice in hand and
+// the pull request the gate waits on or its latest report names. In the glossary's plain words, a
+// title's included: the front desk reads this to tell the director how things stand.
+function workLines(views, words) {
+  const features = isPlain(views.features) ? views.features : {};
+  const asks = Object.values(isPlain(views.gateAsks) ? views.gateAsks : {}).filter((a) => isPlain(a?.data));
+  const open = Object.entries(isPlain(views.work) ? views.work : {}).filter(([id, entry]) => isPlain(entry?.work?.data) && isOpen(views, id))
+    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id]) }))
+    .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at)));
+  if (open.length === 0) return ['No work is open: nothing is running or waiting.'];
+  const lines = open.map(({ id, entry, running, state }) => {
+    const { title, lane } = entry.work.data;
+    const slice = running ? features[id]?.data?.slice : undefined;
+    const report = views.reports?.[id];
+    const pr = asks.filter((a) => a.data.work === id).sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1)?.data.pr
+      ?? (since(report, entry.work) ? report?.data?.pr : undefined);
+    return [
+      `${id}: ${flat(title) || id}${typeof lane === 'string' ? ` (${lane} lane)` : ''}: ${running ? 'running' : 'not running'}`,
+      state,
+      ...(isPlain(slice) && Number.isInteger(slice.n) && Number.isInteger(slice.m) ? [`slice ${slice.n} of ${slice.m}`] : []),
+      ...(Number.isSafeInteger(pr) && pr > 0 ? [`pull request #${pr}`] : []),
+    ].join(', ');
+  });
+  const protect = [...LABELS, ...open.map(({ id }) => `${id}:`)];
+  return plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
 }
 
 // The decision topics, for a card to reuse one: each level in force, each level waiting for the

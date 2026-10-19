@@ -188,7 +188,7 @@ test('while held, the front desk\'s reading commands run, as under STOP; its wri
     hold();
     const cli = `node ${PLUGIN}/scripts/frontdesk/cli.js`;
     for (const command of [
-      `${cli} cards`, `${cli} again 2`, `${cli} preview 12`, `${cli} views waiting`, `${cli} explain pull request`,
+      `${cli} cards`, `${cli} again 2`, `${cli} preview 12`, `${cli} views waiting`, `${cli} views work`, `${cli} explain pull request`,
       `${cli} similar`, `${cli} similar "Could we export the orders as a spreadsheet?"`,
     ]) {
       assert.equal(await decide(bash(main, command), deps(home)), undefined, command);

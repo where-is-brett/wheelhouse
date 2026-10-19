@@ -949,6 +949,68 @@ test('views and explain answer in short lines, and similar finds work that share
   });
 });
 
+test('views work lists the running and waiting work in plain words, and leaves ended work out', async () => {
+  await inHome(async () => {
+    const work = (id, title, lane, n, extra = {}) => makeEvent({ kind: 'work', data: { id, title, lane, visible: false, dependsOn: [], ...extra }, now: () => T(n) });
+    const feature = (id, step, n, extra = {}) => makeEvent({ kind: 'feature', data: { work: id, step, ...extra }, now: () => T(n) });
+    const report = (id, outcome, n, pr) => makeEvent({ kind: 'report', data: { work: id, outcome, summary: 'Over.', rulings: [], ...(pr ? { pr } : {}) }, now: () => T(n) });
+    const helper = fakeHelper({
+      events: [
+        // Building, with the pull request the gate waits on.
+        work('export-csv', 'Export a report as a spreadsheet', 'feature', 1),
+        feature('export-csv', 'building', 2, { slice: { n: 2, m: 3 } }),
+        gateAsks(APPROVE_ASK, () => T(3)),
+        // Quick work started: it builds at once. Its title carries worker labels.
+        work('ci-badge', 'Show the CI status on the PR page', 'quick', 4),
+        feature('ci-badge', 'started', 5),
+        // Planned and waiting for the go-ahead; paused for the five-hour window.
+        work('menu-photos', 'Photos on the menu', 'small', 5),
+        feature('menu-photos', 'planned', 6),
+        work('loyalty', 'A loyalty stamp card', 'small', 5),
+        feature('loyalty', 'paused', 6, { pausedFor: 'five-hour' }),
+        // Queued, needing no approval; and waiting for the director's approval.
+        work('typo-fix', 'Correct the spelling on the menu', 'bug', 6),
+        work('dark-theme', 'A dark theme for the shop', 'small', 7),
+        // Merged: ended by its report.
+        work('opening-hours', 'Opening hours on the home page', 'quick', 8),
+        report('opening-hours', 'merged', 9, 14),
+        // Ended blocked: its feature closed with the report.
+        work('gift-cards', 'Gift cards at the till', 'small', 10),
+        feature('gift-cards', 'building', 11),
+        report('gift-cards', 'blocked', 12, 15),
+        feature('gift-cards', 'closed', 13),
+        // Closed, then queued again: open once more, its old report kept out of it.
+        work('newsletter', 'A monthly newsletter sign-up', 'small', 14),
+        feature('newsletter', 'closed', 15),
+        report('newsletter', 'closed', 15, 16),
+        work('newsletter', 'A monthly newsletter sign-up', 'small', 16),
+      ],
+    });
+    const out = await run(helper, ['views', 'work']);
+    assert.equal(out.code, 0, out.err);
+    const lines = out.out.trimEnd().split('\n');
+    const line = (id) => lines.find((l) => l.startsWith(`${id}: `)) ?? '';
+    // Each as the board's build tab gives a feature: its title and lane, then whether a feature runs
+    // for it, its step or state and its pull request.
+    assert.equal(line('export-csv'), 'export-csv: Export a report as a spreadsheet (feature process level): running, building, piece 2 of 3, proposed change #7');
+    // A worker label in a title is put in plain words; a term mentioned again stays, its meaning at the end.
+    assert.equal(line('ci-badge'), 'ci-badge: Show the automatic check run status on the PR page (quick lane): running, building');
+    assert.equal(line('menu-photos'), 'menu-photos: Photos on the menu (small lane): running, planned, waiting for the go-ahead to build');
+    assert.equal(line('loyalty'), 'loyalty: A loyalty stamp card (small lane): not running, paused until the five-hour usage window has room');
+    assert.equal(line('typo-fix'), 'typo-fix: Correct the spelling on the menu (bug lane): not running, queued, not started yet');
+    assert.equal(line('dark-theme'), 'dark-theme: A dark theme for the shop (small lane): not running, waiting for the director\'s approval');
+    assert.equal(line('newsletter'), 'newsletter: A monthly newsletter sign-up (small lane): not running, waiting for the director\'s approval');
+    for (const ended of ['opening-hours', 'gift-cards']) assert.equal(line(ended), '', ended);
+    // Running work first.
+    assert.deepEqual(lines.filter((l) => /^[a-z-]+: /.test(l)).map((l) => l.split(':')[0]), ['export-csv', 'ci-badge', 'menu-photos', 'loyalty', 'typo-fix', 'dark-theme', 'newsletter']);
+    assert.match(out.out, /\n\nTerms: lane means [^\n]*; pull request means [^\n]*\.\n$/);
+    assert.deepEqual(helper.writes(), []);
+
+    const none = await run(fakeHelper({ events: [work('opening-hours', 'Opening hours', 'quick', 1), report('opening-hours', 'merged', 2)] }), ['views', 'work']);
+    assert.equal(none.out, 'No work is open: nothing is running or waiting.\n');
+  });
+});
+
 test('under STOP the reading commands run and record is refused', async () => {
   await inHome(async () => {
     const helper = fakeHelper({ stop: true, events: [cardEvent(PRODUCT(1), 1), questionEvent()] });
@@ -963,7 +1025,7 @@ test('under STOP the reading commands run and record is refused', async () => {
     const again = await run(helper, ['again', '1']);
     assert.equal(again.code, 0);
     assert.equal(again.json.problems, undefined);
-    for (const name of ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels']) assert.equal((await run(helper, ['views', name])).code, 0, name);
+    for (const name of ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work']) assert.equal((await run(helper, ['views', name])).code, 0, name);
     // The review writes, so it waits until STOP is lifted.
     const review = await run(helper, ['review']);
     assert.equal(review.code, 1);
