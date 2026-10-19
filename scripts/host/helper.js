@@ -595,7 +595,7 @@ function placeFolder(cwd) {
 // Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
 // call. Those commands, like runbook.js, run inside the sandbox, which cannot read
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
-const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance'];
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/config'];
 
 // The request with its project placed from `cwd`. A request that names a project too must
 // name the one the folder is in, or it is refused: the folder is placed from this computer's

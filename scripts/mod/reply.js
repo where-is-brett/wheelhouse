@@ -4,10 +4,13 @@
 // counts as the click: it earns exactly the signed record the click would have, through the
 // prompt record's own code, and the plain card-answer the prompt record writes beside every click
 // (ruling F44), so the card closes in the project's views even when its record goes to the
-// director's profile. A plain "yes" never counts. The bridge, run by
-// the mod outside the sandbox, calls replyRecord. The message's text is only parsed: it is
-// never written anywhere, and only the card's own spelling of the option is used.
-// A record or an answer the helper doesn't take is kept in pending/, as the prompt record keeps them.
+// director's profile. A plain "yes" never counts, and no reply turns on or confirms the Windows
+// build-commands setting (Turn on (dangerous), Use Guarded or Confirm), which only a click on its
+// own card sets; nor does a reply allow a build-command question's commands from any computer but
+// the one that asked it. The bridge, run by the mod outside the sandbox, calls replyRecord. The
+// message's text is only parsed: it is never written anywhere, and only the card's own spelling of
+// the option is used. A record or an answer the helper doesn't take is kept in pending/, as the
+// prompt record keeps them.
 //
 // A code is good once. The shown view is built here from the state clone, which the helper
 // writes each record into, so a record taken a moment ago spends its card at once; a signed
@@ -20,13 +23,14 @@ import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-rec
 import { withinBudget, pendingDir, keep, taken, BUDGET_MS } from '../hooks/pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift } from '../lib/stop.js';
-import { stateDir } from '../lib/paths.js';
+import { computerId, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents } from '../state/events.js';
 import { buildViews } from '../state/views.js';
 import { readEnrolled } from '../state/signing.js';
-import { CODE_ALPHABET, RUNBOOK_TITLES, setLineOf, replyCode } from '../state/card-lines.js';
+import { CODE_ALPHABET, RUNBOOK_TITLES, confirmLine, setLineOf, replyCode } from '../state/card-lines.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
+import { BUILD_QUESTION_LABELS, USE_GUARDED, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 // Longer than any option a card offers; a longer message is not a reply.
@@ -99,6 +103,35 @@ function answeredInPending(project, question) {
   });
 }
 
+// Whether `question` carries the confirm line of a Windows build-commands setting, in the project's
+// state or the director's profile, as the prompt record would find it. That setting is set only by
+// a click on its own card (design section 12.2), so no reply confirms it, whatever card carries it.
+function confirmsBuilds(project, question) {
+  const builds = (dirOf) => {
+    try {
+      return listEvents(dirOf(), { report: () => {} }).some((e) => e.kind === 'setting' && typeof e.data?.key === 'string'
+        && e.data.key.startsWith(settingKey('')) && question.includes(confirmLine(e)));
+    } catch {
+      return false;
+    }
+  };
+  return builds(() => stateDir(project)) || builds(profileDir);
+}
+
+// Whether an Allow reply on the answer card for question `id` would grant nothing: the question is
+// a build-command one, and this isn't the computer that recorded it (unknown counts as another). A
+// grant holds only on the computer whose key signed the answer (buildGrants), so an answer signed
+// here would close the card and leave the builder's commands unallowed there.
+function allowsElsewhere(project, id, label) {
+  if (label !== BUILD_QUESTION_LABELS.once && label !== BUILD_QUESTION_LABELS.feature) return false;
+  try {
+    const asked = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === id).at(-1);
+    return isBuildQuestion(asked?.data) && asked.computer !== computerId();
+  } catch {
+    return true;
+  }
+}
+
 // Writes the plain answer the click would have written beside its record, keeping it in pending/
 // when the helper doesn't take it, as the prompt record does. Never throws.
 async function writeAnswer(api, left, project, question, label, now) {
@@ -168,7 +201,12 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   // On an answer card the question's own options answer it; earned checks the label is one of them
   // and repeats the PUT_OFF check.
   const answers = line.startsWith('Answer question ') && !PUT_OFF.includes(label);
+  // Use Guarded, on the Unattended card, confirms the build-commands setting: a click only.
+  if (label === USE_GUARDED || (label === 'Confirm' && confirmsBuilds(project, card.question))) return no('That setting is changed only by a click on its own card');
   if (!SIGNED_LABELS.includes(label) && !answers) return no('That option doesn\'t need a reply code');
+  if (answers && allowsElsewhere(project, line.slice('Answer question '.length), label)) {
+    return no('Build commands are allowed only on the Windows computer that asked: answer the card there');
+  }
   if (typeof card.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(card.id)) return no('No card has that code');
 
   const api = client ?? helperClient({ timeout: budget });

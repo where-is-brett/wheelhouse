@@ -52,7 +52,7 @@ async function withHelper(remote, fn) {
     await cloneState({ project: 'o__p', remoteUrl: remote.url });
     const helper = await startHelper({ address: testAddress(home), adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
     try {
-      return await fn(helperClient({ address: helper.address }));
+      return await fn(helperClient({ address: helper.address }), home);
     } finally {
       await helper.close();
     }
@@ -88,4 +88,25 @@ test('/config with no configuration file is the empty configuration; an unreadab
       assert.match(answer.refused, /configuration/);
     });
   } finally { bad.cleanup(); }
+});
+
+test('/config with `cwd` is placed from the folder, as a feature session asks it; the watcher\'s `project` still works', async () => {
+  const given = { ...base, buildCommands: ['npm test'] };
+  const remote = await remoteWith({ '.claude/wheelhouse.json': JSON.stringify(given) });
+  try {
+    await withHelper(remote, async (client, home) => {
+      const worktree = path.join(home, 'work', '.claude', 'worktrees', 'login-page');
+      fs.mkdirSync(worktree, { recursive: true });
+      const placed = await client.config({ cwd: worktree });
+      assert.equal(placed.ok, true, placed.refused);
+      assert.deepEqual(placed.config, readConfig(JSON.stringify(given)));
+      assert.deepEqual((await client.config({ project: 'o__p' })).config, placed.config);
+      assert.equal((await client.config({ cwd: worktree, project: 'o__p' })).ok, true);
+      // A name beside the folder must be the folder's project; a folder outside every project, or
+      // not a full path, is refused.
+      assert.deepEqual(await client.config({ cwd: worktree, project: 'o__other' }), { ok: false, refused: 'the folder given is not inside the project named' });
+      assert.match((await client.config({ cwd: fs.realpathSync.native(tempFolder('wh-elsewhere-')) })).refused, /not inside a Wheelhouse project/);
+      assert.match((await client.config({ cwd: 'work/.claude/worktrees/login-page' })).refused, /full path/);
+    });
+  } finally { remote.cleanup(); }
 });

@@ -10,6 +10,7 @@ import {
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
+import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 
 // The labels the five parts start with, in order, then the one for a level 4 card.
 export const PART_LABELS = Object.freeze([
@@ -76,6 +77,11 @@ const SET_FRAGMENTS = SET_LINES.map((p) => new RegExp(p.source.replace(/^\^/, ''
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const isCount = (x) => Number.isInteger(x) && x >= 1;
+// Whether a card's options are a build-command question's own: the design's labels, in order
+// (design section 12.2), whatever words the card puts them in. Their Not now is a put-off button
+// that records no answer, so the card stays waiting.
+const buildOptions = (list) => list.length === BUILD_QUESTION_OPTIONS.length
+  && list.every((o, i) => o.label === BUILD_QUESTION_OPTIONS[i].label);
 const bare = (text) => text.replace(/[.!?]+$/, '');
 // A reason read as a clause after "because": no closing full stop, and its first word in lower case unless it is a name or acronym.
 const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
@@ -185,9 +191,10 @@ function sameThing(kind, what, target) {
   if (why !== null) fail(kind, 'what', why);
 }
 
-// The buttons a card offers, each { label, says }, in the order they are shown. A confirm card for
-// a proposal offers Keep as is in place of Show me.
-function offered(kind, given, target) {
+// The buttons a card offers, each { label, says }, in the order they are shown. `build` says the
+// card answers a build-command question (one that names its `commands`). A confirm card for a
+// proposal (its `target`) offers Keep as is in place of Show me.
+function offered(kind, given, { build = false, target } = {}) {
   if (!Array.isArray(given) || given.length === 0) fail(kind, 'options');
   const seen = new Set();
   const list = given.map((o) => {
@@ -201,7 +208,8 @@ function offered(kind, given, target) {
   });
   if (kind === 'answer' || kind === 'question') {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
-    for (const o of list) if (PUT_OFF.includes(o.label)) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
+    const own = kind === 'answer' && build && buildOptions(list);
+    for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
     return [...list, ...(list.length < CARD.options ? [{ label: 'Explain more', says: PUT_OFF_SAYS['Explain more'] }] : [])];
   }
   const deciding = DECIDING[kind];
@@ -241,7 +249,8 @@ export function composeCard(input) {
 
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
-  const buttons = offered(kind, input.options, input.target);
+  const build = Array.isArray(input.commands) && input.commands.length > 0;
+  const buttons = offered(kind, input.options, { build, target: input.target });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null ? null : replyCode(line);
@@ -300,6 +309,8 @@ export function answerInput(data, work) {
     meanwhile: MEANWHILE,
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },
+    // A build-command question's commands, so its own Not now is offered (see offered).
+    ...(Array.isArray(data.commands) && data.commands.length > 0 ? { commands: data.commands } : {}),
   };
 }
 

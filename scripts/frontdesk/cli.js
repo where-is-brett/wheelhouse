@@ -27,7 +27,7 @@ import { composeCard, answerInput, PART_LABELS } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
-import { checkSetting, definitionOf, KNOWN, SETTINGS } from '../settings/catalogue.js';
+import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS } from '../settings/catalogue.js';
 import { CARD } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
@@ -333,6 +333,11 @@ export async function writeSetting({ client, cwd, data, words, makeId = () => cr
     checkSetting(data.key, data.value, data.until);
   } catch (error) {
     throw new CliError(error.message);
+  }
+  // Build commands on Windows are turned on only by the director's click on their own card, never
+  // by an agent (design section 12.2); the front desk may write only the off switch, Ask.
+  if (definitionOf(data.key) === WINDOWS_BUILD_COMMANDS && data.value !== 'ask') {
+    throw new CliError('Build commands on Windows are turned on only by a click on their own card; the front desk can set them back to ask');
   }
   const setting = { ...data, words: settingWords(data.key, data.value, data.until) };
   const answered = (got) => ({ id: got.id, pushed: got.pushed === true });

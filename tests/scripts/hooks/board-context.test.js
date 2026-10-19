@@ -81,11 +81,11 @@ test('a prompt two hours after the last one brings the briefing; one an hour aft
     assert.match(text, /Approve the sign-in page/);
     // An address shows as text, never as a link.
     assert.match(text, /`https:\/\/example\.com\/sign-in`/);
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
 
     const later = '2026-10-19T13:00:00.000Z';
     assert.equal(await run(repo, 'And then?', later), undefined);
-    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: NOW });
+    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: NOW, weeklyAt: null });
   });
 });
 
@@ -172,11 +172,11 @@ test('a command after a long gap adds only its own text, and leaves the due brie
     for (const command of ['/wheelhouse:settings', '/wheelhouse:board', '/wheelhouse:sources']) {
       const text = contextOf(await run(repo, command, NOW));
       assert.doesNotMatch(text, /Waiting on you:/, command);
-      assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' }, command);
+      assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z', weeklyAt: null }, command);
     }
     const later = '2026-10-19T12:05:00.000Z';
     assert.ok(contextOf(await run(repo, 'Morning', later)).startsWith(HEADINGS.briefing));
-    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: later });
+    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: later, weeklyAt: null });
   });
 });
 
@@ -186,7 +186,7 @@ test('the briefing command marks the briefing given, so the next gap starts from
     const raised = [];
     const out = await run(repo, '/wheelhouse:briefing', NOW, { markRaised: (ids) => raised.push(...ids) });
     assert.ok(contextOf(out).startsWith(HEADINGS.briefing));
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
     assert.deepEqual(raised, []);
     // Ninety minutes on is inside the gap, measured from the command.
     assert.equal(await run(repo, 'Next', '2026-10-19T13:30:00.000Z'), undefined);
@@ -201,6 +201,38 @@ test('unusual use the briefing shows is marked raised, and only that', async () 
     await run(repo, 'Hello', NOW, { briefingModel: briefing, markRaised: (ids) => raised.push(...ids) });
     assert.deepEqual(raised, ['u1']);
     assert.equal(wasRaised('u1'), false, 'the stand-in was used, not the store');
+  });
+});
+
+test('the weekly lines count as given only when the briefing showed them', async () => {
+  await withProject(async ({ repo }) => {
+    const weekly = 'Build commands run unattended on this Windows computer, with no sandbox.';
+    const long = (n) => Array.from({ length: 12 }, (_, i) => `Entry ${n}${i} ${'word '.repeat(30)}`);
+    const asked = [];
+    // So crowded that what to watch is cut out of the briefing altogether.
+    const crowded = (options) => {
+      asked.push(options.weeklySince);
+      return { first: long('f'), waiting: long('w'), changed: long('c'), progress: long('p'), watch: [weekly, 'Unusual use: a lot'], usage: null, raise: ['u1'], weekly: 1 };
+    };
+    const raised = [];
+    const out = contextOf(await run(repo, 'Hello', NOW, { briefingModel: crowded, markRaised: (ids) => raised.push(...ids) }));
+    assert.ok(out.startsWith(HEADINGS.briefing));
+    assert.doesNotMatch(out, /unattended/);
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
+    assert.deepEqual(raised, []);
+
+    // The next briefing that shows it marks it given, and only the unusual items after it count as raised.
+    const later = '2026-10-19T15:00:00.000Z';
+    const roomy = (options) => {
+      asked.push(options.weeklySince);
+      return { first: [], waiting: [], changed: [], progress: [], watch: [weekly, 'Unusual use: a lot'], usage: null, raise: ['u1', 'u2'], weekly: 1 };
+    };
+    assert.match(contextOf(await run(repo, 'Hello again', later, { briefingModel: roomy, markRaised: (ids) => raised.push(...ids) })), /unattended/);
+    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: later, weeklyAt: later });
+    assert.deepEqual(raised, ['u1']);
+    const after = '2026-10-19T18:00:00.000Z';
+    await run(repo, 'And again', after, { briefingModel: roomy, markRaised: () => {} });
+    assert.deepEqual(asked, [null, null, later]);
   });
 });
 
@@ -305,7 +337,7 @@ test('a feature worktree and the foreman get nothing', async () => {
     const inSession = (cwd, text, session, extra = {}) => decide(prompt(cwd, text, session), { now: at(NOW), env: {}, client, ...extra });
     for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await inSession(tree, text, 's-feature'), undefined, text);
     for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await inSession(repo, text, 's-foreman', { env: { WHEELHOUSE_ROLE: 'foreman' } }), undefined, text);
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: null, briefedAt: null });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: null, briefedAt: null, weeklyAt: null });
     // Outside any Wheelhouse project, nothing either.
     assert.equal(await run(tempFolder('wh-elsewhere-'), '/wheelhouse:board', NOW), undefined);
     // The front desk in the main folder does get it.
@@ -343,7 +375,7 @@ test('a failure adds nothing and lets the prompt through', async () => {
     const broken = async () => { throw new Error('unreadable'); };
     assert.equal(await run(repo, 'Hello', NOW, { load: broken }), undefined);
     // The director did write, so the prompt's time is kept; no briefing was given.
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: '2026-10-19T08:00:00.000Z' });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: '2026-10-19T08:00:00.000Z', weeklyAt: null });
 
     assert.equal(await run(repo, '/wheelhouse:board', NOW, { load: async () => ({ none: 'gone' }) }), undefined);
 
@@ -353,7 +385,7 @@ test('a failure adds nothing and lets the prompt through', async () => {
     const late = '2026-10-19T18:00:00.000Z';
     assert.equal(await run(repo, 'Hello', late, { load: slow, waitMs: 50, markRaised: (ids) => raised.push(...ids) }), undefined);
     await new Promise((resolve) => { setTimeout(resolve, 400); });
-    assert.deepEqual(readSeen(P, { now: at(late) }), { promptAt: late, briefedAt: '2026-10-19T08:00:00.000Z' });
+    assert.deepEqual(readSeen(P, { now: at(late) }), { promptAt: late, briefedAt: '2026-10-19T08:00:00.000Z', weeklyAt: null });
     assert.deepEqual(raised, []);
 
     // Damaged input and an unreadable clock add nothing.

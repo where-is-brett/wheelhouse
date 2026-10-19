@@ -10,9 +10,10 @@
 // which is how a foreman started without WHEELHOUSE_ROLE is known; that first prompt gets one line
 // saying so (FOREMAN_LINE), and nothing else. On each prompt it reads when the
 // director last wrote, decides, builds the addition, and only then records the prompt's time and,
-// when it added a briefing, that the briefing was given and which unusual use it raised. It
-// informs: a failure, or a build past WAIT_MS, adds nothing and lets the prompt through (the
-// prompt's time is still kept). It only reads the state, so STOP doesn't hold it.
+// when it added a briefing, that the briefing was given, which unusual use it raised and whether it
+// showed the weekly lines. It informs: a failure, or a build past WAIT_MS, adds nothing and lets
+// the prompt through (the prompt's time is still kept). It only reads the state, so STOP doesn't
+// hold it.
 //
 // When cards wait that no visit has handed out, it adds one line before whatever else it adds, so
 // the line is read as an instruction and never as the data to show: how many to ask, and that
@@ -266,13 +267,14 @@ function reviewOf(project, settings, at) {
 }
 
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
-async function build(want, { project, cwd, at, client, load, command, since, briefingModel, reserve }) {
+async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
   const room = CONTEXT_CHARS - HEADINGS[want].length - 2 - reserve;
   let body;
   let raise = [];
+  let weeklyShown = false;
   let make;
   if (want === 'board') {
     make = (limit) => renderBoard(model, { tab: command?.tab ?? settings?.boardTab?.value, limit });
@@ -282,16 +284,19 @@ async function build(want, { project, cwd, at, client, load, command, since, bri
   } else if (want === 'sources') {
     body = isRecord(sources) ? (sourcesText(sources) || NONE_CHANGED) : NOT_CHECKED;
   } else {
-    const briefing = briefingModel({ model, usage, sources, since, now: at, review: reviewOf(project, settings, at) });
+    const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review: reviewOf(project, settings, at) });
     const length = settings?.briefing?.value;
     const words = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
     const parts = briefingParts(briefing, { words });
     body = parts.text.split('\n').map(unlinked).join('\n');
-    raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, parts.shownWatch) : [];
+    // The weekly lines open what to watch, then unusual use.
+    const weekly = Number.isInteger(briefing?.weekly) && briefing.weekly > 0 ? briefing.weekly : 0;
+    raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, Math.max(0, parts.shownWatch - weekly)) : [];
+    weeklyShown = weekly > 0 && parts.shownWatch >= weekly;
   }
   const fitted = inPlainWords(make ?? (() => body), room, wordsOf(project, settings, model));
   // A briefing cut for length here may have lost what it raised, so none of it counts as told.
-  return { text: `${HEADINGS[want]}\n\n${fitted.text}`, raise: fitted.cut ? [] : raise };
+  return { text: `${HEADINGS[want]}\n\n${fitted.text}`, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut };
 }
 
 // decide(input, deps) -> the context to add, or undefined.
@@ -329,13 +334,14 @@ export async function decide(input, deps = {}) {
     const cards = count > 0 ? cardsLine(count) : null;
     const reserve = cards === null ? 0 : cards.length + 2;
     const built = want
-      ? await within(() => build(want, { project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, briefingModel, reserve }), waitMs)
+      ? await within(() => build(want, { project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, weeklySince: seen.weeklyAt, briefingModel, reserve }), waitMs)
       : null;
     // The director did write, whatever could be shown. A command other than the briefing's
     // leaves the time as it was, so a briefing that was due still comes with the next prompt.
     if (!command || command.name === 'briefing') attempt(() => markSeen(project, { promptAt: at }));
     if (built && want === 'briefing') {
-      attempt(() => markSeen(project, { briefedAt: at }));
+      // The weekly lines count as given only when the text showed them.
+      attempt(() => markSeen(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}) }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
     const text = [cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');

@@ -442,6 +442,22 @@ test('record setting records its confirm card and marks it asked, except a conce
   });
 });
 
+test('record setting never turns on build commands on Windows, and can set them back to ask', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const key = 'windowsBuildCommands:abcdef12';
+    for (const value of ['unattended', 'guarded']) {
+      const refused = await run(helper, ['record', 'setting'], JSON.stringify({ key, value }));
+      assert.equal(refused.code, 1, value);
+      assert.match(refused.err, /turned on only by a click on their own card/);
+    }
+    assert.deepEqual(helper.writes(), []);
+    const off = await run(helper, ['record', 'setting'], JSON.stringify({ key, value: 'ask' }));
+    assert.equal(off.code, 0, off.err);
+    assert.deepEqual(helper.writes()[0].data, { key, value: 'ask', words: 'Build commands on Windows: ask' });
+  });
+});
+
 // A product question on the topic copy-changes, asked at T(n) and decided as recommended a second later.
 const approvedOn = (pr, n, topic = 'copy-changes') => {
   const card = cardEvent({ ...PRODUCT(pr), level: 3, topic }, n);

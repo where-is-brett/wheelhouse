@@ -9,6 +9,9 @@ import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
+// The computer whose key signed a verified record, when that is the computer the record names;
+// otherwise null. A record signed by one computer that names another was made on neither.
+const signedOn = (e) => (typeof e?.computer === 'string' && e.sig?.computer === e.computer ? e.computer : null);
 const uniqueIds = (ids) => [...new Set(ids.filter(isPlainKey))];
 
 // The latest event per key, in the sorted order the caller supplies.
@@ -192,12 +195,25 @@ function buildLoopViews(sorted, enrolled) {
     };
   }
 
-  const features = latestPerKey(sorted.filter((e) => e.kind === 'feature'), (e) => e.data?.work);
+  const featureEvents = sorted.filter((e) => e.kind === 'feature');
+  const features = latestPerKey(featureEvents, (e) => e.data?.work);
+  // When each feature's current life began: its first event after its latest close. Work
+  // closed and queued again starts a new life, and what held for the one before ends with it.
+  const lives = {};
+  for (const e of featureEvents) {
+    const id = e.data?.work;
+    if (!isPlainKey(id)) continue;
+    if (lives[id] === undefined || lives[id].closed) lives[id] = { began: e.at, closed: false };
+    if (e.data.step === 'closed') lives[id].closed = true;
+  }
+  for (const [id, f] of Object.entries(features)) f.began = lives[id].began;
   // The latest report for each work: how its feature ended (merged, closed or blocked).
   const reports = latestPerKey(sorted.filter((e) => e.kind === 'report'), (e) => e.data?.work);
 
   // An answer counts for the question as it was shown: it names the hash of the question's data, and
-  // one question recorded again with other words or options needs a fresh answer.
+  // one question recorded again with other words or options needs a fresh answer. It keeps the
+  // computer the click was made on, where a build-command grant holds: the computer that signed
+  // it, or null when that isn't the computer the answer names.
   const questions = {};
   for (const e of sorted) {
     if (e.kind === 'question' && isPlainKey(e.data?.id)) questions[e.data.id] = { question: { key: e.data.id, ...mark(e) }, answer: null };
@@ -206,7 +222,7 @@ function buildLoopViews(sorted, enrolled) {
     const q = questions[a.data.questionId];
     if (!q || typeof a.data.label !== 'string' || a.data.questionHash !== dataHash(q.question.data)) continue;
     if (Array.isArray(q.question.data.options) && q.question.data.options.some((o) => o?.label === a.data.label)) {
-      q.answer = { label: a.data.label, at: a.at };
+      q.answer = { label: a.data.label, at: a.at, computer: signedOn(a) };
     }
   }
 
@@ -257,6 +273,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // of false counts as accepted without a confirmation.
   const unconfirmed = rulebook.filter((r) => r.status === 'proposed')
     .map((r) => ({ kind: 'ruling', id: r.id, at: r.at, data: rulings.find((x) => x.id === r.id).data }));
+  // The latest confirmation of each event, in time order.
+  const lastConfirmation = new Map(confirmations.map((c) => [c.target.id, c.event]));
   const accepted = (kind) => {
     const out = {};
     const all = sorted.filter((e) => e.kind === kind && isPlainKey(e.data?.key));
@@ -269,6 +287,16 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
         const prior = out[e.data.key];
         if (typeof e.data.until === 'string') entry.until = e.data.until;
         entry.before = prior ? { value: prior.value, ...(prior.until === undefined ? {} : { until: prior.until }) } : null;
+        // The computer its event was written on, the computer that signed its latest confirmation
+        // (null when that isn't the computer the confirmation names), and the card line that
+        // confirmation carries, if any: build commands on Windows count a level only where the
+        // click was made, and Unattended only from its own line. A setting counted without a
+        // confirmation (countsAtOnce) has neither.
+        const last = lastConfirmation.get(e.id);
+        const line = last?.data?.line;
+        entry.computer = e.computer;
+        entry.confirmedOn = signedOn(last);
+        entry.line = typeof line === 'string' ? line : null;
       }
       out[e.data.key] = entry;
     }

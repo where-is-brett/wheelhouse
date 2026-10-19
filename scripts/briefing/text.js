@@ -32,8 +32,8 @@ const partWords = (part) => (part.items.length === 0 ? 0 : partLines(part).reduc
 
 // briefingParts(briefing, { words }) -> { text, shownWatch }: the briefing as text, within `words`
 // (the standard length when `words` isn't a positive whole number), and how many of `watch`'s
-// entries the text shows. Unusual use comes first in `watch`, so the caller marks as raised only
-// `raise.slice(0, shownWatch)`, the items the director was really told.
+// entries the text shows. The weekly lines, then unusual use, come first in `watch`, so the caller
+// marks as raised only the unusual items within `shownWatch`, the items the director was really told.
 export function briefingParts(briefing, options) {
   try {
     const words = isRecord(options) ? options.words : undefined;
