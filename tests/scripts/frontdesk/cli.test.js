@@ -453,11 +453,12 @@ test('under STOP the reading commands run and record is refused', async () => {
     const helper = fakeHelper({ stop: true, events: [cardEvent(PRODUCT(1), 1), questionEvent()] });
     const cards = await run(helper, ['cards']);
     assert.equal(cards.code, 0, cards.err);
-    // The Lift STOP card first, then the waiting card. The question's card can't be written under
-    // STOP, so none is tried, and the asked record the helper refuses is no problem to report.
-    assert.deepEqual(cards.json.questions.map((q) => q.header), ['Lift STOP', 'Question']);
+    // The Lift STOP card alone; the waiting card stays on the board. The question's card can't be
+    // written under STOP, so none is tried, and nothing is written.
+    assert.deepEqual(cards.json.questions.map((q) => q.header), ['Lift STOP']);
+    assert.equal(cards.json.left, 1);
     assert.equal(cards.json.problems, undefined);
-    assert.deepEqual(helper.writes().map((w) => w.kind), ['asked']);
+    assert.deepEqual(helper.writes(), []);
     const again = await run(helper, ['again', '1']);
     assert.equal(again.code, 0);
     assert.equal(again.json.problems, undefined);
@@ -472,23 +473,22 @@ test('under STOP the reading commands run and record is refused', async () => {
   });
 });
 
-test('under STOP, cards puts the Lift STOP card first, never recorded, and the director\'s click on it lifts STOP', async () => {
+test('under STOP, cards gives the Lift STOP card alone, never recorded, and the director\'s click on it lifts STOP', async () => {
   await inHome(async () => {
     setStop({ by: 'prompt' });
     const waiting = [1, 2, 3, 4].map((n) => cardEvent(PRODUCT(n), n));
     const helper = fakeHelper({ stop: () => stopState().on, events: [...waiting, questionEvent()] });
     const visit = await run(helper, ['cards']);
     assert.equal(visit.code, 0, visit.err);
-    const [lift, ...rest] = visit.json.questions;
+    assert.equal(visit.json.questions.length, 1, 'the Lift STOP card alone, as the hook\'s line of 1 says');
+    const [lift] = visit.json.questions;
     assert.equal(lift.header, 'Lift STOP');
     assert.equal(setLineOf(lift.question), LIFT_STOP);
     assert.deepEqual(lift.options.map((o) => o.label), ['Lift STOP', 'Not now', 'Explain more', 'Show me']);
-    // One call's worth: the Lift STOP card, then three of the cards waiting; one is left.
-    assert.deepEqual(rest.map((q) => q.question), waiting.slice(0, 3).map((e) => e.data.question));
-    assert.equal(visit.json.left, 1);
-    // No card event is written for it, and the asked record the helper refuses is passed over quietly.
+    // The four cards waiting stay on the board, counted as left; nothing is written, so nothing is refused.
+    assert.equal(visit.json.left, 4);
     assert.equal(visit.json.problems, undefined);
-    assert.deepEqual(helper.writes().map((w) => [w.kind, w.data.cards]), [['asked', waiting.slice(0, 3).map((e) => e.id)]]);
+    assert.deepEqual(helper.writes(), []);
     assert.equal(helper.held.filter((e) => e.kind === 'card').length, 4);
     // The card check takes the visit's cards as they are.
     const ask = { cwd: CWD, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: visit.json.questions } };
@@ -508,9 +508,10 @@ test('under STOP, cards puts the Lift STOP card first, never recorded, and the d
     assert.deepEqual(records.map((e) => [e.kind, e.data.action ?? e.data.options]), [['shown', lift.options.map((o) => o.label)], ['action', 'lift-stop']]);
     assert.equal(records[1].data.question, lift.question);
     assert.equal(stopState().on, false);
-    // With STOP off, a visit has no Lift STOP card.
+    // With STOP off, a visit has no Lift STOP card, and the cards waiting are asked.
     const after = await run(helper, ['cards']);
     assert.ok(after.json.questions.every((q) => q.header !== 'Lift STOP'), JSON.stringify(after.json));
+    assert.deepEqual(after.json.questions.map((q) => q.question), waiting.map((e) => e.data.question));
   });
 });
 

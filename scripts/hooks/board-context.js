@@ -15,8 +15,8 @@
 //
 // When cards wait that no visit has handed out, it adds one line before whatever else it adds, so
 // the line is read as an instruction and never as the data to show: how many to ask, and that
-// `cli.js cards` gives them (cardsLine). Under STOP the line names the one Lift STOP card that
-// `cli.js cards` puts first, so it doesn't repeat the cards a visit can't mark as asked.
+// `cli.js cards` gives them (cardsLine). Under STOP the line names the one Lift STOP card, the only
+// card `cli.js cards` gives then.
 //
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,

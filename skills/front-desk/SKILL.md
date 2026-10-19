@@ -66,7 +66,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
 | "How's it going?" | One line. The full board is `/wheelhouse:board` |
 
-**STOP:** say in one or two lines what was in progress, then run `cards` and ask what it gives: the Lift STOP card comes first.
+**STOP:** say in one or two lines what was in progress, then run `cards` and ask what it gives: the Lift STOP card alone.
 
 **Changed without the director's confirmation** (the session start or briefing lists it): it has no effect. Say first that it waits for their confirmation, and plan as if it weren't there.
 

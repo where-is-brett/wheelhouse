@@ -3,7 +3,7 @@
 // JSON on standard input where a command takes it:
 //   cards           this visit's cards, as AskUserQuestion's input, and how many are left; first
 //                   it makes an answer card for each open question from the build that no waiting
-//                   card asks yet. Under STOP the Lift STOP card comes first
+//                   card asks yet. Under STOP, the Lift STOP card alone
 //   card            composes one card from the composer's input and records it ({ question, id })
 //   again <n>       the card the board numbers n, to ask again
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON
@@ -205,8 +205,8 @@ function answerCard(id, data, views, words) {
 // question from the build that no waiting card asks gets its answer card first. The cards handed
 // out are recorded as asked, so a card dismissed with no answer isn't offered on every turn. A
 // write the helper refuses is a problem, not a failure: the cards waiting are still given. Under
-// STOP the Lift STOP card comes first and the helper writes nothing, so no answer card is made and
-// the asked record it refuses is no problem.
+// STOP the visit's one card is Lift STOP: the helper writes nothing, so no answer card is made, and
+// the cards waiting stay on the board, counted in `left`, for the visit after STOP is lifted.
 export async function cards({ client, cwd, now }) {
   const problems = [];
   let { views, stop } = await viewsOf(client, cwd);
@@ -230,7 +230,7 @@ export async function cards({ client, cwd, now }) {
     }
   }
   if (made > 0) ({ views } = await viewsOf(client, cwd));
-  const chosen = cardsForVisit(views, { room: CARD.questions - (lift === null ? 0 : 1) });
+  const chosen = cardsForVisit(views, { room: lift === null ? CARD.questions : 0 });
   problems.push(...await markAsked(client, cwd, chosen.ids, stop));
   return { questions: [...(lift === null ? [] : [lift]), ...chosen.questions], left: chosen.left, ...withProblems(problems) };
 }
