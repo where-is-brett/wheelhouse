@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withHome } from '../../helpers/homes.js';
 import { briefingModel } from '../../../scripts/briefing/model.js';
+import { briefingParts } from '../../../scripts/briefing/text.js';
 import { markRaised } from '../../../scripts/usage/figures.js';
+import { NOT_NOW_STEP } from '../../../scripts/board/model.js';
+import { WINDOWS_LINE, UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const at = (day, hour = 0) => new Date(Date.UTC(2026, 9, day, hour)).toISOString();
@@ -187,6 +190,124 @@ test('unconfirmed changes and what waits come straight from the board model', ()
   assert.deepEqual(b.waiting, ['Choose the sign-up colour', 'Approve the plan']);
   // Nothing in it throws, whatever it is given.
   for (const odd of [undefined, null, {}, { model: 'x' }, { model: { director: 7, build: [], missing: 'x' }, usage: 3, sources: [] }]) {
-    assert.deepEqual(briefingModel(odd), { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] });
+    assert.deepEqual(briefingModel(odd), { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 });
   }
 });
+
+test('Unattended is repeated once each week, Monday in the director\'s time, first in what to watch', () => {
+  const health = [
+    { level: 'ok', text: 'Protection: Standard' },
+    { level: 'watch', text: WINDOWS_LINE },
+    { level: 'watch', text: UNATTENDED_LINE },
+    { level: 'watch', text: 'This project has no CI, so nothing can merge' },
+  ];
+  const model = board({ health });
+  const usage = usageWith({ unusual: [{ id: 'day:2026-10-18', kind: 'day', unit: 'tokens', tokens: 900000, median: 100000, cause: 'a long review' }] });
+  // NOW is Monday 19 October 2026, 12:00 in UTC. `weeklySince` is the last briefing that showed the line.
+  const brief = (weeklySince, timeZone, extra = {}) => briefingModel({ model, usage: null, since: at(19, 11), now: NOW, wasRaised: never, timeZone, weeklySince, ...extra });
+  const watch = (weeklySince, timeZone) => brief(weeklySince, timeZone).watch;
+  const every = [UNATTENDED_LINE, WINDOWS_LINE, 'This project has no CI, so nothing can merge'];
+  const without = [WINDOWS_LINE, 'This project has no CI, so nothing can merge'];
+  assert.deepEqual(watch(null, 'UTC'), every, 'never shown before');
+  assert.equal(brief(null, 'UTC').weekly, 1);
+  assert.deepEqual(watch(at(18, 23), 'UTC'), every, 'last shown on Sunday');
+  assert.deepEqual(watch(at(12, 9), 'UTC'), every, 'last shown a week ago');
+  assert.deepEqual(watch(at(19, 0), 'UTC'), without, 'shown this Monday');
+  assert.equal(brief(at(19, 0), 'UTC').weekly, 0);
+  assert.deepEqual(watch(at(19, 11), 'UTC'), without);
+  // The last briefing given doesn't decide it: one given this week that didn't show the line leaves it due.
+  assert.deepEqual(brief(at(18), 'UTC', { since: at(19, 11) }).watch, every);
+  // In Sydney, 14:00 on Sunday in UTC is already Monday; in Los Angeles, 06:00 on Monday is still Sunday.
+  assert.deepEqual(watch(at(18, 14), 'Australia/Sydney'), without);
+  assert.deepEqual(watch(at(18, 14), 'UTC'), every);
+  assert.deepEqual(watch(at(19, 6), 'America/Los_Angeles'), every);
+  assert.deepEqual(watch(at(19, 6), 'UTC'), without);
+  // A time that can't be read, or is after now, counts as never shown.
+  assert.deepEqual(watch('yesterday', 'UTC'), every);
+  assert.deepEqual(watch(at(20), 'UTC'), every);
+  // With no time zone given, it is this computer's own.
+  const local = new Date(NOW);
+  local.setHours(0, 0, 0, 0);
+  local.setDate(local.getDate() - ((local.getDay() + 6) % 7));
+  assert.deepEqual(watch(new Date(local.getTime() + 1000).toISOString()), without);
+  assert.deepEqual(watch(new Date(local.getTime() - 1000).toISOString()), every);
+  // It comes ahead of unusual use too, and `raise` still lists only the unusual items.
+  const withUnusual = brief(null, 'UTC', { usage });
+  assert.equal(withUnusual.watch[0], UNATTENDED_LINE);
+  assert.match(withUnusual.watch[1], /^18 October 2026 used/);
+  assert.deepEqual(withUnusual.raise, ['day:2026-10-18']);
+});
+
+test('the Locked line is weekly too, and with neither line the briefing carries nothing new', () => {
+  const locked = board({ health: [{ level: 'watch', text: WINDOWS_LINE }, { level: 'watch', text: LOCKED_UNATTENDED_LINE }] });
+  const brief = (model, weeklySince) => briefingModel({ model, usage: null, since: null, now: NOW, wasRaised: never, timeZone: 'UTC', weeklySince });
+  assert.deepEqual(brief(locked, at(18)).watch, [LOCKED_UNATTENDED_LINE, WINDOWS_LINE]);
+  assert.equal(brief(locked, at(18)).weekly, 1);
+  assert.deepEqual(brief(locked, at(19, 1)).watch, [WINDOWS_LINE]);
+  const plain = board({ health: [{ level: 'watch', text: WINDOWS_LINE }, { level: 'ok', text: 'Build commands run at low integrity on this Windows computer: they can\'t change files outside the project, but can still use the network.' }] });
+  assert.deepEqual(brief(plain, at(18)).watch, [WINDOWS_LINE]);
+  assert.equal(brief(plain, null).weekly, 0);
+  assert.deepEqual(brief(board(), null).watch, []);
+  // A time zone that isn't one leaves the rest of the briefing standing.
+  const odd = briefingModel({ model: locked, usage: null, since: null, now: NOW, wasRaised: never, timeZone: 'Nowhere/Else' });
+  assert.ok(odd.watch.includes(WINDOWS_LINE));
+});
+
+test('in a crowded short briefing the Unattended line is still shown', () => {
+  const model = board({
+    waiting: [{ n: 1, what: 'Choose the colour for the sign-up page buttons and the border around them', since: at(10) }, { n: 2, what: 'Approve the plan for the search page and its filters', since: at(11) }],
+    features: [
+      { work: 'search', title: 'Search across every product page', lane: 'feature', step: 'building', slice: { n: 2, m: 5 }, pr: null },
+      { work: 'dark', title: 'Dark mode for the whole site', lane: 'small', step: 'building', slice: null, pr: null },
+    ],
+    health: [
+      { level: 'watch', text: WINDOWS_LINE },
+      { level: 'watch', text: UNATTENDED_LINE },
+      { level: 'watch', text: 'Your profile isn\'t backed up off this computer yet' },
+    ],
+  });
+  const briefing = briefingModel({ model, usage: null, since: null, now: NOW, wasRaised: never, timeZone: 'UTC' });
+  const parts = briefingParts(briefing, { words: 80 });
+  // The standing Windows line is the one cut, not the week's news.
+  assert.ok(!parts.text.includes(WINDOWS_LINE), parts.text);
+  assert.ok(parts.text.includes(UNATTENDED_LINE), parts.text);
+  assert.ok(parts.shownWatch >= briefing.weekly);
+  assert.ok(parts.text.split(/\s+/).filter(Boolean).length <= 80);
+});
+
+test('a feature held by Not now to its build commands reads as waiting on the director', () => {
+  const model = board({
+    features: [
+      { work: 'login', title: 'Log in', lane: 'feature', step: NOT_NOW_STEP, slice: { n: 1, m: 3 }, pr: null },
+      { work: 'search', title: 'Search', lane: 'feature', step: 'building', slice: null, pr: null },
+    ],
+  });
+  const b = briefingModel({ model, usage: null, since: null, now: NOW, wasRaised: never });
+  assert.deepEqual(b.progress, ['Log in is waiting on you to allow its build commands', 'Building Search']);
+  assert.equal(NOT_NOW_STEP, 'waiting on you to allow its build commands');
+});
+
+test('the delegation review, when due, is something to watch, after unusual use and before the health lines', () => withHome(() => {
+  const usage = usageWith({ unusual: [{ kind: 'session', id: 'session:abc', tokens: 1200000, median: 300000, cause: 'a long test run', unit: 'tokens' }] });
+  const model = board({ health: [{ level: 'watch', text: 'The weekly allowance is 90% used' }] });
+  const unusual = 'One session used 1.2M tokens, against a usual 300K: a long test run';
+  const watch = (review) => briefingModel({ model, usage, now: NOW, wasRaised: never, review }).watch;
+  assert.deepEqual(watch({ due: true, days: 14 }), [unusual, 'The fortnightly look at what I can decide alone is due', 'The weekly allowance is 90% used']);
+  assert.deepEqual(watch({ due: true, days: 7 }), [unusual, 'The look at what I can decide alone is due (every 7 days)', 'The weekly allowance is 90% used']);
+  // Not due, or not worked out: nothing said.
+  for (const review of [{ due: false, days: 14 }, undefined, null, 'due']) assert.deepEqual(watch(review), [unusual, 'The weekly allowance is 90% used']);
+  // What it raises is still only the unusual use, which opens `watch`.
+  assert.deepEqual(briefingModel({ model, usage, now: NOW, wasRaised: never, review: { due: true, days: 14 } }).raise, ['session:abc']);
+}));
+
+test('a due Unattended line comes ahead of unusual use and a due delegation review', () => withHome(() => {
+  const usage = usageWith({ unusual: [{ kind: 'session', id: 'session:abc', tokens: 1200000, median: 300000, cause: 'a long test run', unit: 'tokens' }] });
+  const model = board({ health: [{ level: 'watch', text: WINDOWS_LINE }, { level: 'watch', text: UNATTENDED_LINE }] });
+  const watch = briefingModel({ model, usage, now: NOW, wasRaised: never, timeZone: 'UTC', weeklySince: null, review: { due: true, days: 14 } }).watch;
+  assert.deepEqual(watch, [
+    UNATTENDED_LINE,
+    'One session used 1.2M tokens, against a usual 300K: a long test run',
+    'The fortnightly look at what I can decide alone is due',
+    WINDOWS_LINE,
+  ]);
+}));

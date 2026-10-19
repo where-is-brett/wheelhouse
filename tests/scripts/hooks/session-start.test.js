@@ -15,10 +15,13 @@ import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
-import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
-import { helperAddress, keysDir, computerId } from '../../../scripts/lib/paths.js';
+import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
+import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { selfTestFile } from '../../../scripts/windows/low.js';
+import { settingKey } from '../../../scripts/protection/windows-builds.js';
+import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { makeEvent } from '../../../scripts/state/events.js';
 import { startRun, markStep } from '../../../scripts/setup/journal.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
@@ -62,7 +65,7 @@ const PLUGIN_ROOT = '/plugin/root';
 const MATCHED = () => ({ ok: true, mismatches: [], manifest: true, upstreams: {}, kept: true });
 const run = (f, extra = {}, input = {}) => decide(
   { cwd: '/x', session_id: 's1', ...input },
-  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, ...extra },
+  { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, guardedSelfTest: async () => null, startLowNodeCopy: () => true, ...extra },
 );
 const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
 const call = (cwd, tool) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {} });
@@ -130,6 +133,22 @@ test('the reload lists ids and titles, not whole files', async () => {
   });
 });
 
+test('the reload leaves out a proposal kept as is on its card', async () => {
+  await withHome(async () => {
+    const f = fake({ views: {
+      ...VIEWS,
+      unconfirmed: [
+        { kind: 'level', id: 'l1', key: 'copy-changes', data: { words: '"copy-changes": level 2' } },
+        { kind: 'ruling', id: 'r9', data: { words: 'Do it this way' } },
+      ],
+      keptAsIs: ['l1'],
+    } });
+    const t = text(await run(f));
+    assert.match(t, /Changed without the director's confirmation:\n- r9 \(ruling\): Do it this way/);
+    assert.doesNotMatch(t, /l1 \(level/);
+  });
+});
+
 test('the reload stays under the context limit however much there is', async () => {
   await withHome(async () => {
     const long = 'x'.repeat(5000);
@@ -186,6 +205,112 @@ test('the Windows line appears once per session', async () => {
   });
 });
 
+// The settings view as buildViews makes it, holding Unattended on `computer` from a click on its own card.
+const unattendedOn = (computer, value = 'unattended') => ({
+  [settingKey(computer)]: { key: settingKey(computer), id: 'e-1', at: '2026-10-19T01:00:00.000Z', value, computer, confirmedOn: computer, line: unattendedBuildsLine('e-1', computer) },
+});
+
+test('on Windows the session start runs the Guarded self-test when there is no recent result or the level would be Guarded', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const NOW = new Date('2026-10-19T09:00:00.000Z');
+    const tried = [];
+    const guardedSelfTest = async (options) => {
+      tried.push(options);
+      const result = { at: NOW.toISOString(), lowStarts: true, writeHeld: true, keysReadHeld: false };
+      fs.mkdirSync(path.dirname(selfTestFile(options.home)), { recursive: true });
+      fs.writeFileSync(selfTestFile(options.home), JSON.stringify(result));
+      return result;
+    };
+    const up = (settings = {}) => {
+      const f = fake({ views: { ...VIEWS, settings } });
+      f.client.health = async () => ({ ok: true });
+      return f;
+    };
+    let copies = 0;
+    const go = (f, extra = {}, input = {}) => run(f, {
+      platform: 'win32', now: () => NOW, guardedSelfTest, lowNodeReady: () => true, startLowNodeCopy: () => { copies += 1; return true; }, ...extra,
+    }, { cwd: '/x/wt', ...input });
+    // With no whole copy of Node.js, the copy is started in the background and nothing waits for it.
+    await go(up(), { lowNodeReady: () => false }, { session_id: 's0' });
+    assert.equal(copies, 1);
+    assert.equal(tried.length, 0, 'no self-test without the copy');
+    await go(up());
+    assert.equal(copies, 1, 'a whole copy is not made again');
+    assert.equal(tried.length, 1, 'no result yet');
+    assert.equal(tried[0].home, wheelhouseHome());
+    assert.equal(tried[0].worktree, '/x/wt');
+    assert.ok(tried[0].timeoutMs > 0 && tried[0].timeoutMs <= 3000, String(tried[0].timeoutMs));
+    assert.equal(typeof tried[0].run, 'function');
+    // A result under a day old is kept, unless the level would be Guarded.
+    await go(up(), {}, { session_id: 's2' });
+    assert.equal(tried.length, 1);
+    const guarded = { [settingKey(me)]: { key: settingKey(me), id: 'e-g', at: '2026-10-19T01:00:00.000Z', value: 'guarded', computer: me, confirmedOn: me, line: null } };
+    await go(up(guarded), {}, { session_id: 's3' });
+    assert.equal(tried.length, 2);
+    // A day later it runs again.
+    await go(up(), { now: () => new Date(NOW.getTime() + 25 * 60 * 60 * 1000) }, { session_id: 's4' });
+    assert.equal(tried.length, 3);
+    // Never off Windows, and a self-test that fails leaves the session start as it was.
+    await go(up(guarded), { platform: 'darwin' }, { session_id: 's5' });
+    assert.equal(tried.length, 3);
+    const out = await go(up(guarded), { guardedSelfTest: async () => { throw new Error('icacls'); } }, { session_id: 's6' });
+    assert.match(text(out), new RegExp(WINDOWS_LINE.replace(/[.]/g, '\\.')));
+  });
+});
+
+test('while Unattended is on, the Windows line is followed by the Unattended line', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const up = (views) => {
+      const f = fake({ views: { ...VIEWS, ...views } });
+      f.client.health = async () => ({ ok: true });
+      return f;
+    };
+    let n = 0;
+    const session = () => ({ session_id: `u${(n += 1)}` });
+    const lines = text(await run(up({ settings: unattendedOn(me) }), { platform: 'win32' }, session())).split('\n');
+    assert.equal(lines[lines.indexOf(WINDOWS_LINE) + 1], UNATTENDED_LINE);
+    // At Ask, for another computer, in a Locked project, or off Windows, nothing new.
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me, 'ask') }), { platform: 'win32' }, session())), /unattended/);
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn('deadbeef') }), { platform: 'win32' }, session())), /unattended/);
+    assert.doesNotMatch(text(await run(up({}), { platform: 'win32' }, session())), /unattended/);
+    const locked = { projectOf: () => ({ project: P, locked: true }), platform: 'win32' };
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me) }), locked, session())), /unattended/);
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me) }), { platform: 'darwin' }, session())), /unattended/);
+    // Only with the Windows line, once a session.
+    const again = session();
+    assert.match(text(await run(up({ settings: unattendedOn(me) }), { platform: 'win32' }, again)), /unattended/);
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me) }), { platform: 'win32' }, again)), /unattended/);
+  });
+});
+
+test('with no helper, the level is read from the local events, as the waker reads them', async () => {
+  await withHome(async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    const me = computerId();
+    const put = (event) => {
+      const file = path.join(stateDir(P), eventPath(event));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(event));
+    };
+    const on = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'unattended', words: 'Build commands: unattended' }, now: () => new Date('2026-10-19T01:00:00.000Z') });
+    const { kind, data } = confirmationFor(on);
+    put(on);
+    put(makeEvent({ kind, data: { ...data, line: unattendedBuildsLine(on.id, me) }, now: () => new Date('2026-10-19T01:00:01.000Z') }));
+    // The views on disk, as an older sync left them, say nothing of it.
+    const views = path.join(process.env.WHEELHOUSE_HOME, 'projects', P, 'views');
+    fs.mkdirSync(views, { recursive: true });
+    fs.writeFileSync(path.join(views, 'settings.json'), '{}');
+    fs.writeFileSync(path.join(views, 'unconfirmed.json'), '[]');
+    const t = text(await run(fake({ startsUp: false }), { platform: 'win32' }));
+    assert.match(t, new RegExp(NO_HELPER));
+    const lines = t.split('\n');
+    assert.equal(lines[lines.indexOf(WINDOWS_LINE) + 1], UNATTENDED_LINE);
+  });
+});
+
 test('outside a Wheelhouse project it says nothing', async () => {
   const f = fake();
   const out = await decide({ cwd: '/x' }, { client: f.client, spawn: f.spawn, projectOf: () => null });
@@ -200,6 +325,48 @@ test('the whole reload is cut at 9,000 characters', async () => {
     const mk = (c) => Array.from({ length: 20 }, (_, i) => ({ id: `${c}${i}`, kind: 'ruling', status: 'accepted', words: longTitle(c, i), data: { title: longTitle(c, i), words: longTitle(c, i) } }));
     const f = fake({ views: { ...VIEWS, damaged: mk('d').map((x) => x.words), waiting: mk('w'), unconfirmed: mk('u'), rulebook: mk('r') } });
     assert.equal(text(await run(f)).length, 9000);
+  });
+});
+
+test('the Windows and Unattended lines come before the lists, so a cut reload keeps them', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const mk = (c) => Array.from({ length: 20 }, (_, i) => ({ id: `${c}${i}`, kind: 'ruling', status: 'accepted', words: longTitle(c, i), data: { title: longTitle(c, i), words: longTitle(c, i) } }));
+    const f = fake({ views: { ...VIEWS, damaged: mk('d').map((x) => x.words), waiting: mk('w'), unconfirmed: mk('u'), rulebook: mk('r'), settings: unattendedOn(me) } });
+    f.client.health = async () => ({ ok: true });
+    const t = text(await run(f, { platform: 'win32', stopState: () => ({ on: true, by: 'the director', at: '2026-10-19T01:00:00.000Z' }) }));
+    assert.equal(t.length, 9000, 'cut');
+    const lines = t.split('\n');
+    assert.match(lines[0], /^STOP is on/);
+    assert.deepEqual(lines.slice(1, 3), [WINDOWS_LINE, UNATTENDED_LINE]);
+  });
+});
+
+test('a computer id that can\'t be read leaves the rest of the reload, and shows Ask', async () => {
+  await withHome(async (home) => {
+    // computer.json as a folder: computerId throws.
+    fs.mkdirSync(path.join(home, 'computer.json'), { recursive: true });
+    assert.throws(() => computerId());
+    const f = fake({ views: { ...VIEWS, waiting: [{ id: 'c1', data: { title: 'T' } }] } });
+    f.client.health = async () => ({ ok: true });
+    const t = text(await run(f, { platform: 'win32', stopState: () => ({ on: true, by: 'the director', at: '2026-10-19T01:00:00.000Z' }) }));
+    assert.match(t, /^STOP is on/);
+    assert.ok(t.includes(WINDOWS_LINE));
+    assert.ok(!t.includes(UNATTENDED_LINE));
+    assert.match(t, /c1: T/);
+  });
+});
+
+test('a proposal for build commands on Windows is not listed as changed without the director\'s confirmation', async () => {
+  await withHome(async () => {
+    const f = fake({ views: { ...VIEWS, unconfirmed: [
+      { kind: 'setting', id: 'e-b', at: '2026-10-19T01:00:00.000Z', key: settingKey('0a1b2c3d'), data: { key: settingKey('0a1b2c3d'), value: 'unattended' } },
+      { kind: 'setting', id: 'e-s', at: '2026-10-19T01:00:01.000Z', key: 'reviewRounds', data: { key: 'reviewRounds', value: 3 } },
+    ] } });
+    f.client.health = async () => ({ ok: true });
+    const t = text(await run(f));
+    assert.match(t, /e-s \(setting reviewRounds\)/);
+    assert.doesNotMatch(t, /e-b|windowsBuildCommands/);
   });
 });
 
@@ -684,6 +851,21 @@ test('the guard floor is the build loop\'s Claude Code floor, named once', () =>
   assert.equal(OLD_CLAUDE_CODE, 'This Claude Code is older than 2.1.295, so a guard that fails does not stop a tool call: update Claude Code');
 });
 
+test('on Windows under STOP, the lineage hold line comes first after STOP, then the Windows lines', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    const f = fake({ views: { ...VIEWS, settings: unattendedOn(computerId()) } });
+    f.client.health = async () => ({ ok: true });
+    const stop = { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-18T01:00:00.000Z' }), now: () => new Date('2026-10-19T02:00:00.000Z') };
+    const lines = text(await lineageRun(f, fixture, folder, { ...stop, platform: 'win32' })).split('\n');
+    assert.deepEqual(lines.slice(0, 4), [
+      'STOP is on (set by prompt at 2026-10-18T01:00:00.000Z)', LINEAGE_LINE('LICENSE'), WINDOWS_LINE, UNATTENDED_LINE,
+    ]);
+  });
+});
+
 // --- A folder being set up: no project record yet, the plugin switched on in its own settings or a setup run there.
 
 const pluginOn = (folder) => {
@@ -844,5 +1026,42 @@ test('in a registered folder setup is still finishing, the session start resumes
         assert.equal(g.calls.spawn.length, 0);
       }
     }
+  });
+});
+
+test('on Windows, a registered folder being set up gets the Windows lines straight after STOP and setup\'s line in place of the front desk\'s; a folder with no project record gets no Windows lines', async () => {
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const T = Date.parse('2026-10-19T03:00:00.000Z');
+    const me = computerId();
+    const STOP = { on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' };
+    const windows = { platform: 'win32', stopState: () => STOP, guardedSelfTest: async () => null, lowNodeReady: () => false, startLowNodeCopy: () => true };
+    const STEP_4 = 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.';
+    // Registered (step 3 done), with its first commit, Unattended on for this computer.
+    const folder = fs.realpathSync.native(tempFolder('wh-registered-win zoë '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    writeProject('o__win', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const run3 = startRun({ folder, now: () => new Date(T) });
+    for (const n of [1, 2, 3]) markStep(run3.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    const f = fake({ views: { ...VIEWS, settings: unattendedOn(me) } });
+    const out = await decide({ cwd: folder, session_id: 'w1' }, {
+      pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, dir: managed, pause: async () => {}, startWaitMs: 200,
+      background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, ...windows,
+    });
+    const lines = text(out).split('\n');
+    assert.deepEqual(lines.slice(0, 3), ['STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)', WINDOWS_LINE, UNATTENDED_LINE], lines.join('\n'));
+    assert.ok(lines.includes(STEP_4), lines.join('\n'));
+    assert.ok(!lines.includes(FRONT_DESK_LINE), lines.join('\n'));
+    // No project record yet: setup's short reload, with no Windows lines.
+    const fresh = fs.realpathSync.native(tempFolder('wh-fresh-win-'));
+    startRun({ folder: fresh, now: () => new Date(T) });
+    const g = fake();
+    const short = await decide({ cwd: fresh, session_id: 'w2' }, {
+      pluginRoot: PLUGIN_ROOT, client: g.client, spawn: g.spawn, projectOf: () => null, pause: async () => {}, startWaitMs: 200, ...windows,
+    });
+    assert.deepEqual(text(short).split('\n'), [
+      'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
+      'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.',
+    ]);
   });
 });

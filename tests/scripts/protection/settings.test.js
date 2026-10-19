@@ -261,6 +261,55 @@ test('on Windows, where no sandbox runs, the build commands get no allow rules',
   assert.throws(() => featureAllowRules({ ...config, buildCommands: ['rm *'] }, { platform: 'win32' }), /build command/, 'still checked');
 });
 
+const WIN = { platform: 'win32' };
+const GIT_RULES = ['Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git restore:*)', 'Bash(git rm:*)', 'Bash(git mv:*)'];
+const grant = (commands, scope = 'run', questionId = 'q-login-page-1') => ({ questionId, commands, scope });
+
+test('on Windows, ask with no grant gives no allow rules', () => {
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'ask' }), []);
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'ask', grants: [] }), []);
+  // An unknown level is ask.
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'always' }), []);
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'always', grants: [grant(['npm test'])] }), ['Bash(npm test:*)']);
+});
+
+test('on Windows, ask gives one rule for each granted command that is still configured', () => {
+  const grants = [grant(['npm test', 'git status']), grant(['npm run build', 'npm test'], 'feature', 'q-login-page-2')];
+  assert.deepEqual(featureAllowRules(config, { ...WIN, grants }), ['Bash(npm test:*)', 'Bash(git status:*)', 'Bash(npm run build:*)']);
+  // A command the question named but the configuration doesn't hold, or one no rule can hold, gives nothing.
+  const odd = [grant(['curl example.com', 'npm testing', 'git push', 'git status && curl x', 'rm *', 'make check', 7]), { questionId: 'q-login-page-3' }, null];
+  assert.deepEqual(featureAllowRules(config, { ...WIN, grants: odd }), []);
+  assert.deepEqual(featureAllowRules({ ...config, buildCommands: ['make check'] }, { ...WIN, grants: [grant(['make check', 'npm test'])] }), ['Bash(make check:*)']);
+});
+
+test('unattended gives every configured command and local git on Windows', () => {
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'unattended' }), ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)', ...GIT_RULES]);
+  assert.deepEqual(featureAllowRules({ ...config, buildCommands: ['pytest'] }, { ...WIN, level: 'unattended', grants: [grant(['npm test'])] }), ['Bash(pytest:*)', ...GIT_RULES]);
+});
+
+test('guarded gives the runner\'s rule, and the director\'s grants as at ask', () => {
+  const runner = 'node guarded.js';
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: runner }), ['Bash(node guarded.js:*)']);
+  // A command the runner refuses (one that fetches new code) still asks, so a grant still counts.
+  assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: runner, grants: [grant(['npm test', 'curl x'])] }), ['Bash(node guarded.js:*)', 'Bash(npm test:*)']);
+  // With no runner to name, guarded gives the grants alone.
+  for (const none of [null, '', 'a\nb', 7]) {
+    assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: none }), [], String(none));
+    assert.deepEqual(featureAllowRules(config, { ...WIN, level: 'guarded', guardedCommand: none, grants: [grant(['git status'])] }), ['Bash(git status:*)'], String(none));
+  }
+});
+
+test('off Windows the level and grants change nothing', () => {
+  const today = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)'];
+  for (const platform of ['darwin', 'linux']) {
+    for (const level of ['ask', 'guarded', 'unattended', 'always']) {
+      for (const grants of [[], [grant(['git status', 'npm run build'])]]) {
+        assert.deepEqual(featureAllowRules(config, { platform, level, grants, guardedCommand: 'node guarded.js' }), today, `${platform} ${level}`);
+      }
+    }
+  }
+});
+
 test('a build command a rule cannot hold safely is refused, not allowed', () => {
   for (const bad of ['', ' npm test', 'npm test:*', 'a)', 'rm *', '-x', 'a\nb', 1]) {
     assert.throws(() => featureAllowRules({ ...config, buildCommands: [bad] }), /build command/, String(bad));

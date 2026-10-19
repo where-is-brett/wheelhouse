@@ -10,12 +10,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { LANES, SLUG } from '../lib/build-loop.js';
 import { BEGIN as PROVENANCE, removeProvenance } from '../lineage/provenance.js';
+import { isBuildQuestion } from '../protection/windows-builds.js';
 
 export const FEATURE_DIR = '.wheelhouse/feature';
 
 export const PHASES = Object.freeze(['planning', 'ready-to-build', 'building', 'pr-open', 'waiting', 'done']);
 export const WAITING_ON = Object.freeze(['question', 'clash', 'pace', 'dependency', 'ci', 'review', 'merge']);
-export const QUESTION_KINDS = Object.freeze(['question', 'extra-plan']);
+export const QUESTION_KINDS = Object.freeze(['question', 'extra-plan', 'build-command']);
 export const REPORT_STATUSES = Object.freeze(['done', 'blocked', 'partial']);
 
 // The most of a question file, or of a status file, that is read.
@@ -191,7 +192,7 @@ export function writeStatus(file, status) {
 
 // --- The questions ---
 
-const QUESTION_KEYS = ['id', 'kind', 'what', 'why', 'options', 'recommendation', 'level', 'plan'];
+const QUESTION_KEYS = ['id', 'kind', 'what', 'why', 'options', 'recommendation', 'level', 'plan', 'commands'];
 
 // `q-<work>-<n>`, the same id the state's question record carries.
 export const QUESTION_ID = /^q-([a-z0-9-]+)-[0-9]+$/;
@@ -212,7 +213,9 @@ function validQuestion(q) {
     && q.options.every((o) => isPlain(o) && Object.keys(o).length === 2 && isText(o.label) && typeof o.says === 'string')
     && isText(q.recommendation)
     && [1, 2, 3, 4].includes(q.level)
-    && (q.kind === 'extra-plan' ? isText(q.plan) : q.plan === undefined || typeof q.plan === 'string');
+    && (q.kind === 'extra-plan' ? isText(q.plan) : q.plan === undefined || typeof q.plan === 'string')
+    // A build-command line must be the CLI's own, so one written by hand never reaches the director.
+    && (q.kind === 'build-command' ? isBuildQuestion(q) : q.commands === undefined);
 }
 
 // The questions in `file`, one JSON object per line. Lines that are not a valid

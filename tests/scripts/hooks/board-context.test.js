@@ -6,14 +6,17 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { readSeen, markSeen } from '../../../scripts/briefing/seen.js';
+import { readSeen, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
 import { wasRaised } from '../../../scripts/usage/figures.js';
-import { setStop } from '../../../scripts/lib/stop.js';
-import { profileViewsDir, sourcesDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { profileDir, profileViewsDir, sourcesDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
@@ -78,11 +81,11 @@ test('a prompt two hours after the last one brings the briefing; one an hour aft
     assert.match(text, /Approve the sign-in page/);
     // An address shows as text, never as a link.
     assert.match(text, /`https:\/\/example\.com\/sign-in`/);
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
 
     const later = '2026-10-19T13:00:00.000Z';
     assert.equal(await run(repo, 'And then?', later), undefined);
-    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: NOW });
+    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: NOW, weeklyAt: null });
   });
 });
 
@@ -169,11 +172,11 @@ test('a command after a long gap adds only its own text, and leaves the due brie
     for (const command of ['/wheelhouse:settings', '/wheelhouse:board', '/wheelhouse:sources']) {
       const text = contextOf(await run(repo, command, NOW));
       assert.doesNotMatch(text, /Waiting on you:/, command);
-      assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' }, command);
+      assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z', weeklyAt: null }, command);
     }
     const later = '2026-10-19T12:05:00.000Z';
     assert.ok(contextOf(await run(repo, 'Morning', later)).startsWith(HEADINGS.briefing));
-    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: later });
+    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: later, weeklyAt: null });
   });
 });
 
@@ -183,7 +186,7 @@ test('the briefing command marks the briefing given, so the next gap starts from
     const raised = [];
     const out = await run(repo, '/wheelhouse:briefing', NOW, { markRaised: (ids) => raised.push(...ids) });
     assert.ok(contextOf(out).startsWith(HEADINGS.briefing));
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
     assert.deepEqual(raised, []);
     // Ninety minutes on is inside the gap, measured from the command.
     assert.equal(await run(repo, 'Next', '2026-10-19T13:30:00.000Z'), undefined);
@@ -198,6 +201,38 @@ test('unusual use the briefing shows is marked raised, and only that', async () 
     await run(repo, 'Hello', NOW, { briefingModel: briefing, markRaised: (ids) => raised.push(...ids) });
     assert.deepEqual(raised, ['u1']);
     assert.equal(wasRaised('u1'), false, 'the stand-in was used, not the store');
+  });
+});
+
+test('the weekly lines count as given only when the briefing showed them', async () => {
+  await withProject(async ({ repo }) => {
+    const weekly = 'Build commands run unattended on this Windows computer, with no sandbox.';
+    const long = (n) => Array.from({ length: 12 }, (_, i) => `Entry ${n}${i} ${'word '.repeat(30)}`);
+    const asked = [];
+    // So crowded that what to watch is cut out of the briefing altogether.
+    const crowded = (options) => {
+      asked.push(options.weeklySince);
+      return { first: long('f'), waiting: long('w'), changed: long('c'), progress: long('p'), watch: [weekly, 'Unusual use: a lot'], usage: null, raise: ['u1'], weekly: 1 };
+    };
+    const raised = [];
+    const out = contextOf(await run(repo, 'Hello', NOW, { briefingModel: crowded, markRaised: (ids) => raised.push(...ids) }));
+    assert.ok(out.startsWith(HEADINGS.briefing));
+    assert.doesNotMatch(out, /unattended/);
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
+    assert.deepEqual(raised, []);
+
+    // The next briefing that shows it marks it given, and only the unusual items after it count as raised.
+    const later = '2026-10-19T15:00:00.000Z';
+    const roomy = (options) => {
+      asked.push(options.weeklySince);
+      return { first: [], waiting: [], changed: [], progress: [], watch: [weekly, 'Unusual use: a lot'], usage: null, raise: ['u1', 'u2'], weekly: 1 };
+    };
+    assert.match(contextOf(await run(repo, 'Hello again', later, { briefingModel: roomy, markRaised: (ids) => raised.push(...ids) })), /unattended/);
+    assert.deepEqual(readSeen(P, { now: at(later) }), { promptAt: later, briefedAt: later, weeklyAt: later });
+    assert.deepEqual(raised, ['u1']);
+    const after = '2026-10-19T18:00:00.000Z';
+    await run(repo, 'And again', after, { briefingModel: roomy, markRaised: () => {} });
+    assert.deepEqual(asked, [null, null, later]);
   });
 });
 
@@ -302,7 +337,7 @@ test('a feature worktree and the foreman get nothing', async () => {
     const inSession = (cwd, text, session, extra = {}) => decide(prompt(cwd, text, session), { now: at(NOW), env: {}, client, ...extra });
     for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await inSession(tree, text, 's-feature'), undefined, text);
     for (const text of ['/wheelhouse:board', 'Hello']) assert.equal(await inSession(repo, text, 's-foreman', { env: { WHEELHOUSE_ROLE: 'foreman' } }), undefined, text);
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: null, briefedAt: null });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: null, briefedAt: null, weeklyAt: null });
     // Outside any Wheelhouse project, nothing either.
     assert.equal(await run(tempFolder('wh-elsewhere-'), '/wheelhouse:board', NOW), undefined);
     // The front desk in the main folder does get it.
@@ -340,7 +375,7 @@ test('a failure adds nothing and lets the prompt through', async () => {
     const broken = async () => { throw new Error('unreadable'); };
     assert.equal(await run(repo, 'Hello', NOW, { load: broken }), undefined);
     // The director did write, so the prompt's time is kept; no briefing was given.
-    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: '2026-10-19T08:00:00.000Z' });
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: '2026-10-19T08:00:00.000Z', weeklyAt: null });
 
     assert.equal(await run(repo, '/wheelhouse:board', NOW, { load: async () => ({ none: 'gone' }) }), undefined);
 
@@ -350,7 +385,7 @@ test('a failure adds nothing and lets the prompt through', async () => {
     const late = '2026-10-19T18:00:00.000Z';
     assert.equal(await run(repo, 'Hello', late, { load: slow, waitMs: 50, markRaised: (ids) => raised.push(...ids) }), undefined);
     await new Promise((resolve) => { setTimeout(resolve, 400); });
-    assert.deepEqual(readSeen(P, { now: at(late) }), { promptAt: late, briefedAt: '2026-10-19T08:00:00.000Z' });
+    assert.deepEqual(readSeen(P, { now: at(late) }), { promptAt: late, briefedAt: '2026-10-19T08:00:00.000Z', weeklyAt: null });
     assert.deepEqual(raised, []);
 
     // Damaged input and an unreadable clock add nothing.
@@ -464,5 +499,185 @@ test('the role comes from the session\'s first prompt and is kept: the wake line
     assert.ok(contextOf(await send('Hello', 's-desk')).length > 0);
     assert.equal(contextOf(await send(`${FOREMAN_PROMPT_LEAD} handle wake-1.json`, 's-desk', '2026-10-19T12:10:00.000Z')), cardsLine(1));
     assert.deepEqual(JSON.parse(fs.readFileSync(roleFile('s-desk'), 'utf8')), { role: 'front-desk' });
+  });
+});
+
+// --- Learning ---
+
+// Writes events to a clone of events on disk, as the helper would.
+const store = (dir, events) => { for (const e of events) put(path.join(dir, eventPath(e)), e); };
+const noon = (d, minutes = 0) => new Date(Date.UTC(2026, 9, d, 12, minutes)).toISOString();
+const learnCard = (d, concepts) => makeEvent({
+  kind: 'card',
+  now: () => new Date(noon(d)),
+  data: composeCard({
+    kind: 'question', level: 2, what: `Which name suits page ${d}?`, why: 'It is the wording users see.',
+    options: [{ label: 'Plain', says: 'Plain words.' }, { label: 'Playful', says: 'Playful words.' }],
+    recommend: 'Plain', because: 'it reads quickest', meanwhile: 'The page keeps its old name.', concepts,
+  }).card,
+});
+const clicked = (card, label, d) => makeEvent({ kind: 'card-answer', data: { card: card.id, label }, now: () => new Date(noon(d, 5)) });
+
+// A helper client that keeps what it is asked to write. A card it records joins the waiting view,
+// unasked, as the helper's fresh views would show it.
+function learningClient() {
+  const profileWrites = [];
+  const stateWrites = [];
+  const learnt = {
+    ...client,
+    state: {
+      write: async (body) => {
+        stateWrites.push(body);
+        const id = `card-${stateWrites.length}`;
+        const file = viewFile('waiting');
+        put(file, [...JSON.parse(fs.readFileSync(file, 'utf8')), { id, at: NOW, data: body.data, asked: null }]);
+        return { ok: true, id, pushed: true };
+      },
+    },
+    profile: {
+      write: async (body) => {
+        profileWrites.push(body);
+        return { ok: true, id: `p-${profileWrites.length}`, pushed: true };
+      },
+    },
+  };
+  return { learnt, profileWrites, stateWrites };
+}
+
+test('the hook runs learning once a visit and records each proposal as one waiting card', async () => {
+  await withProject(async ({ repo }) => {
+    assert.equal(LEARN_WAIT_MS, 3000);
+    // Three cards about pull requests answered on three days; Explain more on a card about CI, which the director knows.
+    const cards = [15, 16, 17].map((d) => learnCard(d, ['pull request']));
+    const ci = learnCard(18, ['CI']);
+    store(stateDir(P), [...cards, ...cards.map((card, i) => clicked(card, 'Plain', 15 + i)), ci, clicked(ci, 'Explain more', 18)]);
+    store(profileDir(), [makeEvent({ kind: 'setting', data: { key: 'known:ci', value: true, words: 'Knows "ci": yes' }, now: () => new Date(noon(1)) })]);
+    setProfile({ 'known:ci': true });
+    // The build tab asked for on three visits running.
+    for (const d of [15, 16, 17]) markSeen(P, { boardAsk: { at: noon(d), tab: 'build', visit: noon(d) } });
+
+    const { learnt, profileWrites, stateWrites } = learningClient();
+    const out = contextOf(await run(repo, 'Hello', NOW, { client: learnt }));
+    // known:ci false counts at once, with no card; each other proposal is one waiting card.
+    assert.deepEqual(profileWrites.map((w) => [w.data.key, w.data.value]), [['known:ci', false], ['known:pull-request', true], ['boardTab', 'build']]);
+    assert.ok(profileWrites.every((w) => w.kind === 'setting' && typeof w.data.because === 'string' && typeof w.data.words === 'string'));
+    assert.deepEqual(stateWrites.map((w) => [w.kind, w.cwd, w.data.line]), [
+      ['card', repo, confirmLine({ kind: 'setting', id: 'p-2', data: profileWrites[1].data })],
+      ['card', repo, confirmLine({ kind: 'setting', id: 'p-3', data: profileWrites[2].data })],
+    ]);
+    // They reach the director with this visit's cards, and learning adds no text of its own.
+    assert.ok(out.startsWith(`${cardsLine(2)}\n\n${HEADINGS.briefing}`), out);
+    assert.equal(readVisits(P, { now: at(NOW) }).visitAt, NOW);
+
+    // Later in the same visit, nothing more is learnt.
+    await run(repo, 'And then?', '2026-10-19T12:10:00.000Z', { client: learnt });
+    assert.equal(profileWrites.length, 3);
+    // A command after a gap learns nothing either; the visit's first prompt does.
+    await run(repo, '/wheelhouse:board build', '2026-10-19T18:00:00.000Z', { client: learnt });
+    assert.equal(profileWrites.length, 3);
+    const asks = readVisits(P, { now: at('2026-10-19T18:00:00.000Z') }).boardAsks;
+    assert.deepEqual(asks.at(-1), { at: '2026-10-19T18:00:00.000Z', tab: 'build', visit: '2026-10-19T18:00:00.000Z' });
+  });
+});
+
+test('learning never runs under STOP, and a helper that never answers holds the prompt LEARN_WAIT_MS at most', async () => {
+  await withProject(async ({ repo }) => {
+    const cards = [15, 16, 17].map((d) => learnCard(d, ['pull request']));
+    store(stateDir(P), [...cards, ...cards.map((card, i) => clicked(card, 'Plain', 15 + i))]);
+    const { learnt, profileWrites } = learningClient();
+    setStop({ by: 'prompt' });
+    await run(repo, 'Hello', NOW, { client: learnt });
+    assert.deepEqual(profileWrites, []);
+
+    liftStop();
+    // A helper that takes learning's write and never answers. The board's inputs ask the answering
+    // client, so the time measured is learning's alone: its bound, not the build's or the helper's.
+    let asked = 0;
+    const never = () => { asked += 1; return new Promise(() => {}); };
+    const hung = { ...client, state: { write: never }, profile: { write: never } };
+    const load = (options) => loadBoardInputs({ ...options, client });
+    const started = Date.now();
+    const out = contextOf(await run(repo, 'Hello', '2026-10-19T18:00:00.000Z', { client: hung, learnWaitMs: 100, load }));
+    const took = Date.now() - started;
+    assert.equal(asked, 1, 'learning reached the helper, which never answered');
+    assert.ok(took >= 100 && took < 1000, `${took} ms`);
+    assert.ok(out.startsWith(HEADINGS.briefing), out);
+    // What wasn't written is worked out again on the next visit.
+    await run(repo, 'Hello', '2026-10-20T09:00:00.000Z', { client: learnt });
+    assert.deepEqual(profileWrites.map((w) => w.data.key), ['known:pull-request']);
+  });
+});
+
+test('a setting waiting for its confirmation whose card was not written gets its card on the next visit', async () => {
+  await withProject(async ({ repo }) => {
+    const data = { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you opened the build tab first on each of your last three visits' };
+    // One the director set themselves, whose card wasn't written when `record setting` wrote it.
+    const own = { key: 'briefing', value: 'short', words: 'Briefing length: short' };
+    put(path.join(profileViewsDir(), 'unconfirmed.json'), [
+      { kind: 'setting', id: 'p-old', at: '2026-10-18T09:00:00.000Z', key: 'boardTab', data },
+      { kind: 'setting', id: 'p-own', at: '2026-10-18T09:00:00.000Z', key: 'briefing', data: own },
+      // One with no words, which no card can name.
+      { kind: 'setting', id: 'p-bare', at: '2026-10-18T09:00:00.000Z', key: 'presence', data: { key: 'presence', value: 'away' } },
+    ]);
+    const { learnt, stateWrites } = learningClient();
+    await run(repo, 'Hello', NOW, { client: learnt });
+    assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'setting', id: 'p-old', data }), confirmLine({ kind: 'setting', id: 'p-own', data: own })]);
+    assert.match(stateWrites[0].data.question, /suggested from how you work/);
+    assert.match(stateWrites[1].data.question, /as you asked/);
+    // Once a card in this project carries its line, none is written again.
+    store(stateDir(P), stateWrites.map((w) => makeEvent({ kind: 'card', data: w.data, now: () => new Date(NOW) })));
+    await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });
+    assert.equal(stateWrites.length, 2);
+  });
+});
+
+test('a level waiting for its confirmation whose card was not written gets its card on the next visit', async () => {
+  await withProject(async ({ repo }) => {
+    const data = { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose what I recommended 5 times so far' };
+    put(viewFile('unconfirmed'), [
+      { kind: 'level', id: 'l-old', at: '2026-10-18T09:00:00.000Z', key: 'copy-changes', data },
+      // One with no words, which no card can name, and a ruling, whose card `record ruling` writes.
+      { kind: 'level', id: 'l-bare', at: '2026-10-18T09:00:00.000Z', key: 'colours', data: { key: 'colours', value: 3 } },
+      { kind: 'ruling', id: 'r-1', at: '2026-10-18T09:00:00.000Z', data: { words: 'Totals to the cent' } },
+    ]);
+    const { learnt, stateWrites } = learningClient();
+    await run(repo, 'Hello', NOW, { client: learnt });
+    assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'level', id: 'l-old', data })]);
+    assert.equal(stateWrites[0].cwd, repo);
+    assert.deepEqual(stateWrites[0].data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
+    assert.ok(stateWrites[0].data.question.includes(data.because));
+    // Once a card in this project carries its line, none is written again.
+    store(stateDir(P), stateWrites.map((w) => makeEvent({ kind: 'card', data: w.data, now: () => new Date(NOW) })));
+    await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });
+    assert.equal(stateWrites.length, 1);
+  });
+});
+
+test('the briefing says when the delegation review is due, worked out from the state on disk', async () => {
+  await withProject(async ({ repo }) => {
+    const given = [];
+    const briefing = (options) => {
+      given.push(options.review);
+      return { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] };
+    };
+    // No events: nothing to review.
+    await run(repo, 'Hello', NOW, { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: false, days: 14 });
+    // The project's first event was 18 days ago, and there has been no review.
+    store(stateDir(P), [makeEvent({ kind: 'idea', data: { key: 'x', title: 'An idea' }, now: () => new Date(noon(1)) })]);
+    await run(repo, 'Hello', '2026-10-19T15:00:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: true, days: 14 });
+    const out = await run(repo, 'Hello', '2026-10-19T18:00:00.000Z');
+    assert.match(contextOf(out), /^- The fortnightly look at what I can decide alone is due$/m);
+    // A review six days ago: not due again yet.
+    store(stateDir(P), [makeEvent({ kind: 'note', data: { review: 'delegation', at: noon(13) }, now: () => new Date(noon(13)) })]);
+    await run(repo, 'Hello', '2026-10-19T21:00:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: false, days: 14 });
+    // The project's setting in force decides the days.
+    put(viewFile('settings'), { delegationReviewDays: { key: 'delegationReviewDays', id: 's1', at: noon(1), value: 7, before: null } });
+    await run(repo, 'Hello', '2026-10-19T23:30:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: false, days: 7 });
+    await run(repo, 'Hello', '2026-10-20T12:00:00.000Z', { briefingModel: briefing });
+    assert.deepEqual(given.at(-1), { due: true, days: 7 });
   });
 });

@@ -160,7 +160,7 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" cards`,
         `node '${cli}' again 3`,
         `node "${cli}" again 12`,
-        ...['rulebook', 'waiting', 'ideas', 'glossary', 'settings'].map((name) => `node "${cli}" views ${name}`),
+        ...['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels'].map((name) => `node "${cli}" views ${name}`),
         `node "${cli}" explain merge`,
         `node "${cli}" explain pull request`,
         `node "${cli}" explain "pull request"`,
@@ -188,6 +188,8 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" views`,
         `node "${cli}" views secrets`,
         `node "${cli}" views rulebook extra`,
+        // The delegation review writes its proposals, so it waits for STOP to be lifted.
+        `node "${cli}" review`,
         `node "${cli}" explain`,
         `node "${cli}" explain --help`,
         `node "${cli}" explain ../x`,
