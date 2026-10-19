@@ -21,6 +21,7 @@ const SECRETS = [
   // plain words in fields that once printed any word.
   'todoState', 'secretupdated', 'byServer', 'session_01AbcDefGhiJkLmnOp', 'task_AbcDefGhiJkLmnoP', 'bAbCdEfGhIjKlMnOpQr',
   'side-session-alpha', 'mySecretProject', 'secretproducer', 'secretpath', 'brandNewField', 'secretword',
+  'LEAKBLOCK',
 ];
 
 function line(entry) { return JSON.stringify(entry); }
@@ -65,6 +66,8 @@ function hostileSession() {
     { ...base, type: '/Users/secretpath/x', uuid: 'u10' },
     { ...base, type: 'system', subtype: 'secretword', uuid: 'u11' },
     { ...base, type: 'user', uuid: 'u12', brandNewField: 'secretword', message: { role: 'user', content: 'w' } },
+    // A content block of a type nobody listed.
+    { ...base, type: 'user', uuid: 'u13', message: { role: 'user', content: [{ type: 'LEAKBLOCK_/Users/x/proj' }, { type: 'image' }] } },
   ];
   fs.writeFileSync(file, entries.map(line).join('\n') + '\n');
   const sub = path.join(dir, SESSION, 'subagents');
@@ -93,6 +96,7 @@ test('the summary of a hostile transcript prints none of its ids or the person\'
     assert.match(out, /usage\.cache_read_input_tokens 1;/);
     assert.match(out, /session:<value>/);
     assert.match(out, /system:<value>/);
+    assert.match(out, /session: <block> \+ image/);
     // The hidden keys are counted per parent path.
     assert.match(out, /== Keys not on the list/);
     assert.match(out, /\t\(top\)\n/);
@@ -179,6 +183,9 @@ test('--out refuses a link, dangling or not, and any path whose real folder is i
     fs.symlinkSync(repo, path.join(dir, 'into-repo'));
     assert.throws(() => outPath(path.join(dir, 'into-repo', 'x.txt'), { repo }), /outside the repository/);
     assert.throws(() => outPath(path.join(repo, 'x.txt'), { repo }), /outside the repository/);
+    // A new folder inside the repository: refused before any folder is made.
+    assert.throws(() => outPath(path.join(repo, 'newdir', 'deeper', 'x.txt'), { repo }), /outside the repository/);
+    assert.equal(fs.existsSync(path.join(repo, 'newdir')), false);
     // A plain file outside: written, and written again.
     const fine = outPath(path.join(dir, 'out', 'mine.txt'), { repo });
     writeOut(fine, 'one');

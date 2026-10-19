@@ -36,8 +36,9 @@
 //     field names (key paths), kinds of marker (known prefixes, enumerated
 //     values such as `entrypoint` and `origin.kind`) and counts, each through
 //     the allowlists in fields.js: anything not listed prints as <key> or
-//     <value>, and hidden keys are counted per parent path. Never message text, `cwd` values, paths, session ids, model
-//     names, project or folder names. The output is written under the
+//     <value>, and hidden keys are counted per parent path. Never message
+//     text, `cwd` values, paths, session ids, model names, project or
+//     folder names. The output is written under the
 //     temporary folder (or to --out, which must be outside the repository)
 //     and is never committed.
 import crypto from 'node:crypto';
@@ -212,7 +213,7 @@ export function userSignature(entry, toolNames, { firstPrompt = false } = {}) {
     for (const block of content) {
       if (block?.type === 'tool_result') parts.push(`tool_result(${toolNames.get(block.tool_use_id) ?? 'unknown tool'})`);
       else if (block?.type === 'text') parts.push(`text:${textMarker(block.text)}`);
-      else parts.push(String(block?.type ?? 'unknown'));
+      else parts.push(BLOCK_TYPES.has(block?.type) ? block.type : '<block>');
     }
   } else {
     parts.push(`content:${content === undefined ? 'none' : typeof content}`);
@@ -487,10 +488,18 @@ export function outPath(outArg, { repo = repoDir, tmp = os.tmpdir() } = {}) {
   try { stat = fs.lstatSync(outFile); } catch { /* not there yet */ }
   if (stat?.isSymbolicLink()) throw new Error('--out must not be a link');
   if (stat && !stat.isFile()) throw new Error('--out must be a file');
-  fs.mkdirSync(path.dirname(outFile), { recursive: true });
-  const realOut = path.join(fs.realpathSync(path.dirname(outFile)), path.basename(outFile));
+  // The real path of the nearest folder that exists, with the rest added; the
+  // check comes before any folder is made.
+  let existing = path.dirname(outFile);
+  const rest = [path.basename(outFile)];
+  while (!fs.existsSync(existing)) {
+    rest.unshift(path.basename(existing));
+    existing = path.dirname(existing);
+  }
+  const realOut = path.join(fs.realpathSync(existing), ...rest);
   const realRepo = fs.realpathSync(repo);
   if (realOut === realRepo || realOut.startsWith(realRepo + path.sep)) throw new Error('--out must be outside the repository');
+  fs.mkdirSync(path.dirname(realOut), { recursive: true });
   return realOut;
 }
 
