@@ -23,7 +23,14 @@ const KEPT_OUT = 'Wheelhouse traffic, shown in the pane'
 const TRAFFIC = [
   'Wheelhouse: the banner change is ready for review',
   'Wheelhouse courier: card 3 waits for the director',
-  'Wheelhouse foreman: slice 2 of 3 finished\nThe tests pass.',
+  'Wheelhouse builder: slice 2 of 3 finished\nThe tests pass.',
+] as const
+// Prompts led by the foreman's lead (FOREMAN_PROMPT_LEAD, scripts/foreman/start.js). They match
+// MESSAGE_LEAD, but the foreman talks to no one: a session's first such prompt is how an
+// app-started foreman learns its role, so it is never traffic (ruling 34).
+const FOREMAN = [
+  'Wheelhouse foreman: you are the long-lived foreman of shop. At each wake, follow the wheelhouse:foreman skill.',
+  'Wheelhouse foreman: CI failed on pull request #4\nThe tests pass locally.',
 ] as const
 // Messages that mention Wheelhouse without its lead on the first line.
 const NOT_TRAFFIC = [
@@ -163,6 +170,51 @@ test('a peer or sdk message led by Wheelhouse is kept out of the front desk and 
     expect(await receive($, TRAFFIC[1], { kind: 'peer' }, { agentId: 'agent-1' })).toEqual({ text: TRAFFIC[1] })
     expect(seen.receives).toHaveLength(1)
     expect(seen.receives[0].agentId).toBe('agent-1')
+  }
+})
+
+test('a prompt led by the foreman\'s lead passes on unchanged in a front desk\'s session', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, () => frontDesk())
+  for (const surface of SURFACES) {
+    await start($, surface)
+    expect(seen.ticks).toHaveLength(1)
+    for (const text of FOREMAN) {
+      clear()
+      for (const kind of ['sdk', 'peer']) expect(await submit($, text, kind)).toMatchObject({ text })
+      expect(await receive($, text, { kind: 'peer' })).toEqual({ text })
+      await clock.settle()
+      expect(seen.prompts.map((p: any) => [p.text, p.origin.kind])).toEqual([[text, 'sdk'], [text, 'peer']])
+      expect(seen.receives.map((r: any) => r.text)).toEqual([text])
+      expect(seen.ticks).toHaveLength(0)
+      expect(seen.runs).toHaveLength(0)
+    }
+  }
+})
+
+test('an app-started foreman\'s first prompt reaches the session after a first tick that answered front desk', async ($, on) => {
+  // The foreman's session is known only from its first prompt, which arrives after the mod's
+  // first tick; until the role is recorded, that tick answers as the front desk's.
+  let reply: object = frontDesk()
+  const { seen, clear, start, clock } = world(on, () => reply)
+  for (const surface of SURFACES) {
+    reply = frontDesk()
+    await start($, surface)
+    expect(seen.ticks).toHaveLength(1)
+    clear()
+    const first = await submit($, FOREMAN[0], 'sdk')
+    expect(first).toEqual({ text: FOREMAN[0], origin: { kind: 'sdk' } })
+    expect(seen.prompts).toHaveLength(1)
+    expect(seen.prompts[0].text).toBe(FOREMAN[0])
+    expect(seen.prompts[0].origin).toEqual({ kind: 'sdk' })
+    await clock.settle()
+    expect(seen.ticks).toHaveLength(0)
+    expect(seen.runs).toHaveLength(0)
+
+    // Once the role is recorded, the next tick answers as the foreman's.
+    reply = foreman()
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(1)
+    expect(seen.ticks[0].cmd).toBe('tick')
   }
 })
 

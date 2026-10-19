@@ -13,6 +13,7 @@ import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
 import { PANE_ID, TICK_MS, STALE_TICKS, WATCH_BRIDGE_MS, LEADS, MESSAGE_LEAD } from '../../../scripts/lib/mod-numbers.js';
 import { BRIDGE_MS } from '../../../scripts/mod/bridge.js';
+import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 // The mod's hooks as the validator lists them.
@@ -349,7 +350,7 @@ test('the mod reads a reply code from the code alphabet', () => {
 test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
   const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'MESSAGE_LEAD', 'PANE_ID', 'PANE_LEAD', 'STALE_TICKS', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS']);
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'MESSAGE_LEAD', 'PANE_ID', 'PANE_LEAD', 'STALE_TICKS', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS']);
   const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
   assert.equal(value('PANE_ID'), PANE_ID);
   assert.equal(value('TICK_MS'), TICK_MS);
@@ -357,6 +358,7 @@ test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numb
   assert.equal(value('BRIDGE_MS'), BRIDGE_MS);
   assert.equal(value('WATCH_BRIDGE_MS'), WATCH_BRIDGE_MS);
   assert.equal(value('PANE_LEAD'), LEADS.pane);
+  assert.equal(value('FOREMAN_LEAD'), FOREMAN_PROMPT_LEAD);
   assert.equal(written.MESSAGE_LEAD, String(MESSAGE_LEAD));
   // The waits are the bridge's limits and the time node takes to start (ruling 26).
   assert.equal(written.ASK_MS, 'BRIDGE_MS + 1500');
