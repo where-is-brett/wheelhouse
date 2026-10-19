@@ -6,7 +6,7 @@ These are the mod plan's two scenarios (`docs/superpowers/plans/2026-10-19-wheel
 
 **Run on** 20 October 2026, on macOS, with Claude Code 2.1.302, Superpowers 7.0.0 loaded from its installed folder, and Matt Pocock's skills, the organisation-synced copy this computer has.
 
-**How they were run.** Not with `npm run eval`: `scripts/eval/run.js` reads only `tests/eval/build-loop/`, and the evaluation plan's runner across suites (its Task 3) isn't built (Ruling 35). Each run was one call of `runScenario` from `scripts/eval/harness.js`, from a script in the session's scratch folder, never committed:
+**How they are run.** By `npm run eval -- 36 37 --variant with` and `npm run eval -- 36 37 --variant without`: the runner across suites (`scripts/eval/run.js`) finds them in `tests/eval/mod/`, by their numbers, which no other suite uses, and `npm run eval -- --suite mod` runs both. The counted runs below were made before that runner existed, directly: each was one call of `runScenario` from `scripts/eval/harness.js`, from a script in the session's scratch folder, never committed:
 
 ```js
 const scenario = (await import('<repo>/tests/eval/mod/36-pane-explain.js')).default;
@@ -14,7 +14,7 @@ const outcome = await runScenario({ scenario, variant: 'with', trial: 1 });
 console.log(outcome.line);
 ```
 
-`npm run eval -- 36` can't reach `tests/eval/mod/` until the runner across suites exists; wiring it there is a note for the evaluation build. Two changes to the evaluation's shared code came with these scenarios: `scripts/eval/harness.js` (`runSession` takes `extraArgs`, put last on the command line, and `runScenario` passes a scenario's own, so a runner needs nothing more to run them) and `scripts/eval/stand-in-helper.js` (it keeps a caller's id on a plain event and gives the card events with the views, both below). The record of each run, with every stream-json event, is in `~/.wheelhouse-evals/2026-10-20/<id>-<variant>-<trial>.json`. `npm test` has no test that every scenario file is reachable by the runner, or of the numbering across folders; `tests/scripts/eval/scenarios-36-37.test.js` checks these two scenarios' set-up and judgements on made-up streams.
+That is the same call the runner makes for each trial, so a run by `npm run eval` sets up and judges a session as they were. Two changes to the evaluation's shared code came with these scenarios: `scripts/eval/harness.js` (`runSession` takes `extraArgs`, put last on the command line, and `runScenario` passes a scenario's own, so the runner needs nothing more to run them) and `scripts/eval/stand-in-helper.js` (it keeps a caller's id on a plain event and gives the card events with the views, both below). The record of each run, with every stream-json event, is in `~/.wheelhouse-evals/2026-10-20/<id>-<variant>-<trial>.json`. `tests/scripts/eval/scenarios-36-37.test.js` checks these two scenarios' set-up and judgements on made-up streams, and that the runner finds and runs both by number (with a stand-in for the session).
 
 **What a run is.** Each scenario (`tests/eval/mod/<id>-*.js`, sharing `tests/eval/mod/front-desk-playbook.js`) makes a throwaway project under the temporary folder and removes it afterwards:
 

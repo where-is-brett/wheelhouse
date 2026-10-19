@@ -2,9 +2,12 @@
 // The mod's scenarios' set-up pieces and judgements (tests/eval/mod/): the playbook each variant
 // loads, the cards as `cli.js card` composes them, the prompts the bridge submits, the reader of
 // what the session wrote to the director, and the judgements of scenarios 36 and 37, on made-up
-// streams and events.
+// streams and events; and that the runner across suites finds both in the mod's suite.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { EVAL_ROOT, findScenario, loadScenarios, main } from '../../../scripts/eval/run.js';
+import { tempFolder } from '../../helpers/homes.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
 import { mainCalls, playbookFor, seedCards, boardNumbers, textBlocks, THE_LINES } from '../../eval/mod/front-desk-playbook.js';
 import scenario36, { APPROVAL_CARD, CARDS as CARDS_36, PROMPT as PROMPT_36, judge as judge36 } from '../../eval/mod/36-pane-explain.js';
@@ -120,4 +123,20 @@ test('37 passes one plain one-line notification, then one call holding cards 3 a
   assert.match(judge(events(ask())).why, /no PushNotification call/);
   assert.match(judge(events(notify('2 cards.'), ask()), { asked: [...NEW_CARDS, CARDS_37[0].id] }).why, /asked before/);
   assert.match(judge(events(notify('2 cards.'), ask()), { forbidden: ['card-answer'] }).why, /never earns: card-answer/);
+});
+
+test('npm run eval finds 36 and 37 in the mod\'s suite, numbered as their files, and runs them by number', async () => {
+  assert.equal(findScenario(36), path.join(EVAL_ROOT, 'mod', '36-pane-explain.js'));
+  assert.equal(findScenario(37), path.join(EVAL_ROOT, 'mod', '37-courier-wake.js'));
+  assert.deepEqual(await loadScenarios(36), [scenario36]);
+  assert.deepEqual(await loadScenarios(37), [scenario37]);
+  // No real session: the trial is a stand-in that only says what it was given.
+  const ran = [];
+  const run = async ({ scenario, variant, trial }) => {
+    ran.push([scenario.id, variant, trial]);
+    return { pass: true, handled: true, why: 'stand-in', file: null, usage: { input: 0, output: 0 }, line: '' };
+  };
+  const code = await main(['36', '37', '--variant', 'with'], { home: tempFolder('eval-36-37-'), run, print: () => {}, commit: null, version: null });
+  assert.equal(code, 0);
+  assert.deepEqual(ran, [[36, 'with', 1], [37, 'with', 1]]);
 });
