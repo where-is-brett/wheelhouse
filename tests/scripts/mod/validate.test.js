@@ -190,8 +190,8 @@ test('a second $.process.run, or one running anything but the bridge, fails', ()
   assert.equal(aliased.ok, false);
   const none = bridgeArgv({ 'hooks/register.ts': '// no calls' });
   assert.equal(none.ok, false);
-  // A mention in a comment is not a call.
-  assert.deepEqual(bridgeArgv({ ...SOURCES, 'hooks/mod/note.ts': '// $.process.run( is the only call' }), { ok: true });
+  // A mention in a comment counts too: the check reads the raw text, so a misread comment can't hide a call.
+  assert.equal(bridgeArgv({ ...SOURCES, 'hooks/mod/note.ts': '// $.process.run( is the only call' }).ok, false);
   // checkMod carries the same problem.
   const result = checkMod({ report: reportWith([`./register.ts hooks: ${FOUR}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, 'hooks/mod/more.ts': `$.process.run(${ARGV})` } });
   assert.match(result.problems.join('\n'), /exactly one/);
@@ -446,4 +446,37 @@ test('hooks.json naming any module but ./register.ts fails, and so does a report
   assert.match(checkMod({ report: other, sources, hooksJson: { modules: ['./register.ts'] } }).problems.join('\n'), /lists hooks for \.\/part\.ts, not \.\/register\.ts/);
   // The repository's own hooks.json and files pass.
   assert.deepEqual(checkMod({ report, ...readMod(ROOT) }).problems, []);
+});
+
+// Fix round 2: a // the scanner misreads as a comment must not hide code.
+const MISREAD = [
+  ['hooks/mod/more.ts', "if (x) /\\/\\//.test(y); "],
+  ['hooks/mod/more.ts', "if (ok) /https:\\/\\//.test(u) && "],
+  ['hooks/mod/more.tsx', 'const e = <Text>a // b</Text>; '],
+];
+
+test('a second process run behind a misread // still fails', () => {
+  for (const [file, before] of MISREAD) {
+    const result = bridgeArgv({ ...SOURCES, 'hooks/mod/ask.ts': REAL_ASK, [file]: `${before}$.process.run(['sh'])\n` });
+    assert.equal(result.ok, false, before);
+    assert.match(result.why, /exactly one/, before);
+  }
+});
+
+test('a forbidden member behind a misread // still fails', () => {
+  const report = fixture('validate-repo.json');
+  for (const [file, before] of MISREAD) {
+    const result = checkMod({ report, sources: { ...repoSources(), [file]: `${before}$.fs.write(1)\n` } });
+    assert.match(result.problems.join('\n'), /\$\.fs\.write, which the mod must never call/, before);
+  }
+  // A comment that names one fails too, once.
+  const named = checkMod({ report, sources: { ...repoSources(), 'hooks/mod/more.ts': '// never $.env.set\n' } });
+  assert.equal(named.problems.filter((p) => /\$\.env\.set/.test(p)).length, 1, named.problems.join('\n'));
+});
+
+test('the scanner reads a regular expression after the ) of if, while, for or with', () => {
+  assert.deepEqual(membersIn("if (x) /\\/\\//.test(y); $.fs.write(1)"), ['$.fs.write']);
+  assert.deepEqual(membersIn("while (a) /https:\\/\\//.test(u) && $.ui.toast(1)"), ['$.ui.toast']);
+  assert.deepEqual(membersIn("for (;;) /a\\/\\//.test(u); $.ui.toast(1)"), ['$.ui.toast']);
+  assert.deepEqual(membersIn('const q = f(a) / 2; // $.fs.read\n$.ui.toast(q / 3)'), ['$.ui.toast']);
 });

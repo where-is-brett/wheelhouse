@@ -1,9 +1,9 @@
 // hooks/mod/ask.ts
 // The mod's one call out: the plugin's bridge, `node <plugin root>/scripts/mod/bridge.js`,
-// run through $.process.run with one JSON request on standard input. The bridge answers one
-// JSON line, { ok, says? }. Those commands run outside the session's sandbox, so the bridge
-// can sign (check 32). scripts/mod/validate.js checks that this is the only $.process.run in
-// the mod and that it runs nothing but the bridge.
+// run through the engine's process call with one JSON request on standard input. The bridge
+// answers one JSON line, { ok, says? }. Those commands run outside the session's sandbox, so
+// the bridge can sign (check 32). scripts/mod/validate.js checks that this is the mod's only
+// such call and that it runs nothing but the bridge.
 import type { EngineInterface } from 'claude-code'
 
 const BRIDGE_MS = 5000

@@ -67,8 +67,13 @@ function codeOf(source) {
   const text = String(source);
   let out = '';
   let i = 0;
+  // Whether each open ( follows if, while, for or with, and where the last such ) ended: a /
+  // after it starts a regular expression, as after any other statement's head.
+  const parens = [];
+  let controlEnd = -1;
   const regexHere = () => {
     const tail = out.slice(-200).trimEnd();
+    if (tail.endsWith(')') && controlEnd === out.trimEnd().length) return true;
     return tail === '' || REGEX_AFTER.includes(tail.slice(-1)) || REGEX_AFTER_WORD.test(tail);
   };
   const quoted = (quote) => {
@@ -127,8 +132,10 @@ function codeOf(source) {
           if (depth === 0) return;
           depth -= 1;
         } else if (inExpression && c === '{') depth += 1;
+        if (c === '(') parens.push(/(?:^|[^\w$.])(?:if|while|for|with)\s*$/.test(out.slice(-40)));
         out += c;
         i += 1;
+        if (c === ')' && parens.pop()) controlEnd = out.length;
       }
     }
   }
@@ -138,9 +145,19 @@ function codeOf(source) {
 
 // Every `$.noun.member` (or a bare `$.noun`) the source names outside its comments, sorted.
 export function membersIn(source) {
+  return membersOf(codeOf(source));
+}
+
+function membersOf(code) {
   const found = new Set();
-  for (const m of codeOf(source).matchAll(/(?<![\w$])\$\s*\??\.\s*([A-Za-z_]\w*)(?:\s*\??\.\s*([A-Za-z_]\w*))?/g)) found.add(m[2] ? `$.${m[1]}.${m[2]}` : `$.${m[1]}`);
+  for (const m of code.matchAll(/(?<![\w$])\$\s*\??\.\s*([A-Za-z_]\w*)(?:\s*\??\.\s*([A-Za-z_]\w*))?/g)) found.add(m[2] ? `$.${m[1]}.${m[2]}` : `$.${m[1]}`);
   return [...found].sort();
+}
+
+// The same members read from the raw text, comments, strings and all: a check that no
+// misread comment can hide a member from.
+function rawMembersIn(source) {
+  return membersOf(String(source));
 }
 
 const slashes = (file) => file.replaceAll('\\', '/');
@@ -206,7 +223,11 @@ const ARGV = /^\s*\(\s*\[\s*'node'\s*,\s*`\$\{\$\.plugin\.root\}\/scripts\/mod\/
 export function bridgeArgv(sources) {
   const mentions = [];
   let calls = 0;
+  let raw = 0;
   for (const [file, text] of entriesOf(sources)) {
+    // Counted in the raw text as well, with nothing stripped, so a comment the scan misreads
+    // can't hide a second run: a mention in a comment fails too.
+    raw += [...text.matchAll(/(?<![\w$])process\s*\??\.\s*run(?![\w$])/g)].length;
     const code = codeOf(text);
     for (const m of code.matchAll(/(?<![\w$])process\s*\??\.\s*run(?![\w$])/g)) {
       const rest = code.slice(m.index + m[0].length);
@@ -214,8 +235,8 @@ export function bridgeArgv(sources) {
       if (/^\s*(?:\?\.\s*)?\(/.test(rest)) calls += 1;
     }
   }
-  if (mentions.length !== 1 || calls !== 1) {
-    return { ok: false, why: `The mod's source must hold exactly one $.process.run( call, the bridge's, and it holds ${mentions.length} mention${mentions.length === 1 ? '' : 's'} of process.run and ${calls} call${calls === 1 ? '' : 's'}` };
+  if (raw !== 1 || mentions.length !== 1 || calls !== 1) {
+    return { ok: false, why: `The mod's source must hold exactly one $.process.run( call, the bridge's, and no other mention of process.run, even in a comment; it holds ${Math.max(raw, mentions.length)} mention${Math.max(raw, mentions.length) === 1 ? '' : 's'} and ${calls} call${calls === 1 ? '' : 's'}` };
   }
   const [{ file, before, rest }] = mentions;
   if (file !== ASK) return { ok: false, why: `The mod's one $.process.run( is in ${file}, not ${ASK}` };
@@ -474,6 +495,11 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
       if (![base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}/index.ts`, `${base}/index.tsx`].some((candidate) => known.has(candidate))) {
         problems.push(`The mod's ${file} imports ${specifier}, which isn't one of the mod's files (hooks/register.ts and hooks/mod/)`);
       }
+    }
+    const stripped = new Set(membersIn(text));
+    // Read again from the raw text: a forbidden member named anywhere, a comment included, fails.
+    for (const member of rawMembersIn(text)) {
+      if (!stripped.has(member) && matchesForbidden(member, FORBIDDEN_CALLS)) problems.push(`The mod's source names ${member}, which the mod must never call, in text that may be a comment (in ${file})`);
     }
     if (imports.dynamic > 0) problems.push(`The mod's ${file} imports a file by a name the checks can't read`);
     for (const member of membersIn(text)) {
