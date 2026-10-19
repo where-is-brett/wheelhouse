@@ -3,17 +3,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pressCard } from '../../../scripts/mod/press.js';
-import { replyRecord } from '../../../scripts/mod/reply.js';
+import { pressCard, SAYS } from '../../../scripts/mod/press.js';
+import { replyRecord, repliedDir } from '../../../scripts/mod/reply.js';
 import { hashOf } from '../../../scripts/mod/status.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
-import { composeCard } from '../../../scripts/cards/compose.js';
+import { answerInput, composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath, listEvents, dataHash } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, USE_GUARDED, settingKey } from '../../../scripts/protection/windows-builds.js';
 import { withHome } from '../../helpers/homes.js';
 
 const P = 'owner__name';
@@ -396,4 +397,83 @@ test('a Lift STOP card drawn before this STOP began records nothing', () => with
   const fresh = putCard(liftStopCard(), 31);
   assert.equal((await press(fresh, fake(), 'Lift STOP', { liftStop })).made, true);
   assert.equal(stopState().on, false);
+}));
+
+// A confirm card for a setting event, as the front desk composes it.
+const settingCard = (event) => composeCard({ ...common, kind: 'confirm', recommend: 'Confirm', what: `A setting you asked for: ${event.data.words}.`, options: [says('Confirm')], target: { event } }).card;
+const claimedNothing = () => {
+  try {
+    return fs.readdirSync(repliedDir(P)).length === 0;
+  } catch {
+    return true;
+  }
+};
+
+test('no press confirms a Windows build-commands setting: only a click on its own card does', () => withKey(async () => {
+  const me = computerId();
+  const setting = (value) => makeEvent({ kind: 'setting', data: { key: settingKey(me), value, words: `Run build commands ${value}` }, now: () => NOW });
+  const guarded = setting('guarded');
+  keepEvent(guarded);
+  // Nor one in the director's profile.
+  const profiled = setting('unattended');
+  fs.mkdirSync(path.join(profileDir(), path.dirname(eventPath(profiled))), { recursive: true });
+  fs.writeFileSync(path.join(profileDir(), eventPath(profiled)), JSON.stringify(profiled));
+  const refused = { made: false, says: SAYS.buildsByClick };
+  for (const [event, minute] of [[guarded, 0], [profiled, 1]]) {
+    const card = putCard(settingCard(event), minute);
+    const client = fake();
+    assert.deepEqual(await press(card, client, 'Confirm'), refused);
+    assert.equal(untouched(client), 0);
+    assert.equal(waitingIds().includes(card.id), true);
+  }
+  // Use Guarded, which confirms that setting, is a click only too, whatever card offers it.
+  const offers = putCard(composeCard({ ...common, kind: 'question', recommend: 'Keep asking', what: 'How should build commands run on this computer?', options: [{ label: 'Keep asking', says: 'Each run is asked.' }, { label: USE_GUARDED, says: 'Runs in the guarded runner.' }] }).card, 2);
+  const client = fake();
+  assert.deepEqual(await press(offers, client, USE_GUARDED), refused);
+  assert.equal(untouched(client), 0);
+  assert.deepEqual(pendingFiles(), []);
+  assert.equal(claimedNothing(), true);
+}));
+
+test('a press allows a build-command question\'s commands only on the computer that recorded the question', () => withKey(async () => {
+  const asked = (n) => ({
+    id: `q-export-csv-${n}`, work: 'export-csv', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
+    options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })), recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'],
+  });
+  const elsewhere = { ...makeEvent({ kind: 'question', data: asked(2), now: () => NOW }), computer: 'deadbeef' };
+  const unknown = { ...makeEvent({ kind: 'question', data: asked(3), now: () => NOW }), computer: undefined };
+  for (const e of [elsewhere, unknown]) keepEvent(e);
+  for (const [e, minute] of [[elsewhere, 0], [unknown, 1]]) {
+    const card = putCard(composeCard(answerInput(e.data, 'export-csv')).card, minute);
+    for (const label of [BUILD_QUESTION_LABELS.once, BUILD_QUESTION_LABELS.feature]) {
+      const client = fake();
+      assert.deepEqual(await press(card, client, label), { made: false, says: 'Build commands are allowed only on the Windows computer that asked: answer the card there' }, `${e.data.id} ${label}`);
+      assert.equal(untouched(client), 0);
+    }
+    assert.equal(waitingIds().includes(card.id), true);
+  }
+  assert.deepEqual(pendingFiles(), []);
+  assert.equal(claimedNothing(), true);
+}));
+
+test('an ordinary press beside those still records: Allow on this computer\'s question, Confirm on another setting', () => withKey(async () => {
+  const data = {
+    id: 'q-export-csv-1', work: 'export-csv', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
+    options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })), recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'],
+  };
+  const here = makeEvent({ kind: 'question', data, now: () => NOW });
+  keepEvent(here);
+  const card = putCard(composeCard(answerInput(data, 'export-csv')).card);
+  const client = fake();
+  assert.deepEqual(await press(card, client, BUILD_QUESTION_LABELS.feature), { made: true, says: `Recorded: ${BUILD_QUESTION_LABELS.feature} on card 1` });
+  assert.deepEqual(signed(client).map((r) => [r.data.action, r.data.questionId, r.data.label]), [['answer', 'q-export-csv-1', BUILD_QUESTION_LABELS.feature]]);
+  assert.equal(waitingIds().includes(card.id), false);
+
+  const tab = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Open the board on its build tab' }, now: () => NOW });
+  keepEvent(tab);
+  const confirm = putCard(settingCard(tab), 1);
+  const other = fake();
+  assert.equal((await press(confirm, other, 'Confirm')).made, true);
+  assert.deepEqual(signed(other).map((r) => r.kind), ['confirmation']);
+  assert.equal(waitingIds().includes(confirm.id), false);
 }));

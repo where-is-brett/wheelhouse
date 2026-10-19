@@ -73,6 +73,9 @@ export function recordedAs(made, question) {
 
 const no = (says) => ({ made: false, says });
 
+// Why an Allow on a build-command question asked on another computer records nothing.
+export const ALLOWED_ELSEWHERE = 'Build commands are allowed only on the Windows computer that asked: answer the card there';
+
 // The views and the events they were built from, from the state clone as writeViews builds them.
 // A reply reads its card in the shown view, and a press on the pane in the waiting view.
 export function viewsNow(project, now) {
@@ -105,8 +108,9 @@ export function answeredInPending(project, question) {
 
 // Whether `question` carries the confirm line of a Windows build-commands setting, in the project's
 // state or the director's profile, as the prompt record would find it. That setting is set only by
-// a click on its own card (design section 12.2), so no reply confirms it, whatever card carries it.
-function confirmsBuilds(project, question) {
+// a click on its own card (design section 12.2), so no reply confirms it, whatever card carries it,
+// and no pane press does either (press.js).
+export function confirmsBuilds(project, question) {
   const builds = (dirOf) => {
     try {
       return listEvents(dirOf(), { report: () => {} }).some((e) => e.kind === 'setting' && typeof e.data?.key === 'string'
@@ -121,8 +125,9 @@ function confirmsBuilds(project, question) {
 // Whether an Allow reply on the answer card for question `id` would grant nothing: the question is
 // a build-command one, and this isn't the computer that recorded it (unknown counts as another). A
 // grant holds only on the computer whose key signed the answer (buildGrants), so an answer signed
-// here would close the card and leave the builder's commands unallowed there.
-function allowsElsewhere(project, id, label) {
+// here would close the card and leave the builder's commands unallowed there. A pane press is
+// refused the same way (press.js).
+export function allowsElsewhere(project, id, label) {
   if (label !== BUILD_QUESTION_LABELS.once && label !== BUILD_QUESTION_LABELS.feature) return false;
   try {
     const asked = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === id).at(-1);
@@ -208,7 +213,7 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   if (label === USE_GUARDED || (label === 'Confirm' && confirmsBuilds(project, card.question))) return no('That setting is changed only by a click on its own card');
   if (!SIGNED_LABELS.includes(label) && !answers) return no('That option doesn\'t need a reply code');
   if (answers && allowsElsewhere(project, line.slice('Answer question '.length), label)) {
-    return no('Build commands are allowed only on the Windows computer that asked: answer the card there');
+    return no(ALLOWED_ELSEWHERE);
   }
   if (typeof card.id !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(card.id)) return no('No card has that code');
 

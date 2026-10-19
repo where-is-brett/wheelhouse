@@ -19,6 +19,12 @@
 // signs and sends its record, which closes the card on its own; no card answer is written or
 // kept, so Not now notes nothing, and Explain more, Show me and a question card's options still
 // give their prompt, since reading and explaining carry on.
+//
+// Two presses record nothing, whatever the card offers, as a reply code records nothing for them
+// (reply.js): confirming a Windows build-commands setting (Confirm on its card, or Use Guarded),
+// which only a click on its own card when the front desk asks it sets (design section 12.2), and
+// an Allow on a build-command question recorded on another computer, which would grant nothing
+// there.
 import fs from 'node:fs';
 import path from 'node:path';
 import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
@@ -31,7 +37,8 @@ import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
 import { cardButtons, kindOf } from './buttons.js';
 import { cardTextOf, hashOf } from './status.js';
-import { claim, answeredInPending, repliedDir, viewsNow } from './reply.js';
+import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsElsewhere, ALLOWED_ELSEWHERE } from './reply.js';
+import { USE_GUARDED } from '../protection/windows-builds.js';
 
 const NOT_NOW = 'Not now';
 // Longer than any option a card offers.
@@ -51,6 +58,8 @@ export const SAYS = {
   cantLift: 'STOP couldn\'t be lifted, so nothing was recorded',
   notNoted: 'STOP is on, so that wasn\'t noted; the card stays as it was',
   lost: 'That wasn\'t noted this time, so the card stays as it was',
+  buildsByClick: 'That setting is set only by a click on its own card when the front desk asks it, so nothing was recorded',
+  elsewhere: ALLOWED_ELSEWHERE,
 };
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -150,6 +159,9 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   if (typeof label !== 'string' || label === '' || label.length > LABEL_CHARS || /[\p{Cc}\p{Cf}]/u.test(label)) return no(SAYS.notOffered);
   const button = cardButtons(data).buttons.find((b) => b.label === label);
   if (!button) return no(`That card doesn't offer ${label}`);
+  if (label === USE_GUARDED || (label === 'Confirm' && confirmsBuilds(project, question))) return no(SAYS.buildsByClick);
+  const line = setLineOf(question);
+  if (line?.startsWith('Answer question ') && allowsElsewhere(project, line.slice('Answer question '.length), label)) return no(SAYS.elsewhere);
   const shownId = shownIdOf(views.shown, question);
   const markers = shownId === null ? [card] : [card, shownId];
   if (answeredInPending(project, question) || decidedInPending(project, data, question) || markers.some((id) => claimed(project, id))) {
