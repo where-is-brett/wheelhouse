@@ -46,12 +46,13 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     health: () => ask(address, 'GET', '/health', undefined, timeout),
     stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
     push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
+    pull: post('/pull'), //          { project | cwd, dir, branch } -> { ok, already } or { ok, already: false, merged, from, sha, bundle }, or { ok: false, refused, conflicts? }: `cli.js pull` brings the host's copy of the worktree's own feature branch in; `bundle` (base64) holds the commits the worktree lacks, under refs/wheelhouse/pulled
     foreman: {
       run: post('/foreman/run'), // { folder, script: 'act' | 'wake', argv } -> { ok, code, stdout, stderr }: the foreman's command, run by the helper outside the sandbox; `folder` must be the project's main checkout; answered under STOP
     },
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
-    // /push, /pr/open, /state/answer, /lineage/provenance and /config take `cwd`, a full path, in
-    // place of or beside `project`, and the helper places the project from it (scripts/feature/cli.js
+    // /push, /pull, /pr/open, /state/answer, /lineage/provenance and /config take `cwd`, a full
+    // path, in place of or beside `project`, and the helper places the project from it (scripts/feature/cli.js
     // runs where ~/.wheelhouse cannot be read); given both, the folder must be in the project named.
     openPr: post('/pr/open'), //     { project | cwd, head, base?, title, body, session }: no base means the default branch; the helper stamps the body with what built it, from the session's provenance on this computer, and refuses a session with none
     updatePr: post('/pr/update'), // { project, number, title?, body?, session }: a new body is stamped as openPr's is; a session with no provenance on this computer is refused

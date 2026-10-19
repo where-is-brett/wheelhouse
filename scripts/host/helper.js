@@ -13,6 +13,7 @@
 // agent's folder into the mirror, with no key, reading nothing but objects
 // from that folder (its config, remote, replace refs and hooks count for
 // nothing). The checks and the push then run in the mirror, with the key.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -44,6 +45,7 @@ import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
 import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
+import { branchOf } from '../hooks/session-start.js';
 import { SLUG } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
@@ -55,6 +57,12 @@ export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
 const REMOTE = 'origin';
 const INCOMING = 'refs/wheelhouse/incoming';
+// A pull's refs in the mirror: the host's copy of the branch, and what is handed back. The bundle
+// names PULLED, which `cli.js pull` fetches from it.
+const PULL_HOST = 'refs/wheelhouse/pull-host';
+const PULLED = 'refs/wheelhouse/pulled';
+// The largest bundle a pull hands back in its answer.
+const PULL_BUNDLE_BYTES = 32 * 1024 * 1024;
 const MOST_BODY = 1024 * 1024;
 const PROBE_MS = 1000;
 const PIPE = /^\\\\[.?]\\pipe\\/i;
@@ -352,6 +360,7 @@ export const PUSH_REFUSALS = {
   ciSignIn: 'sign in to GitHub (or GitLab) on this computer to push the CI change',
   outsideProject: 'the folder to push from is not inside the project',
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
+  movedOn: 'the host\'s branch has moved on since this one was taken from it',
   notJson: 'a file in the state push is not JSON, so nothing is pushed',
   prBase: 'a pull request may only be opened against the default branch',
   profile: 'a profile push may only add new event files under events/, and add or remove bundles under backups/',
@@ -364,6 +373,18 @@ const UPDATE_REFUSALS = {
   base: 'only a pull request against the default branch is brought up to date',
   branch: 'only a pull request from a feature/<work> branch is brought up to date',
   fork: 'the pull request\'s head is not this repository\'s branch of that name, so it is not brought up to date: it may come from a fork',
+};
+
+// Why a feature session's pull (/pull) brings nothing in.
+export const PULL_REFUSALS = {
+  plain: 'only a plain branch name can be brought in',
+  feature: 'only a feature/<work> branch is brought in through the helper',
+  notOwn: 'that is not the branch this folder is on: a pull brings in only the worktree\'s own branch',
+  outsideProject: 'the folder to bring the branch into is not inside the project',
+  shallow: 'a shallow repository cannot be checked, so nothing is brought in',
+  conflict: 'the host\'s branch and this one change the same lines, so nothing was brought in',
+  tooLarge: 'what the host\'s branch adds is too large to hand back through the helper',
+  unread: 'the host\'s branch could not be read',
 };
 
 // A plain branch name: [A-Za-z0-9._/-], not refs/..., not HEAD, and nothing git
@@ -596,7 +617,7 @@ function placeFolder(cwd) {
 // Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
 // call. Those commands, like runbook.js, run inside the sandbox, which cannot read
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
-const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/config', '/push'];
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/config', '/push', '/pull'];
 
 const NOT_MAIN_CHECKOUT = 'the foreman\'s commands run only in the project\'s main checkout';
 
@@ -913,6 +934,22 @@ export async function startHelper({
     });
   }
 
+  // Copies `branch` in from `source` into the mirror's INCOMING ref, as described in pushToHost.
+  // The refusal, or null once it has arrived.
+  async function copyIn(mirror, source, branch) {
+    const hooked = await configSets(unkeyed, mirror, '^hook\\.');
+    if (hooked !== 'none') return 'the mirror\'s git configuration names a hook, or could not be read, so nothing is copied into it';
+    await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
+    const fetched = await gitIn({ ...ISOLATED, GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS)('git', [
+      '-c', `core.hooksPath=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
+      'fetch', '-q', '--no-tags', '--no-recurse-submodules', source, `+refs/heads/${branch}:${INCOMING}`,
+    ], { cwd: mirror });
+    if (fetched.timedOut) return 'reading the folder took too long';
+    const arrived = await unkeyed('git', ['rev-parse', '--verify', '-q', INCOMING], { cwd: mirror });
+    if (fetched.code !== 0 || arrived.code !== 0) return PUSH_REFUSALS.missing;
+    return null;
+  }
+
   async function pushToHost({ project, branch, source, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
     return (async () => {
       const mirror = await mirrorFor(project);
@@ -925,16 +962,8 @@ export async function startHelper({
       // core.hooksPath set to the null file stops the hooks folder; a hook
       // named in the mirror's configuration (hook.<name>.command) would not
       // be stopped by it, so a mirror whose configuration sets one is refused.
-      const hooked = await configSets(unkeyed, mirror, '^hook\\.');
-      if (hooked !== 'none') return { ok: false, refused: 'the mirror\'s git configuration names a hook, or could not be read, so nothing is copied into it' };
-      await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
-      const fetched = await gitIn({ ...ISOLATED, GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS)('git', [
-        '-c', `core.hooksPath=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
-        'fetch', '-q', '--no-tags', '--no-recurse-submodules', source, `+refs/heads/${branch}:${INCOMING}`,
-      ], { cwd: mirror });
-      if (fetched.timedOut) return { ok: false, refused: 'reading the folder took too long' };
-      const arrived = await unkeyed('git', ['rev-parse', '--verify', '-q', INCOMING], { cwd: mirror });
-      if (fetched.code !== 0 || arrived.code !== 0) return { ok: false, refused: PUSH_REFUSALS.missing };
+      const copied = await copyIn(mirror, source, branch);
+      if (copied !== null) return { ok: false, refused: copied };
 
       const keyed = gitIn(ctx.gitEnv);
       const checked = await checkPush({ refspec, dir: mirror, defaultBranch, run: keyed, sha: INCOMING });
@@ -1016,7 +1045,99 @@ export async function startHelper({
     }
     if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
     const answer = await pushFrom({ project, branch, source: dir, refspec, defaultBranch, ciGuard: true }, ctx);
+    if (answer.rejected === 'non-fast-forward') return { ...answer, refused: PUSH_REFUSALS.movedOn };
     return answer.ok ? { ok: true } : answer;
+  }
+
+  // A feature session's pull (`cli.js pull`, final review I1): the host's copy of the worktree's own
+  // branch, brought together with the worktree's branch in the project's mirror, and handed back as
+  // a git bundle. The rules /push keeps hold: the folder places the project and must be inside it;
+  // the branch is plain, never the default; and it must be the folder's own feature branch. The
+  // helper runs no git in the worktree: it reads the branch's objects from it, as a push does, with
+  // no key; then fetches the host's copy with the key, in the mirror, which no session can reach.
+  // It brings the two together there: nothing to do when the worktree's has everything the
+  // host's has; a fast-forward when the host's is ahead; otherwise a plain merge, made here, the
+  // worktree's commit first, refused on a conflict and naming the files. The answer carries only
+  // the commits the worktree lacks (the bundle, base64), never a key or the mirror's settings; the
+  // session's own git brings them in, inside the sandbox. The host is only read. Refused under STOP.
+  async function doPull({ project, dir, branch }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) refuse('the folder to bring the branch into must be a full path');
+    let isDir = false;
+    try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
+    if (!isDir) refuse('the folder to bring the branch into was not found');
+    if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PULL_REFUSALS.outsideProject };
+    if (!plainBranch(branch)) return { ok: false, refused: PULL_REFUSALS.plain };
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    if (typeof defaultBranch !== 'string' || defaultBranch === '' || branch === defaultBranch) return { ok: false, refused: PUSH_REFUSALS.defaultBranch };
+    if (!FEATURE_BRANCH.test(branch)) return { ok: false, refused: PULL_REFUSALS.feature };
+    if (branchOf(dir) !== branch) return { ok: false, refused: PULL_REFUSALS.notOwn };
+    try {
+      if (isPartialClone(dir)) return { ok: false, refused: PUSH_REFUSALS.partialClone };
+    } catch {
+      return { ok: false, refused: PUSH_REFUSALS.unchecked };
+    }
+    try {
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ mirror, keyed }) => pullIn({ project, mirror, keyed, dir, branch })));
+    } finally {
+      await oneAtATime(`mirror:${project}`, () => dropRequestRefs(project));
+      tidyAfterAnswer(project);
+    }
+  }
+
+  // The body of a pull, in the project's mirror queue.
+  async function pullIn({ project, mirror, keyed, dir, branch }) {
+    const git = local(mirror);
+    const refusal = await mirrorRefusal(mirror, keyed);
+    if (refusal) return { ok: false, refused: refusal };
+    const copied = await copyIn(mirror, dir, branch);
+    if (copied !== null) return { ok: false, refused: copied };
+    const shallow = await git([...NO_HOOKS, 'rev-parse', '--is-shallow-repository']);
+    if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
+    if (shallow.stdout.trim() === 'true') {
+      // A shallow marker came in with the objects: start the mirror afresh next time.
+      fs.rmSync(mirror, { recursive: true, force: true });
+      return { ok: false, refused: PULL_REFUSALS.shallow };
+    }
+    const listed = await keyed('git', [...NO_HOOKS, 'ls-remote', '--heads', REMOTE, `refs/heads/${branch}`], { cwd: mirror, input: '' });
+    if (listed.code !== 0) return { ok: false, refused: PULL_REFUSALS.unread };
+    if (listed.stdout.trim() === '') return { ok: false, refused: `the host has no branch ${branch} yet: push it first` };
+    const fetched = await keyed('git', [
+      ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE, `+refs/heads/${branch}:${PULL_HOST}`,
+    ], { cwd: mirror, input: '' });
+    if (fetched.code !== 0) return { ok: false, refused: PULL_REFUSALS.unread };
+    const shaOf = async (ref) => {
+      const read = await git([...NO_HOOKS, 'rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+      return read.code === 0 && FULL_SHA.test(read.stdout.trim()) ? read.stdout.trim() : null;
+    };
+    const ours = await shaOf(INCOMING);
+    const theirs = await shaOf(PULL_HOST);
+    if (ours === null || theirs === null) return { ok: false, refused: PULL_REFUSALS.unread };
+    const within = async (a, b) => {
+      const said = await git([...NO_HOOKS, 'merge-base', '--is-ancestor', a, b]);
+      if (said.code > 1) throw new Error('comparing the two branches failed');
+      return said.code === 0;
+    };
+    if (await within(theirs, ours)) return { ok: true, already: true };
+    let sha = theirs;
+    const merged = !(await within(ours, theirs));
+    if (merged) {
+      const made = await git([...MERGE_ONLY, 'merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', ours, theirs]);
+      if (made.code === 1) return { ok: false, refused: PULL_REFUSALS.conflict, conflicts: made.stdout.split('\0').slice(1).filter((name) => name !== '') };
+      if (made.code !== 0) throw new Error('git could not merge the host\'s branch in');
+      sha = await mergeCommit(git, made.stdout.split('\0')[0].trim(), ours, theirs, `Merge the host's ${branch} into this worktree's`);
+    }
+    if ((await git([...NO_HOOKS, 'update-ref', PULLED, sha])).code !== 0) throw new Error('keeping what is handed back failed');
+    const file = path.join(stateDir(project), '..', `pull-${crypto.randomUUID()}.bundle`);
+    try {
+      const bundled = await git([...NO_HOOKS, 'bundle', 'create', '-q', file, PULLED, `^${ours}`]);
+      if (bundled.code !== 0) throw new Error('making the bundle failed');
+      if (fs.statSync(file).size > PULL_BUNDLE_BYTES) return { ok: false, refused: PULL_REFUSALS.tooLarge };
+      return { ok: true, already: false, merged, from: ours, sha, bundle: fs.readFileSync(file).toString('base64') };
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
   }
 
   // --- state and the lock ---
@@ -1579,17 +1700,10 @@ export async function startHelper({
         if (merged.code !== 0) throw new Error('git could not merge the default branch in');
         const tree = merged.stdout.split('\0')[0].trim();
         const base = (await git([...NO_HOOKS, 'rev-parse', '--verify', `${BASE_REF}^{commit}`])).stdout.trim();
-        const dated = await git([...NO_HOOKS, 'log', '--no-walk', '--format=%ct', pr.headSha, base]);
-        const seconds = dated.stdout.split('\n').filter((l) => /^\d+$/.test(l.trim())).map(Number);
-        if (dated.code !== 0 || seconds.length !== 2) throw new Error('reading the commits\' dates failed');
-        const at = `${Math.max(...seconds)} +0000`;
-        const commit = await git([...NO_HOOKS, 'commit-tree', '--no-gpg-sign', tree, '-p', pr.headSha, '-p', base, '-m', `Merge ${defaultBranch} into ${branch}`], {
-          env: { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
-        });
-        if (commit.code !== 0 || !FULL_SHA.test(commit.stdout.trim())) throw new Error('making the merge commit failed');
-        const kept = await git([...NO_HOOKS, 'update-ref', `refs/heads/${branch}`, commit.stdout.trim()]);
+        const commit = await mergeCommit(git, tree, pr.headSha, base, `Merge ${defaultBranch} into ${branch}`);
+        const kept = await git([...NO_HOOKS, 'update-ref', `refs/heads/${branch}`, commit]);
         if (kept.code !== 0) throw new Error('keeping the merge commit failed');
-        return { commit: commit.stdout.trim(), mirror };
+        return { commit, mirror };
       } finally {
         await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
       }
@@ -1610,6 +1724,21 @@ export async function startHelper({
       await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
     }
     return { ok: true, updated: true, head: made.commit };
+  }
+
+  // A merge commit the helper makes in the mirror, of `tree`, with `first` and `second` as its
+  // parents: Wheelhouse as author and committer, and both dates the later of the parents'
+  // committer dates, so the same two parents always give the same commit (ruling R118). Its id.
+  async function mergeCommit(git, tree, first, second, message) {
+    const dated = await git([...NO_HOOKS, 'log', '--no-walk', '--format=%ct', first, second]);
+    const seconds = dated.stdout.split('\n').filter((l) => /^\d+$/.test(l.trim())).map(Number);
+    if (dated.code !== 0 || seconds.length !== 2) throw new Error('reading the commits\' dates failed');
+    const at = `${Math.max(...seconds)} +0000`;
+    const commit = await git([...NO_HOOKS, 'commit-tree', '--no-gpg-sign', tree, '-p', first, '-p', second, '-m', message], {
+      env: { ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+    });
+    if (commit.code !== 0 || !FULL_SHA.test(commit.stdout.trim())) throw new Error('making the merge commit failed');
+    return commit.stdout.trim();
   }
 
   async function doMerge(body, ctx) {
@@ -2204,6 +2333,7 @@ export async function startHelper({
     '/runbook/contain': signedIn(clicked(5, doContain)),
     '/runbook/candidates': signedIn(doCandidates),
     '/push': (body, ctx) => oneAtATime(`push:${body.project}`, () => doPush(body, ctx)),
+    '/pull': (body, ctx) => doPull(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
     '/state/clone': stateRoute(async ({ project }, ctx) => {
       await cloneState({ project, remoteUrl: recordOf(project).remoteUrl, env: ctx.gitEnv });

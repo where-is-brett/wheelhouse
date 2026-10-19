@@ -2,12 +2,14 @@
 // The helper runs the foreman's commands (ruling R156): /foreman/run takes the main checkout's
 // folder, the script and its arguments, runs scripts/foreman/runner.js there outside the
 // sandbox with no key or secret in its environment, and gives back the exit code and output.
-// And a feature session's push names its worktree, from which the helper places the project
-// (ruling R157).
+// And a feature session's push and pull name its worktree, from which the helper places the
+// project (ruling R157); a pull hands back the host's branch as a bundle (final review, I1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pull as cliPull } from '../../../scripts/feature/cli.js';
+import { featurePaths } from '../../../scripts/feature/files.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { FOREMAN_RUNNER, SIGN_IN_NAMES, foremanEnv, foremanRequestRefusal } from '../../../scripts/host/foreman-run.js';
@@ -162,6 +164,99 @@ test('a feature session\'s push names its worktree, and the helper places the pr
       const elsewhere = fs.realpathSync.native(tempFolder('wh-elsewhere-'));
       assert.match((await client.push({ cwd: elsewhere, dir: worktree, refspec: 'feature/export' })).refused, /not inside a Wheelhouse project/);
     });
+  } finally { p.remote.cleanup(); }
+});
+
+// A clone of the host on `branch`, standing in for whatever else moves the host's branch on:
+// the gate bringing it up to date, or another push.
+async function elsewhereOn(p, branch) {
+  const other = fs.realpathSync.native(tempFolder('wh-other-'));
+  await g(path.dirname(other), 'clone', '-q', '-b', branch, p.remote.url, other);
+  return other;
+}
+
+async function commitIn(dir, file, text, message) {
+  fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+  fs.writeFileSync(path.join(dir, file), text);
+  await g(dir, 'add', '-A');
+  await g(dir, 'commit', '-q', '-m', message);
+  return g(dir, 'rev-parse', 'HEAD');
+}
+
+test('a feature session\'s pull brings the host\'s branch into its own, by fast-forward or a plain merge made by the helper, and refuses a conflict (I1)', async () => {
+  const p = await project();
+  const KEY = 'ghs_STANDINPULLKEY0123456789abcdef';
+  try {
+    const worktree = path.join(p.checkout, '.claude', 'worktrees', 'export');
+    await g(p.checkout, 'worktree', 'add', '-q', '-b', 'feature/export', worktree, 'origin/main');
+    fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
+    const first = await commitIn(worktree, 'export.js', 'export const csv = true;\n', 'The export');
+    await g(worktree, 'push', '-q', 'origin', 'feature/export');
+    const other = await elsewhereOn(p, 'feature/export');
+    await withHelper(p.home, async (client) => {
+      const ask = (extra = {}) => client.pull({ cwd: worktree, dir: worktree, branch: 'feature/export', ...extra });
+      // Nothing new on the host: nothing to bring in.
+      assert.deepEqual(await ask(), { ok: true, already: true });
+
+      // The host's branch moves on: a fast-forward, handed back as a bundle and brought in by the
+      // session's own git.
+      const moved = await commitIn(other, 'b.js', 'b\n', 'On the host');
+      await g(other, 'push', '-q', 'origin', 'feature/export');
+      const answer = await ask();
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+      assert.deepEqual({ ...answer, bundle: typeof answer.bundle }, { ok: true, already: false, merged: false, from: first, sha: moved, bundle: 'string' });
+      assert.equal(JSON.stringify(answer).includes(KEY), false, 'no key comes back');
+      assert.deepEqual(await cliPull({ client, worktree }), { branch: 'feature/export', already: false, merged: false, sha: moved });
+      assert.equal(await g(worktree, 'rev-parse', 'HEAD'), moved);
+      assert.equal(fs.readdirSync(featurePaths(worktree).dir).length, 0, 'the bundle is not left behind');
+
+      // Both move on, as when the gate merges main in and the session commits a fix: the helper
+      // makes the merge in its mirror, Wheelhouse its author, the session's commit first.
+      await g(other, 'pull', '-q', '--ff-only');
+      const onHost = await commitIn(other, 'c.js', 'c\n', 'On the host again');
+      await g(other, 'push', '-q', 'origin', 'feature/export');
+      const fix = await commitIn(worktree, 'export.js', 'export const csv = false;\n', 'A fix');
+      const merged = await cliPull({ client, worktree });
+      assert.equal(merged.merged, true);
+      const head = await g(worktree, 'rev-parse', 'HEAD');
+      assert.equal(merged.sha, head);
+      assert.equal(await g(worktree, 'rev-parse', `${head}^@`), `${fix}\n${onHost}`);
+      assert.equal(await g(worktree, 'log', '-1', '--format=%an <%ae>'), 'Wheelhouse <wheelhouse@invalid>');
+      assert.equal(await g(worktree, 'status', '--porcelain'), '');
+      // The host is unchanged: a pull only reads it.
+      assert.equal(await g(p.remote.url, 'rev-parse', 'refs/heads/feature/export'), onHost);
+      await g(worktree, 'push', '-q', 'origin', 'feature/export');
+
+      // Both change the same line: nothing is brought in, and the files are named.
+      await g(other, 'pull', '-q', '--ff-only');
+      await commitIn(other, 'export.js', 'export const csv = 1;\n', 'One way');
+      await g(other, 'push', '-q', 'origin', 'feature/export');
+      const mine = await commitIn(worktree, 'export.js', 'export const csv = 2;\n', 'The other way');
+      const conflict = await ask();
+      assert.equal(conflict.ok, false);
+      assert.match(conflict.refused, /the host's branch and this one change the same lines/);
+      assert.deepEqual(conflict.conflicts, ['export.js']);
+      await assert.rejects(cliPull({ client, worktree }), /export\.js/);
+      assert.equal(await g(worktree, 'rev-parse', 'HEAD'), mine, 'nothing was brought in');
+
+      // Only the worktree's own feature branch, from a folder in the project, and not under STOP.
+      assert.match((await ask({ branch: 'feature/other' })).refused, /not the branch this folder is on/);
+      assert.equal((await ask({ branch: 'main' })).ok, false);
+      assert.equal((await ask({ branch: 'feature/export:main' })).ok, false);
+      assert.deepEqual(await ask({ project: 'o__other' }), { ok: false, refused: 'the folder given is not inside the project named' });
+      const elsewhere = fs.realpathSync.native(tempFolder('wh-elsewhere-'));
+      assert.match((await client.pull({ cwd: elsewhere, dir: worktree, branch: 'feature/export' })).refused, /not inside a Wheelhouse project/);
+      assert.match((await ask({ dir: p.checkout, branch: 'main' })).refused, /default branch|feature/);
+      setStop({ by: 'prompt' });
+      try {
+        assert.deepEqual(await ask(), { ok: false, refused: 'STOP is on' });
+      } finally { liftStop(); }
+
+      // A branch the host doesn't hold yet.
+      const fresh = path.join(p.checkout, '.claude', 'worktrees', 'fresh');
+      await g(p.checkout, 'worktree', 'add', '-q', '-b', 'feature/fresh', fresh, 'origin/main');
+      assert.match((await client.pull({ cwd: fresh, dir: fresh, branch: 'feature/fresh' })).refused, /has no branch feature\/fresh yet/);
+    }, { envFor: async () => ({ mode: 'narrow', env: { GH_TOKEN: KEY } }) });
   } finally { p.remote.cleanup(); }
 });
 

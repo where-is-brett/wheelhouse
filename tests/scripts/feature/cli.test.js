@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ask, answer, report, openPr, push, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
+import { ask, answer, report, openPr, pull, push, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
@@ -469,6 +469,44 @@ test('push sends the worktree\'s branch through the helper by its folder, and sa
   write(path.join(tree, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
   await assert.rejects(push({ client, worktree: tree }), /branch/);
   assert.equal(calls.length, 2);
+});
+
+test('a push the host turns down because its branch moved on says to pull, then push again (I1)', async () => {
+  const tree = feature();
+  const client = { push: async () => ({ ok: false, rejected: 'non-fast-forward' }) };
+  await assert.rejects(push({ client, worktree: tree }), (e) => e instanceof CliError
+    && e.message === 'The branch was not pushed: the host\'s branch has moved on (the gate may have brought it up to date): run `cli.js pull`, then push again');
+  // The helper's own words win when it gives them.
+  const said = { push: async () => ({ ok: false, rejected: 'non-fast-forward', refused: 'the host\'s branch has moved on' }) };
+  await assert.rejects(push({ client: said, worktree: tree }), /run `cli\.js pull`, then push again/);
+});
+
+test('pull asks the helper for the host\'s copy of the worktree\'s own branch by its folder, and says what came of it (I1)', async () => {
+  const tree = feature();
+  const calls = [];
+  const answering = (answer) => ({ pull: async (args) => { calls.push(args); return answer; } });
+  assert.deepEqual(await pull({ client: answering({ ok: true, already: true }), worktree: tree }), { branch: 'feature/login-page', already: true });
+  assert.deepEqual(calls, [{ cwd: tree, dir: tree, branch: 'feature/login-page' }]);
+
+  const said = { out: '', err: '' };
+  const io = (client) => ({ cwd: tree, client, find: () => ({ root: tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; } });
+  assert.equal(await main(['pull'], io(answering({ ok: true, already: true }))), 0, said.err);
+  assert.equal(said.out, 'Already up to date with the host\'s feature/login-page\n');
+  assert.equal(await main(['pull', 'origin'], io(answering({ ok: true, already: true }))), 1);
+  assert.match(said.err, /pull takes no arguments/);
+
+  // A refusal, with the files that conflict.
+  const conflicted = answering({ ok: false, refused: 'the host\'s branch and this one change the same lines, so nothing was brought in', conflicts: ['a.js', 'b.js'] });
+  await assert.rejects(pull({ client: conflicted, worktree: tree }), (e) => e instanceof CliError
+    && e.message === 'The host\'s branch was not brought in: the host\'s branch and this one change the same lines, so nothing was brought in (a.js, b.js)');
+  await assert.rejects(pull({ client: { pull: async () => undefined }, worktree: tree }), /no answer/);
+  // An answer that can't be read brings nothing in.
+  for (const odd of [{ ok: true, sha: 'x', from: 'y', bundle: 'z' }, { ok: true, sha: 'a'.repeat(40), from: 'b'.repeat(40) }]) {
+    await assert.rejects(pull({ client: answering(odd), worktree: tree }), /could not read/);
+  }
+  // A detached head has no branch to bring anything into.
+  write(path.join(tree, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
+  await assert.rejects(pull({ client: answering({ ok: true, already: true }), worktree: tree }), /branch/);
 });
 
 test('open-pr opens nothing when its branch can\'t be pushed', async () => {

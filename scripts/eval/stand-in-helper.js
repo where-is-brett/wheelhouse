@@ -109,6 +109,13 @@ export async function startStandInHelper({ address, answers = {}, state = {} } =
       record({ route: 'push', branch, sha });
       return { ok: true, pushed: branch };
     },
+    // cli.js pull: { cwd, dir, branch }. The stand-in host holds only what was pushed to it, so
+    // there is never anything new to bring in.
+    'POST /pull': (body) => {
+      const branch = typeof body.branch === 'string' ? body.branch : null;
+      record({ route: 'pull', branch });
+      return { ok: true, already: true };
+    },
     // cli.js open-pr: { cwd, head, title, body, session? }.
     'POST /pr/open': (body) => {
       const sha = commitOf(body.cwd, body.head);

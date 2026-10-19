@@ -650,6 +650,46 @@ test('feature A merges while B is ready: B is updated, tested again, and its rev
   });
 });
 
+test('feature A merges while B is ready: B is updated, and B pushes a fix after the update', async () => {
+  await onComputer({}, async (world) => {
+    const [, beta] = await twoReady(world);
+    await watch(world);
+    const merged = await foreman(world, ['merge', 'alpha']);
+    assert.equal(merged.code, 0, merged.err);
+    // The gate brings B up to date on the host, as above.
+    const updating = await foreman(world, ['merge', 'beta']);
+    assert.equal(updating.code, 0, updating.err);
+    const updated = await g(world.remote.url, 'rev-parse', 'refs/heads/feature/beta');
+    assert.notEqual(updated, beta.head);
+
+    // B's session commits a fix (its CI went red, or a reviewer found something) and pushes it.
+    // The host's branch has moved on, so the push is turned down, in plain words.
+    writeFiles(beta.worktree, { 'src/beta.js': 'export const beta = 2;\n' });
+    await g(beta.worktree, 'add', '-A');
+    await g(beta.worktree, 'commit', '-q', '-m', 'Fix beta');
+    const fix = await g(beta.worktree, 'rev-parse', 'HEAD');
+    const turnedDown = await session(world, beta, ['push']);
+    assert.equal(turnedDown.code, 1);
+    assert.equal(turnedDown.err, 'The branch was not pushed: the host\'s branch has moved on (the gate may have brought it up to date): run `cli.js pull`, then push again\n');
+    assert.equal(await g(world.remote.url, 'rev-parse', 'refs/heads/feature/beta'), updated, 'nothing was pushed');
+
+    // pull brings the update into B's branch: the helper merges it with the fix in its mirror,
+    // and the session's own git brings that in.
+    const pulled = await session(world, beta, ['pull']);
+    assert.equal(pulled.code, 0, pulled.err);
+    const head = await g(beta.worktree, 'rev-parse', 'HEAD');
+    assert.equal(pulled.out, `Brought in the host's feature/beta: merged with this branch at ${head.slice(0, 12)}\n`);
+    assert.equal(await g(beta.worktree, 'rev-parse', `${head}^@`), `${fix}\n${updated}`);
+    assert.equal(await g(beta.worktree, 'status', '--porcelain'), '');
+
+    // Then the push goes.
+    const pushed = await session(world, beta, ['push']);
+    assert.equal(pushed.code, 0, pushed.err);
+    assert.equal(pushed.out, 'Pushed feature/beta\n');
+    assert.equal(await g(world.remote.url, 'rev-parse', 'refs/heads/feature/beta'), head);
+  });
+});
+
 test('an incident while two PRs are ready: neither merges; the fix does; the click ends it', async () => {
   await onComputer({}, async (world) => {
     const [alpha, beta] = await twoReady(world);

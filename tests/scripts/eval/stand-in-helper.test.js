@@ -22,6 +22,7 @@ test('the stand-in helper answers a feature session\'s commands and records each
     const client = helperClient({ address: helper.address });
     assert.deepEqual(await client.push({ cwd: dir, dir, refspec: 'feature/x' }), { ok: true, pushed: 'feature/x' });
     assert.equal((await client.push({ cwd: dir, dir, refspec: 'main' })).ok, false, 'the default branch is never pushed');
+    assert.deepEqual(await client.pull({ cwd: dir, dir, branch: 'feature/x' }), { ok: true, already: true });
     const opened = await client.openPr({ cwd: dir, head: 'feature/x', title: 'T', body: 'B' });
     assert.deepEqual(opened.result.number, 1);
     assert.equal((await client.openPr({ cwd: dir, head: 'feature/x', title: 'T2', body: 'B' })).result.number, 2);
@@ -31,12 +32,13 @@ test('the stand-in helper answers a feature session\'s commands and records each
     assert.equal((await client.merge({ project: 'p', number: 1 })).ok, false, 'anything else is refused');
 
     const records = helper.records();
-    assert.deepEqual(records.map((r) => r.route), ['push', 'push', 'pr/open', 'pr/open', 'state/answer', 'state/answer', 'lineage/provenance', 'POST /merge']);
+    assert.deepEqual(records.map((r) => r.route), ['push', 'push', 'pull', 'pr/open', 'pr/open', 'state/answer', 'state/answer', 'lineage/provenance', 'POST /merge']);
     assert.equal(records[0].sha, head);
     assert.equal(records[1].refused, true);
-    assert.equal(records[2].sha, head);
-    assert.equal(records[2].body, 'B');
-    assert.equal(records[7].unanswered, true);
+    assert.equal(records[2].branch, 'feature/x');
+    assert.equal(records[3].sha, head);
+    assert.equal(records[3].body, 'B');
+    assert.equal(records[8].unanswered, true);
   } finally {
     await helper.close();
   }
