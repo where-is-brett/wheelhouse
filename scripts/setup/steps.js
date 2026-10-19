@@ -7,7 +7,7 @@
 //   Step = {
 //     n: number, title: string,
 //     plan(ctx) -> Promise<{ changes: PlannedChange[], card: CardInput, director: string }
-//                        | { ask: { id, card: CardInput, typed?: boolean, rules? } }
+//                        | { ask: { id, card: CardInput, typed?: boolean, rules?, writes? } }
 //                        | { wait: ms, why: string } | { settled: { record } }>,
 //     apply(ctx, changes) -> Promise<Change[]>,
 //     long?: boolean,        runs in a detached child (scripts/setup/run-step.js)
@@ -30,8 +30,10 @@
 //
 // A plan may give, in place of its list (rulings R30 to R32): `ask`, a question it needs answered
 // first, while ctx.answers lacks it (`id` of up to 40 lowercase letters, digits and dashes; `card`
-// the composer's input without its kind, which is `question`; `typed` when a typed answer
-// counts); `wait`, nothing to ask for that many milliseconds; or `settled`, every answer is in and
+// the composer's input without its kind, which is `question`, or of kind `confirm-all` for step 5's
+// card of the rules found, whose line the engine makes from `rules`; `typed` when a typed answer
+// counts; `writes`, what each answer records in the project's state, which the prompt record signs
+// from the click: scripts/lib/setup-writes.js); `wait`, nothing to ask for that many milliseconds; or `settled`, every answer is in and
 // the step changes nothing outside setup's own records, which marks it done with `record` kept in
 // the journal and no Go ahead. ctx.answers holds every answer of the run, from every step, as
 // { '<step>.<id>': { label, text, at } }: `label` the option clicked, or `text` typed, the other
@@ -50,21 +52,22 @@
 // Until each step's task (Tasks 7 to 13) fills it in, the step lists no changes (ruling R14).
 // Step 1, the install, is the director's own (the README's line, Task 16), so it lists none.
 // Step 2, the tools, is scripts/setup/tools.js; step 3, the host and the connection, is
-// scripts/setup/host.js.
-import crypto from 'node:crypto';
-import { canonicalJson } from '../lib/canonical.js';
+// scripts/setup/host.js; step 4, the three questions, is scripts/setup/questions.js; step 5, the
+// rules found, is scripts/setup/rules.js.
+import { listHash } from '../lib/setup-writes.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { toolsStep } from './tools.js';
 import { hostStep } from './host.js';
+import { questionsStep } from './questions.js';
+import { rulesStep } from './rules.js';
 
 // The first step of a run not yet done is in scripts/lib/setup-run.js, which the hooks read
 // without reaching this file; it numbers the steps as STEPS does.
 export { firstUnfinished } from '../lib/setup-run.js';
 
-// The SHA-256 of a list of changes in canonical JSON: what a setup card's line names.
-export function planHash(changes) {
-  return crypto.createHash('sha256').update(canonicalJson(changes)).digest('hex');
-}
+// The SHA-256 of a list of changes in canonical JSON: what a setup card's line names. The prompt
+// record works out the hash of the rules on step 5's card the same way (scripts/lib/setup-writes.js).
+export const planHash = (changes) => listHash(changes);
 
 // The card of a step that changes nothing yet.
 function placeholderCard(n) {
@@ -96,6 +99,6 @@ function placeholder(n) {
   };
 }
 
-const FILLED = { 2: toolsStep, 3: hostStep };
+const FILLED = { 2: toolsStep, 3: hostStep, 4: questionsStep, 5: rulesStep };
 
 export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => (FILLED[n] ? FILLED[n]() : placeholder(n))));

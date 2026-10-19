@@ -17,11 +17,14 @@
 // ahead is shown once they have finished.
 //
 // A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
-// list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules? } }`: a question it needs
-// answered first, composed as a `question` card (no set line, no reply code) and recorded as asked
-// in setup/asked/; the prompt record keeps the director's answer on that exact card, signed, and
-// every step's plan reads every answer of its run in ctx.answers, so the list a Go ahead's hash
-// names already holds the choices, and a later answer that changes it makes that Go ahead CHANGED.
+// list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules?, writes? } }`: a question it
+// needs answered first, composed as a `question` card (no set line, no reply code), or, for a card
+// of kind `confirm-all`, as setup's card of the rules found, whose line names the hash of `rules`
+// (ruling R35), and recorded as asked in setup/asked/ with its `rules` and `writes` (what an answer
+// records in the project's state, which the prompt record signs: scripts/lib/setup-writes.js); the
+// prompt record keeps the director's answer on that exact card, signed, and every step's plan reads
+// every answer of its run in ctx.answers, so the list a Go ahead's hash names already holds the
+// choices, and a later answer that changes it makes that Go ahead CHANGED.
 // `{ wait: ms, why }`: nothing to ask yet. `{ settled: { record } }`: every answer is in and the
 // step changes nothing outside setup's own records, so the record is kept in the journal as an
 // `answer` change and the step is done, with no Go ahead.
@@ -306,11 +309,13 @@ export function setupRoutes({
     const got = await step.plan(ctx);
     const bad = (what) => new Error(`Step ${step.n}'s plan gave ${what}`);
     if (got?.ask !== undefined) {
-      const { id, card, typed, rules } = got.ask ?? {};
+      const { id, card, typed, rules, writes } = got.ask ?? {};
       if (typeof id !== 'string' || !SETUP_QUESTION_ID.test(id)) throw bad('a question without an id of up to 40 lowercase letters, digits and dashes');
       if (!card || typeof card !== 'object') throw bad('a question without its card');
       if (typed !== undefined && typeof typed !== 'boolean') throw bad('a question whose typed answer is neither allowed nor refused');
-      return { ask: { id, card, typed: typed === true, rules } };
+      if (writes !== undefined && (writes === null || typeof writes !== 'object' || Array.isArray(writes))) throw bad('a question whose writes are not a record of them');
+      if (card.kind === 'confirm-all' && !(Array.isArray(rules) && rules.length > 0)) throw bad('a card of the rules found without its rules');
+      return { ask: { id, card, typed: typed === true, rules, writes } };
     }
     if (got?.wait !== undefined) {
       if (!Number.isFinite(got.wait) || got.wait < 0 || typeof got.why !== 'string' || got.why === '') throw bad('a wait without its time and why');
@@ -351,14 +356,20 @@ export function setupRoutes({
     // composer judges the text that is sent (its length too), and the stored card is the one sent
     // (the helper cleans what it sends again, which changes nothing). The set line holds no address.
     let card = null;
-    if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question' }).question;
+    // A question is composed as a `question` card, with no set line; the card of the rules found as
+    // a `confirm-all` card, whose line names how many rules it lists and the hash of that list,
+    // worked out here (ruling R35).
+    if (got.ask?.card.kind === 'confirm-all') {
+      const { rules } = got.ask;
+      card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'confirm-all', target: { count: rules.length, hash: planHash(rules) } }).question;
+    } else if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question' }).question;
     else if (got.changes) card = composeCard({ ...cleanDeep(got.card, []), kind: 'setup', target: { step: step.n, hash: got.hash } }).question;
     if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.
     if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now });
     if (got.ask) {
-      noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, now });
+      noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, now });
       return { ok: true, ask: { step: step.n, id: got.ask.id, card } };
     }
     if (got.settled) {

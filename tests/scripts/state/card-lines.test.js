@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -60,7 +60,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   // Every set line pattern is used by a line function's output.
   const all = [
     ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
-    LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL),
+    LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3),
   ];
   for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
 });
@@ -91,4 +91,15 @@ test('a near miss of a build loop line is not a set line', () => {
   assert.equal(setLineOf(`${answerLine('q-a-1')}\n${answerLine('q-a-2')}`), null);
   assert.equal(setLineOf(`${liftIncidentLine('a')}\n${incidentFixLine('a', 3)}`), null);
   assert.equal(setLineOf(`${approveWorkLine('a', 'bug', FULL)}\n${approvalLine(3, FULL)}`), null);
+});
+
+test('the line of setup\'s card of the rules found names how many rules and the list\'s hash, and nothing near it is one', () => {
+  assert.equal(confirmAllLine(FULL, 3), `Confirm all 3 rules as listed, ${FULL.slice(0, 12)}`);
+  assert.equal(confirmAllLine(FULL, 1), `Confirm all 1 rule as listed, ${FULL.slice(0, 12)}`);
+  assert.equal(setLineOf(`What this is.\n${confirmAllLine(FULL, 12)}`), confirmAllLine(FULL, 12));
+  for (const near of ['Confirm all 0 rules as listed, abcdef123456', 'Confirm all rules as listed, abcdef123456', 'Confirm all 3 rules as listed, abcdef12345', 'Confirm all 3 rules as listed, ABCDEF123456', 'Confirm all 3 rules, abcdef123456']) {
+    assert.equal(setLineOf(near), null, near);
+  }
+  // It is not read as a confirm line for one event.
+  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(confirmAllLine(FULL, 3))).length, 1);
 });

@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -48,6 +48,10 @@ const INPUTS = {
   'lift-incident': { ...common, recommend: 'End it', kind: 'lift-incident', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, recommend: 'Merge the fix', kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
   setup: { ...common, recommend: 'Go ahead', kind: 'setup', what: 'Setup step 6, Changes to this computer: transcripts are kept 30 days.', options: [says('Go ahead')], target: { step: 6, hash: DOC } },
+  'confirm-all': {
+    ...common, recommend: 'Confirm all', kind: 'confirm-all', what: 'Setup step 5 found 2 rules this project follows: 1) "Money is shown in dollars"; 2) "Never push to main".',
+    options: [says('Confirm all'), says('Let me correct some')], target: { count: 2, hash: DOC },
+  },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
 };
 const LINES = {
@@ -62,6 +66,7 @@ const LINES = {
   'lift-incident': liftIncidentLine('bad-total'),
   'incident-fix': incidentFixLine('bad-total', 31),
   setup: setupLine(6, DOC),
+  'confirm-all': confirmAllLine(DOC, 2),
   question: null,
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
@@ -88,12 +93,12 @@ test("each kind's card carries the five parts in order, its set line and its rep
       assert.equal(setLineOf(question.question), null);
       assert.equal(card.line, null);
       assert.equal(card.code, null);
-    } else if (kind === 'setup') {
+    } else if (NO_REPLY_CODE.includes(kind)) {
       assert.deepEqual(rows.slice(5), [LINES[kind]], 'a setup card is approved by its click alone, so it has no reply code');
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all']);
     } else {
       assert.deepEqual(rows.slice(5), [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -468,4 +473,20 @@ test('a build-command question\'s answer card offers the design\'s three options
   assert.throws(() => composeCard({
     kind: 'question', level: 3, what: 'Which commands?', why: 'w', because: 'b', meanwhile: 'm', recommend: 'Allow this time', options: asked.options,
   }), /Not now/);
+});
+
+test('setup\'s card of the rules found offers Confirm all and Let me correct some, names its count, and has no reply code', () => {
+  const { question, card } = composeCard(input('confirm-all'));
+  assert.deepEqual(card.options, ['Confirm all', 'Let me correct some', 'Not now', 'Explain more']);
+  assert.equal(question.header, 'Rules found');
+  assert.equal(card.code, null);
+  assert.equal(setLineOf(question.question), confirmAllLine(DOC, 2));
+  refused({ options: [says('Confirm all')] }, /must describe Let me correct some/, 'confirm-all');
+  refused({ options: [says('Confirm all'), says('Let me correct some'), says('Show me')] }, /can't describe Show me/, 'confirm-all');
+  refused({ what: 'Setup step 5 found 3 rules: "Money is shown in dollars".' }, /what.*how many rules it lists, 2/, 'confirm-all');
+  refused({ target: { count: 0, hash: DOC } }, /target/, 'confirm-all');
+  refused({ target: { count: 2, hash: 'not hex' } }, /target/, 'confirm-all');
+  // One rule reads as one.
+  const one = composeCard(input('confirm-all', { what: 'Setup step 5 found 1 rule: "Never push to main".', target: { count: 1, hash: DOC } }));
+  assert.equal(setLineOf(one.question.question), confirmAllLine(DOC, 1));
 });

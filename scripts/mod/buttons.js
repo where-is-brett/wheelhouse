@@ -5,8 +5,9 @@
 // hook uses, so a card the hook would have refused gets no button that records anything. The
 // Unattended card for build commands on Windows, known by its risk words as the prompt record knows
 // it, gets no button at all: only a click on it when the front desk asks it sets the level. Nor
-// does a setup card: its step goes ahead only by the director's click on the very card setup
-// showed, which only the prompt record counts (scripts/setup/clicks.js).
+// does a setup card, nor setup's card of the rules found: its step goes ahead only by the
+// director's click on the very card setup showed, which only the prompt record counts
+// (scripts/setup/clicks.js).
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -15,7 +16,7 @@ import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
 const ANSWER_LINE = /^Answer question /;
-const SETUP_LINE = /^Set up step /;
+const SETUP_LINE = /^(?:Set up step |Confirm all [1-9][0-9]* rules? as listed, )/;
 const EXPLAIN = 'Explain more';
 const NOT_NOW = 'Not now';
 // What a card offers to turn to the front desk, apart from its own options.
@@ -34,10 +35,11 @@ function optionsOf(card) {
 
 const button = (label, does) => ({ label, does });
 
-// Whether a card is a setup card: of kind setup, or carrying setup's set line.
+// Whether a card is a setup card: of kind setup or confirm-all (the rules found), or carrying
+// either's set line.
 export function isSetupCard(card) {
   const text = typeof card?.question === 'string' ? card.question : '';
-  return card?.kind === 'setup' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
+  return card?.kind === 'setup' || card?.kind === 'confirm-all' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
 }
 
 // cardButtons(card) -> { buttons, note }. `card` is a card event's data: { kind, question,

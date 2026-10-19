@@ -5,8 +5,8 @@
 // The front desk asks only what this returns (`cli.js card`), never a card it wrote itself.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
-  SETUP_LABEL, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
+  SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
@@ -31,6 +31,7 @@ export const HEADERS = Object.freeze({
   'lift-incident': 'End incident',
   'incident-fix': 'Incident fix',
   setup: 'Setup',
+  'confirm-all': 'Rules found',
   question: 'Question',
 });
 
@@ -47,12 +48,13 @@ export const DECIDING = Object.freeze({
   'lift-incident': 'End it',
   'incident-fix': 'Merge the fix',
   setup: SETUP_LABEL,
+  'confirm-all': CONFIRM_ALL_LABEL,
 });
 
 // The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
 // director's click on the card itself, never on a reply, so a code would make a shown record that
-// is never spent. Setup's Confirm all kind (Task 9) joins this list.
-export const NO_REPLY_CODE = Object.freeze(['setup']);
+// is never spent. Setup's card of the rules found (confirm-all, ruling R35) is one too.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all']);
 
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'that feature waits; the others carry on';
@@ -158,6 +160,10 @@ function lineFor(kind, target) {
     }
     return setupLine(t.step, t.hash);
   }
+  if (kind === 'confirm-all') {
+    if (!isCount(t.count) || !HEX.test(t.hash)) bad('needs how many rules it lists and the hash of that list');
+    return confirmAllLine(t.hash, t.count);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -190,6 +196,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
   if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];
   if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
+  if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return null;
@@ -229,9 +236,13 @@ function offered(kind, given, { build = false, target } = {}) {
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
-  const allowed = [deciding, ...PUT_OFF.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
+  // The card of the rules found offers its second answer in place of Show me (ruling R35).
+  const allowed = kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL, 'Not now', 'Explain more']
+    : [deciding, ...PUT_OFF.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
-  if (!list.some((o) => o.label === deciding)) fail(kind, 'options', `must describe ${deciding}`);
+  for (const must of kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL] : [deciding]) {
+    if (!list.some((o) => o.label === must)) fail(kind, 'options', `must describe ${must}`);
+  }
   return allowed.map((label) => ({ label, says: list.find((o) => o.label === label)?.says ?? PUT_OFF_SAYS[label] }));
 }
 

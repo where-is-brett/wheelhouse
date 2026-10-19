@@ -36,6 +36,7 @@ function targetOf(line) {
   if ((m = new RegExp(`^End incident (${ID}) and let merges carry on$`).exec(line))) return { kind: 'lift-incident', target: { incident: m[1] } };
   if ((m = new RegExp(`^Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})$`).exec(line))) return { kind: 'incident-fix', target: { incident: m[2], pr: Number(m[1]) } };
   if ((m = new RegExp(`^Set up step ([0-9]{1,2}) as listed, ${SHA12}$`).exec(line)) && Object.hasOwn(SETUP_TITLES, m[1])) return { kind: 'setup', target: { step: Number(m[1]), hash: m[2] } };
+  if ((m = new RegExp(`^Confirm all ([1-9][0-9]*) rules? as listed, ${SHA12}$`).exec(line))) return { kind: 'confirm-all', target: { count: Number(m[1]), hash: m[2] } };
   return null;
 }
 

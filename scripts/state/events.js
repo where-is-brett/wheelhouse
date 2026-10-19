@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL } from './card-lines.js';
+import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL } from './card-lines.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
@@ -23,7 +23,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -41,6 +41,10 @@ const ACTION_OWN = {
   // asked for, the question's id within the step, and the option clicked as `label` or, on a card
   // that takes one, the text typed as `text`; the other is null.
   'setup-answer': ['runId', 'step', 'questionId', 'text'],
+  // The director's Confirm all on setup's card of the rules found in a project (ruling R35): the
+  // full hash of the list the card's line names, and the ids of the rulings the click recorded from
+  // it, one per rule listed, each confirmed by its own confirmation.
+  'confirm-all': ['hash', 'ids'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, or put the card off: a click on one is never an answer.
@@ -104,6 +108,12 @@ function checkAction(data) {
     const one = (given(data.label) && data.text === null) || (data.label === null && given(data.text));
     if (!one) bad('needs a label or a typed text, one of them, with the other null');
     if (NOT_AN_ANSWER.includes(data.label)) bad('has a label that is not an answer');
+  } else if (data.action === 'confirm-all') {
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list of rules its card showed');
+    if (!Array.isArray(data.ids) || data.ids.length === 0 || !data.ids.every(isText) || new Set(data.ids).size !== data.ids.length) {
+      bad('needs the ids of the rulings it confirmed, each once');
+    }
+    if (data.label !== CONFIRM_ALL_LABEL) bad(`needs the ${CONFIRM_ALL_LABEL} label`);
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }

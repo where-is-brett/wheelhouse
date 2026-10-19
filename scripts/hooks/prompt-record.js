@@ -15,6 +15,11 @@
 // step asked becomes a signed setup-answer kept in setup/answers/ the same way. In a folder being
 // set up (no project record yet: kit.js's beingSetUp) those are the only clicks recorded, and
 // nothing else is. A setup card has no reply code, so it gets no shown record.
+// An answer on a setup card that said it records something in the project's state (steps 4 and
+// 5: the product's glossary entry and phase, the rules found; rulings R35, R59) earns those records
+// first, signed and kept pending as every signed record is (scripts/lib/setup-writes.js), and is
+// kept as a setup-answer only once they are, so a step never settles on an answer whose records
+// were not made. In a folder with no project record such an answer is kept nowhere.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -31,6 +36,7 @@ import {
 } from '../state/card-lines.js';
 import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES } from '../state/card-lines.js';
 import { keepClick, shownHash, keepAnswer, askedFor } from '../lib/setup-clicks.js';
+import { setupRecordsOf } from '../lib/setup-writes.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -46,6 +52,7 @@ const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`,
 const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
 const SETUP = new RegExp(`Set up step ([0-9]{1,2}) as listed, ${SHA12}`, 'g');
 const SETUP_LINE = new RegExp(`^${SETUP.source}$`);
+const CONFIRM_ALL_LINE = /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/;
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 
 function ciEntry(project, branch, sha12, now) {
@@ -250,19 +257,23 @@ function setupClickOf(cwd, { question, label, card }) {
 // one setup asked, for a folder holding this session's folder, and the answer is one of its own
 // options, never Explain more or Not now, or, on a card that takes one, typed text in which no
 // secret is found. The record names the run and step the question was asked for, and its id.
+// Gives { made, asked }: the record to sign and the asked record it answers.
 function setupAnswerOf(cwd, { question, label, card, signable, typed }) {
   if (PUT_OFF.includes(label) || !(signable || typed)) return null;
   const asked = askedFor({ cwd, card });
   if (asked === null || asked.card.question !== question) return null;
   const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question };
-  if (signable) return { kind: 'action', data: { ...data, label, text: null } };
+  if (signable) return { asked, made: { kind: 'action', data: { ...data, label, text: null } } };
   if (asked.typed !== true || label.trim() === '' || scanContent(label).length > 0) return null;
-  return { kind: 'action', data: { ...data, label: null, text: label } };
+  return { asked, made: { kind: 'action', data: { ...data, label: null, text: label } } };
 }
 
 // Signs each setup click and answer and keeps it in setup/clicks/ or setup/answers/. One failing
-// does not stop the rest.
-function keepSetupClicks(cwd, out, now) {
+// does not stop the rest. An answer that records something in the project's state has those
+// records kept pending in `project` first; they are given back, as keepEarned gives them, to be
+// sent. With no project, such an answer is not kept.
+function keepSetupClicks(cwd, out, now, project = null) {
+  const queued = [];
   for (const click of out) {
     try {
       const made = click.signable ? setupClickOf(cwd, click) : null;
@@ -271,9 +282,17 @@ function keepSetupClicks(cwd, out, now) {
         continue;
       }
       const answer = setupAnswerOf(cwd, click);
-      if (answer) keepAnswer(makeEvent({ ...answer, now }));
+      if (!answer) continue;
+      const records = setupRecordsOf(answer.asked, answer.made.data, { now });
+      if (records.length > 0 && project === null) continue;
+      for (const { route, body } of records) {
+        const full = { project, ...body };
+        queued.push({ file: keep(project, route, full, now), body: full, route });
+      }
+      keepAnswer(makeEvent({ ...answer.made, now }));
     } catch { /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
   }
+  return queued;
 }
 
 // What was answered, and which answers came from a click on a button the card offered
@@ -325,7 +344,8 @@ export function keepEarned(project, got, { now, liftStop = defaultLift }) {
 
 // Sends one kept record, removing it once the helper has it. True when it was taken.
 export async function sendKept(api, left, { file, body, route }) {
-  const result = await left(route === 'profile-record' ? api.profile.record(body) : api.state.record(body));
+  const send = { 'profile-record': () => api.profile.record(body), write: () => api.state.write(body) }[route] ?? (() => api.state.record(body));
+  const result = await left(send());
   if (!taken(result)) return false;
   fs.rmSync(file, { force: true });
   return true;
@@ -344,8 +364,9 @@ function shownFor(project, input, at, stopState = defaultStopState) {
   for (const q of questions) {
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     const line = setLineOf(q.question);
-    // A setup card has no reply code (ruling R36): only the click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line)) continue;
+    // A setup card, and setup's card of the rules found, have no reply code (ruling R36): only the
+    // click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -381,7 +402,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const at = now();
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
-  keepSetupClicks(input.cwd, out, clock);
+  queued.push(...keepSetupClicks(input.cwd, out, clock, project));
   // An answer on a card a setup step asked goes only to setup/answers/, or nowhere when it was
   // refused (ruling R53): it earns no record in the state and is not sent as a card-answer.
   const setupAsked = new Set(out.filter((c) => askedFor({ cwd: input.cwd, card: c.card }) !== null).map((c) => c.question));

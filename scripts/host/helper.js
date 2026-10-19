@@ -30,7 +30,7 @@ import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -82,8 +82,9 @@ const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const PENDING_BYTES = 256 * 1024;
 
 // The ids of the records the hooks kept in projects/<p>/pending/ to send later:
-// a signed record's own id, or a write's given id. Only regular files of at
-// most PENDING_BYTES are read; anything else, or a file that won't read, is passed over.
+// a signed record's own id, the id of the event a kept confirmation carries, or a write's given
+// id. Only regular files of at most PENDING_BYTES are read; anything else, or a file that won't
+// read, is passed over.
 function pendingIds(project) {
   const ids = new Set();
   let names = [];
@@ -96,7 +97,7 @@ function pendingIds(project) {
       const stat = fs.lstatSync(file);
       if (!stat.isFile() || stat.size > PENDING_BYTES) continue;
       const { body } = JSON.parse(fs.readFileSync(file, 'utf8'));
-      for (const id of [body?.event?.id, body?.id]) if (typeof id === 'string') ids.add(id);
+      for (const id of [body?.event?.id, body?.target?.id, body?.id]) if (typeof id === 'string') ids.add(id);
     } catch { /* not a record */ }
   }
   return ids;
@@ -1051,17 +1052,44 @@ export async function startHelper({
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
-  async function doRecord({ project, event }, ctx) {
+  const TARGET_KEYS = ['v', 'id', 'at', 'computer', 'kind', 'data'];
+  // The plain ruling or setting a confirmation carries (`target`): the event a hook made from the
+  // director's answer on a setup card that said it records it (rulings R35, R59), confirmed by that
+  // same click. The helper makes every other plain event itself, but a confirmation names its
+  // event's every field, its time among them, so this one comes whole, and is taken only as the
+  // event the signed confirmation names, by its id and its hash, made on this computer.
+  function checkTarget(target, event) {
+    const plain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+    if (event.kind !== 'confirmation') refuse('only a confirmation carries the event it confirms');
+    if (!plain(target) || Object.keys(target).some((k) => !TARGET_KEYS.includes(k)) || target.v !== 1 || !plain(target.data)) refuse('the confirmed event is not a whole plain event');
+    if (!CONFIRMABLE_KINDS.includes(target.kind) || target.kind === 'level') refuse('only a ruling or a setting comes with its confirmation');
+    if (typeof target.id !== 'string' || !RANDOM_UUID.test(target.id) || typeof target.at !== 'string' || !ISO_TIME.test(target.at)) refuse('the confirmed event needs a random id and its time');
+    if (target.computer !== computerId()) refuse('only an event made on this computer comes with its confirmation');
+    if (event.data?.confirms !== target.id || event.data?.confirmsHash !== eventHash(target)) refuse('the confirmation does not name the event it carries');
+    if (target.kind === 'setting') {
+      try { checkSetting(target.data.key, target.data.value, target.data.until); } catch (error) { refuse(error.message); }
+    }
+  }
+
+  async function doRecord({ project, event, target }, ctx) {
     if (!event || typeof event !== 'object' || Array.isArray(event)) refuse('the record must be an event');
     if (!PROTECTED_KINDS.includes(event.kind)) refuse('only a signed kind is recorded this way');
     if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
     if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
+    if (target !== undefined) checkTarget(target, event);
     // The same record again has been taken (a hook sending its kept copy); another
     // event under its id has not, and says so in words a hook does not count as taken.
-    const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.id === event.id);
+    const events = listEvents(stateDir(project), { report: () => {} });
+    const held = events.filter((e) => e.id === event.id);
     if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
     if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
+    // The confirmed event goes first, once: a kept copy sent again after it went finds it there.
+    if (target !== undefined) {
+      const there = events.filter((e) => e.id === target.id);
+      if (there.some((e) => canonicalJson(e) !== canonicalJson(target))) refuse('another event in the state carries the confirmed event\'s id, so neither was recorded');
+      if (there.length === 0) await writeEvent({ project, event: target, push: pushFor(project, ctx), env: ctx.gitEnv });
+    }
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });

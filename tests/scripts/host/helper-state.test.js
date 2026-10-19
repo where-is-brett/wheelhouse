@@ -18,7 +18,7 @@ import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { cloneState } from '../../../scripts/state/clone.js';
-import { makeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { keep, taken } from '../../../scripts/hooks/pending.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
@@ -356,6 +356,59 @@ test('/state/record refuses an id the state already holds', async () => {
       assert.equal(again.ok, false);
       assert.match(again.refused, /id/);
       assert.equal((await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).length, 2);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('/state/record takes a confirmation with the ruling or setting it confirms, once, and nothing it does not name', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo);
+  try {
+    await c.as(async () => {
+      const ruling = makeEvent({ kind: 'ruling', data: { words: 'Never push straight to main.', source: { file: 'CLAUDE.md', line: 3 }, original: false }, now: at(100) });
+      const confirmation = makeEvent({ ...confirmationFor(ruling), now: at(100) });
+      // Refused: a target it does not name, altered, made elsewhere, of a kind not taken this way,
+      // a setting the catalogue refuses, or carried by anything but a confirmation.
+      const altered = { ...ruling, data: { ...ruling.data, words: 'Push to main.' } };
+      const elsewhere = { ...ruling, computer: '0f0f0f0f' };
+      const level = makeEvent({ kind: 'level', data: { key: 'copy', value: 1 }, now: at(100) });
+      const badSetting = makeEvent({ kind: 'setting', data: { key: 'phase', value: 'gone' }, now: at(100) });
+      const review = makeEvent({ kind: 'review', data: { pr: 7, commit: 'abc1234', verdict: 'CLEAN' }, now: at(100) });
+      for (const [label, body] of [
+        ['altered', { event: confirmation, target: altered }],
+        ['another computer', { event: makeEvent({ ...confirmationFor(elsewhere), now: at(100) }), target: elsewhere }],
+        ['a level', { event: makeEvent({ ...confirmationFor(level), now: at(100) }), target: level }],
+        ['a refused setting', { event: makeEvent({ ...confirmationFor(badSetting), now: at(100) }), target: badSetting }],
+        ['not a confirmation', { event: review, target: ruling }],
+        ['signed', { event: confirmation, target: sign(ruling) }],
+      ]) {
+        const answer = await c.client.state.record({ project: PROJECT, ...body });
+        assert.equal(answer.ok, false, label);
+        assert.equal(taken(answer), false, `${label}: ${answer.refused}`);
+      }
+      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), [], 'nothing reached the host');
+
+      // A write can't take the id of a ruling a kept confirmation carries.
+      keep(PROJECT, 'record', { project: PROJECT, event: confirmation, target: ruling }, at(100));
+      const write = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'x' }, id: ruling.id });
+      assert.match(write.refused, /waiting to be sent/);
+
+      // Taken: the ruling first, then its confirmation; sent again, it is taken as already held.
+      const accepted = await c.client.state.record({ project: PROJECT, event: confirmation, target: ruling });
+      assert.deepEqual(accepted, { ok: true, id: confirmation.id, pushed: true });
+      const files = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
+      assert.deepEqual(files.map((f) => f.split('_').at(-2)).sort(), ['confirmation', 'ruling']);
+      const again = await c.client.state.record({ project: PROJECT, event: confirmation, target: ruling });
+      assert.equal(taken(again), true, again.refused);
+      // A setting with its confirmation counts at once, as the views show.
+      const phase = makeEvent({ kind: 'setting', data: { key: 'phase', value: 'launched', words: 'Product phase: launched' }, now: at(200) });
+      const confirmsPhase = makeEvent({ ...confirmationFor(phase), now: at(200) });
+      assert.equal((await c.client.state.record({ project: PROJECT, event: confirmsPhase, target: phase })).ok, true);
+      assert.equal((await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).length, 4);
+      const views = JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', 'settings.json'), 'utf8'));
+      assert.equal(views.phase.value, 'launched');
+      const rulebook = JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', 'rulebook.json'), 'utf8'));
+      assert.deepEqual(rulebook.map((r) => [r.words, r.status]), [['Never push straight to main.', 'accepted']]);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });

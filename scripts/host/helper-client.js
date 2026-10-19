@@ -68,7 +68,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     state: {
       clone: post('/state/clone'), //   { project }
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
-      record: post('/state/record'), // { project, event }: a signed event made by this computer's hook
+      record: post('/state/record'), // { project, event, target? }: a signed event made by this computer's hook; a confirmation may carry the plain ruling or setting it confirms
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
       views: post('/state/views'), //   { project, cards?, review? } -> { ok, views, cards?, review? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile

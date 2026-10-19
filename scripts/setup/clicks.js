@@ -12,8 +12,10 @@
 //                  description }] }
 //   asked/         each question a run's step last asked (ruling R30), as
 //                  <run id>-<step>-<question id>.json: { runId, folder, step, id, card, typed,
-//                  rules?, at }, written by the helper when a step's plan asks it; `typed` says
-//                  whether a typed answer counts
+//                  rules?, writes?, at }, written by the helper when a step's plan asks it; `typed`
+//                  says whether a typed answer counts, `rules` is the list on step 5's card of the
+//                  rules found, `writes` what each answer records in the project's state
+//                  (scripts/lib/setup-writes.js)
 //   answers/       each answer as the prompt record signed it: an `action` event `setup-answer`
 //                  { runId, step, questionId, question, label, text }
 // The prompt record reads `shown/` to turn the twelve characters on a card into the full hash
@@ -60,14 +62,16 @@ export function shownFor(runId, step) {
 }
 
 // Records the question a run's step asked: its id within the step, the card as the director is
-// shown it, whether a typed answer counts, and anything the step keeps with it (`rules`). Asking
-// it again replaces the record, so only an answer on the card as last asked counts.
-export function noteAsked({ runId, folder, step, id, card, typed = false, rules, now = () => new Date() }) {
+// shown it, whether a typed answer counts, and anything the step keeps with it (`rules`, `writes`).
+// Asking it again replaces the record, so only an answer on the card as last asked counts.
+export function noteAsked({ runId, folder, step, id, card, typed = false, rules, writes, now = () => new Date() }) {
   const asked = shownCard(card);
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id)) || typeof folder !== 'string' || asked === null) {
     throw new Error('An asked question needs its run, folder, step, id and card');
   }
-  const record = { runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), at: now().toISOString() };
+  const record = {
+    runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), ...(writes === undefined ? {} : { writes }), at: now().toISOString(),
+  };
   writeWhole(path.join(askedDir(), `${runId}-${step}-${id}.json`), `${JSON.stringify(record)}\n`);
 }
 

@@ -515,6 +515,17 @@ test('no press on a setup card records anything: only the director\'s click on t
     assert.equal(untouched(client), 0, label);
     assert.equal(client.calls.profileRecord.length, 0, label);
   }
+  // Nor on setup's card of the rules found (ruling R35).
+  const rules = putCard(composeCard({
+    ...common, kind: 'confirm-all', recommend: 'Confirm all', what: 'Setup step 5 found 1 rule: 1) "Never push to main".',
+    options: [says('Confirm all'), says('Let me correct some')], target: { count: 1, hash },
+  }).card, 1);
+  for (const label of ['Confirm all', 'Let me correct some', 'Not now', 'Explain more']) {
+    const client = fake();
+    assert.deepEqual(await press(rules, client, label), { made: false, says: SAYS.setupByClick }, label);
+    assert.equal(untouched(client), 0, label);
+  }
+  assert.equal(waitingIds().includes(rules.id), true);
   assert.equal(waitingIds().includes(setup.id), true);
   assert.deepEqual(pendingFiles(), []);
   assert.equal(claimedNothing(), true);
