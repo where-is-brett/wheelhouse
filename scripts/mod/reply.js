@@ -73,6 +73,10 @@ export function recordedAs(made, question) {
 
 const no = (says) => ({ made: false, says });
 
+// The labels that set the Windows build-commands level from the Unattended card, which only a click
+// on that card sets: no reply and no pane press (press.js) records either.
+export const CLICK_ONLY_LABELS = Object.freeze(['Turn on (dangerous)', USE_GUARDED]);
+
 // Why an Allow on a build-command question asked on another computer records nothing.
 export const ALLOWED_ELSEWHERE = 'Build commands are allowed only on the Windows computer that asked: answer the card there';
 

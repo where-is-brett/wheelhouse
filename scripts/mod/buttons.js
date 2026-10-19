@@ -2,11 +2,14 @@
 // Which buttons the pane draws under a card, and what each does: `record` is a press the bridge
 // signs as the same click on the card would earn; `turn` hands the front desk a short prompt
 // (Task 5). The mod decides none of this. A card is judged by the same function the card check
-// hook uses, so a card the hook would have refused gets no button that records anything.
+// hook uses, so a card the hook would have refused gets no button that records anything. The
+// Unattended card for build commands on Windows, known by its risk words as the prompt record knows
+// it, gets no button at all: only a click on it when the front desk asks it sets the level.
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { setLinesOf } from '../state/card-lines.js';
+import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
 const ANSWER_LINE = /^Answer question /;
@@ -44,6 +47,9 @@ function buttonsOf(card) {
   const offers = optionsOf(card);
   const offered = (label) => offers.includes(label);
   const lines = setLinesOf(text);
+
+  // The Unattended card, with or without Use Guarded: nothing on it is answered from the pane.
+  if (text.includes(UNATTENDED_CARD().risk)) return { buttons: [], note: CANT_ANSWER };
 
   // A card with no set line asks a question the front desk takes up: every option is a turn.
   if (kind === 'question' && lines.length === 0) return { buttons: offers.map((label) => button(label, 'turn')), note: null };

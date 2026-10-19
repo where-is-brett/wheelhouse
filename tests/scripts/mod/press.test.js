@@ -14,7 +14,8 @@ import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
-import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, USE_GUARDED, settingKey } from '../../../scripts/protection/windows-builds.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, USE_GUARDED, settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
+import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { withHome } from '../../helpers/homes.js';
 
 const P = 'owner__name';
@@ -476,4 +477,31 @@ test('an ordinary press beside those still records: Allow on this computer\'s qu
   assert.equal((await press(confirm, other, 'Confirm')).made, true);
   assert.deepEqual(signed(other).map((r) => r.kind), ['confirmation']);
   assert.equal(waitingIds().includes(confirm.id), false);
+}));
+
+test('Turn on (dangerous) on the Unattended card records nothing from the pane, and the card stays waiting', () => withKey(async () => {
+  const me = computerId();
+  const on = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'unattended', words: 'Run build commands unattended' }, now: () => NOW });
+  keepEvent(on);
+  const card = putCard(unattendedCardData(UNATTENDED_CARD(), on.id, me));
+  for (const label of ['Turn on (dangerous)', 'Keep asking']) {
+    const client = fake();
+    const out = await press(card, client, label);
+    assert.equal(out.made, false, label);
+    assert.equal(out.submit, undefined, label);
+    assert.equal(/\n/.test(out.says), false, label);
+    assert.equal(untouched(client), 0, label);
+  }
+  assert.deepEqual(await press(card, fake(), 'Turn on (dangerous)'), { made: false, says: SAYS.buildsByClick });
+  assert.equal(waitingIds().includes(card.id), true);
+  assert.deepEqual(pendingFiles(), []);
+  assert.equal(claimedNothing(), true);
+  assert.equal(listEvents(stateDir(P), { report: () => {} }).some((e) => e.kind === 'card-answer' || e.kind === 'confirmation'), false);
+
+  // An ordinary press beside it still records.
+  const other = putCard(questionCard(), 1);
+  const client = fake();
+  assert.equal((await press(other, client, 'Comma')).made, true);
+  assert.equal(client.calls.write.length, 1);
+  assert.equal(waitingIds().includes(other.id), false);
 }));

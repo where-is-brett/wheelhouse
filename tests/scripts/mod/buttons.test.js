@@ -6,6 +6,8 @@ import { composeCard, DECIDING } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { approvalLine, replyCode, replyCodeLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { unattendedCardData } from '../../../scripts/foreman/act.js';
+import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
@@ -156,4 +158,20 @@ test('junk gives no buttons and never throws', () => {
     assert.ok(Array.isArray(got.buttons), String(junk));
     assert.equal(got.buttons.some((b) => b.does === 'record'), false, String(junk));
   }
+});
+
+test('the Unattended card gets no button on the pane, with or without Use Guarded', () => {
+  const computer = '0a1b2c3d';
+  const on = makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended' }, now: () => NOW });
+  const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(computer), value: 'guarded', words: 'Run build commands guarded' }, now: () => NOW });
+  const plain = unattendedCardData(UNATTENDED_CARD(), on.id, computer);
+  const offered = unattendedCardData(UNATTENDED_CARD({ guardedReady: true }), on.id, computer, guarded);
+  // Without Guarded it has no set line, so it would otherwise be a question whose options are turns.
+  assert.equal(setLineOf(plain.question), null);
+  assert.deepEqual(plain.options, ['Keep asking', 'Turn on (dangerous)']);
+  assert.deepEqual(cardButtons(plain), { buttons: [], note: CANT_ANSWER });
+  assert.deepEqual(offered.options, ['Keep asking', 'Turn on (dangerous)', 'Use Guarded']);
+  assert.deepEqual(cardButtons(offered), { buttons: [], note: CANT_ANSWER });
+  // Even offering Explain more, it gets nothing.
+  assert.deepEqual(cardButtons({ ...plain, options: [...plain.options, 'Explain more'] }), { buttons: [], note: CANT_ANSWER });
 });

@@ -21,10 +21,10 @@
 // give their prompt, since reading and explaining carry on.
 //
 // Two presses record nothing, whatever the card offers, as a reply code records nothing for them
-// (reply.js): confirming a Windows build-commands setting (Confirm on its card, or Use Guarded),
-// which only a click on its own card when the front desk asks it sets (design section 12.2), and
-// an Allow on a build-command question recorded on another computer, which would grant nothing
-// there.
+// (reply.js): turning on or confirming a Windows build-commands setting (Turn on (dangerous), Use
+// Guarded, or Confirm on the setting's card), which only a click on its own card when the front
+// desk asks it sets (design section 12.2), and an Allow on a build-command question recorded on
+// another computer, which would grant nothing there.
 import fs from 'node:fs';
 import path from 'node:path';
 import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
@@ -37,8 +37,7 @@ import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
 import { cardButtons, kindOf } from './buttons.js';
 import { cardTextOf, hashOf } from './status.js';
-import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsElsewhere, ALLOWED_ELSEWHERE } from './reply.js';
-import { USE_GUARDED } from '../protection/windows-builds.js';
+import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsElsewhere, ALLOWED_ELSEWHERE, CLICK_ONLY_LABELS } from './reply.js';
 
 const NOT_NOW = 'Not now';
 // Longer than any option a card offers.
@@ -157,9 +156,9 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   const question = cardTextOf(data);
   if (typeof hash !== 'string' || hash !== hashOf(question)) return no(SAYS.changed);
   if (typeof label !== 'string' || label === '' || label.length > LABEL_CHARS || /[\p{Cc}\p{Cf}]/u.test(label)) return no(SAYS.notOffered);
+  if (CLICK_ONLY_LABELS.includes(label) || (label === 'Confirm' && confirmsBuilds(project, question))) return no(SAYS.buildsByClick);
   const button = cardButtons(data).buttons.find((b) => b.label === label);
   if (!button) return no(`That card doesn't offer ${label}`);
-  if (label === USE_GUARDED || (label === 'Confirm' && confirmsBuilds(project, question))) return no(SAYS.buildsByClick);
   const line = setLineOf(question);
   if (line?.startsWith('Answer question ') && allowsElsewhere(project, line.slice('Answer question '.length), label)) return no(SAYS.elsewhere);
   const shownId = shownIdOf(views.shown, question);
