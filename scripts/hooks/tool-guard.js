@@ -1,6 +1,7 @@
 // scripts/hooks/tool-guard.js
 // Before each file, shell (Bash, PowerShell, Monitor) or connector tool (mcp__*
-// and the MCP resource tools) in a Wheelhouse project: refuses
+// and the MCP resource tools) in a Wheelhouse project, or in a folder being set up (kit.js's
+// beingSetUp), as in a project: refuses
 // secrets (.env files, the credential folders, Wheelhouse's own home), writes to
 // the places that hold the guardrails, the host tools (gh, glab, git push) and
 // connectors the project has not listed. It backs up the deny rules and the
@@ -9,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { answer, runAndExit, projectOf, registeredByPath } from './kit.js';
+import { answer, runAndExit, projectOf, registeredByPath, beingSetUp } from './kit.js';
 import { segments } from './shell-words.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome } from '../lib/paths.js';
@@ -270,10 +271,11 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
   const cwd = input.cwd;
   const found = find(cwd, { dir });
   const byPath = found ? false : registeredByPath(cwd);
+  const setup = !found && byPath === false ? beingSetUp(cwd) : null;
   // A folder that cannot be placed is guarded, not waved through.
-  if (!found && byPath === false) return undefined;
+  if (!found && byPath === false && setup === null) return undefined;
   if (isConnector) {
-    let main = found?.record?.folder;
+    let main = found?.record?.folder ?? setup?.folder;
     if (!main) {
       try {
         main = projectForFolder(fs.realpathSync.native(cwd))?.record?.folder;

@@ -9,8 +9,9 @@ import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { writeViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
-import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine } from '../../../scripts/state/card-lines.js';
+import { computerId, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { BUILD_QUESTION_OPTIONS, settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -458,6 +459,88 @@ test('a reply on a build loop card whose record can\'t be earned records nothing
   });
 });
 
+test('no reply turns on Unattended or confirms a Windows build-commands setting: only a click on its own card does', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const setting = (value) => makeEvent({ kind: 'setting', data: { key: settingKey(me), value, words: `Run build commands: ${value}` }, now: () => NOW });
+    const on = setting('unattended');
+    const guarded = setting('guarded');
+    keepEvent(on);
+    keepEvent(guarded);
+    const tried = [];
+    const reply = async (text) => {
+      const c = fake();
+      const out = await replyRecord({ project: P, text, client: c, now: () => LATER });
+      tried.push(c);
+      return out;
+    };
+    // The Unattended card's line is no set line, so the card has no reply code at all.
+    const line = unattendedBuildsLine(on.id, me);
+    await show(`${UNATTENDED_CARD().risk}\n${line}\n${replyCodeLine(replyCode(line))}`, { options: ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'] });
+    assert.deepEqual(await reply(`${replyCode(line)} Turn on (dangerous)`), { made: false, says: 'No card has that code' });
+    // A card that carries the Unattended line beside the setting's confirm line: neither its
+    // Turn on (dangerous) nor its Confirm can be answered by a reply.
+    const both = cardOf(confirmLine(on), `${UNATTENDED_CARD().risk}\n${line}`);
+    await show(both, { options: ['Turn on (dangerous)', 'Confirm', 'Not now'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(on))} Turn on (dangerous)`), { made: false, says: 'That option doesn\'t need a reply code' });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(on))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    // The Unattended card offering Use Guarded carries Guarded's confirm line and its code, and
+    // Use Guarded, which confirms that event, is a click only too.
+    const proposed = setting('guarded');
+    keepEvent(proposed);
+    const offered = `What this is: ${UNATTENDED_CARD({ guardedReady: true }).what} ${UNATTENDED_CARD().risk}\n${line}\n${confirmLine(proposed)}\n${replyCodeLine(replyCode(confirmLine(proposed)))}`;
+    await show(offered, { options: ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(proposed))} Use Guarded`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(proposed))} Turn on (dangerous)`), { made: false, says: 'That option doesn\'t need a reply code' });
+    // Guarded's card confirms through the setting's confirm line, by a click only.
+    await show(cardOf(confirmLine(guarded)), { options: ['Confirm', 'Not now'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(guarded))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    // Nor from the director's profile.
+    const profiled = { ...setting('guarded') };
+    fs.mkdirSync(path.join(profileDir(), path.dirname(eventPath(profiled))), { recursive: true });
+    fs.writeFileSync(path.join(profileDir(), eventPath(profiled)), JSON.stringify(profiled));
+    await show(cardOf(confirmLine(profiled)), { options: ['Confirm', 'Not now'] });
+    assert.deepEqual(await reply(`${replyCode(confirmLine(profiled))} Confirm`), { made: false, says: 'That setting is changed only by a click on its own card' });
+    for (const c of tried) assert.equal(c.calls.record.length + c.calls.profileRecord.length + c.calls.write.length, 0);
+    // Another setting's confirm card still takes a reply.
+    const tab = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Open the board on its build tab' }, now: () => NOW });
+    keepEvent(tab);
+    await show(cardOf(confirmLine(tab)), { options: ['Confirm', 'Not now'] });
+    assert.equal((await reply(`${replyCode(confirmLine(tab))} Confirm`)).made, true);
+  });
+});
+
+test('a reply allows a build-command question\'s commands only on the computer that recorded the question', async () => {
+  await withHome(async () => {
+    const asked = (n) => ({
+      id: `q-export-csv-${n}`, work: 'export-csv', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
+      options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })), recommendation: 'Allow this time', level: 3, commands: ['npm test'],
+    });
+    const options = [...BUILD_QUESTION_OPTIONS.map((o) => o.label), 'Explain more'];
+    const here = makeEvent({ kind: 'question', data: asked(1), now: () => NOW });
+    const elsewhere = { ...makeEvent({ kind: 'question', data: asked(2), now: () => NOW }), computer: 'deadbeef' };
+    const unknown = { ...makeEvent({ kind: 'question', data: asked(3), now: () => NOW }), computer: undefined };
+    for (const e of [here, elsewhere, unknown]) keepEvent(e);
+    const reply = async (id, label) => {
+      const c = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(answerLine(id))} ${label}`, client: c, now: () => LATER });
+      return { out, signed: signed(c) };
+    };
+    const ELSEWHERE = { made: false, says: 'Build commands are allowed only on the Windows computer that asked: answer the card there' };
+    for (const id of ['q-export-csv-2', 'q-export-csv-3']) {
+      await show(cardOf(answerLine(id)), { options });
+      for (const label of ['Allow this time', 'Allow for this feature']) assert.deepEqual(await reply(id, label), { out: ELSEWHERE, signed: [] }, `${id} ${label}`);
+      // Not now by reply stays as it is: it needs no reply code.
+      assert.deepEqual((await reply(id, 'Not now')).out, { made: false, says: 'That option doesn\'t need a reply code' });
+    }
+    // On the computer that recorded the question, the reply answers it as a click would.
+    await show(cardOf(answerLine('q-export-csv-1')), { options });
+    const { out, signed: made } = await reply('q-export-csv-1', 'Allow for this feature');
+    assert.deepEqual(out, { made: true, says: 'Recorded: Answer: Allow for this feature' });
+    assert.deepEqual(made.map((r) => [r.data.action, r.data.questionId, r.data.label]), [['answer', 'q-export-csv-1', 'Allow for this feature']]);
+  });
+});
+
 test('a reply-code Confirm on a profile setting\'s card closes the card in the project\'s waiting view', async () => {
   await withHome(async () => {
     // The setting is in the director's profile; its confirm card is in the project's state.
@@ -486,5 +569,17 @@ test('a reply-code Confirm on a profile setting\'s card closes the card in the p
     assert.deepEqual(c.calls.profileRecord.map((r) => r.event.data.confirms), [setting.id]);
     assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label: 'Confirm' } }]);
     assert.deepEqual((await writeViews(P, { now: () => LATER })).waiting, []);
+  });
+});
+
+test('no reply lets a setup step go ahead: only the director\'s click on the card setup showed does', async () => {
+  await withHome(async () => {
+    const line = setupLine(1, 'fedcba9876543210'.repeat(4));
+    await show(cardOf(line, 'Setup step 1, checking this computer, changes nothing on it.'), { options: ['Go ahead', 'Not now', 'Explain more'] });
+    for (const label of ['Go ahead', 'Not now']) {
+      const c = fake();
+      assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER }), { made: false, says: 'That option doesn\'t need a reply code' }, label);
+      assert.equal(c.calls.record.length + c.calls.profileRecord.length + c.calls.write.length, 0, label);
+    }
   });
 });

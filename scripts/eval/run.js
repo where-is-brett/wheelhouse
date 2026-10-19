@@ -4,7 +4,10 @@
 // purpose, never from `npm test`.
 // Usage: npm run eval -- <id…> [--variant with|without] [--trials n]
 // Writes <home>/.wheelhouse-evals/<date>/<id>-<variant>-<n>.json and prints
-// `<id> <variant>: pass|fail (<why>) <tokens>` for each run.
+// `<id> <variant>: pass|fail (<why>) <tokens>` for each run. A scenario whose
+// pass has more than one leg has a file per leg, each named `<id>-…`; its number
+// runs every leg, and `<id>-<leg>` (27-route) runs that leg alone, its records
+// named `<id>-<leg>-<variant>-<n>.json`.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,16 +15,28 @@ import { parseArgs, runScenario } from './harness.js';
 
 const scenarioDir = fileURLToPath(new URL('../../tests/eval/build-loop/', import.meta.url));
 
+// Every leg of scenario `id` (a number), or the one leg `id` names (27-route), in file order.
+export async function loadScenarios(id) {
+  const [number, leg] = String(id).split('-');
+  const files = fs.readdirSync(scenarioDir).filter((name) => name.startsWith(`${number}-`) && name.endsWith('.js')).sort();
+  const found = [];
+  for (const file of files) {
+    const scenario = (await import(pathToFileURL(path.join(scenarioDir, file)).href)).default;
+    if (leg === undefined || scenario.leg === leg) found.push(scenario);
+  }
+  if (found.length === 0) throw new Error(`No scenario ${id} in ${path.relative(process.cwd(), scenarioDir)}`);
+  return found;
+}
+
+// The scenario a number names (its first leg, when it has more than one).
 export async function loadScenario(id) {
-  const file = fs.readdirSync(scenarioDir).find((name) => name.startsWith(`${id}-`) && name.endsWith('.js'));
-  if (!file) throw new Error(`No scenario ${id} in ${path.relative(process.cwd(), scenarioDir)}`);
-  return (await import(pathToFileURL(path.join(scenarioDir, file)).href)).default;
+  return (await loadScenarios(id))[0];
 }
 
 export async function main(argv) {
   const { ids, variants, trials } = parseArgs(argv);
   const scenarios = [];
-  for (const id of ids) scenarios.push(await loadScenario(id));
+  for (const id of ids) scenarios.push(...await loadScenarios(id));
   let failed = 0;
   for (const scenario of scenarios) {
     for (const variant of variants) {

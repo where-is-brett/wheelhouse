@@ -4,10 +4,12 @@
 // as `setting` events; this file says which of them are allowed.
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../sources/list.js';
+import { LEVELS as BUILD_LEVELS } from '../protection/windows-builds.js';
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const CONCEPT = /^known:[a-z0-9-]{1,40}$/;
+const WINDOWS_BUILDS_KEY = /^windowsBuildCommands:[0-9a-f]{8}$/;
 const CHANNELS = ['claude', 'ntfy', 'telegram'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -60,10 +62,15 @@ export const SETTINGS = {
 // One per concept the director already knows (a plain-words glossary switch).
 export const KNOWN = { label: 'Concept the director knows', group: 'everyday', check: (v) => typeof v === 'boolean', default: false, home: 'profile' };
 
+// One per computer (`windowsBuildCommands:<computer>`): the level its build commands run at
+// on Windows (design section 12.2).
+export const WINDOWS_BUILD_COMMANDS = { label: 'Build commands on Windows', group: 'everyday', levels: BUILD_LEVELS, default: 'ask', home: 'project' };
+
 // The catalogue entry for a key, or undefined when Wheelhouse has no such setting.
 export function definitionOf(key) {
   if (typeof key !== 'string') return undefined;
   if (Object.hasOwn(SETTINGS, key)) return SETTINGS[key];
+  if (WINDOWS_BUILDS_KEY.test(key)) return WINDOWS_BUILD_COMMANDS;
   return CONCEPT.test(key) ? KNOWN : undefined;
 }
 

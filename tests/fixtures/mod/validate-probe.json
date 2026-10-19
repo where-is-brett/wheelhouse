@@ -1,0 +1,42 @@
+{
+  "success": true,
+  "strict": false,
+  "target": "<scratch>/.claude-plugin/plugin.json",
+  "manifest": {
+    "file": "<scratch>/.claude-plugin/plugin.json",
+    "type": "plugin",
+    "errors": [],
+    "warnings": [
+      {
+        "path": "author",
+        "message": "No author information provided. Consider adding author details for plugin attribution",
+        "code": null
+      }
+    ],
+    "notes": [],
+    "gatingHooks": []
+  },
+  "contents": [
+    {
+      "file": "<scratch>/hooks/hooks.json",
+      "type": "hooks",
+      "errors": [],
+      "warnings": [],
+      "notes": [
+        "./register.ts hooks: prompt.submit, session.start, command.run{command=digest}, ui.render{component=Pane, requestId=probe40}, ui.render{component=AbovePrompt}",
+        "./register.ts answers its own command: command.run{command=digest}",
+        "./register.ts gating hook without .catch: prompt.submit",
+        "./register.ts calls: $.clock.every, $.clock.now, $.command.register, $.fs.read (via append), $.fs.write (via append), $.prompt.submit"
+      ],
+      "gatingHooks": [
+        {
+          "module": "./register.ts",
+          "pattern": "prompt.submit",
+          "hook": "prompt.submit",
+          "hasCatch": false
+        }
+      ]
+    }
+  ],
+  "advice": []
+}

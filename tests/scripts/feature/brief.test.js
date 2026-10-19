@@ -188,7 +188,11 @@ test('every brief has the signed review of the pull request\'s head dispatched o
     const finish = text.slice(text.indexOf('# How to finish'), text.indexOf('# Models by role'));
     const flat = finish.replace(/\s+/g, ' ');
     assert.match(flat, /Once `open-pr` prints the pull request's number \(#n\), dispatch `wheelhouse:reviewer` on its head commit with `pr: n`/, lane);
-    assert.match(flat, /fix them, push, and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`/, lane);
+    assert.match(flat, /fix them, push with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" push` \(when it says the host's branch has moved on, bring it in with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" pull`, then push again\), and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`/, lane);
+    // The gate's update is brought in with the helper's pull: the session has no key to pull with (I1).
+    assert.match(flat, /`review-needed`: the gate brought the branch up to date and the review didn't carry over\), bring the host's branch in with `node "[^"]+[\\/]scripts[\\/]feature[\\/]cli\.js" pull`, then dispatch/, lane);
+    assert.doesNotMatch(flat, /pull the branch/, lane);
+    assert.match(flat, /`open-pr` refuses until the report passes\. It pushes your branch through the host helper, then opens the pull request from it\./, lane);
     assert.match(flat, /signed review/, lane);
     // Each lane's own finish names the same steps, in order: the report, open-pr, then the reviewer on the head.
     const laneText = text.slice(text.indexOf('# Your lane'), text.indexOf('# Rules in every lane')).replace(/\s+/g, ' ');
@@ -290,4 +294,82 @@ test('an amended brief says what changed and has a new hash', () => {
   assert.throws(() => amendBrief('not a brief', { change: 'x', now }), /can't be read/);
   assert.throws(() => amendBrief(original, { change: '', now }), /change/);
   assert.throws(() => amendBrief(original, { change: 'x', now: 'yesterday' }), /time/);
+});
+
+// --- Build commands on Windows (design section 12.2) ---
+
+const CLI = `node "${path.join(pluginRoot, 'scripts', 'feature', 'cli.js')}"`;
+const ASK_WORDS = `Before your first build command, ask for every one you will need at once with \`${CLI} ask --kind build-command --command "<command>" …\`, then end your turn. A refused command means the grant has ended: ask again.`;
+const RUNNER = "'C:/Users/me/.wheelhouse/windows/low-node/node.exe' 'C:/plugins/wheelhouse/scripts/windows/guarded.js'";
+const GUARDED_WORDS = `Run every build command through \`${RUNNER}\`, for example \`${RUNNER} npm test\`, except local git. Local git (\`git status\`, \`git add\`, \`git commit\` and the rest) doesn't go through it, and nor does a command that fetches new code: each is asked for like any build command. Before your first one, ask for every one you will need at once with \`${CLI} ask --kind build-command --command "<command>" …\`, then end your turn; once granted, run it directly, not through the runner. If the runner says it isn't at low integrity, stop using it, and ask for every build command you will need in the same way.`;
+const windows = (windowsBuilds, lane = 'small') => renderBrief({ fields: fields(lane), pluginRoot, windowsBuilds });
+
+test('a Windows brief at ask tells the session to ask for its build commands at once', () => {
+  for (const lane of LANES) {
+    const text = windows({ level: 'ask', guardedCommand: null }, lane);
+    assert.ok(text.includes(ASK_WORDS), lane);
+    // Not now holds the feature: the session ends its turn and waits.
+    assert.match(text, /On \*\*Not now\*\* the feature waits[^\n]*end your turn and wait/);
+    assert.ok(!text.includes('Run every build command through'), lane);
+    assert.doesNotMatch(text, /\{\{|\}\}|<!--/, 'no placeholder or marker is left');
+    assert.equal(text.split(ASK_WORDS).length, 2, 'said once');
+  }
+  // A level that can't be read, or Guarded with no runner to name, is Ask.
+  for (const odd of [{ level: 'bogus' }, {}, 'ask', { level: 'guarded', guardedCommand: null }, { level: 'guarded', guardedCommand: 'a`b' }, { level: 'guarded', guardedCommand: 'a\nb' }]) {
+    const text = windows(odd);
+    assert.ok(text.includes(ASK_WORDS), JSON.stringify(odd));
+    assert.ok(!text.includes('Run every build command through'), JSON.stringify(odd));
+  }
+});
+
+test('a Windows brief at guarded gives the runner\'s exact command', () => {
+  const text = windows({ level: 'guarded', guardedCommand: RUNNER });
+  assert.ok(text.includes(GUARDED_WORDS), text);
+  assert.ok(!text.includes('Before your first build command'));
+  assert.doesNotMatch(text, /\{\{|\}\}|<!--/);
+  // The runner's command is put in as it is, never filled again.
+  const odd = windows({ level: 'guarded', guardedCommand: 'run {{cli}}' });
+  assert.ok(odd.includes('`run {{cli}} npm test`'));
+});
+
+test('the brief says nothing new off Windows', () => {
+  const off = render('small');
+  assert.equal(windows(null), off);
+  assert.equal(windows(undefined), off);
+  assert.ok(!off.includes('build-command') && !off.includes('Build commands on Windows'));
+  assert.doesNotMatch(off, /<!--/);
+});
+
+// Unattended can be turned off mid-feature, and the waker reads the level at every run.
+const REFUSED_WORDS = ASK_WORDS.replace('Before your first build command', 'If a build command is refused');
+
+test('a Windows brief at unattended says to ask for build commands if one is refused', () => {
+  for (const lane of LANES) {
+    for (const guardedCommand of [null, RUNNER]) {
+      const text = windows({ level: 'unattended', guardedCommand }, lane);
+      assert.ok(text.includes(REFUSED_WORDS), lane);
+      assert.equal(text.split('Build commands on Windows').length, 2, 'one paragraph');
+      assert.ok(!text.includes('Before your first build command'), lane);
+      assert.ok(!text.includes('Run every build command through'), lane);
+      assert.match(text, /On \*\*Not now\*\* the feature waits/);
+      assert.doesNotMatch(text, /\{\{|\}\}|<!--/);
+    }
+  }
+});
+
+const SESSION_WORDS = 'Here a build command is allowed only by a click in this session itself, so no card can grant one. Before your first build command, ask once with the `ask` below, naming the commands and telling the director to open this session (login-page) and click Allow there when it asks; then end your turn. When woken, run them, and never ask again for a command you have asked about.';
+
+test('a Windows brief at watcher Shape 2 says to ask the director once to click Allow in the session, at every level', () => {
+  for (const level of ['ask', 'unattended', 'guarded', 'bogus']) {
+    const text = windows({ level, guardedCommand: RUNNER, shape: 2 });
+    assert.ok(text.includes(SESSION_WORDS), level);
+    assert.ok(!text.includes('--kind build-command'), `${level}: no card grants here`);
+    assert.ok(!text.includes('the grant has ended: ask again'), `${level}: never asks again`);
+    assert.ok(!text.includes('Run every build command through'), level);
+    assert.equal(text.split('Build commands on Windows').length, 2, 'one paragraph');
+    assert.doesNotMatch(text, /\{\{|\}\}|<!--/);
+  }
+  // Shape 1, or no shape given, keeps the card.
+  assert.ok(windows({ level: 'ask', guardedCommand: null, shape: 1 }).includes(ASK_WORDS));
+  assert.ok(!windows({ level: 'ask', guardedCommand: null, shape: 1 }).includes(SESSION_WORDS));
 });

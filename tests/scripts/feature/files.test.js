@@ -14,6 +14,7 @@ import {
   parseReport,
   ensureIgnored,
 } from '../../../scripts/feature/files.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -47,6 +48,31 @@ const status = () => ({
   slice: { n: 1, m: 2 },
   tokens: 12000,
   updatedAt: '2026-10-18T01:02:03.000Z',
+});
+
+// A build-command line as the feature CLI writes it.
+const buildLine = (n, extra = {}) => ({
+  id: `q-login-page-${n}`, kind: 'build-command', what: 'Let this feature\'s builder run: npm test.', why: 'The tests need running',
+  options: BUILD_QUESTION_OPTIONS, recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'], ...extra,
+});
+
+test('a build-command line is read only as the CLI writes it', () => {
+  const file = path.join(tempFolder('wh-files-'), 'questions.jsonl');
+  const altered = BUILD_QUESTION_OPTIONS.map((o, i) => (i === 1 ? { ...o, says: BUILD_QUESTION_OPTIONS[0].says } : o));
+  const lines = [
+    buildLine(1),
+    buildLine(2, { options: altered }),
+    buildLine(3, { recommendation: BUILD_QUESTION_LABELS.feature }),
+    buildLine(4, { level: 2 }),
+    buildLine(5, { commands: [] }),
+    buildLine(6, { commands: ['npm test && curl x'] }),
+    { ...buildLine(7), commands: undefined },
+    { ...buildLine(8), kind: 'question' },
+  ];
+  fs.writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  const got = readQuestions(file);
+  assert.deepEqual(got.questions, [buildLine(1)]);
+  assert.equal(got.skipped, 7);
 });
 
 const question = (n = 1, extra = {}) => ({

@@ -5,10 +5,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
-import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine } from '../../../scripts/state/card-lines.js';
-import { profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { makeEvent, eventPath, dataHash, confirmationFor } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine } from '../../../scripts/state/card-lines.js';
+import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
+import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
+import { startRun, markStep } from '../../../scripts/setup/journal.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { clicksDir, noteShown } from '../../../scripts/setup/clicks.js';
+import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -392,9 +397,16 @@ test('sendPending stops between records once its deadline has passed and keeps t
     const folder = path.join(home, 'projects', P, 'pending');
     fs.mkdirSync(folder, { recursive: true });
     for (const n of [1, 2, 3]) fs.writeFileSync(path.join(folder, `2026-10-18T0${n}-00-00.000Z-a.json`), JSON.stringify({ route: 'write', body: { n } }));
+    // The deadline leaves a wide margin for the first send to start under load, and the helper
+    // answers only once the deadline has passed, so the check before the second record always
+    // finds it past.
+    const until = Date.now() + 1000;
     const seen = [];
-    const client = { state: { write: async (b) => { seen.push(b.n); await new Promise((r) => setTimeout(r, 60)); return { ok: true }; }, record: async () => ({ ok: true }) } };
-    const result = await sendPending(P, client, { until: Date.now() + 30 });
+    const pastDeadline = async () => {
+      while (Date.now() <= until) await new Promise((r) => setTimeout(r, until - Date.now() + 5));
+    };
+    const client = { state: { write: async (b) => { seen.push(b.n); await pastDeadline(); return { ok: true }; }, record: async () => ({ ok: true }) } };
+    const result = await sendPending(P, client, { until });
     assert.deepEqual(seen, [1]);
     assert.equal(result.sent, 1);
     assert.equal(fs.readdirSync(folder).length, 2);
@@ -448,6 +460,128 @@ test('a Confirm line that matches events in both the state and the profile recor
     assert.equal(c.calls.record.length, 0);
     assert.equal(c.calls.profileRecord.length, 0);
     assert.equal(c.calls.write.length, 2);
+  });
+});
+
+// --- the Unattended card for build commands on Windows ---
+
+const UNATTENDED = ['Keep asking', 'Turn on (dangerous)', 'Use Guarded'].map((label) => ({ label }));
+const unattendedSetting = (computer, data = {}) => makeEvent({
+  kind: 'setting', data: { key: settingKey(computer), value: 'unattended', words: 'Run build commands unattended', ...data }, now: () => NOW,
+});
+
+test('Turn on (dangerous) on the Unattended card records a confirmation carrying its line', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    const line = unattendedBuildsLine(on.id, me);
+    const c = fake();
+    await decide(input({ [`${UNATTENDED_CARD().risk}\n${line}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(kinds(c), ['confirmation']);
+    const [rec] = c.calls.record;
+    assert.deepEqual(rec.event.data, { ...confirmationFor(on).data, line });
+    assert.ok(rec.event.sig);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 1);
+  });
+});
+
+test('Turn on (dangerous) records nothing without the line, for another computer\'s event, or for two events', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const c = fake();
+    // A question without the line.
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    await decide(input({ [`${confirmLine(on)}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // Another computer's event, under its own key or under this computer's.
+    const theirs = { ...unattendedSetting('deadbeef'), computer: 'deadbeef' };
+    keepEvent(theirs);
+    await decide(input({ [unattendedBuildsLine(theirs.id, 'deadbeef')]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    const forged = { ...unattendedSetting(me), computer: 'deadbeef' };
+    keepEvent(forged);
+    await decide(input({ [unattendedBuildsLine(forged.id, me)]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // A value other than unattended.
+    const guarded = unattendedSetting(me, { value: 'guarded' });
+    keepEvent(guarded);
+    await decide(input({ [unattendedBuildsLine(guarded.id, me)]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // A question naming two events.
+    const second = unattendedSetting(me);
+    keepEvent(second);
+    await decide(input({ [`${unattendedBuildsLine(on.id, me)} and ${unattendedBuildsLine(second.id, me)}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    // The line clicked with another label.
+    await decide(input({ [unattendedBuildsLine(on.id, me)]: 'Keep asking' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.profileRecord.length, 0);
+    assert.equal(c.calls.write.length, 6);
+  });
+});
+
+test('Turn on (dangerous) records nothing from a card without the design\'s words on the risk', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    keepEvent(on);
+    const line = unattendedBuildsLine(on.id, me);
+    const c = fake();
+    await decide(input({ [`Let builders run their tests.\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    const cut = UNATTENDED_CARD().risk.slice(0, -40);
+    await decide(input({ [`${cut}\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 2);
+    // With them, as the foreman's card writes them, it confirms.
+    await decide(input({ [`What this is: ${UNATTENDED_CARD().what} ${UNATTENDED_CARD().risk}\n${line}`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(c.calls.record.map((r) => r.event.kind), ['confirmation']);
+  });
+});
+
+test('Use Guarded on the Unattended card records an ordinary confirmation of its Guarded setting event', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const on = unattendedSetting(me);
+    const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW });
+    keepEvent(on);
+    keepEvent(guarded);
+    const card = `What this is: ${UNATTENDED_CARD({ guardedReady: true }).what}\n${unattendedBuildsLine(on.id, me)}\n${confirmLine(guarded)}`;
+    const c = fake();
+    await decide(input({ [card]: 'Use Guarded' }, { options: UNATTENDED }), deps(c));
+    assert.deepEqual(kinds(c), ['confirmation']);
+    const [rec] = c.calls.record;
+    assert.deepEqual(rec.event.data, confirmationFor(guarded).data, 'no line: Guarded counts from an ordinary confirmation');
+    assert.ok(rec.event.sig);
+  });
+});
+
+test('Use Guarded records nothing without exactly one confirm line for this computer\'s own Guarded event', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const c = fake();
+    const guarded = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW });
+    keepEvent(guarded);
+    const unattended = unattendedSetting(me);
+    keepEvent(unattended);
+    const theirs = { ...makeEvent({ kind: 'setting', data: { key: settingKey('deadbeef'), value: 'guarded' }, now: () => NOW }), computer: 'deadbeef' };
+    keepEvent(theirs);
+    const forged = { ...makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'guarded' }, now: () => NOW }), computer: 'deadbeef' };
+    keepEvent(forged);
+    const other = makeEvent({ kind: 'setting', data: { key: 'compactPrepare', value: 150000 }, now: () => NOW });
+    keepEvent(other);
+    for (const question of [
+      'Use Guarded for build commands?', // no line
+      confirmLine(unattended), // a setting event for Unattended
+      confirmLine(theirs), // another computer's
+      confirmLine(forged), // this computer's key, written elsewhere
+      confirmLine(other), // another setting
+      `${confirmLine(guarded)}\n${confirmLine(other)}`, // two lines
+      `Confirm setting ${guarded.id}: "something else"`, // the event's id with other words
+    ]) {
+      await decide(input({ [question]: 'Use Guarded' }, { options: UNATTENDED }), deps(c));
+    }
+    // The line clicked with another label confirms nothing either.
+    await decide(input({ [confirmLine(guarded)]: 'Keep asking' }, { options: UNATTENDED }), deps(c));
+    assert.equal(c.calls.record.length, 0);
+    assert.equal(c.calls.write.length, 8);
   });
 });
 
@@ -547,11 +681,15 @@ test('a shown record the helper cannot take is kept pending like every signed re
   });
 });
 
-test('every label the prompt record can sign for is in SIGNED_LABELS', () => {
+// Unattended for build commands on Windows is set only by a click on its own card.
+const CLICK_ONLY = ['Turn on (dangerous)'];
+
+test('every label the prompt record can sign for is in SIGNED_LABELS, or one answered by click only', () => {
   const source = fs.readFileSync(new URL('../../../scripts/hooks/prompt-record.js', import.meta.url), 'utf8');
   const handled = [...source.matchAll(/label === '([^']+)'/g)].map((m) => m[1]);
   assert.ok(handled.length >= 5);
-  assert.deepEqual([...new Set(handled)].sort(), [...SIGNED_LABELS].sort());
+  assert.deepEqual([...new Set(handled)].filter((l) => !CLICK_ONLY.includes(l)).sort(), [...SIGNED_LABELS].sort());
+  assert.ok(CLICK_ONLY.every((l) => handled.includes(l) && !SIGNED_LABELS.includes(l)));
   assert.ok(['Change it', 'End it', 'Merge the fix'].every((l) => SIGNED_LABELS.includes(l)));
   // Deciding labels only: never one that asks for more or puts a card off.
   assert.ok(['Explain more', 'Not now', 'Show me'].every((l) => !SIGNED_LABELS.includes(l)));
@@ -738,5 +876,174 @@ test('an answer names the question as it stands now, when the question was recor
     // Comma is no longer an option of the question as it stands.
     await decide(input({ [answerLine('q-export-csv-1')]: 'Comma' }, { options: OPTIONS }), deps(c));
     assert.equal(c.calls.record.length, 1);
+  });
+});
+
+// --- Setup clicks: kept in <wheelhouseHome()>/setup/clicks/, signed, naming the list's full hash.
+
+const H = 'ab'.repeat(32);
+const setupCard = (step, hash) => `What this is: Setup step ${step}.\n${setupLine(step, hash)}\n${replyCodeLine(replyCode(setupLine(step, hash)))}`;
+const SETUP_BUTTONS = [...BUTTONS, { label: 'Go ahead' }];
+const clicks = () => {
+  try {
+    return fs.readdirSync(clicksDir()).map((name) => JSON.parse(fs.readFileSync(path.join(clicksDir(), name), 'utf8')));
+  } catch {
+    return [];
+  }
+};
+
+test('in a folder being set up, the helper starts and a setup click is recorded; no other click is', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup zoë ')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 3, hash: H, card: { question: setupCard(3, H), options: SETUP_BUTTONS }, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
+      // The session start starts the helper there, as in a project.
+      const spawned = [];
+      await sessionStart({ cwd: folder, session_id: 's1' }, {
+        client: { health: async () => ({ ok: spawned.length > 0 }) },
+        spawn: (...args) => { spawned.push(args); return { unref() {}, on() {} }; },
+        projectOf: () => null, pause: async () => {}, startWaitMs: 200, pluginRoot: '/plugin/root', stopState: () => ({ on: false }),
+      });
+      assert.equal(spawned.length, 1);
+
+      fs.writeFileSync(stopFile(), '{}');
+      const c = fake();
+      const here = (answers, options = SETUP_BUTTONS) => ({ ...input(answers, { options }), cwd: folder });
+      await decide(here({
+        [setupCard(3, H)]: 'Go ahead', [approvalLine(7, FULL)]: 'Approve', [`${LIFT_STOP}?`]: 'Lift STOP', [runbookLine(1)]: 'Do it',
+      }), { client: c, now: () => NOW, projectOf: () => null });
+      // Exactly one record: the setup click, signed by this computer, naming the step and the full hash.
+      const [only, ...rest] = clicks();
+      assert.deepEqual(rest, []);
+      assert.equal(only.kind, 'action');
+      assert.deepEqual(only.data, { action: 'setup', runId: run.id, step: 3, hash: H, question: setupCard(3, H), label: 'Go ahead' });
+      assert.equal(only.at, NOW.toISOString());
+      assert.equal(verify(only, readEnrolled()), true);
+      // Nothing else is recorded there: no answer, no signed record, no question to the host, and STOP stays on.
+      assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      assert.equal(fs.existsSync(stopFile()), true);
+
+      // A put-off, a list this folder was never shown, a step not shown, a card reworded around the
+      // right set line (its text, an option's description, or a header added), a card with two set
+      // lines, and a button the card did not offer record nothing.
+      await decide(here({ [setupCard(3, H)]: 'Not now' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(3, 'cd'.repeat(32))]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(6, H)]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(4, H).replace('Setup step 4.', 'Setup step 4: nothing changes.')]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      const reworded = SETUP_BUTTONS.map((o) => (o.label === 'Go ahead' ? { ...o, description: 'Setup changes nothing on this computer.' } : o));
+      await decide(here({ [setupCard(4, H)]: 'Go ahead' }, reworded), { client: c, now: () => NOW, projectOf: () => null });
+      const headed = here({ [setupCard(4, H)]: 'Go ahead' });
+      headed.tool_input.questions[0].header = 'Nothing';
+      await decide(headed, { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [`${setupCard(3, H)}\n${approvalLine(7, FULL)}`]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      await decide(here({ [setupCard(3, H)]: 'Go ahead' }, BUTTONS), { client: c, now: () => NOW, projectOf: () => null });
+      assert.equal(clicks().length, 1);
+      assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      // Step 4's card exactly as shown is recorded.
+      await decide(here({ [setupCard(4, H)]: 'Go ahead' }), { client: c, now: () => NOW, projectOf: () => null });
+      assert.deepEqual(clicks().map((e) => e.data.step).sort(), [3, 4]);
+
+      // From a session in another folder being set up, the card shown for this one records nothing.
+      const other = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-other-')));
+      startRun({ folder: other, now: () => NOW });
+      await decide({ ...input({ [setupCard(3, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: other }, { client: c, now: () => NOW, projectOf: () => null });
+      assert.equal(clicks().length, 2);
+      fs.rmSync(other, { recursive: true, force: true });
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a registered project a setup click is kept in setup/clicks, and the answer goes to the state as usual', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-setup-p-')));
+    try {
+      const run = startRun({ folder, now: () => NOW });
+      noteShown({ runId: run.id, folder, step: 5, hash: H, card: { question: setupCard(5, H), options: SETUP_BUTTONS }, now: () => NOW });
+      const c = fake();
+      await decide({ ...input({ [setupCard(5, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: folder }, deps(c));
+      assert.deepEqual(clicks().map((e) => [e.data.step, e.data.hash]), [[5, H]]);
+      assert.equal(c.calls.record.filter((r) => r.event.kind === 'action').length, 0, 'the setup click is not sent to the state');
+      assert.deepEqual(c.calls.write.map((w) => w.data.label), ['Go ahead']);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('in a registered folder setup is still finishing, a setup click is kept, with or without its first commit', async () => {
+  await withHome(async () => {
+    const made = [];
+    try {
+      for (const git of [false, true]) {
+        const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), `wh-registered${git ? '-git' : ''} zoë `)));
+        made.push(folder);
+        if (git) fs.mkdirSync(path.join(folder, '.git'));
+        writeProject(git ? 'o__git' : 'o__new', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+        const run = startRun({ folder, now: () => NOW });
+        for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => NOW });
+        noteShown({ runId: run.id, folder, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
+        const before = clicks().length;
+        // The hook as it runs: the folder is placed by itself, not by a stand-in.
+        await decide({ ...input({ [setupCard(4, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: folder }, { client: fake(), now: () => NOW });
+        const kept = clicks();
+        assert.equal(kept.length, before + 1, git ? 'with .git' : 'without .git');
+        assert.equal(kept.find((e) => e.data.runId === run.id)?.data.step, 4);
+      }
+      // Once every step is done, a folder with no .git yet is left alone again.
+      const done = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-done-')));
+      made.push(done);
+      writeProject('o__done', { folder: done, remoteUrl: 'https://example.com/o/d.git', host: 'github', repo: 'o/d', connection: {} });
+      const run = startRun({ folder: done, now: () => NOW });
+      for (let n = 1; n <= 10; n += 1) markStep(run.id, n, 'doneAt', { now: () => NOW });
+      noteShown({ runId: run.id, folder: done, step: 4, hash: H, card: { question: setupCard(4, H), options: SETUP_BUTTONS }, now: () => NOW });
+      const before = clicks().length;
+      await decide({ ...input({ [setupCard(4, H)]: 'Go ahead' }, { options: SETUP_BUTTONS }), cwd: done }, { client: fake(), now: () => NOW });
+      assert.equal(clicks().length, before);
+    } finally {
+      for (const folder of made) fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+test('a click on the Unattended card records nothing in a folder with no project record, and counts as usual in a registered folder being set up', async () => {
+  await withHome(async (home) => {
+    const me = computerId();
+    const made = [];
+    try {
+      // No project record: only setup clicks are kept, so the build-command click earns nothing,
+      // even with a matching setting event in a project's state.
+      const fresh = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-fresh-builds-')));
+      made.push(fresh);
+      startRun({ folder: fresh, now: () => NOW });
+      const on = unattendedSetting(me);
+      keepEvent(on);
+      const card = `${UNATTENDED_CARD().risk}\n${unattendedBuildsLine(on.id, me)}?`;
+      const c = fake();
+      await decide({ ...input({ [card]: 'Turn on (dangerous)' }, { options: UNATTENDED }), cwd: fresh }, { client: c, now: () => NOW, projectOf: () => null });
+      assert.deepEqual(c.calls, { write: [], record: [], profileRecord: [], prState: [] });
+      assert.equal(fs.existsSync(path.join(home, 'projects', P, 'pending')), false);
+      assert.deepEqual(clicks(), []);
+
+      // Registered, setup still finishing: the project's clicks count as in any project.
+      const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-registered-builds-')));
+      made.push(folder);
+      fs.mkdirSync(path.join(folder, '.git'));
+      writeProject('o__builds', { folder, remoteUrl: 'https://example.com/o/b.git', host: 'github', repo: 'o/b', connection: {} });
+      const run = startRun({ folder, now: () => NOW });
+      for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => NOW });
+      const there = unattendedSetting(me);
+      keepEvent(there, stateDir('o__builds'));
+      const d = fake();
+      await decide({ ...input({ [`${UNATTENDED_CARD().risk}\n${unattendedBuildsLine(there.id, me)}?`]: 'Turn on (dangerous)' }, { options: UNATTENDED }), cwd: folder }, { client: d, now: () => NOW });
+      assert.deepEqual(kinds(d), ['confirmation']);
+      assert.equal(d.calls.record[0].event.data.confirms, there.id);
+      assert.deepEqual(clicks(), []);
+    } finally {
+      for (const folder of made) fs.rmSync(folder, { recursive: true, force: true });
+    }
   });
 });

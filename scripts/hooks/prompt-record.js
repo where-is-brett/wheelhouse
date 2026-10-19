@@ -9,23 +9,29 @@
 // profile goes to the profile; the answer itself still goes to the project.
 // A card carrying one set line and its reply code also gets a signed shown record,
 // so a later reply with that code (scripts/mod/reply.js) can count as the click.
+// A Go ahead on a setup card becomes a signed setup action kept in
+// <wheelhouseHome()>/setup/clicks/, where the helper reads it, since there may be no state to
+// record it in yet (Task 13 copies the clicks into the state). In a folder being set up (no
+// project record yet: kit.js's beingSetUp) that is the one click recorded, and nothing else is.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runAndExit, projectOf } from './kit.js';
+import { runAndExit, projectOf, beingSetUp } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
-import { profileDir, stateDir } from '../lib/paths.js';
+import { profileDir, stateDir, computerId } from '../lib/paths.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, ID, LANES, QUESTION_ID,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { setLineOf, replyCode, replyCodeLine } from '../state/card-lines.js';
+import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES } from '../state/card-lines.js';
+import { keepClick, shownHash } from '../lib/setup-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
+import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -35,6 +41,7 @@ const ANSWER = new RegExp(`Answer question (${QUESTION_ID})(?![a-z0-9-])`, 'g');
 const AMEND = new RegExp(`Change the approved (${ID}) to this, ${SHA12}`, 'g');
 const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`, 'g');
 const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
+const SETUP = new RegExp(`Set up step ([0-9]{1,2}) as listed, ${SHA12}`, 'g');
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 
 function ciEntry(project, branch, sha12, now) {
@@ -80,6 +87,7 @@ function only(pattern, text) {
 
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
 // of the question's own options (scripts/mod/reply.js), which earned checks against the question.
+// Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
 export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix'];
 
 // The events of one kind that the state holds, oldest first.
@@ -159,6 +167,30 @@ export async function earned({ project, question, label, client, now, left, stop
     if (found.length + inProfile.length !== 1) return null;
     return found.length === 1 ? { made: confirmationFor(found[0]) } : { made: confirmationFor(inProfile[0]), profile: true };
   }
+  if (label === 'Turn on (dangerous)') {
+    // The Unattended card for build commands on Windows: it says the design's words on the risk,
+    // its line names one setting event, written on this computer for this computer, and the
+    // confirmation carries the line, so the level counts Unattended from this card alone.
+    if (!question.includes(UNATTENDED_CARD().risk)) return null;
+    const computer = computerId();
+    const found = held(project, 'setting').filter((e) => e.computer === computer && e.data?.key === settingKey(computer)
+      && e.data?.value === 'unattended' && question.includes(unattendedBuildsLine(e.id, computer)));
+    if (found.length !== 1) return null;
+    const { kind, data } = confirmationFor(found[0]);
+    return { made: { kind, data: { ...data, line: unattendedBuildsLine(found[0].id, computer) } } };
+  }
+  if (label === USE_GUARDED) {
+    // Use Guarded on the Unattended card (ruling 22): the card carries exactly one confirm line,
+    // for a setting event proposing Guarded, written on this computer for this computer, and the
+    // click confirms that event as Confirm would, with no line, so the level counts Guarded (once
+    // this computer's self-test passes).
+    const confirms = setLinesOf(question).filter((line) => line.startsWith('Confirm '));
+    if (confirms.length !== 1) return null;
+    const computer = computerId();
+    const found = held(project, 'setting').filter((e) => e.computer === computer && e.data?.key === settingKey(computer)
+      && e.data?.value === 'guarded' && confirmLine(e) === confirms[0]);
+    return found.length === 1 ? { made: confirmationFor(found[0]) } : null;
+  }
   if (label === 'Lift STOP') {
     const stop = stopState();
     if (!question.includes(LIFT_STOP) || !stop.on) return null;
@@ -194,6 +226,33 @@ export async function earned({ project, question, label, client, now, left, stop
   return null;
 }
 
+// The signed record a Go ahead on a setup card earns: the card carries one set line, setup's, and
+// is the very card the helper composed for the list its twelve characters name, for the folder
+// this session is in, word for word (its text, header and options), so a card reworded around the
+// right set line earns nothing.
+// The record names the run the card was shown for and that list's full hash, which the helper
+// matches against its run for the folder and the list it works out again.
+function setupClickOf(cwd, { question, label, card }) {
+  if (label !== SETUP_LABEL) return null;
+  const m = only(SETUP, question);
+  if (!m) return null;
+  const step = Number(m[1]);
+  if (!Object.hasOwn(SETUP_TITLES, step) || setLineOf(question) !== setupLine(step, m[2])) return null;
+  const shown = shownHash({ cwd, step, h12: m[2], card });
+  return shown === null ? null : { kind: 'action', data: { action: 'setup', runId: shown.runId, step, hash: shown.hash, question, label } };
+}
+
+// Signs each setup click and keeps it in setup/clicks/. One failing does not stop the rest.
+function keepSetupClicks(cwd, out, now) {
+  for (const click of out) {
+    if (!click.signable) continue;
+    try {
+      const made = setupClickOf(cwd, click);
+      if (made) keepClick(makeEvent({ ...made, now }));
+    } catch { /* not kept: the helper then refuses the step for want of a click, and the card is asked again */ }
+  }
+}
+
 // What was answered, and which answers came from a click on a button the card offered.
 function clicks(input) {
   const ti = input.tool_input ?? {};
@@ -214,6 +273,7 @@ function clicks(input) {
       question,
       label: many ? raw.join(', ') : raw,
       signable: offered && q.multiSelect !== true && agrees,
+      card: q,
     });
   }
   return out;
@@ -274,7 +334,13 @@ function shownFor(project, input, at, stopState = defaultStopState) {
 export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS, liftStop = defaultLift, stopState } = {}) {
   if (input.tool_name !== 'AskUserQuestion') return undefined;
   const found = find(input.cwd, { dir });
-  if (!found) return undefined;
+  if (!found) {
+    if (beingSetUp(input.cwd) !== null) {
+      const at = now();
+      keepSetupClicks(input.cwd, clicks(input), () => at);
+    }
+    return undefined;
+  }
   const project = found.project;
   const api = client ?? helperClient({ timeout: budget });
   const end = Date.now() + budget;
@@ -288,6 +354,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const at = now();
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
+  keepSetupClicks(input.cwd, out, clock);
   let cards = [];
   try {
     cards = shownFor(project, input, at, stopState);

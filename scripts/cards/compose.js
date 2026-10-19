@@ -5,11 +5,13 @@
 // The front desk asks only what this returns (`cli.js card`), never a card it wrote itself.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
+  SETUP_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
+import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 
 // The labels the five parts start with, in order, then the one for a level 4 card.
 export const PART_LABELS = Object.freeze([
@@ -28,6 +30,7 @@ export const HEADERS = Object.freeze({
   amend: 'Change work',
   'lift-incident': 'End incident',
   'incident-fix': 'Incident fix',
+  setup: 'Setup',
   question: 'Question',
 });
 
@@ -43,6 +46,7 @@ export const DECIDING = Object.freeze({
   amend: 'Change it',
   'lift-incident': 'End it',
   'incident-fix': 'Merge the fix',
+  setup: SETUP_LABEL,
 });
 
 // What an answer card says happens while the director decides.
@@ -76,6 +80,11 @@ const SET_FRAGMENTS = SET_LINES.map((p) => new RegExp(p.source.replace(/^\^/, ''
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const isCount = (x) => Number.isInteger(x) && x >= 1;
+// Whether a card's options are a build-command question's own: the design's labels, in order
+// (design section 12.2), whatever words the card puts them in. Their Not now is a put-off button
+// that records no answer, so the card stays waiting.
+const buildOptions = (list) => list.length === BUILD_QUESTION_OPTIONS.length
+  && list.every((o, i) => o.label === BUILD_QUESTION_OPTIONS[i].label);
 const bare = (text) => text.replace(/[.!?]+$/, '');
 // A reason read as a clause after "because": no closing full stop, and its first word in lower case unless it is a name or acronym.
 const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
@@ -138,6 +147,12 @@ function lineFor(kind, target) {
     if (!slug(t.incident)) bad('needs an incident id');
     return liftIncidentLine(t.incident);
   }
+  if (kind === 'setup') {
+    if (!Number.isInteger(t.step) || !Object.hasOwn(SETUP_TITLES, t.step) || !HEX.test(t.hash)) {
+      bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length} and the hash of its list of changes`);
+    }
+    return setupLine(t.step, t.hash);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -145,8 +160,8 @@ function lineFor(kind, target) {
 
 // The first part must name what the set line names, for every kind that names something: the
 // pull request (and the incident), the work, the incident, the runbook step's title, the branch,
-// the ruling's words. It names no other pull request or commit than the set line's. An answer
-// card, a lift-STOP card and a product question name nothing more.
+// the ruling's words, setup's step. It names no other pull request or commit than the set line's.
+// An answer card, a lift-STOP card and a product question name nothing more.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
 // right. The card check judges a card by this too, from the set line alone: with `abbreviated`,
 // the target's commit is the twelve characters the set line holds, so a longer name for the same
@@ -169,6 +184,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'runbook') need = [names(RUNBOOK_TITLES[target.step]), `the step's title, "${RUNBOOK_TITLES[target.step]}"`];
   if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
   if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];
+  if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return null;
@@ -185,9 +201,10 @@ function sameThing(kind, what, target) {
   if (why !== null) fail(kind, 'what', why);
 }
 
-// The buttons a card offers, each { label, says }, in the order they are shown. A confirm card for
-// a proposal offers Keep as is in place of Show me.
-function offered(kind, given, target) {
+// The buttons a card offers, each { label, says }, in the order they are shown. `build` says the
+// card answers a build-command question (one that names its `commands`). A confirm card for a
+// proposal (its `target`) offers Keep as is in place of Show me.
+function offered(kind, given, { build = false, target } = {}) {
   if (!Array.isArray(given) || given.length === 0) fail(kind, 'options');
   const seen = new Set();
   const list = given.map((o) => {
@@ -201,7 +218,8 @@ function offered(kind, given, target) {
   });
   if (kind === 'answer' || kind === 'question') {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
-    for (const o of list) if (PUT_OFF.includes(o.label)) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
+    const own = kind === 'answer' && build && buildOptions(list);
+    for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
     return [...list, ...(list.length < CARD.options ? [{ label: 'Explain more', says: PUT_OFF_SAYS['Explain more'] }] : [])];
   }
   const deciding = DECIDING[kind];
@@ -241,7 +259,8 @@ export function composeCard(input) {
 
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
-  const buttons = offered(kind, input.options, input.target);
+  const build = Array.isArray(input.commands) && input.commands.length > 0;
+  const buttons = offered(kind, input.options, { build, target: input.target });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null ? null : replyCode(line);
@@ -300,6 +319,8 @@ export function answerInput(data, work) {
     meanwhile: MEANWHILE,
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },
+    // A build-command question's commands, so its own Not now is offered (see offered).
+    ...(Array.isArray(data.commands) && data.commands.length > 0 ? { commands: data.commands } : {}),
   };
 }
 

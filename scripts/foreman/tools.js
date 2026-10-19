@@ -7,49 +7,27 @@
 // script, by its full path, in this plugin.
 //
 // These are Wheelhouse's own scripts, not project code, so unlike the build
-// commands (ruling R56) they are given on Windows too. There the path is
-// written with forward slashes, which node and Git Bash both take, and through
-// npm's claude.cmd shim each rule goes on a cmd.exe command line, which
-// refuses any argument holding `"` or `%` (scripts/lib/claude.js). So the
-// script's path is in single quotes, which bash reads literally and cmd passes
-// through.
-//
-// The plugin root is checked against an allow-list, as build commands are
-// (scripts/gate/guardrails.js): a full path of letters, digits and `._/@=~-`,
-// with single spaces between words, and on Windows a drive letter and its
-// colon in front. Letters and digits are any script's, with their combining
-// marks (a user folder may be `José` or `田中`), and `~` is there for a
-// Windows short name such as `JOSE~1`: none of them means anything to bash in
-// single quotes or to cmd.exe. Nothing else can reach a rule: no quote, `$`,
-// `%`, `*`, comma or parenthesis, any of which could change what the command
-// or the rule means, or how --allowedTools is split.
+// commands (ruling R56) they are given on Windows too. Each script's path is
+// written as scripts/lib/command-path.js writes a path into an allow rule:
+// forward slashes, a drive letter on Windows, in single quotes, and only from
+// an allow-list of characters.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { commandPath } from '../lib/command-path.js';
 
 // The plugin this file sits in: scripts/foreman/ is two folders down.
 export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const SCRIPTS = Object.freeze({ wake: 'scripts/foreman/wake.js', act: 'scripts/foreman/act.js' });
 
-// A full path in the allowed characters: each part after a slash is words of
-// those characters with single spaces between them.
-const ALLOWED_PATH = /^(\/[\p{L}\p{M}\p{N}._@=~-]+( [\p{L}\p{M}\p{N}._@=~-]+)*)+\/?$/u;
-
-// The plugin root as it is written in a command: on Windows, forward slashes
-// after its drive letter.
+// The plugin root as it is written in a command, without its quotes: on
+// Windows, forward slashes after its drive letter.
 function rootOf(pluginRoot, platform) {
-  const refuse = () => { throw new Error(`The plugin's folder can't be given to the foreman as a command: ${JSON.stringify(pluginRoot)}`); };
-  if (typeof pluginRoot !== 'string') refuse();
-  let drive = '';
-  let rest = pluginRoot;
-  if (platform === 'win32') {
-    const m = /^([A-Za-z]:)([\\/].*)$/s.exec(pluginRoot);
-    if (m === null) refuse();
-    drive = m[1];
-    rest = m[2].replaceAll('\\', '/');
+  try {
+    return commandPath(pluginRoot, { platform }).slice(1, -1);
+  } catch {
+    throw new Error(`The plugin's folder can't be given to the foreman as a command: ${JSON.stringify(pluginRoot)}`);
   }
-  if (!ALLOWED_PATH.test(rest)) refuse();
-  return `${drive}${rest.replace(/\/$/, '')}`;
 }
 
 // The exact command that runs each of the foreman's scripts, for its playbook

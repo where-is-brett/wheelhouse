@@ -10,10 +10,11 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
+import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
@@ -46,6 +47,7 @@ const INPUTS = {
   amend: { ...common, recommend: 'Change it', kind: 'amend', what: 'A change to the plan you approved for export-csv.', options: [says('Change it')], target: { work: 'export-csv', hash: DOC } },
   'lift-incident': { ...common, recommend: 'End it', kind: 'lift-incident', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, recommend: 'Merge the fix', kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
+  setup: { ...common, recommend: 'Go ahead', kind: 'setup', what: 'Setup step 6, Changes to this computer: transcripts are kept 30 days.', options: [says('Go ahead')], target: { step: 6, hash: DOC } },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
 };
 const LINES = {
@@ -59,6 +61,7 @@ const LINES = {
   amend: amendLine('export-csv', DOC),
   'lift-incident': liftIncidentLine('bad-total'),
   'incident-fix': incidentFixLine('bad-total', 31),
+  setup: setupLine(6, DOC),
   question: null,
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
@@ -159,7 +162,7 @@ test('a level-4 card without what it does to the checks is refused', () => {
 test('decision cards offer the deciding label, Not now, Explain more and Show me', () => {
   const expected = {
     approval: 'Approve', confirm: 'Confirm', 'lift-stop': 'Lift STOP', 'ci-push': 'Push it', runbook: 'Do it',
-    'approve-work': 'Approve', amend: 'Change it', 'lift-incident': 'End it', 'incident-fix': 'Merge the fix',
+    'approve-work': 'Approve', amend: 'Change it', 'lift-incident': 'End it', 'incident-fix': 'Merge the fix', setup: 'Go ahead',
   };
   for (const [kind, label] of Object.entries(expected)) {
     assert.equal(DECIDING[kind], label);
@@ -429,4 +432,34 @@ test('questionProblem says why a question from the build could not be its answer
     ['a label on two lines', { ...question, options: [{ label: 'Com\nma', says: 'x' }, OWN[1]] }, /one line/],
     ['no options', { ...question, options: undefined }, /can't be read/],
   ]) assert.match(questionProblem(bad) ?? '', why, name);
+});
+
+test('a build-command question\'s answer card offers the design\'s three options, Not now among them', () => {
+  const asked = {
+    id: 'q-export-csv-2', work: 'export-csv', kind: 'build-command', what: 'Let this feature\'s builder run: npm test, which runs "node --test".',
+    why: 'The tests need running', options: BUILD_QUESTION_OPTIONS.map((o) => ({ ...o })), recommendation: 'Allow this time', level: 3, commands: ['npm test'],
+  };
+  assert.equal(questionProblem(asked), null);
+  const { question, card } = composeCard(answerInput(asked, 'Export a report'));
+  assert.equal(card.line, answerLine('q-export-csv-2'));
+  assert.deepEqual(card.options, ['Allow this time', 'Allow for this feature', 'Not now', 'Explain more']);
+  assert.ok(question.options[0].description.startsWith('Recommended: '));
+  assert.ok(card.question.includes('npm test'), 'the card names the commands');
+  // In plain words, as the front desk rewrites what each option says, the card is still composed.
+  const input = answerInput(asked, 'Export a report');
+  const plain = composeCard({ ...input, options: input.options.map((o) => ({ ...o, says: `In plain words: ${o.label.toLowerCase()}.` })) });
+  assert.deepEqual(plain.card.options, card.options);
+  assert.ok(plain.card.question.includes('Not now: In plain words: not now'));
+  // Only a question that names its commands, with the design's three labels in order, carries Not
+  // now; a product question never does.
+  const changed = [
+    ['another order', { options: [asked.options[1], asked.options[0], asked.options[2]] }],
+    ['a fourth option', { options: [...asked.options, { label: 'Never', says: 'Never run it.' }] }],
+    ['no commands', { commands: undefined }],
+    ['an empty list of commands', { commands: [] }],
+  ];
+  for (const [name, change] of changed) assert.match(questionProblem({ ...asked, ...change }) ?? '', /Not now/, name);
+  assert.throws(() => composeCard({
+    kind: 'question', level: 3, what: 'Which commands?', why: 'w', because: 'b', meanwhile: 'm', recommend: 'Allow this time', options: asked.options,
+  }), /Not now/);
 });

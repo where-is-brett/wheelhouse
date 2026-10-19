@@ -15,6 +15,8 @@
 //       the waker (under Shape 2 the waker's START line is passed on).
 //       `--plan` is only for a plan the foreman knows is in the repository
 //       already; a session records its own with `cli.js plan` (ruling R87).
+//       On Windows the brief says how to run build commands at the level this
+//       computer reads (design section 12.2).
 //       Work whose feature closed and that a `work` event queued again since
 //       (ruling R102) starts afresh in the worktree and branch its closed
 //       feature recorded, with the ended run's status files set aside.
@@ -34,7 +36,11 @@
 //   resume <work>   lifts such a pause. A pause the director's amendment made
 //       (`pausedFor: director`) is lifted only by their amendment beginning
 //       "Resume"; `build` and `resume` refuse it.
-//   question <work> <questionId>      the feature's question, into state.
+//   question <work> <questionId>      the feature's question, into state. On
+//       Windows, outside a Locked project and below Unattended, a feature's third
+//       build-command question that day (the computer's own date) is followed by
+//       the Unattended card, once a day: a setting event proposing Unattended for
+//       this computer, then the card whose line confirms that one event.
 //   extra-plan <work> <questionId>    the extra plan, queued as work.
 //   ask <work> --what … --why … --option "<label>=<says>"… --recommend <label> --level <n>
 //       The foreman's own question for the director.
@@ -62,6 +68,10 @@
 // `merge` refuses but for an open incident's recorded fix, and under STOP
 // refuses that too.
 //
+// The command forwards to the host helper (ruling R156, scripts/foreman/forward.js):
+// the foreman's session is sandboxed, and these commands read and write the
+// Wheelhouse home, so the helper runs `main` outside the sandbox, in the main checkout.
+//
 // Every command checks the work id, prints a few short lines, and refuses
 // with one plain line and exit code 1. Each may be run again with nothing
 // more done (a wake may repeat, ruling R27): it says what is so already.
@@ -69,8 +79,9 @@
 // Writing state. Every event goes through the helper's /state/write with an
 // id made here, and that id is recorded in the watcher's handled list
 // (scripts/watcher/handled.js) before the write, so the foreman's own
-// records never wake it (R64). The list has no lock: the foreman runs these
-// commands one at a time. A `feature` event replaces the last one in the
+// records never wake it (R64). The list has no lock of its own: the helper's
+// /foreman/run runs a project's foreman commands one at a time, so a retry
+// waits for the first to end. A `feature` event replaces the last one in the
 // features view, so each carries the feature's worktree, branch, plan, files
 // and slice forward. Only `start` and `amend` carry `brief`: a `building`
 // event without it is the session's go-ahead (`build`, ruling R85), and one
@@ -117,16 +128,26 @@ import {
 import {
   buildStatus, loadFeature, readCapped, readPrRecord, safeFeatureFolder, validSlice, writeWhole,
 } from '../feature/status.js';
+import { cardProblems } from '../hooks/card-check.js';
 import { sameStatus } from '../hooks/feature-status.js';
+import { lockedByPath } from '../hooks/kit.js';
 import { branchOf } from '../hooks/session-start.js';
+import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
+import { CARD } from '../lib/front-desk.js';
 import { canonicalJson } from '../lib/canonical.js';
+import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram, withoutGitVars } from '../lib/run.js';
+import {
+  GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
+} from '../protection/windows-builds.js';
+import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../state/card-lines.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
 import { makeWaker, sessionFile } from '../watcher/waker.js';
+import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 
 // The first number of the foreman's own question ids.
 export { FOREMAN_QUESTIONS };
@@ -213,11 +234,11 @@ function optionsOf(found, recommendation) {
 
 // --- Where things stand, and writing to state ---
 
-function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out }) {
+function context({ project, client, now, run, wakerFor, pluginRoot, makeId, out, platform, isLocked }) {
   let views = null;
   let config = null;
   const ctx = {
-    project, client, now, run, pluginRoot,
+    project, client, now, run, pluginRoot, platform, isLocked,
     say: (line) => out(`${line}\n`),
     async views() {
       views ??= (await loadViews(project, client)).views;
@@ -446,7 +467,7 @@ async function start(ctx, work, rest) {
   };
   let text;
   try {
-    text = renderBrief({ fields, pluginRoot: ctx.pluginRoot });
+    text = renderBrief({ fields, pluginRoot: ctx.pluginRoot, windowsBuilds: windowsBuildsOf(ctx, views, config) });
   } catch (error) {
     refuse(`The brief can't be written: ${oneLine(error.message, 200)}`);
   }
@@ -644,16 +665,170 @@ function featureQuestion(ctx, views, work, rest) {
 async function question(ctx, work, rest) {
   const views = await ctx.views();
   const q = featureQuestion(ctx, views, work, rest);
-  if (q.kind !== 'question') refuse(`${q.id} is an extra plan: act extra-plan ${work} ${q.id}`);
+  if (q.kind === 'extra-plan') refuse(`${q.id} is an extra plan: act extra-plan ${work} ${q.id}`);
+  // A build-command question carries the commands it asks for, which a grant reads from state.
   const data = {
     id: q.id, work, what: q.what, why: q.why, options: q.options, recommendation: q.recommendation, level: q.level,
+    ...(q.kind === 'build-command' ? { commands: q.commands } : {}),
   };
+  let at;
   if (same(views.questions[q.id]?.question?.data, data)) {
     ctx.say(`Question ${q.id} is recorded already.`);
-    return;
+    at = views.questions[q.id].question.at;
+  } else {
+    await ctx.write('question', data);
+    ctx.say(`Recorded question ${q.id} for the director.`);
+    at = ctx.now().toISOString();
   }
-  await ctx.write('question', data);
-  ctx.say(`Recorded question ${q.id} for the director.`);
+  await offerUnattended(ctx, views, work, { ...data, at });
+}
+
+// --- Build commands on Windows (design section 12.2) ---
+
+// The level of build commands on this computer, in the terms renderBrief takes: null off
+// Windows, else `{ level, guardedCommand, shape }`, with the Guarded runner's command where it can
+// be given. Anything that fails reads Ask. At watcher Shape 2 the waker gives a feature session no
+// allow rules (ruling 4), so the brief tells it to ask for a click in the session itself, whatever
+// the level.
+function windowsBuildsOf(ctx, views, config) {
+  if (ctx.platform !== 'win32') return null;
+  const shape = config?.watcherShape === 2 ? 2 : 1;
+  let runner = null;
+  try {
+    runner = guardedCommand({ home: wheelhouseHome(), pluginRoot: ctx.pluginRoot, platform: ctx.platform });
+  } catch { /* no runner to name: the brief gives the Ask words */ }
+  try {
+    return { level: buildsHere(ctx, views).level, guardedCommand: runner, shape };
+  } catch {
+    return { level: 'ask', guardedCommand: runner, shape };
+  }
+}
+
+// This computer's Guarded self-test (scripts/windows/low.js): `ready`, a result under a day old
+// found the runner low and a write outside the worktree refused; `readsHeld`, it found the helper's
+// keys folder unreadable. Anything that can't be read is not ready.
+function guardedHere(ctx) {
+  try {
+    const result = readSelfTest({ home: wheelhouseHome(), now: ctx.now, platform: ctx.platform });
+    const { writesHeld, readsHeld } = guardedCardInput(result);
+    return { ready: writesHeld, readsHeld };
+  } catch {
+    return { ready: false, readsHeld: false };
+  }
+}
+
+// Whether the project is Locked, and buildsLevel for this computer and project. An isLocked that
+// throws reads as Locked; lockedByPath itself answers false (not Locked) when it can't tell.
+function buildsHere(ctx, views) {
+  let locked = true;
+  try {
+    locked = ctx.isLocked(checkoutOf(ctx.project)) !== false;
+  } catch { /* read as Locked */ }
+  return { locked, level: buildsLevel({ views, computer: computerId(), locked, guardedReady: guardedHere(ctx).ready }) };
+}
+
+// The computer's own date for a time, as "<year>-<month>-<day>", or null.
+function localDay(at) {
+  const when = at instanceof Date ? at : new Date(at);
+  return Number.isNaN(when.getTime()) ? null : `${when.getFullYear()}-${when.getMonth() + 1}-${when.getDate()}`;
+}
+
+// The Unattended card's question: the five parts, each with its words on its label's own line
+// as the composer writes them (the card-check hook refuses a card otherwise), the design's words
+// on the risk as they are, and the line that a Turn on (dangerous) click confirms the setting
+// event `settingId` by. Where Use Guarded is offered, `guarded` is the setting event proposing
+// Guarded, and its confirm line and that line's reply code line follow (ruling 22): a Use Guarded
+// click confirms that event, and the card check asks a card with a set line for its code.
+function unattendedQuestion(card, settingId, computer, guarded) {
+  const named = (name) => card.options.find((o) => o.name === name);
+  const offersGuarded = guarded !== null && card.options.some((o) => o.name === 'guarded');
+  return [
+    `What this is: ${card.what} ${card.risk}`,
+    `Why it's coming to you: ${card.why}`,
+    `Options: ${card.options.map((o) => `${o.label}: ${o.says.replace(/[.!?]+$/, '')}`).join('; ')}`,
+    `My recommendation: ${named(card.recommend).label}`,
+    `While you decide: ${card.meanwhile}`,
+    unattendedBuildsLine(settingId, computer),
+    ...(offersGuarded ? [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))] : []),
+  ].join('\n');
+}
+
+// The Unattended card as a card event holds it, for the front desk to ask as it is: its question,
+// its own options with what each says (the recommendation marked, as the composer marks it), and
+// no set line or reply code of its own, since only a click on Turn on (dangerous) or Use Guarded
+// sets the level. `guarded` is the setting event Use Guarded confirms, where it is offered.
+export function unattendedCardData(card, settingId, computer, guarded = null) {
+  const recommended = card.options.find((o) => o.name === card.recommend);
+  return {
+    question: unattendedQuestion(card, settingId, computer, guarded),
+    header: 'Unattended',
+    options: card.options.map((o) => o.label),
+    descriptions: card.options.map((o) => (o === recommended ? `Recommended: ${o.says}` : o.says)),
+    kind: 'question',
+    level: 3,
+    line: null,
+    code: null,
+  };
+}
+
+// What stops the Unattended card as `data` holds it reaching the director, as a clause, or null:
+// a question past the card's length, or one the card-check hook would refuse. Checked here, where
+// the card is written, so a card in the wrong form is never written, whatever the hook does.
+export function unattendedCardFault(data) {
+  const question = typeof data?.question === 'string' ? data.question : '';
+  if (question.length > CARD.chars) return `it would pass ${CARD.chars} characters (it is ${question.length})`;
+  const problems = cardProblems(question);
+  return problems.length === 0 ? null : `the card ${problems.join('; ')}`;
+}
+
+// After a feature's third build-command question recorded in a day (the computer's own date),
+// on Windows, outside a Locked project and below Unattended: a setting event proposing
+// Unattended for this computer, and where this computer's Guarded self-test passed one proposing
+// Guarded, then the Unattended card that confirms either, once a day. Read from state, so running
+// it again offers nothing more, and an offer whose card wasn't written gets its card. `asked` is
+// the question as recorded, with its time.
+async function offerUnattended(ctx, views, work, asked) {
+  if (ctx.platform !== 'win32' || !isBuildQuestion(asked)) return;
+  try {
+    const here = buildsHere(ctx, views);
+    if (here.locked || here.level === 'unattended') return;
+    const today = localDay(ctx.now());
+    if (localDay(asked.at) !== today) return;
+    const earlier = Object.values(views.questions).filter((e) => e?.question?.data?.id !== asked.id && e?.question?.data?.work === work
+      && isBuildQuestion(e.question.data) && localDay(e.question.at) === today);
+    if (earlier.length + 1 < 3) return;
+
+    const computer = computerId();
+    const key = settingKey(computer);
+    const events = stateEvents(ctx.project);
+    const offers = events.filter((e) => e.kind === 'setting' && e.computer === computer && e.data?.key === key
+      && e.data?.value === 'unattended' && localDay(e.at) === today);
+    const carded = (id) => events.some((e) => e.kind === 'card' && typeof e.data?.question === 'string'
+      && e.data.question.includes(unattendedBuildsLine(id, computer)));
+    if (offers.some((e) => carded(e.id))) return;
+    const settingId = offers.at(-1)?.id ?? await ctx.write('setting', { key, value: 'unattended' });
+    const guarded = guardedHere(ctx);
+    let guardedEvent = null;
+    if (guarded.ready) {
+      guardedEvent = events.filter((e) => e.kind === 'setting' && e.computer === computer && e.data?.key === key
+        && e.data?.value === 'guarded' && localDay(e.at) === today).at(-1) ?? null;
+      if (guardedEvent === null) {
+        const data = { key, value: 'guarded', words: GUARDED_SETTING_WORDS };
+        guardedEvent = { kind: 'setting', id: await ctx.write('setting', data), data };
+      }
+    }
+    const card = UNATTENDED_CARD({ guardedReady: guarded.ready, readsHeld: guarded.readsHeld });
+    const data = unattendedCardData(card, settingId, computer, guardedEvent);
+    const fault = unattendedCardFault(data);
+    if (fault !== null) {
+      ctx.say(`The Unattended card wasn't written, so builders keep asking: ${fault}.`);
+      return;
+    }
+    await ctx.write('card', data);
+    ctx.say('Offered the director the Unattended card for build commands on this computer.');
+  } catch (error) {
+    ctx.say(`The Unattended card wasn't offered: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}. It is offered with the next build-command question.`);
+  }
 }
 
 // The work id of an extra plan: `<work>-x<n>` for the question q-<work>-<n>,
@@ -983,7 +1158,7 @@ const USAGE = `Commands: ${Object.keys(COMMANDS).join(', ')}, each followed by t
 // gives the waker that starts a session.
 export async function main(argv, {
   cwd = process.cwd(), project: given, client = helperClient(), now = () => new Date(), run = runProgram,
-  wakerFor, pluginRoot = PLUGIN_ROOT, makeId = () => crypto.randomUUID(),
+  wakerFor, pluginRoot = PLUGIN_ROOT, makeId = () => crypto.randomUUID(), platform = process.platform, isLocked = lockedByPath,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
@@ -992,7 +1167,7 @@ export async function main(argv, {
     if (typeof work !== 'string' || !SLUG.test(work)) refuse('Give the work id: lower-case letters, digits and hyphens, at most 40');
     const project = given ?? projectHere(cwd);
     const waker = wakerFor ?? ((cfg, print) => makeWaker({ shape: cfg.watcherShape, project, config: cfg, print }));
-    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out });
+    const ctx = context({ project, client, now, run, wakerFor: waker, pluginRoot, makeId, out, platform, isLocked });
     await COMMANDS[command](ctx, work, rest);
     return 0;
   } catch (error) {
@@ -1001,6 +1176,7 @@ export async function main(argv, {
   }
 }
 
+// Run as a command, it forwards to the host helper, which runs `main` outside the sandbox (ruling R156).
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode = await forward('act', process.argv.slice(2));
 }

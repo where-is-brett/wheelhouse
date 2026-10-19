@@ -1,8 +1,9 @@
 // tests/scripts/board/model.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boardModel, oneLine } from '../../../scripts/board/model.js';
+import { boardModel, numberedWaiting, oneLine } from '../../../scripts/board/model.js';
 import { LINE_CHARS } from '../../../scripts/lib/core-numbers.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, settingKey } from '../../../scripts/protection/windows-builds.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const at = (day, hour = 0) => new Date(Date.UTC(2026, 9, day, hour)).toISOString();
@@ -115,10 +116,98 @@ test('waiting lists cards and unasked build-loop questions once each, numbered',
   views.waiting = [askedCard, other].map((e) => ({ id: e.id, at: e.at, data: e.data }));
   const m = model({ views, events });
   assert.deepEqual(m.director.waiting, [
-    { n: 1, what: 'Email or phone sign-in?', since: at(8) },
-    { n: 2, what: 'Name the app', since: at(11) },
-    { n: 3, what: 'Pick a colour', since: at(12) },
+    { n: 1, id: 'q:q-login-2', what: 'Email or phone sign-in?', since: at(8) },
+    { n: 2, id: other.id, what: 'Name the app', since: at(11) },
+    { n: 3, id: askedCard.id, what: 'Pick a colour', since: at(12) },
   ]);
+});
+
+test('the board\'s waiting items carry ids, and numberedWaiting numbers them the same way', () => {
+  const card = ev('card', at(12), { title: 'Pick a colour', question: 'Pick a colour?' });
+  const questions = [
+    { ...ev('question', at(8), { id: 'q-login-2', work: 'login', what: 'Email or phone sign-in?', why: '', options: [], recommendation: '', level: 3 }) },
+  ];
+  const views = { ...emptyViews(), ...buildLoop({ questions }), waiting: [{ id: card.id, at: card.at, data: card.data }] };
+  const m = model({ views, events: [card] });
+  const items = numberedWaiting(views, [card]);
+  assert.deepEqual(m.director.waiting.map((w) => [w.n, w.id]), items.map((i) => [i.n, i.id]));
+  assert.deepEqual(items.map((i) => i.id), ['q:q-login-2', card.id]);
+  assert.equal(items[0].question, 'q-login-2');
+  assert.equal(items[1].card, card.id);
+});
+
+test('a Windows build-commands proposal is not listed as not yet confirmed: only its own card confirms it', () => {
+  const views = emptyViews();
+  views.unconfirmed = [
+    { kind: 'setting', id: 's1', at: at(12), key: 'pace', data: { key: 'pace', value: 2 } },
+    { kind: 'setting', id: 's2', at: at(13), key: settingKey('0a1b2c3d'), data: { key: settingKey('0a1b2c3d'), value: 'unattended' } },
+    { kind: 'setting', id: 's3', at: at(14), data: { key: settingKey('0a1b2c3d'), value: 'unattended' } },
+  ];
+  assert.deepEqual(model({ views }).director.first, ['A setting: pace 2, not yet confirmed by you']);
+});
+
+// A build-command question as the feature CLI writes it.
+const buildQuestion = (when, id, work, over = {}) => ev('question', when, {
+  id, work, kind: 'build-command', what: `Let this feature's builder run its tests (${id})`, why: 'w',
+  options: BUILD_QUESTION_OPTIONS, recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test', 'npm run build'], ...over,
+});
+
+test('a build-command question waiting is named by its commands, with what it says beside them', () => {
+  const questions = [
+    buildQuestion(at(8), 'q-login-1', 'login', { what: 'Run the [tests](https://x.test)' }),
+    buildQuestion(at(9), 'q-login-2', 'login', { what: '' }),
+    // Not a build-command question (another recommendation), so shown as today.
+    buildQuestion(at(10), 'q-login-3', 'login', { what: 'Anything at all', recommendation: BUILD_QUESTION_LABELS.feature }),
+  ];
+  const m = model({ views: { ...emptyViews(), ...buildLoop({ questions }) } });
+  assert.deepEqual(m.director.waiting, [
+    { n: 1, id: 'q:q-login-1', what: 'Run npm test, npm run build: Run the tests', since: at(8) },
+    { n: 2, id: 'q:q-login-2', what: 'Run npm test, npm run build', since: at(9) },
+    { n: 3, id: 'q:q-login-3', what: 'Anything at all', since: at(10) },
+  ]);
+});
+
+test('a feature held by Not now to its build commands reads as waiting on the director, not building', () => {
+  const work = ['login', 'search', 'dark', 'maps', 'share', 'help'].map((id) => ({ ...ev('work', at(1), { id, title: `Work ${id}`, lane: 'feature', visible: true, dependsOn: [] }) }));
+  const features = work.map((w) => ev('feature', at(2), { work: w.data.id, step: 'building' }));
+  const notNow = (when, id) => ev('card-answer', when, { question: `May the builder run npm test?\n\nAnswer question ${id}`, label: BUILD_QUESTION_LABELS.notNow });
+  const questions = [
+    buildQuestion(at(3), 'q-login-1', 'login'),
+    // Not now, then asked again: the newer question decides.
+    buildQuestion(at(3), 'q-search-1', 'search'),
+    buildQuestion(at(5), 'q-search-2', 'search'),
+    // Not now, then a report: the feature has moved on.
+    buildQuestion(at(3), 'q-dark-1', 'dark'),
+    // A card-answer that names two questions, or another question, isn't an exact match.
+    buildQuestion(at(3), 'q-maps-1', 'maps'),
+    // Not a build-command question.
+    buildQuestion(at(3), 'q-share-1', 'share', { recommendation: BUILD_QUESTION_LABELS.feature }),
+    // Not now from before the question was recorded.
+    buildQuestion(at(6), 'q-help-1', 'help'),
+  ];
+  const events = [
+    notNow(at(4), 'q-login-1'),
+    notNow(at(4), 'q-search-1'),
+    notNow(at(4), 'q-dark-1'),
+    ev('report', at(5), { work: 'dark', outcome: 'blocked', summary: 's', rulings: [] }),
+    ev('card-answer', at(4), { question: 'Answer question q-maps-1 and Answer question q-maps-2', label: BUILD_QUESTION_LABELS.notNow }),
+    ev('card-answer', at(4), { question: 'Answer question q-maps-10', label: BUILD_QUESTION_LABELS.notNow }),
+    notNow(at(4), 'q-share-1'),
+    notNow(at(5), 'q-help-1'),
+    // Another label isn't Not now.
+    ev('card-answer', at(4), { question: 'Answer question q-maps-1', label: 'Explain more' }),
+  ];
+  const m = model({ views: { ...emptyViews(), ...buildLoop({ work, features, questions }) }, events });
+  const steps = Object.fromEntries(m.build.features.map((f) => [f.work, f.step]));
+  assert.deepEqual(steps, {
+    login: 'waiting on you to allow its build commands',
+    search: 'building',
+    dark: 'building',
+    maps: 'building',
+    share: 'building',
+    help: 'building',
+  });
+  assert.deepEqual(m.director.inProgress.feature[0], { title: 'Work login', step: 'waiting on you to allow its build commands' });
 });
 
 test('launch progress counts resolved blockers', () => {
@@ -326,6 +415,7 @@ test('budget shows the week and unusual use in its own unit; open incidents and 
   const texts = m.director.health.map((l) => l.text);
   assert.equal(texts[0], 'Protection: Standard');
   assert.ok(texts.includes('Incident leak is open, so nothing merges: Emails sent twice'));
+  assert.equal(m.director.health.find((l) => l.text.startsWith('Incident leak')).incident, 'leak');
   assert.ok(texts.includes('m-old, a model your projects use, retires on 1 November 2026'));
   assert.ok(texts.includes('A security advisory for owner/repo: Bad thing'));
   assert.ok(!texts.some((t) => t.includes('m-other')));
@@ -341,7 +431,7 @@ test('event times reach the model only as strict UTC times', () => {
   assert.deepEqual(m.director.rulings, [{ what: 'B', at: at(5) }, { what: 'A', at: null }]);
   assert.ok(m.build.decisions.every((d) => d.at === null || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(d.at)));
   assert.equal(m.build.decisions.find((d) => d.what === 'R').at, null);
-  assert.deepEqual(m.director.waiting, [{ n: 1, what: 'T', since: null }]);
+  assert.deepEqual(m.director.waiting, [{ n: 1, id: 'c1', what: 'T', since: null }]);
   assert.deepEqual(m.director.changed, []);
   assert.equal(m.director.budget.week.from, null);
 

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { healthLines, readHostFacts, QUICK_LINE } from '../../../scripts/board/health.js';
-import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
+import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
@@ -50,12 +50,14 @@ test('each health line appears in its case and in its order', () => {
     profile: null,
     platform: 'win32',
     realUsers: true,
+    builds: { level: 'unattended', lockedUnattended: false },
   });
   assert.deepEqual(everything.map((line) => line.text), [
     'STOP is on, since 18 October 2026',
     'Protection: Standard',
     QUICK_LINE,
     WINDOWS_LINE,
+    UNATTENDED_LINE,
     FREE_PLAN_LINE,
     NO_CI,
     LOCKED_ELSEWHERE,
@@ -64,7 +66,7 @@ test('each health line appears in its case and in its order', () => {
     NO_PROFILE,
   ]);
   assert.deepEqual(everything.map((line) => line.level), [
-    'stop', 'ok', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch',
+    'stop', 'ok', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch',
   ]);
 });
 
@@ -77,6 +79,34 @@ test('the lines come only in their own case', () => {
   assert.deepEqual(texts({ renewal: { due: true, on: '2026-12-25' } }), ['Protection: Standard', 'Renew the host key by 25 December 2026']);
   assert.deepEqual(texts({ profile: null }), ['Protection: Standard', NO_PROFILE]);
   assert.deepEqual(texts({ stop: { on: true } }), ['STOP is on', 'Protection: Standard']);
+});
+
+test('on Windows the build-commands level comes right after the Windows line', () => {
+  const win = (builds, extra = {}) => healthLines({ ...calm, platform: 'win32', builds, ...extra });
+  const windows = { level: 'watch', text: WINDOWS_LINE };
+  assert.equal(UNATTENDED_LINE, 'Build commands run unattended on this Windows computer, with no sandbox.');
+  assert.equal(GUARDED_LINE, 'Build commands run at low integrity on this Windows computer: they can\'t change files outside the project, but can still use the network.');
+  assert.equal(LOCKED_UNATTENDED_LINE, 'Unattended build commands are off in a Locked project');
+  assert.deepEqual(win({ level: 'unattended', lockedUnattended: false }).slice(1), [windows, { level: 'watch', text: UNATTENDED_LINE }]);
+  assert.deepEqual(win({ level: 'guarded', lockedUnattended: false }).slice(1), [windows, { level: 'ok', text: GUARDED_LINE }]);
+  assert.deepEqual(win({ level: 'ask', lockedUnattended: true }, { locked: true }), [
+    { level: 'ok', text: 'Protection: Locked' }, windows, { level: 'watch', text: LOCKED_UNATTENDED_LINE },
+  ]);
+  // At Ask, or with nothing read, only the Windows line.
+  assert.deepEqual(win({ level: 'ask', lockedUnattended: false }).slice(1), [windows]);
+  assert.deepEqual(win(undefined).slice(1), [windows]);
+  assert.deepEqual(win(null).slice(1), [windows]);
+  assert.deepEqual(win({ level: 'always' }).slice(1), [windows]);
+  // The lines come before the rest of the watch lines.
+  assert.deepEqual(win({ level: 'unattended' }, { helperUp: false }).map((line) => line.text), ['Protection: Standard', WINDOWS_LINE, UNATTENDED_LINE, NO_HELPER]);
+});
+
+test('off Windows the build-commands level adds nothing, whatever it reads', () => {
+  for (const platform of ['darwin', 'linux']) {
+    for (const builds of [{ level: 'unattended', lockedUnattended: false }, { level: 'guarded', lockedUnattended: false }, { level: 'ask', lockedUnattended: true }]) {
+      assert.deepEqual(texts({ platform, builds }), ['Protection: Standard']);
+    }
+  }
 });
 
 test('the lock line shows only when another computer holds the project', () => {
