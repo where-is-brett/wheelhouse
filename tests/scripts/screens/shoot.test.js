@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBrowser, browserArgs, shoot } from '../../../scripts/screens/shoot.js';
+import { findBrowser, browserArgs, shoot, stopsAtPicture } from '../../../scripts/screens/shoot.js';
 import { pixelHash } from '../../../scripts/screens/png.js';
 import { SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../../../scripts/lib/front-desk.js';
 import { encodePng, solid } from '../../fixtures/screens/encode.js';
@@ -46,6 +46,22 @@ function fakeFetch(table) {
 }
 
 const ok200 = () => fakeFetch({ [URL_]: [200] });
+
+// A fake browser that stays running after its picture, as Chrome and Edge do on macOS: it writes
+// `chunks` to the --screenshot file one after another, `every` ms apart, and then waits until it is
+// stopped through options.signal, or until options.timeoutMs.
+function lingeringRun({ chunks = [PNG], every = 20, stderr = '' } = {}) {
+  const runs = [];
+  const run = (file, args, options) => new Promise((resolve) => {
+    runs.push({ file, args, options });
+    const out = argOf(args, '--screenshot');
+    chunks.forEach((chunk, i) => setTimeout(() => fs.appendFileSync(out, chunk), every * (i + 1)));
+    const limit = setTimeout(() => resolve({ code: 1, stdout: '', stderr, timedOut: true }), options.timeoutMs);
+    options.signal?.addEventListener('abort', () => { clearTimeout(limit); resolve({ code: 1, stdout: '', stderr, stopped: true }); });
+  });
+  run.runs = runs;
+  return run;
+}
 
 test('findBrowser looks for Chrome, then Edge, in their usual places', () => {
   const only = (want) => (p) => p === want;
@@ -173,4 +189,49 @@ test('with no browser nothing is fetched or run', async () => {
   const fetch = ok200();
   assert.deepEqual(await shoot({ browser: null, url: URL_, size: SIZE, run, fetch, tmp: tempFolder('wh-shoot-') }), { ok: false, why: 'no browser' });
   assert.equal(fetch.calls.length + run.runs.length, 0);
+});
+
+test('a browser that stays running after a whole picture is stopped then, and the picture is used', async () => {
+  const run = lingeringRun();
+  const started = Date.now();
+  const result = await shoot({ browser: '/bin/chrome', url: URL_, size: SIZE, run, fetch: ok200(), tmp: tempFolder('wh-shoot-') });
+  assert.deepEqual(result, { ok: true, hash: pixelHash(PNG) });
+  assert.ok(run.runs[0].options.signal instanceof AbortSignal);
+  assert.ok(Date.now() - started < SCREEN_TIMEOUT_MS / 2, 'not left to time out');
+});
+
+test('a picture still being written is waited for, and one never finished gives no hash', async () => {
+  // Written in three parts: the browser is stopped only once the picture is whole.
+  const parts = [PNG.subarray(0, 20), PNG.subarray(20, 40), PNG.subarray(40)];
+  const whole = await shoot({ browser: '/bin/chrome', url: URL_, size: SIZE, run: lingeringRun({ chunks: parts, every: 150 }), fetch: ok200(), tmp: tempFolder('wh-shoot-') });
+  assert.deepEqual(whole, { ok: true, hash: pixelHash(PNG) });
+  // Never finished, or never written: the run times out and there is no picture.
+  for (const chunks of [[PNG.subarray(0, PNG.length - 4)], []]) {
+    const result = await shoot({ browser: '/bin/chrome', url: URL_, size: SIZE, run: lingeringRun({ chunks }), fetch: ok200(), tmp: tempFolder('wh-shoot-'), timeoutMs: 600 });
+    assert.deepEqual(result, { ok: false, why: 'the browser timed out' });
+  }
+});
+
+test('only Chrome is stopped at its picture: Edge photographs its own error page when a load fails', () => {
+  for (const chrome of ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', '/usr/bin/google-chrome-stable', '/usr/bin/chromium']) assert.equal(stopsAtPicture(chrome), true, chrome);
+  for (const other of ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', '/bin/firefox', '', null]) assert.equal(stopsAtPicture(other), false, String(other));
+});
+
+test('Edge is not stopped at its picture: it counts only when Edge exits 0 by itself', async () => {
+  const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+  const lingering = lingeringRun();
+  const result = await shoot({ browser: edge, url: URL_, size: SIZE, run: lingering, fetch: ok200(), tmp: tempFolder('wh-shoot-'), timeoutMs: 600 });
+  assert.deepEqual(result, { ok: false, why: 'the browser timed out' });
+  assert.equal(lingering.runs[0].options.signal, undefined);
+  const exits = await shoot({ browser: edge, url: URL_, size: SIZE, run: fakeRun(), fetch: ok200(), tmp: tempFolder('wh-shoot-') });
+  assert.deepEqual(exits, { ok: true, hash: pixelHash(PNG) });
+});
+
+test('a picture from a browser that says the page failed to load never counts', async () => {
+  for (const stderr of ['[1:2:ERROR:headless_command_handler.cc:403] Page load failed: net::ERR_EMPTY_RESPONSE\n', '[1:2:ERROR:headless_command_handler.cc:409] Page load timed out.\n']) {
+    const stopped = await shoot({ browser: '/bin/chrome', url: URL_, size: SIZE, run: lingeringRun({ stderr }), fetch: ok200(), tmp: tempFolder('wh-shoot-') });
+    assert.equal(stopped.ok, false, stderr);
+    const exited = await shoot({ browser: '/bin/chrome', url: URL_, size: SIZE, run: async (file, args) => { fs.writeFileSync(argOf(args, '--screenshot'), PNG); return { code: 0, stdout: '', stderr }; }, fetch: ok200(), tmp: tempFolder('wh-shoot-') });
+    assert.equal(exited.ok, false, stderr);
+  }
 });
