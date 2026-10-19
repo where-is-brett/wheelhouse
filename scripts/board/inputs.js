@@ -26,7 +26,8 @@ import { usageFigures, weeklyShare } from '../usage/figures.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { readProfileViews, profileRemote } from '../profile/store.js';
 import { stopState } from '../lib/stop.js';
-import { sourcesDir, stateDir } from '../lib/paths.js';
+import { computerId, sourcesDir, stateDir } from '../lib/paths.js';
+import { buildsShown } from '../protection/windows-builds.js';
 import { renewalDue } from '../host/connection.js';
 import { helperClient } from '../host/helper-client.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
@@ -134,6 +135,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const sources = offline ? null : readSources();
 
   const known = await helperFacts(project, { client, address, now: clock, offline, clockRead, waitMs }).catch(() => ({}));
+  // On Windows, the level build commands run at on this computer. Guarded waits for its self-test.
+  const builds = process.platform === 'win32' ? attempt(() => buildsShown({ views, computer: computerId(), locked, guardedReady: false })) : null;
   const health = attempt(() => healthLines({
     record,
     locked,
@@ -146,6 +149,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     profile: attempt(() => profileRemote()),
     platform: process.platform,
     realUsers: settings?.phase?.value === 'launched',
+    builds,
   }));
 
   const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, now: clock });

@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { withHome } from '../../helpers/homes.js';
 import { briefingModel } from '../../../scripts/briefing/model.js';
 import { markRaised } from '../../../scripts/usage/figures.js';
+import { NOT_NOW_STEP } from '../../../scripts/board/model.js';
+import { WINDOWS_LINE, UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const at = (day, hour = 0) => new Date(Date.UTC(2026, 9, day, hour)).toISOString();
@@ -189,4 +191,62 @@ test('unconfirmed changes and what waits come straight from the board model', ()
   for (const odd of [undefined, null, {}, { model: 'x' }, { model: { director: 7, build: [], missing: 'x' }, usage: 3, sources: [] }]) {
     assert.deepEqual(briefingModel(odd), { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [] });
   }
+});
+
+test('Unattended is repeated in the first briefing of each week, Monday in the director\'s time', () => {
+  const health = [
+    { level: 'ok', text: 'Protection: Standard' },
+    { level: 'watch', text: WINDOWS_LINE },
+    { level: 'watch', text: UNATTENDED_LINE },
+    { level: 'watch', text: 'This project has no CI, so nothing can merge' },
+  ];
+  const model = board({ health });
+  // NOW is Monday 19 October 2026, 12:00 in UTC.
+  const watch = (since, timeZone) => briefingModel({ model, usage: null, since, now: NOW, wasRaised: never, timeZone }).watch;
+  const every = [WINDOWS_LINE, UNATTENDED_LINE, 'This project has no CI, so nothing can merge'];
+  const without = [WINDOWS_LINE, 'This project has no CI, so nothing can merge'];
+  assert.deepEqual(watch(null, 'UTC'), every, 'no briefing before');
+  assert.deepEqual(watch(at(18, 23), 'UTC'), every, 'the last was on Sunday');
+  assert.deepEqual(watch(at(12, 9), 'UTC'), every, 'the last was a week ago');
+  assert.deepEqual(watch(at(19, 0), 'UTC'), without, 'the last was this Monday');
+  assert.deepEqual(watch(at(19, 11), 'UTC'), without);
+  // In Sydney, 14:00 on Sunday in UTC is already Monday; in Los Angeles, 06:00 on Monday is still Sunday.
+  assert.deepEqual(watch(at(18, 14), 'Australia/Sydney'), without);
+  assert.deepEqual(watch(at(18, 14), 'UTC'), every);
+  assert.deepEqual(watch(at(19, 6), 'America/Los_Angeles'), every);
+  assert.deepEqual(watch(at(19, 6), 'UTC'), without);
+  // A last briefing that can't be read, or is after now, counts as none.
+  assert.deepEqual(watch('yesterday', 'UTC'), every);
+  assert.deepEqual(watch(at(20), 'UTC'), every);
+  // With no time zone given, it is this computer's own.
+  const local = new Date(NOW);
+  local.setHours(0, 0, 0, 0);
+  local.setDate(local.getDate() - ((local.getDay() + 6) % 7));
+  assert.deepEqual(watch(new Date(local.getTime() + 1000).toISOString()), without);
+  assert.deepEqual(watch(new Date(local.getTime() - 1000).toISOString()), every);
+});
+
+test('the Locked line is weekly too, and with neither line the briefing carries nothing new', () => {
+  const locked = board({ health: [{ level: 'watch', text: WINDOWS_LINE }, { level: 'watch', text: LOCKED_UNATTENDED_LINE }] });
+  const watch = (model, since) => briefingModel({ model, usage: null, since, now: NOW, wasRaised: never, timeZone: 'UTC' }).watch;
+  assert.deepEqual(watch(locked, at(18)), [WINDOWS_LINE, LOCKED_UNATTENDED_LINE]);
+  assert.deepEqual(watch(locked, at(19, 1)), [WINDOWS_LINE]);
+  const plain = board({ health: [{ level: 'watch', text: WINDOWS_LINE }, { level: 'ok', text: 'Build commands run at low integrity on this Windows computer: they can\'t change files outside the project, but can still use the network.' }] });
+  assert.deepEqual(watch(plain, at(18)), [WINDOWS_LINE]);
+  assert.deepEqual(watch(board(), null), []);
+  // A time zone that isn't one leaves the rest of the briefing standing.
+  const odd = briefingModel({ model: locked, usage: null, since: null, now: NOW, wasRaised: never, timeZone: 'Nowhere/Else' });
+  assert.ok(odd.watch.includes(WINDOWS_LINE));
+});
+
+test('a feature held by Not now to its build commands reads as waiting on the director', () => {
+  const model = board({
+    features: [
+      { work: 'login', title: 'Log in', lane: 'feature', step: NOT_NOW_STEP, slice: { n: 1, m: 3 }, pr: null },
+      { work: 'search', title: 'Search', lane: 'feature', step: 'building', slice: null, pr: null },
+    ],
+  });
+  const b = briefingModel({ model, usage: null, since: null, now: NOW, wasRaised: never });
+  assert.deepEqual(b.progress, ['Log in is waiting on you to allow its build commands', 'Building Search']);
+  assert.equal(NOT_NOW_STEP, 'waiting on you to allow its build commands');
 });

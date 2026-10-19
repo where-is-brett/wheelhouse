@@ -8,8 +8,12 @@ import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE } from '../../../scripts/hooks/session-start.js';
-import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
-import { helperAddress } from '../../../scripts/lib/paths.js';
+import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
+import { helperAddress, computerId, stateDir } from '../../../scripts/lib/paths.js';
+import { settingKey } from '../../../scripts/protection/windows-builds.js';
+import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 
 const P = 'owner__name';
 
@@ -166,6 +170,64 @@ test('the Windows line appears once per session', async () => {
     assert.doesNotMatch(text(await run(f, { platform: 'win32' })), /no sandbox/);
     assert.match(text(await run(f, { platform: 'win32' }, { session_id: 's2' })), /no sandbox/);
     assert.doesNotMatch(text(await run(f, { platform: 'darwin' }, { session_id: 's3' })), /no sandbox/);
+  });
+});
+
+// The settings view as buildViews makes it, holding Unattended on `computer` from a click on its own card.
+const unattendedOn = (computer, value = 'unattended') => ({
+  [settingKey(computer)]: { key: settingKey(computer), id: 'e-1', at: '2026-10-19T01:00:00.000Z', value, computer, line: unattendedBuildsLine('e-1', computer) },
+});
+
+test('while Unattended is on, the Windows line is followed by the Unattended line', async () => {
+  await withHome(async () => {
+    const me = computerId();
+    const up = (views) => {
+      const f = fake({ views: { ...VIEWS, ...views } });
+      f.client.health = async () => ({ ok: true });
+      return f;
+    };
+    let n = 0;
+    const session = () => ({ session_id: `u${(n += 1)}` });
+    const lines = text(await run(up({ settings: unattendedOn(me) }), { platform: 'win32' }, session())).split('\n');
+    assert.equal(lines[lines.indexOf(WINDOWS_LINE) + 1], UNATTENDED_LINE);
+    assert.equal(lines.at(-1), UNATTENDED_LINE);
+    // At Ask, for another computer, in a Locked project, or off Windows, nothing new.
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me, 'ask') }), { platform: 'win32' }, session())), /unattended/);
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn('deadbeef') }), { platform: 'win32' }, session())), /unattended/);
+    assert.doesNotMatch(text(await run(up({}), { platform: 'win32' }, session())), /unattended/);
+    const locked = { projectOf: () => ({ project: P, locked: true }), platform: 'win32' };
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me) }), locked, session())), /unattended/);
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me) }), { platform: 'darwin' }, session())), /unattended/);
+    // Only with the Windows line, once a session.
+    const again = session();
+    assert.match(text(await run(up({ settings: unattendedOn(me) }), { platform: 'win32' }, again)), /unattended/);
+    assert.doesNotMatch(text(await run(up({ settings: unattendedOn(me) }), { platform: 'win32' }, again)), /unattended/);
+  });
+});
+
+test('with no helper, the level is read from the local events, as the waker reads them', async () => {
+  await withHome(async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    const me = computerId();
+    const put = (event) => {
+      const file = path.join(stateDir(P), eventPath(event));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(event));
+    };
+    const on = makeEvent({ kind: 'setting', data: { key: settingKey(me), value: 'unattended', words: 'Build commands: unattended' }, now: () => new Date('2026-10-19T01:00:00.000Z') });
+    const { kind, data } = confirmationFor(on);
+    put(on);
+    put(makeEvent({ kind, data: { ...data, line: unattendedBuildsLine(on.id, me) }, now: () => new Date('2026-10-19T01:00:01.000Z') }));
+    // The views on disk, as an older sync left them, say nothing of it.
+    const views = path.join(process.env.WHEELHOUSE_HOME, 'projects', P, 'views');
+    fs.mkdirSync(views, { recursive: true });
+    fs.writeFileSync(path.join(views, 'settings.json'), '{}');
+    fs.writeFileSync(path.join(views, 'unconfirmed.json'), '[]');
+    const t = text(await run(fake({ startsUp: false }), { platform: 'win32' }));
+    assert.match(t, new RegExp(NO_HELPER));
+    const lines = t.split('\n');
+    assert.equal(lines[lines.indexOf(WINDOWS_LINE) + 1], UNATTENDED_LINE);
   });
 });
 

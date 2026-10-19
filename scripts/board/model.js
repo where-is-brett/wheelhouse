@@ -6,6 +6,7 @@
 // reaches the board through oneLine, as one capped line with no Markdown of its own.
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
+import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];
@@ -18,6 +19,12 @@ const NO_HEALTH = 'How the project stands couldn\'t be read';
 const NO_SETTINGS = 'The settings couldn\'t be read';
 const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
 const NO_CLOCK = 'The board\'s clock couldn\'t be read';
+// The step a feature reads as while the director's Not now to its build commands holds it.
+export const NOT_NOW_STEP = 'waiting on you to allow its build commands';
+// The Windows build-commands settings, one per computer: confirmed only through their own card.
+const BUILDS_KEY = settingKey('');
+// A card's answer line, as the prompt record reads it.
+const ANSWER_LINE = /Answer question (q-[a-z0-9-]+-[0-9]+)(?![a-z0-9-])/g;
 // A time as the state and usage scripts write it, in UTC. Any other text is no time.
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 // The most of a text oneLine reads.
@@ -123,10 +130,12 @@ export const dollarWords = (value) => `$${value < 1 ? value.toFixed(2) : Math.ro
 // Section 9: what was written for the director to confirm and isn't confirmed yet. The views keep
 // these without effect, so nothing has been applied without confirmation; they are listed instead.
 // `profile` is the profile views' unconfirmed list: a setting there is the director's own, for
-// every project.
+// every project. A Windows build-commands setting is left out: it is confirmed only through its own
+// card, and a Keep asking click leaves one unconfirmed each day it is offered.
 function firstLines(views, profile) {
   const kinds = { ruling: 'A ruling', level: 'A level', setting: 'A setting' };
-  const project = list(views?.unconfirmed).filter((u) => Object.hasOwn(kinds, u.kind)).map((u) => ({ u, label: kinds[u.kind] }));
+  const builds = (u) => u.kind === 'setting' && [u.key, u.data?.key].some((key) => typeof key === 'string' && key.startsWith(BUILDS_KEY));
+  const project = list(views?.unconfirmed).filter((u) => Object.hasOwn(kinds, u.kind) && !builds(u)).map((u) => ({ u, label: kinds[u.kind] }));
   const own = list(profile).filter((u) => u.kind === 'setting').map((u) => ({ u, label: 'Your setting' }));
   return [...project, ...own].sort((a, b) => oldestFirst(a.u, b.u)).map(({ u, label }) => {
     const data = isRecord(u.data) ? u.data : {};
@@ -144,6 +153,7 @@ function namesQuestion(card, id) {
 // The cards waiting are the waiting view's, so one rule, in views.js, says what waits. (Whether a
 // card put off with Not now stays waiting is the front desk plan's change to that rule.) Then the
 // build loop's questions that nobody has answered and no card asked, waiting or not, names.
+// A build-command question is named by its commands, since a session writes its `what`.
 // Oldest first, numbered from 1.
 function waitingList(views, events, questions) {
   const cards = list(views?.waiting);
@@ -151,9 +161,43 @@ function waitingList(views, events, questions) {
   const items = cards.map((card) => ({ what: oneLine(card.data?.title ?? card.data?.question) || 'A question', since: timeOf(card.at) }));
   for (const [id, entry] of Object.entries(questions)) {
     if (!isRecord(entry) || entry.answer || named.some((card) => namesQuestion(card, id))) continue;
-    items.push({ what: oneLine(entry.question?.data?.what) || 'A question from the build', since: timeOf(entry.question?.at) });
+    items.push({ what: questionWords(entry.question?.data) || 'A question from the build', since: timeOf(entry.question?.at) });
   }
   return items.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? '')).map((item, i) => ({ n: i + 1, ...item }));
+}
+
+// A build-loop question in words: a build-command question by its commands, with its `what` beside them.
+function questionWords(data) {
+  const what = oneLine(data?.what);
+  if (!isBuildQuestion(data)) return what;
+  return cap(`Run ${data.commands.map(oneLine).join(', ')}${what ? `: ${what}` : ''}`);
+}
+
+// Whether the director's Not now holds the feature for `work`: its newest build-command question
+// (isBuildQuestion) isn't answered, and a plain card-answer labelled Not now, after the question,
+// names that question alone by its answer line; and no report for the work came at or after it.
+// A Not now click is never a signed answer, so this is for the board's words only: a forged
+// card-answer makes the feature read as waiting, nothing more.
+function heldByNotNow(work, questions, events, reports) {
+  const asked = Object.entries(questions)
+    .filter(([, entry]) => isRecord(entry) && isBuildQuestion(entry.question?.data) && entry.question.data.work === work && timeOf(entry.question.at))
+    .sort(([, a], [, b]) => oldestFirst(a.question, b.question));
+  if (asked.length === 0) return false;
+  const [id, newest] = asked.at(-1);
+  if (newest.answer) return false;
+  const ms = (value) => Date.parse(timeOf(value));
+  const since = ms(newest.question.at);
+  const said = events.filter((e) => e.kind === 'card-answer' && e.data?.label === BUILD_QUESTION_LABELS.notNow && ms(e.at) >= since
+    && typeof e.data.question === 'string' && namesOnly(e.data.question, id));
+  if (said.length === 0) return false;
+  const first = Math.min(...said.map((e) => ms(e.at)));
+  return !reports.some((r) => r.data.work === work && ms(r.at) >= first);
+}
+
+// Whether `text` names exactly one question by its answer line, and that one is `id`.
+function namesOnly(text, id) {
+  const found = [...text.matchAll(ANSWER_LINE)];
+  return found.length === 1 && found[0][1] === id;
 }
 
 function workInfo(work, id) {
@@ -260,13 +304,16 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
   if (damaged > 0) missing.push(`${damaged} ${damaged === 1 ? 'record' : 'records'} couldn't be read`);
 
   const active = values(features).filter((f) => isRecord(f.data) && typeof f.data.work === 'string' && f.data.step !== 'closed').sort(oldestFirst);
+  // The step each active feature reads as: the director's Not now to its build commands holds it.
+  const held = new Set(part(missing, 'build-command answers', () => active.map((f) => f.data.work).filter((w) => heldByNotNow(w, questions, all, reports)), []));
+  const stepOf = (f) => (held.has(f.data.work) ? NOT_NOW_STEP : oneLine(f.data.step));
   const prOfWork = (id) => reports.filter((r) => r.data.work === id && isPr(r.data.pr)).sort(oldestFirst).at(-1)?.data.pr ?? null;
 
   const inProgress = part(missing, 'work in progress', () => {
     const out = Object.fromEntries(LANES.map((lane) => [lane, []]));
     for (const f of active) {
       const info = workInfo(work, f.data.work);
-      if (info.lane) out[info.lane].push({ title: info.title, step: oneLine(f.data.step) });
+      if (info.lane) out[info.lane].push({ title: info.title, step: stepOf(f) });
     }
     return out;
   }, Object.fromEntries(LANES.map((lane) => [lane, []])));
@@ -329,7 +376,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
         work: oneLine(f.data.work),
         title: info.title,
         lane: info.lane,
-        step: oneLine(f.data.step),
+        step: stepOf(f),
         slice: isRecord(slice) && Number.isInteger(slice.n) && Number.isInteger(slice.m) ? { n: slice.n, m: slice.m } : null,
         pr: prOfWork(f.data.work),
       };

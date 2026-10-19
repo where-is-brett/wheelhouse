@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {
-  LEVELS, GIT_LOCAL, settingKey, buildsLevel, UNATTENDED_CARD, GUARDED_CARD, BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, buildGrants, isBuildQuestion,
+  LEVELS, GIT_LOCAL, settingKey, buildsLevel, buildsShown, UNATTENDED_CARD, GUARDED_CARD, BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, buildGrants, isBuildQuestion,
 } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { buildViews } from '../../../scripts/state/views.js';
@@ -120,6 +120,29 @@ test('unattended in a Locked project reads as ask', () => {
     const events = [on, confirm(2, on, unattendedBuildsLine(on.id, me))];
     assert.equal(level(events, me, { locked: true }), 'ask');
     assert.equal(level(events, me, { locked: false }), 'unattended');
+  });
+});
+
+test('what is shown of the level: the level read, and a Locked project whose setting would be Unattended', () => {
+  withHome((me) => {
+    const on = setting(1, me, 'unattended');
+    const events = [on, confirm(2, on, unattendedBuildsLine(on.id, me))];
+    const shown = (evs, locked) => buildsShown({ views: views(evs), computer: me, locked, guardedReady: false });
+    assert.deepEqual(shown(events, false), { level: 'unattended', lockedUnattended: false });
+    assert.deepEqual(shown(events, true), { level: 'ask', lockedUnattended: true });
+    // Only through buildsLevel's reading: an unconfirmed proposal, a plain Confirm, another
+    // computer's setting or a newer event back to Ask says nothing of Unattended, Locked or not.
+    assert.deepEqual(shown([on], true), { level: 'ask', lockedUnattended: false });
+    assert.deepEqual(shown([on, confirm(2, on)], true), { level: 'ask', lockedUnattended: false });
+    const forged = setting(1, me, 'unattended', { from: OTHER });
+    assert.deepEqual(shown([forged, confirm(2, forged, unattendedBuildsLine(forged.id, me))], true), { level: 'ask', lockedUnattended: false });
+    assert.deepEqual(shown([...events, setting(3, me, 'ask')], true), { level: 'ask', lockedUnattended: false });
+    // Guarded waits for its self-test; nothing readable is Ask.
+    const g = setting(1, me, 'guarded');
+    assert.deepEqual(shown([g, confirm(2, g)], false), { level: 'ask', lockedUnattended: false });
+    assert.deepEqual(buildsShown({ views: views([g, confirm(2, g)]), computer: me, locked: false, guardedReady: true }), { level: 'guarded', lockedUnattended: false });
+    assert.deepEqual(buildsShown({ views: null, computer: me, locked: true }), { level: 'ask', lockedUnattended: false });
+    assert.deepEqual(buildsShown(), { level: 'ask', lockedUnattended: false });
   });
 });
 

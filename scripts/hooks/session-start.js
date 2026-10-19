@@ -19,8 +19,12 @@ import { sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
 import { stopState } from '../lib/stop.js';
-import { wheelhouseHome, stateDir } from '../lib/paths.js';
-import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
+import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
+import { buildsShown } from '../protection/windows-builds.js';
+import { listEvents } from '../state/events.js';
+import { readEnrolled } from '../state/signing.js';
+import { buildViews } from '../state/views.js';
 import { startBackground } from '../lib/background.js';
 import { projectConfig } from '../watcher/main.js';
 
@@ -147,6 +151,21 @@ export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'u
   return Object.keys(out).length > 0 ? out : null;
 }
 
+// The views the session start reads when the helper can't give them: those the last sync left on
+// disk, with the settings and the unconfirmed changes built from the local events, as the waker
+// reads them, so the level shown is the one the waker acts on. Events that can't be read leave
+// the views on disk as they are.
+function fallbackViews(project) {
+  const views = localViews(project);
+  let built = null;
+  try {
+    built = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+  } catch {
+    return views;
+  }
+  return { ...views, settings: built.settings, unconfirmed: built.unconfirmed };
+}
+
 const MARKER_DAYS = 7;
 
 // True the first time it is asked for a session, false after. Markers older
@@ -226,7 +245,9 @@ async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   } catch { /* the session carries on without it */ }
 }
 
-export function reload({ views, stop, notes, feature, stateRoot, windows }) {
+// `windows` adds the Windows line; `builds`, the level build commands run at on this computer,
+// adds the Unattended line after it while that is on.
+export function reload({ views, stop, notes, feature, stateRoot, windows, builds }) {
   const lines = [];
   if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   const damaged = Array.isArray(views?.damaged) ? views.damaged.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))) : [];
@@ -244,7 +265,10 @@ export function reload({ views, stop, notes, feature, stateRoot, windows }) {
   const levels = Object.values(views?.levels ?? {}).map((l) => `${l.key}: ${show(l.value)}`);
   lines.push(...section('Levels:', levels));
   if (feature) lines.push(`Your feature's ledger: ${path.join(stateRoot, 'features', feature, 'ledger.md')}`);
-  if (windows) lines.push(WINDOWS_LINE);
+  if (windows) {
+    lines.push(WINDOWS_LINE);
+    if (builds === 'unattended') lines.push(UNATTENDED_LINE);
+  }
   let text = lines.join('\n');
   if (text.length > MAX_CHARS) text = `${text.slice(0, MAX_CHARS - 1)}…`;
   return text;
@@ -259,7 +283,7 @@ export async function decide(input, deps = {}) {
   } = deps;
   const found = find(input.cwd, { dir });
   if (!found) return undefined;
-  const { project } = found;
+  const { project, locked } = found;
   markManaged(project, input.session_id, { self, dir: dir ?? managedDir(), now });
   const end = Date.now() + totalMs;
   const left = withinBudget(end);
@@ -286,13 +310,15 @@ export async function decide(input, deps = {}) {
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
     await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
-  views ??= localViews(project);
+  views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   const stateRoot = stateDir(project);
+  const windows = platform === 'win32' && firstForSession(project, input.session_id, now);
+  // Guarded waits for its self-test, so in Part 1 only Unattended is shown.
+  const builds = windows ? buildsShown({ views, computer: computerId(), locked, guardedReady: false }).level : 'ask';
   const text = reload({
-    views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot,
-    windows: platform === 'win32' && firstForSession(project, input.session_id, now),
+    views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot, windows, builds,
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

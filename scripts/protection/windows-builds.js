@@ -5,6 +5,7 @@
 // read is Ask.
 import { isBuildCommand } from '../gate/guardrails.js';
 import { unattendedBuildsLine } from '../state/card-lines.js';
+import { GUARDED_LINE } from '../lib/platform-lines.js';
 
 export const LEVELS = ['ask', 'guarded', 'unattended'];
 
@@ -50,6 +51,20 @@ export function buildsLevel({ views, computer, locked, guardedReady }) {
   }
   if (entry.value === 'guarded') return guardedReady === true && entry.line === null ? 'guarded' : 'ask';
   return 'ask';
+}
+
+// What the board and the session start show of the level on `computer`: `level`, as buildsLevel
+// reads it, and `lockedUnattended`, whether the project is Locked and its setting would read as
+// Unattended were it not. Both come only through buildsLevel's reading, never the raw value, and
+// anything that can't be read shows nothing: Ask, and no Locked line.
+export function buildsShown({ views, computer, locked, guardedReady } = {}) {
+  try {
+    const level = buildsLevel({ views, computer, locked, guardedReady });
+    const lockedUnattended = locked === true && buildsLevel({ views, computer, locked: false, guardedReady }) === 'unattended';
+    return { level, lockedUnattended };
+  } catch {
+    return { level: 'ask', lockedUnattended: false };
+  }
 }
 
 // What each Allow click grants, by its label.
@@ -102,7 +117,7 @@ export function buildGrants({ views, work, used, computer }) {
 const UNATTENDED_RISK = 'Builders on this computer will run their tests and build steps without asking you, and with nothing to hold them. '
   + 'A builder writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, '
   + 'change Wheelhouse\'s own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and STOP still hold.';
-const GUARDED_SAYS = 'Build commands run at low integrity on this Windows computer: they can\'t change files outside the project, but can still use the network.';
+const GUARDED_SAYS = GUARDED_LINE;
 const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'A builder asks you before it runs a build command, as now.' };
 
 // The card that turns Unattended on. Use Guarded is offered, and recommended, only where this

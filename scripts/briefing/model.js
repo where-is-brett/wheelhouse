@@ -9,7 +9,12 @@
 // and `raise` lists the ids this briefing includes, in the order they open `watch`. The caller
 // marks as raised (markRaised) only those its text showed, `raise.slice(0, shownWatch)` from
 // briefingParts, once the briefing has really been given.
-import { oneLine, unusualLine, tokenWords, dollarWords } from '../board/model.js';
+//
+// The board's lines for Unattended build commands on Windows, and for Unattended off in a Locked
+// project, stand while they hold; the briefing repeats them only in the first briefing of each
+// week, the week starting on Monday in the director's time (this computer's own time zone).
+import { oneLine, unusualLine, tokenWords, dollarWords, NOT_NOW_STEP } from '../board/model.js';
+import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
 
 // Briefing = { first, waiting, changed, progress, watch, usage, raise }.
@@ -22,6 +27,9 @@ const BARE_MERGE = /^(Pull request #\d+|A pull request) merged$/;
 const UNCONFIRMED = /, not yet confirmed by you$/;
 // The board model's line for event records it couldn't read.
 const DAMAGED = /^\d+ records? couldn't be read$/;
+// The health lines given once a week.
+const WEEKLY = [UNATTENDED_LINE, LOCKED_UNATTENDED_LINE];
+const DAY_MS = 24 * 60 * 60 * 1000;
 // Anthropic's pages the sources check reads (sources/list.js), by id, as the director knows them.
 const PAGE_NAMES = {
   models: 'models overview',
@@ -55,6 +63,22 @@ function clockMs(now) {
   }
 }
 
+// The Monday that starts the week holding `ms` in `timeZone` (this computer's own when it is
+// undefined), as a count of days.
+function weekOf(ms, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(new Date(ms));
+  const part = (type) => Number(parts.find((p) => p.type === type)?.value);
+  const day = Date.UTC(part('year'), part('month') - 1, part('day')) / DAY_MS;
+  return day - ((new Date(day * DAY_MS).getUTCDay() + 6) % 7);
+}
+
+// Whether this is the first briefing of the week: there was none before (or none that can be
+// read), or the last was in an earlier week. A clock that can't be read can't tell, so it is.
+function firstOfWeek(sinceMs, nowMs, timeZone) {
+  if (Number.isNaN(sinceMs) || !Number.isFinite(nowMs)) return true;
+  return weekOf(sinceMs, timeZone) < weekOf(nowMs, timeZone);
+}
+
 // Builds one part, or leaves it empty when its inputs are too damaged to build it.
 function part(build, fallback) {
   try {
@@ -69,8 +93,13 @@ function progressLines(model, isNew) {
   const merged = records(model.director?.changed).filter((c) => isNew(c.at)).length;
   if (merged > 0) out.push(`${merged} pull ${merged === 1 ? 'request' : 'requests'} merged`);
   const features = records(model.build?.features);
-  for (const f of features.filter((x) => x.step === 'building')) {
+  for (const f of features.filter((x) => x.step === 'building' || x.step === NOT_NOW_STEP)) {
     const title = oneLine(f.title) || oneLine(f.work) || 'Untitled work';
+    // Held by the director's Not now to its build commands: it waits on them, it isn't building.
+    if (f.step === NOT_NOW_STEP) {
+      out.push(`${title} is ${NOT_NOW_STEP}`);
+      continue;
+    }
     const slice = isRecord(f.slice) && Number.isInteger(f.slice.n) && Number.isInteger(f.slice.m) ? `, slice ${f.slice.n} of ${f.slice.m}` : '';
     out.push(`Building ${title}${slice}`);
   }
@@ -127,10 +156,10 @@ function usageLine(usage) {
   return said.length > 0 ? `Usage this week: ${said.join(', ')}.` : null;
 }
 
-// briefingModel({ model, usage, sources, since, now, wasRaised }) -> Briefing.
+// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone }) -> Briefing.
 // `model` is boardModel's, `usage` usageFigures', `sources` the sources report, `since` the time of
 // the last briefing. `wasRaised(id)` says whether an unusual item was raised already (the usage
-// store's by default).
+// store's by default). `timeZone` is the director's, this computer's own by default.
 export function briefingModel(options) {
   try {
     return build(isRecord(options) ? options : {});
@@ -139,7 +168,7 @@ export function briefingModel(options) {
   }
 }
 
-function build({ model, usage, sources, since, now, wasRaised = realWasRaised }) {
+function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone }) {
   const briefing = EMPTY();
   const board = isRecord(model) ? model : {};
   const director = isRecord(board.director) ? board.director : {};
@@ -156,7 +185,9 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised })
     .filter((what) => !BARE_MERGE.test(what)), []);
   briefing.progress = part(() => progressLines({ director, build: isRecord(board.build) ? board.build : {} }, isNew), []);
 
-  const health = part(() => lines(records(director.health).filter((l) => l.level === 'watch' || l.level === 'stop').map((l) => l.text)), []);
+  const weekly = part(() => firstOfWeek(sinceMs, nowMs, timeZone), true);
+  const health = part(() => lines(records(director.health).filter((l) => l.level === 'watch' || l.level === 'stop').map((l) => l.text))
+    .filter((text) => weekly || !WEEKLY.includes(text)), []);
   const unusual = part(() => unusualItems(usage, typeof wasRaised === 'function' ? wasRaised : realWasRaised), []);
   const report = isRecord(sources) && (Number.isNaN(sinceMs) || msOf(sources.at) > sinceMs) ? sources : null;
   const fromSources = report ? part(() => sourceLines(report), []) : [];
