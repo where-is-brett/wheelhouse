@@ -144,3 +144,18 @@ test('a masked path leaves no part of any listed word', () => {
   assert.equal(maskWords('docs/Bar-and-FOOBAR/x.md', ['bar', 'foobar']), 'docs/***-and-***/x.md');
   assert.equal(maskWords('plain.md', ['bar']), 'plain.md');
 });
+
+test('an added line that starts with ++ is read, and file headers are not', async () => {
+  const root = await makeRepo();
+  fs.writeFileSync(path.join(root, 'counter.c'), 'x\n++quillandink;\n');
+  await g(root, 'add', 'counter.c');
+  await g(root, 'commit', '--quiet', '-m', 'count');
+  const counted = await g(root, 'rev-parse', 'HEAD');
+  const hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'diff');
+  assert.deepEqual(hits.map((h) => h.at), [counted]);
+  // A word only in a file's name is not counted from the header lines.
+  fs.writeFileSync(path.join(root, 'quillandink-notes.md'), 'plain\n');
+  await g(root, 'add', '--all');
+  await g(root, 'commit', '--quiet', '-m', 'notes');
+  assert.deepEqual((await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'diff').map((h) => h.at), [counted]);
+});

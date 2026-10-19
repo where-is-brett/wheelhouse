@@ -157,7 +157,15 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
   for (const entry of (patches ?? '').split('\x1e').filter((e) => e.trim() !== '')) {
     const [first, ...rest] = entry.replace(/\r\n/g, '\n').split('\n');
     const lines = rest.join('\n').replace(/^\n+/, '').split('\n');
-    lineHits(lines.map((l) => (l.startsWith('+') && !l.startsWith('+++') ? l.slice(1) : null)), 'diff', first.trim());
+    // A file's header runs from its `diff --git` line to its first `@@`; after that, a `+` line is
+    // an added line whatever follows the `+`, `+++` included.
+    let header = false;
+    const added = lines.map((l) => {
+      if (l.startsWith('diff --git ')) header = true;
+      else if (l.startsWith('@@')) header = false;
+      return !header && l.startsWith('+') ? l.slice(1) : null;
+    });
+    lineHits(added, 'diff', first.trim());
   }
   return { hits, files: read, messages: messages.length };
 }

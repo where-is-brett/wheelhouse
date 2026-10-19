@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
-import { commandsIn, deniedByStandard, surveyProject } from '../../../scripts/install/survey.js';
+import { batchSshCommand, commandsIn, deniedByStandard, surveyProject } from '../../../scripts/install/survey.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -266,4 +266,38 @@ test('surveyed from a linked worktree, the main checkout is listed and the workt
   await g(folder, 'worktree', 'add', '--quiet', '-b', 'feature/till', worktree);
   const survey = await surveyProject({ folder: worktree, manifest: MANIFEST, run: noPrs, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') });
   assert.deepEqual(survey.inFlight.worktrees.map((w) => [fs.realpathSync(w.path), w.branch]), [[fs.realpathSync(folder), 'main']]);
+});
+
+test('a command-start word at the end of a piece is not taken for a runner', () => {
+  assert.deepEqual(commandsIn('ls'), []);
+  assert.deepEqual(commandsIn('if true; then git push; fi'), ['git push']);
+  assert.deepEqual(commandsIn('for x in a; do npm test; done'), ['npm test']);
+  assert.deepEqual(commandsIn('pnpm'), []);
+});
+
+test('the fetch keeps the director\'s own ssh command and adds BatchMode to it', async () => {
+  assert.equal(batchSshCommand({ env: {}, configured: '' }), 'ssh -o BatchMode=yes');
+  assert.equal(batchSshCommand({ env: {}, configured: 'ssh -i ~/.ssh/shop_key' }), 'ssh -i ~/.ssh/shop_key -o BatchMode=yes');
+  assert.equal(batchSshCommand({ env: { GIT_SSH_COMMAND: 'C:/Windows/System32/OpenSSH/ssh.exe' }, configured: 'ssh -i k' }), 'C:/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes');
+
+  const { folder } = await makeProject();
+  const upstream = await makeUpstream(folder);
+  await g(folder, 'config', 'core.sshCommand', 'ssh -i ~/.ssh/shop_key');
+  const calls = [];
+  const recording = async (file, args, options) => {
+    if (file === 'git') calls.push({ args, env: options?.env ?? {} });
+    return noPrs(file, args, options);
+  };
+  await surveyProject({ folder, manifest: MANIFEST, run: recording, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-'), sshEnv: {} });
+  assert.equal(calls.find((c) => c.args.includes('fetch')).env.GIT_SSH_COMMAND, 'ssh -i ~/.ssh/shop_key -o BatchMode=yes');
+});
+
+test('a bare main repository is not listed as a worktree in flight', async () => {
+  const { remote } = await makeProject();
+  const bare = path.join(tempFolder('wh-bare-'), 'shop.git');
+  await g(path.dirname(bare), 'clone', '--quiet', '--bare', remote.url, bare);
+  const worktree = path.join(path.dirname(bare), 'shop-main');
+  await g(bare, 'worktree', 'add', '--quiet', worktree, 'main');
+  const survey = await surveyProject({ folder: worktree, manifest: { upstreams: [] }, run: noPrs, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-') });
+  assert.deepEqual(survey.inFlight.worktrees, []);
 });

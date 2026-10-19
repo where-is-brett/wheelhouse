@@ -226,7 +226,7 @@ export function commandsIn(chunk) {
     const token = tokens[i];
     if (OPERATOR.test(token)) { starts = true; continue; }
     const word = token.replace(/^[$"']+/, '');
-    const runner = starts && RUNNER_FIRSTS.get(word) === tokens[i + 1];
+    const runner = starts && RUNNER_FIRSTS.has(word) && RUNNER_FIRSTS.get(word) === tokens[i + 1];
     if (starts && (COMMAND_WORDS.has(word) || runner)) {
       const parts = [word];
       if (runner) parts.push(tokens[(i += 1)]);
@@ -302,12 +302,21 @@ export function deniedByStandard(named) {
 
 // --- Work in flight ---
 
-async function readInFlight({ folder, host, git, run }) {
+// The ssh command for the survey's fetch: the one git would use (GIT_SSH_COMMAND, else the
+// configured core.sshCommand, else plain ssh), with BatchMode on, so a passphrase prompt fails
+// at once instead of waiting.
+export function batchSshCommand({ env = process.env, configured = '' } = {}) {
+  const own = typeof env.GIT_SSH_COMMAND === 'string' && env.GIT_SSH_COMMAND.trim() !== '' ? env.GIT_SSH_COMMAND.trim() : configured.trim();
+  return `${own || 'ssh'} -o BatchMode=yes`;
+}
+
+async function readInFlight({ folder, host, git, run, sshEnv }) {
   const remotes = (await git(['remote'])).split('\n').map((r) => r.trim()).filter(Boolean);
   let behind = 0;
   let prs = [];
   if (remotes.includes('origin')) {
-    await git(['fetch', '--quiet', 'origin'], folder, { env: { GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' } });
+    const configured = (await git(['config', '--get', 'core.sshCommand'], folder, { allowFail: true })).trim();
+    await git(['fetch', '--quiet', 'origin'], folder, { env: { GIT_SSH_COMMAND: batchSshCommand({ env: sshEnv, configured }) } });
     let ref = (await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], folder, { allowFail: true })).trim();
     if (ref === '') {
       for (const candidate of ['refs/remotes/origin/main', 'refs/remotes/origin/master']) {
@@ -323,7 +332,8 @@ async function readInFlight({ folder, host, git, run }) {
   for (const block of blocks) {
     const lines = block.split('\n');
     const at = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
-    if (!at || sameFolder(at, folder)) continue; // the folder surveyed is not work left in flight
+    // The folder surveyed, and a bare main repository, are not work left in flight.
+    if (!at || lines.includes('bare') || sameFolder(at, folder)) continue;
     const branchLine = lines.find((l) => l.startsWith('branch '));
     const branch = branchLine ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '') : null;
     const there = fs.existsSync(at);
@@ -401,21 +411,22 @@ function readPersonalSkills(claudeHome) {
 // upstream's name to a clone of its repository (bare or not) with its whole history; `host` is
 // 'github' or 'gitlab', worked out from the remote's address when not given; `scheduled` is
 // Claude's scheduled tasks as `{ name, folder, path? }`, or null when no list was given (the
-// survey's `scheduled` is then null too); `claudeHome` is the director's Claude folder.
-export async function surveyProject({ folder, manifest, run = defaultRun, upstreams = {}, host = null, scheduled = null, claudeHome = defaultClaudeHome() }) {
+// survey's `scheduled` is then null too); `claudeHome` is the director's Claude folder; `sshEnv`
+// is where an existing GIT_SSH_COMMAND is read from.
+export async function surveyProject({ folder, manifest, run = defaultRun, upstreams = {}, host = null, scheduled = null, claudeHome = defaultClaudeHome(), sshEnv = process.env }) {
   if (typeof folder !== 'string' || !fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory()) throw new Error('The project folder is not there');
   if (scheduled !== null && !Array.isArray(scheduled)) throw new Error('The scheduled tasks are not a list');
   const project = path.resolve(folder);
   // An empty hooks folder, so no hook of the project's runs during the survey.
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
   try {
-    return await surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, hooksPath: path.join(scratch, 'hooks') });
+    return await surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv, hooksPath: path.join(scratch, 'hooks') });
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 }
 
-async function surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, hooksPath }) {
+async function surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv, hooksPath }) {
   fs.mkdirSync(hooksPath);
   const git = async (args, cwd = project, { allowFail = false, env = {} } = {}) => {
     const result = await run('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${hooksPath}`, ...args], {
@@ -449,7 +460,7 @@ async function surveyIn({ project, manifest, run, upstreams, host, scheduled, cl
       .map((t) => (typeof t.path === 'string' ? { name: t.name, path: t.path } : { name: t.name })),
     copies,
     keep,
-    inFlight: await readInFlight({ folder: project, host: hostName, git, run }),
+    inFlight: await readInFlight({ folder: project, host: hostName, git, run, sshEnv }),
     commandsNamed,
     deniedAfterSwitchBack: deniedByStandard(commandsNamed),
     plugins: readPlugins({ claudeHome, manifest }),
