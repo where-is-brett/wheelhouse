@@ -24,6 +24,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ATTRIBUTION_OFF, frontDeskCommand } from '../protection/settings.js';
 import { helperAddress } from '../lib/paths.js';
+import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { briefHash } from '../feature/files.js';
 import { reload } from '../hooks/session-start.js';
 import { locateSuperpowers } from './harness.js';
@@ -61,7 +62,7 @@ function allowRules(plugin) {
     for (const at of new Set([plugin, realOr(plugin)])) {
       allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
       const command = frontDeskCommand(at);
-      if (command !== null) allow.push(`Bash(${command}:*)`);
+      if (command !== null) allow.push(`Bash(${command}:*)`, `Edit(/${FRONT_DESK_INPUT})`);
     }
   }
   try {
