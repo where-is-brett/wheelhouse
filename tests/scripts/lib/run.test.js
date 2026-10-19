@@ -105,3 +105,10 @@ test('on Windows a timed-out command is killed with its children', async () => {
   await run(process.execPath, sleeper, { timeoutMs: 100, platform: 'linux', killer });
   assert.deepEqual(sent, []);
 });
+
+test('run gives stdout as bytes with encoding buffer', async () => {
+  const result = await run(process.execPath, ['-e', 'process.stdout.write(Buffer.from([0, 255, 104, 105]))'], { encoding: 'buffer' });
+  assert.equal(result.code, 0);
+  assert.ok(Buffer.isBuffer(result.stdout));
+  assert.deepEqual([...result.stdout], [0, 255, 104, 105]);
+});

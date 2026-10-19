@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
-import { surveyProject } from '../../../scripts/install/survey.js';
+import { commandsIn, deniedByStandard, surveyProject } from '../../../scripts/install/survey.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -204,4 +204,66 @@ test('the survey changes nothing in the project but its remote-tracking refs', a
   const before = await status();
   await surveyProject({ folder, manifest: MANIFEST, run: noPrs, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') });
   assert.equal(await status(), before);
+});
+
+test('with no scheduled list given, scheduled is null, not empty', async () => {
+  const { folder } = await makeProject();
+  const upstream = await makeUpstream(folder);
+  const survey = await surveyProject({ folder, manifest: MANIFEST, run: noPrs, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') });
+  assert.equal(survey.scheduled, null);
+  const given = await surveyProject({ folder, manifest: MANIFEST, run: noPrs, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-'), scheduled: [] });
+  assert.deepEqual(given.scheduled, []);
+});
+
+test('commands run through pnpm dlx, bunx and yarn dlx are listed and checked', () => {
+  assert.deepEqual(commandsIn('pnpm dlx vercel deploy --prod && bunx netlify deploy'), ['pnpm dlx vercel deploy --prod', 'bunx netlify deploy']);
+  assert.deepEqual(commandsIn('yarn dlx wrangler deploy'), ['yarn dlx wrangler deploy']);
+  assert.deepEqual(commandsIn('pnpm install && yarn build'), []);
+  const denied = deniedByStandard([
+    { command: 'pnpm dlx vercel deploy --prod', paths: ['a'] }, { command: 'bunx netlify deploy', paths: ['a'] }, { command: 'yarn dlx wrangler deploy', paths: ['a'] },
+  ]);
+  assert.deepEqual(denied.map((d) => d.rule), ['Bash(pnpm dlx vercel:*)', 'Bash(bunx netlify:*)', 'Bash(yarn dlx wrangler:*)']);
+});
+
+test('the survey never runs the project\'s hooks or fsmonitor, and its fetch never asks for a passphrase', async () => {
+  const { folder, remote } = await makeProject();
+  const upstream = await makeUpstream(folder);
+  // A new commit on the remote, so the fetch updates a ref and would run reference-transaction.
+  const other = path.join(tempFolder('wh-other-'), 'other');
+  await g(path.dirname(other), 'clone', '--quiet', remote.url, other);
+  await g(other, 'commit', '--quiet', '--allow-empty', '-m', 'more');
+  await g(other, 'push', '--quiet', 'origin', 'main');
+  const marker = path.join(tempFolder('wh-marker-'), 'ran');
+  const hook = path.join(folder, '.git', 'hooks', 'reference-transaction');
+  fs.writeFileSync(hook, `#!/bin/sh\necho ran >> "${marker.replace(/\\/g, '/')}"\n`);
+  fs.chmodSync(hook, 0o755);
+  await g(folder, 'config', 'core.fsmonitor', hook);
+
+  const calls = [];
+  const recording = async (file, args, options) => {
+    if (file === 'git') calls.push({ args, env: options?.env ?? {} });
+    return noPrs(file, args, options);
+  };
+  await surveyProject({ folder, manifest: MANIFEST, run: recording, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') });
+  assert.equal(fs.existsSync(marker), false, 'a project hook ran');
+  for (const { args } of calls) {
+    assert.ok(args.includes('core.fsmonitor=false'), args.join(' '));
+    assert.ok(args.some((a) => a.startsWith('core.hooksPath=')), args.join(' '));
+  }
+  const fetch = calls.find((c) => c.args.includes('fetch'));
+  assert.match(fetch.env.GIT_SSH_COMMAND, /BatchMode=yes/);
+  // The same hook does run under plain git, so the test would see it.
+  await g(other, 'commit', '--quiet', '--allow-empty', '-m', 'again');
+  await g(other, 'push', '--quiet', 'origin', 'main');
+  await g(folder, '-c', 'core.fsmonitor=false', 'fetch', '--quiet', 'origin');
+  assert.equal(fs.existsSync(marker), true);
+});
+
+test('surveyed from a linked worktree, the main checkout is listed and the worktree itself is not', async () => {
+  const { folder } = await makeProject();
+  const upstream = await makeUpstream(folder);
+  const worktree = path.join(path.dirname(folder), 'lantern-till');
+  await g(folder, 'worktree', 'add', '--quiet', '-b', 'feature/till', worktree);
+  const survey = await surveyProject({ folder: worktree, manifest: MANIFEST, run: noPrs, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') });
+  assert.deepEqual(survey.inFlight.worktrees.map((w) => [fs.realpathSync(w.path), w.branch]), [[fs.realpathSync(folder), 'main']]);
 });

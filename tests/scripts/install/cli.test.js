@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeBrief } from '../../../scripts/install/brief.js';
-import { cardLines, cloneUpstreams, main } from '../../../scripts/install/cli.js';
+import { cardLines, cloneUpstreams, main, NOT_READ } from '../../../scripts/install/cli.js';
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -59,4 +59,32 @@ test('the upstreams are cloned bare into temporary folders and removed after', a
   assert.equal(await g(clones['kit-a'], 'rev-parse', '--is-bare-repository'), 'true');
   remove();
   assert.equal(fs.existsSync(clones['kit-a']), false);
+});
+
+test('cli survey prints scheduled as null and says to pass --scheduled when no list is given', async () => {
+  const folder = path.join(tempFolder('wh-cli-'), 'lantern-shop');
+  fs.mkdirSync(folder);
+  await g(folder, 'init', '--quiet', '-b', 'main');
+  await g(folder, 'commit', '--quiet', '--allow-empty', '-m', 'start');
+  const options = (out, err) => ({
+    write: (t) => out.push(t), warn: (t) => err.push(t), manifest: { upstreams: [] }, clone: async () => ({ clones: {}, remove: () => {} }),
+  });
+  let out = [];
+  let err = [];
+  assert.equal(await main(['survey', folder], options(out, err)), 0);
+  assert.equal(JSON.parse(out.join('')).scheduled, null);
+  assert.equal(err.join(''), NOT_READ);
+  assert.match(NOT_READ, /--scheduled/);
+
+  const list = path.join(tempFolder('wh-cli-'), 'scheduled.json');
+  fs.writeFileSync(list, JSON.stringify([{ name: 'weekly-stock', folder }]));
+  out = [];
+  err = [];
+  assert.equal(await main(['survey', folder, '--scheduled', list], options(out, err)), 0);
+  assert.deepEqual(JSON.parse(out.join('')).scheduled, [{ name: 'weekly-stock' }]);
+  assert.equal(err.join(''), '');
+
+  err = [];
+  assert.equal(await main(['survey'], options(out, err)), 2);
+  assert.match(err.join(''), /--scheduled/);
 });

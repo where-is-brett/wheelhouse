@@ -58,6 +58,7 @@ test('a brief with a missing or mistyped key is refused, naming the key', () => 
     [(b) => { b.v = 2; }, /\bv\b/],
     [(b) => { b.extra = true; }, /extra/],
     [(b) => { b.protection = 'locked'; b.connection = 'quick'; }, /connection/],
+    [(b) => { b.folder = 'lantern-shop'; }, /folder is not a full path/],
   ];
   const file = path.join(briefDir(folder), 'brief.json');
   for (const [change, named] of cases) {
@@ -80,4 +81,15 @@ test('a brief for another folder is refused', () => withHome(() => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.copyFileSync(path.join(briefDir(other), 'brief.json'), file);
   assert.throws(() => readBrief(folder), /another folder/);
+}));
+
+test('a link to the folder, or another spelling of it, finds the same brief', () => withHome(() => {
+  const real = projectFolder();
+  fs.mkdirSync(real, { recursive: true });
+  const link = path.join(tempFolder('wh-brief-link-'), 'shop-link');
+  fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(briefDir(link), briefDir(real));
+  if (process.platform === 'darwin' || process.platform === 'win32') assert.equal(briefDir(real.toUpperCase()), briefDir(real));
+  writeBrief(goodBrief(real));
+  assert.equal(readBrief(link).folder, real);
 }));

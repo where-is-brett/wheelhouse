@@ -21,15 +21,22 @@
 //   description, leaving out Wheelhouse, its pins and the copies its settings already switch off.
 // - Scheduled tasks: Claude Code records no folder in a scheduled task's own files, so the caller
 //   passes the list (`scheduled`, as `{ name, folder, path? }`), and the survey keeps this project's.
+//   With no list given, `scheduled` is null: not read, which is not the same as none.
+//
+// Git never runs the project's own code here: every call on the project turns fsmonitor off and
+// points core.hooksPath at an empty folder, and the fetch's ssh never asks for a passphrase.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { run as defaultRun, withoutGitVars } from '../lib/run.js';
 import { claudeHome as defaultClaudeHome, MARKETPLACE } from '../lineage/manifest.js';
 import { HOST_TOOLS, projectSettings, SWITCHED_OFF_PLUGINS } from '../protection/settings.js';
 
 export const SAME_NAME = 'same name, own content';
-const COMMAND_WORDS = new Set(['gh', 'glab', 'git', 'npm', 'npx', ...HOST_TOOLS]);
+const COMMAND_WORDS = new Set(['gh', 'glab', 'git', 'npm', 'npx', 'bunx', ...HOST_TOOLS]);
+// Package runners of two words, which Standard's deny rules also name (`pnpm dlx vercel`).
+const RUNNER_FIRSTS = new Map([['pnpm', 'dlx'], ['yarn', 'dlx']]);
 // Words after which a command still starts, in a shell line.
 const LEADS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', 'time', 'exec', 'command', 'sudo', 'xargs', 'env']);
 const OPERATOR = /^[;&|()`]+$/;
@@ -219,10 +226,13 @@ export function commandsIn(chunk) {
     const token = tokens[i];
     if (OPERATOR.test(token)) { starts = true; continue; }
     const word = token.replace(/^[$"']+/, '');
-    if (starts && COMMAND_WORDS.has(word)) {
+    const runner = starts && RUNNER_FIRSTS.get(word) === tokens[i + 1];
+    if (starts && (COMMAND_WORDS.has(word) || runner)) {
       const parts = [word];
+      if (runner) parts.push(tokens[(i += 1)]);
+      const most = parts.length + MOST_ARGUMENTS - 1;
       // A closing quote ends the command with the argument it follows.
-      while (parts.length <= MOST_ARGUMENTS && i + 1 < tokens.length) {
+      while (parts.length <= most && i + 1 < tokens.length) {
         const next = tokens[i + 1];
         const bare = next.replace(/["']+$/, '');
         if (!ARGUMENT.test(bare)) break;
@@ -297,7 +307,7 @@ async function readInFlight({ folder, host, git, run }) {
   let behind = 0;
   let prs = [];
   if (remotes.includes('origin')) {
-    await git(['fetch', '--quiet', 'origin']);
+    await git(['fetch', '--quiet', 'origin'], folder, { env: { GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' } });
     let ref = (await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], folder, { allowFail: true })).trim();
     if (ref === '') {
       for (const candidate of ['refs/remotes/origin/main', 'refs/remotes/origin/master']) {
@@ -310,10 +320,10 @@ async function readInFlight({ folder, host, git, run }) {
   const dirty = (await git(['status', '--porcelain'])).trim() !== '';
   const worktrees = [];
   const blocks = (await git(['worktree', 'list', '--porcelain'])).replace(/\r\n/g, '\n').split('\n\n').filter((b) => b.trim() !== '');
-  for (const block of blocks.slice(1)) {
+  for (const block of blocks) {
     const lines = block.split('\n');
     const at = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
-    if (!at) continue;
+    if (!at || sameFolder(at, folder)) continue; // the folder surveyed is not work left in flight
     const branchLine = lines.find((l) => l.startsWith('branch '));
     const branch = branchLine ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '') : null;
     const there = fs.existsSync(at);
@@ -390,13 +400,26 @@ function readPersonalSkills(claudeHome) {
 // Surveys the project in `folder`. `manifest` gives the pinned skills; `upstreams` maps each
 // upstream's name to a clone of its repository (bare or not) with its whole history; `host` is
 // 'github' or 'gitlab', worked out from the remote's address when not given; `scheduled` is
-// Claude's scheduled tasks as `{ name, folder, path? }`; `claudeHome` is the director's Claude folder.
-export async function surveyProject({ folder, manifest, run = defaultRun, upstreams = {}, host = null, scheduled = [], claudeHome = defaultClaudeHome() }) {
+// Claude's scheduled tasks as `{ name, folder, path? }`, or null when no list was given (the
+// survey's `scheduled` is then null too); `claudeHome` is the director's Claude folder.
+export async function surveyProject({ folder, manifest, run = defaultRun, upstreams = {}, host = null, scheduled = null, claudeHome = defaultClaudeHome() }) {
   if (typeof folder !== 'string' || !fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory()) throw new Error('The project folder is not there');
+  if (scheduled !== null && !Array.isArray(scheduled)) throw new Error('The scheduled tasks are not a list');
   const project = path.resolve(folder);
-  const git = async (args, cwd = project, { allowFail = false } = {}) => {
-    const result = await run('git', ['-c', 'core.quotepath=off', ...args], {
-      cwd, baseEnv: withoutGitVars(), env: { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, timeoutMs: GIT_WAIT_MS,
+  // An empty hooks folder, so no hook of the project's runs during the survey.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
+  try {
+    return await surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, hooksPath: path.join(scratch, 'hooks') });
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+async function surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, hooksPath }) {
+  fs.mkdirSync(hooksPath);
+  const git = async (args, cwd = project, { allowFail = false, env = {} } = {}) => {
+    const result = await run('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${hooksPath}`, ...args], {
+      cwd, baseEnv: withoutGitVars(), env: { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...env }, timeoutMs: GIT_WAIT_MS,
     });
     if (result.code !== 0) {
       if (allowFail) return '';
@@ -421,7 +444,7 @@ export async function surveyProject({ folder, manifest, run = defaultRun, upstre
     agents: readAgents(project),
     commands: readCommands(project),
     hooks: readHooks(project),
-    scheduled: (Array.isArray(scheduled) ? scheduled : [])
+    scheduled: scheduled === null ? null : scheduled
       .filter((t) => typeof t?.name === 'string' && sameFolder(t.folder, project))
       .map((t) => (typeof t.path === 'string' ? { name: t.name, path: t.path } : { name: t.name })),
     copies,

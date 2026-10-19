@@ -1,10 +1,12 @@
 // scripts/install/cli.js
 // The install brief's two commands, for the agent writing the private brief:
-//   node scripts/install/cli.js survey <folder> [--scheduled <file.json>]
+//   node scripts/install/cli.js survey <folder> --scheduled <file.json>
 //     Surveys the project read-only and prints the survey as JSON. Each pinned upstream is cloned
 //     bare into its own new temporary folder, removed after, so copies can be told from same-named
 //     skills. `--scheduled` names a JSON list of Claude's scheduled tasks as { name, folder, path? },
-//     since Claude Code keeps no folder in a scheduled task's own files.
+//     since Claude Code keeps no folder in a scheduled task's own files: make it from the
+//     scheduled-tasks tool's list (list_scheduled_tasks, with each task's runs or prompt for its
+//     folder). Without it the survey's `scheduled` is null, meaning not read, and a note says so.
 //   node scripts/install/cli.js brief <folder>
 //     Checks the written brief with readBrief and prints what the install card will say: the
 //     answers and the counts, never a part's name.
@@ -76,18 +78,28 @@ function scheduledFrom(file) {
   return listed;
 }
 
-export async function main(argv, { write = (text) => process.stdout.write(text) } = {}) {
+export const USAGE = 'usage: node scripts/install/cli.js survey <folder> --scheduled <file.json> | brief <folder>\n'
+  + '  --scheduled: a JSON list of { name, folder, path? }, made from the scheduled-tasks tool\'s list\n'
+  + '  (list_scheduled_tasks). Without it the survey runs, but "scheduled" is null: not read.\n';
+export const NOT_READ = 'No --scheduled list was given, so "scheduled" is null: the scheduled tasks were not read. '
+  + 'Make the list from the scheduled-tasks tool (list_scheduled_tasks), as [{ name, folder, path }], and run the survey again with --scheduled <file.json>.\n';
+
+// `manifest` and `clone` are for tests.
+export async function main(argv, {
+  write = (text) => process.stdout.write(text), warn = (text) => process.stderr.write(text), manifest = null, clone = cloneUpstreams,
+} = {}) {
   const [command, folder, ...rest] = argv;
   if (command === 'survey' && folder && (rest.length === 0 || (rest.length === 2 && rest[0] === '--scheduled'))) {
-    const scheduled = rest.length === 2 ? scheduledFrom(rest[1]) : [];
-    const manifest = readManifest();
-    const { clones, remove } = await cloneUpstreams(manifest);
+    const scheduled = rest.length === 2 ? scheduledFrom(rest[1]) : null;
+    const pins = manifest ?? readManifest();
+    const { clones, remove } = await clone(pins);
     try {
-      const survey = await surveyProject({ folder, manifest, run, upstreams: clones, scheduled });
+      const survey = await surveyProject({ folder, manifest: pins, run, upstreams: clones, scheduled });
       write(`${JSON.stringify(survey, null, 2)}\n`);
     } finally {
       remove();
     }
+    if (scheduled === null) warn(NOT_READ);
     return 0;
   }
   if (command === 'brief' && folder && rest.length === 0) {
@@ -99,7 +111,7 @@ export async function main(argv, { write = (text) => process.stdout.write(text) 
     write(`${cardLines(brief).join('\n')}\n`);
     return 0;
   }
-  process.stderr.write('usage: node scripts/install/cli.js survey <folder> [--scheduled <file.json>] | brief <folder>\n');
+  warn(USAGE);
   return 2;
 }
 

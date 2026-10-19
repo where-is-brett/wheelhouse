@@ -17,12 +17,20 @@ export const BRIEF_FILE = 'brief.json';
 export const KINDS = Object.freeze(['skill', 'agent', 'command', 'hook', 'scheduled']);
 const COMPUTER_ID = /^[0-9a-f]{8}$/;
 
+// A folder's one spelling: its real path when it exists (links resolved, so /tmp and
+// /private/tmp agree), else the resolved path; lowercased where the system folds case.
+function folderKey(folder) {
+  let full = path.resolve(folder);
+  try { full = fs.realpathSync.native(full); } catch { /* not there yet */ }
+  return process.platform === 'darwin' || process.platform === 'win32' ? full.toLowerCase() : full;
+}
+
 // The folder the brief for the project in `folder` lives in: its folder name, then the first
-// eight hex characters of the SHA-256 of its full path, so two projects with the same folder
-// name never share a brief.
+// eight hex characters of the SHA-256 of its real path, so two projects with the same folder
+// name never share a brief, and every spelling of one folder finds the same brief.
 export function briefDir(folder) {
   if (typeof folder !== 'string' || folder === '') throw new Error('The project folder is not a path');
-  const full = path.resolve(folder);
+  const full = folderKey(folder);
   const name = path.basename(full).replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_') || 'project';
   const hash = crypto.createHash('sha256').update(full).digest('hex').slice(0, 8);
   return path.join(wheelhouseHome(), 'install', `${name}-${hash}`);
@@ -82,6 +90,7 @@ const checkShape = record({
 // connection (design section 11).
 export function checkBrief(brief) {
   checkShape(brief, '');
+  if (!path.isAbsolute(brief.folder)) fail('folder', 'is not a full path');
   if (brief.protection === 'locked' && brief.connection !== 'narrow') fail('connection', 'is quick, which Locked never takes');
 }
 

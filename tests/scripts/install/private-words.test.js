@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
 import { PRIVATE_SCAN_COMMITS } from '../../../scripts/lib/install-numbers.js';
-import { checkPrivate, privateWords, scanRepo } from '../../../scripts/install/private-words.js';
+import { checkPrivate, maskWords, privateWords, scanRepo } from '../../../scripts/install/private-words.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -50,10 +50,16 @@ test('a listed word in a tracked file or an unpushed commit message fails, whate
   const root = await makeRepo();
   const head = await g(root, 'rev-parse', 'HEAD');
   const hits = await scanRepo({ root, words: ['quill-and-ink', 'LanternShop'] });
-  assert.deepEqual(hits, [
+  const added = hits.filter((h) => h.where === 'diff');
+  assert.deepEqual(hits.filter((h) => h.where !== 'diff'), [
     { where: 'file', at: 'notes.md', line: 2, wordNo: 2 },
     { where: 'commit', at: head, line: 3, wordNo: 2 },
   ]);
+  // The unpushed commit's added line names it too; the pushed commit's never counts.
+  assert.equal(added.length, 1);
+  assert.equal(added[0].at, head);
+  assert.equal(added[0].wordNo, 2);
+  assert.ok(added[0].line > 0);
   await withHome(async (home) => {
     writeList(home, '# names\nquill-and-ink\nlanternshop\n');
     const result = await checkPrivate({ root });
@@ -85,6 +91,7 @@ test('a hit is reported by place, never by the word', async () => {
     assert.match(text, /notes\.md, line 2: word 3 of the private list/);
     assert.match(text, /commit [0-9a-f]{40}, line 3: word 3 of the private list/);
     assert.match(text, /a file's name: word 3 of the private list/);
+    assert.match(text, /commit [0-9a-f]{40}, line \d+ of its changes: word 3 of the private list/);
   });
 });
 
@@ -104,4 +111,36 @@ test('with a list and no hits the check passes and says what it read', async () 
     assert.equal(result.code, 0);
     assert.match(result.lines.join('\n'), /No private words found/);
   });
+});
+
+test('a word added in one unpushed commit and taken out in a later one still fails', async () => {
+  const root = await makeRepo();
+  fs.writeFileSync(path.join(root, 'notes.md'), 'nothing here\na draft naming QuillAndInk\n');
+  await g(root, 'commit', '--quiet', '-am', 'draft');
+  const drafted = await g(root, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(root, 'notes.md'), 'nothing here\n');
+  await g(root, 'commit', '--quiet', '-am', 'tidy again');
+  const hits = await scanRepo({ root, words: ['quillandink'] });
+  assert.deepEqual(hits.map((h) => [h.where, h.at, h.wordNo]), [['diff', drafted, 1]]);
+});
+
+test('the index is read, not the working tree, and a link\'s target is read too', async () => {
+  const root = await makeRepo();
+  // Staged with the word, then taken out of the working tree only: still found.
+  fs.writeFileSync(path.join(root, 'staged.md'), 'about quillandink\n');
+  await g(root, 'add', 'staged.md');
+  fs.writeFileSync(path.join(root, 'staged.md'), 'clean\n');
+  // In the working tree only, never staged: not found.
+  fs.writeFileSync(path.join(root, 'notes.md'), 'nothing here\nsecond line about LANTERNSHOP stock\nquillandink\n');
+  // A link whose committed target names the word.
+  const object = (await run('git', ['hash-object', '-w', '--stdin'], { cwd: root, input: '../quillandink/shelf' })).stdout.trim();
+  await g(root, 'update-index', '--add', '--cacheinfo', `120000,${object},shelf-link`);
+  const hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'file');
+  assert.deepEqual(hits.map((h) => [h.at, h.line]).sort(), [['shelf-link', 1], ['staged.md', 1]]);
+});
+
+test('a masked path leaves no part of any listed word', () => {
+  assert.equal(maskWords('foobar.md', ['bar', 'foobar']), '***.md');
+  assert.equal(maskWords('docs/Bar-and-FOOBAR/x.md', ['bar', 'foobar']), 'docs/***-and-***/x.md');
+  assert.equal(maskWords('plain.md', ['bar']), 'plain.md');
 });
