@@ -11,6 +11,8 @@ export const DELEGATE_AFTER = 5;
 // The page sizes a preview is photographed at, and how long one page may take.
 export const SCREEN_SIZES = Object.freeze([Object.freeze({ width: 1280, height: 800 }), Object.freeze({ width: 390, height: 844 })]);
 export const SCREEN_TIMEOUT_MS = 30000;
+// How long a page's own scripts may run, in the browser's time, before its picture is taken.
+export const SCREEN_SETTLE_MS = 5000;
 
 // What a card is about: the cards with a set line, and the one without.
 export const CARD_KINDS = Object.freeze([

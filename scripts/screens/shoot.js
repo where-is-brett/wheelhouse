@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run as runProgram } from '../lib/run.js';
-import { SCREEN_TIMEOUT_MS } from '../lib/front-desk.js';
+import { SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../lib/front-desk.js';
 import { pixelHash } from './png.js';
 
 // How many redirects on the preview's own host are followed before giving up.
@@ -46,7 +46,8 @@ export function findBrowser({ platform = process.platform, exists = fs.existsSyn
 }
 
 // The browser's arguments for one screenshot of `url` at `size`, written to `out`, with its profile
-// in `profile`. The address goes last.
+// in `profile`. The page's scripts get SCREEN_SETTLE_MS to draw first; the browser's sandbox stays on.
+// The address goes last.
 export function browserArgs({ url, size, profile, out }) {
   return [
     '--headless=new',
@@ -57,6 +58,7 @@ export function browserArgs({ url, size, profile, out }) {
     '--mute-audio',
     '--hide-scrollbars',
     '--force-device-scale-factor=1',
+    `--virtual-time-budget=${SCREEN_SETTLE_MS}`,
     `--user-data-dir=${profile}`,
     `--window-size=${size.width},${size.height}`,
     `--screenshot=${out}`,
@@ -65,7 +67,7 @@ export function browserArgs({ url, size, profile, out }) {
 }
 
 // Reads the page's status before any browser runs, following redirects only while they stay on the
-// page's own origin. Resolves to { ok: true, url } with the address that answered 2xx, or
+// page's own origin. Resolves to { ok: true, url } with the address that answered 2xx (not 204 or 205), or
 // { ok: false, why }.
 async function readStatus(url, fetch, timeoutMs) {
   const origin = new URL(url).origin;
@@ -80,6 +82,8 @@ async function readStatus(url, fetch, timeoutMs) {
     }
     try { await response.body?.cancel(); } catch { /* the body is not needed */ }
     const { status } = response;
+    // 204 and 205 have no page to show: a blank picture would match at both commits.
+    if (status === 204 || status === 205) return { ok: false, why: `the page answered ${status} with nothing to show` };
     if (status >= 200 && status < 300) return { ok: true, url: at };
     const location = status >= 300 && status < 400 ? response.headers.get('location') : null;
     if (!location) return { ok: false, why: `the page answered ${status}` };

@@ -154,6 +154,15 @@ test('pages are joined onto the preview and must stay on it', async () => {
   const under = cachedShooter({ dir: tempFolder('wh-screens-'), previewUrl: async () => 'https://review.example.com/shop/mr-12/', shoot: nested, browser: '/bin/chrome' });
   await under(BEFORE, '/pricing', SCREEN_SIZES[0]);
   assert.equal(nested.calls[0].url, 'https://review.example.com/shop/mr-12/pricing');
+
+  // A page can't climb out of a preview under a path into another deployment, however it is spelt.
+  for (const page of ['/../mr-11/', '/%2e%2e/mr-11/', '/%2E%2E/mr-11/', '/.%2e/mr-11/', '/./pricing', '/%2e/pricing', '/a/../../mr-11/', '/..', '/pricing/..?x=1']) {
+    assert.equal((await under(BEFORE, page, SCREEN_SIZES[0])).ok, false, page);
+  }
+  // Dots inside a name, or after the path, are fine.
+  await under(BEFORE, '/v1.2/notes...', SCREEN_SIZES[0]);
+  await under(BEFORE, '/search?q=../x', SCREEN_SIZES[0]);
+  assert.deepEqual(nested.calls.slice(1).map((c) => c.url), ['https://review.example.com/shop/mr-12/v1.2/notes...', 'https://review.example.com/shop/mr-12/search?q=../x']);
 });
 
 test('hashes are cached per commit and page, and answer when the preview has gone', async () => {
@@ -191,6 +200,24 @@ test('a failed photograph is not cached, and a broken cache file is a miss', asy
     assert.deepEqual(await shootAt(AFTER, '/', SCREEN_SIZES[0]), { ok: true, hash: H2 });
     assert.equal(shot.calls.length, before + 1, broken);
   }
+});
+
+test('a photograph whose cache can not be written is still answered', async () => {
+  const blocker = path.join(tempFolder('wh-screens-'), 'a-file');
+  fs.writeFileSync(blocker, '');
+  const shot = fakeShoot({ ok: true, hash: H2 });
+  // The cache folder sits under a file, so it can't be made.
+  const shootAt = cachedShooter({ dir: path.join(blocker, 'cache'), previewUrl, shoot: shot, browser: '/bin/chrome' });
+  assert.deepEqual(await shootAt(BEFORE, '/', SCREEN_SIZES[0]), { ok: true, hash: H2 });
+  assert.equal(await screenshotsMatch({ before: BEFORE, after: AFTER, pages: ['/'], shootAt }), true);
+});
+
+test('two pictures of one commit taken at once both reach its cache file', async () => {
+  const dir = tempFolder('wh-screens-');
+  const shootAt = cachedShooter({ dir, previewUrl, shoot: fakeShoot(), browser: '/bin/chrome' });
+  const answers = await Promise.all(SCREEN_SIZES.map((size) => shootAt(BEFORE, '/', size)));
+  assert.ok(answers.every((a) => a.ok));
+  assert.deepEqual(fs.readdirSync(dir), [`${BEFORE}.json`]);
 });
 
 test('a commit that is not a commit id is refused, never used as a path', async () => {

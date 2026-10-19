@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findBrowser, browserArgs, shoot } from '../../../scripts/screens/shoot.js';
 import { pixelHash } from '../../../scripts/screens/png.js';
-import { SCREEN_TIMEOUT_MS } from '../../../scripts/lib/front-desk.js';
+import { SCREEN_TIMEOUT_MS, SCREEN_SETTLE_MS } from '../../../scripts/lib/front-desk.js';
 import { encodePng, solid } from '../../fixtures/screens/encode.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -78,6 +78,11 @@ test('browserArgs runs a hidden browser at one size with its own profile, the ad
   const args = browserArgs({ url: URL_, size: { width: 390, height: 844 }, profile: '/tmp/p', out: '/tmp/p/screen.png' });
   for (const flag of ['--headless=new', '--hide-scrollbars', '--window-size=390,844', '--user-data-dir=/tmp/p', '--screenshot=/tmp/p/screen.png', '--no-first-run']) assert.ok(args.includes(flag), flag);
   assert.equal(args.at(-1), URL_);
+  // A client-rendered page gets time to draw before its picture.
+  assert.equal(SCREEN_SETTLE_MS, 5000);
+  assert.ok(args.includes(`--virtual-time-budget=${SCREEN_SETTLE_MS}`));
+  // The browser's own sandbox is never turned off.
+  assert.ok(!args.some((a) => /sandbox/i.test(a)), 'no sandbox flag');
 });
 
 test('a page is photographed and its pixels hashed', async () => {
@@ -129,8 +134,8 @@ test('only an https address is photographed, refused before any fetch', async ()
   }
 });
 
-test('a page with an error status, or that cannot be fetched, is not photographed', async () => {
-  for (const fetch of [fakeFetch({ [URL_]: [404] }), fakeFetch({ [URL_]: [500] }), fakeFetch({ [URL_]: [304] }), fakeFetch({})]) {
+test('a page with an error or empty status, or that cannot be fetched, is not photographed', async () => {
+  for (const fetch of [fakeFetch({ [URL_]: [404] }), fakeFetch({ [URL_]: [204] }), fakeFetch({ [URL_]: [205] }), fakeFetch({ [URL_]: [500] }), fakeFetch({ [URL_]: [304] }), fakeFetch({})]) {
     const run = fakeRun();
     const result = await shoot({ browser: '/bin/chrome', url: URL_, size: SIZE, run, fetch, tmp: tempFolder('wh-shoot-') });
     assert.equal(result.ok, false);
