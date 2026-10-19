@@ -195,6 +195,75 @@ test('Shape 2: a second foreman session\'s tick finds the lock taken and runs no
   }
 }));
 
+test('Shape 2: the waker stays Shape 2\'s while the shape is cached, and the configuration is asked for once a tick', () => withHome(async () => {
+  const checkout = await project();
+  const h = helper(config({ watcherShape: 2 }));
+  const c = clock();
+  const look = looker([INCIDENT]);
+  const fake = fakeSpawn();
+  const tick = () => watchTick({
+    project: P,
+    role: 'foreman',
+    client: h.client,
+    now: c.now,
+    pluginRoot: ROOT,
+    spawn: fake.spawn,
+    loop: { observe: look.observe, log: quiet, wakerOptions: { run: () => { throw new Error('the bridge starts no session'); } } },
+  });
+
+  // The configuration read for the shape is the loop's: it isn't asked for twice.
+  await tick();
+  assert.equal(h.asked(), 1);
+
+  // The default branch now says Shape 1, within the ten minutes the shape is kept: the loop's own
+  // read of the configuration doesn't turn its waker into one that starts sessions.
+  h.set(config());
+  c.move(60 * SEC);
+  const second = await tick();
+  assert.equal(h.asked(), 2);
+  assert.equal(second.submit.length, 1);
+  assert.equal(path.dirname(second.submit[0].slice(`${FOREMAN_PROMPT_LEAD} WAKE foreman `.length)), path.join(checkout, '.wheelhouse', 'foreman', 'wakes'));
+  assert.equal(fake.calls.length, 0);
+}));
+
+test('Shape 2: lines printed by a loop cut off at the bridge\'s limit are handed back at the next tick', () => withHome(async () => {
+  await project();
+  const h = helper(config({ watcherShape: 2 }));
+  const c = clock();
+  const seen = [];
+  // A stand-in for the watcher's loop: prints `lines`, then answers as `ends` says.
+  const runner = (lines, ends) => async (args) => {
+    seen.push(args);
+    for (const line of lines) args.wakerOptions.print(line);
+    if (ends === 'never') return new Promise(() => {});
+    return { started: ends === 'ran', loops: 1 };
+  };
+  const tick = (runWatcher) => watchTick({ project: P, role: 'foreman', client: h.client, now: c.now, loop: { runWatcher } });
+  const lead = (line) => `${FOREMAN_PROMPT_LEAD} ${line}`;
+
+  // The bridge's limit comes before the loop returns: the answer never goes.
+  const late = new Promise((resolve) => { setTimeout(() => resolve('late'), 50); });
+  assert.equal(await Promise.race([tick(runner(['WAKE foreman /w/a.json', 'WAKE feature login-page /w/b.json'], 'never')), late]), 'late');
+  assert.equal(seen[0].config.watcherShape, 2, 'the configuration read on this tick is passed');
+  assert.equal(seen[0].wakerOptions.shape, 2);
+
+  // A tick whose loop finds the lock taken leaves them for the loop that runs.
+  c.move(30 * SEC);
+  assert.deepEqual(await tick(runner([], 'locked')), { watcher: 'running', submit: [] });
+
+  // The next loop that runs hands them back first, then its own.
+  c.move(30 * SEC);
+  assert.deepEqual(await tick(runner(['WAKE foreman /w/c.json'], 'ran')), {
+    watcher: 'running',
+    submit: [lead('WAKE foreman /w/a.json'), lead('WAKE feature login-page /w/b.json'), lead('WAKE foreman /w/c.json')],
+  });
+  assert.equal(seen[2].config, null, 'a cached shape leaves the loop to read the configuration');
+  // Once in an answer, they aren't handed back again.
+  c.move(30 * SEC);
+  assert.deepEqual(await tick(runner([], 'ran')), { watcher: 'running', submit: [] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(watchFile(P), 'utf8')).unsent, []);
+}));
+
 test('nothing starts before the default branch\'s configuration has been read', () => withHome(async () => {
   await project();
   const h = helper(null);

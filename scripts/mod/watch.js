@@ -13,7 +13,9 @@
 //   lines (WAKE foreman <file>, WAKE feature <work> <file>), handed back as the foreman's
 //   prompts in order. The watcher's start lock keeps two loops of one project from running at
 //   once, so a second foreman session, or a monitor left over, runs nothing. The loop's awake
-//   time is the time since the last loop this file records, capped as the watcher caps it.
+//   time is the time since the last loop this file records, capped as the watcher caps it. Its
+//   waker is always Shape 2's, and its lines are kept here as `unsent` until they are in an
+//   answer, so a loop cut off by the bridge's limit loses none.
 //   Any other role, or the other shape: nothing to do.
 //
 // watchTick never throws. Its `watcher` is 'running', 'started', 'failed' or 'not-needed', or
@@ -52,15 +54,18 @@ function readKept(project) {
   }
 }
 
-// Writes watch.json whole, through a temporary file. A file that can't be written costs only
-// the cache: the next tick asks again.
-function keep(project, kept) {
+// Writes `fields` into watch.json as it is now, read afresh, so what another session's tick
+// wrote meanwhile in its other fields is kept. The file is written whole through a temporary
+// file. A file that can't be written costs only the cache: the next tick asks again.
+function change(project, fields) {
   try {
     const file = watchFile(project);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    writeJsonFile(file, kept);
+    writeJsonFile(file, { ...readKept(project), ...fields });
   } catch { /* asked again next tick */ }
 }
+
+const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 // The milliseconds since `at` (an ISO time) when it is a time not after `t`, otherwise null.
 function since(at, t) {
@@ -68,20 +73,21 @@ function since(at, t) {
   return Number.isFinite(ms) && t >= ms ? t - ms : null;
 }
 
-// The shape, 1 or 2, from the cache while it is fresh, otherwise from the default branch,
-// otherwise the last one read; null when none has ever been read. `kept` is updated in place.
+// `{ shape, config }`: the shape, 1 or 2, from the cache while it is fresh, otherwise from the
+// default branch, otherwise the last one read, and null when none has ever been read; `config`
+// is the configuration when it was read on this tick, otherwise null. A shape read is kept.
 async function shapeOf(project, client, kept, t) {
   const cached = isRecord(kept.shape) && (kept.shape.value === 1 || kept.shape.value === 2) ? kept.shape : null;
   const age = since(cached?.at, t);
-  if (cached !== null && age !== null && age < SHAPE_FRESH_MS) return cached.value;
+  if (cached !== null && age !== null && age < SHAPE_FRESH_MS) return { shape: cached.value, config: null };
   const read = await projectConfig(project, client);
   if (read.config !== null) {
     // As the start script reads it: anything but 2 is Shape 1.
-    const value = read.config.watcherShape === 2 ? 2 : 1;
-    kept.shape = { value, at: new Date(t).toISOString() };
-    return value;
+    const shape = read.config.watcherShape === 2 ? 2 : 1;
+    change(project, { shape: { value: shape, at: new Date(t).toISOString() } });
+    return { shape, config: read.config };
   }
-  return cached?.value ?? null;
+  return { shape: cached?.value ?? null, config: null };
 }
 
 // Shape 1, at the front desk: the watcher started when it isn't running.
@@ -96,26 +102,43 @@ function keepRunning(project, { spawn, pluginRoot, alive, now, env }) {
 }
 
 // Shape 2, in the foreman's session: one loop of the watcher, as its command line runs it, with
-// the wake lines collected. `loop` passes the observation, the waker's options and the log in
-// tests.
-async function oneLoop(project, { client, now, kept, t, loop }) {
+// the wake lines collected. The waker is always Shape 2's, whatever a configuration read inside
+// the loop says, so the bridge never starts a session itself. The configuration read on this
+// tick is passed, so the loop doesn't ask for it again.
+//
+// A line counts as delivered by the waker once it is printed, so each is also kept in watch.json
+// as `unsent` until the loop has returned and the line is in the answer. A tick cut off by the
+// bridge's limit leaves its lines there, and the next tick that runs a loop hands them back
+// first (a wake may repeat). `loop` passes the observation, the waker's options, the log and the
+// runner in tests.
+async function oneLoop(project, { client, config, now, kept, t, loop }) {
+  const leftover = strings(kept.unsent) ? kept.unsent : [];
   const lines = [];
+  const print = (line) => {
+    lines.push(line);
+    change(project, { unsent: [...leftover, ...lines] });
+  };
   const cap = 2 * Math.min(...Object.values(INTERVALS));
   const gap = since(kept.loop?.at, t);
   const awake = awakeSince(gap === null ? null : t - gap, t, cap);
   const look = loop.observe ?? defaultObserve;
   const options = cliOptions(project);
-  const result = await runWatcher({
+  const result = await (loop.runWatcher ?? runWatcher)({
     ...options,
     client,
+    config,
     now,
     loops: 1,
     log: loop.log ?? (() => {}),
     observe: (args) => look({ ...args, awake }),
-    wakerOptions: { ...options.wakerOptions, ...loop.wakerOptions, print: (line) => lines.push(line) },
+    wakerOptions: {
+      ...options.wakerOptions, ...loop.wakerOptions, shape: 2, print,
+    },
   });
-  if (result.started) kept.loop = { at: new Date(t).toISOString() };
-  return lines.map((line) => `${FOREMAN_PROMPT_LEAD} ${line}`);
+  // Another session's loop holds the lock: what was left over stays for the loop that runs.
+  if (!result?.started) return [];
+  change(project, { loop: { at: new Date(t).toISOString() }, unsent: [] });
+  return [...leftover, ...lines].map((line) => `${FOREMAN_PROMPT_LEAD} ${line}`);
 }
 
 // watchTick({ project, role, client, now, pluginRoot, spawn?, alive?, env?, loop? })
@@ -133,31 +156,21 @@ export async function watchTick({
       const age = since(kept.check?.at, t);
       if (age !== null && age < WATCH_EVERY_MS && ANSWERS.includes(kept.check.watcher)) return answer(kept.check.watcher);
     }
-    const shape = await shapeOf(project, client, kept, t);
+    const { shape, config } = await shapeOf(project, client, kept, t);
     if (shape === null) return answer(null);
 
     if (role === 'front-desk') {
       const watcher = shape === 1 ? keepRunning(project, {
         spawn, pluginRoot, alive, now, env,
       }) : 'not-needed';
-      kept.check = { at: new Date(t).toISOString(), watcher };
-      keep(project, kept);
+      change(project, { check: { at: new Date(t).toISOString(), watcher } });
       return answer(watcher);
     }
 
-    if (shape !== 2) {
-      keep(project, kept);
-      return answer('not-needed');
-    }
-    let submit;
-    try {
-      submit = await oneLoop(project, {
-        client, now, kept, t, loop,
-      });
-    } finally {
-      keep(project, kept);
-    }
-    return answer('running', submit);
+    if (shape !== 2) return answer('not-needed');
+    return answer('running', await oneLoop(project, {
+      client, config, now, kept, t, loop,
+    }));
   } catch {
     return answer('failed');
   }
