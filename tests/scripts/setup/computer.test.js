@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerStep, computerChanges, lockedStep, weakening } from '../../../scripts/setup/computer.js';
+import { computerStep, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
 import { findRun, markStep, reverseChange, startRun } from '../../../scripts/setup/journal.js';
@@ -28,8 +28,10 @@ import { NEEDS_NARROW, HAS_MDM, NOT_OURS } from '../../../scripts/protection/loc
 import { LEVELS, REAL_USERS } from '../../../scripts/setup/host.js';
 import { withProject, SLUG, REPO, T0 } from '../../helpers/setup-answers.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { fileURLToPath } from 'node:url';
 
 const PORT = 14318;
+const QUIET_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-quiet-steps.js');
 const MANIFEST = { claudeCode: { floor: '2.1.100' } };
 const NO_PLIST = '/nowhere/com.anthropic.claudecode.plist';
 
@@ -145,6 +147,66 @@ test('by the launch environment, the card asks for a Desktop restart', async () 
     assert.match(planned.director, /quit and reopen Claude Desktop/);
     assert.match(text, /variables for your account and a login item/, 'the why line names what this route changes');
     assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'the plan only reads');
+  });
+});
+
+// The user's Claude settings as step 6 would leave them, with `own` beside them: every key it lists
+// written, so a plan has nothing left to change.
+async function asWheelhouseNeeds(file, user, folder, own = {}) {
+  fs.writeFileSync(file, `${JSON.stringify(own)}\n`);
+  const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: path.dirname(file) }, manifest: MANIFEST, port: PORT });
+  const planned = await step.plan({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const c of planned.changes ?? []) {
+    let at = data;
+    for (const k of c.key.slice(0, -1)) at = (at[k] ??= {});
+    at[c.key.at(-1)] = c.after;
+  }
+  fs.writeFileSync(file, `${JSON.stringify(data)}\n`);
+}
+
+test('with nothing to change, step 6 settles, naming the director\'s settings that weaken Standard in a line, not the signing key', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const file = path.join(config, 'settings.json');
+    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
+    const plan = async () => {
+      const said = [];
+      return { got: await step.plan({ ...ctx, say: (line) => said.push(line) }), said };
+    };
+    await asWheelhouseNeeds(file, user, folder);
+    const quiet = await plan();
+    assert.deepEqual(quiet, { got: { settled: { record: { nothing: true } } }, said: [] }, 'nothing to name');
+    await asWheelhouseNeeds(file, user, folder, { sandbox: { excludedCommands: ['docker'] }, enabledPlugins: { 'theirs@market': true } });
+    const named = await plan();
+    assert.deepEqual(named.got, { settled: { record: { nothing: true } } });
+    assert.equal(named.said.length, 1);
+    assert.ok(named.said[0].startsWith(`${SETTLED_LEAD} Your own settings that weaken Standard, left as they are for you to decide:`), named.said[0]);
+    assert.match(named.said[0], /docker runs outside the sandbox/);
+    assert.match(named.said[0], /the plugin theirs@market is on/);
+    assert.doesNotMatch(named.said[0], /signing/);
+  });
+});
+
+test('through the helper, step 6 with nothing to change settles: its { nothing } answer, its done mark, and its line in status', async () => {
+  await withProject(async ({ folder, user, config, home }) => {
+    fs.writeFileSync(path.join(home, 'quiet-world.json'), JSON.stringify({ config, floor: MANIFEST.claudeCode.floor, port: PORT, pluginRoot: '/p' }));
+    await asWheelhouseNeeds(path.join(config, 'settings.json'), user, folder, { sandbox: { excludedCommands: ['docker'] } });
+    const routes = setupRoutes({ now: () => T0, userHome: user, platform: 'darwin', stepsModule: QUIET_STEPS });
+    const got = await routes['/setup/plan']({ folder, step: 6 });
+    assert.equal(got.ok, true, got.refused);
+    assert.equal(got.done, true);
+    assert.match(got.said, /docker runs outside the sandbox/);
+    const run = findRun(folder);
+    assert.equal(run.steps[6].doneAt, T0.toISOString());
+    assert.equal(run.steps[6].shownAt, undefined, 'no Go-ahead card');
+    const answer = run.changes.filter((c) => c.step === 6);
+    assert.deepEqual(answer.map((c) => [c.kind, c.target, c.before, c.after]), [['answer', 'step 6', null, { nothing: true }]]);
+    const { lines } = await routes['/setup/status']({ folder });
+    const at = lines.findIndex((l) => l.startsWith('Step 6,'));
+    assert.match(lines[at], /done at/);
+    assert.equal(lines[at + 1], `  ${answer[0].said}`);
+    assert.match(lines[at + 1], /docker runs outside the sandbox/);
   });
 });
 

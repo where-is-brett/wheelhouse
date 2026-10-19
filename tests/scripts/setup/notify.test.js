@@ -14,15 +14,15 @@ import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { answersFor } from '../../../scripts/setup/clicks.js';
 import { findRun, readJournal, startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
-import { noteAsked } from '../../../scripts/setup/clicks.js';
-import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
+import { noteAsked, copySetupRecords } from '../../../scripts/setup/clicks.js';
+import { keepAnswer, keepClick } from '../../../scripts/lib/setup-clicks.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { phonePushResult } from '../../../scripts/lib/setup-run.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { setLineOf } from '../../../scripts/state/card-lines.js';
+import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
-import { withProject, T0 } from '../../helpers/setup-answers.js';
+import { withProject, T0, SLUG } from '../../helpers/setup-answers.js';
 
 // The prompt record keeps an answer as made a minute before T0 (tests/helpers/setup-answers.js).
 const ANSWERED = new Date(T0.getTime() - 60 * 1000);
@@ -269,6 +269,29 @@ test('step 9 settles at once when an earlier run on this computer recorded the p
   assert.equal((await notifyStep({ pushResult: () => null }).plan({ runId: 'run-0000000002', answers: {}, now: () => T0 })).ask.id, READY_ID);
   const own = { [`9.${ARRIVED_ID}`]: { label: ARRIVED.no, text: null, at: T0.toISOString() } };
   assert.deepEqual(await step.plan({ runId: 'run-0000000002', answers: own, now: () => T0 }), { settled: { record: { pushArrived: false } } });
+});
+
+// A joining computer's run (ruling R74) ends on step 9's settling, with no health check after it:
+// that settling copies what no apply copied, step 9's answer and a Locked step 8's click among
+// them, into the project's state (ruling R45).
+test('on a joining run, step 9\'s settling copies its answer and step 8\'s click into the project\'s state', async () => {
+  await withProject(async ({ folder, user }) => {
+    const run = startRun({ folder, now: () => T0 });
+    addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: 'o/Cafe-Menu' } }]);
+    for (const n of [1, 2, 3, 6, 7, 8]) markStep(run.id, n, 'doneAt', { now: () => T0 });
+    const hash = 'c'.repeat(64);
+    const locked = makeEvent({ kind: 'action', data: { action: 'setup', runId: run.id, step: 8, hash, question: setupLine(8, hash), label: 'Go ahead' }, now: () => T0 });
+    keepClick(locked);
+    const card = { question: 'Did the test notification reach your phone?', header: 'Question', options: [ARRIVED.yes, ARRIVED.no].map((l) => ({ label: l, description: l })) };
+    noteAsked({ runId: run.id, folder, step: 9, id: ARRIVED_ID, card, now: () => T0 });
+    const arrived = makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: run.id, step: 9, questionId: ARRIVED_ID, question: card.question, label: ARRIVED.yes, text: null }, now: () => T0 });
+    keepAnswer(arrived);
+    const sent = [];
+    const record = async ({ project, event }) => { sent.push([project, event.id]); return { ok: true, id: event.id }; };
+    const routes = setupRoutes({ now: () => T0, userHome: user, copy: (runId) => copySetupRecords(runId, SLUG, { record }) });
+    assert.deepEqual(await routes['/setup/plan']({ folder, step: 9 }), { ok: true, done: true });
+    assert.deepEqual(sent.sort(), [[SLUG, locked.id], [SLUG, arrived.id]].sort());
+  });
 });
 
 test('the push test\'s result names whether it arrived, and only for one of the card\'s two answers', () => {

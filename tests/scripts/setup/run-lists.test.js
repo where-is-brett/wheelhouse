@@ -94,14 +94,15 @@ async function withJoining(fn, { done = [], joining = true, world = {} } = {}) {
     if (joining) addChanges(run.id, [{ ...JOINED, id: newId('chg') }]);
     for (const n of done) markStep(run.id, n, 'doneAt', { now: () => NOW });
     const finished = [];
+    const copied = [];
     const made = readJournal().runs.find((r) => r.id === run.id);
     const routes = setupRoutes({
       now: () => NOW, stepsModule: TEST_STEPS, userHome: user,
       health: async () => ({ green: true, lines: [], board: null, trials: null, project: 'o__Cafe-Menu' }),
       finish: async (args) => { finished.push(args); return { started: 'started' }; },
-      closeTrial: async () => {}, copy: async () => null,
+      closeTrial: async () => {}, copy: async (runId, at) => { copied.push([runId, at]); return null; },
     });
-    await fn({ folder, run: made, routes, finished });
+    await fn({ folder, run: made, routes, finished, copied });
   });
 }
 
@@ -111,7 +112,9 @@ test('on a joining run, steps 4, 5 and 10 are neither planned nor applied', asyn
       await assert.rejects(routes['/setup/plan']({ folder, step: n }), (e) => e.message === notOnList(run, n), `plan of step ${n}`);
       await assert.rejects(routes['/setup/apply']({ folder, step: n, hash: 'a'.repeat(64) }), (e) => e.message === notOnList(run, n), `apply of step ${n}`);
     }
-    assert.match(notOnList(run, 10), /^step 10, Health check is not one of this run's steps: .* runs only steps 1, 2, 3, 6, 7, 8, 9$/);
+    assert.equal(notOnList(run, 10), 'step 10, Health check is not one of this run\'s steps: a computer joining a project set up on another runs only steps 1, 2, 3, 6, 7, 8, 9');
+    // A run of another kind is not called a joining computer.
+    assert.equal(notOnList({ steps: {}, changes: [] }, 4), 'step 4, Three questions is not one of this run\'s steps: this run has only steps 1, 2, 3, 4, 5, 6, 7, 8, 9, 10');
     assert.equal(readJournal().runs[0].steps[10], undefined, 'nothing shown');
     // Its own steps are planned as usual.
     const card = await routes['/setup/plan']({ folder, step: 6 });
@@ -174,4 +177,25 @@ test('a joining run has no health check: the health route refuses it, with no gr
     assert.match(got.lines[0], /^Not yet: step 4 \(/);
     assert.deepEqual(finished, []);
   }, { done: [1, 2, 3, 5, 6, 7, 8, 9, 10], joining: false });
+});
+
+// A joining run ends on a settling, with no health check after it, so that settling copies the
+// run's last clicks and answers into the project's state (ruling R45), once; a settling that
+// doesn't finish the run, or a run of its own (whose health check copies), copies nothing.
+test('the settling that finishes a joining run copies its records into the project\'s state, once', async () => {
+  const world = { settle: [6, 9], record: { 6: { nothing: true }, 9: { pushArrived: true } } };
+  await withJoining(async ({ folder, run, routes, copied }) => {
+    assert.deepEqual(await routes['/setup/plan']({ folder, step: 6 }), { ok: true, done: true });
+    assert.deepEqual(copied, [], 'step 6 doesn\'t finish the run');
+    for (const n of [7, 8]) markStep(run.id, n, 'doneAt', { now: () => NOW });
+    assert.deepEqual(await routes['/setup/plan']({ folder, step: 9 }), { ok: true, done: true });
+    assert.deepEqual(copied, [[run.id, folder]]);
+    assert.equal(firstUnfinished(readJournal().runs[0]), null);
+    await assert.rejects(routes['/setup/plan']({ folder, step: 9 }), /already done/);
+    assert.equal(copied.length, 1);
+  }, { done: [1, 2, 3], world });
+  await withJoining(async ({ folder, routes, copied }) => {
+    assert.deepEqual(await routes['/setup/plan']({ folder, step: 9 }), { ok: true, done: true });
+    assert.deepEqual(copied, [], 'step 10 is still to come');
+  }, { done: [1, 2, 3, 4, 5, 6, 7, 8], world, joining: false });
 });

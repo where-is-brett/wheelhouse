@@ -7,7 +7,8 @@
 //                                            { ok, ask: { step, id, card } } (a question to ask), or
 //                                            { ok, wait, why } (nothing to ask yet), with
 //                                            `waitsFor`, the step it waits for, when it is that, or
-//                                            { ok, done: true } (the step settled on its answers)
+//                                            { ok, done: true } (the step settled on its answers),
+//                                            with `said`, a line it said as it settled (R101)
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask }; a running step's latest
 //                                            line for the director (ctx.say, ruling R40) among them
@@ -43,7 +44,10 @@
 // choices, and a later answer that changes it makes that Go ahead CHANGED.
 // `{ wait: ms, why }`: nothing to ask yet. `{ settled: { record } }`: every answer is in and the
 // step changes nothing outside setup's own records, so the record is kept in the journal as an
-// `answer` change and the step is done, with no Go ahead.
+// `answer` change and the step is done, with no Go ahead. A line the plan said as it settled
+// (ctx.say) is kept on that change as `said`, which status shows (ruling R101). A settling that
+// finishes the run, as a joining computer's last step does, copies the run's records into the
+// project's state (ruling R45), since no apply or health check comes after it.
 //
 // Every card is cleaned of any sign-in in an address (scripts/lib/clean.js) before it is stored,
 // and the cleaned card is the one sent, so the card the director clicks is the card stored (R33).
@@ -83,7 +87,7 @@ import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as jou
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
-import { stepDone, healthGreen, stepsFor, onRunList, HEALTH_STEP } from '../lib/setup-run.js';
+import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, HEALTH_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -210,9 +214,20 @@ const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
 // (ruling R74), so a step waiting for it (`after`) counts only the steps on the run's list.
 const isDone = (run, n) => stepDone(run, n);
 
-// Why a step the run doesn't have is neither planned nor applied (ruling R74): a computer joining
-// a project set up on another has only some of the steps.
-export const notOnList = (run, n) => `${title(n)} is not one of this run's steps: a computer joining a project set up on another runs only steps ${stepsFor(run).map((s) => s.n).join(', ')}`;
+// Why a step the run doesn't have is neither planned nor applied (ruling R74), naming what kind of
+// run it is: a computer joining a project set up on another has only some of the steps.
+export function notOnList(run, n) {
+  const steps = stepsFor(run).map((s) => s.n).join(', ');
+  const kind = joinedRepo(run) !== null ? 'a computer joining a project set up on another runs' : 'this run has';
+  return `${title(n)} is not one of this run's steps: ${kind} only steps ${steps}`;
+}
+
+// A line for the director, as a step says it (ctx.say, ruling R40): on one line, and cut to what
+// the journal keeps, so what a step says never stops it; null when it says nothing.
+function oneLine(line) {
+  const one = String(line ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, SAY_CHARS);
+  return one === '' ? null : one;
+}
 
 // The steps given that the run has, in their order (ruling R74).
 const runSteps = (run, steps) => steps.filter((s) => onRunList(run, s.n));
@@ -252,8 +267,8 @@ export async function runApply({ step, runId, changes, ctx, current, copy = copy
   // A line on several lines is put on one, and a long one cut to what the journal keeps, so what a
   // step says never stops it.
   const say = (line) => {
-    const one = String(line ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, SAY_CHARS);
-    if (one !== '') markStep(runId, step.n, 'say', { now: ctx.now, line: one, when: current });
+    const one = oneLine(line);
+    if (one !== null) markStep(runId, step.n, 'say', { now: ctx.now, line: one, when: current });
   };
   try {
     record(await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes));
@@ -294,7 +309,12 @@ function statusLines(run, steps, running) {
     const entry = run.steps?.[n] ?? {};
     const name = `Step ${n}, ${SETUP_TITLES[n]}`;
     if (entry.doneAt && !stepDone(run, n)) lines.push(`${name}: its own checks finished at ${entry.doneAt}; the board isn't green yet`);
-    else if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
+    else if (entry.doneAt) {
+      lines.push(`${name}: done at ${entry.doneAt}`);
+      // What a step said as it settled, such as step 6's settings that weaken Standard (ruling R101).
+      const said = (run.changes ?? []).filter((c) => c?.step === n && c.kind === 'answer' && typeof c.said === 'string').at(-1)?.said;
+      if (said !== undefined) lines.push(`  ${hide(said, [])}`);
+    }
     else if (entry.failed) lines.push(`${name}: did not finish: ${entry.failed}`);
     else if (entry.clickedAt) {
       lines.push(running(n)
@@ -368,9 +388,11 @@ export function setupRoutes({
   // and when the run started (step 1 reads the session's first message from then, ruling R76).
   const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, answers: answersFor(runId) });
 
-  // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling.
+  // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling. A
+  // plan may say a line for the director (ctx.say), kept only with a settling, as `said` (R101).
   async function planned(step, ctx) {
-    const got = await step.plan(ctx);
+    let said = null;
+    const got = await step.plan({ ...ctx, say: (line) => { said = oneLine(line) ?? said; } });
     const bad = (what) => new Error(`Step ${step.n}'s plan gave ${what}`);
     if (got?.ask !== undefined) {
       const { id, card, typed, rules, writes, found } = got.ask ?? {};
@@ -394,7 +416,7 @@ export function setupRoutes({
       const given = got.settled?.record;
       if (given !== undefined && (given === null || typeof given !== 'object' || Array.isArray(given))) throw bad('a settling without its record');
       const record = given ?? {};
-      return { settled: { record } };
+      return { settled: { record, said } };
     }
     if (!got || !Array.isArray(got.changes)) throw bad('no list of changes');
     return { ...got, hash: planHash(got.changes) };
@@ -452,9 +474,19 @@ export function setupRoutes({
       // R19 widened (R32): a done mark the director's signed answers earned, with no Go ahead. The
       // step changes nothing outside setup's own records; what it settled on is kept as an
       // `answer` change, which uninstall has nothing to put back for.
-      addChanges(run.id, [{ id: newId('chg'), step: step.n, kind: 'answer', target: `step ${step.n}`, before: null, after: got.settled.record }]);
+      // What the step said as it settled is kept with it, for status to show (ruling R101).
+      const { record, said } = got.settled;
+      addChanges(run.id, [{ id: newId('chg'), step: step.n, kind: 'answer', target: `step ${step.n}`, before: null, after: record, ...(said === null ? {} : { said }) }]);
       mark(run.id, step.n, 'doneAt', { now, when: (entry) => !entry.doneAt });
-      return { ok: true, done: true };
+      // A settling that finishes the run (a joining computer's, which has no health check to end
+      // it, ruling R74) copies the run's last clicks and answers into the project's state, as an
+      // apply does after each step (ruling R45); a copy that fails never fails the step.
+      if (firstUnfinished(runById(run.id)) === null) {
+        try {
+          await copy(run.id, run.folder);
+        } catch { /* the records stay in setup's own folder */ }
+      }
+      return { ok: true, done: true, ...(said === null ? {} : { said: hide(said, []) }) };
     }
     noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card, now });
     mark(run.id, step.n, 'shownAt', { now });

@@ -15,7 +15,9 @@
 //                            (rulings R47, R70); its plan gives a wait naming the step meanwhile
 //     asksDuring?: number[], steps among `after` while which its questions are still asked (R54)
 //   }
-//   ctx = { folder, step, runId, startedAt, now, userHome, platform, answers }, and for apply also
+//   ctx = { folder, step, runId, startedAt, now, userHome, platform, answers, say }, where a plan's
+//         say(line) is kept only when it settles, shown by status beside the step (ruling R101);
+//         and for apply also
 //         applyJsonKey({ file, key, value, project? }), the journal's key edit, which records the
 //           change in the journal before it writes the file, and gives the change back;
 //         record(change or changes), to put a change of any other kind in the journal;

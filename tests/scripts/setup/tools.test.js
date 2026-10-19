@@ -14,7 +14,7 @@ import {
   NODE_LINE, MAC_INSTALLER, GIT_INSTALLER_ARGS, ChecksumError,
 } from '../../../scripts/setup/tools.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
-import { runApply } from '../../../scripts/setup/engine.js';
+import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
 import { startRun, markStep, findRun, reverseChange } from '../../../scripts/setup/journal.js';
 import { toolPath, fetchedPath, toolFolder } from '../../../scripts/lib/host-tools.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
@@ -22,8 +22,10 @@ import { protectionStatus } from '../../../scripts/host/protection.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setupLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { fileURLToPath } from 'node:url';
 
 const NOW = new Date('2026-10-19T03:00:00.000Z');
+const QUIET_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-quiet-steps.js');
 const PLUGIN = '/Applications/Plug ins/wheelhouse';
 const SETUP_RULE = `Bash(node "${PLUGIN}/scripts/setup/cli.js":*)`;
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -364,6 +366,26 @@ test('with everything here, the list is only the allow rule, written by key besi
     const [change] = findRun(folder).changes;
     assert.deepEqual(reverseChange(change), { put: true });
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)'] }, theirs: 1 });
+  });
+});
+
+test('through the helper, step 2 with everything here and the rule in settles: its { nothing } answer and its done mark, no card', async () => {
+  await withHome(async (home) => {
+    const user = fs.realpathSync.native(tempFolder('wh-user zoë '));
+    const folder = path.join(user, 'Projects', 'Café Menu');
+    fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'quiet-world.json'), JSON.stringify({ pluginRoot: PLUGIN }));
+    const routes = setupRoutes({ now: () => NOW, userHome: user, platform: 'darwin', stepsModule: QUIET_STEPS });
+    // Without the rule, the rule is the list, on a card.
+    const card = await routes['/setup/plan']({ folder, step: 2 });
+    assert.equal(card.ok, true, card.refused);
+    assert.deepEqual(card.changes.map((c) => c.after), [[SETUP_RULE]]);
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: [SETUP_RULE] } }));
+    assert.deepEqual(await routes['/setup/plan']({ folder, step: 2 }), { ok: true, done: true });
+    const run = findRun(folder);
+    assert.equal(run.steps[2].doneAt, NOW.toISOString());
+    assert.deepEqual(run.changes.filter((c) => c.step === 2).map((c) => [c.kind, c.target, c.before, c.after]), [['answer', 'step 2', null, { nothing: true }]]);
   });
 });
 

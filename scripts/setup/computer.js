@@ -18,7 +18,8 @@
 // 6), and each of the director's own settings that weakens Standard (`weakening`), so the director
 // decides; a later card can switch one off. With every setting already as Wheelhouse needs (a
 // computer set up for another project), the step settles with nothing to do, with no Go ahead
-// (ruling R75).
+// (ruling R75), and names any of the director's settings that weaken Standard in a line the
+// session's status shows (ctx.say, ruling R101).
 //
 // Step 8 installs Locked (scripts/protection/locked.js), with the system's own password prompt,
 // only when the director chose Locked (step 3's answer, ruling R37), only on a Mac, and only once
@@ -47,7 +48,7 @@ import { MARKETPLACE, UPSTREAMS, readManifest } from '../lineage/manifest.js';
 import { receiverPort } from '../telemetry/main.js';
 import { telemetryChanges, telemetryOn, isObject, readText } from './telemetry.js';
 import { LEVELS } from './host.js';
-import { newId } from './journal.js';
+import { newId, SAY_CHARS } from './journal.js';
 
 // ---- Step 6 ----
 
@@ -179,9 +180,10 @@ function weakeningSentence(found, fit) {
 }
 
 // Step 6's card: each change in plain words, the signing key, and the settings that weaken Standard.
+// Only a list with something on it has a card: an empty one settles the step (ruling R75).
 export function computerCard({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey() }) {
   const listed = lines({ changes, userSettings, kept, route, platform, floor });
-  const head = `Setup step 6, ${SETUP_TITLES[6]}: ${listed.length > 0 ? `${listed.join('; ')}.` : 'every setting is already as Wheelhouse needs, so nothing changes.'} Wheelhouse never updates itself.`;
+  const head = `Setup step 6, ${SETUP_TITLES[6]}: ${listed.join('; ')}. Wheelhouse never updates itself.`;
   // Named without its id, which a card would read as a commit.
   const signing = key ? ' This computer\'s key for signing your clicks is already made.' : '';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
@@ -194,12 +196,11 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
     what,
     why,
     options: [
-      { label: SETUP_LABEL, says: changes.length === 0 ? 'Setup marks this step done.' : 'Setup changes these settings only.' },
+      { label: SETUP_LABEL, says: 'Setup changes these settings only.' },
       { label: 'Not now', says: 'Nothing changes.' },
     ],
     recommend: SETUP_LABEL,
-    because: changes.length === 0 ? 'nothing changes'
-      : (changes.some((c) => c.what === 'retention') ? 'uninstall puts each setting back, but not removed transcripts' : 'uninstall puts each back'),
+    because: changes.some((c) => c.what === 'retention') ? 'uninstall puts each setting back, but not removed transcripts' : 'uninstall puts each back',
     meanwhile: 'Setup waits; nothing changes.',
   });
   // Whether a card with this sentence fits the composer's limit (CARD.chars): the card without it,
@@ -209,6 +210,9 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   const weak = weakeningSentence(weakening(userSettings), fit);
   return card(`${head}${signing}${weak === '' ? '' : ` ${weak}`}`);
 }
+
+// What step 6 says when it settles with nothing to change, before the settings that weaken Standard.
+export const SETTLED_LEAD = `Setup step 6, ${SETUP_TITLES[6]}: every setting is already as Wheelhouse needs.`;
 
 // Step 6. `run` reads (and on the launch-environment route sets) the account's launch environment;
 // `env` is the environment setup runs in (CLAUDE_CONFIG_DIR, and any telemetry variable of the
@@ -230,7 +234,13 @@ export function computerStep({ run = realRun, env = process.env, route = TELEMET
     async plan(ctx) {
       const { platform, userSettings, floor, kept, changes } = await world(ctx);
       // Every setting already as Wheelhouse needs settles the step, with no Go ahead (ruling R75).
-      if (changes.length === 0) return { settled: { record: { nothing: true } } };
+      // The director's own settings that weaken Standard are still named, as a line status shows
+      // (ruling R101); the signing key, no change, is not.
+      if (changes.length === 0) {
+        const weak = weakeningSentence(weakening(userSettings), (line) => `${SETTLED_LEAD} ${line}`.length <= SAY_CHARS);
+        if (weak !== '') ctx.say?.(`${SETTLED_LEAD} ${weak}`);
+        return { settled: { record: { nothing: true } } };
+      }
       const card = computerCard({ changes, userSettings, kept, route, platform, floor });
       const restart = changes.some((c) => c.kind === 'env');
       return { changes, card, director: restart ? 'One click, then quit and reopen Claude Desktop' : 'One click' };
