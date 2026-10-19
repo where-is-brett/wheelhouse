@@ -1,12 +1,19 @@
 // probes/29-release/run.js
-// Task 29's trial of the undo: what check 30 left open. A scratch marketplace, declared in a
-// scratch project's settings at a release tag as Wheelhouse's is, lists a plugin inside itself
+// Task 29's trial of the undo: what check 30 left open. A scratch marketplace lists a plugin inside itself
 // (standing in for Wheelhouse, with the same plugin.json version in both releases) and
 // Superpowers as an `https` `url` source pinned by `ref` and `sha`, at v6.4.2 in release r1 and
 // v7.0.0 in release r2, whose plugin.json versions differ. It installs r1, moves the project's
 // settings to r2 and reinstalls, deletes r1's Superpowers folder from the cache (standing in for
 // Claude Code's 14-day clean-up), moves the settings back to r1 and runs the undo's reinstall
 // (`reinstall` in scripts/lineage/release.js), then confirms r1's commits from gitCommitSha.
+//
+// The marketplace is first declared as Wheelhouse's is, in the scratch project's settings at a
+// release tag (a `git` source with a file:// address and `ref`), and fetched from there: by the
+// shell, then by one short headless session in the project (`claude -p`, a trivial prompt; its
+// token use is logged). Then the undo runs end to end, both halves, with an `open` that applies
+// its settings change to the project as the merge would. If Claude Code fetches the declared
+// marketplace by none of these, the run says so, and uses a stand-in instead: the marketplace
+// added as a folder, held at each release by a checkout of its tag, with the undo's reinstall.
 // Usage: node probes/29-release/run.js --go
 //
 // THIS CHANGES THIS COMPUTER'S PLUGIN LIST while it runs (it adds a scratch marketplace and
@@ -27,7 +34,9 @@ import { pathToFileURL } from 'node:url';
 import { appendJsonl, probeLogDir } from '../lib/log.js';
 import { makeScratchProject, assertUnderTmp } from '../lib/scratch.js';
 import { run as realRun } from '../../scripts/lib/run.js';
-import { reinstall } from '../../scripts/lineage/release.js';
+import { reinstall, undo } from '../../scripts/lineage/release.js';
+import { hostVariableNames } from '../../scripts/lib/claude.js';
+import { runSession } from '../../scripts/eval/harness.js';
 
 if (!process.argv.includes('--go')) {
   console.error('Usage: node probes/29-release/run.js --go');
@@ -238,11 +247,57 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 
 const settingsFile = () => path.join(project.dir, '.claude', 'settings.json');
 // How the marketplace was declared: 'settings' (a git source at a ref, in the project's
-// settings) or 'folder' (a folder source, held at a release's commit by a checkout).
+// settings, as Wheelhouse's is) or 'folder' (a folder source, held at a release's commit by a
+// checkout), the stand-in when Claude Code will not fetch the first.
 let mode = null;
+// The headless sessions run, with what each cost.
+const sessions = [];
+
+// Every command the reinstall and the undo run stops once a signal has arrived, so nothing new
+// is installed while the clean-up runs.
+const guarded = (file, args, options) => {
+  keepGoing();
+  return logged(file, args, options);
+};
+
+function knownEntry() {
+  return (readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME] ?? null;
+}
+
+// The commit of this computer's copy of the scratch marketplace, or null.
+function copyHead() {
+  const where = knownEntry()?.installLocation;
+  if (typeof where !== 'string' || !fs.existsSync(where)) return null;
+  try { return git(where, ['rev-parse', 'HEAD']); } catch { return null; }
+}
+
+async function waitFor(condition, ms = 60_000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (condition()) return true;
+    keepGoing();
+    await new Promise((done) => setTimeout(done, 2_000));
+  }
+  return condition();
+}
+
+// One short headless session in the scratch project: the session start is when Claude Code
+// fetches a marketplace that the project's settings declare, or whose source they changed
+// (plugin loading reference). The prompt is trivial; its token use is recorded.
+async function sessionStart(label) {
+  keepGoing();
+  const env = Object.fromEntries(hostVariableNames(process.env).map((name) => [name, undefined]));
+  const outcome = await runSession({
+    dir: project.dir, prompt: 'Reply with the single word ok.', pluginDirs: [], permissionMode: 'default', maxTurns: 1, env, timeoutMs: 3 * 60 * 1000,
+  });
+  const record = { label, exitCode: outcome.exitCode, usage: outcome.usage, totalUsage: outcome.totalUsage, timedOut: outcome.timedOut === true };
+  sessions.push(record);
+  const init = outcome.events.find((e) => e.type === 'system' && e.subtype === 'init');
+  await note(`${label}: headless session`, { ...record, plugins: init?.plugins ?? null, stderr: outcome.stderr });
+}
 
 // Moves the project's settings to `release`, as the merged pull request would: only the scratch
-// marketplace's ref changes.
+// marketplace's ref changes. In folder mode, the folder is checked out at the release instead.
 async function pointSettingsAt(release) {
   if (mode === 'folder') {
     git(marketplace.dir, ['-c', 'advice.detachedHead=false', 'checkout', '--quiet', release.ref]);
@@ -252,26 +307,37 @@ async function pointSettingsAt(release) {
   const settings = readJson(settingsFile());
   const source = settings?.extraKnownMarketplaces?.[MARKETPLACE_NAME]?.source;
   if (!source || typeof source !== 'object') throw new Error('the project\'s settings declare no scratch marketplace to move');
-  if (typeof source.ref === 'string') source.ref = release.ref;
-  else if (typeof source.url === 'string' && source.url.includes('#')) source.url = source.url.replace(/#.*$/, `#${release.ref}`);
-  else source.ref = release.ref;
+  source.ref = release.ref;
   fs.writeFileSync(settingsFile(), `${JSON.stringify(settings, null, 2)}\n`);
   await note(`settings pointed at ${release.ref}`, { source });
 }
 
-function knownEntry() {
-  return (readJson(KNOWN_FILE) ?? {})[MARKETPLACE_NAME] ?? null;
+// `reinstall`'s stop when this computer's copy of the marketplace is not at the release.
+const NOT_AT_RELEASE = /so nothing was reinstalled\. A shell command does not fetch/;
+
+// Runs `step` (a reinstall or the undo's second half). When it stops because the marketplace
+// copy is not at the release, starts one session in the project, waits for the copy to reach
+// the release's commit, and runs it once more. Says which way the copy got there.
+async function untilAtRelease(release, label, step) {
+  const before = fs.readFileSync(settingsFile(), 'utf8');
+  let done = await step();
+  let fetchedBy = 'claude plugin marketplace update';
+  await note(`${label}: first try said`, { ok: done.ok, line: done.line, copyHead: copyHead() });
+  if (!done.ok && NOT_AT_RELEASE.test(done.line ?? '')) {
+    await sessionStart(label);
+    const reached = await waitFor(() => copyHead() === release.sha);
+    fetchedBy = reached ? 'a session start' : 'nothing';
+    await note(`${label}: after the session start`, { reached, copyHead: copyHead(), known: knownEntry() });
+    done = await step();
+  }
+  await note(`${label}: said`, { ok: done.ok, line: done.line, installed: done.installed, fetchedBy, known: knownEntry() });
+  await check(`${label}: the project's settings are as the release has them afterwards`, fs.readFileSync(settingsFile(), 'utf8') === before);
+  return { ...done, fetchedBy };
 }
 
-// The undo's reinstall, against the scratch marketplace, through the logged runner.
-async function reinstallTo(release, label) {
-  keepGoing();
-  const before = fs.readFileSync(settingsFile(), 'utf8');
-  const done = await reinstall({ projectDir: project.dir, release: { ref: release.ref, sha: release.sha }, run: logged, marketplace: MARKETPLACE_NAME, claudeHome: configDir });
-  await note(`${label}: reinstall said`, { ok: done.ok, line: done.line, installed: done.installed, putBack: done.putBack, known: knownEntry() });
-  await check(`${label}: the project's settings are as the release has them afterwards`, fs.readFileSync(settingsFile(), 'utf8') === before);
-  return done;
-}
+const reinstallTo = (release, label) => untilAtRelease(release, label, () => reinstall({
+  projectDir: project.dir, release: { ref: release.ref, sha: release.sha }, run: guarded, marketplace: MARKETPLACE_NAME, claudeHome: configDir,
+}));
 
 function expectRelease(info, release) {
   return info[OWN_PLUGIN]?.sha === release.sha
@@ -296,25 +362,34 @@ try {
   console.log(`  (cd "${project.dir}" && claude plugin marketplace remove ${MARKETPLACE_NAME})`);
   console.log(`  rm -rf "${SCRATCH_CACHE}" "${SCRATCH_CLONE}"\n`);
 
-  // 1. Declare the marketplace in the project's settings at release r1, as a git source, as
-  // Wheelhouse's own is declared at a tag. `claude plugin marketplace add` refuses a file://
-  // address (seen on the first run), so the declaration is written into the settings and the
-  // command line is asked to fetch it. If it does not, the marketplace is added as a folder held
-  // at r1's commit instead, and a move between releases is a checkout of the other tag there.
+  // 1. Declare the marketplace in the project's settings at release r1, as a `git` source with a
+  // file:// address and a ref, as Wheelhouse's is declared at a tag. `claude plugin marketplace
+  // add` refuses a file:// address, and a shell `marketplace update` does not fetch a marketplace
+  // only the settings declare (both seen on earlier runs, tried again here), so a session start
+  // is tried. If that does not fetch it either, the marketplace is added as a folder held at r1's
+  // commit, and a move between releases is a checkout of the other tag there.
   ownsMarketplace = true;
   fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
   fs.writeFileSync(settingsFile(), `${JSON.stringify({ extraKnownMarketplaces: { [MARKETPLACE_NAME]: { source: { source: 'git', url: marketplace.url, ref: RELEASES.r1.ref }, autoUpdate: false } } }, null, 2)}\n`);
-  await claude(['plugin', 'marketplace', 'update', MARKETPLACE_NAME, '--json'], project.dir);
-  await claude(['plugin', 'marketplace', 'list', '--json'], project.dir);
-  await note('after declaring it in the settings', { known: knownEntry() });
-  if (knownEntry()) {
+  const shellAdd = await claude(['plugin', 'marketplace', 'add', `${marketplace.url}#${RELEASES.r1.ref}`, '--scope', 'project', '--json'], project.dir);
+  const shellUpdate = await claude(['plugin', 'marketplace', 'update', MARKETPLACE_NAME, '--json'], project.dir);
+  await note('from the shell', { addCode: shellAdd.code, add: shellAdd.stdout.trim(), updateCode: shellUpdate.code, update: shellUpdate.stdout.trim(), known: knownEntry() });
+  if (!(knownEntry() && copyHead() === RELEASES.r1.sha)) {
+    await sessionStart('declared at r1');
+    await waitFor(() => knownEntry() !== null && copyHead() === RELEASES.r1.sha);
+  }
+  const declared = knownEntry() !== null && copyHead() === RELEASES.r1.sha;
+  await check('the marketplace the project\'s settings declare (git source, file:// address, ref r1) is fetched at r1', declared, { known: knownEntry(), copyHead: copyHead() });
+  if (declared) {
     mode = 'settings';
   } else {
     mode = 'folder';
+    // A declaration fetched only partly is removed before the stand-in is added.
+    if (knownEntry()) await claude(['plugin', 'marketplace', 'remove', MARKETPLACE_NAME, '--scope', 'project'], project.dir);
     fs.writeFileSync(settingsFile(), '{}\n');
     git(marketplace.dir, ['-c', 'advice.detachedHead=false', 'checkout', '--quiet', RELEASES.r1.ref]);
     const added = await claude(['plugin', 'marketplace', 'add', marketplace.dir, '--scope', 'project', '--json'], project.dir);
-    await check('the marketplace is added at project scope, as a folder at r1', added.code === 0, added.stderr.slice(0, 300));
+    await check('the stand-in: the marketplace is added at project scope, as a folder at r1', added.code === 0, added.stderr.slice(0, 300));
     if (added.code !== 0) throw new Error('the marketplace could not be added: stopping');
   }
   await note('marketplace declared', { mode, projectSettings: readJson(settingsFile()), known: knownEntry() });
@@ -328,7 +403,7 @@ try {
   await note('installed r1', first);
   await check('r1 is installed at its commits (gitCommitSha)', expectRelease(first, RELEASES.r1), first);
 
-  // 3. Move the settings to r2 and reinstall.
+  // 3. Release r2: the settings move to it (the merged pull request), then the reinstall.
   await pointSettingsAt(RELEASES.r2);
   const forward = await reinstallTo(RELEASES.r2, 'forward to r2');
   const second = installs(project.dir);
@@ -348,18 +423,43 @@ try {
   await fs.promises.rm(folder, { recursive: true, force: true });
   await check('r1\'s Superpowers folder is deleted', !fs.existsSync(folder));
 
-  // 5. The undo: the settings back at r1 (the merged pull request), then the reinstall.
-  await pointSettingsAt(RELEASES.r1);
-  const back = await reinstallTo(RELEASES.r1, 'undo to r1');
+  // 5. The undo from r2 back to r1.
+  let back;
+  if (mode === 'settings') {
+    // End to end: `undo` opens its pull request through `open`, which here applies the change to
+    // the project's settings as its merge would; then `undo` again reinstalls r1.
+    const opened = [];
+    const open = async (request) => {
+      keepGoing();
+      opened.push(request);
+      fs.writeFileSync(path.join(project.dir, ...request.file.split('/')), request.text);
+      return { ok: true, number: 1 };
+    };
+    const undoR1 = () => undo({
+      project: 'probe', projectDir: project.dir, previous: { ref: RELEASES.r1.ref, sha: RELEASES.r1.sha }, run: guarded, open, claudeHome: configDir,
+      declared: { marketplace: MARKETPLACE_NAME, source: { source: 'git', url: marketplace.url } },
+    });
+    const pending = await undoR1();
+    await note('undo, first half', { pending, opened: opened.map(({ branch, file, title }) => ({ branch, file, title })) });
+    await check('undo, first half: it opens its pull request and installs nothing', pending.pending === true && opened.length === 1
+      && opened[0].branch === `wheelhouse-release-${RELEASES.r1.sha}`
+      && readJson(settingsFile())?.extraKnownMarketplaces?.[MARKETPLACE_NAME]?.source?.ref === RELEASES.r1.ref
+      && expectRelease(installs(project.dir), RELEASES.r2), pending);
+    back = await untilAtRelease(RELEASES.r1, 'undo to r1', undoR1);
+    await check('undo, second half: no second pull request', opened.length === 1);
+  } else {
+    await pointSettingsAt(RELEASES.r1);
+    back = await reinstallTo(RELEASES.r1, 'undo to r1');
+  }
   const third = installs(project.dir);
   await note('installed after the undo', third);
-  await check('undo to r1: the reinstall says r1 is installed', back.ok === true, back.line);
+  await check('undo to r1: it says r1 is installed', back.ok === true, back.line);
   await check('undo to r1: r1 is installed at its commits (gitCommitSha)', expectRelease(third, RELEASES.r1), third);
   await check('undo to r1: r1\'s Superpowers folder is fetched again', fs.existsSync(folder) && readJson(path.join(folder, '.claude-plugin', 'plugin.json'))?.version === RELEASES.r1.upstream.version);
-  await note('routes', { forward: forward.installed, back: back.installed });
+  await note('routes', { mode, forward: { fetchedBy: forward.fetchedBy, installed: forward.installed }, back: { fetchedBy: back.fetchedBy, installed: back.installed } });
   // Superpowers' two releases differ in plugin.json version, so `plugin update` moves it; the
   // plugin inside the marketplace keeps one version, so only uninstall then install does.
-  const route = (done, plugin) => done.installed.find((one) => one.plugin === plugin)?.route;
+  const route = (done, plugin) => done.installed?.find((one) => one.plugin === plugin)?.route;
   for (const [label, done] of [['forward to r2', forward], ['undo to r1', back]]) {
     await check(`${label}: Superpowers moved by plugin update`, route(done, UPSTREAM) === 'update', done.installed);
     await check(`${label}: the plugin with one version moved by uninstall, then install`, route(done, OWN_PLUGIN) === 'uninstall, then install', done.installed);
@@ -369,5 +469,6 @@ try {
   await note('error', { message: String(error.stack ?? error) });
   console.error(`Stopped: ${error.message}`);
 } finally {
+  await note('headless sessions', { sessions });
   await undoTrial();
 }

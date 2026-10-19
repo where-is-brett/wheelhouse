@@ -58,24 +58,28 @@ export function canInstall({ features } = {}) {
 
 // --- The settings change ---
 
-// The Wheelhouse marketplace's source in `settings`, or null when it is not Wheelhouse's own.
-function wheelhouseSource(settings) {
-  const entry = isObject(settings) && isObject(settings.extraKnownMarketplaces) && Object.hasOwn(settings.extraKnownMarketplaces, MARKETPLACE)
-    ? settings.extraKnownMarketplaces[MARKETPLACE] : null;
+// How a project declares Wheelhouse's marketplace: its name in `extraKnownMarketplaces`, and the
+// fields of its source other than `ref`. A probe names a scratch marketplace in its place.
+export const WHEELHOUSE_DECLARED = Object.freeze({ marketplace: MARKETPLACE, source: Object.freeze({ source: 'github', repo: WHEELHOUSE_REPO }) });
+
+// The marketplace's source in `settings` as `declared` names it, or null when it is not that one.
+function wheelhouseSource(settings, declared = WHEELHOUSE_DECLARED) {
+  const entry = isObject(settings) && isObject(settings.extraKnownMarketplaces) && Object.hasOwn(settings.extraKnownMarketplaces, declared.marketplace)
+    ? settings.extraKnownMarketplaces[declared.marketplace] : null;
   const source = isObject(entry) ? entry.source : null;
-  return isObject(source) && source.source === 'github' && source.repo === WHEELHOUSE_REPO ? source : null;
+  return isObject(source) && Object.entries(declared.source).every(([key, value]) => source[key] === value) ? source : null;
 }
 
 // The project's settings with only the Wheelhouse marketplace's `ref` changed, to `ref`. A
 // marketplace source takes no commit (ruling R135), so `sha` is not written here: it goes in
 // the pull request's branch name (releaseBranch), and the gate checks the tag's commit is it.
 // The input is not changed. Throws when the settings name no Wheelhouse marketplace.
-export function releaseChange(settings, { ref, sha } = {}) {
+export function releaseChange(settings, { ref, sha } = {}, { declared = WHEELHOUSE_DECLARED } = {}) {
   if (!isTag(ref)) throw new Error('The release must be named by a plain tag');
   if (!FULL_SHA.test(sha ?? '')) throw new Error('The release\'s commit must be written in full');
-  if (wheelhouseSource(settings) === null) throw new Error('The project\'s settings name no Wheelhouse marketplace to move');
+  if (wheelhouseSource(settings, declared) === null) throw new Error('The project\'s settings name no Wheelhouse marketplace to move');
   const copy = JSON.parse(JSON.stringify(settings));
-  set(wheelhouseSource(copy), 'ref', ref);
+  set(wheelhouseSource(copy, declared), 'ref', ref);
   return copy;
 }
 
@@ -227,9 +231,12 @@ export async function reinstall({
     return {
       ok: false,
       installed: [],
-      // A shell command does not fetch a marketplace again from a source changed in settings;
-      // Claude Code does that when a session starts in the project (plugin loading reference).
-      line: `This computer's copy of the ${marketplace} marketplace is at ${at ? short(at) : 'a commit that could not be read'}, not ${ref} (${short(sha)}), so nothing was reinstalled. Check the project's settings in this folder name ${ref}, start a Claude Code session in the folder so it fetches the marketplace from them again, then run the reinstall again.`,
+      // A shell command does not fetch a marketplace again from a source changed in settings
+      // (Task 29's trial). The plugin loading reference says a session started in the project
+      // does, and that adding a repository's declared marketplaces needs the workspace trust
+      // dialog; a headless session in an untrusted folder did not (Task 29's trial). So this
+      // route is not yet proven end to end.
+      line: `This computer's copy of the ${marketplace} marketplace is at ${at ? short(at) : 'a commit that could not be read'}, not ${ref} (${short(sha)}), so nothing was reinstalled. A shell command does not fetch the marketplace again when the project's settings change its ref. Claude Code's documentation says a session started in the project's trusted folder fetches it again from them; that is not yet proven. Check the settings in this folder name ${ref}, start a Claude Code session there, then run the reinstall again.`,
     };
   }
   const pins = pinsOf(installLocation, sha);
@@ -281,22 +288,23 @@ export async function reinstall({
 // { ok: false, pending: true, pr, line }: the gate weighs it as any release, so it needs no
 // approval only when `previous` is itself a pins-only release (ruling R140). Once the merged
 // change is in the folder, the next call reinstalls the release (see reinstall) and says what is
-// installed. `projectDir` is the project's folder from its record unless given.
+// installed. `projectDir` is the project's folder from its record unless given; `declared` is
+// for probes, which name a scratch marketplace (see WHEELHOUSE_DECLARED).
 export async function undo({
-  project, previous, run = defaultRun, open, projectDir = readProject(project)?.folder, claudeHome, marketplace, resolved,
+  project, previous, run = defaultRun, open, projectDir = readProject(project)?.folder, claudeHome, declared = WHEELHOUSE_DECLARED, resolved,
 }) {
   const { ref, sha } = previous ?? {};
   if (!isTag(ref) || !FULL_SHA.test(sha ?? '')) throw new Error('The earlier release must be a plain tag and its full commit');
   if (typeof projectDir !== 'string' || projectDir === '') throw new Error('The project\'s folder is not known');
   const settings = readJson(path.join(projectDir, ...SETTINGS_FILE.split('/')));
-  const source = wheelhouseSource(settings);
+  const source = wheelhouseSource(settings, declared);
   if (source === null) return { ok: false, line: 'The project\'s settings name no Wheelhouse marketplace, so there is no release to put back.' };
   if (source.ref !== ref) {
     if (typeof open !== 'function') throw new Error('The undo needs a way to open its pull request');
     const opened = await open({
       branch: releaseBranch(sha),
       file: SETTINGS_FILE,
-      text: settingsText(releaseChange(settings, { ref, sha })),
+      text: settingsText(releaseChange(settings, { ref, sha }, { declared })),
       title: `Put Wheelhouse back to ${ref}`,
       body: `Puts this project back to Wheelhouse ${ref} (${sha}), the release before ${source.ref ?? 'the current one'}. Only the Wheelhouse marketplace's ref in ${SETTINGS_FILE} changes. Once it merges, the undo reinstalls ${ref}.`,
     });
@@ -304,7 +312,7 @@ export async function undo({
     return { ok: false, pending: true, pr: opened.number, line: `The undo's pull request${Number.isInteger(opened.number) ? ` #${opened.number}` : ''} is open. Once it merges and this folder has it, the undo reinstalls ${ref}.` };
   }
   const done = await reinstall({
-    projectDir, release: { ref, sha }, run, ...(marketplace ? { marketplace } : {}), ...(claudeHome ? { claudeHome } : {}), ...(resolved ? { resolved } : {}),
+    projectDir, release: { ref, sha }, run, marketplace: declared.marketplace, ...(claudeHome ? { claudeHome } : {}), ...(resolved ? { resolved } : {}),
   });
   return { ok: done.ok, line: done.line, installed: done.installed };
 }

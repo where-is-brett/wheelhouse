@@ -226,7 +226,7 @@ test('the reinstall stops when the computer\'s marketplace is not at the release
   // The settings name A, but the commit given is another: the marketplace's copy is not at it.
   const done = await undo({ project: 'o__p', projectDir: pc.projectDir, claudeHome: pc.claudeHome, run: pc.run, resolved: DIRECT, previous: { ref: 'v1.0.0', sha: 'c'.repeat(40) } });
   assert.equal(done.ok, false);
-  assert.equal(done.line, `This computer's copy of the wheelhouse marketplace is at ${'a'.repeat(12)}, not v1.0.0 (${'c'.repeat(12)}), so nothing was reinstalled. Check the project's settings in this folder name v1.0.0, start a Claude Code session in the folder so it fetches the marketplace from them again, then run the reinstall again.`);
+  assert.equal(done.line, `This computer's copy of the wheelhouse marketplace is at ${'a'.repeat(12)}, not v1.0.0 (${'c'.repeat(12)}), so nothing was reinstalled. A shell command does not fetch the marketplace again when the project's settings change its ref. Claude Code's documentation says a session started in the project's trusted folder fetches it again from them; that is not yet proven. Check the settings in this folder name v1.0.0, start a Claude Code session there, then run the reinstall again.`);
   assert.equal(pc.calls.filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0);
   // Settings that name no Wheelhouse marketplace have nothing to put back.
   fs.writeFileSync(pc.settingsFile, '{}\n');
