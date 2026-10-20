@@ -99,7 +99,7 @@ import { writeProject } from '../lib/projects.js';
 import { cloneState, STATE_BRANCH } from '../state/clone.js';
 import { sameRemote } from '../state/git.js';
 import { listEvents } from '../state/events.js';
-import { joinedRepo, JOIN_STEP } from '../lib/setup-run.js';
+import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
 import { profileRemote, ensureProfileClone, readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl } from './tools.js';
 import {
@@ -470,12 +470,12 @@ function originNames(origin, repo) {
 }
 
 // The repository this folder is checked out to as a joining computer's (ruling R102), or null: the
-// `.git` change step 3's checkout recorded for it, in any run, or this run's repository found by a
-// joining attempt when the folder's `origin` names it. Such a folder stays joined: the join question
+// `.git` change step 3's checkout recorded for it, in any run uninstall hasn't closed, or this run's
+// repository found by a joining attempt when the folder's `origin` names it. Such a folder stays joined: the join question
 // is not asked again, every retry uses that repository, and it is never set up as a new product.
 export function joinedFolder(folder, run = null) {
   const target = path.join(folder, '.git');
-  const checkout = readJournal().runs.flatMap((r) => r?.changes ?? [])
+  const checkout = readJournal().runs.filter((r) => !runClosed(r)).flatMap((r) => r?.changes ?? [])
     .filter((c) => c?.step === JOIN_STEP && c.kind === 'folder' && c.target === target && typeof c.after?.joined === 'string').at(-1);
   if (checkout) return checkout.after.joined;
   const found = joinRecords(run).filter((c) => c.after.found === true).at(-1)?.after.joined ?? null;
@@ -700,8 +700,9 @@ async function createRepo({ host, owner, name, readme, run, api }) {
   return info;
 }
 
-// Whether setup made this repository itself, in any run: a retry then carries on with it.
-export const madeBySetup = (target) => readJournal().runs.flatMap((r) => r?.changes ?? [])
+// Whether setup made this repository itself, in any run uninstall hasn't closed: a retry then
+// carries on with it.
+export const madeBySetup = (target) => readJournal().runs.filter((r) => !runClosed(r)).flatMap((r) => r?.changes ?? [])
   .some((c) => c?.kind === 'host' && c.target === target && c.after?.made === true);
 
 // Connects the product's folder to its new repository in place (ruling R34): git init -b main when

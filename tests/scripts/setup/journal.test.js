@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   addChanges, applyJsonKey, closeRun, findRun, journalFile, markPutBack, markStep, readJournal, reverseChange, startRun, stepTimes, wouldReverse, heldNow,
+  reverseText,
 } from '../../../scripts/setup/journal.js';
 import {
   CLICK_FRESH_MS, NODE_FLOOR, PUSH_TEST_WAIT_MS, RETENTION_DAYS, STEP_TIMEOUT_MS, TARGET_MINUTES,
@@ -567,4 +568,23 @@ test('heldNow reads what a key or a file holds now, changing nothing', () => {
     assert.equal(readText(file), 'not json');
     assert.throws(() => heldNow({ id: 'e', kind: 'env', target: 'X', before: null, after: '1' }), /not a key or a file/);
   });
+});
+
+test('reverseText puts a key or a file back in a copy held elsewhere, changing nothing here', () => {
+  const key = { id: 'chg-1', kind: 'json-key', target: '/p/.claude/settings.json', key: ['extraKnownMarketplaces'], before: null, absent: true, after: { w: 1 } };
+  const text = `${JSON.stringify({ enabledPlugins: { a: true }, extraKnownMarketplaces: { w: 1 } }, null, 2)}\n`;
+  assert.deepEqual(reverseText(key, text), { put: true, text: `${JSON.stringify({ enabledPlugins: { a: true } }, null, 2)}\n` });
+  // Holding what was there before: nothing to change. Neither: changed since setup.
+  const without = `${JSON.stringify({ enabledPlugins: { a: true } }, null, 2)}\n`;
+  assert.deepEqual(reverseText(key, without), { put: true, text: without });
+  assert.deepEqual(reverseText(key, '{"extraKnownMarketplaces":{"w":2}}'), { put: false, why: 'changed since setup' });
+  assert.deepEqual(reverseText(key, 'not json'), { put: false, why: 'changed since setup' });
+  assert.deepEqual(reverseText(key, null), { put: true, text: null });
+  assert.deepEqual(reverseText({ ...key, absent: undefined, before: 'mine' }, null), { put: false, why: 'changed since setup' });
+  assert.deepEqual(reverseText({ ...key, absent: undefined, before: { w: 0 } }, '{"extraKnownMarketplaces":{"w":1}}'), { put: true, text: '{"extraKnownMarketplaces":{"w":0}}' });
+  const file = { id: 'chg-2', kind: 'file', target: '/p/CLAUDE.md', before: null, after: '# Compact\n' };
+  assert.deepEqual(reverseText(file, '# Compact\n'), { put: true, text: null });
+  assert.deepEqual(reverseText(file, null), { put: true, text: null });
+  assert.deepEqual(reverseText(file, '# Theirs\n'), { put: false, why: 'changed since setup' });
+  assert.throws(() => reverseText({ id: 'chg-3', kind: 'folder', target: '/p/x', before: null, after: {} }, null));
 });

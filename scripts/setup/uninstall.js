@@ -1,8 +1,8 @@
 // scripts/setup/uninstall.js
 // What uninstall puts back, worked out without changing anything (Task 15, rulings R85 to R89).
 // uninstallPlan reads setup's journal, the projects registered on this computer and the world as it
-// stands, and gives the list uninstall's card names and its hash covers; applying it is the helper's
-// (Task 15b), after the card's own click (Task 15c).
+// stands, and gives the list uninstall's card names and its hash covers. Applying it (applyUninstall,
+// below) is the helper's, through uninstallRoutes, after the card's own click (Task 15c).
 //
 // Which changes (R85). Every change the folder's runs recorded, not yet marked put back (the
 // journal's putBack, so an uninstall cut short resumes and never reverses twice), grouped by
@@ -81,21 +81,36 @@ import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
 import { wheelhouseHome, keysDir, profileDir, projectsDir } from '../lib/paths.js';
-import { projectForFolder, registeredProjects } from '../lib/projects.js';
+import { projectForFolder, readProject, registeredProjects } from '../lib/projects.js';
 import { listHash } from '../lib/setup-writes.js';
-import { joinedRepo, runClosed } from '../lib/setup-run.js';
+import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir } from '../lib/setup-clicks.js';
-import { HOST_TOOLS, toolFolder } from '../lib/host-tools.js';
+import { HOST_TOOLS, toolFolder, toolPath } from '../lib/host-tools.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { enrolledFile, signingKeyFile } from '../state/signing.js';
-import { RETENTION_DAYS } from '../lib/setup-numbers.js';
+import { CLICK_FRESH_MS, RETENTION_DAYS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { readProfileViews } from '../profile/store.js';
-import { readJournal, heldNow } from './journal.js';
-import { launchVarState } from './telemetry.js';
-import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
-import { PROFILE_REPO } from './host.js';
+import { cleanDeep } from '../lib/clean.js';
+import { composeCard } from '../cards/compose.js';
+import { readProfileViews, profileRemote } from '../profile/store.js';
+import { makeAdapter } from '../host/adapter.js';
+import { deleteKey } from '../host/keys.js';
+import { checkBaseUrl, projectPath } from '../host/gitlab-key.js';
+import { GITLAB_URL, appKeys, connectionInstallationPage, installationPages, revokeGitlabKey } from '../host/cut-access.js';
+import { stopForeman, stopWatcher } from '../foreman/start.js';
+import { stopReceiver } from '../telemetry/main.js';
+import { leaveLocked } from '../protection/locked.js';
+import { lockedProjects } from '../protection/managed.js';
+import { readJournal, heldNow, markPutBack, closeRun, reverseChange, reverseText } from './journal.js';
+import { launchVarState, unsetLaunchVar } from './telemetry.js';
+import { PROFILE_TARGET, acceptedOwnApp, putBackOwnApp } from './own-app.js';
+import { PROFILE_REPO, directorGitEnv, directorGitlabApi, openPage } from './host.js';
 import { SETUP_FILES } from './project-files.js';
+import { setupGit, reaching } from './git.js';
+import { toolsStatus } from './tools.js';
+import { withdrawEnrolment } from './computers.js';
+import { answersFor, noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick } from './clicks.js';
+import { admitFolder, SetupRefusal } from './engine.js';
 
 // The phases, in the order uninstall applies them (ruling R89).
 export const PHASES = Object.freeze(['stop', 'locked', 'files', 'computer', 'keys', 'kept', 'last']);
@@ -373,8 +388,14 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   const projectSettings = path.join(real, '.claude', 'settings.json');
   const numberedPrs = new Set(all.map((g) => /^(.+) pull request \d+$/.exec(g[0].c.target)?.[1]).filter(Boolean));
 
-  for (const group of all) {
-    if (group === commitGroup) continue;
+  for (const whole of all) {
+    if (whole === commitGroup) continue;
+    // The own app proposed again with the value the profile already held (ruling R115) changed
+    // nothing: there is nothing to put back for it, so the last uninstall never proposes again what
+    // would hide the accepted app on every computer.
+    const group = whole[0].c.target === PROFILE_TARGET ? whole.filter((e) => !same(e.c.before, e.c.after)) : whole;
+    if (group.length < whole.length) settled(whole.filter((e) => !group.includes(e)).map((e) => e.c.id), 'it held this before setup');
+    if (group.length === 0) continue;
     const c = newest(group);
     const at = seqOf(group);
     const list = idsOf(group);
@@ -544,8 +565,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   if (slug !== null) remove(projectFolder(slug), 'last');
   if (last) {
     for (const file of [signingKeyFile(), enrolledFile()]) if (exists(file)) add('keys', -1, { put: 'remove', target: file });
-    const ownPaths = [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile(), clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir()];
-    for (const p of ownPaths) if (exists(p)) remove(p, 'last');
+    for (const p of [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile()]) if (exists(p)) remove(p, 'last');
+    // Setup's own records are listed whether they are there yet or not: showing uninstall's card
+    // and clicking it write them, and the list must be the same before and after.
+    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir()]) remove(p, 'last');
   } else {
     kept('Wheelhouse\'s helper, telemetry, tools, profile and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }
@@ -584,7 +607,9 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     { phase: 'last', put: 'remove-plugin', line: PLUGIN_LINE },
     ...(last ? [{ phase: 'last', put: 'stop', what: 'helper', when: 'after the answer' }] : []),
   ];
-  const hash = listHash({ changes, keep, asks: asks.map((a) => ({ id: a.id, put: a.put, target: a.target, ids: a.ids })), done });
+  // The folder's real path is in the hash too, so a click stands for one folder: two folders with
+  // the same name and nothing recorded would otherwise give the same list.
+  const hash = listHash({ folder: real, changes, keep, asks: asks.map((a) => ({ id: a.id, put: a.put, target: a.target, ids: a.ids })), done });
   const name = slug ?? path.basename(real);
   const card = {
     kind: 'uninstall',
@@ -605,4 +630,531 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
       : 'The checks no longer guard this project; protection stays as it is.',
   };
   return { project: slug, last, changes, keep, asks, done, card, hash };
+}
+
+// ---- Applying it (Task 15b, rulings R87 to R92) ----
+//
+// The helper's routes /setup/uninstall/plan | apply | status (uninstallRoutes, wired in
+// scripts/host/helper.js; `cli.js uninstall plan | apply <hash> | status` asks them):
+//   plan   { folder }        -> { ok, hash, card, asks: [{ id, about, card }], last }: the list worked
+//                               out, its card composed (cleaned first) and kept as shown for the
+//                               folder (noteUninstallShown), and each level 4 card asked; read-only
+//                               but for setup's own records, so it answers under STOP
+//   apply  { folder, hash }  -> { ok, lines, pages, helperStops? }: only after the director's
+//                               Remove it on the card naming this project and this hash, signed and
+//                               fresh, the card shown for this folder, and the hash of the list worked
+//                               out again now; refused under STOP, read again just before the click
+//                               is used (ruling R91)
+//   status { folder }        -> { ok, lines }: the whole list as plain lines, the card's "and N more"
+//
+// Apply walks the plan's changes in their order (the phases, newest first within each, ruling R89)
+// and marks each change in the journal as it is dealt with (markPutBack: put true when put back,
+// false with why when left as it is), straight after it is done, so an uninstall cut short resumes
+// with a fresh plan and never puts anything back twice. Anything that fails stops it there, with
+// nothing after it done and the run left open: the next plan lists what is left, on a new card.
+// Locked is left first, with the director's password, before anything that removes the project's
+// record. The level 4 cards (the asks) are acted on after the keys, and only on Delete it: the
+// state branch is deleted with the director's own sign-in; a repository's settings page is opened
+// for their own Delete (ruling R92). Then the settled and kept changes are marked, and last of all
+// each of the folder's open runs is closed (closeRun, by uninstall). The helper stops after its
+// answer is sent, and only when the list says so (no other project needs it).
+//
+// The level 4 cards are asked as questions of setup's run in the folder, under ASK_STEP: the
+// director's answer is then a signed setup-answer the prompt record keeps as it keeps every setup
+// question's, which names a step from 1 to 10. Their ids (uninstall-delete-…) keep them apart from
+// that step's own questions. The answers are read before anything is removed (the trusted-keys list
+// that verifies them is among what the last uninstall removes).
+
+export const UNINSTALL_FIELDS = Object.freeze(['folder', 'hash']);
+export const UNINSTALL_NEEDS_CLICK = `uninstall needs the director's Remove it on its card, from the last ${CLICK_FRESH_MS / 60000} minutes`;
+export const UNINSTALL_CHANGED = 'the list has changed since the card: ask for uninstall\'s plan again and show the new card';
+export const UNINSTALL_OWN_LIST = 'the helper works out uninstall\'s list itself: a request names only the folder and the hash on the card';
+export const UNINSTALL_STOP = { ok: false, refused: 'STOP is on, so nothing is removed: lift STOP first, then ask for uninstall\'s plan again' };
+export const UNINSTALL_RUNNING = 'uninstall is already running for this folder';
+// The setup step uninstall's level 4 cards are asked under (see above).
+export const ASK_STEP = HEALTH_STEP;
+// The branch uninstall's pull request comes from, and its title.
+export const UNINSTALL_BRANCH = 'wheelhouse/uninstall';
+export const UNINSTALL_TITLE = 'Remove Wheelhouse';
+const UNINSTALL_BODY = 'This takes out of the project\'s files what Wheelhouse\'s setup put in: its settings, its configuration, its section of CLAUDE.md and the pinned kits. Once it is merged, Wheelhouse\'s checks no longer guard this project. Branch protection stays on.';
+// Setup's own name on uninstall's commit, as on the enrolment's (scripts/setup/computers.js).
+const AUTHOR = ['-c', 'user.name=Wheelhouse setup', '-c', 'user.email=setup@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
+const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+const FULL_HASH = /^[0-9a-f]{64}$/;
+
+// Stops the uninstall where it is, with why.
+class Halt extends Error {}
+const halt = (why) => { throw new Halt(why); };
+
+// git for uninstall's host work, with the director's own sign-in, in a scratch bare repository of
+// setup's own under the Wheelhouse home, removed afterwards: never the director's folder, never the
+// helper's clones (as scripts/setup/computers.js publishes the enrolment). `use(git)` gets
+// `{ ok(args, input?), out(args, input?), must(args, why, input?) }`.
+async function withScratchGit({ run, gitPath, env, remoteUrl, index = false }, use) {
+  const parent = path.join(wheelhouseHome(), 'setup');
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(parent, 'uninstall-'));
+  try {
+    const call = setupGit({ run, gitPath, env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...env, ...(index ? { GIT_INDEX_FILE: path.join(dir, 'uninstall.index') } : {}) }, remoteUrl), cwd: dir });
+    const git = (args, input) => call([...NO_HOOKS, ...args], input === undefined ? {} : { input });
+    const out = async (args, input) => {
+      const got = await git(args, input);
+      return got.code === 0 ? String(got.stdout).trim() : null;
+    };
+    const must = async (args, why, input) => {
+      const got = await git(args, input);
+      if (got.code !== 0) throw new Halt(why);
+      return String(got.stdout).trim();
+    };
+    await must(['init', '-q', '--bare'], 'git could not start a scratch repository for uninstall');
+    return await use({ git, out, must });
+  } finally {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch { /* left for the system to clear */ }
+  }
+}
+
+// The tip of a branch on the host, or null when there is no such branch; throws when the host can't
+// be reached.
+async function hostTip(git, remoteUrl, branch) {
+  const got = await git.must(['ls-remote', '--heads', remoteUrl, `refs/heads/${branch}`], 'the host could not be reached with your sign-in');
+  return /^([0-9a-f]{40,64})\t/m.exec(got)?.[1] ?? null;
+}
+
+// Deletes a branch on the host while it is at `sha` (any tip when `sha` is null), with the director's
+// own sign-in: { put: true } when deleted or gone already, { put: false, why } when it moved.
+async function deleteHostBranch(git, remoteUrl, branch, sha) {
+  const tip = await hostTip(git, remoteUrl, branch);
+  if (tip === null) return { put: true, why: 'gone already' };
+  if (sha !== null && tip !== sha) return { put: false, why: 'it moved since setup, so it stays' };
+  await git.must(['push', '-q', '--no-verify', `--force-with-lease=refs/heads/${branch}:${tip}`, remoteUrl, `:refs/heads/${branch}`], `the branch ${branch} could not be deleted on the host`);
+  return { put: true };
+}
+
+// The project's files on `base` as the host holds them, with each in-pull-request entry put back by
+// its change's `before` (reverseText): a pin by its key in .claude/settings.json. Gives
+// { files: { rel: text | null } changed, left: [{ ids, why, what }] }.
+async function putBackOnHost(git, tip, folder, entries) {
+  const files = new Map();
+  const relOf = (target) => path.relative(folder, target).split(path.sep).join('/');
+  const textAt = async (rel) => {
+    if (!files.has(rel)) {
+      const got = await git.git(['cat-file', 'blob', `${tip}:${rel}`]);
+      files.set(rel, { text: got.code === 0 ? String(got.stdout) : null, changed: false });
+    }
+    return files.get(rel);
+  };
+  const left = [];
+  for (const e of entries) {
+    const plugin = e.change.kind === 'process' ? e.change.after?.plugin : null;
+    const change = plugin
+      ? { id: e.change.id, kind: 'json-key', target: path.join(folder, '.claude', 'settings.json'), key: ['enabledPlugins', plugin], before: null, absent: true, after: true }
+      : e.change;
+    const rel = relOf(change.target);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      left.push({ ids: e.ids, why: 'not one of the project\'s files', what: rel });
+      continue;
+    }
+    const file = await textAt(rel);
+    const got = reverseText(change, file.text);
+    if (!got.put) left.push({ ids: e.ids, why: got.why, what: plugin ? `the pinned kit ${String(plugin).split('@')[0]}` : rel });
+    else if (got.text !== file.text) files.set(rel, { text: got.text, changed: true });
+  }
+  return { files: Object.fromEntries([...files].filter(([, f]) => f.changed).map(([rel, f]) => [rel, f.text])), left };
+}
+
+// The real host work, with the director's own sign-in: git in a scratch repository, the host's tool
+// through the adapter, and GitLab's API for a merge request's search.
+function hostWork({ platform, run, fetch }) {
+  const adapterFor = ({ host, repo }) => makeAdapter({ host, repo, run, env: {} });
+  return {
+    findGit: async () => (await toolsStatus({ platform, run, tools: ['git'] })).git,
+    gitEnvFor: ({ host, gitPath }) => directorGitEnv({ host, gitPath, platform }),
+    adapterFor,
+    // The open pull request from `branch`, or null.
+    async findOpenPr({ host, repo, branch, baseUrl }) {
+      if (host === 'github') {
+        const got = await run(toolPath('gh', { platform }), ['pr', 'list', '--repo', repo, `--head=${branch}`, '--state', 'open', '--json', 'number,url'], { env: {} });
+        if (got.code !== 0) throw new Halt(`GitHub could not list ${repo}'s pull requests with your sign-in`);
+        const found = JSON.parse(String(got.stdout || '[]'))[0];
+        return found ? { number: found.number, url: found.url } : null;
+      }
+      const api = await directorGitlabApi({ run, fetch, baseUrl });
+      const got = await api.get(`${projectPath(repo)}/merge_requests?state=opened&source_branch=${encodeURIComponent(branch)}`);
+      if (got.status !== 200 || !Array.isArray(got.body)) throw new Halt(`GitLab could not list ${repo}'s merge requests with your sign-in (HTTP ${got.status})`);
+      const found = got.body[0];
+      return found ? { number: found.iid, url: found.web_url } : null;
+    },
+    openPage: (url) => openPage(url, { platform, run }).catch(() => null),
+  };
+}
+
+// Applies an uninstall plan worked out for `folder` (its real path). `ops` replaces parts for tests:
+// the stops, leaveLocked, the host work (`findGit`, `gitEnvFor`, `adapterFor`, `findOpenPr`,
+// `openPage`), putBackOwnApp's `profile`, revokeGitlabKey, withdrawEnrolment. `stopped` reads STOP,
+// which halts it between two changes. Gives { ok, lines, pages, helperStops? }, or, when it stopped
+// part-way, { ok: false, refused, lines, pages }.
+export async function applyUninstall({
+  folder, plan, now = () => new Date(), userHome = os.homedir(), platform = process.platform, run = realRun, fetch = globalThis.fetch,
+  stopped = () => false, ops = {},
+}) {
+  const o = {
+    stopForeman: (project) => stopForeman(project),
+    stopWatcher: (project) => stopWatcher(project),
+    stopReceiver: () => stopReceiver(),
+    leaveLocked: (args) => leaveLocked({ ...args, run }),
+    putBackOwnApp: (change) => putBackOwnApp(change, ops.profile === undefined ? {} : { profile: ops.profile }),
+    revokeGitlabKey: (args) => revokeGitlabKey({ ...args, fetch }),
+    withdrawEnrolment: (args) => withdrawEnrolment({ ...args, run }),
+    ...hostWork({ platform, run, fetch }),
+    ...ops,
+  };
+  const lines = [];
+  const pages = [];
+  const say = (line) => lines.push(line);
+  const page = async (what, url) => {
+    pages.push({ what, url });
+    await o.openPage(url);
+  };
+  const journal = readJournal();
+  const byId = new Map(journal.runs.flatMap((r) => (Array.isArray(r?.changes) ? r.changes : [])).map((c) => [c.id, c]));
+  // Marks changes of the journal as dealt with, straight after (ruling R89).
+  const mark = (ids, put, why) => {
+    const list = (ids ?? []).filter((id) => byId.has(id));
+    if (list.length > 0) markPutBack(list, { put, ...(why ? { why } : {}), now });
+  };
+  const mine = (r) => typeof r?.folder === 'string' && keyOf(realOr(r.folder)) === keyOf(folder);
+  const openRuns = journal.runs.filter((r) => mine(r) && !runClosed(r));
+  const record = plan.project === null ? null : readProject(plan.project);
+  const hostName = (h) => HOSTS[h] ?? h;
+  // The answers to the level 4 cards, read now: what verifies them may be removed below.
+  const answers = Object.assign({}, ...openRuns.map((r) => answersFor(r.id)));
+  let git = null;
+  const gitFor = async (host, remoteUrl, use, index = false) => {
+    git ??= await o.findGit();
+    if (!git?.ok || typeof git.path !== 'string') halt('git is not on this computer, so uninstall can\'t reach the host');
+    return withScratchGit({ run, gitPath: git.path, env: o.gitEnvFor({ host, gitPath: git.path }), remoteUrl, index }, use);
+  };
+
+  // A push 15a's plan read as not made may have reached the host if setup stopped before it fetched:
+  // looked for on the host first, and the list is stale if it is there.
+  const unpushed = plan.keep.flatMap((k) => k.ids ?? []).map((id) => byId.get(id)).filter((c) => c?.kind === 'host' && c.after?.action === 'push').at(-1);
+
+  // The level 4 cards, on Delete it alone.
+  const asked = async () => {
+    for (const ask of plan.asks) {
+      const answer = answers[`${ASK_STEP}.${ask.id}`];
+      if (answer?.label !== DELETE_LABEL) {
+        mark(ask.ids, false, answer ? 'kept, as its own card said' : 'kept: its own card was not answered Delete it');
+        say(`Kept: ${ask.target.replace(/^(github|gitlab):/, '')}${answer ? '' : ', as its own card was not answered'}.`);
+        continue;
+      }
+      const h = hostTarget(ask.target);
+      if (ask.put === 'delete-branch') {
+        if (record === null) halt('the project\'s record is gone, so its state branch could not be deleted');
+        const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, STATE_BRANCH, null));
+        say(got.put ? `The ${STATE_BRANCH} branch of ${record.repo} is deleted.` : `The ${STATE_BRANCH} branch stays: ${got.why}.`);
+      } else {
+        const base = h.host === 'gitlab' ? (record?.connection?.baseUrl ?? GITLAB_URL) : null;
+        const url = h.host === 'github' ? `https://github.com/${h.repo}/settings` : `${base}/${h.repo}/edit`;
+        mark(ask.ids, false, 'left for your own Delete on its settings page');
+        say(`${h.repo} is yours to delete: on its settings page (the Danger zone at the bottom), click Delete.`);
+        await page(`${h.repo}'s settings page`, url);
+      }
+    }
+  };
+
+  let helperStops = false;
+  let askedYet = false;
+  let removed = 0;
+  try {
+    if (unpushed !== undefined) {
+      if (record === null) halt('the project\'s record is gone, so whether setup\'s commit reached the host can\'t be checked');
+      const { remoteUrl } = record;
+      const there = await gitFor(record.host, remoteUrl, async (g) => {
+        const fetched = await g.git(['fetch', '-q', '--no-tags', remoteUrl, `+refs/heads/${unpushed.after.branch}:refs/fetched/branch`]);
+        if (fetched.code !== 0) halt(`${unpushed.after.branch} on ${hostName(record.host)} could not be read with your sign-in, so uninstall did not go on`);
+        return (await g.git(['cat-file', '-e', `${unpushed.after.sha}^{commit}`])).code === 0;
+      });
+      if (there) halt(`setup's commit is on ${unpushed.after.branch} on ${hostName(record.host)} after all, so ${UNINSTALL_CHANGED}`);
+    }
+    for (const entry of plan.changes) {
+      if (entry.put !== 'stop' && stopped()) halt('STOP came on, so uninstall stopped here; once STOP is lifted, ask for uninstall\'s plan again');
+      if (entry.phase === 'last' && !askedYet) {
+        askedYet = true;
+        await asked();
+      }
+      switch (entry.put) {
+        case 'stop': {
+          if (entry.what === 'helper') {
+            helperStops = true;
+            say('The host helper stops once this answer is sent.');
+            break;
+          }
+          const got = entry.what === 'receiver' ? await o.stopReceiver()
+            : await (entry.what === 'foreman' ? o.stopForeman(plan.project) : o.stopWatcher(plan.project));
+          const name = { foreman: 'The foreman', watcher: 'The watcher', receiver: 'The usage receiver' }[entry.what];
+          say(got.stopped ? `${name} is stopped.` : `${name}: ${got.why}.`);
+          break;
+        }
+        case 'leave-locked': {
+          const dir = path.dirname(entry.target);
+          const got = await o.leaveLocked({ project: entry.project, platform, now, dir });
+          const kept = readProject(entry.project);
+          if (kept === null || lockedProjects({ dir }).some((f) => samePath(f, kept.folder))) halt(`Locked was not left (${got?.line ?? 'it did not say why'}), so nothing else was removed`);
+          mark(entry.ids, true);
+          say(`Locked: ${got.line}.`);
+          break;
+        }
+        case 'pull-request': {
+          if (record === null) halt('the project\'s record is gone, so the pull request could not be made');
+          const inPr = plan.changes.filter((c) => c.put === 'in-pull-request');
+          const made = await gitFor(record.host, record.remoteUrl, async (g) => {
+            const fetched = await g.git(['fetch', '-q', '--no-tags', record.remoteUrl, `+refs/heads/${entry.branch}:refs/fetched/base`]);
+            if (fetched.code !== 0) halt(`${entry.branch} on ${hostName(record.host)} could not be read with your sign-in`);
+            const tip = await g.must(['rev-parse', '--verify', 'refs/fetched/base^{commit}'], `${entry.branch} could not be read`);
+            const { files, left } = await putBackOnHost(g, tip, folder, inPr);
+            if (Object.keys(files).length === 0) return { tip, left, sha: null };
+            await g.must(['read-tree', tip], 'git could not read the project\'s files');
+            for (const [rel, text] of Object.entries(files)) {
+              // Taken out of the index by a mode of 0, which a repository without a working tree takes.
+              if (text === null) await g.must(['update-index', '--index-info'], `git could not take out ${rel}`, `0 ${'0'.repeat(tip.length)}\t${rel}\n`);
+              else {
+                const blob = await g.must(['hash-object', '-w', '--stdin'], `git could not write ${rel}`, text);
+                await g.must(['update-index', '--add', '--cacheinfo', `100644,${blob},${rel}`], `git could not put back ${rel}`);
+              }
+            }
+            const tree = await g.must(['write-tree'], 'git could not make the pull request\'s files');
+            const sha = await g.must([...AUTHOR, 'commit-tree', tree, '-p', tip, '-m', UNINSTALL_TITLE], 'git could not make uninstall\'s commit');
+            // Wheelhouse's own branch: a retry's commit takes the place of an earlier attempt's.
+            await g.must(['push', '-q', '--no-verify', '--force', record.remoteUrl, `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
+            return { tip, left, sha };
+          }, true);
+          for (const l of made.left) mark(l.ids, false, l.why);
+          if (made.sha === null) {
+            mark(entry.ids, true, `nothing of setup's is left on ${entry.branch}`);
+            say(`Nothing of setup's is left in the project's files on ${entry.branch}, so no pull request is needed.`);
+          } else {
+            const baseUrl = record.connection?.baseUrl ?? GITLAB_URL;
+            const pr = (await o.findOpenPr({ host: record.host, repo: record.repo, branch: UNINSTALL_BRANCH, baseUrl }))
+              ?? await (await o.adapterFor({ host: record.host, repo: record.repo })).openPr({ head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: UNINSTALL_BODY });
+            mark(entry.ids, true, `taken out by pull request ${pr.number}, for the director to merge`);
+            say(`Pull request ${pr.number} takes setup's files and pins out of ${entry.branch}: merge it on ${hostName(record.host)}. Once it is merged, Wheelhouse's checks no longer guard this project; protection stays on.`);
+            await page('the pull request', pr.url);
+          }
+          for (const l of made.left) say(`Left in the project's files: ${l.what}, ${l.why}.`);
+          break;
+        }
+        case 'in-pull-request':
+          break; // with its pull request
+        case 'close-pull-request': {
+          if (record === null) halt('the project\'s record is gone, so the trial pull request could not be closed');
+          const adapter = await o.adapterFor({ host: record.host, repo: record.repo });
+          const number = entry.number ?? (await o.findOpenPr({ host: record.host, repo: record.repo, branch: entry.branch, baseUrl: record.connection?.baseUrl ?? GITLAB_URL }))?.number ?? null;
+          if (number !== null && (await adapter.prState(number))?.state === 'open') await adapter.closePr(number);
+          mark(entry.ids, true);
+          say(number === null ? 'The trial pull request is not open.' : `The trial pull request ${number} is closed.`);
+          break;
+        }
+        case 'delete-branch': {
+          if (record === null) halt('the project\'s record is gone, so the trial branch could not be deleted');
+          const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, entry.branch, entry.sha ?? null));
+          mark(entry.ids, got.put, got.put ? undefined : got.why);
+          say(got.put ? `The trial branch ${entry.branch} is deleted.` : `The trial branch ${entry.branch} stays: ${got.why}.`);
+          break;
+        }
+        case 'reverse': {
+          const got = reverseChange(entry.change);
+          mark(entry.ids, got.put, got.put ? undefined : got.why);
+          say(got.put ? `Put back: ${describe(entry.change, userHome)}.` : `Left: ${describe(entry.change, userHome)}, ${got.why}.`);
+          break;
+        }
+        case 'unset-env': {
+          const last = byId.get(entry.ids.at(-1));
+          const first = byId.get(entry.ids[0]);
+          const read = await launchVarState(entry.target, { platform, run });
+          if (read.why !== undefined) halt(read.why);
+          if (read.value === last?.after) {
+            await unsetLaunchVar(entry.target, { platform, run });
+            mark(entry.ids, true);
+            say(`${entry.target} is taken out of your account's settings.`);
+          } else if (read.value === (first?.before ?? null)) mark(entry.ids, true, 'already put back');
+          else {
+            mark(entry.ids, false, 'changed since setup');
+            say(`Left: ${entry.target}, changed since setup.`);
+          }
+          break;
+        }
+        case 'put-back-own-app': {
+          const got = await o.putBackOwnApp(entry.change);
+          if (!got.put && got.why !== 'changed since setup') halt(`your own GitHub App could not be put back in your profile: ${got.why}`);
+          mark(entry.ids, got.put, got.put ? undefined : got.why);
+          say(got.put ? 'Your profile\'s own GitHub App is put back as it was; like any profile setting, it takes effect once you Confirm it.' : 'Left: your own GitHub App in your profile, changed since setup.');
+          break;
+        }
+        case 'remove-enrolment': {
+          const profile = profileRemote();
+          if (profile === null) halt('your profile isn\'t known on this computer, so this computer\'s key could not be taken out of it');
+          const setUp = byId.get(entry.ids.at(-1));
+          git ??= await o.findGit();
+          if (!git?.ok || typeof git.path !== 'string') halt('git is not on this computer, so uninstall can\'t reach the host');
+          const got = await o.withdrawEnrolment({ profile, target: entry.target, after: setUp?.after, gitPath: git.path, env: o.gitEnvFor({ host: profile.host, gitPath: git.path }) });
+          mark(entry.ids, got.put, got.put ? undefined : got.why);
+          say(got.put ? 'This computer\'s key is taken out of your profile.' : `This computer's key in your profile: ${got.why}.`);
+          break;
+        }
+        case 'delete-key': {
+          const urls = installationPages(appKeys());
+          deleteKey('github-app');
+          mark(entry.ids, true);
+          say('The GitHub app\'s keys are deleted from this computer. The app is still installed on GitHub: on its installation page, click Uninstall.');
+          for (const url of urls) await page('the app\'s installation page', url);
+          break;
+        }
+        case 'untick-repository': {
+          say(`Another project here still uses the GitHub app, so its keys stay: on its installation page, untick ${entry.repo} under repository access, then Save.`);
+          await page('the app\'s installation page', connectionInstallationPage(record?.connection));
+          break;
+        }
+        case 'revoke-key': {
+          const setUp = byId.get(entry.ids.at(-1));
+          const projectId = Number(entry.key.slice('gitlab-project-'.length));
+          const repo = setUp?.after?.project ?? record?.repo ?? '';
+          const holder = [...registeredProjects().map((p) => p.record), profileRemote()].find((r) => r?.connection?.projectId === projectId);
+          const base = checkBaseUrl(holder?.connection?.baseUrl ?? GITLAB_URL);
+          const got = await o.revokeGitlabKey({ name: entry.key, projectId, base, repo });
+          if (got.found && !got.revoked && got.status !== 401) {
+            halt(`GitLab did not revoke the ${entry.pasted ? 'token' : 'project key'}${got.status === null ? ' (it could not be reached)' : ` (HTTP ${got.status})`}, so its file was kept: open ${got.url}, revoke it, then ask for uninstall's plan again`);
+          }
+          // A key GitLab no longer accepts no longer works anywhere: its file goes too.
+          if (got.status === 401) deleteKey(entry.key);
+          mark(entry.ids, true, got.found ? undefined : 'no key was kept on this computer');
+          say(got.found ? `${entry.line}.` : `No GitLab key was kept on this computer; check ${got.url} for any Wheelhouse made.`);
+          break;
+        }
+        case 'remove': {
+          const recorded = (entry.ids ?? []).some((id) => byId.get(id)?.kind === 'folder' && samePath(byId.get(id).target, entry.target) && typeof byId.get(id).after?.installer === 'string');
+          if (!within(wheelhouseHome(), entry.target) && !recorded) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
+          if (fs.existsSync(entry.target)) removed += 1;
+          fs.rmSync(entry.target, { recursive: true, force: true });
+          mark(entry.ids, true);
+          break;
+        }
+        case 'remove-plugin':
+          say(`${entry.line}.`);
+          break;
+        default:
+          halt(`uninstall's list holds a change it can't make (${entry.put})`);
+      }
+    }
+    if (!askedYet) await asked();
+    for (const d of plan.done) mark(d.ids, true, d.why);
+    for (const k of plan.keep) mark(k.ids, false, k.why);
+    for (const r of openRuns) closeRun(r.id, { at: now, by: 'uninstall' });
+    if (removed > 0) say(`${removed} of Wheelhouse's own folders and files are removed from this computer.`);
+    return { ok: true, lines, pages, ...(helperStops ? { helperStops: true } : {}) };
+  } catch (error) {
+    const why = error instanceof Halt ? error.message : `something went wrong: ${error instanceof Error ? error.message : 'no reason given'}`;
+    return { ok: false, refused: `Uninstall stopped: ${why}. What it did before is marked and is not done again; ask for uninstall's plan again for what is left.`, lines, pages };
+  }
+}
+
+// One line for a change of the list, for `status`.
+function entryLine(e, userHome) {
+  switch (e.put) {
+    case 'stop': return `stop the ${e.what === 'receiver' ? 'usage receiver' : e.what === 'helper' ? 'host helper, after its answer' : e.what}`;
+    case 'leave-locked': return 'leave Locked (your password)';
+    case 'pull-request': return `a pull request taking setup's files and pins out of ${e.branch}, for you to merge`;
+    case 'in-pull-request': return `  in it: ${describe(e.change, userHome)}`;
+    case 'close-pull-request': return `close the trial pull request${e.number ? ` ${e.number}` : ''}`;
+    case 'delete-branch': return `delete the trial branch ${e.branch}`;
+    case 'reverse': return `put back ${describe(e.change, userHome)}`;
+    case 'unset-env': return `take ${e.target} out of your account's settings`;
+    case 'put-back-own-app': return 'put back your own GitHub App in your profile';
+    case 'remove-enrolment': return 'take this computer\'s key out of your profile';
+    case 'delete-key': return 'delete the GitHub app\'s keys, and give its installation page';
+    case 'untick-repository': return `give the app's installation page, to untick ${e.repo}`;
+    case 'revoke-key': return e.line;
+    case 'remove': return `remove ${shown(e.target, userHome)}`;
+    case 'remove-plugin': return e.line;
+    default: return e.put;
+  }
+}
+
+// The whole list as plain lines: what uninstall's card names by groups and counts.
+export function planLines(got, folder, userHome) {
+  const name = got.card.target.project;
+  return [
+    `Uninstall of ${name} (${folder}), its list ${got.hash.slice(0, 12)}:`,
+    ...got.changes.map((e, i) => `${i + 1}. ${entryLine(e, userHome)}`),
+    ...got.keep.map((k) => `Stays: ${k.what}: ${k.why}`),
+    ...got.asks.map((a) => `Its own card: ${a.card.what}`),
+    ...(got.done.length > 0 ? [`Nothing left to put back for ${got.done.reduce((n, d) => n + d.ids.length, 0)} of setup's changes`] : []),
+  ];
+}
+
+// The helper's uninstall routes, each taking the request's body and giving its answer; a refusal
+// throws SetupRefusal, which the helper sends as { ok: false, refused }. `ops` and `fetch` go to
+// applyUninstall.
+export function uninstallRoutes({
+  now = () => new Date(), stopped = () => false, stopRefusal = UNINSTALL_STOP, userHome = os.homedir(), platform = process.platform,
+  run = realRun, fetch = globalThis.fetch, ops = {},
+} = {}) {
+  const running = new Set();
+  const only = (body, fields) => {
+    if (Object.keys(body).some((k) => !fields.includes(k))) throw new SetupRefusal(UNINSTALL_OWN_LIST);
+  };
+  const planFor = (folder) => uninstallPlan({ folder, userHome, platform, run });
+  const openRunOf = (folder) => readJournal().runs.filter((r) => typeof r?.folder === 'string' && !runClosed(r) && keyOf(realOr(r.folder)) === keyOf(folder)).at(-1) ?? null;
+
+  async function plan(body) {
+    only(body, ['folder']);
+    const folder = admitFolder(body.folder, { userHome });
+    const got = await planFor(folder);
+    // The card as the director sees it, cleaned before it is composed, so the stored card is the
+    // one sent (ruling R33).
+    const card = composeCard(cleanDeep(got.card, [])).question;
+    if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('Uninstall\'s card could not be cleaned as it is sent');
+    noteUninstallShown({ project: got.card.target.project, folder, hash: got.hash, card, now });
+    const open = openRunOf(folder);
+    const asks = open === null ? [] : got.asks.map((a) => {
+      const asked = composeCard({ ...cleanDeep(a.card, []), kind: 'question' }).question;
+      noteAsked({ runId: open.id, folder: open.folder, step: ASK_STEP, id: a.id, card: asked, now });
+      return { id: a.id, about: a.about, card: asked };
+    });
+    return { ok: true, hash: got.hash, card, asks, last: got.last };
+  }
+
+  async function apply(body) {
+    if (stopped()) return stopRefusal;
+    only(body, UNINSTALL_FIELDS);
+    const folder = admitFolder(body.folder, { userHome });
+    if (typeof body.hash !== 'string' || !FULL_HASH.test(body.hash)) throw new SetupRefusal('the hash must be the full hash of the list on uninstall\'s card');
+    const key = keyOf(folder);
+    if (running.has(key)) throw new SetupRefusal(UNINSTALL_RUNNING);
+    running.add(key);
+    try {
+      // The list as it is now, worked out here with the same home and system the card's was.
+      const got = await planFor(folder);
+      const project = got.card.target.project;
+      const shownNow = uninstallShownFor(folder);
+      if (got.hash !== body.hash || shownNow?.hash !== got.hash || shownNow.project !== project) throw new SetupRefusal(UNINSTALL_CHANGED);
+      // STOP is read again at the last moment, before the click is used.
+      if (stopped()) return stopRefusal;
+      const click = freshUninstallClicks({ project, hash: got.hash, now }).find((e) => useClick(e, now));
+      if (!click) throw new SetupRefusal(UNINSTALL_NEEDS_CLICK);
+      return await applyUninstall({ folder, plan: got, now, userHome, platform, run, fetch, stopped, ops });
+    } finally {
+      running.delete(key);
+    }
+  }
+
+  async function status(body) {
+    only(body, ['folder']);
+    const folder = admitFolder(body.folder, { userHome });
+    return { ok: true, lines: planLines(await planFor(folder), folder, userHome) };
+  }
+
+  return { '/setup/uninstall/plan': plan, '/setup/uninstall/apply': apply, '/setup/uninstall/status': status };
 }

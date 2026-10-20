@@ -39,7 +39,13 @@ function fakeClient(answers = {}) {
     const answer = answers[name];
     return typeof answer === 'function' ? answer(body) : answer ?? { ok: false, refused: 'not expected' };
   };
-  return { calls, setup: { plan: route('plan'), apply: route('apply'), status: route('status'), health: route('health') } };
+  return {
+    calls,
+    setup: {
+      plan: route('plan'), apply: route('apply'), status: route('status'), health: route('health'),
+      uninstall: { plan: route('uninstall plan'), apply: route('uninstall apply'), status: route('uninstall status') },
+    },
+  };
 }
 
 test('each form asks the helper for this folder, and only with the folder, the step and the hash', async () => {
@@ -168,7 +174,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\]\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -177,5 +183,42 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\]\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+});
+
+test('the uninstall forms ask the helper\'s uninstall routes for this folder, apply with the full hash only', async () => {
+  const card = { question: 'Uninstall.\nRemove Wheelhouse from shop as listed, abababababab', header: 'Uninstall', options: [{ label: 'Remove it' }], multiSelect: false };
+  const c = fakeClient({
+    'uninstall plan': { ok: true, hash: H, card, asks: [], last: true },
+    'uninstall apply': { ok: true, lines: ['Locked: Locked is off.'], pages: [{ what: 'the pull request', url: 'https://github.com/o/shop/pull/3' }], helperStops: true },
+    'uninstall status': { ok: true, lines: ['Uninstall of shop (/x/Projects/shop), its list abababababab:', '1. stop the foreman'] },
+  });
+  const plan = await run(['uninstall', 'plan'], { client: c });
+  assert.equal(plan.code, 0, plan.err);
+  assert.deepEqual(JSON.parse(plan.out), { hash: H, card, asks: [], last: true });
+  const apply = await run(['uninstall', 'apply', H], { client: c });
+  assert.equal(apply.code, 0, apply.err);
+  assert.deepEqual(JSON.parse(apply.out), { lines: ['Locked: Locked is off.'], pages: [{ what: 'the pull request', url: 'https://github.com/o/shop/pull/3' }], helperStops: true });
+  const status = await run(['uninstall', 'status'], { client: c });
+  assert.equal(status.out, 'Uninstall of shop (/x/Projects/shop), its list abababababab:\n1. stop the foreman\n');
+  assert.deepEqual(c.calls, [
+    ['uninstall plan', { folder: '/x/Projects/shop' }],
+    ['uninstall apply', { folder: '/x/Projects/shop', hash: H }],
+    ['uninstall status', { folder: '/x/Projects/shop' }],
+  ]);
+  // A short hash, and any other words, are refused before the helper is asked.
+  for (const argv of [['uninstall', 'apply', 'abc'], ['uninstall'], ['uninstall', 'plan', 'now'], ['uninstall', 'status', 'x'], ['uninstall', 'apply']]) {
+    const got = await run(argv, { client: c });
+    assert.equal(got.code, 1, argv.join(' '));
+  }
+  assert.equal(c.calls.length, 3);
+});
+
+test('an uninstall that stopped part-way says why, then what it did before it stopped, each on its own line', async () => {
+  const c = fakeClient({
+    'uninstall apply': { ok: false, refused: 'Uninstall stopped: Locked was not left.', lines: ['The foreman is stopped.', 'The watcher: not running.'] },
+  });
+  const got = await run(['uninstall', 'apply', H], { client: c });
+  assert.equal(got.code, 1);
+  assert.equal(got.err, 'Uninstall stopped: Locked was not left.\nDone before it stopped:\nThe foreman is stopped.\nThe watcher: not running.\n');
 });

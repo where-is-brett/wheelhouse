@@ -11,7 +11,8 @@
 // and the record is fresh (the watcher touches both at every loop; ten
 // minutes, as its lock's own staleness). A second start while it runs starts
 // nothing; two at once start two, and the second finds the lock taken and
-// stops. The session start shares startWatcher (ruling R62).
+// stops. The session start shares startWatcher (ruling R62). Uninstall stops it (stopWatcher),
+// and the foreman's session it started (stopForeman), first of all (ruling R89).
 //
 // Shape 2: starts the foreman's long session in the project's main checkout:
 // `claude` with its explicit mode (sessionModeOf) and model
@@ -37,7 +38,7 @@ import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { healthFile, lockFile, projectConfig } from '../watcher/main.js';
 import {
-  ROLE_VARIABLE, pidAlive, sessionEnv, sessionModeOf, watcherFolder, writeJsonFile,
+  ROLE_VARIABLE, pidAlive, processStartTime, runningFile, sessionEnv, sessionModeOf, watcherFolder, writeJsonFile,
 } from '../watcher/waker.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -61,21 +62,70 @@ function readSmall(file) {
   }
 }
 
-// Whether the project's watcher runs: a live pid in a fresh lock or health record.
-export function watcherRunning(project, { alive = pidAlive, now = () => new Date() } = {}) {
+// The pid of the project's running watcher: a live pid in a fresh lock or health record; else null.
+function watcherPid(project, { alive = pidAlive, now = () => new Date() } = {}) {
   const t = now().getTime();
   const fresh = (ms) => Number.isFinite(ms) && t - ms < WATCHER_FRESH_MS;
   const livePid = (pid) => Number.isInteger(pid) && pid > 0 && alive(pid);
   const lock = readSmall(lockFile(project));
-  if (lock !== null && fresh(lock.mtimeMs) && livePid(Number.parseInt(lock.text, 10))) return true;
+  if (lock !== null && fresh(lock.mtimeMs)) {
+    const pid = Number.parseInt(lock.text, 10);
+    if (livePid(pid)) return pid;
+  }
   const health = readSmall(healthFile(project));
   if (health !== null) {
     try {
       const h = JSON.parse(health.text);
-      if (livePid(h?.pid) && fresh(Date.parse(h?.at))) return true;
+      if (livePid(h?.pid) && fresh(Date.parse(h?.at))) return h.pid;
     } catch { /* not a health record */ }
   }
-  return false;
+  return null;
+}
+
+// Whether the project's watcher runs: a live pid in a fresh lock or health record.
+export function watcherRunning(project, options = {}) {
+  return watcherPid(project, options) !== null;
+}
+
+// Asks a process to stop (SIGTERM, which the watcher and the foreman's session end on; on Windows
+// the process is ended): { stopped: true }, or { stopped: false, why }. One already gone is stopped.
+function askToStop(pid, kill) {
+  try {
+    kill(pid, 'SIGTERM');
+    return { stopped: true };
+  } catch (error) {
+    return error?.code === 'ESRCH' ? { stopped: true } : { stopped: false, why: `it could not be stopped (${error?.code ?? 'no reason given'})` };
+  }
+}
+
+// Stops the project's watcher, as uninstall does first (ruling R89), so nothing is woken while
+// setup's changes are put back: { stopped, why? }, `why: 'not running'` when none runs. The pid is
+// the one its fresh lock or health record names, as watcherRunning reads them; the watcher also
+// stops by itself once its lock is gone, which uninstall's removal of the project's folder does.
+export function stopWatcher(project, { alive, now, kill = process.kill } = {}) {
+  stateDir(project); // a project name that is not a folder name throws here
+  const pid = watcherPid(project, { alive, now });
+  return pid === null ? { stopped: false, why: 'not running' } : askToStop(pid, kill);
+}
+
+// Stops the foreman's session the watcher started (Shape 1), as uninstall does (ruling R89):
+// { stopped, why? }, `why: 'not running'` when none runs. Only the process the watcher's running
+// record names is stopped, and only while it is still that process: alive, and started when the
+// record says (its pid not reused). A record with no start time, or a start time the system won't
+// give, stops nothing (it fails closed), and says so. Shape 2's long session runs in the director's
+// own terminal, recorded nowhere: they close it.
+export async function stopForeman(project, { alive = pidAlive, kill = process.kill, startTime = processStartTime } = {}) {
+  stateDir(project);
+  let record = null;
+  try {
+    const read = readSmall(runningFile(project, 'foreman'));
+    record = read === null ? null : JSON.parse(read.text);
+  } catch { /* none */ }
+  const pid = record?.pid;
+  if (record?.state !== 'running' || !Number.isInteger(pid) || pid <= 0 || !alive(pid)) return { stopped: false, why: 'not running' };
+  const now = typeof record.startTime === 'string' ? await startTime(pid) : null;
+  if (now === null || now !== record.startTime) return { stopped: false, why: 'its process could not be told apart from another, so it was left running' };
+  return askToStop(pid, kill);
 }
 
 // Starts the watcher, detached and hidden, in Wheelhouse's own folder, unless

@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { publishEnrolment, enrolmentChange, NOT_PUBLISHED, KEY_CHANGED } from '../../../scripts/setup/computers.js';
+import { publishEnrolment, withdrawEnrolment, enrolmentChange, NOT_PUBLISHED, NOT_WITHDRAWN, KEY_CHANGED } from '../../../scripts/setup/computers.js';
 import { directorGitEnv } from '../../../scripts/setup/host.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -540,4 +540,51 @@ test('a failed push of the key leaves the helper\'s profile branch as it was, an
     fs.rmSync(home, { recursive: true, force: true });
     remote.cleanup();
   }
+});
+
+test('the last uninstall takes this computer\'s key back out of the profile by its exact SHA, only while it holds the key setup published', async () => {
+  await withHome(async () => {
+    const remote = await profileHere();
+    try {
+      ownComputer();
+      const own = ownKey();
+      const env = directorGitEnv({ host: 'github', gitPath: 'git', platform: 'darwin' });
+      const recorded = [];
+      await publishEnrolment({ profile: profileRemote(), env, run: realRun, record: (c) => recorded.push(c), now: () => NOW });
+      const { target, after } = recorded[0];
+      const tipBefore = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
+      const git = watched();
+      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: git.run }), { put: true });
+      const tip = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
+      assert.equal(await g(remote.url, 'rev-parse', `${tip}^`), tipBefore);
+      assert.equal(await g(remote.url, 'diff-tree', '--no-commit-id', '--name-status', '-r', tip), `D\tenrolments/${own.computer}.json`);
+      const pushes = git.calls.filter((c) => callOf(c.args)[0] === 'push');
+      assert.deepEqual(pushes.map((c) => callOf(c.args)), [['push', '--no-verify', '--porcelain', remote.url, `${tip}:refs/heads/${PROFILE_BRANCH}`]]);
+      assert.ok(git.calls.every((c) => path.basename(c.cwd).startsWith('withdraw-')) && !fs.existsSync(git.calls[0].cwd));
+      // Gone already: nothing to do.
+      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: realRun }), { put: true });
+      assert.equal(await g(remote.url, 'rev-parse', PROFILE_BRANCH), tip);
+      // A key this computer's id holds since, not setup's, stays.
+      const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-withdraw-'));
+      try {
+        await g(work, 'clone', '-q', '-b', PROFILE_BRANCH, remote.url, '.');
+        fs.mkdirSync(path.join(work, 'enrolments'), { recursive: true });
+        const other = crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' });
+        fs.writeFileSync(path.join(work, 'enrolments', `${own.computer}.json`), `${JSON.stringify({ computer: own.computer, publicKey: other, at: NOW.toISOString() }, null, 2)}\n`);
+        await g(work, 'add', '-A');
+        await g(work, 'commit', '-q', '-m', 'Another key');
+        await g(work, 'push', '-q', 'origin', PROFILE_BRANCH);
+      } finally {
+        fs.rmSync(work, { recursive: true, force: true });
+      }
+      const moved = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
+      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: realRun }), { put: false, why: 'it holds another key since setup, so it stays' });
+      assert.equal(await g(remote.url, 'rev-parse', PROFILE_BRANCH), moved);
+      // A host that can't be reached says so.
+      await assert.rejects(withdrawEnrolment({ profile: { ...profileRemote(), remoteUrl: path.join(os.tmpdir(), 'wh-no-such-remote.git') }, target, after, env, run: realRun }), { message: NOT_WITHDRAWN });
+      await assert.rejects(withdrawEnrolment({ profile: profileRemote(), target: 'github:o/p:keys/x.json', after, env, run: realRun }));
+    } finally {
+      remote.cleanup();
+    }
+  });
 });

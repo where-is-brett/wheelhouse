@@ -27,10 +27,11 @@ import { gateDecision } from '../gate/conditions.js';
 import { classifyChange, readConfig, CI_FILES } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
-import { deleteKey, readKey } from './keys.js';
-import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
-import { childEnv, installationOf } from './connection.js';
+import { readKey } from './keys.js';
+import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
+import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
+import { cutAccess } from './cut-access.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { cloneState } from '../state/clone.js';
@@ -59,6 +60,7 @@ import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
+import { uninstallRoutes } from '../setup/uninstall.js';
 import { baselineRoutes } from '../measures/baseline.js';
 import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from '../lib/trust-clicks.js';
 
@@ -781,6 +783,10 @@ export async function startHelper({
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
   setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
+  // Parts of uninstall's apply a test replaces (scripts/setup/uninstall.js, applyUninstall's `ops`),
+  // and what the helper does once uninstall's answer saying it stops has been sent: given its own
+  // close, by default it closes; the real helper (helper-main.js) then exits.
+  uninstallOps = {}, onStop = (close) => close(),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -2223,58 +2229,9 @@ export async function startHelper({
 
   const plainAnswer = (text, rest = {}) => ({ ok: true, message: text, ...rest });
 
-  // Step 2.
-  async function doCutAccess({ project }) {
-    const { connection, host, repo } = recordOf(project);
-    const base = host === 'gitlab' ? checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com') : null;
-    if (connection.mode !== 'narrow') {
-      if (host === 'github') {
-        return plainAnswer('Nothing was changed on this computer: the agents use the director\'s own GitHub sign-in, and only the director can revoke it. Still for the director: open the page below and revoke the sign-in that Wheelhouse uses.', { url: 'https://github.com/settings/applications' });
-      }
-      const apps = `${base}/-/user_settings/applications`;
-      const tokens = `${base}/-/user_settings/personal_access_tokens`;
-      return plainAnswer(`Nothing was changed on this computer: the agents use the director's own GitLab sign-in, and only the director can revoke it. Still for the director: revoke the sign-in on ${apps}, and check ${tokens} for any token of theirs that Wheelhouse uses.`, { url: apps });
-    }
-    if (host === 'github') {
-      let keys = null;
-      try { keys = readKey('github-app'); } catch { /* damaged: deleted below */ }
-      // The project's own installation of the app, on its account (ruling R83).
-      const id = installationOf(connection, keys);
-      const url = id ? `https://github.com/settings/installations/${id}` : 'https://github.com/settings/installations';
-      deleteKey('github-app');
-      return plainAnswer('Done on this computer: the Wheelhouse app\'s keys were deleted from it, so nothing here can use them. Still for the director: the app is still installed on GitHub, and a copy of its keys would still work until the app is suspended or uninstalled. Open the page below and choose Suspend or Uninstall.', { url });
-    }
-    const name = `gitlab-project-${connection.projectId}`;
-    let key = null;
-    try { key = readKey(name); } catch { /* damaged: treated as none */ }
-    const pasted = key?.kind === 'pasted-token';
-    const url = pasted ? `${base}/-/user_settings/personal_access_tokens` : `${base}/${repo}/-/settings/access_tokens`;
-    if (typeof key?.token !== 'string' || key.token === '') {
-      return plainAnswer('No project key was found on this computer, so there was nothing to revoke from here. Still for the director: check the page below for any key that Wheelhouse made, and revoke it.', { url });
-    }
-    const api = gitlabApi({ baseUrl: base, token: key.token, fetch });
-    const statusOf = async (call) => { try { return (await call()).status; } catch { return null; } };
-    const revoked = (status) => status !== null && status >= 200 && status < 300;
-    let status = await statusOf(() => api.delete('/personal_access_tokens/self'));
-    // If GitLab will not revoke a key by itself, try it by its own number.
-    if (status !== null && !revoked(status) && status !== 401 && Number.isInteger(key.id) && key.id > 0) {
-      status = await statusOf(() => api.delete(`${projectPath(connection.projectId)}/access_tokens/${key.id}`));
-    }
-    if (revoked(status)) {
-      deleteKey(name);
-      return plainAnswer(pasted
-        ? 'Done: GitLab revoked the token. It was the director\'s own token, pasted in at setup, so it stops working anywhere else they used it too; its file was deleted from this computer. The page below lists their personal access tokens, to check it is gone.'
-        : 'Done: GitLab revoked the project key, and its file was deleted from this computer. Nothing is left for the director on this step.', { url });
-    }
-    if (status === 401) {
-      return plainAnswer(`GitLab no longer accepts this key (HTTP 401), so it no longer works; its file was kept on this computer. Still for the director: open the page below and check that the key is gone.`, { url });
-    }
-    return {
-      ok: false,
-      refused: `GitLab did not revoke the ${pasted ? 'token' : 'project key'}${status === null ? ' (it could not be reached)' : ` (HTTP ${status})`}, so its file was kept on this computer. For the director: open the page below, find ${pasted ? 'the token' : 'the key Wheelhouse made'}, and revoke it.`,
-      url,
-    };
-  }
+  // Step 2: the agents' keys taken away from this computer (scripts/host/cut-access.js, shared with
+  // uninstall, ruling R88).
+  const doCutAccess = ({ project }) => cutAccess({ record: recordOf(project), fetch });
 
   // Step 3, the first half: a pull request that puts the product back to an earlier release.
   async function doRestoreMain({ project, sha }, ctx) {
@@ -2539,9 +2496,14 @@ export async function startHelper({
   // desk can't reach it; a request that arrives all the same may get its card, but nothing is
   // recorded until STOP is lifted.
   const measures = baselineRoutes({ now, stopped, stopRefusal: STOP_REFUSAL });
+  // Uninstall's routes (scripts/setup/uninstall.js): plan and status answer under STOP; apply is
+  // refused, and goes ahead only after the director's signed Remove it on the card naming the list
+  // the helper works out again. When the list stops the helper, it stops once that answer is sent.
+  const uninstall = uninstallRoutes({ now, stopped, userHome, run, fetch, ops: uninstallOps });
   const routes = {
     ...setup,
     ...measures,
+    ...uninstall,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -2707,6 +2669,25 @@ export async function startHelper({
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
   };
 
+  // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
+  // a git process is working in can't be removed. Photographing and comparing stop after the
+  // picture under way.
+  let closed = null;
+  function close() {
+    closed ??= (async () => {
+      closing = true;
+      await new Promise((resolve) => {
+        server.close(() => {
+          if (!pipe) fs.rmSync(address, { force: true });
+          resolve();
+        });
+        server.closeAllConnections?.();
+      });
+      while (queues.size > 0) await Promise.allSettled([...queues.values()]);
+    })();
+    return closed;
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
     if (url.pathname === '/health') return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}) });
@@ -2749,6 +2730,10 @@ export async function startHelper({
         const answer = cleanDeep(await route(body), []);
         if (typeof answer?.refused === 'string') answer.refused = clean(answer.refused, []) || 'the request failed';
         if (Array.isArray(answer?.lines)) answer.lines = answer.lines.map((line) => `${/^\s*/.exec(String(line))[0]}${clean(line, [])}`);
+        // The last uninstall on this computer stops the helper, once its answer has gone.
+        if (url.pathname === '/setup/uninstall/apply' && answer?.helperStops === true) {
+          res.once('finish', () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); });
+        }
         return send(res, 200, answer);
       } catch (error) {
         const message = error instanceof SetupRefusal || error instanceof Error ? error.message : '';
@@ -2809,21 +2794,5 @@ export async function startHelper({
     releaseStart();
   }
 
-  return {
-    address,
-    // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
-    // a git process is working in can't be removed. Photographing and comparing stop after the
-    // picture under way.
-    close: async () => {
-      closing = true;
-      await new Promise((resolve) => {
-        server.close(() => {
-          if (!pipe) fs.rmSync(address, { force: true });
-          resolve();
-        });
-        server.closeAllConnections?.();
-      });
-      while (queues.size > 0) await Promise.allSettled([...queues.values()]);
-    },
-  };
+  return { address, close };
 }

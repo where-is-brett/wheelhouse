@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { recordsHandler, receiverPort, maintain } from '../../../scripts/telemetry/main.js';
+import { recordsHandler, receiverPort, maintain, stopReceiver, receiverPidFile } from '../../../scripts/telemetry/main.js';
 
 const MAIN = fileURLToPath(new URL('../../../scripts/telemetry/main.js', import.meta.url));
 const fixture = fs.readFileSync(new URL('../../fixtures/otlp-metrics.json', import.meta.url), 'utf8');
@@ -134,6 +134,33 @@ test('the receiver process answers before writing, and a second copy exits', asy
     first.child.kill();
     second?.child.kill();
     await first.exited;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('stopReceiver stops the receiver its pid file names, only while that process started before the file was written', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-receiver-stop-'));
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    const killed = [];
+    const kill = (pid, signal) => { killed.push([pid, signal]); };
+    const alive = (pid) => pid === 6161;
+    assert.deepEqual(await stopReceiver({ kill, alive }), { stopped: false, why: 'not running' });
+    fs.mkdirSync(path.dirname(receiverPidFile()), { recursive: true });
+    fs.writeFileSync(receiverPidFile(), '6161\n');
+    const written = fs.statSync(receiverPidFile()).mtimeMs;
+    const at = (ms) => async () => new Date(written + ms).toISOString();
+    assert.deepEqual(await stopReceiver({ kill, alive, startTime: at(-5000) }), { stopped: true });
+    assert.deepEqual(killed, [[6161, 'SIGTERM']]);
+    // A process that started well after the file was written has the pid of a receiver gone.
+    const reused = await stopReceiver({ kill, alive, startTime: at(60 * 60 * 1000) });
+    assert.equal(reused.stopped, false);
+    assert.equal((await stopReceiver({ kill, alive, startTime: async () => null })).stopped, false);
+    assert.deepEqual(await stopReceiver({ kill, alive: () => false, startTime: at(0) }), { stopped: false, why: 'not running' });
+    assert.equal(killed.length, 1);
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
     fs.rmSync(home, { recursive: true, force: true });
   }
 });

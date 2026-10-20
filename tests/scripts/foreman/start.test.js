@@ -8,11 +8,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, startWatcher, watcherRunning, FOREMAN_PROMPT_LEAD, MONITOR_NOTE } from '../../../scripts/foreman/start.js';
+import { main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD, MONITOR_NOTE } from '../../../scripts/foreman/start.js';
 import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../../../scripts/lib/build-loop.js';
 import { healthFile, lockFile } from '../../../scripts/watcher/main.js';
-import { watcherDir } from '../../../scripts/watcher/waker.js';
+import { watcherDir, runningFile } from '../../../scripts/watcher/waker.js';
 import { withHome } from '../../helpers/homes.js';
 import { P, config, fakeClient, project } from '../../helpers/foreman.js';
 
@@ -168,3 +168,50 @@ test('start refuses in one line when the project or its configuration can\'t be 
     assert.equal(r.err.trim().split('\n').length, 1, r.err);
   }
 }));
+
+test('stopWatcher stops the watcher its fresh lock names, and nothing when none runs', () => {
+  withHome(() => {
+    const killed = [];
+    const kill = (pid, signal) => { killed.push([pid, signal]); };
+    assert.deepEqual(stopWatcher(P, { kill }), { stopped: false, why: 'not running' });
+    fs.mkdirSync(path.dirname(lockFile(P)), { recursive: true });
+    fs.writeFileSync(lockFile(P), '4242\n');
+    assert.deepEqual(stopWatcher(P, { kill, alive: (pid) => pid === 4242 }), { stopped: true });
+    assert.deepEqual(killed, [[4242, 'SIGTERM']]);
+    // A lock too old, or a pid gone, names no running watcher.
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    fs.utimesSync(lockFile(P), old, old);
+    assert.deepEqual(stopWatcher(P, { kill, alive: () => true }), { stopped: false, why: 'not running' });
+    // A watcher gone by the time it is stopped is stopped.
+    fs.utimesSync(lockFile(P), new Date(), new Date());
+    const gone = () => { throw Object.assign(new Error('no such process'), { code: 'ESRCH' }); };
+    assert.deepEqual(stopWatcher(P, { kill: gone, alive: () => true }), { stopped: true });
+    assert.throws(() => stopWatcher('../x', { kill }));
+  });
+});
+
+test('stopForeman stops only the foreman process the watcher recorded, while it is still that process', async () => {
+  await withHome(async () => {
+    const killed = [];
+    const kill = (pid) => { killed.push(pid); };
+    const alive = (pid) => pid === 5151;
+    assert.deepEqual(await stopForeman(P, { kill, alive }), { stopped: false, why: 'not running' });
+    fs.mkdirSync(path.dirname(runningFile(P, 'foreman')), { recursive: true });
+    const write = (r) => fs.writeFileSync(runningFile(P, 'foreman'), JSON.stringify({ at: new Date().toISOString(), ...r }));
+    write({ state: 'running', pid: 5151, startTime: 'Mon Oct 20 03:00:00 2026' });
+    assert.deepEqual(await stopForeman(P, { kill, alive, startTime: async () => 'Mon Oct 20 03:00:00 2026' }), { stopped: true });
+    assert.deepEqual(killed, [5151]);
+    // Its pid since reused by another process, or a start time not to be had: left running.
+    for (const startTime of [async () => 'Mon Oct 20 04:00:00 2026', async () => null]) {
+      const got = await stopForeman(P, { kill, alive, startTime });
+      assert.equal(got.stopped, false);
+      assert.match(got.why, /could not be told apart/);
+    }
+    // Still starting, or recorded with no start time: nothing is stopped.
+    write({ state: 'starting' });
+    assert.deepEqual(await stopForeman(P, { kill, alive }), { stopped: false, why: 'not running' });
+    write({ state: 'running', pid: 5151 });
+    assert.equal((await stopForeman(P, { kill, alive, startTime: async () => 'x' })).stopped, false);
+    assert.deepEqual(killed, [5151]);
+  });
+});

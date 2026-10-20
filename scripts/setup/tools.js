@@ -40,6 +40,7 @@ import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readJournal, newId } from './journal.js';
+import { runClosed } from '../lib/setup-run.js';
 
 export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -467,9 +468,10 @@ async function stillOpen(change, { platform, run }) {
   return false;
 }
 
-// The newest installer for `tool` the journal records, from any run, while it is still open; else null.
+// The newest installer for `tool` the journal records, from any run uninstall hasn't closed, while it
+// is still open; else null.
 export async function openInstaller(tool, { platform = process.platform, run = realRun } = {}) {
-  const started = readJournal().runs.flatMap((r) => r?.changes ?? [])
+  const started = readJournal().runs.filter((r) => !runClosed(r)).flatMap((r) => r?.changes ?? [])
     .filter((c) => c?.kind === 'process' && c.after?.tool === tool)
     .sort((a, b) => String(a.after.startedAt).localeCompare(String(b.after.startedAt)));
   const newest = started.at(-1);

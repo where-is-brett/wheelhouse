@@ -21,6 +21,14 @@
 //                        (`trials: { pr, project }`): run `node "<root>/scripts/health/trials.js"
 //                        --pr <pr> --project <project>`, then `health` with every line it printed
 //                        (not its notes), then show `board`, and `briefing` when there is one
+//   uninstall plan       uninstall's list worked out by the helper, its card and its level 4
+//                        cards: { hash, card, asks: [{ id, about, card }], last }. Each ask card is
+//                        asked exactly as given, before uninstall's own card
+//   uninstall apply <hash>  asks the helper to put back what setup changed, with the full hash
+//                        `uninstall plan` gave; it goes ahead only after the director's Remove it on
+//                        the card naming it: { lines, pages, helperStops? }, each page a link for
+//                        the director (the pull request to merge, an installation page)
+//   uninstall status     the whole list, as plain lines
 // The playbook (wheelhouse:setup) runs in the sandbox and only talks: every change is the
 // helper's, so every form is a request to its /setup/* routes, naming this folder, and nothing here
 // reads or writes a file. A request carries only the folder, the step and the hash; the helper
@@ -31,7 +39,8 @@
 // trial left, closes the trial pull request and deletes its branch, and, once the board is green
 // with every other step done, records the green mark, copies the run's records into the project's
 // state and finishes setup (the foreman and the first briefing), once. The STOP guard lets these
-// four through; `apply` is refused under STOP.
+// four through, and `uninstall plan` and `uninstall status`; `apply` and `uninstall apply` are
+// refused under STOP.
 // Errors are one line on standard error.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,22 +49,31 @@ import { helperClient } from '../host/helper-client.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
-// An error whose message is said to the session as it is.
-export class CliError extends Error {}
+// An error whose message is said to the session as it is; with `lines`, on the lines it has.
+export class CliError extends Error {
+  constructor(message, { lines = false } = {}) {
+    super(message);
+    this.lines = lines;
+  }
+}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, health [<trial line> ...]';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
 const STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 const HASH = /^[0-9a-f]{64}$/;
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 
-// Asks one route and gives its answer when it is ok; otherwise the helper's own words.
-async function ask(route, body) {
-  let got;
+// Asks one route and gives its answer, whatever it is.
+async function askOnce(route, body) {
   try {
-    got = await route(body);
+    return await route(body);
   } catch (error) {
     throw new CliError(`The host helper didn't answer: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
+}
+
+// Asks one route and gives its answer when it is ok; otherwise the helper's own words.
+async function ask(route, body) {
+  const got = await askOnce(route, body);
   if (got?.ok !== true) throw new CliError(got?.refused ?? got?.why ?? 'The host helper refused the request');
   return got;
 }
@@ -98,6 +116,21 @@ export async function main(argv, {
       const got = await ask(helper.setup.status, { folder });
       const next = Number.isInteger(got.next) ? got.next : null;
       json({ lines: Array.isArray(got.lines) ? got.lines : [], next, plan: Number.isInteger(got.ask) ? await plan(helper, folder, got.ask) : null });
+    } else if (form === 'uninstall' && rest[0] === 'plan' && rest.length === 1) {
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.uninstall.plan, { folder }); // eslint-disable-line no-unused-vars
+      json(answer);
+    } else if (form === 'uninstall' && rest[0] === 'apply' && rest.length === 2) {
+      if (!HASH.test(rest[1])) throw new CliError('Give the full hash of the list on uninstall\'s card, as uninstall plan gave it');
+      const got = await askOnce((client ?? helperClient()).setup.uninstall.apply, { folder, hash: rest[1] });
+      if (got?.ok !== true) {
+        const done = Array.isArray(got?.lines) ? got.lines.map((l) => `\n${String(l).replace(BREAKS, ' ')}`).join('') : '';
+        throw new CliError(`${got?.refused ?? got?.why ?? 'The host helper refused the request'}${done === '' ? '' : `\nDone before it stopped:${done}`}`, { lines: true });
+      }
+      const { ok, ...answer } = got; // eslint-disable-line no-unused-vars
+      json(answer);
+    } else if (form === 'uninstall' && rest[0] === 'status' && rest.length === 1) {
+      const got = await ask((client ?? helperClient()).setup.uninstall.status, { folder });
+      out(`${(Array.isArray(got.lines) ? got.lines : []).map((l) => String(l).replace(BREAKS, ' ')).join('\n')}\n`);
     } else if (form === 'health') {
       if (rest.length > MOST_TRIAL_LINES || !rest.every((l) => parseTrialLine(l) !== null)) {
         throw new CliError('Give the lines trials.js printed, each as one argument, as they are');
@@ -110,7 +143,7 @@ export async function main(argv, {
     return 0;
   } catch (error) {
     const message = error instanceof CliError ? error.message : `That did not work: ${error instanceof Error ? error.message : 'unknown error'}`;
-    err(`${message.replace(BREAKS, ' ')}\n`);
+    err(`${error instanceof CliError && error.lines ? message : message.replace(BREAKS, ' ')}\n`);
     return 1;
   }
 }

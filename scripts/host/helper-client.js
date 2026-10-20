@@ -110,6 +110,12 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       apply: post('/setup/apply'), //   { folder, step, hash } -> { ok, started }: only after the director's click on the card naming that hash; refused under STOP
       status: post('/setup/status'), // { folder } -> { ok, lines, next, ask }: the folder's run as plain lines, answered under STOP
       health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing? }: step 10's board, answered under STOP
+      // Uninstall (scripts/setup/uninstall.js), naming the folder, a full path.
+      uninstall: {
+        plan: post('/setup/uninstall/plan'), //     { folder } -> { ok, hash, card, asks, last }: answered under STOP
+        apply: post('/setup/uninstall/apply'), //   { folder, hash } -> { ok, lines, pages, helperStops? }: only after the director's Remove it on the card naming that hash; refused under STOP
+        status: post('/setup/uninstall/status'), // { folder } -> { ok, lines }: the whole list, answered under STOP
+      },
     },
     // The baseline from the private note (scripts/measures/baseline.js), per computer, no project.
     measures: {

@@ -20,6 +20,9 @@
 // (its text, or past MAX_ENROLMENT_BYTES its SHA-256 and size), or null. An enrolment already holding this computer's key is left as it is, with the
 // day it was added, so the other computers' cards keep naming the same day.
 //
+// The last uninstall on this computer takes its enrolment back out the same way (withdrawEnrolment,
+// ruling R87), only while the file still holds the key setup published.
+//
 // Nothing here trusts anything: another computer's key counts on this one only after the
 // director's Trust it on the card the session start shows (scripts/lib/trust-clicks.js).
 import crypto from 'node:crypto';
@@ -144,4 +147,66 @@ async function commitOn({ tip, computer, text, must }) {
   const sub = await must(['mktree', '-z'], `${[...inside.filter((e) => e.split('\t')[1] !== name), `100644 blob ${blob}\t${name}`].join('\0')}\0`);
   const tree = await must(['mktree', '-z'], `${[...top.filter((e) => e.split('\t')[1] !== 'enrolments'), `040000 tree ${sub}\tenrolments`].join('\0')}\0`);
   return must([...AUTHOR, 'commit-tree', tree, '-p', tip, '-m', `Add the key of computer ${computer}`]);
+}
+
+export const NOT_WITHDRAWN = 'This computer\'s key could not be taken out of your profile: uninstall\'s plan, asked for again, tries again';
+
+// Takes this computer's enrolment back out of the profile, as the last uninstall on this computer
+// does (rulings R79, R87), with the director's own sign-in, the way publishEnrolment put it in: a
+// commit made from objects alone on the profile's tip as just fetched, in a scratch bare repository
+// setup makes and removes, pushed by its exact SHA, never forced, made again on a new tip a few
+// times at most. `target` is the host change step 3 recorded (`<host>:<owner/name>:enrolments/
+// <computer>.json`) and `after` the text it published: the file is taken out only while it still
+// holds that key, so a key the computer published since, or another's, stays. Gives { put: true }
+// (taken out, or gone already), or { put: false, why } when it holds another key; throws
+// NOT_WITHDRAWN when git or the push fails.
+export async function withdrawEnrolment({ profile, target, after, gitPath = 'git', env = {}, run = realRun }) {
+  const file = /^[^:]+:[^:]+:(enrolments\/[0-9a-f]{8}\.json)$/.exec(String(target))?.[1];
+  if (file === undefined) throw new Error('That is not a computer\'s enrolment in the profile');
+  const computer = path.basename(file, '.json');
+  const parent = path.join(wheelhouseHome(), 'setup');
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(parent, 'withdraw-'));
+  const call = setupGit({ run, gitPath, env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...env }, profile.remoteUrl), cwd: dir });
+  const git = (args, input) => call([...NO_HOOKS, ...args], input === undefined ? {} : { input });
+  const must = async (args, input) => {
+    const got = await git(args, input);
+    if (got.code !== 0) throw new Error(NOT_WITHDRAWN);
+    return got.stdout.trim();
+  };
+  const keyOf = (text) => (typeof text === 'string' ? enrolmentOf(text, computer)?.publicKey ?? null : null);
+  try {
+    await must(['init', '-q', '--bare']);
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      await must(['fetch', '-q', '--no-tags', profile.remoteUrl, `+refs/heads/${PROFILE_BRANCH}:${FETCHED}`]);
+      const tip = await must(['rev-parse', '--verify', '-q', `${FETCHED}^{commit}`]);
+      const held = await git(['cat-file', 'blob', `${tip}:${file}`]);
+      if (held.code !== 0) return { put: true };
+      const ours = held.stdout === after || (keyOf(after) !== null && keyOf(held.stdout) === keyOf(after));
+      if (!ours) return { put: false, why: 'it holds another key since setup, so it stays' };
+      const commit = await commitWithout({ tip, computer, must });
+      const pushed = await git(['push', '--no-verify', '--porcelain', profile.remoteUrl, `${commit}:refs/heads/${PROFILE_BRANCH}`]);
+      if (pushed.code === 0) return { put: true };
+      const line = String(pushed.stdout ?? '').split('\n').find((l) => l.startsWith('!'));
+      if (!line || !/\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(line)) break;
+    }
+    throw new Error(NOT_WITHDRAWN);
+  } finally {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch { /* left for the system to clear: it holds only the profile's public files */ }
+  }
+}
+
+// A commit on `tip` whose tree is the tip's without enrolments/<computer>.json (and without the
+// folder, once nothing is left in it), made from objects alone.
+async function commitWithout({ tip, computer, must }) {
+  const entries = async (treeish) => (await must(['ls-tree', '-z', treeish])).split('\0').filter(Boolean);
+  const top = await entries(`${tip}^{tree}`);
+  const folder = top.find((e) => /^040000 tree [0-9a-f]+\tenrolments$/.test(e));
+  const inside = (folder === undefined ? [] : await entries(folder.split(/[ \t]/)[2])).filter((e) => e.split('\t')[1] !== `${computer}.json`);
+  const rest = top.filter((e) => e.split('\t')[1] !== 'enrolments');
+  const kept = inside.length === 0 ? rest : [...rest, `040000 tree ${await must(['mktree', '-z'], `${inside.join('\0')}\0`)}\tenrolments`];
+  const tree = await must(['mktree', '-z'], kept.length === 0 ? '' : `${kept.join('\0')}\0`);
+  return must([...AUTHOR, 'commit-tree', tree, '-p', tip, '-m', `Take out the key of computer ${computer}`]);
 }

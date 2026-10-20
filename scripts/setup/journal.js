@@ -320,6 +320,11 @@ function readObjectFile(file) {
     if (error.code === 'ENOENT') return { data: {}, indent: 2, eol: '\n', bom: '', newline: true };
     throw error;
   }
+  return objectOf(file, text);
+}
+
+// A JSON object file's text read as readObjectFile reads it: the object and its layout.
+function objectOf(file, text) {
   const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
   const body = text.slice(bom.length);
   let data;
@@ -340,10 +345,15 @@ function readObjectFile(file) {
   };
 }
 
-function writeObjectFile(file, { data, indent, eol, bom, newline }) {
+// The text an object and its layout are written as.
+function objectText({ data, indent, eol, bom, newline }) {
   let text = JSON.stringify(data, null, indent === 0 ? undefined : indent);
   if (eol === '\r\n') text = text.replaceAll('\n', '\r\n');
-  writeAtomic(writePath(file), `${bom}${text}${newline ? eol : ''}`);
+  return `${bom}${text}${newline ? eol : ''}`;
+}
+
+function writeObjectFile(file, read) {
+  writeAtomic(writePath(file), objectText(read));
 }
 
 function checkKey(key) {
@@ -486,6 +496,39 @@ function reverseOrSay(change, write) {
 // left as it is and the reason is given. Kinds whose own step puts them back are not touched here.
 export function reverseChange(change) {
   return reverseOrSay(change, true);
+}
+
+// What putting a `json-key` or `file` change back makes of `text`, a copy of its file held elsewhere
+// (the host's, for uninstall's pull request, ruling R87), null when that copy has no such file;
+// nothing is written. { put: true, text } with the text to hold (null: no file), the same text when
+// it holds the change's `before` already; or { put: false, why } when it holds neither what setup
+// wrote nor what was there before, as reverseChange leaves a file changed since setup.
+export function reverseText(change, text) {
+  checkChange(change, { needStep: false });
+  if (change.kind === 'json-key') {
+    checkKey(change.key);
+    if (text === null) return change.absent === true ? { put: true, text } : CHANGED;
+    let read;
+    try {
+      read = objectOf(change.target, text);
+    } catch (error) {
+      if (error.notJson) return CHANGED;
+      throw error;
+    }
+    const now = getAt(read.data, change.key);
+    if (now.found && canonicalJson(now.value) === canonicalJson(change.after)) {
+      if (change.absent === true) deleteAt(read.data, change.key);
+      else setAt(read.data, change.key, structuredClone(change.before));
+      return { put: true, text: objectText(read) };
+    }
+    const before = change.absent === true ? !now.found : now.found && canonicalJson(now.value) === canonicalJson(change.before);
+    return before ? { put: true, text } : CHANGED;
+  }
+  if (change.kind === 'file') {
+    if (text === change.after) return { put: true, text: change.before };
+    return text === change.before ? { put: true, text } : CHANGED;
+  }
+  throw new Error(`Change ${change.id} is not a key or a file`);
 }
 
 // What a `json-key` or `file` change's target holds now, changing nothing: { held: false } when the

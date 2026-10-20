@@ -1143,6 +1143,11 @@ test('a folder whose setup run uninstall closed reads as removed, not as being s
       assert.notEqual(text(out), NOT_SET_UP);
       assert.equal(f.calls.spawn.length, 0, 'no helper is started for a folder Wheelhouse was removed from');
     }
+    // A new folder made inside it, whose own settings switch the plugin on, is a folder of its own
+    // to set up: only the removed folder itself reads as removed.
+    const inner = pluginOn(path.join(folder, 'new shop'));
+    assert.deepEqual(beingSetUp(inner), { folder: inner, run: null, journal: true });
+    assert.equal(text(await setupStart(fake(), inner)), NOT_SET_UP);
     assert.equal(PLUGIN_KEY, 'wheelhouse@wheelhouse', 'the key setup\'s step 1 switches on');
     assert.ok(REMOVED.includes(REMOVE_PLUGIN) && REMOVE_PLUGIN.includes(PLUGIN_KEY), REMOVED);
     assert.match(REMOVED, /^Wheelhouse was removed from this folder\./);

@@ -192,9 +192,12 @@ export function beingSetUp(cwd, { home = os.homedir() } = {}) {
     const run = nearestRun(holding);
     return { folder: run.folder, run, journal: true };
   }
-  if (holdingRuns(named, real, home).length > 0) return null;
+  // A folder Wheelhouse was removed from (only a closed run's folder is it) is not being set up,
+  // though its settings still switch the plugin on; a folder inside it whose own settings switch
+  // the plugin on is a new one.
   const stop = path.resolve(home);
   for (let dir = real; dir !== stop && !sameFolder(dir, stop); dir = path.dirname(dir)) {
+    if (named.some((r) => sameFolder(r.folder, dir))) return null;
     if (pluginOnIn(dir)) return { folder: dir, run: null, journal: true };
     if (path.dirname(dir) === dir) break;
   }
