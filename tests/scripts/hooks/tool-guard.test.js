@@ -202,6 +202,83 @@ test('a connector is refused unless the configuration lists its server', async (
   });
 });
 
+const APP_TOOLS = ['mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up', 'mcp__ccd_view__show_pane',
+  'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view'];
+
+test('the Claude app\'s own drawing tools pass unlisted, each by its whole name; its other tools stay with the list', async () => {
+  await withHome(async (home) => {
+    for (const config of [undefined, { v: 1, criticalAreas: [], ciFiles: [], mcpServers: ['figma'], webDomains: [] }]) {
+      const { base, main } = makeProject(config);
+      try {
+        for (const tool of APP_TOOLS) assert.equal(await run(base, home, call(main, tool)), undefined, `${tool} ${JSON.stringify(config)}`);
+        for (const tool of ['mcp__ccd_turn__other', 'mcp__ccd_turn__wrap_up_now', 'mcp__ccd_turn__wrap_up__x', 'mcp__ccd_turnx__wrap_up',
+          'mcp__CCD_TURN__wrap_up', 'mcp__ccd_view__show_pane2', 'mcp__plugin_x_ccd_turn__wrap_up', 'mcp__ccd_session_mgmt__delete_session',
+          'mcp__ccd_session__spawn_task', 'mcp__ccd_host__clean_up_worktrees', 'mcp__ccd_settings__set_setting', 'mcp__ccd_turn', 'mcp__ccd_view__']) {
+          assert.ok(denied(await run(base, home, call(main, tool))), tool);
+        }
+        assert.ok(denied(await run(base, home, call(main, 'ReadMcpResourceTool', { server: 'ccd_turn', uri: 'x://y' }))));
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    }
+    // Listing another of the app's servers lets it through by the list, as any connector.
+    const listed = makeProject({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: ['ccd_session_mgmt'], webDomains: [] });
+    try {
+      assert.equal(await run(listed.base, home, call(listed.main, 'mcp__ccd_session_mgmt__list_sessions')), undefined);
+      assert.equal(await run(listed.base, home, call(listed.main, 'mcp__ccd_turn__wrap_up')), undefined);
+    } finally { fs.rmSync(listed.base, { recursive: true, force: true }); }
+    // A configuration that can't be read refuses them with every connector.
+    const unreadable = makeProject('not json');
+    try {
+      for (const tool of APP_TOOLS) assert.ok(denied(await run(unreadable.base, home, call(unreadable.main, tool))), tool);
+    } finally { fs.rmSync(unreadable.base, { recursive: true, force: true }); }
+  });
+});
+
+test('a project whose configuration names ccd_turn or ccd_view is refused those servers\' tools, the app\'s own included', async () => {
+  await withHome(async (home) => {
+    const plain = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+    const mcpJson = (servers) => JSON.stringify({ mcpServers: Object.fromEntries(servers.map((s) => [s, { command: 'node' }])) });
+    const cases = [
+      { label: 'listed ccd_turn', config: { ...plain, mcpServers: ['ccd_turn'] } },
+      { label: 'listed ccd_view', config: { ...plain, mcpServers: ['figma', 'ccd_view'] } },
+      { label: '.mcp.json ccd_view', config: plain, mcp: mcpJson(['figma', 'ccd_view']) },
+      { label: '.mcp.json ccd.turn', config: plain, mcp: mcpJson(['ccd.turn']) },
+      { label: '.mcp.json ccd turn', config: undefined, mcp: mcpJson(['ccd turn']) },
+      { label: '.mcp.json not json', config: plain, mcp: '{ nope' },
+      { label: '.mcp.json servers not an object', config: plain, mcp: JSON.stringify({ mcpServers: ['ccd_turn'] }) },
+    ];
+    for (const { label, config, mcp } of cases) {
+      const { base, main } = makeProject(config);
+      try {
+        if (mcp !== undefined) fs.writeFileSync(path.join(main, '.mcp.json'), mcp);
+        for (const tool of [...APP_TOOLS, 'mcp__ccd_turn__other', 'mcp__ccd_view__other']) {
+          const out = await run(base, home, call(main, tool));
+          assert.ok(denied(out), `${label}: ${tool}`);
+          assert.match(out.hookSpecificOutput.permissionDecisionReason, /ccd_turn or ccd_view/, `${label}: ${tool}`);
+        }
+        assert.ok(denied(await run(base, home, call(main, 'ListMcpResourcesTool', { server: 'ccd_view' }))), label);
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    }
+    // A .mcp.json naming other servers, or none, leaves the app's tools passing.
+    for (const mcp of [mcpJson(['figma', 'ccd-turn', 'CCD_TURN']), JSON.stringify({}), 'null']) {
+      const { base, main } = makeProject(plain);
+      try {
+        fs.writeFileSync(path.join(main, '.mcp.json'), mcp);
+        for (const tool of APP_TOOLS) assert.equal(await run(base, home, call(main, tool)), undefined, `${mcp}: ${tool}`);
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    }
+    // A .mcp.json in the session's own folder, or a folder above it, counts as well as the main folder's.
+    const { base, main } = makeProject(plain);
+    try {
+      const deep = path.join(main, 'app', 'web');
+      fs.mkdirSync(deep, { recursive: true });
+      fs.writeFileSync(path.join(main, 'app', '.mcp.json'), mcpJson(['ccd_turn']));
+      assert.equal(await run(base, home, call(main, 'mcp__ccd_turn__wrap_up')), undefined);
+      assert.ok(denied(await run(base, home, call(deep, 'mcp__ccd_turn__wrap_up'))));
+      assert.ok(denied(await run(base, home, call(path.join(main, 'app'), 'mcp__ccd_view__get_layout'))));
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 test('tools it does not name pass untouched, and a folder outside any project is left alone', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();

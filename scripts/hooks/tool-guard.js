@@ -4,7 +4,8 @@
 // beingSetUp), as in a project: refuses
 // secrets (.env files, the credential folders, Wheelhouse's own home), writes to
 // the places that hold the guardrails, the host tools (gh, glab, git push) and
-// connectors the project has not listed. It backs up the deny rules and the
+// connectors the project has not listed (the Claude app's own drawing tools pass
+// unlisted). It backs up the deny rules and the
 // sandbox; it does not replace them. Any other tool passes untouched.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -257,8 +258,76 @@ function serverOf(input) {
   return cut < 0 ? null : rest.slice(0, cut);
 }
 
-function connectorRefusal(server, mainFolder) {
+// The Claude Desktop app's own tools that only draw in the app (its task list, its wrap-up box
+// and its panes) pass without the project listing them. Each is named whole, so every other
+// mcp__ccd_* tool, and one the app adds later, stays with the connector list.
+//
+// Why the names can be trusted: Desktop starts each session's Claude Code with its own
+// deniedMcpServers setting, which names ccd_turn and ccd_view among the app's servers, so a
+// configured server of either name is not loaded there (Claude Code matches the name exactly,
+// and the app's own servers come in through the SDK, which that setting does not hold). Claude
+// Code itself reserves neither name, so a session started elsewhere could load one, and a server
+// called `ccd.turn` takes the same tool names, since Claude Code writes each character outside
+// letters, digits, `_` and `-` as `_`. So a project whose connector list or .mcp.json names
+// either server is refused both servers' tools, these included.
+const APP_TOOLS = new Set([
+  'mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up',
+  'mcp__ccd_view__show_pane', 'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view',
+]);
+const APP_SERVERS = ['ccd_turn', 'ccd_view'];
+
+// A server's name as Claude Code writes it in its tools' names.
+const asInToolNames = (name) => name.replace(/[^a-zA-Z0-9_-]/g, '_');
+const namesAppServer = (names) => names.some((name) => APP_SERVERS.includes(asInToolNames(name)));
+
+// Whether a .mcp.json names one of the app's servers. One that is there but can't be read counts
+// as naming one.
+function mcpJsonNamesAppServer(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    return !['ENOENT', 'ENOTDIR'].includes(error?.code);
+  }
+  try {
+    const servers = JSON.parse(text)?.mcpServers;
+    if (servers === undefined) return false;
+    if (servers === null || typeof servers !== 'object' || Array.isArray(servers)) return true;
+    return namesAppServer(Object.keys(servers));
+  } catch {
+    return true;
+  }
+}
+
+// Whether the project's configuration names one of the app's servers: its connector list, the
+// main folder's .mcp.json, or a .mcp.json in the session's folder or any folder above it.
+function configurationNamesAppServer(allowed, mainFolder, cwd) {
+  if (namesAppServer(allowed)) return true;
+  const files = new Set([path.join(mainFolder, '.mcp.json')]);
+  const starts = [path.resolve(cwd)];
+  try {
+    starts.push(fs.realpathSync.native(cwd));
+  } catch {
+    // The folder as given is still looked at.
+  }
+  for (const start of starts) {
+    for (let folder = start; ; folder = path.dirname(folder)) {
+      files.add(path.join(folder, '.mcp.json'));
+      if (path.dirname(folder) === folder) break;
+    }
+  }
+  return [...files].some(mcpJsonNamesAppServer);
+}
+
+function connectorRefusal(input, server, mainFolder) {
   const allowed = mainFolder ? allowedServers(mainFolder) : null;
+  const appTool = APP_TOOLS.has(input.tool_name);
+  if (allowed !== null && (appTool || APP_SERVERS.includes(server))) {
+    if (configurationNamesAppServer(allowed, mainFolder, input.cwd)) {
+      return answer.deny(`This project's configuration names ccd_turn or ccd_view, which the Claude app keeps for its own tools: ${HELPER}`);
+    }
+    if (appTool) return null;
+  }
   if (server === null || server === '' || allowed === null || !allowed.includes(server)) {
     return answer.deny(`This project has not listed that connector: ${HELPER}`);
   }
@@ -284,7 +353,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
         main = undefined;
       }
     }
-    return connectorRefusal(serverOf(input), main) ?? undefined;
+    return connectorRefusal(input, serverOf(input), main) ?? undefined;
   }
   if (SHELL_TOOLS.includes(tool)) {
     const command = input.tool_input?.command;
