@@ -1139,7 +1139,7 @@ Everything is built in one programme, in this order. Each step is usable before 
 
 On 20 October 2026 both passed three trials of three with Wheelhouse's lines and failed without them: without them the front desk took the prompt for text that wasn't the director's and did nothing it asked. Since those runs the playbook's section on the baseline from the private note has come in from `main`, so both variants now hold it as well; it doesn't touch the lines these scenarios test. The same day both were run again, one trial each, with each session kept from the director's own as the front desk's are: each passed with the lines and failed without (`docs/evals/mod.md`); those reruns are the counted results.
 
-**Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **A pilot** runs on one small feature of the first project before wider use.
+**Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **Real use** follows the evaluation as a whole: Wheelhouse is used for all work on the first project, with no small-feature pilot first (the director's decision of 19 October 2026, section 17.2).
 
 **Measures:**
 
