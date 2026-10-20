@@ -39,6 +39,7 @@ import { HOST_TOOLS, toolFolder, fetchedPath } from '../lib/host-tools.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
+import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
 
@@ -50,6 +51,12 @@ const FLOOR = NODE_FLOOR.join('.');
 // every tool is refused with a message naming a Wheelhouse script, which is how the hooks fail
 // with no `node` (check 35), as well as a Node.js that is missing or too old.
 export const NODE_LINE = `Wheelhouse needs Node.js ${NODE_FLOOR[0]} or later. If this computer has none or an older one, or a Wheelhouse session refuses every tool with a message naming a Wheelhouse script and "node: command not found", install the LTS from nodejs.org, then ask again in the same conversation; if it still refuses, start a new session.`;
+
+// The README's install line (Task 16, ruling R97): the form check 37 documented, pasted into a
+// Desktop session opened on the product's folder, with `<tag>` standing for the release's tag.
+// Check 37's sitting may change it, here only; the README tells the director to pick "this
+// project" at its scope question (whether the user scope must be handled too is ruling R24's).
+export const INSTALL_LINE = `/plugin install wheelhouse --marketplace ${WHEELHOUSE_REPO}#<tag>`;
 
 // How often the step looks again while an installer runs, and how long the installer may go unseen,
 // with git still missing, before the step says it closed (ruling R55): its window may take a
