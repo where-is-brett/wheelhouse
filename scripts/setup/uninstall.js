@@ -28,7 +28,7 @@
 // changed since setup. journal.json is kept.
 //
 // The setup commit counts as on the host only when the journal or the folder shows it went up:
-// step 7 finished, or recorded a change after the push (protection), or the folder's copy of the
+// step 7 finished, or recorded protection after the push, or the folder's copy of the
 // branch on the host holds it. Step 7 records the push before making it, so a push that failed
 // leaves the files and pins to be put back here, and the commit named as kept in the folder.
 //
@@ -91,8 +91,8 @@ import { enrolledFile, signingKeyFile } from '../state/signing.js';
 import { RETENTION_DAYS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { readProfileViews } from '../profile/store.js';
-import { readJournal, wouldReverse, heldNow } from './journal.js';
-import { readLaunchVar } from './telemetry.js';
+import { readJournal, heldNow } from './journal.js';
+import { launchVarState } from './telemetry.js';
 import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
 import { PROFILE_REPO } from './host.js';
 import { SETUP_FILES } from './project-files.js';
@@ -361,7 +361,9 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     const branch = c.after.branch;
     if (c.after.action === 'push') {
       const runChanges = Array.isArray(pushRun.changes) ? pushRun.changes : [];
-      const afterPush = runChanges.slice(runChanges.findIndex((x) => x.id === c.id) + 1).some((x) => x.step === 7);
+      // Protection is recorded only once the push went up; another change of step 7's after it may be
+      // a later attempt's, stopped before its own push.
+      const afterPush = runChanges.slice(runChanges.findIndex((x) => x.id === c.id) + 1).some((x) => x.step === 7 && x.kind === 'host' && x.after?.action === 'protect');
       pullRequest = typeof pushRun.steps?.[7]?.doneAt === 'string' || afterPush || refOf(real, `refs/remotes/origin/${branch}`) === c.after.sha;
       if (!pullRequest) kept(`setup's commit on ${branch}, never pushed`, 'it stays in this folder\'s history', idsOf(commitGroup));
     } else if (refOf(real, `refs/heads/${branch}`) === commitGroup[0].c.before?.sha) settled(idsOf(commitGroup), 'the commit was never made');
@@ -410,9 +412,18 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         else if (slug !== null && within(projectFolder(slug), c.target)) remove(projectFolder(slug), 'last', list, at);
         else if (samePath(c.target, profileDir()) || within(path.join(wheelhouseHome(), 'tools'), c.target) || typeof c.after?.installer === 'string') remove(c.target, 'last', list, at);
         else if (one.before !== null) settled(list, 'not made by setup');
-        else if (!exists(c.target)) settled(list, 'already put back');
-        else if (wouldReverse(one).put) add('computer', at, { put: 'reverse', change: one, ids: list });
-        else kept(shown(c.target, userHome), 'not empty: what is in it stays', list);
+        else {
+          // Gone is put back already; a folder that can't be read is kept, with why.
+          let inside = null;
+          try {
+            inside = fs.readdirSync(c.target);
+          } catch (error) {
+            if (error.code === 'ENOENT') settled(list, 'already put back');
+            else kept(shown(c.target, userHome), `could not read it: ${error.code ?? error.message}`, list);
+          }
+          if (inside !== null && inside.length === 0) add('computer', at, { put: 'reverse', change: one, ids: list });
+          else if (inside !== null) kept(shown(c.target, userHome), 'not empty: what is in it stays', list);
+        }
         break;
       }
       case 'host': {
@@ -475,8 +486,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           // unless setup's own key edits there put it back already.
           const key = ['enabledPlugins', plugin];
           const pin = { id: c.id, step: c.step, kind: 'json-key', target: projectSettings, key, before: null, absent: true, after: true };
+          const held = heldNow(pin);
           if (groups.has(JSON.stringify(['json-key', projectSettings, key]))) settled(list, 'its key goes back with the project\'s settings');
-          else if (wouldReverse(pin).put) add('files', at, { put: 'reverse', change: pin, ids: list });
+          else if (held.why !== undefined) kept(describe(c, userHome), held.why, list);
+          else if (held.held && held.value === true) add('files', at, { put: 'reverse', change: pin, ids: list });
           else settled(list, 'not switched on in the project\'s settings');
         }
         break;
@@ -487,9 +500,16 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           settled(list, 'it held this before setup');
           break;
         }
-        const value = await readLaunchVar(c.target, { platform, run });
-        if (value === c.after) add('computer', at, { put: 'unset-env', target: c.target, where: c.where ?? null, ids: list });
-        else if (value === one.before) settled(list, 'already put back');
+        // A variable that can't be read is kept, with why: never taken for one already unset.
+        let read;
+        try {
+          read = await launchVarState(c.target, { platform, run });
+        } catch (error) {
+          read = { why: `could not read ${c.target}: ${error.message}` };
+        }
+        if (read.why !== undefined) kept(describe(c, userHome), read.why, list, brief(c));
+        else if (read.value === c.after) add('computer', at, { put: 'unset-env', target: c.target, where: c.where ?? null, ids: list });
+        else if (read.value === one.before) settled(list, 'already put back');
         else kept(describe(c, userHome), 'changed since setup', list, brief(c));
         break;
       }

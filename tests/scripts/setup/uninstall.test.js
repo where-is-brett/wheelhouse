@@ -32,9 +32,13 @@ const writeText = (file, text) => {
   fs.writeFileSync(file, text);
 };
 
-// launchctl as a fake: the account's variables, read only.
-const launchEnv = (vars) => async (file, args) => {
-  if (file === 'launchctl' && args[0] === 'getenv') return { code: Object.hasOwn(vars, args[1]) ? 0 : 1, stdout: vars[args[1]] ?? '', stderr: '' };
+// launchctl as a fake: the account's variables, read only. An unset one reads as empty, as launchctl
+// gives it; `failing` makes every read fail.
+const launchEnv = (vars, { failing = false } = {}) => async (file, args) => {
+  if (file === 'launchctl' && args[0] === 'getenv') {
+    if (failing) return { code: 1, stdout: '', stderr: 'launchctl could not be reached' };
+    return { code: 0, stdout: Object.hasOwn(vars, args[1]) ? `${vars[args[1]]}\n` : '', stderr: '' };
+  }
   throw new Error(`nothing else is run: ${file} ${args.join(' ')}`);
 };
 
@@ -718,5 +722,71 @@ test('nothing recorded is left out of the plan: a folder setup didn\'t make, and
     const got = await plan(world);
     assert.deepEqual(got.done.map((d) => d.why).sort(), ['it held this before setup', 'not made by setup']);
     assert.deepEqual(accounted(got), recordedIds());
+  });
+});
+
+// ---- Fix round 2 ----
+
+test('an account variable that can\'t be read is kept with why, never taken for one already unset', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    fullSetup(world);
+    const got = await plan(world, { run: launchEnv({}, { failing: true }) });
+    assert.equal(got.changes.some((c) => c.put === 'unset-env'), false);
+    assert.equal(got.done.some((d) => d.why === 'already put back'), false);
+    const kept = got.keep.find((k) => k.brief === 'CLAUDE_CODE_ENABLE_TELEMETRY');
+    assert.match(kept.why, /^could not read CLAUDE_CODE_ENABLE_TELEMETRY: launchctl could not be reached/);
+    assert.equal(kept.ids.length, 1);
+    // Unset, read cleanly: put back already.
+    const unset = await plan(world, { run: launchEnv({}) });
+    assert.ok(unset.done.some((d) => d.why === 'already put back' && d.ids.includes(kept.ids[0])));
+  });
+});
+
+test('a folder setup made that can\'t be read is kept with why, never settled as gone', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    const run = startRun({ folder: world.folder, now: NOW });
+    const shut = path.join(world.folder, 'shut');
+    const inner = path.join(shut, 'made');
+    fs.mkdirSync(inner, { recursive: true });
+    const made = recorder(run.id).add(3, { kind: 'folder', target: inner, before: null, after: { made: true } });
+    fs.chmodSync(shut, 0o000);
+    try {
+      const got = await plan(world);
+      assert.equal(got.done.some((d) => d.ids.includes(made.id)), false);
+      assert.match(got.keep.find((k) => k.ids?.includes(made.id)).why, /^could not read it: EACCES/);
+    } finally {
+      fs.chmodSync(shut, 0o755);
+    }
+  });
+});
+
+test('a pin whose project settings can\'t be read as JSON is kept with why, and one setup\'s key edits cover is settled', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { pin } = stoppedAtPush(world);
+    fs.writeFileSync(path.join(world.folder, '.claude', 'settings.json'), 'not json');
+    const got = await plan(world);
+    assert.equal(got.done.some((d) => d.ids.includes(pin.id)), false);
+    assert.equal(got.keep.find((k) => k.ids?.includes(pin.id)).why, 'changed since setup');
+  });
+  await withHome(async () => {
+    const world = makeWorld();
+    const { pin, r } = stoppedAtPush(world);
+    r.key(7, path.join(world.folder, '.claude', 'settings.json'), ['enabledPlugins', 'superpowers@wheelhouse'], true);
+    const got = await plan(world);
+    assert.deepEqual(got.done.find((d) => d.ids.includes(pin.id)).why, 'its key goes back with the project\'s settings');
+  });
+});
+
+test('only protection recorded after the push counts it as made: a later attempt\'s file change doesn\'t', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = stoppedAtPush(world);
+    r.file(7, path.join(world.folder, '.claude', 'wheelhouse.json'), '{}\n');
+    const got = await plan(world);
+    assert.equal(got.changes.some((c) => c.put === 'pull-request'), false);
   });
 });

@@ -82,13 +82,22 @@ export function loginItem(vars) {
 const psQuote = (text) => `'${String(text).replaceAll("'", "''")}'`;
 const powershell = (run, script) => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script]);
 
-// A variable of the account's launch environment, or null when it is not set.
-export async function readLaunchVar(name, { platform, run }) {
+// A variable of the account's launch environment as read: { value } (null when it is not set), or
+// { why } when it could not be read (launchctl or PowerShell failed), so a reader that must tell the
+// two apart, such as uninstall's plan, can.
+export async function launchVarState(name, { platform, run }) {
   const got = platform === 'win32'
     ? await powershell(run, `[Environment]::GetEnvironmentVariable(${psQuote(name)},'User')`)
     : await run('launchctl', ['getenv', name]);
+  if (got?.code !== 0) return { why: `could not read ${name}${got?.stderr ? `: ${String(got.stderr).trim()}` : ''}` };
   const value = String(got?.stdout ?? '').replace(/\r?\n$/, '');
-  return got?.code === 0 && value !== '' ? value : null;
+  return { value: value === '' ? null : value };
+}
+
+// A variable of the account's launch environment, or null when it is not set or could not be read.
+export async function readLaunchVar(name, { platform, run }) {
+  const got = await launchVarState(name, { platform, run });
+  return got.why === undefined ? got.value : null;
 }
 
 async function setLaunchVar(name, value, { platform, run }) {
