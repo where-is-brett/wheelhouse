@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine } from './card-lines.js';
+import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
@@ -24,7 +24,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -50,6 +50,16 @@ const ACTION_OWN = {
   // card's set line alone, so the click carries no figure. It is kept in
   // <wheelhouseHome()>/measures/clicks/ and never written to the state (writeEvent refuses it).
   baseline: ['hash'],
+  // The director's Trust it on a trust card (ruling R80): the other computer's id, when its key was
+  // added to the profile, the key's fingerprint and its full SHA-256 (ruling R107). Its question is
+  // the card's set line alone. It is kept in <wheelhouseHome()>/trust/ and never written to the
+  // state (writeEvent refuses it).
+  trust: ['computer', 'at', 'fingerprint', 'keyHash'],
+  // The director's Remove it on uninstall's card (ruling R90): the project its line names (the
+  // project's slug, or the folder's own name when none is registered there) and the full SHA-256 of
+  // the list uninstall puts back. Its question is the card's set line alone. It is kept in
+  // <wheelhouseHome()>/setup/clicks/, as a setup click is, where the helper reads it.
+  uninstall: ['project', 'hash'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, or put the card off: a click on one is never an answer.
@@ -123,6 +133,20 @@ function checkAction(data) {
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the figures its card read back');
     if (data.label !== BASELINE_LABEL) bad(`needs the ${BASELINE_LABEL} label`);
     if (data.question !== baselineLine(data.hash)) bad('carries only the baseline card\'s set line as its question');
+  } else if (data.action === 'trust') {
+    if (typeof data.computer !== 'string' || !/^[0-9a-f]{8}$/.test(data.computer)) bad('needs the id of the computer it trusts');
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs when that computer\'s key was added');
+    if (typeof data.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(data.fingerprint)) bad('needs the fingerprint of the key it trusts');
+    if (typeof data.keyHash !== 'string' || !/^[0-9a-f]{64}$/.test(data.keyHash) || !data.keyHash.startsWith(data.fingerprint)) {
+      bad('needs the full hash of the key it trusts, which its fingerprint starts');
+    }
+    if (data.label !== TRUST_LABEL) bad(`needs the ${TRUST_LABEL} label`);
+    if (data.question !== trustLine(data.computer, data.at, data.fingerprint)) bad('carries only the trust card\'s set line as its question');
+  } else if (data.action === 'uninstall') {
+    if (!isLineName(data.project)) bad('needs the project it removes Wheelhouse from');
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list its card showed');
+    if (data.label !== UNINSTALL_LABEL) bad(`needs the ${UNINSTALL_LABEL} label`);
+    if (data.question !== uninstallLine(data.project, data.hash)) bad('carries only uninstall\'s card\'s set line as its question');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }
@@ -407,11 +431,15 @@ export function carriesBaseline(event, { now = () => new Date() } = {}) {
   return carriesFigures(stringsIn(data).join('\n'), data?.header, { now });
 }
 
+// The words the state refuses a trust click with: it is kept on the computer it trusts on.
+export const TRUST_KEPT_HERE = 'A trust click is kept on the computer it was made on, never in the state';
+
 // `dir` and `branch` name another clone of events, such as the profile's; by default
 // the project's state clone and its state branch. An event carrying the baseline card is refused.
 export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH, now = () => new Date() }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
   if (carriesBaseline(event, { now })) throw new Error(CARRIES_BASELINE);
+  if (event.kind === 'action' && event.data?.action === 'trust') throw new Error(TRUST_KEPT_HERE);
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }
@@ -455,9 +483,9 @@ export async function writeEvent({ project, event, push, env, dir = stateDir(pro
 
 // Pulls, then pushes anything not yet pushed. Resolves with whether the pull
 // went through and how many commits the remote still lacks. `dir` and `branch`
-// as for writeEvent.
-export async function syncState({ project, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
-  const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
+// as for writeEvent; `pull`, when given, is a clone's own pull ({ code }), as the profile's is.
+export async function syncState({ project, push, pull, env, dir = stateDir(project), branch = STATE_BRANCH }) {
+  const pulled = pull ? await pull() : await git(dir, ['pull', '--rebase', 'origin', branch], env);
   if (pulled.code !== 0) await git(dir, ['rebase', '--abort'], env);
   await pushWithRetry(dir, push, env, branch);
   const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], env);

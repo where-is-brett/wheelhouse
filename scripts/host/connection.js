@@ -9,6 +9,8 @@
 //     projectId?: number,   GitLab narrow: the project's number, naming its key
 //     baseUrl?: string,     GitLab: the GitLab address (default https://gitlab.com)
 //     locked?: boolean,     the project's protection level is Locked
+//     installationId?: number,  GitHub narrow: the app's installation on the project's
+//                           account, kept when step 3 connected it
 //   }
 //
 // It is kept in the project's settings and holds no secret. Quick uses the
@@ -27,6 +29,7 @@ const MOST_PAGES = 100;
 const GITHUB_API = 'https://api.github.com';
 const GITHUB_HEADER = 'http.https://github.com/.extraheader';
 
+const validId = (id) => Number.isInteger(id) && id > 0;
 const timeOf = (now) => (typeof now === 'function' ? now() : now ?? new Date()).getTime();
 
 function check(connection) {
@@ -37,6 +40,9 @@ function check(connection) {
   if (typeof project !== 'string' || !project.includes('/')) throw new Error('The connection\'s project must be written owner/name');
   if (host === 'gitlab' && mode === 'narrow' && !(Number.isInteger(projectId) && projectId > 0)) {
     throw new Error('The GitLab connection needs the project\'s number');
+  }
+  if (connection.installationId !== undefined && !validId(connection.installationId)) {
+    throw new Error('The connection\'s installation must be a number');
   }
   return connection;
 }
@@ -65,6 +71,20 @@ function gitlabKey(connection) {
     throw new Error('The GitLab connection has no key for this project: setup needs to make one');
   }
   return key;
+}
+
+// The app's installation a GitHub connection uses: the project's own, which its record keeps once
+// step 3 connected it; else the one the keys keep for the project's account; else, from keys kept
+// before installations were kept per account (only `installationId`), that one. Null when none.
+// One key file serves every installation of the app: its access key works across them (check 20).
+export function installationOf(connection, keys) {
+  if (validId(connection?.installationId)) return connection.installationId;
+  const kept = keys?.installations;
+  if (kept !== null && typeof kept === 'object' && !Array.isArray(kept)) {
+    const account = typeof connection?.project === 'string' ? connection.project.split('/')[0].toLowerCase() : null;
+    return account !== null && validId(kept[account]) ? kept[account] : null;
+  }
+  return validId(keys?.installationId) ? keys.installationId : null;
 }
 
 // The GitHub access key, renewed first when it has less than ten minutes
@@ -147,14 +167,15 @@ async function listPage(url, key, fetch) {
 
 // Whether the Wheelhouse app's installation can see the project. If not, the
 // installation's settings page, where the director ticks it. This only reads:
-// the helper cannot add a repository to the installation (check 20).
+// the helper cannot add a repository to the installation (check 20). The
+// installation is the project's (installationOf).
 export async function installationCovers(connection, { fetch = globalThis.fetch, now = () => new Date() } = {}) {
   check(connection);
   if (connection.host !== 'github' || connection.mode !== 'narrow') {
     throw new Error('Only the narrow GitHub connection has an installation to check');
   }
-  const { installationId } = githubKeys();
-  if (!Number.isInteger(installationId) || installationId < 1) {
+  const installationId = installationOf(connection, githubKeys());
+  if (installationId === null) {
     throw new Error('The GitHub connection does not know its installation: sign in to the Wheelhouse app again');
   }
   const key = await githubAccessKey({ fetch, now });

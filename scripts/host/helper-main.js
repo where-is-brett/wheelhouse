@@ -15,10 +15,16 @@ function recordOf(project) {
   return record;
 }
 
-export function startRealHelper({ address = helperAddress(), fetch = globalThis.fetch, now = () => new Date() } = {}) {
+// `onStop` is what the helper does once the last uninstall's answer, saying it stops, has been sent
+// (by default it closes and this process exits).
+export function startRealHelper({
+  address = helperAddress(), fetch = globalThis.fetch, now = () => new Date(),
+  onStop = (close) => close().then(() => process.exit(0), () => process.exit(1)),
+} = {}) {
   return startHelper({
     address,
     now,
+    onStop,
     adapterFor: (project, { env }) => {
       const record = recordOf(project);
       return makeAdapter({ host: record.host, repo: record.repo, run, env });

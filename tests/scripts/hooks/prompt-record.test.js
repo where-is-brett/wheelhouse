@@ -7,12 +7,13 @@ import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { clicksDir, noteShown, noteAsked } from '../../../scripts/setup/clicks.js';
+import { clicksDir, noteShown, noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick } from '../../../scripts/setup/clicks.js';
+import { CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -1265,5 +1266,99 @@ test('records are kept only together with their answer: an answer that can\'t be
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
     }
+  });
+});
+
+
+// --- Uninstall's click (ruling R90): kept in setup/clicks/, signed, naming the project and the list's full hash.
+
+const UNINSTALL_HASH = 'ef'.repeat(32);
+const uninstallCard = (project, hash, what = `Remove Wheelhouse from ${project}: stop its jobs, put back 3 changes on this computer.`) => composeCard({
+  kind: 'uninstall', level: 4, what, why: 'You asked for it, and it takes away the checks that guard this project.',
+  options: [{ label: 'Remove it', says: 'Setup\'s changes are put back, as listed.' }, { label: 'Not now', says: 'Nothing changes.' }],
+  recommend: 'Remove it', because: 'you asked', meanwhile: 'Nothing changes until you click; if STOP is on, lift it first.',
+  checks: 'The checks no longer guard this project.', target: { project, hash },
+}).question;
+const uninstallClicks = () => clicks().filter((e) => e.data?.action === 'uninstall');
+const removeClick = (card, label, cwd) => ({
+  cwd, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+  tool_input: { questions: [card], answers: { [card.question]: label } }, tool_response: { answers: { [card.question]: label } },
+});
+
+test('Remove it on uninstall\'s card, exactly as the helper showed it for this folder, is signed and kept in setup/clicks', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-uninstall zoë ')));
+    const other = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-uninstall-other ')));
+    try {
+      const card = uninstallCard(P, UNINSTALL_HASH);
+      assert.deepEqual(cardProblems(card.question), []);
+      noteUninstallShown({ project: P, folder, hash: UNINSTALL_HASH, card, now: () => NOW });
+      assert.equal(uninstallShownFor(folder).hash, UNINSTALL_HASH);
+      const c = fake();
+      // In a registered project: the click is kept, and the plain answer goes to the state as any card's does.
+      await decide(removeClick(card, 'Remove it', folder), { client: c, now: () => NOW, projectOf: () => ({ project: P }) });
+      const [only, ...rest] = uninstallClicks();
+      assert.deepEqual(rest, []);
+      assert.equal(only.kind, 'action');
+      assert.deepEqual(only.data, { action: 'uninstall', project: P, hash: UNINSTALL_HASH, question: uninstallLine(P, UNINSTALL_HASH), label: 'Remove it' });
+      assert.equal(verify(only, readEnrolled()), true);
+      assert.equal(c.calls.record.length, 0, 'no click, shown record or reply code goes to the state');
+      assert.deepEqual(c.calls.write.map((w) => w.data.label), ['Remove it']);
+
+      // Nothing else counts: a put-off; a card for another project, or another list, never shown; a
+      // card reworded around the right line; the right card from a folder it wasn't shown for; a card
+      // with a second set line; and a button the card didn't offer.
+      const nothing = async (input, find = () => null) => decide(input, { client: fake(), now: () => NOW, projectOf: find });
+      await nothing(removeClick(card, 'Not now', folder));
+      await nothing(removeClick(card, 'Explain more', folder));
+      await nothing(removeClick(uninstallCard('owner__other', UNINSTALL_HASH), 'Remove it', folder));
+      await nothing(removeClick(uninstallCard(P, 'ab'.repeat(32)), 'Remove it', folder));
+      await nothing(removeClick(uninstallCard(P, UNINSTALL_HASH, `Remove Wheelhouse from ${P}: nothing at all changes.`), 'Remove it', folder));
+      await nothing(removeClick({ ...card, options: card.options.map((o) => (o.label === 'Remove it' ? { ...o, description: 'Nothing changes.' } : o)) }, 'Remove it', folder));
+      await nothing(removeClick(card, 'Remove it', other));
+      await nothing(removeClick({ ...card, question: `${card.question}\n${approvalLine(7, FULL)}` }, 'Remove it', folder));
+      await nothing(removeClick({ ...card, options: card.options.filter((o) => o.label !== 'Remove it') }, 'Remove it', folder));
+      assert.equal(uninstallClicks().length, 1);
+
+      // In a folder with no project record (here one inside it, where no setup runs either), the card
+      // shown for the folder holding it counts the same way.
+      fs.mkdirSync(path.join(folder, 'web'));
+      await nothing(removeClick(card, 'Remove it', path.join(folder, 'web')));
+      assert.equal(uninstallClicks().length, 2);
+
+      // Shown again for a new list, only the card as last shown counts.
+      const newer = uninstallCard(P, 'cd'.repeat(32));
+      noteUninstallShown({ project: P, folder, hash: 'cd'.repeat(32), card: newer, now: () => NOW });
+      await nothing(removeClick(card, 'Remove it', folder));
+      assert.equal(uninstallClicks().length, 2);
+      await nothing(removeClick(newer, 'Remove it', folder));
+      assert.deepEqual(uninstallClicks().map((e) => e.data.hash).sort(), ['cd'.repeat(32), UNINSTALL_HASH, UNINSTALL_HASH].sort());
+
+      // The helper's reader: fresh for CLICK_FRESH_MS, this project and this hash only, until used.
+      const at = (ms) => () => new Date(NOW.getTime() + ms);
+      assert.equal(freshUninstallClicks({ project: P, hash: UNINSTALL_HASH, now: at(60000) }).length, 2);
+      assert.deepEqual(freshUninstallClicks({ project: P, hash: UNINSTALL_HASH, now: at(CLICK_FRESH_MS + 1) }), [], 'a stale click counts for nothing');
+      assert.deepEqual(freshUninstallClicks({ project: 'owner__other', hash: UNINSTALL_HASH, now: at(60000) }), []);
+      assert.deepEqual(freshUninstallClicks({ project: P, hash: 'ab'.repeat(32), now: at(60000) }), []);
+      for (const e of freshUninstallClicks({ project: P, hash: UNINSTALL_HASH, now: at(60000) })) assert.equal(useClick(e), true);
+      assert.deepEqual(freshUninstallClicks({ project: P, hash: UNINSTALL_HASH, now: at(60000) }), [], 'a used click counts once');
+      assert.equal(freshUninstallClicks({ project: P, hash: 'cd'.repeat(32), now: at(60000) }).length, 1);
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+});
+
+test('a forged uninstall click, signed by no key this computer trusts, or made elsewhere, is not fresh', async () => {
+  await withHome(async () => {
+    fs.mkdirSync(clicksDir(), { recursive: true });
+    const real = makeEvent({ kind: 'action', data: { action: 'uninstall', project: P, hash: UNINSTALL_HASH, question: uninstallLine(P, UNINSTALL_HASH), label: 'Remove it' }, now: () => NOW });
+    const write = (event, name) => fs.writeFileSync(path.join(clicksDir(), `${name}.json`), JSON.stringify(event));
+    write({ ...real, id: 'forged-1', data: { ...real.data } }, 'forged');
+    write({ ...real, id: 'elsewhere-1', computer: 'ffffffff' }, 'elsewhere');
+    assert.deepEqual(freshUninstallClicks({ project: P, hash: UNINSTALL_HASH, now: () => NOW }), []);
+    write(real, 'real');
+    assert.deepEqual(freshUninstallClicks({ project: P, hash: UNINSTALL_HASH, now: () => NOW }).map((e) => e.id), [real.id]);
   });
 });

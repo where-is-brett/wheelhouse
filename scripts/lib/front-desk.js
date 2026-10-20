@@ -21,10 +21,13 @@ export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
 
 // What a card is about: the cards with a set line, and the one without. A baseline card reads
 // the private note's figures back (scripts/measures/baseline.js); the helper composes it, and it
-// is never a card event in the state.
+// is never a card event in the state. A trust card asks to trust another of the director's
+// computers here (ruling R80); the session start composes it, and its click is kept on this computer.
+// Uninstall's card asks to remove Wheelhouse from a project (ruling R90); the helper composes it, and
+// its click is kept on this computer, as a setup click is.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
-  'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'question',
+  'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall', 'question',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me']);

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { makeSigningKey, sign, verify, readEnrolled, enrol } from '../../../scripts/state/signing.js';
+import { makeSigningKey, sign, verify, readEnrolled, enrol, enrolledFile } from '../../../scripts/state/signing.js';
 import { computerId, keysDir, profileDir } from '../../../scripts/lib/paths.js';
 import { withHome } from '../../helpers/homes.js';
 
@@ -112,7 +112,7 @@ test('enrol creates folders, keeps entries, and replaces the same computer', () 
     enrol({ computer: 'aaaaaaaa', publicKey: 'k1', enrolledAt: 't1' });
     enrol({ computer: 'bbbbbbbb', publicKey: 'k2', enrolledAt: 't2' });
     enrol({ computer: 'aaaaaaaa', publicKey: 'k3', enrolledAt: 't3' });
-    assert.ok(fs.existsSync(path.join(profileDir(), 'keys', 'enrolled.json')));
+    assert.ok(fs.existsSync(path.join(keysDir(), 'enrolled.json')));
     assert.deepEqual(readEnrolled(), [
       { computer: 'bbbbbbbb', publicKey: 'k2', enrolledAt: 't2' },
       { computer: 'aaaaaaaa', publicKey: 'k3', enrolledAt: 't3' },
@@ -120,7 +120,21 @@ test('enrol creates folders, keeps entries, and replaces the same computer', () 
   });
 });
 
-const enrolledPath = () => path.join(profileDir(), 'keys', 'enrolled.json');
+const enrolledPath = () => path.join(keysDir(), 'enrolled.json');
+
+test('the trusted keys are kept beside this computer\'s own key, never in the profile\'s clone (ruling R105)', () => {
+  withHome(() => {
+    assert.equal(enrolledFile(), enrolledPath());
+    // A list in the profile's clone, where a pull could bring one, is not read, and not moved.
+    const old = path.join(profileDir(), 'keys', 'enrolled.json');
+    fs.mkdirSync(path.dirname(old), { recursive: true });
+    fs.writeFileSync(old, JSON.stringify([{ computer: 'deadbeef', publicKey: 'AAAA', enrolledAt: 't' }]));
+    assert.deepEqual(readEnrolled(), []);
+    enrol({ computer: 'aaaaaaaa', publicKey: 'k1', enrolledAt: 't1' });
+    assert.deepEqual(readEnrolled().map((e) => e.computer), ['aaaaaaaa']);
+    assert.equal(JSON.parse(fs.readFileSync(old, 'utf8'))[0].computer, 'deadbeef', 'left as it was');
+  });
+});
 const entry = (computer) => ({ computer, publicKey: 'AAAA', enrolledAt: '2026-10-18T00:00:00.000Z' });
 
 test('enrol refuses to write when enrolled.json is damaged, and writes atomically', () => {

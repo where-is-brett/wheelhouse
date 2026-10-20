@@ -1,29 +1,35 @@
 // tests/scripts/hooks/session-start.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
+import {
+  decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
+  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY,
+} from '../../../scripts/hooks/session-start.js';
+import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
 import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HELD } from '../../../scripts/lineage/check.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { beingSetUp } from '../../../scripts/hooks/kit.js';
+import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
-import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
+import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId, closeRun } from '../../../scripts/setup/journal.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
@@ -674,31 +680,80 @@ test('the session start starts no watcher in a project setup is still finishing'
 });
 
 // Whether setup has finished here isn't known while its journal can't be read, so the foreman,
-// the last thing setup starts, isn't started (rulings R44, R67); the rest of the session start
-// goes on as in any project.
-test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher', async () => {
+// the last thing setup starts, is held back (rulings R44, R67); the rest of the session start
+// goes on as in any project, and the front desk's reload says why, naming what to tell the
+// director (rulings R72, R73).
+test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher and tells the front desk why', async () => {
   await withHome(async (home) => {
+    assert.equal(FOREMAN_HELD_NEWER, 'The foreman is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.');
+    assert.equal(FOREMAN_HELD_UNREADABLE, 'The foreman is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.');
     const folder = fs.realpathSync.native(tempFolder('wh-unreadable journal '));
     fs.mkdirSync(path.join(folder, '.git'));
     writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
-    const start = (f) => decide({ cwd: folder, session_id: 's1' }, {
+    const start = (f, env = {}) => decide({ cwd: folder, session_id: 's1' }, {
       pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
       pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
-      guardedSelfTest: async () => null, startLowNodeCopy: () => true,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true, env,
     });
-    const f = fake();
-    f.client.health = async () => ({ ok: true });
-    f.client.config = async () => shapeConfig(1);
+    // A helper that answers and a Shape 1 project: a watcher would be started.
+    const shape1 = () => {
+      const made = fake();
+      made.client.health = async () => ({ ok: true });
+      made.client.config = async () => shapeConfig(1);
+      return made;
+    };
+    const f = shape1();
+    const held = [FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE, JOURNAL_UNREADABLE];
+    const heldLines = (out) => text(out).split('\n').filter((l) => held.includes(l));
     fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
-    fs.writeFileSync(journalFile(), 'not json');
-    assert.equal(beingSetUp(folder), null, 'the guards treat it as the project it is');
-    const unreadable = await start(f);
-    assert.equal(watcherStarts(f).length, 0, 'not while the journal can\'t be read');
-    // Readable again (no journal at all: setup never ran here), it is started, and the reload is the same.
+    // Not JSON, a journal of another shape, and one a newer Wheelhouse wrote.
+    const cases = [
+      ['not json', FOREMAN_HELD_UNREADABLE],
+      ['{"v":1,"runs":{}}', FOREMAN_HELD_UNREADABLE],
+      ['[]', FOREMAN_HELD_UNREADABLE],
+      ['{"v":2,"runs":[]}', FOREMAN_HELD_NEWER],
+      ['{"v":3}', FOREMAN_HELD_NEWER],
+    ];
+    for (const [journal, line] of cases) {
+      fs.writeFileSync(journalFile(), journal);
+      assert.equal(beingSetUp(folder), null, 'the guards treat it as the project it is');
+      const out = await start(f);
+      assert.equal(watcherStarts(f).length, 0, `not while the journal can't be read: ${journal}`);
+      assert.deepEqual(heldLines(out), [line], journal);
+      // The rest of the reload is a project's: the front desk's line is there too.
+      assert.ok(text(out).split('\n').includes(FRONT_DESK_LINE), journal);
+      // Nothing rewrites the journal.
+      assert.equal(fs.readFileSync(journalFile(), 'utf8'), journal);
+    }
+    // The foreman's own session and a feature's are held back too, and given no such line.
+    const foreman = shape1();
+    const foremanOut = await start(foreman, { WHEELHOUSE_ROLE: 'foreman' });
+    assert.equal(watcherStarts(foreman).length, 0);
+    assert.deepEqual(heldLines(foremanOut), []);
+    fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/feature/login\n');
+    const feature = shape1();
+    const featureOut = await start(feature);
+    assert.equal(watcherStarts(feature).length, 0);
+    assert.deepEqual(heldLines(featureOut), []);
+    assert.ok(!text(featureOut).split('\n').includes(FRONT_DESK_LINE));
+    fs.rmSync(path.join(folder, '.git', 'HEAD'));
+    // Held back with the helper down too, and still said.
+    const down = fake({ startsUp: false });
+    down.client.config = async () => shapeConfig(1);
+    const unhelped = await start(down);
+    assert.equal(watcherStarts(down).length, 0);
+    assert.deepEqual(heldLines(unhelped), [FOREMAN_HELD_NEWER]);
+    // Readable again (no journal at all: setup never ran here), it is started, and the reload
+    // has no such line.
     fs.rmSync(journalFile());
     const readable = await start(f);
     assert.equal(watcherStarts(f).length, 1);
-    assert.equal(text(unreadable), text(readable));
+    assert.deepEqual(heldLines(readable), []);
+    // A readable journal whose runs are elsewhere, too.
+    fs.writeFileSync(journalFile(), JSON.stringify({ v: 1, runs: [] }));
+    const again = shape1();
+    assert.deepEqual(heldLines(await start(again)), []);
+    assert.equal(watcherStarts(again).length, 1);
   });
 });
 
@@ -1024,6 +1079,22 @@ test('a fresh computer gets a signing key and enrols it once', async () => {
   });
 });
 
+// A folder with no project record, with a journal that can't be read, is counted as being set up
+// (kit.js's beingSetUp): its reload has setup's own line for it, and not the project's as well.
+test('in a folder being set up, a journal that can\'t be read gives setup\'s line alone', async () => {
+  await withHome(async () => {
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-unread-setup ')));
+    fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
+    for (const journal of ['not json', '{"v":2,"runs":[]}']) {
+      fs.writeFileSync(journalFile(), journal);
+      const f = fake();
+      f.client.health = async () => ({ ok: true });
+      const out = await setupStart(f, folder);
+      assert.equal(text(out), JOURNAL_UNREADABLE, journal);
+    }
+  });
+});
+
 test('the next session start resumes at the first unfinished step', async () => {
   await withHome(async () => {
     const folder = fs.realpathSync.native(tempFolder('wh-resume '));
@@ -1078,15 +1149,90 @@ test('the guards act in a folder being set up', async () => {
       assert.ok(denied(await stop(bash(folder, 'npm install'))), folder);
       // `health` with the trial lines the session printed is a reading form too (ruling R41).
       const trialLine = '"read .env.local: refused / refused"';
-      for (const reading of ['status', 'plan 3', 'plan 10', 'resume', 'health', `health ${trialLine}`, `health ${trialLine} "merge with forged approval: refused / MERGED (unexpected)"`]) {
+      for (const reading of ['status', 'plan 3', 'plan 10', 'resume', 'health', `health ${trialLine}`, `health ${trialLine} "merge with forged approval: refused / MERGED (unexpected)"`,
+        'uninstall plan', 'uninstall status']) {
         assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
       }
       for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x', 'health "not a line"', 'health status',
+        `uninstall apply ${'a'.repeat(64)}`, 'uninstall', 'uninstall plan 3',
         `health ${Array.from({ length: 13 }, () => trialLine).join(' ')}`]) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
       assert.equal(await stop(call(folder, 'Read')), undefined);
     }
     assert.equal(await stop({ ...call(stranger, 'Write'), tool_input: { file_path: path.join(stranger, 'a.txt') } }), undefined);
     liftStop();
+  });
+});
+
+test('a folder whose setup run uninstall closed reads as removed, not as being set up, and the guards leave it (ruling R89)', async () => {
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const T = Date.parse('2026-10-20T03:00:00.000Z');
+    // The plugin is still switched on in the folder's own settings until the director removes it.
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-removed zoë ')));
+    const run = startRun({ folder, now: () => new Date(T) });
+    for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    closeRun(run.id, { at: () => new Date(T + 3600000), by: 'uninstall' });
+    fs.mkdirSync(path.join(folder, 'web'));
+    for (const cwd of [folder, path.join(folder, 'web')]) {
+      assert.equal(beingSetUp(cwd), null, cwd);
+      assert.equal(removedFrom(cwd)?.run?.id, run.id, cwd);
+      const f = fake();
+      const out = await setupStart(f, cwd);
+      assert.equal(text(out), REMOVED, cwd);
+      assert.notEqual(text(out), NOT_SET_UP);
+      assert.equal(f.calls.spawn.length, 0, 'no helper is started for a folder Wheelhouse was removed from');
+    }
+    // A new folder made inside it, whose own settings switch the plugin on, is a folder of its own
+    // to set up: only the removed folder itself reads as removed.
+    const inner = pluginOn(path.join(folder, 'new shop'));
+    assert.deepEqual(beingSetUp(inner), { folder: inner, run: null, journal: true });
+    assert.equal(text(await setupStart(fake(), inner)), NOT_SET_UP);
+    assert.equal(PLUGIN_KEY, 'wheelhouse@wheelhouse', 'the key setup\'s step 1 switches on');
+    assert.ok(REMOVED.includes(REMOVE_PLUGIN) && REMOVE_PLUGIN.includes(PLUGIN_KEY), REMOVED);
+    assert.match(REMOVED, /^Wheelhouse was removed from this folder\./);
+    // The guards no longer act there: Wheelhouse is gone from it.
+    const bash = (command) => ({ ...call(folder, 'Bash'), tool_input: { command } });
+    assert.equal(await toolGuard(bash('gh pr merge 3'), { dir: managed, home: os.homedir(), platform: 'darwin', pluginRoot: PLUGIN_ROOT }), undefined);
+    setStop({ by: 'prompt' });
+    try {
+      assert.equal(await stopGuard(bash('npm install'), { dir: managed, pluginRoot: PLUGIN_ROOT, platform: 'darwin' }), undefined);
+    } finally {
+      liftStop();
+    }
+    // A folder nothing was ever set up in, with the plugin on, still reads as not set up yet.
+    const fresh = pluginOn(fs.realpathSync.native(tempFolder('wh-fresh-again ')));
+    assert.equal(removedFrom(fresh), null);
+    assert.equal(text(await setupStart(fake(), fresh)), NOT_SET_UP);
+  });
+});
+
+test('a folder set up again after uninstall reads as being set up by the newer run (ruling R89)', async () => {
+  await withHome(async () => {
+    const T = Date.parse('2026-10-20T03:00:00.000Z');
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-again zoë ')));
+    const old = startRun({ folder, now: () => new Date(T) });
+    for (const n of [1, 2, 3, 4]) markStep(old.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    closeRun(old.id, { at: () => new Date(T + 3600000), by: 'uninstall' });
+    const again = startRun({ folder, now: () => new Date(T + 7200000) });
+    markStep(again.id, 1, 'doneAt', { now: () => new Date(T + 7260000) });
+    assert.equal(beingSetUp(folder)?.run?.id, again.id);
+    assert.equal(removedFrom(folder), null);
+    assert.equal(text(await setupStart(fake(), folder)), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    // Uninstalled again, it reads as removed again.
+    closeRun(again.id, { at: () => new Date(T + 9000000), by: 'uninstall' });
+    assert.equal(beingSetUp(folder), null);
+    assert.equal(removedFrom(folder)?.run?.id, again.id);
+  });
+  // A registered folder whose latest run is closed is a project like any other, never being set up.
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-registered-closed '));
+    writeProject('o__closed', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const run = startRun({ folder });
+    markStep(run.id, 1, 'doneAt', {});
+    assert.equal(beingSetUp(folder)?.run?.id, run.id, 'unfinished, so being set up');
+    closeRun(run.id, { by: 'uninstall' });
+    assert.equal(beingSetUp(folder), null);
+    assert.equal(removedFrom(folder), null, 'a registered folder is a project, not one Wheelhouse was removed from');
   });
 });
 
@@ -1200,5 +1346,110 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
       'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
       'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.',
     ]);
+  });
+});
+
+// ---- Another of the director's computers (rulings R80, R81) ----
+
+// A public key made here, standing for another computer's.
+const someKey = () => crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+// The trust cards a reload hands over, as AskUserQuestion's questions.
+const trustCards = (out) => text(out).split('\n').filter((l) => l.startsWith(TRUST_ASK)).map((l) => JSON.parse(l.slice(TRUST_ASK.length)));
+const ADDED = '2026-10-19T22:30:00.000Z';
+const AT = Date.parse('2026-10-20T03:00:00.000Z');
+
+test('the front desk is handed a trust card for each computer the profile holds that this one doesn\'t trust, the helper asked at most once an hour', async () => {
+  await withHome(async (home) => {
+    const own = makeSigningKey();
+    enrol({ ...own, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const other = { computer: '0a1b2c3d', publicKey: someKey(), at: ADDED };
+    const known = { computer: '1b2c3d4e', publicKey: someKey() };
+    enrol({ ...known, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    let enrolments = [other, { ...known, publicKey: someKey(), at: ADDED }, { ...own, at: ADDED }];
+    let asked = 0;
+    const f = fake();
+    f.client.profile = { enrolments: async () => { asked += 1; return { ok: true, fetched: true, enrolments }; } };
+    const at = (minutes) => ({ now: () => new Date(AT + minutes * 60000) });
+
+    const out = await run(f, at(0));
+    assert.equal(asked, 1);
+    const [card, ...more] = trustCards(out);
+    assert.deepEqual(more, [], 'one card: this computer and the one it trusts get none');
+    assert.equal(setLineOf(card.question), trustLine(other.computer, ADDED, fingerprint(other.publicKey)));
+    assert.deepEqual(cardProblems(card.question), [], 'the card check lets it through');
+    assert.deepEqual(card.options.map((o) => o.label), ['Trust it', 'Not now', 'Explain more']);
+    // A computer it trusts whose enrolment holds another key: a line, never a card.
+    assert.ok(text(out).split('\n').includes(differentKeyLine(known.computer)));
+    assert.equal(differentKeyLine(known.computer), 'A different key claims your computer 1b2c3d4e; nothing was trusted.');
+    // When it asked is kept beside weekly.json.
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'jobs', 'enrolments.json'), 'utf8')).at, new Date(AT).toISOString());
+
+    // Within the hour the helper isn't asked again: the card comes from what the last fetch found.
+    assert.equal(trustCards(await run(f, at(59))).length, 1);
+    assert.equal(asked, 1);
+    // An hour on it is asked again; an ask with no answer (a refusal, or none in time) keeps what
+    // the last fetch found and its time, so the next start asks again (ruling R107).
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: false, refused: 'the host helper did not answer in time' }; };
+    assert.equal(trustCards(await run(f, at(60))).length, 1);
+    assert.equal(asked, 2);
+    assert.equal(trustCards(await run(f, at(61))).length, 1);
+    assert.equal(asked, 3);
+    // A fetch slower than what is left of the budget: asked again at the next start too.
+    f.client.profile.enrolments = () => { asked += 1; return new Promise(() => {}); };
+    assert.equal(trustCards(await run(f, { ...at(62), totalMs: 300 })).length, 1);
+    assert.equal(asked, 4);
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: true, fetched: false, enrolments }; };
+    assert.equal(trustCards(await run(f, at(63))).length, 1);
+    assert.equal(asked, 5);
+    // Once an answer has arrived (here the helper's fetch failed, and it said so), not again for an hour.
+    assert.equal(trustCards(await run(f, at(90))).length, 1);
+    assert.equal(asked, 5);
+    // Each card handed over has its key's full hash kept, which a click must match.
+    assert.deepEqual(readShownTrust(), { [setLineOf(card.question)]: keyHash(other.publicKey) });
+
+    // Once trusted, no card.
+    enrol({ computer: other.computer, publicKey: other.publicKey, enrolledAt: new Date(AT).toISOString() });
+    assert.deepEqual(trustCards(await run(f, at(91))), []);
+
+    // At most MAX_TRUST_CARDS a time, and a line saying more are waiting.
+    enrolments = ['2a000001', '2a000002', '2a000003', '2a000004'].map((computer) => ({ computer, publicKey: someKey(), at: ADDED }));
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: true, fetched: true, enrolments }; };
+    const many = await run(f, at(200));
+    assert.equal(trustCards(many).length, MAX_TRUST_CARDS);
+    assert.ok(text(many).includes(moreTrust(4 - MAX_TRUST_CARDS)));
+  });
+});
+
+test('only the front desk is handed trust cards, and only once step 3 is done in a folder being set up', async () => {
+  await withHome(async () => {
+    const own = makeSigningKey();
+    enrol({ ...own, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    let asked = 0;
+    const f = fake();
+    f.client.profile = { enrolments: async () => { asked += 1; return { ok: true, fetched: true, enrolments: [{ computer: '0a1b2c3d', publicKey: someKey(), at: ADDED }] }; } };
+    // The foreman's session: not asked, no card.
+    recordRole('s-foreman', 'foreman');
+    assert.deepEqual(trustCards(await run(f, { now: () => new Date(AT) }, { session_id: 's-foreman' })), []);
+    assert.equal(asked, 0);
+    // A folder being set up: not before step 3 is done; then the card, for setup's session to ask.
+    const folder = fs.realpathSync.native(tempFolder('wh-trust-setup '));
+    const setupRun = startRun({ folder, now: () => new Date(AT) });
+    const g = fake();
+    g.client.profile = f.client.profile;
+    assert.deepEqual(trustCards(await setupStart(g, folder, { now: () => new Date(AT) })), []);
+    assert.equal(asked, 0);
+    markStep(setupRun.id, 3, 'doneAt', { now: () => new Date(AT) });
+    assert.equal(trustCards(await setupStart(g, folder, { now: () => new Date(AT) })).length, 1);
+    assert.equal(asked, 1);
+  });
+});
+
+test('a helper that answers nothing about enrolments costs the session start nothing and adds no line', async () => {
+  await withHome(async () => {
+    const f = fake();
+    f.client.profile = { enrolments: async () => { throw new Error('boom'); } };
+    const out = await run(f, { now: () => new Date(AT) });
+    assert.deepEqual(trustCards(out), []);
+    assert.doesNotMatch(text(out), /different key|trusted/);
   });
 });

@@ -206,15 +206,16 @@ function earlier(entry, before, fileAt) {
   return Number.isFinite(at) ? at < limit : fileAt < limit;
 }
 
-// readTranscripts(folder, { userHome, env, before }) -> the director's typed messages in their past
-// Claude Code sessions in this folder, newest session first: from ~/.claude/projects/*/*.jsonl
-// (under CLAUDE_CONFIG_DIR when it is set), each entry matched by its `cwd` field, never by the
-// folder's name, and with `before`, only those written before then (the setup run's own sessions
-// are not past words, ruling R62). Each transcript's first PROBE_BYTES tell whether its session
-// was in the folder; of those that were, at most TRANSCRIPT_BYTES are read, from the newest back,
-// and of each its first TRANSCRIPT_FILE_BYTES. A line that isn't an entry is passed over.
-export function readTranscripts(folder, {
-  userHome, env = process.env, before, totalBytes = TRANSCRIPT_BYTES, fileBytes = TRANSCRIPT_FILE_BYTES,
+// folderEntries(folder, { userHome, env }) -> the entries of the director's past Claude Code
+// sessions in this folder, as { entry, fileAt }, newest session first: from
+// ~/.claude/projects/*/*.jsonl (under CLAUDE_CONFIG_DIR when it is set), each entry matched by its
+// `cwd` field (the folder or a folder inside it), never by the folder's name; `fileAt` is its
+// file's time. Each transcript's first PROBE_BYTES tell whether its session was in the folder; of
+// those that were, at most TRANSCRIPT_BYTES are read, from the newest back, and of each its first
+// TRANSCRIPT_FILE_BYTES. A line that isn't an entry is passed over. Step 1 reads the session's
+// first message from these (scripts/setup/install-step.js, ruling R76).
+export function folderEntries(folder, {
+  userHome, env = process.env, totalBytes = TRANSCRIPT_BYTES, fileBytes = TRANSCRIPT_FILE_BYTES,
 } = {}) {
   const config = typeof env.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR !== '' ? env.CLAUDE_CONFIG_DIR : path.join(userHome, '.claude');
   const projects = path.join(config, 'projects');
@@ -250,7 +251,7 @@ export function readTranscripts(folder, {
       return [];
     }
   });
-  const typed = [];
+  const found = [];
   let left = totalBytes;
   for (const { file, at, size } of files.slice(0, PROBE_FILES)) {
     if (left <= 0) break;
@@ -260,13 +261,21 @@ export function readTranscripts(folder, {
     left -= take;
     const text = take <= PROBE_BYTES ? probe.slice(0, take) : readStart(file, take);
     if (text === null) continue;
-    for (const entry of entries(text)) {
-      if (!inFolder(entry?.cwd, folder, realFolder) || !earlier(entry, before, at)) continue;
-      const said = typedIn(entry);
-      if (said !== null) typed.push(said);
-    }
+    for (const entry of entries(text)) if (inFolder(entry?.cwd, folder, realFolder)) found.push({ entry, fileAt: at });
   }
-  return typed;
+  return found;
+}
+
+// readTranscripts(folder, { userHome, env, before }) -> the director's typed messages in their past
+// Claude Code sessions in this folder, newest session first, read as folderEntries reads them, and
+// with `before`, only those written before then (the setup run's own sessions are not past words,
+// ruling R62).
+export function readTranscripts(folder, { before, ...reading } = {}) {
+  return folderEntries(folder, reading).flatMap(({ entry, fileAt }) => {
+    if (!earlier(entry, before, fileAt)) return [];
+    const said = typedIn(entry);
+    return said === null ? [] : [said];
+  });
 }
 
 // The words of a text, in lower case: runs of letters and digits.

@@ -15,7 +15,9 @@
 //                            (rulings R47, R70); its plan gives a wait naming the step meanwhile
 //     asksDuring?: number[], steps among `after` while which its questions are still asked (R54)
 //   }
-//   ctx = { folder, step, runId, now, userHome, platform, answers }, and for apply also
+//   ctx = { folder, step, runId, startedAt, now, userHome, platform, answers, say }, where a plan's
+//         say(line) is kept only when it settles, shown by status beside the step (ruling R101);
+//         and for apply also
 //         applyJsonKey({ file, key, value, project? }), the journal's key edit, which records the
 //           change in the journal before it writes the file, and gives the change back;
 //         record(change or changes), to put a change of any other kind in the journal;
@@ -50,8 +52,11 @@
 // is not recorded twice. A throw marks the step failed with its message; a fresh card and click
 // run it again, so apply must be safe to repeat.
 //
-// Until each step's task (Tasks 7 to 13) fills it in, the step lists no changes (ruling R14).
-// Step 1, the install, is the director's own (the README's line, Task 16), so it lists none.
+// A run has its own list of steps (scripts/lib/setup-run.js, stepsFor; ruling R74): a computer
+// joining a project set up on another runs steps 1, 2, 3, 6, 7, 8 and 9 only.
+//
+// Step 1, the install, is the director's own (the README's line, Task 16): it settles at once with
+// when the session's first message came (scripts/setup/install-step.js, ruling R76).
 // Step 2, the tools, is scripts/setup/tools.js; step 3, the host and the connection, is
 // scripts/setup/host.js; step 4, the three questions, is scripts/setup/questions.js; step 5, the
 // rules found, is scripts/setup/rules.js; step 6, the changes to this computer, and step 8, Locked,
@@ -59,7 +64,8 @@
 // scripts/setup/project-files.js; step 9, phone notifications, is scripts/setup/notify.js; step 10,
 // the health check, is scripts/setup/health.js.
 import { listHash } from '../lib/setup-writes.js';
-import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+import { SETUP_TITLES } from '../state/card-lines.js';
+import { installStep } from './install-step.js';
 import { toolsStep } from './tools.js';
 import { hostStep } from './host.js';
 import { questionsStep } from './questions.js';
@@ -77,38 +83,8 @@ export { firstUnfinished } from '../lib/setup-run.js';
 // record works out the hash of the rules on step 5's card the same way (scripts/lib/setup-writes.js).
 export const planHash = (changes) => listHash(changes);
 
-// The card of a step that changes nothing yet.
-function placeholderCard(n) {
-  return {
-    kind: 'setup',
-    level: 3,
-    what: `Setup step ${n}, ${SETUP_TITLES[n]}: this step has nothing to change on this computer yet.`,
-    why: 'Setup changes nothing without your click on the list of what it will change.',
-    options: [
-      { label: SETUP_LABEL, says: 'Setup marks this step done and moves on.' },
-      { label: 'Not now', says: 'Setup waits at this step; nothing changes.' },
-    ],
-    recommend: SETUP_LABEL,
-    because: 'the list is empty, so nothing changes',
-    meanwhile: 'Setup waits at this step; nothing changes.',
-  };
-}
-
-function placeholder(n) {
-  return {
-    n,
-    title: SETUP_TITLES[n],
-    async plan() {
-      return { changes: [], card: placeholderCard(n), director: 'One click' };
-    },
-    async apply() {
-      return [];
-    },
-  };
-}
-
-const FILLED = {
-  2: toolsStep, 3: hostStep, 4: questionsStep, 5: rulesStep, 6: computerStep, 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
+const STEP_OF = {
+  1: installStep, 2: toolsStep, 3: hostStep, 4: questionsStep, 5: rulesStep, 6: computerStep, 7: projectFilesStep, 8: lockedStep, 9: notifyStep, 10: healthStep,
 };
 
-export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => (FILLED[n] ? FILLED[n]() : placeholder(n))));
+export const STEPS = Object.freeze(Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map((n) => STEP_OF[n]()));

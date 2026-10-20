@@ -13,16 +13,16 @@ import { notifyStep, pushTestResult, READY, ARRIVED, READY_ID, ARRIVED_ID } from
 import { STEPS } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { answersFor } from '../../../scripts/setup/clicks.js';
-import { findRun, readJournal, startRun, markStep } from '../../../scripts/setup/journal.js';
-import { noteAsked } from '../../../scripts/setup/clicks.js';
-import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
+import { findRun, readJournal, startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { noteAsked, copySetupRecords } from '../../../scripts/setup/clicks.js';
+import { keepAnswer, keepClick } from '../../../scripts/lib/setup-clicks.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { phonePushResult } from '../../../scripts/lib/setup-run.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { setLineOf } from '../../../scripts/state/card-lines.js';
+import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
-import { withProject, T0 } from '../../helpers/setup-answers.js';
+import { withProject, T0, SLUG } from '../../helpers/setup-answers.js';
 
 // The prompt record keeps an answer as made a minute before T0 (tests/helpers/setup-answers.js).
 const ANSWERED = new Date(T0.getTime() - 60 * 1000);
@@ -229,11 +229,69 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       assert.deepEqual(changes.map((c) => [c.kind, c.target, c.before, c.after]), [['answer', 'step 9', null, pushTestResult(label)]]);
       assert.equal(fs.existsSync(path.join(home, 'setup', 'shown')), false, 'no Go-ahead card');
       // What the board reads from the journal.
-      assert.deepEqual(phonePushResult(), { arrived, at: run.steps[9].doneAt });
+      assert.deepEqual(phonePushResult(), { arrived, at: run.steps[9].doneAt, run: run.id });
       // Done: not planned again.
       await assert.rejects(planLater(), /already done/);
     });
   }
+});
+
+// Phone notifications belong to the computer (ruling R75): a push that arrived in an earlier run
+// settles step 9 at once; one that didn't asks again.
+test('step 9 settles at once when an earlier run on this computer recorded the push arrived, and asks when it didn\'t', async () => {
+  for (const arrived of [true, false]) {
+    await withProject(async ({ folder, user, home }) => {
+      const other = path.join(user, 'Projects', 'Earlier');
+      fs.mkdirSync(other, { recursive: true });
+      const earlier = startRun({ folder: other, now: () => T0 });
+      addChanges(earlier.id, [{ id: newId('chg'), step: 9, kind: 'answer', target: 'step 9', before: null, after: { pushArrived: arrived } }]);
+      markStep(earlier.id, 9, 'doneAt', { now: () => new Date(T0.getTime() - 60 * 60 * 1000) });
+      const run = readyFor9(folder);
+      const routes = setupRoutes({ now: () => T0, userHome: user });
+      const got = await routes['/setup/plan']({ folder, step: 9 });
+      if (!arrived) {
+        assert.equal(got.ask?.id, READY_ID, 'a push that didn\'t arrive is tested again');
+        return;
+      }
+      assert.deepEqual(got, { ok: true, done: true });
+      const mine = readJournal().runs.find((r) => r.id === run.id);
+      assert.deepEqual(mine.changes.filter((c) => c.step === 9).map((c) => [c.kind, c.after]), [['answer', { pushArrived: true, from: earlier.id }]]);
+      assert.equal(fs.existsSync(path.join(home, 'setup', 'asked')), false, 'nothing asked');
+      // The board reads this run's result now, still arrived.
+      assert.deepEqual(phonePushResult(), { arrived: true, at: mine.steps[9].doneAt, run: run.id });
+    });
+  }
+  // Directly: only another run's arrival counts, and this run's own answer comes first.
+  const result = { arrived: true, at: T0.toISOString(), run: 'run-0000000001' };
+  const step = notifyStep({ pushResult: () => result });
+  assert.deepEqual(await step.plan({ runId: 'run-0000000002', answers: {}, now: () => T0 }), { settled: { record: { pushArrived: true, from: 'run-0000000001' } } });
+  assert.equal((await step.plan({ runId: 'run-0000000001', answers: {}, now: () => T0 })).ask.id, READY_ID);
+  assert.equal((await notifyStep({ pushResult: () => null }).plan({ runId: 'run-0000000002', answers: {}, now: () => T0 })).ask.id, READY_ID);
+  const own = { [`9.${ARRIVED_ID}`]: { label: ARRIVED.no, text: null, at: T0.toISOString() } };
+  assert.deepEqual(await step.plan({ runId: 'run-0000000002', answers: own, now: () => T0 }), { settled: { record: { pushArrived: false } } });
+});
+
+// A joining computer's run (ruling R74) ends on step 9's settling, with no health check after it:
+// that settling copies what no apply copied, step 9's answer and a Locked step 8's click among
+// them, into the project's state (ruling R45).
+test('on a joining run, step 9\'s settling copies its answer and step 8\'s click into the project\'s state', async () => {
+  await withProject(async ({ folder, user }) => {
+    const run = startRun({ folder, now: () => T0 });
+    addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: 'o/Cafe-Menu' } }]);
+    for (const n of [1, 2, 3, 6, 7, 8]) markStep(run.id, n, 'doneAt', { now: () => T0 });
+    const hash = 'c'.repeat(64);
+    const locked = makeEvent({ kind: 'action', data: { action: 'setup', runId: run.id, step: 8, hash, question: setupLine(8, hash), label: 'Go ahead' }, now: () => T0 });
+    keepClick(locked);
+    const card = { question: 'Did the test notification reach your phone?', header: 'Question', options: [ARRIVED.yes, ARRIVED.no].map((l) => ({ label: l, description: l })) };
+    noteAsked({ runId: run.id, folder, step: 9, id: ARRIVED_ID, card, now: () => T0 });
+    const arrived = makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: run.id, step: 9, questionId: ARRIVED_ID, question: card.question, label: ARRIVED.yes, text: null }, now: () => T0 });
+    keepAnswer(arrived);
+    const sent = [];
+    const record = async ({ project, event }) => { sent.push([project, event.id]); return { ok: true, id: event.id }; };
+    const routes = setupRoutes({ now: () => T0, userHome: user, copy: (runId) => copySetupRecords(runId, SLUG, { record }) });
+    assert.deepEqual(await routes['/setup/plan']({ folder, step: 9 }), { ok: true, done: true });
+    assert.deepEqual(sent.sort(), [[SLUG, locked.id], [SLUG, arrived.id]].sort());
+  });
 });
 
 test('the push test\'s result names whether it arrived, and only for one of the card\'s two answers', () => {
@@ -287,6 +345,6 @@ test('the board reads the latest settled push test of this computer\'s journal, 
       { id: 'c4', step: 9, kind: 'answer', target: 'step 9', before: null, after: {} },
     ] },
   ] };
-  assert.deepEqual(phonePushResult(journal), { arrived: true, at: '2026-10-20T05:00:00.000Z' });
+  assert.deepEqual(phonePushResult(journal), { arrived: true, at: '2026-10-20T05:00:00.000Z', run: 'r1' });
   assert.equal(phonePushResult({ v: 1, runs: [] }), null);
 });

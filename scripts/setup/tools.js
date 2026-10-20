@@ -23,7 +23,8 @@
 //
 // The step also writes one allow rule into the project's .claude/settings.local.json, by key, for
 // setup's own command (ruling R43), so the playbook's calls before step 7 are not asked about
-// each time.
+// each time. With everything here and the rule in, nothing is listed, and the step settles with
+// no Go ahead (ruling R75).
 //
 // pickArchive, archWord, versionOf and parseChecksums are copied from probes/38-host-tools/run.js
 // (ruling R47): a probe is frozen evidence, not a module the plugin loads.
@@ -38,7 +39,9 @@ import { HOST_TOOLS, toolFolder, fetchedPath } from '../lib/host-tools.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
+import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
+import { runClosed } from '../lib/setup-run.js';
 
 export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -48,6 +51,12 @@ const FLOOR = NODE_FLOOR.join('.');
 // every tool is refused with a message naming a Wheelhouse script, which is how the hooks fail
 // with no `node` (check 35), as well as a Node.js that is missing or too old.
 export const NODE_LINE = `Wheelhouse needs Node.js ${NODE_FLOOR[0]} or later. If this computer has none or an older one, or a Wheelhouse session refuses every tool with a message naming a Wheelhouse script and "node: command not found", install the LTS from nodejs.org, then ask again in the same conversation; if it still refuses, start a new session.`;
+
+// The README's install line (Task 16, ruling R97): the form check 37 documented, pasted into a
+// Desktop session opened on the product's folder, with `<tag>` standing for the release's tag.
+// Check 37's sitting may change it, here only; the README tells the director to pick "this
+// project" at its scope question (whether the user scope must be handled too is ruling R24's).
+export const INSTALL_LINE = `/plugin install wheelhouse --marketplace ${WHEELHOUSE_REPO}#<tag>`;
 
 // How often the step looks again while an installer runs, and how long the installer may go unseen,
 // with git still missing, before the step says it closed (ruling R55): its window may take a
@@ -466,9 +475,10 @@ async function stillOpen(change, { platform, run }) {
   return false;
 }
 
-// The newest installer for `tool` the journal records, from any run, while it is still open; else null.
+// The newest installer for `tool` the journal records, from any run uninstall hasn't closed, while it
+// is still open; else null.
 export async function openInstaller(tool, { platform = process.platform, run = realRun } = {}) {
-  const started = readJournal().runs.flatMap((r) => r?.changes ?? [])
+  const started = readJournal().runs.filter((r) => !runClosed(r)).flatMap((r) => r?.changes ?? [])
     .filter((c) => c?.kind === 'process' && c.after?.tool === tool)
     .sort((a, b) => String(a.after.startedAt).localeCompare(String(b.after.startedAt)));
   const newest = started.at(-1);
@@ -490,6 +500,7 @@ function directorFor(changes, platform) {
   return 'One click';
 }
 
+// The card of a list with something on it: an empty list settles the step (ruling R75).
 function cardFor(changes, status, platform) {
   const lines = [];
   for (const c of changes.filter((x) => x.kind === 'process')) {
@@ -501,20 +512,18 @@ function cardFor(changes, status, platform) {
   }
   if (changes.some((c) => c.kind === 'json-key')) lines.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
-  const what = changes.length === 0
-    ? `Setup step 2, ${SETUP_TITLES[2]}: ${here.join(', ')} ${here.length === 1 ? 'is' : 'are'} already here, so nothing changes.`
-    : `Setup step 2, ${SETUP_TITLES[2]}: ${lines.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`;
+  const what = `Setup step 2, ${SETUP_TITLES[2]}: ${lines.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`;
   return {
     kind: 'setup',
     level: 3,
     what,
     why: 'Wheelhouse keeps the project on GitHub or GitLab through git and the host\'s own tool.',
     options: [
-      { label: SETUP_LABEL, says: changes.length === 0 ? 'Setup marks this step done and moves on.' : 'Setup starts what is listed and moves on to its questions while it runs.' },
+      { label: SETUP_LABEL, says: 'Setup starts what is listed and moves on to its questions while it runs.' },
       { label: 'Not now', says: 'Setup waits at this step; nothing is installed.' },
     ],
     recommend: SETUP_LABEL,
-    because: changes.length === 0 ? 'nothing changes' : 'each comes from its official source, and setup needs them for the next steps',
+    because: 'each comes from its official source, and setup needs them for the next steps',
     meanwhile: 'Setup waits at this step; nothing is installed.',
   };
 }
@@ -571,6 +580,8 @@ export function toolsStep({
         const allow = allowRules(file);
         if (!allow.includes(rule)) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, rule] });
       }
+      // Nothing to do settles the step, with no Go ahead (ruling R75).
+      if (changes.length === 0) return { settled: { record: { nothing: true } } };
       return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };
     },
     // Starts every installer at once, first, and fetches the host tools meanwhile; writes the rule

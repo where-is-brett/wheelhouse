@@ -4,10 +4,14 @@
 // will change, named by the hash of that list (design section 15, the plan's call 2).
 //
 //   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }, or
-//                                            { ok, ask: { step, id, card } } (a question to ask), or
+//                                            { ok, ask: { step, id, card } } (a question to ask),
+//                                            with `unanswered`, a line saying why, when it is
+//                                            asked again because what was typed on it was no
+//                                            answer (ruling R125), or
 //                                            { ok, wait, why } (nothing to ask yet), with
 //                                            `waitsFor`, the step it waits for, when it is that, or
-//                                            { ok, done: true } (the step settled on its answers)
+//                                            { ok, done: true } (the step settled on its answers),
+//                                            with `said`, a line it said as it settled (R101)
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
 //   /setup/status { folder }              -> { ok, lines, next, ask }; a running step's latest
 //                                            line for the director (ctx.say, ruling R40) among them
@@ -24,6 +28,12 @@
 // which are asked while those are unfinished: step 3's while step 2's installers run, and its Go
 // ahead is shown once they have finished.
 //
+// A run has its own list of steps (scripts/lib/setup-run.js, stepsFor; ruling R74): every step, or
+// for a computer joining a project set up on another, steps 1, 2, 3, 6, 7, 8 and 9. A step not on
+// the run's list is neither planned nor applied, status names only the run's steps, a step waiting
+// for one the run doesn't have goes ahead, and a run without the health check is finished once its
+// own steps are done, with no green mark and no ending (/setup/health refuses it).
+//
 // A step's plan gives one of four results (rulings R30 to R32). `{ changes, card, director }`: its
 // list, shown on a Go-ahead card. `{ ask: { id, card, typed?, rules?, writes? } }`: a question it
 // needs answered first, composed as a `question` card (no set line, no reply code), or, for a card
@@ -34,10 +44,16 @@
 // in an address, which the card would show hidden; the
 // prompt record keeps the director's answer on that exact card, signed, and every step's plan reads
 // every answer of its run in ctx.answers, so the list a Go ahead's hash names already holds the
-// choices, and a later answer that changes it makes that Go ahead CHANGED.
+// choices, and a later answer that changes it makes that Go ahead CHANGED. On a card that takes a
+// typed answer, a question or the choice handed back ("you decide", "not sure" and the like) is no
+// answer (ruling R125, clicks.js notAnAnswer): the step sees it unanswered and asks the card again,
+// and the plan says why (`unanswered`), once, for the playbook to tell the director.
 // `{ wait: ms, why }`: nothing to ask yet. `{ settled: { record } }`: every answer is in and the
 // step changes nothing outside setup's own records, so the record is kept in the journal as an
-// `answer` change and the step is done, with no Go ahead.
+// `answer` change and the step is done, with no Go ahead. A line the plan said as it settled
+// (ctx.say) is kept on that change as `said`, which status shows (ruling R101). A settling that
+// finishes the run, as a joining computer's last step does, copies the run's records into the
+// project's state (ruling R45), since no apply or health check comes after it.
 //
 // Every card is cleaned of any sign-in in an address (scripts/lib/clean.js) before it is stored,
 // and the cleaned card is the one sent, so the card the director clicks is the card stored (R33).
@@ -75,9 +91,11 @@ import { pluginOnIn } from '../lib/plugin-on.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
-import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
+import {
+  noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords, typedNotAnswered,
+} from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
-import { stepDone, healthGreen, HEALTH_STEP, SETUP_STEPS } from '../lib/setup-run.js';
+import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -88,6 +106,8 @@ export const NEEDS_CLICK = `this step needs the director's click on its card, fr
 export const CHANGED = 'the list has changed since the card: ask for the plan again and show the new card';
 export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
+// Said with a card asked again because what was typed on it was no answer (ruling R125).
+export const NOT_AN_ANSWER = 'What was typed on this card reads as a question, or hands the choice back, so it was not taken as the answer: the choice is the director\'s, and the card is asked again.';
 const APPLY_FIELDS = ['folder', 'step', 'hash'];
 const HEALTH_FIELDS = ['folder', 'lines'];
 // How long the playbook waits before asking again for a step whose Go ahead waits on another (R54).
@@ -130,11 +150,12 @@ function atOrAboveHome(folder, userHome) {
 // setup, never this one's (ruling R27), so it is passed over, as is a run at the user's home or
 // above it, which no route starts. (A run in a folder inside a registered project is carried on
 // here, though kit.js's beingSetUp counts only a run in the project's own folder; the playbook runs
-// in the project's own folder, so no such run is started.)
+// in the project's own folder, so no such run is started.) A run uninstall has closed (ruling R89) is
+// over and never carried on: setting the folder up again starts a new run.
 function runFor(real, userHome) {
   const project = projectForFolder(real);
   const own = project === null ? null : realOrNull(project.record.folder);
-  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real))
+  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && !runClosed(r) && (keyOf(r.folder) === keyOf(real) || within(r.folder, real))
     && !(own !== null && within(r.folder, own)) && !atOrAboveHome(r.folder, userHome));
   if (holding.length === 0) return null;
   const nearest = Math.max(...holding.map((r) => keyOf(r.folder).length));
@@ -200,8 +221,27 @@ export async function loadSteps(modulePath) {
 
 const title = (n) => `step ${n}, ${SETUP_TITLES[n]}`;
 // Done: finished, and for the health check, its board green as well (ruling R67), so a red board
-// leaves step 10 to be run again by a fresh card.
+// leaves step 10 to be run again by a fresh card. A step the run doesn't have reads as done
+// (ruling R74), so a step waiting for it (`after`) counts only the steps on the run's list.
 const isDone = (run, n) => stepDone(run, n);
+
+// Why a step the run doesn't have is neither planned nor applied (ruling R74), naming what kind of
+// run it is: a computer joining a project set up on another has only some of the steps.
+export function notOnList(run, n) {
+  const steps = stepsFor(run).map((s) => s.n).join(', ');
+  const kind = joinedRepo(run) !== null ? 'a computer joining a project set up on another runs' : 'this run has';
+  return `${title(n)} is not one of this run's steps: ${kind} only steps ${steps}`;
+}
+
+// A line for the director, as a step says it (ctx.say, ruling R40): on one line, and cut to what
+// the journal keeps, so what a step says never stops it; null when it says nothing.
+function oneLine(line) {
+  const one = String(line ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, SAY_CHARS);
+  return one === '' ? null : one;
+}
+
+// The steps given that the run has, in their order (ruling R74).
+const runSteps = (run, steps) => steps.filter((s) => onRunList(run, s.n));
 
 // Running: clicked, not done, not failed, and not past the time a step may take.
 function runningSince(entry, now) {
@@ -238,8 +278,8 @@ export async function runApply({ step, runId, changes, ctx, current, copy = copy
   // A line on several lines is put on one, and a long one cut to what the journal keeps, so what a
   // step says never stops it.
   const say = (line) => {
-    const one = String(line ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, SAY_CHARS);
-    if (one !== '') markStep(runId, step.n, 'say', { now: ctx.now, line: one, when: current });
+    const one = oneLine(line);
+    if (one !== null) markStep(runId, step.n, 'say', { now: ctx.now, line: one, when: current });
   };
   try {
     record(await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes));
@@ -280,7 +320,12 @@ function statusLines(run, steps, running) {
     const entry = run.steps?.[n] ?? {};
     const name = `Step ${n}, ${SETUP_TITLES[n]}`;
     if (entry.doneAt && !stepDone(run, n)) lines.push(`${name}: its own checks finished at ${entry.doneAt}; the board isn't green yet`);
-    else if (entry.doneAt) lines.push(`${name}: done at ${entry.doneAt}`);
+    else if (entry.doneAt) {
+      lines.push(`${name}: done at ${entry.doneAt}`);
+      // What a step said as it settled, such as step 6's settings that weaken Standard (ruling R101).
+      const said = (run.changes ?? []).filter((c) => c?.step === n && c.kind === 'answer' && typeof c.said === 'string').at(-1)?.said;
+      if (said !== undefined) lines.push(`  ${hide(said, [])}`);
+    }
     else if (entry.failed) lines.push(`${name}: did not finish: ${entry.failed}`);
     else if (entry.clickedAt) {
       lines.push(running(n)
@@ -350,12 +395,15 @@ export function setupRoutes({
   // The first step this one waits for that is not done, or null; those in `during` pass over.
   const unfinishedBefore = (run, step, during = []) => stepsBefore(step).find((m) => !during.includes(m) && !isDone(run, m)) ?? null;
 
-  // A step's ctx: with every answer the director has given to its run's questions (ruling R31).
-  const ctxFor = (folder, n, runId) => ({ folder, step: n, runId, now, userHome, platform, answers: answersFor(runId) });
+  // A step's ctx: with every answer the director has given to its run's questions (ruling R31),
+  // and when the run started (step 1 reads the session's first message from then, ruling R76).
+  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, answers: answersFor(runId) });
 
-  // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling.
+  // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling. A
+  // plan may say a line for the director (ctx.say), kept only with a settling, as `said` (R101).
   async function planned(step, ctx) {
-    const got = await step.plan(ctx);
+    let said = null;
+    const got = await step.plan({ ...ctx, say: (line) => { said = oneLine(line) ?? said; } });
     const bad = (what) => new Error(`Step ${step.n}'s plan gave ${what}`);
     if (got?.ask !== undefined) {
       const { id, card, typed, rules, writes, found } = got.ask ?? {};
@@ -379,14 +427,16 @@ export function setupRoutes({
       const given = got.settled?.record;
       if (given !== undefined && (given === null || typeof given !== 'object' || Array.isArray(given))) throw bad('a settling without its record');
       const record = given ?? {};
-      return { settled: { record } };
+      return { settled: { record, said } };
     }
     if (!got || !Array.isArray(got.changes)) throw bad('no list of changes');
     return { ...got, hash: planHash(got.changes) };
   }
 
   // A step done or running is not planned again: its card's shown time and record stay as they are.
+  // Nor is a step the run doesn't have (ruling R74).
   const showable = (run, n) => {
+    if (!onRunList(run, n)) refuse(notOnList(run, n));
     if (isDone(run, n)) refuse(`${title(n)} is already done`);
     if (runningIn(run, n)) refuse(`${title(n)} is already running`);
   };
@@ -400,7 +450,9 @@ export function setupRoutes({
     const step = await stepOf(body.step);
     let run = runFor(folder, userHome);
     showable(run, step.n);
-    const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id));
+    // A run started by this plan starts when the plan does, so the step reads the time its run has.
+    const startedAt = run?.startedAt ?? now().toISOString();
+    const got = await planned(step, ctxFor(run?.folder ?? folder, step.n, run?.id, startedAt));
     if (got.wait !== undefined) return { ok: true, wait: got.wait, why: got.why };
     // Nothing is asked, settled or shown for a Go ahead while a step it waits for is unfinished
     // (rulings R54, R70): apply would refuse the Go ahead, and the click would go stale; a settling
@@ -424,18 +476,30 @@ export function setupRoutes({
     if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.
     if (run) showable(runById(run.id), step.n);
-    run ??= startRun({ folder, now });
+    run ??= startRun({ folder, now: () => new Date(startedAt) });
     if (got.ask) {
+      // What was typed on this card since it was last asked was no answer: said, before it is asked again.
+      const unanswered = typedNotAnswered(run.id, step.n, got.ask.id);
       noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, found: got.ask.found, now });
-      return { ok: true, ask: { step: step.n, id: got.ask.id, card } };
+      return { ok: true, ask: { step: step.n, id: got.ask.id, card }, ...(unanswered ? { unanswered: NOT_AN_ANSWER } : {}) };
     }
     if (got.settled) {
       // R19 widened (R32): a done mark the director's signed answers earned, with no Go ahead. The
       // step changes nothing outside setup's own records; what it settled on is kept as an
       // `answer` change, which uninstall has nothing to put back for.
-      addChanges(run.id, [{ id: newId('chg'), step: step.n, kind: 'answer', target: `step ${step.n}`, before: null, after: got.settled.record }]);
+      // What the step said as it settled is kept with it, for status to show (ruling R101).
+      const { record, said } = got.settled;
+      addChanges(run.id, [{ id: newId('chg'), step: step.n, kind: 'answer', target: `step ${step.n}`, before: null, after: record, ...(said === null ? {} : { said }) }]);
       mark(run.id, step.n, 'doneAt', { now, when: (entry) => !entry.doneAt });
-      return { ok: true, done: true };
+      // A settling that finishes the run (a joining computer's, which has no health check to end
+      // it, ruling R74) copies the run's last clicks and answers into the project's state, as an
+      // apply does after each step (ruling R45); a copy that fails never fails the step.
+      if (firstUnfinished(runById(run.id)) === null) {
+        try {
+          await copy(run.id, run.folder);
+        } catch { /* the records stay in setup's own folder */ }
+      }
+      return { ok: true, done: true, ...(said === null ? {} : { said: hide(said, []) }) };
     }
     noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card, now });
     mark(run.id, step.n, 'shownAt', { now });
@@ -451,6 +515,7 @@ export function setupRoutes({
     const run = runFor(folder, userHome);
     if (run === null) refuse('this step\'s card has not been shown: ask for its plan first');
     const startable = (current) => {
+      if (!onRunList(current, step.n)) refuse(notOnList(current, step.n));
       if (isDone(current, step.n)) refuse(`${title(step.n)} is already done`);
       if (runningIn(current, step.n)) refuse(`${title(step.n)} is already running`);
     };
@@ -461,7 +526,7 @@ export function setupRoutes({
     if (before !== null) refuse(waitingOn(run, before));
     // The list as it is now, worked out by the helper: the request's hash must name it, and the
     // card this folder was shown for the step must have shown it.
-    const ctx = ctxFor(run.folder, step.n, run.id);
+    const ctx = ctxFor(run.folder, step.n, run.id, run.startedAt);
     const fresh = await planned(step, ctx);
     // A step that now asks, waits or settles has no list for a Go ahead to name.
     if (!fresh.changes) refuse(CHANGED);
@@ -524,7 +589,8 @@ export function setupRoutes({
   async function status(body) {
     const folder = admitFolder(body.folder, { userHome });
     const run = runFor(folder, userHome);
-    const all = await steps();
+    // Only the steps the run has (ruling R74).
+    const all = runSteps(run, await steps());
     const running = (n) => runningIn(run, n);
     if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running) };
     return { ok: true, ...statusLines(run, all, running) };
@@ -555,6 +621,8 @@ export function setupRoutes({
     }
     const found = runFor(folder, userHome);
     if (found === null) refuse('setup has not started in this folder');
+    // A joining computer has no health check (ruling R74): nothing here marks it green or ends it.
+    if (!onRunList(found, HEALTH_STEP)) refuse(notOnList(found, HEALTH_STEP));
     const before = healthQueue.get(found.id) ?? Promise.resolve();
     const turn = before.catch(() => {}).then(async () => {
       const read = (run) => health({ folder: run.folder, run, reported: lines, now });
@@ -562,7 +630,7 @@ export function setupRoutes({
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));
       removeTrialLeftover(run.folder);
-      const before = SETUP_STEPS.find((s) => s.n !== HEALTH_STEP && !stepDone(run, s.n));
+      const before = stepsFor(run).find((s) => s.n !== HEALTH_STEP && !stepDone(run, s.n));
       if (before !== undefined) {
         const got = await read(run);
         return {

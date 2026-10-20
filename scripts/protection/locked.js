@@ -15,7 +15,7 @@ import { managedDir, lockedProjects } from './managed.js';
 import { sameFolder } from '../hooks/kit.js';
 import { credentialRules, cleanDomain } from './settings.js';
 import { readProject } from '../lib/projects.js';
-import { helperAddress, wheelhouseHome } from '../lib/paths.js';
+import { helperAddress, projectsDir, wheelhouseHome } from '../lib/paths.js';
 import { readConfig } from '../gate/guardrails.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -86,7 +86,7 @@ function domainsOf(folder) {
 function registeredDomains() {
   let names = [];
   try {
-    names = fs.readdirSync(path.join(wheelhouseHome(), 'projects')).sort();
+    names = fs.readdirSync(projectsDir()).sort();
   } catch {
     // None registered.
   }

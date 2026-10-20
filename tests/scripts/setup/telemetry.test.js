@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { telemetryChanges, telemetryOn, loginItemFile, contentFree, TELEMETRY_ROUTES } from '../../../scripts/setup/telemetry.js';
+import { telemetryChanges, telemetryOn, loginItemFile, contentFree, TELEMETRY_ROUTES, launchVarState, readLaunchVar, unsetLaunchVar } from '../../../scripts/setup/telemetry.js';
 import { TELEMETRY_ROUTE } from '../../../scripts/lib/setup-numbers.js';
 import { telemetryEnv } from '../../../scripts/telemetry/env.js';
 import { applyJsonKey, reverseChange } from '../../../scripts/setup/journal.js';
@@ -201,4 +201,28 @@ test('no telemetry change sets prompt or tool logging', async () => {
     assert.throws(() => contentFree({ ...OURS, [bad]: '1' }), new RegExp(bad));
   }
   assert.deepEqual(contentFree(OURS), OURS);
+});
+
+test('a launch variable that can\'t be read is told apart from one that isn\'t set; readLaunchVar still gives null for both', async () => {
+  const fake = fakeLaunch({ SET_ONE: 'x' });
+  for (const platform of ['darwin', 'win32']) {
+    assert.deepEqual(await launchVarState('SET_ONE', { platform, run: fake.run }), { value: 'x' });
+    assert.deepEqual(await launchVarState('UNSET_ONE', { platform, run: fake.run }), { value: null });
+  }
+  const failing = async () => ({ code: 1, stdout: '', stderr: 'no launchd here\n' });
+  assert.deepEqual(await launchVarState('SET_ONE', { platform: 'darwin', run: failing }), { why: 'could not read SET_ONE: no launchd here' });
+  assert.equal(await readLaunchVar('SET_ONE', { platform: 'darwin', run: failing }), null);
+  assert.equal(await readLaunchVar('SET_ONE', { platform: 'darwin', run: fake.run }), 'x');
+});
+
+test('unsetLaunchVar takes a variable out with launchctl on macOS and out of the user\'s variables on Windows', async () => {
+  const calls = [];
+  const run = (code) => async (file, args) => { calls.push([file, ...args]); return { code, stdout: '', stderr: code === 0 ? '' : 'denied' }; };
+  await unsetLaunchVar('CLAUDE_CODE_ENABLE_TELEMETRY', { platform: 'darwin', run: run(0) });
+  await unsetLaunchVar("O'TEL", { platform: 'win32', run: run(0) });
+  assert.deepEqual(calls, [
+    ['launchctl', 'unsetenv', 'CLAUDE_CODE_ENABLE_TELEMETRY'],
+    ['powershell', '-NoProfile', '-NonInteractive', '-Command', "[Environment]::SetEnvironmentVariable('O''TEL',$null,'User')"],
+  ]);
+  await assert.rejects(unsetLaunchVar('X', { platform: 'darwin', run: run(1) }), /X could not be taken out of this account's settings: denied/);
 });

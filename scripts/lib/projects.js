@@ -14,7 +14,7 @@
 // here, never from a request.
 import fs from 'node:fs';
 import path from 'node:path';
-import { stateDir } from './paths.js';
+import { stateDir, projectsDir } from './paths.js';
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
@@ -78,6 +78,21 @@ export function readProject(project) {
   }
 }
 
+// The projects registered on this computer, by folder name in order: each folder under projects/
+// with a record that reads, { project, record }.
+export function registeredProjects() {
+  let names;
+  try {
+    names = fs.readdirSync(projectsDir());
+  } catch {
+    return [];
+  }
+  return names.sort().flatMap((project) => {
+    const record = readProject(project);
+    return record === null ? [] : [{ project, record }];
+  });
+}
+
 // Writes the record whole: a temporary file in the same folder, then a rename.
 export function writeProject(project, record) {
   const folder = projectFolder(project);
@@ -117,7 +132,7 @@ export function projectForFolder(folder) {
   const inside = keyOf(target);
   let names;
   try {
-    names = fs.readdirSync(path.join(stateDir('x'), '..', '..'));
+    names = fs.readdirSync(projectsDir());
   } catch {
     return null;
   }

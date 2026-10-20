@@ -324,6 +324,34 @@ test('a git command that fails names its subcommand, never a setting\'s value', 
   });
 });
 
+test('step 10\'s git shuts out git\'s global and system config, with hooks off, and looks for a setting that would run a program before each call (rulings R109, R110)', async () => {
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    const { adapter } = standIn(remote);
+    const real = (await import('../../../scripts/lib/run.js')).run;
+    const gits = [];
+    const run = (file, args, options) => {
+      if (path.basename(file).replace(/\.exe$/, '') === 'git') gits.push({ args: [...args], env: options?.env ?? {} });
+      return real(file, args, options);
+    };
+    const step = stepWith(adapter, merges(REFUSED).client, { run });
+    const { ctx } = ctxFor(folder, remote);
+    await step.apply(ctx, (await step.plan({ folder })).changes).catch(() => {});
+    const CHECK = 'config --includes --name-only --list -z';
+    const own = gits.filter((c) => c.args.join(' ') !== CHECK);
+    assert.ok(own.some((c) => c.args.includes('commit-tree')));
+    assert.equal(gits.length, own.length * 2, 'each call after a look at the repository\'s settings');
+    for (const c of gits) {
+      assert.equal(c.env.GIT_CONFIG_NOSYSTEM, '1');
+      assert.equal(c.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    }
+    for (const c of own) {
+      const pairs = Array.from({ length: Number(c.env.GIT_CONFIG_COUNT) }, (_, i) => `${c.env[`GIT_CONFIG_KEY_${i}`]}=${c.env[`GIT_CONFIG_VALUE_${i}`]}`);
+      assert.ok(pairs.includes('core.hooksPath=/dev/null') && pairs.includes('core.fsmonitor=false'), pairs.join(' '));
+    }
+  });
+});
+
 // Check 31's first change: any refusal that leaves the pull request unmerged counts.
 test('the merge trial passes on any refusal that leaves the pull request unmerged', async () => {
   const adapter = (state) => ({ prState: async () => ({ state }) });

@@ -167,6 +167,26 @@ test('a click older than ten minutes no longer counts', async () => {
   } finally { s.cleanup(); }
 });
 
+test('cut-access names the project\'s own installation of the app, on its account (ruling R83)', async () => {
+  for (const [connection, id] of [
+    [{ host: 'github', mode: 'narrow', project: 'o/p', installationId: 6161 }, 6161],
+    [{ host: 'github', mode: 'narrow', project: 'o/p' }, 5151],
+  ]) {
+    const s = await scenario({ connection });
+    try {
+      await as(s.home, async () => {
+        writeKey('github-app', { clientId: 'Iv1.x', installationId: 4242, installations: { first: 4242, o: 5151 }, accessToken: 'ghu_abcdefghijklmnopqrstuvwxyz0123456789' });
+        click(2);
+      });
+      await viaHelper(s, fakeAdapter(), async (client) => {
+        const answer = await client.runbook.cutAccess({ project: 'o__p' });
+        assert.equal(answer.ok, true, JSON.stringify(answer));
+        assert.equal(answer.url, `https://github.com/settings/installations/${id}`);
+      }, { fetch: async () => { throw new Error('no host in tests'); } });
+    } finally { s.cleanup(); }
+  }
+});
+
 test('cut-access on the narrow GitHub connection deletes the key file and names the installation page', async () => {
   const s = await scenario({ connection: { host: 'github', mode: 'narrow', project: 'o/p' } });
   const secret = 'ghu_abcdefghijklmnopqrstuvwxyz0123456789';

@@ -312,10 +312,31 @@ export function ownAppFrom(views) {
   return { clientId, slug, owner };
 }
 
-const accepted = (views) => {
+// The proposals for `own-github-app` the views list as waiting, oldest first: those newer than the
+// accepted value.
+const proposals = (views) => (Array.isArray(views?.unconfirmed) ? views.unconfirmed : [])
+  .filter((u) => u?.kind === 'setting' && (u.key ?? u.data?.key) === OWN_GITHUB_APP_KEY);
+
+// When the accepted app is hidden only because a newer change to it waits (ownAppFrom gives null):
+// { accepted, waiting }, `waiting` the newest waiting value as an app, or null when it is none or
+// not one setup can read. Otherwise null (ruling R84).
+export function shadowedOwnApp(views) {
+  const entry = views?.settings?.[OWN_GITHUB_APP_KEY];
+  if (!entry || typeof entry !== 'object' || entry.value === null || !isAllowed(OWN_GITHUB_APP_KEY, entry.value)) return null;
+  const newest = proposals(views).at(-1);
+  if (newest === undefined) return null;
+  const value = newest.data?.value;
+  const app = (v) => ({ clientId: v.clientId, slug: v.slug, owner: v.owner });
+  return { accepted: app(entry.value), waiting: value != null && isAllowed(OWN_GITHUB_APP_KEY, value) ? app(value) : null };
+}
+
+// The app the profile's `own-github-app` holds as accepted, or null: what putBackOwnApp compares
+// with setup's record, and uninstall's plan reads from the views kept on this computer.
+export const acceptedOwnApp = (views) => {
   const value = views?.settings?.[OWN_GITHUB_APP_KEY]?.value;
   return value !== undefined && isAllowed(OWN_GITHUB_APP_KEY, value) ? value : null;
 };
+const accepted = acceptedOwnApp;
 
 async function writeValue(profile, value) {
   return profile.write({ kind: 'setting', data: { key: OWN_GITHUB_APP_KEY, value, words: settingWords(OWN_GITHUB_APP_KEY, value) } });
@@ -323,15 +344,17 @@ async function writeValue(profile, value) {
 
 // Records the app in the profile's `own-github-app` key, a `host` change recorded (`record`) just
 // before it is written, with the value the profile held before, for uninstall. Nothing is written
-// when the profile holds it already, confirmed or waiting for the director's Confirm: null then.
+// when the profile holds it already, confirmed with no newer change waiting, or as the newest change
+// waiting for the director's Confirm: null then. When it is the accepted value but a different
+// change waits, which hides it (ownAppFrom), it is written again as a newer proposal, which the
+// director's Confirm restores (ruling R84).
 export async function recordOwnApp({ clientId, slug, owner }, { record = () => {}, profile = helperProfile() } = {}) {
   const value = { clientId, slug, owner };
   if (!isAllowed(OWN_GITHUB_APP_KEY, value)) throw new Error('The app to record has no client ID, name or owner setup can read');
   const views = await profile.views();
   const before = accepted(views);
-  const waiting = (Array.isArray(views?.unconfirmed) ? views.unconfirmed : [])
-    .some((u) => u?.kind === 'setting' && u.key === OWN_GITHUB_APP_KEY && same(u.data?.value, value));
-  if (same(before, value) || waiting) return null;
+  const newest = proposals(views).at(-1);
+  if (newest !== undefined ? same(newest.data?.value, value) : same(before, value)) return null;
   const change = { id: newId('chg'), kind: 'host', target: PROFILE_TARGET, before, after: value };
   record(change);
   const got = await writeValue(profile, value);

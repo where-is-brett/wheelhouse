@@ -2,13 +2,15 @@
 // The prompt record's side of setup's clicks and answers (scripts/setup/clicks.js says how they
 // are kept): keeping a signed click in <wheelhouseHome()>/setup/clicks/ and a signed answer in
 // setup/answers/, and finding the card setup showed, in setup/shown/, or asked, in setup/asked/,
-// that a click was on. It lives apart from scripts/setup/ so the prompt record, which the mod's
+// that a click was on. Uninstall's click (ruling R90) is kept the same way: its card's shown record
+// in setup/shown/, one per folder, and the director's Remove it in setup/clicks/. It lives apart from scripts/setup/ so the prompt record, which the mod's
 // bridge imports, reaches nothing there (scripts/mod/validate.js, bridgeImports). It writes only
 // the click and answer files; it never writes Claude Code's settings or setup's journal.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from './paths.js';
+import { isLineName } from '../state/card-lines.js';
 
 export const HASH = /^[0-9a-f]{64}$/;
 export const RUN_ID = /^run-[0-9a-f]{10}$/;
@@ -183,4 +185,62 @@ export function askedFor({ cwd, card }) {
   const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
   const nearest = Math.max(...found.map(depth));
   return found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+}
+
+// ---- Uninstall's card and click (ruling R90) ----
+
+// Where uninstall's card shown for a folder is kept: one file per folder, named by the SHA-256 of its
+// real path (case and accents folded as the system folds them), so a name with spaces or accents,
+// or a long one, makes a plain file name. A folder that can't be read is named by the path as given.
+export function uninstallShownFile(folder) {
+  const key = keyOf(realPath(folder) ?? path.resolve(String(folder)));
+  return path.join(shownDir(), `uninstall-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 16)}.json`);
+}
+const UNINSTALL_SHOWN = /^uninstall-[0-9a-f]{16}\.json$/;
+
+// Uninstall's shown record kept in setup/shown/, { project, folder, hash, card, at }, or null when
+// the file isn't one.
+export function readUninstallShown(file) {
+  try {
+    const r = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return r && isLineName(r.project) && HASH.test(String(r.hash)) && typeof r.folder === 'string' && typeof r.at === 'string'
+      && shownCard(r.card) !== null ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+// Keeps the director's signed Remove it on uninstall's card, under a name of its time, computer and
+// id, never over another.
+export function keepUninstallClick(event) {
+  if (event?.kind !== 'action' || event.data?.action !== 'uninstall' || !event.sig) throw new Error('Only a signed uninstall click is kept here');
+  if (typeof event.at !== 'string' || !EVENT_ID.test(String(event.id)) || !/^[0-9a-f]{8}$/.test(String(event.computer))) {
+    throw new Error('An uninstall click needs its time, its id and its computer');
+  }
+  const file = path.join(clicksDir(), `${event.at.replaceAll(':', '-')}_${event.computer}_uninstall_${event.id}.json`);
+  writeWhole(file, `${JSON.stringify(event, null, 2)}\n`, { exclusive: true });
+  return file;
+}
+
+// Uninstall's card shown for a folder holding `cwd`, naming `project`, whose list's hash starts with
+// `h12`, on a card the director saw exactly as shown (`card`, the question AskUserQuestion was given):
+// { project, folder, hash }. Null when there is none, or two different lists. Of several, the
+// nearest folder's is taken, as the helper places a folder.
+export function shownUninstall({ cwd, project, h12, card }) {
+  const asked = shownCard(card);
+  if (typeof cwd !== 'string' || !isLineName(project) || !/^[0-9a-f]{12}$/.test(String(h12)) || asked === null) return null;
+  const same = JSON.stringify(asked);
+  let names;
+  try {
+    names = fs.readdirSync(shownDir()).filter((n) => UNINSTALL_SHOWN.test(n));
+  } catch {
+    return null;
+  }
+  const found = names.map((n) => readUninstallShown(path.join(shownDir(), n)))
+    .filter((r) => r !== null && r.project === project && r.hash.startsWith(h12) && JSON.stringify(shownCard(r.card)) === same && holds(r.folder, cwd));
+  if (new Set(found.map((r) => r.hash)).size !== 1) return null;
+  const depth = (r) => keyOf(realPath(r.folder) ?? '').length;
+  const nearest = Math.max(...found.map(depth));
+  const chosen = found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  return { project: chosen.project, folder: chosen.folder, hash: chosen.hash };
 }

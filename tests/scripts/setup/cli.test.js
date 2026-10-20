@@ -39,7 +39,13 @@ function fakeClient(answers = {}) {
     const answer = answers[name];
     return typeof answer === 'function' ? answer(body) : answer ?? { ok: false, refused: 'not expected' };
   };
-  return { calls, setup: { plan: route('plan'), apply: route('apply'), status: route('status'), health: route('health') } };
+  return {
+    calls,
+    setup: {
+      plan: route('plan'), apply: route('apply'), status: route('status'), health: route('health'),
+      uninstall: { plan: route('uninstall plan'), apply: route('uninstall apply'), status: route('uninstall status') },
+    },
+  };
 }
 
 test('each form asks the helper for this folder, and only with the folder, the step and the hash', async () => {
@@ -79,6 +85,21 @@ test('resume gives where setup stands and the card of the first step neither don
   const done = fakeClient({ status: { ok: true, lines: ['Every step is done.'], next: null, ask: null } });
   assert.deepEqual(JSON.parse((await run(['resume'], { client: done })).out), { lines: ['Every step is done.'], next: null, plan: null });
   assert.deepEqual(done.calls.map(([name]) => name), ['status']);
+});
+
+// A step that settles says its line at once (rulings R101, R120): plan and resume pass `said`
+// through, cleaned of line breaks as status's lines are; a settling with nothing said has none.
+test('a settled step\'s said line comes with its plan and with resume, and none when it said nothing', async () => {
+  const said = 'Setup step 6, Changes to this computer: every setting is already as Wheelhouse needs.\nYour own settings that weaken Standard: docker runs outside the sandbox.';
+  const one = 'Setup step 6, Changes to this computer: every setting is already as Wheelhouse needs. Your own settings that weaken Standard: docker runs outside the sandbox.';
+  const c = fakeClient({
+    plan: { ok: true, done: true, said },
+    status: { ok: true, lines: ['Next: step 6, Changes to this computer.'], next: 6, ask: 6 },
+  });
+  assert.deepEqual(JSON.parse((await run(['plan', '6'], { client: c })).out), { step: 6, title: 'Changes to this computer', done: true, said: one });
+  assert.deepEqual(JSON.parse((await run(['resume'], { client: c })).out).plan, { step: 6, title: 'Changes to this computer', done: true, said: one });
+  const quiet = fakeClient({ plan: { ok: true, done: true } });
+  assert.deepEqual(JSON.parse((await run(['plan', '2'], { client: quiet })).out), { step: 2, title: 'Tools', done: true });
 });
 
 // Step 10 (ruling R41): the session hands in the lines its sandboxed trials printed, as they are,
@@ -168,7 +189,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\]\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -177,5 +198,33 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\]\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+});
+
+test('the uninstall forms ask the helper\'s uninstall routes for this folder, apply with the full hash only', async () => {
+  const card = { question: 'Uninstall.\nRemove Wheelhouse from shop as listed, abababababab', header: 'Uninstall', options: [{ label: 'Remove it' }], multiSelect: false };
+  const c = fakeClient({
+    'uninstall plan': { ok: true, hash: H, card, asks: [], last: true },
+    'uninstall apply': { ok: true, started: true },
+    'uninstall status': { ok: true, lines: ['Uninstall is done.', 'Locked: Locked is off.', 'Open the pull request: https://github.com/o/shop/pull/3'], uninstall: { state: 'done' } },
+  });
+  const plan = await run(['uninstall', 'plan'], { client: c });
+  assert.equal(plan.code, 0, plan.err);
+  assert.deepEqual(JSON.parse(plan.out), { hash: H, card, asks: [], last: true });
+  const apply = await run(['uninstall', 'apply', H], { client: c });
+  assert.equal(apply.code, 0, apply.err);
+  assert.deepEqual(JSON.parse(apply.out), { started: true });
+  const status = await run(['uninstall', 'status'], { client: c });
+  assert.equal(status.out, 'Uninstall is done.\nLocked: Locked is off.\nOpen the pull request: https://github.com/o/shop/pull/3\n');
+  assert.deepEqual(c.calls, [
+    ['uninstall plan', { folder: '/x/Projects/shop' }],
+    ['uninstall apply', { folder: '/x/Projects/shop', hash: H }],
+    ['uninstall status', { folder: '/x/Projects/shop' }],
+  ]);
+  // A short hash, and any other words, are refused before the helper is asked.
+  for (const argv of [['uninstall', 'apply', 'abc'], ['uninstall'], ['uninstall', 'plan', 'now'], ['uninstall', 'status', 'x'], ['uninstall', 'apply']]) {
+    const got = await run(argv, { client: c });
+    assert.equal(got.code, 1, argv.join(' '));
+  }
+  assert.equal(c.calls.length, 3);
 });

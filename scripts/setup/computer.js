@@ -16,7 +16,10 @@
 // - phone notifications (`agentPushNotifEnabled: true`, check 4).
 // It also names, without changing it, this computer's signing key (made when setup started, Task
 // 6), and each of the director's own settings that weakens Standard (`weakening`), so the director
-// decides; a later card can switch one off.
+// decides; a later card can switch one off. With every setting already as Wheelhouse needs (a
+// computer set up for another project), the step settles with nothing to do, with no Go ahead
+// (ruling R75), and names any of the director's settings that weaken Standard in a line the
+// session's status shows (ctx.say, ruling R101).
 //
 // Step 8 installs Locked (scripts/protection/locked.js), with the system's own password prompt,
 // only when the director chose Locked (step 3's answer, ruling R37), only on a Mac, and only once
@@ -28,6 +31,12 @@
 // step settles with nothing to do (ruling R32). The answer and what step 3 made must agree: the
 // project record's connection is marked Locked exactly when the answer is Locked, or the step is
 // refused, naming both, so the record and the computer never disagree (ruling R70).
+//
+// On a computer joining a project set up on another (ruling R77), step 3 asks no Locked question,
+// so step 8 asks it itself (`locked`, step 3's words), on a Mac, when the project's state says it
+// is launched (its `phase` setting); otherwise it settles as not Locked. A Locked answer installs
+// Locked as above, and then marks the project record's connection Locked, recorded first, so the
+// record and the computer agree here too.
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -37,15 +46,17 @@ import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
 import { ownKey } from '../state/signing.js';
-import { projectForFolder } from '../lib/projects.js';
+import { projectForFolder, writeProject } from '../lib/projects.js';
+import { stateDir } from '../lib/paths.js';
+import { joinedRepo } from '../lib/setup-run.js';
 import { claudeCodeSettings } from '../protection/settings.js';
 import { installLocked, ownFile, MAC_ONLY, NEEDS_NARROW, HAS_MDM, NOT_OURS, MDM_PLIST } from '../protection/locked.js';
 import { managedDir, lockedProjects } from '../protection/managed.js';
 import { MARKETPLACE, UPSTREAMS, readManifest } from '../lineage/manifest.js';
 import { receiverPort } from '../telemetry/main.js';
 import { telemetryChanges, telemetryOn, isObject, readText } from './telemetry.js';
-import { LEVELS } from './host.js';
-import { newId } from './journal.js';
+import { LEVELS, launchedIn, lockedAsk } from './host.js';
+import { newId, SAY_CHARS, readJournal } from './journal.js';
 
 // ---- Step 6 ----
 
@@ -177,9 +188,10 @@ function weakeningSentence(found, fit) {
 }
 
 // Step 6's card: each change in plain words, the signing key, and the settings that weaken Standard.
+// Only a list with something on it has a card: an empty one settles the step (ruling R75).
 export function computerCard({ changes, userSettings = {}, kept = [], route = TELEMETRY_ROUTE, platform = process.platform, floor, key = ownKey() }) {
   const listed = lines({ changes, userSettings, kept, route, platform, floor });
-  const head = `Setup step 6, ${SETUP_TITLES[6]}: ${listed.length > 0 ? `${listed.join('; ')}.` : 'every setting is already as Wheelhouse needs, so nothing changes.'} Wheelhouse never updates itself.`;
+  const head = `Setup step 6, ${SETUP_TITLES[6]}: ${listed.join('; ')}. Wheelhouse never updates itself.`;
   // Named without its id, which a card would read as a commit.
   const signing = key ? ' This computer\'s key for signing your clicks is already made.' : '';
   const variables = route === 'launch-env' && changes.some((c) => c.kind === 'env' || c.kind === 'file');
@@ -192,12 +204,11 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
     what,
     why,
     options: [
-      { label: SETUP_LABEL, says: changes.length === 0 ? 'Setup marks this step done.' : 'Setup changes these settings only.' },
+      { label: SETUP_LABEL, says: 'Setup changes these settings only.' },
       { label: 'Not now', says: 'Nothing changes.' },
     ],
     recommend: SETUP_LABEL,
-    because: changes.length === 0 ? 'nothing changes'
-      : (changes.some((c) => c.what === 'retention') ? 'uninstall puts each setting back, but not removed transcripts' : 'uninstall puts each back'),
+    because: changes.some((c) => c.what === 'retention') ? 'uninstall puts each setting back, but not removed transcripts' : 'uninstall puts each back',
     meanwhile: 'Setup waits; nothing changes.',
   });
   // Whether a card with this sentence fits the composer's limit (CARD.chars): the card without it,
@@ -207,6 +218,9 @@ export function computerCard({ changes, userSettings = {}, kept = [], route = TE
   const weak = weakeningSentence(weakening(userSettings), fit);
   return card(`${head}${signing}${weak === '' ? '' : ` ${weak}`}`);
 }
+
+// What step 6 says when it settles with nothing to change, before the settings that weaken Standard.
+export const SETTLED_LEAD = `Setup step 6, ${SETUP_TITLES[6]}: every setting is already as Wheelhouse needs.`;
 
 // Step 6. `run` reads (and on the launch-environment route sets) the account's launch environment;
 // `env` is the environment setup runs in (CLAUDE_CONFIG_DIR, and any telemetry variable of the
@@ -227,6 +241,14 @@ export function computerStep({ run = realRun, env = process.env, route = TELEMET
     title: SETUP_TITLES[6],
     async plan(ctx) {
       const { platform, userSettings, floor, kept, changes } = await world(ctx);
+      // Every setting already as Wheelhouse needs settles the step, with no Go ahead (ruling R75).
+      // The director's own settings that weaken Standard are still named, as a line status shows
+      // (ruling R101); the signing key, no change, is not.
+      if (changes.length === 0) {
+        const weak = weakeningSentence(weakening(userSettings), (line) => `${SETTLED_LEAD} ${line}`.length <= SAY_CHARS);
+        if (weak !== '') ctx.say?.(`${SETTLED_LEAD} ${weak}`);
+        return { settled: { record: { nothing: true } } };
+      }
       const card = computerCard({ changes, userSettings, kept, route, platform, floor });
       const restart = changes.some((c) => c.kind === 'env');
       return { changes, card, director: restart ? 'One click, then quit and reopen Claude Desktop' : 'One click' };
@@ -261,9 +283,30 @@ function lockedCard(target, folder) {
   };
 }
 
+// The project record's file, which a joining computer's Locked marks.
+const projectFile = (project) => path.join(stateDir(project), '..', 'project.json');
+
 // Step 8. `run`, `dir` (the managed settings folder), `mdmPlist`, `nodePath` and `address` are
 // installLocked's, for tests.
 export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } = {}) {
+  // Locked's list for the project, once a change installLocked would refuse is ruled out: a change
+  // installLocked would refuse is never offered on a card. `mark`: the record is marked Locked too.
+  const lockedList = (found, mark, platform) => {
+    const where = dir ?? managedDir(platform);
+    if (fs.existsSync(mdmPlist ?? MDM_PLIST)) throw new Error(HAS_MDM);
+    if (!ownFile(where)) throw new Error(NOT_OURS);
+    const target = path.join(where, 'managed-settings.json');
+    const changes = [{ kind: 'locked', target, project: found.project, folder: found.record.folder, ...(mark ? { mark: true } : {}) }];
+    return { changes, card: lockedCard(target, found.record.folder), director: 'Your password, in macOS\'s own window' };
+  };
+  const needsNarrow = (found) => {
+    const mode = found.record.connection?.mode;
+    if (mode !== 'narrow') {
+      throw new Error(mode === 'quick'
+        ? `${NEEDS_NARROW}, and this project has the Quick connection: run step 3 again with the narrow connection`
+        : `${NEEDS_NARROW}, and this project has no connection yet: run step 3 first`);
+    }
+  };
   return {
     n: 8,
     title: SETUP_TITLES[8],
@@ -271,20 +314,26 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
     after: [3, 7],
     async plan(ctx) {
       const platform = ctx.platform ?? process.platform;
+      const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) ?? null : null;
+      // A computer joining a project asks Locked here, when the project is launched (ruling R77).
+      if (joinedRepo(run) !== null) {
+        if (platform === 'win32') return { settled: { record: { locked: false } } };
+        const found = projectForFolder(ctx.folder);
+        if (found === null) return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; Locked comes once it has` };
+        if (!launchedIn(found.project)) return { settled: { record: { locked: false } } };
+        const answered = ctx.answers?.['8.locked'] ?? null;
+        if (answered === null) return { ask: lockedAsk(found.record.repo.split('/').at(-1)) };
+        if (answered.label !== LEVELS.locked) return { settled: { record: { locked: false } } };
+        needsNarrow(found);
+        return lockedList(found, found.record.connection?.locked !== true, platform);
+      }
       const answered = ctx.answers?.['3.locked'] ?? null;
       const chosen = answered?.label === LEVELS.locked;
       // Step 3 never offers Locked on Windows, so there is nothing to make or to agree with.
       if (platform === 'win32') return { settled: { record: chosen ? { locked: false, why: MAC_ONLY } : { locked: false } } };
       const found = projectForFolder(ctx.folder);
       if (found === null) return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; Locked comes once it has` };
-      if (chosen) {
-        const mode = found.record.connection?.mode;
-        if (mode !== 'narrow') {
-          throw new Error(mode === 'quick'
-            ? `${NEEDS_NARROW}, and this project has the Quick connection: run step 3 again with the narrow connection`
-            : `${NEEDS_NARROW}, and this project has no connection yet: run step 3 first`);
-        }
-      }
+      if (chosen) needsNarrow(found);
       // What step 3 made (its connection, marked Locked) and the latest answer must agree: an
       // answer given again on a card shown again after step 3 changes nothing step 3 connected.
       const connected = found.record.connection?.locked === true;
@@ -293,13 +342,7 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
         throw new Error(`Step 3 connected this project ${connected ? 'for Locked' : 'without Locked'}, but ${said}, so step 8 has not gone on: the two must agree`);
       }
       if (!chosen) return { settled: { record: { locked: false } } };
-      // A change installLocked would refuse is never offered on a card.
-      const where = dir ?? managedDir(platform);
-      if (fs.existsSync(mdmPlist ?? MDM_PLIST)) throw new Error(HAS_MDM);
-      if (!ownFile(where)) throw new Error(NOT_OURS);
-      const target = path.join(where, 'managed-settings.json');
-      const changes = [{ kind: 'locked', target, project: found.project, folder: found.record.folder }];
-      return { changes, card: lockedCard(target, found.record.folder), director: 'Your password, in macOS\'s own window' };
+      return lockedList(found, false, platform);
     },
     async apply(ctx, changes) {
       const platform = ctx.platform ?? process.platform;
@@ -317,6 +360,15 @@ export function lockedStep({ run = realRun, dir, mdmPlist, nodePath, address } =
         });
         const got = await installLocked({ project: c.project, platform, run, now: ctx.now, dir: where, mdmPlist, nodePath, address });
         if (!got.installed) throw new Error(got.line);
+        // A joining computer's record, marked Locked once Locked is on, recorded first.
+        if (c.mark) {
+          const found = projectForFolder(c.folder);
+          if (found === null || found.project !== c.project) throw new Error('the project is not registered on this computer; run step 3 first');
+          const kept = { ...found.record, connection: { ...found.record.connection, locked: true } };
+          const file = projectFile(c.project);
+          ctx.record({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: `${JSON.stringify(kept, null, 2)}\n` });
+          writeProject(c.project, kept);
+        }
       }
       return [];
     },

@@ -13,7 +13,10 @@ import { profileDir, profileViewsDir, stateDir, wheelhouseHome } from '../../../
 import { run } from '../../../scripts/lib/run.js';
 import { PROFILE_BRANCH, readProfileViews } from '../../../scripts/profile/store.js';
 import { listEvents, makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
+import { makeSigningKey, enrol, ownKey, readEnrolled, enrolledFile } from '../../../scripts/state/signing.js';
+import { publishEnrolment } from '../../../scripts/setup/computers.js';
+import { profileRemote, PROFILE_HOLDS_KEYS } from '../../../scripts/profile/store.js';
+import { keysDir } from '../../../scripts/lib/paths.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
@@ -194,7 +197,8 @@ test('a profile push that changes keys/ or an existing event is refused', async 
       const eventFile = path.relative(dir, listEvents(dir, { report: () => {} }).map((e) => path.join(dir, eventPath(e)))[0]).replaceAll('\\', '/');
       const original = fs.readFileSync(path.join(dir, eventFile), 'utf8');
 
-      // A commit that adds the enrolled keys.
+      // A commit that adds a keys/ file (the trusted keys are kept outside the clone: ruling R105).
+      putInProfile('keys/enrolled.json', '[]\n');
       await g(dir, 'add', '-f', '--', 'keys/enrolled.json');
       await g(dir, 'commit', '-q', '-m', 'keys');
       const keys = await c.client.profile.sync({});
@@ -203,7 +207,7 @@ test('a profile push that changes keys/ or an existing event is refused', async 
       assert.equal(keys.unpushed, 1);
       await g(dir, 'reset', '-q', '--soft', 'HEAD~1');
       await g(dir, 'rm', '-q', '--cached', '--', 'keys/enrolled.json');
-      assert.ok(fs.existsSync(path.join(dir, 'keys', 'enrolled.json')), 'the keys stay on this computer');
+      assert.ok(fs.existsSync(path.join(dir, 'keys', 'enrolled.json')), 'the file stays on this computer');
 
       // A commit that changes an event already pushed.
       fs.writeFileSync(path.join(dir, eventFile), original.replace('"build"', '"director"'));
@@ -335,6 +339,7 @@ test('a profile clone whose start was cut short is finished, and no bundle is re
       await b.as(async () => {
         // The first steps of joining the branch, then the start is cut short.
         const dir = profileDir();
+        fs.mkdirSync(dir, { recursive: true });
         await g(dir, 'init', '-q');
         await g(dir, 'symbolic-ref', 'HEAD', `refs/heads/${PROFILE_BRANCH}`);
         await g(dir, 'remote', 'add', '-t', PROFILE_BRANCH, 'origin', a.profileRemote.url);
@@ -381,6 +386,7 @@ test('every profile route says the profile is not set up while there is no remot
         c.client.profile.record({ event: {} }),
         c.client.profile.sync({}),
         c.client.profile.views({}),
+        c.client.profile.enrolments({}),
         c.client.state.backup({ project: PROJECT }),
       ];
       for (const answer of await Promise.all(calls())) assert.deepEqual(answer, NOT_SET_UP);
@@ -390,4 +396,106 @@ test('every profile route says the profile is not set up while there is no remot
       assert.equal(fs.existsSync(path.join(profileDir(), 'backups')), false);
     });
   } finally { await c.close(); }
+});
+
+test('/profile/enrolments lists each computer\'s key from the fetched profile, never touching the working tree or the helper\'s branch (ruling R81)', async () => {
+  const a = await computer();
+  const b = await computer({ shared: a });
+  const outside = path.join(a.home, 'outside');
+  try {
+    // The first computer publishes its key, as its step 3 does.
+    let first;
+    await a.as(async () => {
+      assert.equal((await a.client.profile.clone({})).ok, true);
+      assert.equal((await publishEnrolment({ profile: profileRemote(), env: {}, now: () => T0 })).published, true);
+      first = { ...ownKey(), at: T0.toISOString() };
+    });
+    // The second computer's clone is made, and only then does more arrive.
+    await b.as(async () => assert.equal((await b.client.profile.clone({})).ok, true));
+    // Anyone with a key to the profile adds files of their own under enrolments/.
+    await g(a.home, 'clone', '-q', '--branch', PROFILE_BRANCH, a.profileRemote.url, outside);
+    const put = (name, text) => {
+      fs.mkdirSync(path.dirname(path.join(outside, name)), { recursive: true });
+      fs.writeFileSync(path.join(outside, name), text);
+    };
+    put('enrolments/ffffffff.json', JSON.stringify({ ...first, computer: '12345678' })); // names another computer than its file
+    put('enrolments/eeeeeeee.json', 'not json');
+    put('enrolments/notes.txt', 'hello');
+    put('enrolments/deep/abcdef12.json', JSON.stringify({ ...first, computer: 'abcdef12' }));
+    await g(outside, 'add', '.');
+    await g(outside, 'commit', '-q', '-m', 'others');
+    await g(outside, 'push', '-q', 'origin', PROFILE_BRANCH);
+
+    await b.as(async () => {
+      const dir = profileDir();
+      const before = { head: await g(dir, 'rev-parse', 'HEAD'), status: await g(dir, 'status', '--porcelain'), files: await g(dir, 'ls-files') };
+      // The clone was made before the others' commit: the route's fetch brings it in, and reads it.
+      const got = await b.client.profile.enrolments({});
+      assert.deepEqual(got, { ok: true, fetched: true, enrolments: [{ computer: first.computer, publicKey: first.publicKey, at: first.at }] });
+      assert.deepEqual({ head: await g(dir, 'rev-parse', 'HEAD'), status: await g(dir, 'status', '--porcelain'), files: await g(dir, 'ls-files') }, before);
+      assert.equal(fs.existsSync(path.join(dir, 'enrolments', 'ffffffff.json')), false, 'read from the fetched tree, not written out');
+      assert.equal(await g(dir, 'rev-parse', `refs/remotes/origin/${PROFILE_BRANCH}`), await g(a.profileRemote.url, 'rev-parse', PROFILE_BRANCH), 'fetched');
+      // A profile that can't be reached: what the last fetch brought is listed, and it says so.
+      fs.writeFileSync(path.join(wheelhouseHome(), 'profile.json'), JSON.stringify(profileJson(path.join(b.home, 'gone.git'))));
+      await g(dir, 'remote', 'set-url', 'origin', path.join(b.home, 'gone.git'));
+      const offline = await b.client.profile.enrolments({});
+      assert.equal(offline.fetched, false);
+      assert.deepEqual(offline.enrolments, got.enrolments);
+    });
+  } finally { await b.close(); await a.close(); }
+});
+
+test('a keys/enrolled.json pushed to the profile changes no computer\'s trust: the list is kept outside the clone, and a tip holding keys/ is never taken in (ruling R105)', async () => {
+  const a = await computer();
+  const b = await computer({ shared: a });
+  const outside = path.join(a.home, 'attacker');
+  try {
+    let before;
+    await a.as(async () => {
+      assert.equal(enrolledFile(), path.join(keysDir(), 'enrolled.json'), 'beside this computer\'s own key');
+      assert.equal(enrolledFile().startsWith(profileDir()), false);
+      assert.equal((await a.client.profile.write({ kind: 'setting', data: { key: 'boardTab', value: 'build' } })).pushed, true);
+      before = readEnrolled();
+      assert.equal(before.length, 1);
+    });
+    // Someone with a key to the profile pushes a list naming their own key, in either case of the folder's name.
+    await g(a.home, 'clone', '-q', '--branch', PROFILE_BRANCH, a.profileRemote.url, outside);
+    const theirs = JSON.stringify([{ computer: 'deadbeef', publicKey: 'MCowBQYDK2VwAyEAGmzhR5UX2aF8V+glnb1w0HdlXg0ma3NrXjVYqI8n2XE=', enrolledAt: '2026-10-18T00:00:00.000Z' }]);
+    fs.mkdirSync(path.join(outside, 'keys'));
+    fs.writeFileSync(path.join(outside, 'keys', 'enrolled.json'), theirs);
+    await g(outside, 'add', '-f', '.');
+    await g(outside, 'commit', '-q', '-m', 'trust me');
+    await g(outside, 'push', '-q', 'origin', PROFILE_BRANCH);
+
+    await a.as(async () => {
+      const dir = profileDir();
+      const head = await g(dir, 'rev-parse', 'HEAD');
+      // The sync, a write's push and the backup all fetch it, and none takes it in: it fails closed, saying so.
+      assert.deepEqual(await a.client.profile.sync({}), { ok: false, refused: PROFILE_HOLDS_KEYS });
+      const wrote = await a.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short' } });
+      assert.equal(wrote.pushed, false);
+      assert.equal(wrote.refused, PROFILE_HOLDS_KEYS);
+      await a.client.state.backup({ project: PROJECT });
+      // Their commit is fetched, never taken into this computer's branch.
+      assert.notEqual((await run('git', ['merge-base', '--is-ancestor', `refs/remotes/origin/${PROFILE_BRANCH}`, 'HEAD'], { cwd: dir })).code, 0);
+      assert.notEqual(await g(dir, 'rev-parse', 'HEAD'), head, 'its own write is committed here, but nothing of theirs');
+      assert.equal(fs.existsSync(path.join(dir, 'keys', 'enrolled.json')), false);
+      assert.deepEqual(readEnrolled(), before, 'trust is unchanged');
+    });
+    // A computer joining the profile refuses the tip too.
+    await b.as(async () => {
+      const joined = await b.client.profile.clone({});
+      assert.equal(joined.ok, false);
+      assert.equal(joined.refused, PROFILE_HOLDS_KEYS);
+      assert.equal(fs.existsSync(path.join(profileDir(), 'keys', 'enrolled.json')), false);
+    });
+    // Once keys/ is gone from the branch, the sync goes on.
+    await g(outside, 'rm', '-q', '-r', 'keys');
+    await g(outside, 'commit', '-q', '-m', 'gone');
+    await g(outside, 'push', '-q', 'origin', PROFILE_BRANCH);
+    await a.as(async () => {
+      assert.equal((await a.client.profile.sync({})).ok, true);
+      assert.equal(readEnrolled().length, 1);
+    });
+  } finally { await b.close(); await a.close(); }
 });

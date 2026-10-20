@@ -34,6 +34,7 @@ import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
 import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
+import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { recordModReading, recordSession } from '../usage/store.js';
@@ -106,6 +107,7 @@ const DEFAULTS = {
   liftStop: defaultLiftStop,
   sessionRole: defaultSessionRole,
   beingSetUp: defaultBeingSetUp,
+  journalTrouble: defaultJournalTrouble,
   digestText: defaultDigest,
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
@@ -302,10 +304,12 @@ async function helperAnswers(d) {
 }
 
 // The watcher's half of a tick (watch.js), which never holds up the rest: anything that throws
-// is a failure.
+// is a failure. While setup's journal can't be read, whether setup has finished isn't known, so
+// the watcher is `held` back, at the front desk (the pane's `watcher` says so) and in a foreman's
+// session alike, as the session start holds it back (ruling R72).
 function watching(found, role, client, d) {
   return Promise.resolve()
-    .then(() => d.watchTick({ project: found.project, role, client, now: d.now }))
+    .then(() => (d.journalTrouble() === null ? d.watchTick({ project: found.project, role, client, now: d.now }) : { watcher: 'held', submit: [] }))
     .catch(() => ({ watcher: 'failed', submit: [] }));
 }
 

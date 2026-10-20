@@ -4,10 +4,13 @@
 //   plan <step>          the step's list of changes and its card, as AskUserQuestion's question,
 //                        with the list's hash: { step, title, hash, director, changes, card };
 //                        or a question the step asks first, its card to be asked exactly as given:
-//                        { step, title, ask: { step, id, card } }; or { step, title, wait, why },
+//                        { step, title, ask: { step, id, card } }, with `unanswered`, a line saying
+//                        why, when it is asked again because what was typed on it was a question or
+//                        handed the choice back (ruling R125); or { step, title, wait, why },
 //                        nothing to ask for `wait` milliseconds, with `waitsFor`, the step it waits
 //                        for, when it is waiting for another step to finish; or
-//                        { step, title, done: true }, the step settled on the director's answers
+//                        { step, title, done: true }, the step settled on the director's answers,
+//                        with `said`, a line for the director, when it said one as it settled
 //   apply <step> <hash>  asks the helper to apply the step, with the full hash `plan` gave; the
 //                        helper goes ahead only after the director's click on the card naming it
 //   status               where setup stands in this folder, as plain lines
@@ -21,6 +24,16 @@
 //                        (`trials: { pr, project }`): run `node "<root>/scripts/health/trials.js"
 //                        --pr <pr> --project <project>`, then `health` with every line it printed
 //                        (not its notes), then show `board`, and `briefing` when there is one
+//   uninstall plan       uninstall's list worked out by the helper, its card and its level 4
+//                        cards: { hash, card, asks: [{ id, about, card }], last }. Each ask card is
+//                        asked exactly as given, before uninstall's own card
+//   uninstall apply <hash>  asks the helper to put back what setup changed, with the full hash
+//                        `uninstall plan` gave; it goes ahead only after the director's Remove it on
+//                        the card naming it, in its own process: { started: true }
+//   uninstall status     as plain lines: how a started uninstall stands (running; done, or stopped
+//                        with why, then what it said and each page as `Open <what>: <url>`, a link
+//                        for the director: the pull request to merge, an installation page);
+//                        otherwise the whole list
 // The playbook (wheelhouse:setup) runs in the sandbox and only talks: every change is the
 // helper's, so every form is a request to its /setup/* routes, naming this folder, and nothing here
 // reads or writes a file. A request carries only the folder, the step and the hash; the helper
@@ -31,7 +44,8 @@
 // trial left, closes the trial pull request and deletes its branch, and, once the board is green
 // with every other step done, records the green mark, copies the run's records into the project's
 // state and finishes setup (the foreman and the first briefing), once. The STOP guard lets these
-// four through; `apply` is refused under STOP.
+// four through, and `uninstall plan` and `uninstall status`; `apply` and `uninstall apply` are
+// refused under STOP.
 // Errors are one line on standard error.
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
@@ -42,7 +56,7 @@ import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, health [<trial line> ...]';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
 const STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 const HASH = /^[0-9a-f]{64}$/;
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
@@ -67,9 +81,10 @@ function stepOf(text) {
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
   const named = { step, title: SETUP_TITLES[step] };
-  if (got.ask !== undefined) return { ...named, ask: got.ask };
+  if (got.ask !== undefined) return { ...named, ask: got.ask, ...(typeof got.unanswered === 'string' ? { unanswered: got.unanswered } : {}) };
   if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why, ...(Number.isInteger(got.waitsFor) ? { waitsFor: got.waitsFor } : {}) };
-  if (got.done === true) return { ...named, done: true };
+  // A settled step's line for the director, said at once (rulings R101, R120), on one line as status's are.
+  if (got.done === true) return { ...named, done: true, ...(typeof got.said === 'string' && got.said.trim() !== '' ? { said: got.said.replace(BREAKS, ' ').trim() } : {}) };
   return { ...named, hash: got.hash, director: got.director, changes: got.changes, card: got.card };
 }
 
@@ -97,6 +112,16 @@ export async function main(argv, {
       const got = await ask(helper.setup.status, { folder });
       const next = Number.isInteger(got.next) ? got.next : null;
       json({ lines: Array.isArray(got.lines) ? got.lines : [], next, plan: Number.isInteger(got.ask) ? await plan(helper, folder, got.ask) : null });
+    } else if (form === 'uninstall' && rest[0] === 'plan' && rest.length === 1) {
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.uninstall.plan, { folder }); // eslint-disable-line no-unused-vars
+      json(answer);
+    } else if (form === 'uninstall' && rest[0] === 'apply' && rest.length === 2) {
+      if (!HASH.test(rest[1])) throw new CliError('Give the full hash of the list on uninstall\'s card, as uninstall plan gave it');
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.uninstall.apply, { folder, hash: rest[1] }); // eslint-disable-line no-unused-vars
+      json(answer);
+    } else if (form === 'uninstall' && rest[0] === 'status' && rest.length === 1) {
+      const got = await ask((client ?? helperClient()).setup.uninstall.status, { folder });
+      out(`${(Array.isArray(got.lines) ? got.lines : []).map((l) => String(l).replace(BREAKS, ' ')).join('\n')}\n`);
     } else if (form === 'health') {
       if (rest.length > MOST_TRIAL_LINES || !rest.every((l) => parseTrialLine(l) !== null)) {
         throw new CliError('Give the lines trials.js printed, each as one argument, as they are');

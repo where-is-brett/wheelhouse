@@ -97,6 +97,45 @@ export function baselineLine(hash) {
   return `${BASELINE_WORDS}, ${sha12(hash)}`;
 }
 
+// The label whose click on a trust card trusts another of the director's computers here.
+export const TRUST_LABEL = 'Trust it';
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+// A time as the day it falls on, in UTC, day month year: "20 October 2026"; null when it can't be read.
+export function dayOf(at) {
+  const d = new Date(typeof at === 'string' ? at : Number.NaN);
+  return Number.isNaN(d.getTime()) ? null : `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+// The line on a trust card (ruling R80): the other computer by its id, the day its key was added to
+// the profile, and the key's fingerprint (the first twelve hex characters of the SHA-256 of the
+// public key), so a click stands for that computer's key as added that day and no other.
+export function trustLine(computer, at, fingerprint) {
+  return `Trust your computer ${computer}, added ${dayOf(at)}, key ${String(fingerprint).slice(0, 12)}`;
+}
+export const TRUST_LINE = new RegExp(`^Trust your computer ([0-9a-f]{8}), added ([1-9][0-9]? (?:${MONTHS.join('|')}) [0-9]{4}), key ([0-9a-f]{12})$`);
+
+// The label whose click on uninstall's card lets it remove Wheelhouse from a project (ruling R90).
+export const UNINSTALL_LABEL = 'Remove it';
+
+// Whether a name can stand in uninstall's line: the project's slug, or the folder's own name when
+// no project is registered there, on one line, with no control or format characters, at most 200
+// characters, and no space at either end.
+export function isLineName(name) {
+  return typeof name === 'string' && name !== '' && name.length <= 200 && name.trim() === name
+    && !/[\p{Cc}\p{Cf}\u2028\u2029]/u.test(name);
+}
+
+// The line on uninstall's card (ruling R90): the project and the first twelve characters of the hash
+// of the list uninstall puts back, formed as setupLine's are, so a click stands for that list and no
+// other.
+export function uninstallLine(project, hash) {
+  return `Remove Wheelhouse from ${project} as listed, ${sha12(hash)}`;
+}
+// The project's name runs to the last ", as listed," on the line, so a name holding those words still
+// reads back whole.
+export const UNINSTALL_LINE = /^Remove Wheelhouse from (\S(?:.*\S)?) as listed, ([0-9a-f]{12})$/;
+
 // How the build loop's lines spell a work or incident id, a lane and a question id.
 // The prompt record builds its own patterns from these, so the two agree.
 export const ID = '[a-z0-9-]{1,40}';
@@ -150,7 +189,8 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // The lines a card's choice is set by, each matching a whole line of the question: the
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
-// setup's line for a step, its line for the rules found, and the baseline card's line.
+// setup's line for a step, its line for the rules found, the baseline card's line, the trust
+// card's line and uninstall's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
@@ -165,6 +205,8 @@ export const SET_LINES = [
   new RegExp(`^Set up step (?:${Object.keys(SETUP_TITLES).join('|')}) as listed, [0-9a-f]{12}$`, 'm'),
   /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/m,
   new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
+  new RegExp(TRUST_LINE.source, 'm'),
+  new RegExp(UNINSTALL_LINE.source, 'm'),
 ];
 
 // Every set line a question carries, in the order the patterns are listed.

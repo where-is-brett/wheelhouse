@@ -47,7 +47,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { run as realRun, withoutGitVars } from '../lib/run.js';
+import { run as realRun } from '../lib/run.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { parseTrialLine } from '../lib/trial-lines.js';
@@ -67,6 +67,7 @@ import { projectConfig } from '../watcher/main.js';
 import { readJournal, newId } from './journal.js';
 import { HEALTH_STEP } from '../lib/setup-run.js';
 import { directorGitEnv, directorGitlabApi, STOPPED } from './host.js';
+import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 
 export { HEALTH_STEP };
@@ -255,22 +256,26 @@ function subcommand(args) {
   return '';
 }
 
-// Runs git for the trial branch with the director's own sign-in, in `dir`; its output, or a throw
-// naming only the subcommand.
+// Runs git for the trial branch with the director's own sign-in, in `dir`, with git's global and
+// system config shut out and a setting of its config not on setup's allowed list refused (rulings
+// R109 to R112, scripts/setup/git.js);
+// its output, or a throw naming only the subcommand (or the hook).
 async function gitIn(run, { gitPath, env, dir }, args) {
-  const got = await run(gitPath, args, { cwd: dir, env, baseEnv: withoutGitVars(), timeoutMs: 5 * 60 * 1000 });
+  const got = await setupGit({ run, gitPath, env, cwd: dir })(args);
   if (got.code !== 0) throw new Error(`git ${subcommand(args)} failed for the trial branch`);
   return got.stdout.trim();
 }
 
 // git for the trial, with the director's own sign-in, in a new scratch repository, to `use`; the
 // scratch is removed afterwards. Never the director's own folder.
-async function withTrialGit({ run, findGit, gitEnvFor, host, platform }, use) {
+async function withTrialGit({ run, findGit, gitEnvFor, host, platform, remoteUrl }, use) {
   const located = await findGit({ platform });
   if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-health-'));
   try {
-    const git = { gitPath: located.path, env: gitEnvFor({ host, gitPath: located.path, platform }), dir };
+    // https only, with a local path too only when the project's address as setup recorded it is one
+    // (ruling R111).
+    const git = { gitPath: located.path, env: reaching(gitEnvFor({ host, gitPath: located.path, platform }), remoteUrl), dir };
     await gitIn(run, git, ['init', '-q', '--bare', '.']);
     return await use(git);
   } finally {
@@ -332,7 +337,7 @@ export async function closeOpenTrial({
   if (projectRecord === null) return null;
   const adapter = (adapterFor ?? (({ host, repo }) => makeAdapter({ host, repo, run, env: {} })))({ host: projectRecord.host, repo: projectRecord.repo });
   const finder = findGit ?? (async ({ platform: p }) => (await toolsStatus({ platform: p, run, tools: ['git'] })).git);
-  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform }, (git) => use({ ...git, run }));
+  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: projectRecord.remoteUrl }, (git) => use({ ...git, run }));
   return closeTrial({ project: trial.project, projectRecord, pr: trial.pr, sha: trial.sha, adapter, gitFor, record });
 }
 
@@ -471,7 +476,7 @@ export function healthStep({
       halt();
       const adapter = adapterFor({ host: record.host, repo: record.repo });
       const asker = client ?? helperClient({ timeout: HEALTH_MERGE_WAIT_MS });
-      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform }, (git) => use({ ...git, run }));
+      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform, remoteUrl: record.remoteUrl }, (git) => use({ ...git, run }));
       // A trial an earlier attempt left open is closed first: a pull request from the same branch
       // can't be opened twice (ruling R68).
       await closeOpenTrial({ setupRun: readJournal().runs.find((r) => r?.id === ctx.runId) ?? null, record: ctx.record, run, adapterFor, findGit, gitEnvFor, platform });

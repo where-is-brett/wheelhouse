@@ -14,8 +14,8 @@
 //   PowerShell. Claude Desktop reads them when it starts, so the card asks for a restart. Each
 //   variable is read before it is set and recorded as an `env` change with its value before and
 //   where it lives (`where`: 'launchctl' or 'user'); the login item as a `file` change. Putting
-//   back the `env` changes is Task 15's (ruling R13): journal.js's reverseChange leaves them to
-//   their own step. The login item, a file setup made, it removes while it is as setup wrote it.
+//   back the `env` changes is uninstall's (rulings R13, R87, unsetLaunchVar, only while a variable
+//   still holds setup's value): journal.js's reverseChange leaves them to their own step. The login item, a file setup made, it removes while it is as setup wrote it.
 //
 // A variable the director has already set to a value of their own (their own collector, say) is
 // never written over or overridden: then none of the four is set, so telemetry stays wholly as they
@@ -82,13 +82,22 @@ export function loginItem(vars) {
 const psQuote = (text) => `'${String(text).replaceAll("'", "''")}'`;
 const powershell = (run, script) => run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script]);
 
-// A variable of the account's launch environment, or null when it is not set.
-export async function readLaunchVar(name, { platform, run }) {
+// A variable of the account's launch environment as read: { value } (null when it is not set), or
+// { why } when it could not be read (launchctl or PowerShell failed), so a reader that must tell the
+// two apart, such as uninstall's plan, can.
+export async function launchVarState(name, { platform, run }) {
   const got = platform === 'win32'
     ? await powershell(run, `[Environment]::GetEnvironmentVariable(${psQuote(name)},'User')`)
     : await run('launchctl', ['getenv', name]);
+  if (got?.code !== 0) return { why: `could not read ${name}${got?.stderr ? `: ${String(got.stderr).trim()}` : ''}` };
   const value = String(got?.stdout ?? '').replace(/\r?\n$/, '');
-  return got?.code === 0 && value !== '' ? value : null;
+  return { value: value === '' ? null : value };
+}
+
+// A variable of the account's launch environment, or null when it is not set or could not be read.
+export async function readLaunchVar(name, { platform, run }) {
+  const got = await launchVarState(name, { platform, run });
+  return got.why === undefined ? got.value : null;
 }
 
 async function setLaunchVar(name, value, { platform, run }) {
@@ -96,6 +105,16 @@ async function setLaunchVar(name, value, { platform, run }) {
     ? await powershell(run, `[Environment]::SetEnvironmentVariable(${psQuote(name)},${psQuote(value)},'User')`)
     : await run('launchctl', ['setenv', name, value]);
   if (got?.code !== 0) throw new Error(`${name} could not be set for this account${got?.stderr ? `: ${String(got.stderr).trim()}` : ''}`);
+}
+
+// Takes a variable out of the account's launch environment, as uninstall does for one setup set
+// that still holds setup's value (ruling R87): `launchctl unsetenv` on macOS, the user variable
+// removed on Windows. Throws, naming it, when that fails.
+export async function unsetLaunchVar(name, { platform, run }) {
+  const got = platform === 'win32'
+    ? await powershell(run, `[Environment]::SetEnvironmentVariable(${psQuote(name)},$null,'User')`)
+    : await run('launchctl', ['unsetenv', name]);
+  if (got?.code !== 0) throw new Error(`${name} could not be taken out of this account's settings${got?.stderr ? `: ${String(got.stderr).trim()}` : ''}`);
 }
 
 export const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

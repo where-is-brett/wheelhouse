@@ -1,7 +1,7 @@
 // tests/scripts/host/connection.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { childEnv, installationCovers, renewalDue } from '../../../scripts/host/connection.js';
+import { childEnv, installationCovers, installationOf, renewalDue } from '../../../scripts/host/connection.js';
 import { readKey, writeKey } from '../../../scripts/host/keys.js';
 import { withHome } from '../../helpers/homes.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
@@ -266,6 +266,28 @@ test('installationCovers is for GitHub narrow only, and its errors hold no key',
       return true;
     });
   });
+});
+
+test('installationCovers reads the project\'s own installation: its record\'s, else the keys\' for its account, else a file\'s only one (ruling R83)', async () => {
+  await withHome(async () => {
+    writeKey('github-app', githubKeys({ installations: { 'a-director': 99, acme: 88 } }));
+    const asked = async (connection) => {
+      const { fetch, calls } = fakeFetch({ body: repos([]) });
+      const result = await installationCovers(connection, { fetch, now });
+      return [calls[0].url.match(/installations\/(\d+)\//)[1], result.settingsUrl];
+    };
+    assert.deepEqual(await asked({ ...GITHUB, project: 'acme/app', installationId: 66 }), ['66', 'https://github.com/settings/installations/66']);
+    assert.deepEqual(await asked({ ...GITHUB, project: 'ACME/app' }), ['88', 'https://github.com/settings/installations/88']);
+    assert.deepEqual(await asked(GITHUB), ['99', 'https://github.com/settings/installations/99']);
+    // An account the keys keep no installation for is never read against another account's.
+    await assert.rejects(installationCovers({ ...GITHUB, project: 'globex/app' }, { fetch: noFetch, now }), /does not know its installation/);
+    await assert.rejects(installationCovers({ ...GITHUB, installationId: 'x' }, { fetch: noFetch, now }), /installation must be a number/);
+  });
+  // Keys written before installations were kept per account: their one installation serves their project.
+  assert.equal(installationOf(GITHUB, { installationId: 99 }), 99);
+  assert.equal(installationOf({ ...GITHUB, installationId: 66 }, { installationId: 99 }), 66);
+  assert.equal(installationOf(GITHUB, { installations: {} }), null);
+  assert.equal(installationOf(GITHUB, null), null);
 });
 
 // --- renewalDue ---

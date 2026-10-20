@@ -53,7 +53,7 @@ import { fileURLToPath } from 'node:url';
 import { projectForFolder, isInsideFolder } from '../lib/projects.js';
 import { lockedProjects, managedDir } from '../protection/managed.js';
 import { wheelhouseHome } from '../lib/paths.js';
-import { readJournal, firstUnfinished } from '../lib/setup-run.js';
+import { readJournal, firstUnfinished, runClosed } from '../lib/setup-run.js';
 import { readSmallText, SMALL_FILE_BYTES } from '../lib/small-file.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
 
@@ -161,6 +161,10 @@ export function registeredByPath(cwd) {
 // setup finished isn't known). Never throws: a folder that can't be placed is null, and
 // callers that guard treat that as they already do. The guards ask projectOf and registeredByPath
 // first, and act in a registered folder by those.
+// A run uninstall has closed (ruling R89) is over: it never counts. A folder held by closed runs and
+// no open one is one Wheelhouse was removed from (removedFrom), not one being set up, even while its
+// settings still switch the plugin on, until the director removes it; a newer run there, setting it
+// up again, counts as any run does.
 export function beingSetUp(cwd, { home = os.homedir() } = {}) {
   if (typeof cwd !== 'string' || cwd === '' || !path.isAbsolute(cwd)) return null;
   let real;
@@ -178,24 +182,56 @@ export function beingSetUp(cwd, { home = os.homedir() } = {}) {
     return registered ? null : { folder: real, run: null, journal: false };
   }
   const named = runs.filter((r) => typeof r?.folder === 'string');
+  const open = named.filter((r) => !runClosed(r));
   if (registered) {
-    const run = named.filter((r) => sameFolder(r.folder, registered.record.folder)).at(-1);
+    const run = open.filter((r) => sameFolder(r.folder, registered.record.folder)).at(-1);
     return run && firstUnfinished(run) !== null ? { folder: run.folder, run, journal: true } : null;
   }
-  // A run at the home folder or above it is never one setup started (the engine refuses it), and
-  // would hold every folder under home.
-  const holding = named.filter((r) => isInsideFolder(r.folder, real) && !isInsideFolder(r.folder, home));
+  const holding = holdingRuns(open, real, home);
   if (holding.length > 0) {
-    const nearest = Math.max(...holding.map((r) => r.folder.length));
-    const run = holding.filter((r) => r.folder.length === nearest).at(-1);
+    const run = nearestRun(holding);
     return { folder: run.folder, run, journal: true };
   }
+  // A folder Wheelhouse was removed from (only a closed run's folder is it) is not being set up,
+  // though its settings still switch the plugin on; a folder inside it whose own settings switch
+  // the plugin on is a new one.
   const stop = path.resolve(home);
   for (let dir = real; dir !== stop && !sameFolder(dir, stop); dir = path.dirname(dir)) {
+    if (named.some((r) => sameFolder(r.folder, dir))) return null;
     if (pluginOnIn(dir)) return { folder: dir, run: null, journal: true };
     if (path.dirname(dir) === dir) break;
   }
   return null;
+}
+
+// The runs whose folder holds `real`. A run at the home folder or above it is never one setup started
+// (the engine refuses it), and would hold every folder under home.
+const holdingRuns = (runs, real, home) => runs.filter((r) => isInsideFolder(r.folder, real) && !isInsideFolder(r.folder, home));
+// The latest run of the nearest folder among them.
+function nearestRun(holding) {
+  const nearest = Math.max(...holding.map((r) => r.folder.length));
+  return holding.filter((r) => r.folder.length === nearest).at(-1);
+}
+
+// The folder Wheelhouse was removed from that `cwd` lies in, or null (ruling R89): no project is
+// registered there, no open setup run holds it, and a run uninstall closed does, so the session start
+// says Wheelhouse was removed rather than that the folder isn't set up yet. `run` is the latest closed
+// run of the nearest such folder. Never throws: a folder that can't be placed, or a journal that can't
+// be read, is null.
+export function removedFrom(cwd, { home = os.homedir() } = {}) {
+  if (typeof cwd !== 'string' || cwd === '' || !path.isAbsolute(cwd)) return null;
+  try {
+    const real = fs.realpathSync.native(cwd);
+    if (projectForFolder(real) !== null) return null;
+    const named = readJournal().runs.filter((r) => typeof r?.folder === 'string');
+    if (holdingRuns(named.filter((r) => !runClosed(r)), real, home).length > 0) return null;
+    const closed = holdingRuns(named.filter(runClosed), real, home);
+    if (closed.length === 0) return null;
+    const run = nearestRun(closed);
+    return { folder: run.folder, run };
+  } catch {
+    return null;
+  }
 }
 
 // Exists, whatever it is: a folder or a symlink (even a dangling one) counts.

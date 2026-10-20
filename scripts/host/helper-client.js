@@ -86,6 +86,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       record: post('/profile/record'), // { event }: a signed confirmation of a profile event
       sync: post('/profile/sync'), //     {} -> { ok, pulled, unpushed, refused? }: commits new bundles, pulls and pushes
       views: post('/profile/views'), //   {} -> { ok, views }
+      enrolments: post('/profile/enrolments'), // {} -> { ok, fetched, enrolments: [{ computer, publicKey, at }] }: each computer's key as the fetched profile holds it, trusted only on the director's click
     },
     lock: {
       take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }
@@ -109,6 +110,12 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       apply: post('/setup/apply'), //   { folder, step, hash } -> { ok, started }: only after the director's click on the card naming that hash; refused under STOP
       status: post('/setup/status'), // { folder } -> { ok, lines, next, ask }: the folder's run as plain lines, answered under STOP
       health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing? }: step 10's board, answered under STOP
+      // Uninstall (scripts/setup/uninstall.js), naming the folder, a full path.
+      uninstall: {
+        plan: post('/setup/uninstall/plan'), //     { folder } -> { ok, hash, card, asks, last }: answered under STOP
+        apply: post('/setup/uninstall/apply'), //   { folder, hash } -> { ok, started }: only after the director's Remove it on the card naming that hash, the apply then running in its own process; refused under STOP
+        status: post('/setup/uninstall/status'), // { folder } -> { ok, lines, uninstall?: { state, lines, pages, refused? }, helperStops? }: how a started uninstall stands, else the whole list; answered under STOP
+      },
     },
     // The baseline from the private note (scripts/measures/baseline.js), per computer, no project.
     measures: {

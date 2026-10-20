@@ -24,6 +24,17 @@
 // folder, a Record these on it becomes a signed baseline action kept in
 // <wheelhouseHome()>/measures/clicks/, naming only the hash of the figures, and a Not now on it
 // clears the figures waiting. Nothing of that card, not even its plain answer, goes to a project.
+// A trust card asks to trust another of the director's computers (ruling R80): in any folder, a
+// Trust it on it becomes a signed trust action kept in <wheelhouseHome()>/trust/, and that computer's
+// key is enrolled here, only when the enrolment the last fetch of the profile found names the same
+// computer, day and key fingerprint as the card's set line, and this computer doesn't already trust
+// that id with another key (scripts/lib/trust-clicks.js). Nothing of that card, not even its plain
+// answer, goes to a project, and it has no reply code.
+// Uninstall's card asks to remove Wheelhouse from a project (ruling R90): in any folder, a Remove it on
+// it becomes a signed uninstall action kept in setup/clicks/, as a setup click is, naming the project
+// and the full hash of the list, only on the very card the helper composed and recorded as shown for
+// a folder holding this session's folder, word for word. It has no reply code. Its plain answer goes
+// to a project as any card's does.
 import fs from 'node:fs';
 import path from 'node:path';
 import { runAndExit, projectOf, beingSetUp } from './kit.js';
@@ -31,14 +42,19 @@ import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js'
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
+import { readEnrolled, enrol, ownKey } from '../state/signing.js';
+import { trustedBy, keepTrustClick, fingerprint, keyHash } from '../lib/trust-clicks.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine } from '../state/card-lines.js';
-import { keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer } from '../lib/setup-clicks.js';
+import {
+  setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
+  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine,
+} from '../state/card-lines.js';
+import { keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
@@ -348,6 +364,60 @@ function keepBaselineClicks(out, now) {
   }
 }
 
+// Whether a question carries a trust card's set line: its answers stay on this computer.
+const carriesTrust = (question) => setLinesOf(question).some((line) => TRUST_LINE.test(line));
+
+// Acts on each Trust it on a trust card, in whatever folder: the card carries one set line, a trust
+// card's, and the enrolment the last fetch of the profile found names the same computer, day and
+// key fingerprint, with the full key hash the card was handed over for (trustedBy). The click is
+// signed and kept in trust/, naming those, the key's full hash and the set line alone, then the key
+// whose hash the signed record names is enrolled here. One failing does not stop the rest.
+function keepTrustClicks(out, now) {
+  for (const click of out) {
+    if (!click.signable || click.label !== TRUST_LABEL) continue;
+    try {
+      const line = setLineOf(click.question);
+      if (line === null || !TRUST_LINE.test(line)) continue;
+      const found = trustedBy(line, { enrolled: readEnrolled(), own: ownKey() });
+      if (found === null) continue;
+      const data = {
+        action: 'trust', computer: found.computer, at: found.at, fingerprint: fingerprint(found.publicKey), keyHash: keyHash(found.publicKey), question: line, label: TRUST_LABEL,
+      };
+      const kept = makeEvent({ kind: 'action', data, now });
+      if (kept.data.keyHash !== keyHash(found.publicKey)) continue;
+      keepTrustClick(kept);
+      enrol({ computer: found.computer, publicKey: found.publicKey, enrolledAt: now().toISOString() });
+    } catch { /* nothing trusted: the card is offered again at a later session start */ }
+  }
+}
+
+// The signed record a Remove it on uninstall's card earns (ruling R90): the card carries one set line,
+// uninstall's, and is the very card the helper composed for the list its twelve characters name, for
+// the project the line names and a folder holding this session's folder, word for word (its text,
+// header and options). The record names that project and the list's full hash, and its question is
+// the set line alone; the helper matches it against the list it works out again.
+function uninstallClickOf(cwd, { question, label, card }) {
+  if (label !== UNINSTALL_LABEL) return null;
+  const line = setLineOf(question);
+  const m = line === null ? null : UNINSTALL_LINE.exec(line);
+  if (!m) return null;
+  const shown = shownUninstall({ cwd, project: m[1], h12: m[2], card });
+  if (shown === null) return null;
+  return { kind: 'action', data: { action: 'uninstall', project: shown.project, hash: shown.hash, question: uninstallLine(shown.project, shown.hash), label } };
+}
+
+// Signs each Remove it on uninstall's card and keeps it in setup/clicks/, in whatever folder. One
+// failing does not stop the rest.
+function keepUninstallClicks(cwd, out, now) {
+  for (const click of out) {
+    if (!click.signable) continue;
+    try {
+      const made = uninstallClickOf(cwd, click);
+      if (made) keepUninstallClick(makeEvent({ ...made, now }));
+    } catch { /* not kept: the helper then refuses to remove anything for want of a click */ }
+  }
+}
+
 // What was answered, and which answers came from a click on a button the card offered
 // (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other).
 function clicks(input) {
@@ -418,9 +488,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    // A setup card, and setup's card of the rules found, have no reply code (ruling R36): only the
-    // click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line)) continue;
+    // A setup card, setup's card of the rules found, a trust card and uninstall's card have no reply
+    // code (rulings R36, R80, R90): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -446,9 +516,11 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   ]);
   keepBaselineClicks(answered, () => at);
   sweepStale(() => at);
-  // The baseline card's answers stay on this computer: none is sent to the project, and none is
-  // kept as a setup answer, which a later step copies into the project's state.
-  const out = answered.filter((click) => !carrying.has(click.question));
+  keepTrustClicks(answered, () => at);
+  // The baseline card's answers and a trust card's stay on this computer: none is sent to the
+  // project, and none is kept as a setup answer, which a later step copies into the project's state.
+  const out = answered.filter((click) => !carrying.has(click.question) && !carriesTrust(click.question));
+  keepUninstallClicks(input.cwd, out, () => at);
   const found = find(input.cwd, { dir });
   if (!found) {
     if (beingSetUp(input.cwd) !== null) keepSetupClicks(input.cwd, out, () => at);

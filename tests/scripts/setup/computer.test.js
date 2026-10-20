@@ -11,25 +11,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { computerStep, computerChanges, lockedStep, weakening } from '../../../scripts/setup/computer.js';
+import { computerStep, computerChanges, lockedStep, weakening, SETTLED_LEAD } from '../../../scripts/setup/computer.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes, AFTER_WAIT_MS, CHANGED } from '../../../scripts/setup/engine.js';
-import { findRun, markStep, reverseChange, startRun } from '../../../scripts/setup/journal.js';
+import { findRun, markStep, reverseChange, startRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
 import { RETENTION_DAYS } from '../../../scripts/lib/setup-numbers.js';
 import { telemetryEnv } from '../../../scripts/telemetry/env.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setupLine } from '../../../scripts/state/card-lines.js';
-import { makeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { ownKey } from '../../../scripts/state/signing.js';
-import { writeProject } from '../../../scripts/lib/projects.js';
+import { writeProject, readProject } from '../../../scripts/lib/projects.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
 import { NEEDS_NARROW, HAS_MDM, NOT_OURS } from '../../../scripts/protection/locked.js';
 import { LEVELS, REAL_USERS } from '../../../scripts/setup/host.js';
 import { withProject, SLUG, REPO, T0 } from '../../helpers/setup-answers.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { fileURLToPath } from 'node:url';
 
 const PORT = 14318;
+const QUIET_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-quiet-steps.js');
 const MANIFEST = { claudeCode: { floor: '2.1.100' } };
 const NO_PLIST = '/nowhere/com.anthropic.claudecode.plist';
 
@@ -124,10 +127,8 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.ok(made.every((c) => c.kind === 'json-key' && c.target === file));
     assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'it only reads the launch environment');
     assert.ok(!fs.existsSync(path.join(home, 'setup', 'clicks')) || fs.readdirSync(path.join(home, 'setup', 'clicks')).length === 0);
-    // Planned again, nothing is left to change, and the card says so.
-    const again = await step.plan(ctx);
-    assert.deepEqual(again.changes, []);
-    assert.match(composed(again, 6), /already as Wheelhouse needs/i);
+    // Planned again, nothing is left to change, so the step settles with no Go ahead (ruling R75).
+    assert.deepEqual(await step.plan(ctx), { settled: { record: { nothing: true } } });
     // Uninstall puts every key back.
     for (const c of [...made].reverse()) assert.deepEqual(reverseChange(c), { put: true });
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), own);
@@ -147,6 +148,66 @@ test('by the launch environment, the card asks for a Desktop restart', async () 
     assert.match(planned.director, /quit and reopen Claude Desktop/);
     assert.match(text, /variables for your account and a login item/, 'the why line names what this route changes');
     assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'the plan only reads');
+  });
+});
+
+// The user's Claude settings as step 6 would leave them, with `own` beside them: every key it lists
+// written, so a plan has nothing left to change.
+async function asWheelhouseNeeds(file, user, folder, own = {}) {
+  fs.writeFileSync(file, `${JSON.stringify(own)}\n`);
+  const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: path.dirname(file) }, manifest: MANIFEST, port: PORT });
+  const planned = await step.plan({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const c of planned.changes ?? []) {
+    let at = data;
+    for (const k of c.key.slice(0, -1)) at = (at[k] ??= {});
+    at[c.key.at(-1)] = c.after;
+  }
+  fs.writeFileSync(file, `${JSON.stringify(data)}\n`);
+}
+
+test('with nothing to change, step 6 settles, naming the director\'s settings that weaken Standard in a line, not the signing key', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    const file = path.join(config, 'settings.json');
+    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
+    const plan = async () => {
+      const said = [];
+      return { got: await step.plan({ ...ctx, say: (line) => said.push(line) }), said };
+    };
+    await asWheelhouseNeeds(file, user, folder);
+    const quiet = await plan();
+    assert.deepEqual(quiet, { got: { settled: { record: { nothing: true } } }, said: [] }, 'nothing to name');
+    await asWheelhouseNeeds(file, user, folder, { sandbox: { excludedCommands: ['docker'] }, enabledPlugins: { 'theirs@market': true } });
+    const named = await plan();
+    assert.deepEqual(named.got, { settled: { record: { nothing: true } } });
+    assert.equal(named.said.length, 1);
+    assert.ok(named.said[0].startsWith(`${SETTLED_LEAD} Your own settings that weaken Standard, left as they are for you to decide:`), named.said[0]);
+    assert.match(named.said[0], /docker runs outside the sandbox/);
+    assert.match(named.said[0], /the plugin theirs@market is on/);
+    assert.doesNotMatch(named.said[0], /signing/);
+  });
+});
+
+test('through the helper, step 6 with nothing to change settles: its { nothing } answer, its done mark, and its line in status', async () => {
+  await withProject(async ({ folder, user, config, home }) => {
+    fs.writeFileSync(path.join(home, 'quiet-world.json'), JSON.stringify({ config, floor: MANIFEST.claudeCode.floor, port: PORT, pluginRoot: '/p' }));
+    await asWheelhouseNeeds(path.join(config, 'settings.json'), user, folder, { sandbox: { excludedCommands: ['docker'] } });
+    const routes = setupRoutes({ now: () => T0, userHome: user, platform: 'darwin', stepsModule: QUIET_STEPS });
+    const got = await routes['/setup/plan']({ folder, step: 6 });
+    assert.equal(got.ok, true, got.refused);
+    assert.equal(got.done, true);
+    assert.match(got.said, /docker runs outside the sandbox/);
+    const run = findRun(folder);
+    assert.equal(run.steps[6].doneAt, T0.toISOString());
+    assert.equal(run.steps[6].shownAt, undefined, 'no Go-ahead card');
+    const answer = run.changes.filter((c) => c.step === 6);
+    assert.deepEqual(answer.map((c) => [c.kind, c.target, c.before, c.after]), [['answer', 'step 6', null, { nothing: true }]]);
+    const { lines } = await routes['/setup/status']({ folder });
+    const at = lines.findIndex((l) => l.startsWith('Step 6,'));
+    assert.match(lines[at], /done at/);
+    assert.equal(lines[at + 1], `  ${answer[0].said}`);
+    assert.match(lines[at + 1], /docker runs outside the sandbox/);
   });
 });
 
@@ -390,4 +451,57 @@ test('steps 6 and 8 are the filled ones in the steps list', () => {
   assert.deepEqual(eight.after, [3, 7]);
   assert.equal(eight.long, true);
   assert.equal(six.long, undefined);
+});
+
+// ---- A computer joining a project (ruling R77) ----
+
+test('on a joining Mac, step 8 asks Locked itself when the project is launched, and marks the record once Locked is on', async () => {
+  await withProject(async ({ folder, user, home }) => {
+    const dir = tempFolder('wh-managed-');
+    const fake = fakeRun((file) => {
+      if (file === 'osascript') {
+        fs.mkdirSync(path.join(dir, 'wheelhouse'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'managed-settings.json'), '{}');
+        fs.writeFileSync(path.join(dir, 'wheelhouse', 'installed.json'), '{}');
+      }
+      return {};
+    });
+    const step = lockedStep({ run: fake.run, dir, mdmPlist: NO_PLIST, nodePath: '/usr/local/bin/node', address: path.join(home, 'helper.sock') });
+    const run = startRun({ folder, now: () => T0 });
+    addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: REPO, found: true } }]);
+    const ctxOf = (platform, answers = {}) => ({ folder, step: 8, runId: run.id, now: () => T0, userHome: user, platform, answers });
+    // Step 3 asked no Locked question and connected it narrow, not marked Locked.
+    narrow(folder, 'narrow', false);
+    // Before launch: nothing to ask, settled as not Locked.
+    assert.deepEqual(await step.plan(ctxOf('darwin')), { settled: { record: { locked: false } } });
+    // Launched, as the project's state says: Locked is asked here, in step 3's words.
+    const event = { v: 1, id: '0f1e2d3c-0000-4000-8000-000000000002', at: '2026-10-19T00:00:00.000Z', computer: 'c-first', kind: 'setting', data: { key: 'phase', value: 'launched' } };
+    const file = path.join(stateDir(SLUG), eventPath(event));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(event));
+    const asked = await step.plan(ctxOf('darwin'));
+    assert.equal(asked.ask.id, 'locked');
+    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [LEVELS.locked, LEVELS.standard]);
+    assert.match(asked.ask.card.what, /Cafe-Menu has real users/);
+    // Never on Windows; Standard settles; step 3's answers are not read.
+    assert.deepEqual(await step.plan(ctxOf('win32')), { settled: { record: { locked: false } } });
+    assert.deepEqual(await step.plan(ctxOf('darwin', { '8.locked': { label: LEVELS.standard, text: null } })), { settled: { record: { locked: false } } });
+    assert.equal((await step.plan(ctxOf('darwin', { '3.locked': { label: LEVELS.locked, text: null } }))).ask.id, 'locked');
+    // Locked on the Quick connection is refused, as on any computer.
+    narrow(folder, 'quick', false);
+    const locked = { '8.locked': { label: LEVELS.locked, text: null } };
+    await assert.rejects(step.plan(ctxOf('darwin', locked)), new RegExp(`${NEEDS_NARROW}, and this project has the Quick connection`));
+    // Locked, narrow: Locked's list, which marks the record too; applied, the record says Locked.
+    narrow(folder, 'narrow', false);
+    const planned = await step.plan(ctxOf('darwin', locked));
+    assert.deepEqual(planned.changes, [{ kind: 'locked', target: path.join(dir, 'managed-settings.json'), project: SLUG, folder, mark: true }]);
+    const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxOf('darwin', locked), copy: async () => {} });
+    assert.deepEqual(done, { ok: true });
+    assert.equal(readProject(SLUG).connection.locked, true);
+    const made = findRun(folder).changes.filter((c) => c.step === 8);
+    assert.deepEqual(made.map((c) => c.kind), ['locked', 'file'], 'the record marked once Locked is on, recorded first');
+    assert.equal(JSON.parse(made[1].before).connection.locked, undefined);
+    // Asked again, the record already says Locked: nothing more to mark.
+    assert.equal((await step.plan(ctxOf('darwin', locked))).changes[0].mark, undefined);
+  });
 });

@@ -21,6 +21,14 @@
 //                  project's state, so it records it once
 //   answers/       each answer as the prompt record signed it: an `action` event `setup-answer`
 //                  { runId, step, questionId, question, label, text }
+// Uninstall's card and click (ruling R90) are kept in the same folders, so the last uninstall, which
+// removes them whole, takes them too:
+//   shown/uninstall-<16 hex>.json   the card uninstall last showed for a folder (the hex from its
+//                  real path): { project, folder, hash, card, at }, written by the helper when it
+//                  works out uninstall's list and composes its card
+//   clicks/        the director's Remove it as the prompt record signed it: an `action` event
+//                  `uninstall` { project, hash, question, label }, its question the set line alone;
+//                  a used one is marked in clicks-used/ as a setup click is
 // The prompt record reads `shown/` to turn the twelve characters on a card into the full hash
 // the click names, with the run the card was shown for, and counts a click only on the card
 // exactly as the helper composed it (its text, header and each option's label and description),
@@ -41,10 +49,11 @@ import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import {
   HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, writeWhole, shownCard, readShown,
-  readAsked,
+  readAsked, uninstallShownFile, readUninstallShown,
 } from '../lib/setup-clicks.js';
+import { isLineName } from '../state/card-lines.js';
 
-export { clicksDir, keepClick, shownHash, keepAnswer, askedFor } from '../lib/setup-clicks.js';
+export { clicksDir, keepClick, shownHash, keepAnswer, askedFor, keepUninstallClick, shownUninstall } from '../lib/setup-clicks.js';
 
 // A click dated a little after the helper's clock still counts: two clocks on one computer.
 const SKEW_MS = 60 * 1000;
@@ -142,29 +151,91 @@ export function freshClicks({ runId, step, hash, now = () => new Date() }) {
   }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
+// A typed answer that is no answer (ruling R125): a question (it ends with "?"), or, alone, words
+// that hand the choice back. Case and a closing full stop or exclamation mark don't count.
+export const HANDED_BACK = Object.freeze(['you decide', 'you choose', 'not sure', 'i don\'t know', 'skip', 'whatever']);
+export function notAnAnswer(text) {
+  if (typeof text !== 'string') return false;
+  const said = text.trim();
+  if (said.endsWith('?')) return true;
+  const plain = said.replace(/[.!\s]+$/u, '').replace(/\s+/gu, ' ').replaceAll('\u2019', '\'').toLowerCase();
+  return HANDED_BACK.includes(plain);
+}
+
+// This run's setup-answers kept here, made on this computer and signed by its enrolled key, oldest
+// first.
+function keptAnswers(runId) {
+  if (!RUN_ID.test(String(runId))) return [];
+  const enrolled = readEnrolled();
+  const me = computerId();
+  return keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
+    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
 // Every answer the director has given to this run's questions, as each step's plan reads it in
 // ctx.answers: { '<step>.<question id>': { label, text, at } }. An answer counts when it is a
 // setup-answer naming this run, made on this computer and signed by its enrolled key, and the
 // question it answers is the one its step last asked under that id, in the same words, with the
 // label one of that card's own options (never a put-off) or, on a card that takes one, a typed
-// text. Answers are never used up and never go stale: the newest for each question counts.
+// text that is an answer (notAnAnswer: never a question, nor the choice handed back, ruling R125;
+// the record stays as it was kept, and is passed over here). Answers are never used up and never
+// go stale: the newest for each question counts.
 export function answersFor(runId) {
-  if (!RUN_ID.test(String(runId))) return {};
-  const enrolled = readEnrolled();
-  const me = computerId();
   const answers = {};
-  const kept = keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
-    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled));
-  for (const e of kept.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) {
+  for (const e of keptAnswers(runId)) {
     const { step, questionId, question, label, text } = e.data;
     const asked = askedRecord(runId, step, questionId);
     if (asked === null || asked.card.question !== question) continue;
     const fits = typeof label === 'string'
       ? text === null && !PUT_OFF.includes(label) && asked.card.options.some((o) => o.label === label)
-      : label === null && typeof text === 'string' && text !== '' && asked.typed === true;
+      : label === null && typeof text === 'string' && text !== '' && asked.typed === true && !notAnAnswer(text);
     if (fits) answers[`${step}.${questionId}`] = { label, text, at: e.at };
   }
   return answers;
+}
+
+// Whether the newest typed answer to this question since its card was last asked, in the same
+// words, is no answer (notAnAnswer): the step asks the card again, saying why (ruling R125).
+export function typedNotAnswered(runId, step, id) {
+  const asked = askedRecord(runId, step, id);
+  if (asked === null || asked.typed !== true) return false;
+  const since = keptAnswers(runId).filter((e) => e.data.step === step && e.data.questionId === id && e.data.question === asked.card.question
+    && Date.parse(e.at) >= Date.parse(asked.at)).at(-1);
+  return since !== undefined && since.data.label === null && notAnAnswer(since.data.text);
+}
+
+// Records uninstall's card as shown for a folder (ruling R90): the project its line names, the full
+// hash of the list and the card. Showing it again replaces the record, so only a click on the card
+// as last shown counts.
+export function noteUninstallShown({ project, folder, hash, card, now = () => new Date() }) {
+  const shown = shownCard(card);
+  if (!isLineName(project) || !HASH.test(String(hash)) || typeof folder !== 'string' || !path.isAbsolute(folder) || shown === null) {
+    throw new Error('Uninstall\'s shown card needs its project, its folder as a full path, the full hash of its list and the card');
+  }
+  const record = { project, folder, hash, card: shown, at: now().toISOString() };
+  writeWhole(uninstallShownFile(folder), `${JSON.stringify(record)}\n`);
+}
+
+// The card uninstall last showed for a folder, or null.
+export function uninstallShownFor(folder) {
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) return null;
+  return readUninstallShown(uninstallShownFile(folder));
+}
+
+// The director's clicks that let uninstall's list go ahead, newest first: an uninstall action naming
+// this project and this full hash, made on this computer, signed by its enrolled key, from the last
+// CLICK_FRESH_MS, and not yet used (useClick, releaseClick). The route (Task 15b) also matches the
+// hash against uninstallShownFor(folder) and the list it works out again.
+export function freshUninstallClicks({ project, hash, now = () => new Date() }) {
+  if (!isLineName(project) || !HASH.test(String(hash))) return [];
+  const enrolled = readEnrolled();
+  const me = computerId();
+  const at = now().getTime();
+  return keptClicks().filter((e) => {
+    const age = at - Date.parse(e.at);
+    return e.kind === 'action' && e.data?.action === 'uninstall' && e.data.project === project && e.data.hash === hash
+      && age <= CLICK_FRESH_MS && age >= -SKEW_MS && !used(e) && ownSigned(e, me, enrolled);
+  }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
 // How long the helper may take to record one click in the project's state.
