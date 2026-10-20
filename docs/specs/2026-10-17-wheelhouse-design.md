@@ -19,6 +19,8 @@
 
 **Completed by:** `docs/specs/2026-10-18-build-loop-design.md`, the build loop and lineage, approved by the director on 18 October 2026. It wins where the two differ; sections 4, 5.4, 7, 8, 10 and 12.4 point to it.
 
+**The interface:** section 23, Calm, chosen by the director on 20 October 2026. It wins over earlier sections on how anything looks or reads.
+
 **Marks:** *Designer's call* marks a choice the designer made, which the director may override. Section 21 lists every one. Section 22 lists what the director has decided.
 
 ## 1. Intent
@@ -184,7 +186,7 @@ The rules for cards:
 - Each card is asked once, kept on the waiting-on-you list until answered, and never re-pasted into later replies.
 - Cards are batched into one message per visit, most important first.
 - Unavoidable terms are explained in place, and every label comes from the glossary.
-- A card is presented with clickable options (Claude Code's multiple-choice question), plus free text: **Approve**, **Not now**, **Explain more**, **Show me**. They render as clickable options in Desktop on macOS and Windows (check 2, `docs/checks/02-clickable-questions.md`).
+- A card is presented with clickable options (Claude Code's multiple-choice question), plus free text: **Approve**, **Suggest a change…**, **Show me** and **Not now**, with Explain more left to the free text (section 23.4). They render as clickable options in Desktop on macOS and Windows (check 2, `docs/checks/02-clickable-questions.md`).
 - A click on a card, a press of its button in the mod's pane, or its reply code typed or sent from the phone is the only way to approve or confirm anything (section 17.1). A typed "yes" is read and acted on as an instruction, but it is not an approval (section 12.3).
 - A card carries one set line naming exactly what is being decided. There are five kinds: an approval (the pull request and its commit), a confirmation of a ruling, level or setting, lifting STOP, a CI push (the branch and its commit), and a runbook step. A click counts only if the card carries that line, and the answer is one of the options the card offered. Commits are named by their first 12 characters, because a shorter prefix can be matched by brute force in minutes. One script writes the lines and the prompt-record hook checks for them (section 12.5). *Designer's call.* The build loop adds five more, each with its reply code: approving a brief or a design, answering a feature's question, amending approved work, naming an incident's fix and ending the incident (build-loop design, section 10).
 - A card about a safety change (level 4, section 12.4) says in plain words what the change does to the checks, not just what it does to the product.
@@ -192,17 +194,17 @@ The rules for cards:
 **How cards are made.** *Designer's call* for each.
 
 - **By script, never by hand.** One composer (`scripts/cards/compose.js`) writes a card's five parts, its set line and its reply code from one input, so a card can't read as one decision and sign another. The front desk asks for each card through its command (`scripts/frontdesk/cli.js`) and passes it to the question tool as the command gives it. The parts the director reads are put in the glossary's plain words (section 5.5).
-- **Its options.** A card that decides something offers its deciding label (**Approve**, **Confirm**, **Push it** and so on), **Not now**, **Explain more** and **Show me**. A feature's question carries up to three of its own options and **Explain more**, or all four of its own with "explain more" left to the free-text answer; a product question with no set line carries its own options the same way. The question tool takes at most four, and dropping one of a feature's options would decide for the director. A proposal learnt from how the director works offers **Keep as is** in place of **Show me** (section 5.5).
+- **Its options.** A card that decides something offers its deciding label (**Approve**, **Confirm**, **Push it** and so on), **Suggest a change…**, **Show me** and **Not now** (section 23.4). A feature's question carries up to three of its own options and **Suggest a change…**, or all four of its own with a change left to the free-text answer; a product question with no set line carries its own options the same way. The question tool takes at most four, and dropping one of a feature's options would decide for the director. A proposal learnt from how the director works offers **Keep as is** in place of **Show me** (section 5.5).
 - **Checked by a hook.** Before the question tool runs, the card check refuses a card missing one of its five parts, one whose set line has no reply code or another card's, one with two set lines, and one whose first part names another pull request, commit or record than its set line. It informs rather than guards: if it fails itself it lets the card through, since the prompt record is what refuses a wrong click (section 12.3).
 - **Asked once.** The board-context hook tells the front desk how many cards wait that no visit has asked. Its command gives at most four, most important first (STOP or an incident; level 4; a question that holds up all work; level 3; the rest; then oldest first), and records them as asked, so a card dismissed with no answer isn't offered on every turn. Composing a card whose set line is already waiting gives back the waiting card.
-- **"Not now" keeps a card waiting.** So do **Explain more** and **Show me**. Only an option that decides, or a signed record carrying the card's question, closes it. A card put off isn't asked on the next visit: it stays on the board, and the director asks for it again by its number there.
+- **"Not now" keeps a card waiting.** So do **Show me** and asking why. **Suggest a change…** keeps it waiting until the revised card, with its own set line, closes it (section 23.3). Only an option that decides, or a signed record carrying the card's question, closes it. A card put off isn't asked on the next visit: it stays on the board, and the director asks for it again by its number there.
 - **The build loop's records become cards** when the front desk next asks: a feature's open question an answer card; a click the merge gate waits for (the build loop's `gate-asks`) an approval or CI-push card, made once, and a CI-push card asked again only when its click lapsed before the push; a lineage hold one card with no set line, saying in plain words which kits differ, that edits and commands are held, and that no click lifts it: the next session start whose check matches does (build-loop design, section 14.6).
 - **Under STOP** the front desk's command gives the Lift STOP card alone, recommending **Not now**, since the front desk can't know why STOP was set (section 12.7).
 - **The command's input** goes in a file, never a heredoc, which Claude Code refuses whatever the allow rules say (seen on 2.1.302, 20 October 2026). The front desk writes the JSON with its own file tool, to the session's scratchpad where its system prompt names one, otherwise to `.wheelhouse/front-desk.json` in the project, and runs `node "<plugin>/scripts/frontdesk/cli.js" <command> < <file>`. The project's local settings allow that command by its full path and that one file's writing, with no prompt; nothing reads the file as trusted. The session start keeps `.wheelhouse/` out of git in the project's main folder, before the front desk's first write.
 
 **Depth on demand:**
 
-1. **Explain more:** a plain explanation with an everyday example, and a simple picture if it helps, from the glossary where the card uses its terms; then the card is asked again, as it was composed.
+1. **Why?, or asking why:** in the pane, Why? opens the card's reasons in place (section 23.3); asked in the chat, a plain explanation with an everyday example, and a simple picture if it helps, from the glossary where the card uses its terms; then the card is asked again, as it was composed.
 2. **Show me:** the preview, screenshots, or a short visual page. The preview's address comes from the helper, read-only, for the pull request's latest commit (`cli.js preview <n>`).
 3. **Talk it through:** a conversation, one question at a time.
 
@@ -828,7 +830,7 @@ The safety build leaves these out, and they are not promised for any date:
 
 ## 14. Settings
 
-Settings let the director change how the system behaves without briefing it again. Each everyday setting has a few named levels and a default. *The list and defaults are the designer's calls.*
+Settings let the director change how the system behaves without briefing it again. Each everyday setting has a few named levels and a default. The names the director sees are section 23.6's. *The list and defaults are the designer's calls.*
 
 **The catalogue** (`scripts/settings/catalogue.js`) names every setting by key, with its levels or its check, its default and where it lives (section 14.3). A value it doesn't allow is refused, and only presence can carry an end time.
 
@@ -844,11 +846,11 @@ The catalogue holds a setting before everything that obeys it is built, as secti
 |---|---|---|
 | **Autonomy** | Cautious · **Balanced** · Trusting | Shifts the defaults in section 6. Cautious moves level-2 work to level 3. Trusting lets small visual changes inside existing patterns go live and be shown afterwards. Level 4 never moves |
 | **Show before build** | Always · **Visual changes** · Only when asked | Section 7.3 |
-| **Presence** | **Here** · Away until… · Do not disturb | Away: features run to the end, and only breakages and questions that block all work notify. Do not disturb: only STOP-worthy problems and live harm notify. A briefing waits on return either way |
+| **Availability** (`presence`) | **Here** · Away until… · Do not disturb | Away: features run to the end, and only breakages and questions that block all work notify. Do not disturb: only STOP-worthy problems and live harm notify. A briefing waits on return either way |
 | **Feature milestones** | Midpoint demos · Run to the end · **Ask per feature** | Section 7.4, step 5 |
-| **Token efficiency** | Lean · **Balanced** · Thorough | Lean: the mid-sized model for all well-defined work and routine front-desk turns, one builder at a time, screenshots only on request. Thorough: the most capable model more widely, a second reviewer on critical-area work, more evaluation trials. Required reviews, tests and the merge gate never change |
+| **Thoroughness** (`efficiency`) | Lean · **Balanced** · Thorough | Lean: the mid-sized model for all well-defined work and routine front-desk turns, one builder at a time, screenshots only on request. Thorough: the most capable model more widely, a second reviewer on critical-area work, more evaluation trials. Required reviews, tests and the merge gate never change |
 | **Budget** | **Report only** · Weekly share · Per feature | Report only is the director's ruling (section 9.1). Budget allocation is in the backlog, by the director's decision of 18 October 2026; the other two levels come only if it is taken up |
-| **Pace** | 1 · 2 · **3** builders at once | How fast features move, and how much usage they draw at once. The default is the build-loop design's limit of three, which wins over this design's earlier two. *Designer's call* |
+| **Builders at once** (`pace`) | 1 · 2 · **3** | How fast features move, and how much usage they draw at once. The default is the build-loop design's limit of three, which wins over this design's earlier two. *Designer's call* |
 | **Briefing** | Short (about 80 words) · **Standard (about 150)** · Detailed (about 300) | Section 5.2. The gap before a briefing, two hours by default, is set here too |
 | **Explanations** | **Plain** · Some technical terms | How question cards and briefings are written |
 | **Notifications** | Channels, and quiet hours | Section 13 |
@@ -886,7 +888,7 @@ There are two kinds, kept apart:
 ### 14.4 How settings change
 
 - **By saying it.** "I'm away till 6" or "be more careful this week". The front desk reads the change back in one line, and it takes effect on the director's confirmation (section 9). A temporary change carries its end time and reverts on its own.
-- **In the mod's settings pane** (section 17.1), with no Claude turn. A press is both the change and the director's confirmation of it, signed as a Confirm click on its card would be, so it is in force at once. Each row shows its current choice and where it comes from. Presence has six set choices (Here; Away for 2 hours; Away until 18:00; Away until 09:00 tomorrow; Do not disturb until 09:00 tomorrow; Do not disturb until I change it), whose end time is worked out at the press, in the computer's own time zone, and a choice whose time has passed isn't offered. Protection, notifications, working hours and the briefing gap are changed through the front desk, so their rows offer only **Ask the front desk**; the budget shows its one level while budget allocation is in the backlog; the advanced settings stay with the front desk. Under STOP a press records nothing and says so. *Designer's call.*
+- **In the mod's settings pane** (section 17.1), with no Claude turn. A press is both the change and the director's confirmation of it, signed as a Confirm click on its card would be, so it is in force at once. Each row shows its current choice and where it comes from. Presence has six set choices (Here; Away for 2 hours; Away until 18:00; Away until 09:00 tomorrow; Do not disturb until 09:00 tomorrow; Do not disturb until I change it), whose end time is worked out at the press, in the computer's own time zone, and a choice whose time has passed isn't offered. Protection, notifications, working hours and the briefing gap are changed through the front desk, so their rows offer only **Change…**, which asks the front desk (section 23.6); the budget shows its one level while budget allocation is in the backlog; the advanced settings stay with the front desk. Under STOP a press records nothing and says so. *Designer's call.*
 - **Learnt from how the director works** (section 5.5): each is a one-line card, in force only on the director's Confirm, except a concept set back to not known, which makes explanations longer at once.
 - **Only the director changes them.** Agents are denied writes to the settings files, and every change is logged with its date.
 - **Build commands on Windows** moves away from Ask only by the director's click on its card, never by saying it; back to Ask, by either (section 12.2).
@@ -979,12 +981,12 @@ In Desktop on Windows, a reply from another Desktop session reached the mod as a
 | Job | How | Effect |
 |---|---|---|
 | **At a glance** | The side pane and the status line under the prompt (board 2), drawn from the pane's model, which the bridge keeps as the project's `status.json` | The director sees the state without asking |
-| **Card buttons** | A card's deciding option (such as **Approve**) and **Not now** write the signed record and the answer straight into state, with no Claude turn. **Explain more** and **Show me** start a front-desk turn. A button shows at once that its press was taken, so buttons stay live while a turn runs; they are switched off during a turn only if check 41 finds a press made then is lost (check 9) | Approvals cost no tokens. A click is also the strongest proof that the yes came from the director |
+| **Card buttons** | A card's deciding option (such as **Approve**) and **Not now** write the signed record and the answer straight into state, with no Claude turn. **Why?** opens the card's reasons in place, **Show me** opens the preview or starts a front-desk turn, and **Suggest a change…** hands the front desk the director's words (section 23.3). A button shows at once that its press was taken, so buttons stay live while a turn runs; they are switched off during a turn only if check 41 finds a press made then is lost (check 9) | Approvals cost no tokens. A click is also the strongest proof that the yes came from the director |
 | **Prompt record** | Its `prompt.submit` hook records a message as the director's only when its origin is `composer` or `bridge`, and sets STOP for a phone message that is just "stop" (check 4) | Typed and phone approvals count, safely |
 | **STOP** | A button heading the pane that sets STOP at once, and **Lift STOP** in its place while STOP is on (section 12.7) | Everything halts without waiting for a Claude turn |
 | **`/digest`** | The briefing since the last one, from the state files, as the command's own output | A briefing with no Claude turn |
 | **Watching** | Keeps the build loop's watcher running, which polls CI and PR state and wakes the foreman only when something changed: under Shape 1 the front desk's mod starts the background watcher again if it stops; under Shape 2 the mod's timer in the foreman's session runs the watcher's loop | No turns spent waiting on CI |
-| **Settings pane** | The everyday settings of section 14 as buttons, with the current choice shown; a press is the change and its confirmation | Changing how the system works costs no tokens |
+| **Settings pane** | The everyday settings of section 14 as a grouped list with pop-up menus (section 23.6), with the current choice shown; a press is the change and its confirmation | Changing how the system works costs no tokens |
 | **Courier** | Reads state for what is new, through the pane's model, and wakes the front desk only for needs-you items, by the director's presence. Other Wheelhouse sessions' messages are kept out of the front desk's conversation and only refresh the pane | The director's conversation is never interrupted by routine traffic |
 
 **Its first piece is built with the core** (the director's decision, section 22), because in Desktop only a mod can do these jobs (checks 6 and 9):
@@ -1009,11 +1011,11 @@ In Desktop on Windows, a reply from another Desktop session reached the mod as a
 
 - **One tick per period.** On a timer the mod sends the bridge one `tick`, naming the session, its folder, whether a turn is running and where it is drawn. The bridge works out the pane, the courier and the watcher in that one run, and answers what to draw, how often to tick and any prompt to hand the session. The front desk ticks every 15 seconds, a Shape 2 foreman every 30, a session in a project still being set up every 15 with nothing drawn (so the pane opens once setup ends), and any other session not at all. One tick runs at a time; a press or traffic that asks for one meanwhile gets one more after it. The first tick doesn't hold up the session's start.
 - **Who a session is** is the bridge's to say. A foreman the app starts is known only from its first prompt, after the mod's first tick, so a tick that finds the session is the foreman's closes the pane it opened.
-- **The pane's model is `status.json`.** The bridge writes it at each front-desk tick, so what the pane shows can be read without the mod, and the courier knows what was there before. The pane shows the glance; STOP or Lift STOP; the waiting cards one at a time ("Card n of m", with **Back** and **Next**), each card's text whole, as plain text, so nothing in it can be a link or a heading; what is building, the health lines and usage; and what couldn't be read, with when the views were last synced. When the latest can't be read, or what is shown is three ticks old, it says "Couldn't read the latest at <time>; showing <time>'s", in the computer's own time, and shows no figures as current.
+- **The pane's model is `status.json`.** The bridge writes it at each front-desk tick, so what the pane shows can be read without the mod, and the courier knows what was there before. The pane shows the glance; STOP or Lift STOP; the waiting cards one at a time ("Card n of m", with **Back** and **Next**), each card as its parts, drawn as section 23.3 says, with nothing in its words drawn as a link or a heading; what is building, the health lines and usage; and what couldn't be read, with when the views were last synced. When the latest can't be read, or what is shown is three ticks old, it says "Couldn't read the latest at <time>; showing <time>'s", in the computer's own time, and shows no figures as current.
 - **The pane opens by itself** only at the front desk's session start and on `/wheelhouse`. A pane the director closed stays closed.
-- **Each card's buttons** (`scripts/mod/buttons.js`). A card whose form passes the same check the card hook uses gets its deciding button and **Not now**, which record, and **Explain more** and **Show me**, which start a front-desk turn. A card whose form fails gets only **Explain more**. A question with no set line offers its own options, each handed to the front desk. Setup's cards, the baseline card and the build-commands card for unattended running on Windows get no buttons, with a line saying where they are answered. A build-loop question no card asks yet is a line with no buttons.
-- **A press is the director's** under the origin `pane`, which only a button's press handler sets (the mod's press functions, which the proof checks by name). The press names the card and the hash of the text drawn, so a card that changed, closed or was spent since it was drawn records nothing, and the pane says why in one line. The bridge signs for it only what a click on the same card would earn, through the prompt record's own code. An agent's own run of the bridge with `pane` can't read the signing key on the Mac (check 32); on Windows the known gap of section 11 applies, as it does to reply codes. A prompt a press hands the front desk names the card by number and by id: "Wheelhouse pane: the director pressed Explain more on card 2 (<id>)." One press is recorded at a time: meanwhile the other buttons but STOP are plain text, so a double click sends once.
-- **Under STOP** the helper refuses plain writes but takes signed records. So a deciding press still records and closes its card by its signed record; **Not now** and a setting record nothing and say so; **Explain more** and **Show me** still start their turn, since reading and explaining carry on.
+- **Each card's buttons** (`scripts/mod/buttons.js`). A card whose form passes the same check the card hook uses gets its deciding button and **Not now**, which record; **Why?**, which opens in place; **Show me**, which opens the preview or starts a front-desk turn; and **Suggest a change…**, which starts one with the director's words (section 23.3). A card whose form fails gets only **Why?**, which then starts a front-desk turn. A question with no set line offers its own options, each handed to the front desk. Setup's cards, the baseline card and the build-commands card for unattended running on Windows get no buttons, with a line saying where they are answered. A build-loop question no card asks yet is a line with no buttons.
+- **A press is the director's** under the origin `pane`, which only a button's press handler sets (the mod's press functions, which the proof checks by name). The press names the card and the hash of the text drawn, so a card that changed, closed or was spent since it was drawn records nothing, and the pane says why in one line. The bridge signs for it only what a click on the same card would earn, through the prompt record's own code. An agent's own run of the bridge with `pane` can't read the signing key on the Mac (check 32); on Windows the known gap of section 11 applies, as it does to reply codes. A prompt a press hands the front desk names the card by number and by id: "Wheelhouse pane: the director pressed Show me on card 2 (<id>)." One press is recorded at a time: meanwhile the other buttons but STOP are plain text, so a double click sends once.
+- **Under STOP** the helper refuses plain writes but takes signed records. So a deciding press still records and closes its card by its signed record; **Not now** and a setting record nothing and say so; **Why?**, **Show me** and **Suggest a change…** still work, since reading and explaining carry on.
 - **The settings pane** is section 14.4's.
 - **`/digest`** answers with the briefing since the last one as the command's own output, with no model turn (check 40). It is the briefing the hook gives after a gap, and counts as a briefing given (section 5.2).
 - **The courier reads state,** through the pane's model, since the build-loop design replaced the foreman's messages with state. It wakes the front desk only for needs-you items: STOP turned on, an open incident, a health line at its stop level, a card the front desk hasn't asked yet, and a feature finished. By the director's presence: **here** lets them all through; **away**, only STOP, an incident, health at its stop level and a card that holds up all work (ranked by the front desk's own importance order); **do not disturb**, and the quiet hours, only STOP and an incident. Each item wakes once across every session of the project; wakes are at least ten minutes apart, except for STOP and an incident; nothing wakes during a turn; and a session's first tick records what it finds and wakes for nothing, or every old card would wake it at each session start. The wake carries counts and card numbers, never an event's words, and asks for Claude's notification first, then the new cards (section 13): "Wheelhouse courier: 2 new cards (3 and 4). Send Claude's notification in one line, then ask any new cards now, once."
@@ -1173,7 +1175,7 @@ The added costs are:
 **Left to the builder:**
 
 - file formats beyond those named;
-- the board's script and layout, following the mock-up;
+- the board's script and layout, following section 23;
 - the hook implementation details;
 - feature-flag mechanics;
 - the secret scan's patterns;
@@ -1414,6 +1416,8 @@ The added costs are:
 - pages: at most 20, public pages only, a bad list making the configuration unreadable (section 12.4); a picture taken after a five-second settle, so a page its script draws is drawn; only Chrome's pictures counting until check 34's Windows run; the approved commit's pictures only from those taken at its approval; a preview counting only while current, at a public `https` address its commit doesn't share with the approved one; the hashes kept beside the state clone for 30 days (section 12.3). *Designer's call.*
 - evaluation sessions kept apart from the director's own: an allowlisted environment, no MCP servers or Desktop tools, and the sandbox, which also keeps their commands from the director's data and the judges; the keychain's command denied by name (section 18). *Designer's call.*
 
+- Calm's details: the tint as the theme's blue, not Claude's orange; the four shapes of what can be pressed; Why? opening in place; Not now in the card's corner; the pane's own box for Suggest a change…; the revised proposal as a new card; Undo for a minute; the phone's pane opening choices on their own page (section 23). *Designer's call.*
+
 Cards A and B of the safety plan, Cards 1 and 2 of the board-and-usage plan, and Card 1 of the front desk plan, answered by the director, are in section 22. The build loop's own designer's calls are in `docs/specs/2026-10-18-build-loop-design.md`, section 17.
 
 ## 22. Decided by the director
@@ -1447,6 +1451,8 @@ Answered on 17 October 2026:
 | The build loop and lineage | Approved, 18 October 2026: one Claude session per feature, one thin foreman per project, Superpowers' and Matt Pocock's skills used as they are with a written override on top, the director approving designs and briefs but not plans, Superpowers' debugging only, and a green upgrade landing as a briefing line. The rest of its answers are in `docs/specs/2026-10-18-build-loop-design.md`, section 18 |
 | When to build the board, briefing and usage (Card 1 of its plan) | Decided 18 October 2026: "Start now", alongside the build loop. Running both at once draws on the weekly allowance faster, and the two touch a few of the same files, each change a small addition |
 | Answering a card by typing or from the phone (Card 2 of that plan) | Decided 18 October 2026: "both". Reply codes now: a message typed or sent from the phone that is just a card's code and an option ("K7QD Approve") counts as the click. When the rest of the mod draws card buttons, the codes stay beside them, as the way to answer from the phone and a backup to the buttons. A plain typed "yes" never counts (section 17.1) |
+| The interface | Decided 20 October 2026, after three rounds of mock-ups: Calm (section 23). The director had found the pane's card "really ugly, as though it has never been designed, and hard to read too". Round two dropped the denser direction and remade the other two "the way Apple would design them". On Calm's buttons, "the buttons are busy", so each card has two, as an Apple alert does. Then: "Better but the text are to similar to the non clickable text below. The settings UI doesnt look apple too me. But i have decided on A". So everything that can be pressed takes one tint, and Settings became a grouped list. Last: "Yes, write it up", with the four plainer setting names |
+| Suggest a change | Decided 20 October 2026: every card offers Suggest a change, in the pane, the chat and on the phone. The director's words go to the front desk, and a new proposal comes back as a new card. Typed words steer but never approve (sections 12.3 and 23.3) |
 | Comparing screenshots to save a second approval (Card 1 of the front desk plan) | Decided 18 October 2026: **Compare them**, for fewer repeat approvals; any doubt still asks again. When a branch is brought up to date after the director approved it, the helper opens the change's preview in a hidden browser on this computer, with a fresh empty profile, and the approval carries over only when every page looks exactly the same. No setting to always ask again was built; a project that lists no pages always asks (section 12.3) |
 
 **Still the director's to decide, later:**
@@ -1454,3 +1460,277 @@ Answered on 17 October 2026:
 - when the first release happens (section 17.2), proposed once the pilot meets its measures.
 
 **In the backlog:** budget allocation (section 9.1), by the director's decision of 18 October 2026.
+
+## 23. The interface: Calm
+
+The director chose **Calm** on 20 October 2026, after three rounds of mock-ups. Round one had three directions. Round two dropped one and remade the other two on Apple's design principles. Round three settled Calm's buttons and Settings. The mock-ups are kept privately.
+
+**Calm** is laid out like a well-made settings screen. It opens with one sentence that answers "do I need to do anything?", then puts each thing in its own quiet group. Each card has two buttons. This section wins over earlier sections on how anything looks or reads. Sections 5.2, 5.3, 13, 14 and 17.1 point here. What each part of Wheelhouse must change is in section 23.9.
+
+**Why it needed a design.** The director found the pane's card "really ugly, as though it has never been designed, and hard to read too". The pane drew each card as one block of plain text, with its part labels ("What this is:", "Why it's coming to you:") inside it.
+
+### 23.1 The principles
+
+Apple's Human Interface Guidelines, as far as each place can draw them. Where a place can't draw what Apple would do, this section says so and gives the closest honest fallback.
+
+- **The answer first.** The pane, the briefing and the board open with the same verdict: "Two things need you. Nothing is broken."
+- **One main button per card.** Size and weight rank everything else.
+- **Group, don't decorate.** What belongs together sits in one rounded group. There are no icons for their own sake, no capital-letter labels and no colour as ornament.
+- **Each colour means one thing** (section 23.2). A status colour always sits beside its word.
+- **What you can press looks pressable.** It is one tint and also a shape. Plain words never take the tint.
+- **The common path first, more one press away.** Why? opens the full reasons in place, and the board holds the rest.
+- **No motion of our own.** A press shows "Recording…" at once.
+- **Claude's own typeface and theme,** so Wheelhouse feels part of the app. Light, dark and higher contrast follow the director's theme, because only theme colours are used.
+
+### 23.2 The system
+
+**Type: five styles,** from the pane's five text sizes. Emphasis comes from semibold, never capitals, and labels are in sentence case. Nothing is smaller than a footnote except the checking line.
+
+| Style | Size | Used for |
+|---|---|---|
+| Title | `title`, semibold | The verdict ("Two things need you."), "STOP is on", a page's name |
+| Heading | `heading`, semibold | A card's question; a group's one fact |
+| Body | `body` | Sentences, rows |
+| Footnote | `footnote`, dim | A card's small line, a group's note, a row's value |
+| Caption | `caption`, even-width, dim | The checking line and reply code, word for word |
+
+**Colour: theme keys only,** each for one meaning, never a literal colour:
+
+| Key | Means |
+|---|---|
+| `text` | Words |
+| dim text | Secondary words: labels, values, notes |
+| `subtle` | The outline of a group or a quiet button |
+| `suggestion` | **The tint: everything you can press,** and nothing else |
+| `error` | STOP |
+| `warning` | To watch; out of date |
+| `success` | All well |
+
+The tint is the theme's blue, not Claude's orange accent, because orange sits too close to the amber of "to watch". Blue is also Apple's default tint. *Designer's call.*
+
+**Spacing.** The pane's spacing steps, from `xs` to `xl`: small inside a group, large between groups, so the grouping shows without extra lines. The pane keeps one inset on both sides.
+
+**What you can press: one tint, four shapes.** Everything you can press takes the tint and is also a shape, so colour is never the only sign:
+
+| Shape | How it's drawn | Used for |
+|---|---|---|
+| **Filled** | `Button`, `variant="primary"` | The one thing to press: a card's deciding answer (Approve, Confirm, Push it, Do it), Lift STOP, Send, Done |
+| **Outlined** | `Button`, `variant="secondary"`, label in the tint | The other choice: Suggest a change…, Cancel, a feature question's other options |
+| **Small outlined** | the same, at footnote size | Why?, Not now, Back, Next, Board, Settings, Undo, Change… |
+| **Link** | `Link`, ending "↗" | What opens elsewhere: "See 'save a search' ↗" |
+
+- **STOP** is the one exception. It is outlined with its label in `error`, sits apart at the top, and is never beside a filled button, so it can't be pressed by habit.
+- **Three dots** on a label ("Suggest a change…", "Change…") mean "this needs more from you".
+- **Not a ×.** Claude's close mark closes the whole pane, so it never stands for one card.
+
+**States:**
+
+- **Pressed:** the button reads "Recording…" at once. The other buttons except STOP become plain dim text until the press lands, so a double click sends once (section 17.1).
+- **Done:** a one-line note ("Approved. It goes live within the hour."), and the next card takes its place.
+- **Changed:** "That card changed while you were reading. Here is the new one."
+- **Out of date:** "Couldn't read the latest at 14:05. Showing 14:02's.", in `warning`. No figures are shown as current.
+- **Nothing waits:** "Nothing needs you.", in `success`, then what is being built.
+- **STOP on:** the pane leads with it until the director lifts it.
+
+### 23.3 The pane
+
+**Top to bottom:**
+
+1. **The glance** is the pane's title and the status line: "Wheelhouse · 2 waiting · 3 building · launch 3 of 5 · week 34%", plus "· STOP on" while it is on. Launch progress joins while a project has launch blockers. It stays at most 80 characters. Where the title is narrower, the week's share drops first, since the pane shows it below.
+2. **STOP,** outlined with a red label, with "Halts every builder at once." beside it. Under STOP, the "STOP is on" group replaces it: since when, what still carries on, the filled Lift STOP, and "Only you can lift it."
+3. **The verdict,** as a title, with one line under it: "Nothing is broken. Since you were last here at 09:10."
+4. **The card,** one at a time (below). Under it, the next card's subject ("Next: how exported files are named · optional · 3 min") and small Back and Next buttons.
+5. **Being built:** one row per piece of work, with its state and when the director will see it.
+6. **Launch:** "3 of 5 blockers cleared", "+1 since 09:10", a thin bar where Desktop draws one, and what's next, marking the director's own.
+7. **Health and this week:** all well (or what to watch), the protection level, the week's share of usage and spend, and ideas ("4 ideas · 1 new since yesterday").
+8. **The foot:** small Board and Settings buttons, and "Updated 14:02".
+
+**A card, part by part:**
+
+1. **The header row:** its kind and place ("Approval · 1 of 2"), dim, with a small Not now at the right.
+2. **The question,** as a heading: "Put 'save a search' live?"
+3. **The small line,** in footnote: its size, why it is the director's and how long it has waited ("Small feature · changes what users see · asked 2 hours ago"). An optional card adds "optional · 3 min".
+4. **The recommendation and why,** in one sentence of body text.
+5. **The thing itself and Why?** "See 'save a search' ↗" is a link where the work has a preview address. Where it has none, it is a small "Show me" button that starts a front-desk turn. Why? is a small button that opens, in place and with no Claude turn: why it's the director's, what each choice means, and what happens meanwhile. It then reads "Hide why".
+6. **Two buttons,** as an Apple alert has them: the filled deciding answer, and Suggest a change….
+7. **The checking line,** in caption, at the foot: the card's set line and its reply code, word for word ("Approve pull request #42 at commit 3f9c2a7b81d0 · K7QD").
+
+The card's five parts are all still there (section 5.3). The pane shows them as parts, never with their labels. The card's own words are still never drawn as a link or a heading. The only link is the one the bridge builds from the helper's preview address. *Designer's call* for each.
+
+**Which buttons a card gets.** These are as section 17.1 says, drawn in Calm's shapes:
+
+- **A card that decides something:** its deciding answer and Suggest a change…, with Not now in the corner and Why?.
+- **A feature's question:** its own options, the recommended one filled and the rest outlined, then Suggest a change…. The pane isn't bound by the question tool's four.
+- **A card whose form fails the check:** only Why?, which then starts a front-desk turn, since its parts can't be trusted to show.
+- **Setup's cards and the others with no buttons:** still none, with the line saying where each is answered.
+
+**Suggest a change… in the pane.** The director's ruling of 20 October 2026 (section 22):
+
+- **A box opens inside the card,** with "What would you change?", a filled Send (switched off while the box is empty) and an outlined Cancel. The pane draws its own box because it can't move the cursor into the chat's message box. `$.prompt.fill` may be refused in Desktop, so it isn't relied on.
+- **Send hands the front desk a prompt** naming the card, as a press does (section 17.1): "Wheelhouse pane: the director suggested a change on card 2 (<id>): <their words>". A toast says "Sent to the front desk. A new proposal will follow."
+- **The card stays waiting,** marked "You suggested a change at 14:10. A new proposal is on its way, and nothing goes live meanwhile."
+- **The revised proposal is a new card,** with its own commit, set line and reply code, headed "Approval · revised", with a "What changed:" sentence. The old card closes when it arrives. Nothing approved before can stand for the new one.
+- **The words steer and never approve** (section 12.3). The prompt record never counts them as an answer, and they record nothing.
+- **Where the pane can't draw a box** (a phone's pane, which has no text input), the button says "Type your change in the chat, and I'll know it's about card 1."
+
+### 23.4 Cards in the chat and on the phone
+
+Claude draws the question box itself, already as things to press, so the chat matches the pane in words and order, not in looks:
+
+- **The header** is the card's kind, at most 12 characters ("Approval").
+- **The question text:** the question; one plain line on what it is; why it's the director's; what happens meanwhile; and "To know more, just ask."
+- **The checking line and the reply code,** each on its own line ("Reply code: K7QD").
+- **The options, in the pane's order:** the deciding answer, its meaning led by "Recommended:" when it is; **Suggest a change…** ("Tell me what you'd change; I'll come back with a new proposal."); **Show me**; **Not now**.
+- **Explain more leaves the list.** The director asks why in the typed answer Claude always adds.
+- **Picking Suggest a change…** makes the front desk ask "What would you change?" in one line.
+- **A feature's question:** up to three of its own options and Suggest a change…. With all four of its own, a change goes in the typed answer, which the question names. A proposal still offers Keep as is in place of Show me (section 5.5).
+- **On the phone,** the same box comes through Remote Control, and the reply code still answers.
+
+### 23.5 The briefing, `/digest` and the board
+
+These are written into the chat, so Claude's own headings, lists and tables draw them. The first mock-up's features come back in this shape:
+
+- **The verdict first,** the same sentence as the pane's, then "Since 09:10, about 5 hours".
+- **Waiting on you, numbered.** Each item has its title, one line and its recommendation. An optional one is marked with its time ("optional · 3 min").
+- **"Since you were last here"** marks anything new wherever it appears, with counts ("+2").
+- **Section labels in sentence case,** never coloured or in capitals.
+- **Tables where you compare.** The board's work table keeps the "You'll see it" column.
+- **Empty parts fold away** into one dim line, never a heading saying "None".
+- **The briefing's foot:** usage on track, spend, "ask me anything", and the full board.
+- **The board's director view,** in order: the verdict and when it was updated; waiting on you, each card with its small line ("Small feature · level 3 · asked 2 hours ago. If not now, it waits."); on the way to launch ("3 of 5 blockers cleared, 1 since you were last here", what is still open with the director's own marked, and what's next in order); being built; changed for your users, with "Plus 9 changes behind the scenes you don't need to see."; ideas with their order; health and this week; and rulings, "For a glance, not a decision. Disagree? Say so and it becomes a question for you."
+- **The build view** (`/board build`) opens with a one-sentence headline. Then: each feature, what it is and its parts in plain words with their state; changes waiting to join, each with what its review found; quality this week; decisions along the way; and shortcuts and risks, each with what it would cost later.
+- **Not carried:** the first mock-up's serif headline and coloured section labels. The chat draws in Claude's own style.
+
+### 23.6 Settings
+
+Settings is a grouped, inset list, like System Settings on the Mac and Settings on the iPhone. The director's yes covered its four plainer names.
+
+- **The header:** "Settings", and a filled Done that goes back to the pane.
+- **A row is one setting:** its name on the left, as a noun, and its value on the right in plain words ("Autonomy: Balanced"), never a sentence.
+- **A setting with levels** shows them in a pop-up menu (`Select`). In Desktop that is the Mac's own pop-up button, the one System Settings uses.
+- **A setting the front desk changes** shows its value and a small "Change…" button, which asks the front desk. These are Protection, Build commands on Windows, Notifications, Working hours and the briefing gap.
+- **A setting with nothing to change** shows its value alone. Budget is "Report only" while budget allocation is in the backlog.
+- **Each group** has a short dim note under it, saying what the group is.
+
+**The groups, in order:**
+
+1. **STOP:** "Builders · Working", and the STOP button. Note: "STOP halts every builder at once. Only you can lift it."
+2. **This project:** Autonomy, Show before building, Feature milestones, Builders at once, Thoroughness, Product phase, Build commands on Windows, Budget, Protection. Note: "Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them."
+3. **You, in every project:** Availability, Briefing length, Hours before a new briefing, Explanations, Board opens on, Notifications, Working hours. Note: "These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you."
+4. **Advanced settings,** with Change…, which opens the front desk, as "Advanced settings: ask the front desk" did.
+
+**Four plainer names,** shown in the pane, the board and `/wheelhouse:settings`. The keys stay as they are.
+
+| Key | Was | Now |
+|---|---|---|
+| `presence` | Presence | Availability |
+| `pace` | Pace (builders at once) | Builders at once |
+| `efficiency` | Token efficiency | Thoroughness |
+| `boardTab` | Board tab shown first | Board opens on |
+
+**How a pick behaves:**
+
+- **A pick is the change and its confirmation,** as a press is today (section 14.4).
+- **The row then shows "Changed just now"** and a small Undo, for a minute. Undo picks the value before, recorded and confirmed the same way.
+- **Availability's six choices** are its pop-up's options, worked out when the pane is drawn (section 14.4).
+- **Under STOP** a pick records nothing. The pop-up goes back to the value in force, and the pane says "Settings can't change while STOP is on. Lift STOP first."
+
+**What the pane can't draw, and the fallback:**
+
+- **A switch.** The pane has none, and a picture of one can't be pressed, because a button holds only words. No setting is simply on or off today. One that becomes so gets a pop-up with On and Off.
+- **A pop-up on a phone's pane.** It has no `Select`, so it does what iPhone Settings does: each row shows its value and "›", and a press opens the choices on their own page, headed "‹ Settings", with a tick on the one in force. The "›" appears only there. On the Mac a pop-up opens in place, as in System Settings, so it needs none.
+- **A whole row you press.** Desktop would draw it as one wide button, so on the Mac a row is its name and its pop-up. Only the phone's pane makes the row the button.
+- **A raised group.** The theme has no colour for one, so each group is a rounded `subtle` outline.
+
+*Designer's call* for each, apart from the names.
+
+### 23.7 The voice
+
+Wheelhouse speaks as the front desk: a calm, capable manager who has done the reading, so the director doesn't have to. Calm uses the voice sparingly: short lines, with the reasons one press away.
+
+**Seven rules:**
+
+1. **The answer first:** "Two things need you. Nothing is broken."
+2. **Say what happens, not how it works:** "It goes live within the hour."
+3. **"I" and "you".** The front desk is "I", and the agents are "the builders".
+4. **One idea a sentence,** about 20 words at most.
+5. **Plain words.** Each technical word is explained once, in place (section 5.5).
+6. **Read back what was asked,** the choices I'll make unless told otherwise, and when the director will see it.
+7. **No alarm and no cheer:** no "Oops", no "Great news!", no exclamation marks.
+
+**Set words:**
+
+- **Buttons keep their exact words,** since a press is checked by them: Approve, Confirm, Not now, Why?, Show me (in the chat), STOP, Lift STOP, Do it, Push it, Done and Undo.
+- **Suggest a change…** is on every card, and **Change…** on a setting the front desk changes. Neither is ever a word that approves.
+- **"Since you were last here"** marks anything new since the last visit.
+- **Numbers and dates.** Times are in 24 hours on the director's own clock (14:05). Dates read like 20 October. Numbers are figures: 2 waiting, 3 of 5, about $84.
+- **British spelling** throughout.
+
+**The checking line and the reply code** stay word for word, because a press is checked against them. They sit at the card's foot, small, in even-width letters, never inside a sentence.
+
+**Phrases kept from the first mock-up:**
+
+- "Small feature. It changes what users see, so I'll show you before it goes live."
+- "Two choices I'll make unless you say otherwise: …"
+- "Plus 9 changes behind the scenes you don't need to see."
+- "For a glance, not a decision. Disagree? Say so and it becomes a question for you."
+- "If not now, it waits; nothing else is held up."
+- "Noted. Started."
+
+**The pane's messages, as they become:**
+
+| Today | Calm |
+|---|---|
+| Recording Approve on card 1 | Recording… |
+| Wheelhouse couldn't hand that to the front desk | That didn't reach the front desk. Type it in the chat instead. |
+| This project is still being set up: its pane opens once setup finishes | Setup is still running. This pane opens when it finishes. |
+| Wheelhouse's pane belongs to the project's front desk: type /wheelhouse there | This pane lives in the front desk's chat. Type /wheelhouse there. |
+| Settings change once STOP is lifted | Settings can't change while STOP is on. Lift STOP first. |
+| Couldn't read the latest at 14:05; showing 14:02's | Couldn't read the latest at 14:05. Showing 14:02's. |
+
+### 23.8 Setup, notifications and toasts
+
+- **A setup step in the chat** names its place and time ("Step 3 of 9 · about 2 minutes") and what it is ("Connecting to GitHub"). It says what has happened in one line, and what carries on meanwhile ("Meanwhile, Node.js is still installing. Nothing for you to do there."). Its question box gives each option's meaning, led by "Recommended." where it is.
+- **The phone step** says what reaches the phone: "Only things that need you, finished features and breakages reach your phone. Routine progress waits for your next visit."
+- **The health check** ends setup with one verdict ("All 4 checks passed. Wheelhouse is ready.") and one plain line for each check.
+- **Notifications** have the title "Wheelhouse", plus "· STOP is on" when it is. They carry counts and card numbers only, never a card's words (section 13): "2 waiting on you: cards 3 and 4." and "Every builder has halted. Open Claude to see why."
+- **Toasts in the pane** are one line each: what happened, then what to do, if anything. "Approved. It goes live within the hour." "Away until 18:00. Undo in the pane for a minute." "Sent to the front desk. A new proposal will follow."
+
+### 23.9 What each part needs changed
+
+| Part | Files | The change |
+|---|---|---|
+| **The card's model** | `scripts/cards/compose.js`, `scripts/hooks/card-check.js` | The composer gives each card's parts separately as well as its text: kind, question, small line, recommendation, each option with its meaning, why it's yours, meanwhile, set line and reply code. The chat's text is built from the parts in section 23.4's order. The check reads the parts, so a card is still refused if it is missing one. The options change: the deciding answer, Suggest a change…, Show me and Not now, with Explain more left to the typed answer; feature questions as section 23.4 says. A typed or picked "Suggest a change…" keeps the card waiting until its revised card closes it |
+| **The pane's model** | `scripts/mod/status.js`, `scripts/mod/buttons.js` | The bridge sends each card's parts and its buttons by shape (filled, outlined, small, link), never one text, with the preview address for the link where the helper has one. It also sends the glance with launch progress, the verdict line, "since you were last here", and the launch, health and ideas groups |
+| **Suggest a change** | `scripts/mod/press.js`, `scripts/mod/bridge.js`, `hooks/mod/cards.tsx` | A new pane press: Send hands the front desk the prompt of section 23.3, naming the card. The card is marked as steered. The prompt record never counts the words as an answer, and nothing is recorded |
+| **The pane's drawing** | `hooks/mod/pane.tsx`, `hooks/mod/cards.tsx` | Draw sections 23.2 and 23.3 from the parts: the type styles, the theme keys, the four shapes, Why? opening in place, Not now in the card's corner, the box for Suggest a change…, and no × for a card |
+| **Settings** | `hooks/mod/settings.tsx`, `scripts/mod/settings-pane.js`, `scripts/settings/catalogue.js` | Draw section 23.6: groups, rows, pop-ups, Change…, notes, Undo for a minute, Done. A pop-up's pick raises `ui.select`, not `ui.press`, so the one-press-at-a-time claim, "Recording…", the signed confirmation and the STOP refusal must cover it. Undo is a pick of the value before. The phone's pane opens the choices on their own page. Use the four plainer names |
+| **Messages and toasts** | `hooks/mod/messages.ts`, `scripts/mod/` | Section 23.7's words and section 23.8's toasts |
+| **The board and the briefing** | `scripts/board/render.js`, `scripts/briefing/text.js` | Section 23.5's order and words: the verdict first, "since you were last here", sentence-case labels, empty parts folded away, the glance's launch progress (`glanceLine()`, still at most 80 characters, the week's share dropping first) |
+| **`/digest`** | `scripts/mod/digest.js` | The briefing as section 23.5 has it |
+| **Setup** | `scripts/setup/` | Section 23.8's step heading, meanwhile line, phone step and health-check verdict |
+| **Notifications** | `scripts/mod/courier.js`, the front desk's skill | The words of section 23.8, still counts and card numbers only |
+| **Learning and the evaluations** | `scripts/frontdesk/`, section 18's scenarios | Where learning (section 5.5) counts **Explain more**, it counts a press of Why? or a question asking why. Section 18's scenario 36, and the designer's calls in section 21 that name Explain more, read as Why? in the pane and asking why in the chat |
+| **Tests** | `tests/` | The words above are set words, so tests hold them. The mod proof (`npm run mod-check`) covers the new press and the `ui.select` handler |
+
+### 23.10 To check at the Mac sitting
+
+These can only be seen on the real thing. Each has its fallback, so none holds up the build.
+
+- **Whether Desktop shows a theme colour inside its own button.** If not, the outline alone marks a button, and nothing plain is ever blue.
+- **Whether Desktop's link colour is the tint.** If not, the link still reads as a link (its ↗ and Desktop's link look), or becomes a small outlined button.
+- **The main button's fill.** If Desktop fills it with Claude's dark colour rather than the tint, Approve is still the one filled button.
+- **Contrast.** The light theme's blue on white is about 4.4 to 1, a touch under Apple's 4.5 for small text. Check it, and again with higher contrast on. If it falls short, labels go back to `text`, and the outline carries them.
+- **Desktop's outline and background for a group,** from `subtle`, and Box bars for launch progress. If no bar is drawn, the count and "+1" stand alone.
+- **How a screen reader reads the pane:** in order, with each button's name.
+- **Whether the pane shows on the phone at all,** and if so, without a text box or pop-ups.
+- **Whether `$.prompt.fill` works in Desktop.** The pane's own box doesn't depend on it.
+
+### 23.11 Set aside
+
+- **Signal,** a denser, coloured direction, dropped in round two.
+- **Letter,** which read like a written summary, with settings as sentences. Set aside on 20 October 2026: friendlier to read, but slower to scan when several things wait.
+- **Ideas set aside for Calm's buttons:**
+  - one button and a "More choices" list (it hides choices behind a press);
+  - small text links under two buttons (still five things on every card);
+  - choices that appear when you point at the card (a phone can't point, and nobody can see that they exist).
