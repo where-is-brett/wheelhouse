@@ -122,6 +122,18 @@ test('the playbook waits for the labels the cards carry', () => {
   assert.match(playbook, /Only after \*\*Remove it\*\*, run `uninstall apply <hash>`/);
 });
 
+// From the pressure runs: a director who stops is not asked again; a typed answer on a card that
+// takes one goes back to the helper; a Go-ahead card is asked before any other plan; step 10's
+// trials wait for the line status gives once its own checks have finished.
+test('the playbook closes the gaps its pressure runs found', () => {
+  assert.match(playbook, /\*\*The director stops\*\*[^\n]*stop at once[^\n]*don't ask the card again/);
+  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*whatever they type is their answer[^\n]*run `plan <step>` again/);
+  assert.match(playbook, /a Go-ahead card:\*\* ask `card` before anything else; never run `plan` again over it/);
+  const engine = read('scripts/setup/engine.js');
+  assert.ok(engine.includes('its own checks finished at'), 'status words it so');
+  assert.match(playbook, /`status` says step 10's "own checks finished"/);
+});
+
 test('the README gives the Node.js line and the install line as they are', () => {
   assert.ok(readme.includes(NODE_LINE), 'NODE_LINE');
   assert.ok(readme.includes(INSTALL_LINE), 'INSTALL_LINE');
