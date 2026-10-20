@@ -334,10 +334,33 @@ test('a press of Explain more finds the pressed card by its id in views waiting,
   const chat = lines.find((line) => line.startsWith('- **An answer in the chat:**')) ?? '';
   assert.ok(chat, 'a line for an answer in the chat');
   assert.match(chat, /say only what `views waiting` shows of it, without its id, never a guess that the answer wasn't recorded/);
-  const chose = lines.find((line) => line.startsWith('  - **"chose "<option>" on card n"**')) ?? '';
+  const chose = lines.find((line) => line.startsWith('  - **"chose "<option>" on card n (id)"**')) ?? '';
   assert.match(chose, /say so in one line, without its id,/);
   // The red flag.
   const row = lines.find((line) => line.startsWith('| "I know which card n is"')) ?? '';
   assert.ok(row, 'a red flag for guessing card n');
   assert.match(row, /Find the prompt's id in `views waiting` first, and `again` the number it has there/);
+});
+
+test('a press of Show me and a choice in the pane find the card by its id in views waiting, as Explain more does (final fix wave)', () => {
+  const lines = playbook.split('\n');
+  // Show me: the pressed card's number now, by the prompt's id, then Show me for it and `again` that number.
+  const show = lines.find((line) => line.startsWith('  - **"pressed Show me on card n (id)"**')) ?? '';
+  assert.ok(show, 'the Show me press\'s rule');
+  assert.match(show, /^  - \*\*"pressed Show me on card n \(id\)"\*\*: write no text but what this line gives the director, not even a note to yourself\./);
+  assert.match(show, /First `views waiting`: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close\./);
+  assert.match(show, /When no card has that id, it no longer waits: say so in one line and ask nothing\./);
+  assert.match(show, /Then Show me for that card \(see Cards\), then `again <its number now>`, alone\./);
+  assert.match(show, /Never a card's id\./);
+  assert.ok(show.indexOf('`views waiting`') < show.indexOf('`again <its number now>`'), 'views waiting before again');
+  assert.doesNotMatch(show, /`again <n>`|Show me for card n/);
+  // A choice: still waiting by the prompt's id, not by the number or the words.
+  const chose = lines.find((line) => line.startsWith('  - **"chose "<option>" on card n (id)"**')) ?? '';
+  assert.ok(chose, 'the choice\'s rule');
+  assert.match(chose, /Run `views waiting`: if a card with the prompt's id is still there, the choice wasn't noted; say so in one line, without its id, and don't act on it\./);
+  assert.doesNotMatch(chose, /card n is still there|with the words you asked it with/);
+  // The red flag.
+  const row = lines.find((line) => line.startsWith('| "Show me is for card n, as the prompt numbers it"')) ?? '';
+  assert.ok(row, 'a red flag for showing card n by its number');
+  assert.match(row, /Find the prompt's id in `views waiting` first: show and ask the card with that id, by its number there/);
 });
