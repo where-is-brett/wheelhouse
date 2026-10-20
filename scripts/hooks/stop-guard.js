@@ -1,11 +1,11 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
 // only reading, reporting, Claude Code's notification, the runbook, the foreman's reading and
-// closing of a wake, and the front desk's and setup's reading commands through. On SessionEnd it clears the
-// session's bypass marker and says nothing. It acts in a registered project and in a folder
+// closing of a wake, and the front desk's and setup's reading commands (uninstall's among them)
+// through. On SessionEnd it clears the session's bypass marker and says nothing. It acts in a registered project and in a folder
 // being set up (kit.js's beingSetUp), as in a project.
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import fs from 'node:fs';
 import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir, beingSetUp } from './kit.js';
@@ -14,6 +14,8 @@ import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
+import { startedAsScript } from '../lib/started-as-script.js';
+import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite'];
 // They only halt work that is already running.
@@ -66,14 +68,14 @@ function isFeatureRead(command, pluginRoots, platform) {
 // `explain <term>` (one to four words of letters and digits, a word's parts joined by hyphens) and
 // `preview <pull request>`. `cards` and `again` record which cards they handed out, and under STOP
 // the helper refuses that write, so the cards are still given. `card` and `record` write, so they
-// stay refused, as does every other form.
-const VIEW_NAMES = ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels'];
+// stay refused, as does every other form. The lineage hold lets the same forms through (ruling F70).
+const VIEW_NAMES = ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work'];
 const COUNT = /^[1-9][0-9]{0,8}$/;
 const TERM = /^[\p{L}\p{N}]+(?:[ -][\p{L}\p{N}]+)*$/u;
 // A request's words for `similar`, quoted or not: they start with a letter or digit and hold only
 // letters, digits, spaces and plain punctuation, nothing a shell would expand or read as a comment.
 const REQUEST = /^[\p{L}\p{N}][\p{L}\p{N} ,.:'’"!?\/@%+=-]*$/u;
-function isFrontDeskRead(command, pluginRoots, platform) {
+export function isFrontDeskRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/frontdesk/cli.js');
   if (args === null || args.length === 0) return false;
   const [name, ...rest] = args;
@@ -91,11 +93,19 @@ function isFrontDeskRead(command, pluginRoots, platform) {
 // Setup's commands that only read (scripts/setup/cli.js), by their exact words: `status`,
 // `plan <step>` and `resume`, which asks for the status and then the plan of the first step
 // neither done nor running, and so reads no more than those two. The helper answers both under STOP, changing nothing
-// a step lists. `apply` changes what its card lists, so it stays refused, as does every other form.
+// a step lists: `plan` writes only setup's own records, including a step settled on answers the
+// director already gave (ruling R52). `health`, followed by up to MOST_TRIAL_LINES lines each as
+// the safety trials print them (scripts/lib/trial-lines.js), reads step 10's board (ruling R41); under
+// STOP the helper neither starts anything nor removes anything for it. `uninstall plan` and
+// `uninstall status` read what uninstall would put back and where it stands (ruling R90). `apply`
+// and `uninstall apply` change what their cards list, so they stay refused (ruling R91: uninstall
+// has no exception of its own, and its card says to lift STOP first), as does every other form.
 const SETUP_STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 function isSetupRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/setup/cli.js');
   if (args === null) return false;
+  if (args[0] === 'health') return args.length - 1 <= MOST_TRIAL_LINES && args.slice(1).every((l) => parseTrialLine(l) !== null);
+  if (args[0] === 'uninstall') return args.length === 2 && ['plan', 'status'].includes(args[1]);
   return (args.length === 1 && ['status', 'resume'].includes(args[0])) || (args.length === 2 && args[0] === 'plan' && SETUP_STEP.test(args[1]));
 }
 
@@ -171,7 +181,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   return answer.deny(DENIED);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   // One script serves two events, and a failure answers differently on each, so
   // the event is read first and the input handed on.
   let text = '';

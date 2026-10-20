@@ -20,6 +20,16 @@ test('run returns code, stdout and stderr, and never uses a shell', async () => 
   assert.equal(literal.stdout, '$HOME; echo x\n');
 });
 
+test('run gives each piece of output to onOutput as it comes, and still collects it all', async () => {
+  const seen = [];
+  const got = await run(process.execPath, ['-e', 'process.stderr.write("code: AB12-CD34\\n"); setTimeout(() => console.log("done"), 50)'], {
+    onOutput: (text) => { seen.push(text); throw new Error('a reader that fails stops nothing'); },
+  });
+  assert.equal(got.code, 0);
+  assert.equal(got.stdout, 'done\n');
+  assert.match(seen.join(''), /code: AB12-CD34\n[\s\S]*done/);
+});
+
 test('run merges env over process.env', async () => {
   process.env.WH_RUN_TEST_KEPT = 'kept';
   try {

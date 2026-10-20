@@ -281,9 +281,24 @@ test('a pull request\'s review state comes from the signed reviews', () => {
   ];
   const m = model({ views, events });
   assert.deepEqual(m.build.pullRequests, [
-    { pr: 3, work: null, review: 'clean', findings: 0 },
-    { pr: 4, work: 'login', review: 'findings', findings: 3 },
-    { pr: 5, work: null, review: 'none', findings: null },
+    { pr: 3, work: null, review: 'clean', findings: 0, blocked: null },
+    { pr: 4, work: 'login', review: 'findings', findings: 3, blocked: '' },
+    { pr: 5, work: null, review: 'none', findings: null, blocked: null },
+  ]);
+});
+
+test('a pull request whose work\'s latest report says blocked carries its reason, until a later report says otherwise', () => {
+  const report = (when, data) => ev('report', when, { work: 'export', summary: '', rulings: [], ...data });
+  const blocked = report(at(10), { outcome: 'blocked', pr: 17, summary: 'Checks red on #17:\nthe [orders](https://x.test) test fails' });
+  const prs = (events) => model({ events }).build.pullRequests;
+  assert.deepEqual(prs([blocked]), [{ pr: 17, work: 'export', review: 'none', findings: null, blocked: 'Checks red on #17: the orders test fails' }]);
+  // A later report for the work that isn't blocked takes it out; one that ends the pull request takes the pull request out.
+  assert.deepEqual(prs([blocked, report(at(11), { outcome: 'closed' })]), [{ pr: 17, work: 'export', review: 'none', findings: null, blocked: null }]);
+  assert.deepEqual(prs([blocked, report(at(11), { outcome: 'merged', pr: 17 })]), []);
+  // The work's latest report speaks for its own pull request only.
+  assert.deepEqual(prs([report(at(9), { outcome: 'blocked', pr: 16 }), report(at(10), { outcome: 'blocked', pr: 17, summary: 'Stuck' })]), [
+    { pr: 16, work: 'export', review: 'none', findings: null, blocked: null },
+    { pr: 17, work: 'export', review: 'none', findings: null, blocked: 'Stuck' },
   ]);
 });
 
@@ -465,8 +480,8 @@ test('a review of an older commit doesn\'t speak for the pull request\'s head', 
     4: { ccc: ev('approval', at(11), { pr: 4, commit: 'ccc' }) },
   };
   assert.deepEqual(model({ views }).build.pullRequests, [
-    { pr: 3, work: null, review: 'none', findings: null },
-    { pr: 4, work: null, review: 'clean', findings: 0 },
+    { pr: 3, work: null, review: 'none', findings: null, blocked: null },
+    { pr: 4, work: null, review: 'clean', findings: 0, blocked: null },
   ]);
 });
 

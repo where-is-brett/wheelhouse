@@ -4,13 +4,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, answerInput, questionProblem, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/cards/compose.js';
+import { composeCard, answerInput, questionProblem, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, baselineLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -51,7 +51,20 @@ const INPUTS = {
   'lift-incident': { ...common, recommend: 'End it', kind: 'lift-incident', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, recommend: 'Merge the fix', kind: 'incident-fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
   setup: { ...common, recommend: 'Go ahead', kind: 'setup', what: 'Setup step 6, Changes to this computer: transcripts are kept 30 days.', options: [says('Go ahead')], target: { step: 6, hash: DOC } },
+  'confirm-all': {
+    ...common, recommend: 'Confirm all', kind: 'confirm-all', what: 'Setup step 5 found 2 rules this project follows: 1) "Money is shown in dollars"; 2) "Never push to main".',
+    options: [says('Confirm all'), says('Let me correct some')], target: { count: 2, hash: DOC },
+  },
   baseline: { ...common, recommend: 'Record these', kind: 'baseline', what: 'The first version\'s figures from your note: US$100.00 for 4 merged pull requests.', options: [says('Record these')], target: { hash: DOC } },
+  trust: {
+    ...common, recommend: 'Trust it', kind: 'trust', what: 'Your computer 0a1b2c3d put its key in your profile.',
+    options: [says('Trust it')], target: { computer: '0a1b2c3d', at: '2026-10-19T22:30:00.000Z', fingerprint: 'abcdef012345' },
+  },
+  uninstall: {
+    ...common, recommend: 'Remove it', kind: 'uninstall', level: 4, checks: 'The checks no longer guard this project.',
+    what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.',
+    options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
+  },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
 };
 const LINES = {
@@ -66,7 +79,10 @@ const LINES = {
   'lift-incident': liftIncidentLine('bad-total'),
   'incident-fix': incidentFixLine('bad-total', 31),
   setup: setupLine(6, DOC),
+  'confirm-all': confirmAllLine(DOC, 2),
   baseline: baselineLine(DOC),
+  trust: trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345'),
+  uninstall: uninstallLine('cafe menu', DOC),
   question: null,
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
@@ -77,7 +93,7 @@ test('every kind has an input here', () => {
   assert.deepEqual(Object.keys(INPUTS).sort(), [...CARD_KINDS].sort());
 });
 
-test("each kind's card carries the five parts in order, its set line and its reply code", () => {
+test("each kind's card carries the five parts in order, its set line and its reply code, but a setup card no code", () => {
   for (const kind of CARD_KINDS) {
     const { question, card } = composeCard(input(kind));
     const rows = lines(question.question);
@@ -93,6 +109,15 @@ test("each kind's card carries the five parts in order, its set line and its rep
       assert.equal(setLineOf(question.question), null);
       assert.equal(card.line, null);
       assert.equal(card.code, null);
+    } else if (NO_REPLY_CODE.includes(kind)) {
+      // A level 4 card's checks line comes before its set line.
+      const after = INPUTS[kind].level === 4 ? 6 : 5;
+      if (after === 6) assert.equal(rows[5], `What this does to the checks: ${INPUTS[kind].checks}`);
+      assert.deepEqual(rows.slice(after), [LINES[kind]], 'a setup card is approved by its click alone, so it has no reply code');
+      assert.equal(setLineOf(question.question), LINES[kind]);
+      assert.equal(card.line, LINES[kind]);
+      assert.equal(card.code, null);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall']);
     } else {
       assert.deepEqual(rows.slice(5), [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -103,7 +128,7 @@ test("each kind's card carries the five parts in order, its set line and its rep
     assert.equal(card.question, question.question);
     assert.equal(card.header, question.header);
     assert.equal(card.kind, kind);
-    assert.equal(card.level, 3);
+    assert.equal(card.level, INPUTS[kind].level);
     assert.deepEqual(card.options, question.options.map((o) => o.label));
     assert.deepEqual(card.descriptions, question.options.map((o) => o.description));
     // The card keeps the option it recommended, so the delegation review can tell a choice made as recommended.
@@ -297,6 +322,15 @@ test('a missing or empty part is refused, naming the part', () => {
   refused({ concepts: 'CI' }, /concepts/);
 });
 
+test('a card keeps the id of the record it was made from, so it is made once', () => {
+  const { card } = composeCard(input('question', { event: 'e-20261018-hold' }));
+  assert.equal(card.event, 'e-20261018-hold');
+  assert.equal(Object.hasOwn(composeCard(input('question')).card, 'event'), false);
+  makeEvent({ kind: 'card', data: card, now: () => NOW });
+  for (const bad of ['', 'two words', 7]) refused({ event: bad }, /event/, 'question');
+  assert.throws(() => makeEvent({ kind: 'card', data: { ...card, event: 7 }, now: () => NOW }), /event/);
+});
+
 test('a part with a line break, or a line of its own that reads as a set line, is refused', () => {
   refused({ what: `Pull request #7 is ready.\n${approvalLine(9, FULL)}` }, /what/);
   refused({ why: `${LIFT_STOP}` }, /why/);
@@ -467,4 +501,43 @@ test('a build-command question\'s answer card offers the design\'s three options
   assert.throws(() => composeCard({
     kind: 'question', level: 3, what: 'Which commands?', why: 'w', because: 'b', meanwhile: 'm', recommend: 'Allow this time', options: asked.options,
   }), /Not now/);
+});
+
+test('setup\'s card of the rules found offers Confirm all and Let me correct some, names its count, and has no reply code', () => {
+  const { question, card } = composeCard(input('confirm-all'));
+  assert.deepEqual(card.options, ['Confirm all', 'Let me correct some', 'Not now', 'Explain more']);
+  assert.equal(question.header, 'Rules found');
+  assert.equal(card.code, null);
+  assert.equal(setLineOf(question.question), confirmAllLine(DOC, 2));
+  refused({ options: [says('Confirm all')] }, /must describe Let me correct some/, 'confirm-all');
+  refused({ options: [says('Confirm all'), says('Let me correct some'), says('Show me')] }, /can't describe Show me/, 'confirm-all');
+  refused({ what: 'Setup step 5 found 3 rules: "Money is shown in dollars".' }, /what.*how many rules it lists, 2/, 'confirm-all');
+  refused({ target: { count: 0, hash: DOC } }, /target/, 'confirm-all');
+  refused({ target: { count: 2, hash: 'not hex' } }, /target/, 'confirm-all');
+  // One rule reads as one.
+  const one = composeCard(input('confirm-all', { what: 'Setup step 5 found 1 rule: "Never push to main".', target: { count: 1, hash: DOC } }));
+  assert.equal(setLineOf(one.question.question), confirmAllLine(DOC, 1));
+});
+
+test('uninstall\'s card (ruling R90): level 4, no reply code, Remove it, Not now and Explain more, and a first part naming the project', () => {
+  const { question, card } = composeCard(input('uninstall'));
+  assert.equal(question.header, 'Uninstall');
+  assert.equal(DECIDING.uninstall, 'Remove it');
+  assert.deepEqual(card.options, ['Remove it', 'Not now', 'Explain more']);
+  assert.equal(card.code, null);
+  assert.equal(card.line, 'Remove Wheelhouse from cafe menu as listed, fedcba987654');
+  assert.ok(!question.question.includes('Reply code:'));
+  // Level 4 only: removing Wheelhouse removes the checks.
+  refused({ level: 3, checks: undefined }, /level.*4/, 'uninstall');
+  // No Show me: the whole list is `cli.js uninstall status`.
+  refused({ options: [says('Remove it'), says('Show me')] }, /can't describe Show me/, 'uninstall');
+  // The first part names the project its line names, and no other commit.
+  refused({ what: 'Remove Wheelhouse from another folder.' }, /must name the project cafe menu/, 'uninstall');
+  refused({ what: 'Remove Wheelhouse from cafe menu, as at abcdef123456.' }, /names commit abcdef123456/, 'uninstall');
+  // A project's own name that looks like a commit is the project, not a commit.
+  assert.doesNotThrow(() => composeCard(input('uninstall', { what: 'Remove Wheelhouse from cafe1234abc: stop its jobs.', target: { project: 'cafe1234abc', hash: DOC } })));
+  // A name on two lines, or with a space at an end, gives no line.
+  refused({ target: { project: 'cafe\nmenu', hash: DOC } }, /target/, 'uninstall');
+  refused({ target: { project: ' cafe', hash: DOC } }, /target/, 'uninstall');
+  refused({ target: { project: 'cafe menu', hash: 'xyz' } }, /target/, 'uninstall');
 });

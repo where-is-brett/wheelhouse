@@ -20,8 +20,8 @@ import { keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/path
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { startRun, markStep } from '../../../scripts/setup/journal.js';
-import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { SETUP_STEPS, journalFile } from '../../../scripts/lib/setup-run.js';
 import { courierFile } from '../../../scripts/mod/courier.js';
 
 const BRIDGE = fileURLToPath(new URL('../../../scripts/mod/bridge.js', import.meta.url));
@@ -660,8 +660,13 @@ test('a session in a registered project whose setup run is unfinished is setup\'
   markStep(run.id, 10, 'doneAt', { now: at });
   assert.deepEqual(await handle(tickOf(repo), live({ watchTick })), SETUP_TICK);
 
-  // Once every step is done, the same session's next tick is the front desk's.
+  // Every step marked done is not yet the end: the health check counts once its board was green
+  // (setup's ruling R67).
   for (const { n } of SETUP_STEPS) markStep(run.id, n, 'doneAt', { now: at });
+  assert.deepEqual(await handle(tickOf(repo), live({ watchTick })), SETUP_TICK);
+
+  // Once every step is done and the board was green, the same session's next tick is the front desk's.
+  addChanges(run.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: at().toISOString() } }]);
   const after = await handle(tickOf(repo), live({ watchTick }));
   assert.equal(after.ok, true);
   assert.equal(after.role, 'front-desk');
@@ -774,6 +779,51 @@ test('the front desk\'s tick says in the pane whether the watcher runs', () => w
 
   // With the real watch, a configuration that can't be read yet names nothing and starts nothing.
   assert.equal((await handle(tickOf(repo), live())).pane.watcher, null);
+}));
+
+// Whether setup has finished isn't known while its journal can't be read, so a tick starts no
+// watcher and runs no loop, as the session start holds it back (ruling R72). A registered
+// project's folder is not counted as being set up then (kit.js's beingSetUp), so the front desk
+// still gets its pane, which says the watcher is held back.
+test('a tick holds the watcher back while setup\'s journal can\'t be read, at the front desk and in a foreman\'s session', () => withHome(async (home) => {
+  const repo = registered(home);
+  const asked = [];
+  const watchTick = async (args) => { asked.push(args.role); return { watcher: 'started', submit: ['Wheelhouse foreman: WAKE foreman /w/a.json'] }; };
+  for (const trouble of ['unreadable', 'newer']) {
+    const desk = await handle(tickOf(repo), live({ watchTick, journalTrouble: () => trouble }));
+    assert.equal(desk.role, 'front-desk', trouble);
+    assert.equal(desk.every, TICK_MS);
+    assert.equal(desk.pane.watcher, 'held');
+    assert.equal(readPaneStatus(P).watcher, 'held');
+    const foreman = await handle(tickOf(repo), live({ env: { WHEELHOUSE_ROLE: 'foreman' }, watchTick, journalTrouble: () => trouble }));
+    // A foreman keeps ticking, handing on nothing, so its loop runs again once the journal reads.
+    assert.deepEqual(foreman, { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: [] }, trouble);
+  }
+  assert.deepEqual(asked, []);
+  // A check that throws holds it back too, as a failure.
+  const thrown = await handle(tickOf(repo), live({ watchTick, journalTrouble: () => { throw new Error('x'); } }));
+  assert.equal(thrown.pane.watcher, 'failed');
+  assert.deepEqual(asked, []);
+
+  // A journal that reads: as before.
+  const desk = await handle(tickOf(repo), live({ watchTick, journalTrouble: () => null }));
+  assert.equal(desk.pane.watcher, 'started');
+  const foreman = await handle(tickOf(repo), live({ env: { WHEELHOUSE_ROLE: 'foreman' }, watchTick, journalTrouble: () => null }));
+  assert.deepEqual(foreman.submit, ['Wheelhouse foreman: WAKE foreman /w/a.json']);
+  assert.deepEqual(asked, ['front-desk', 'foreman']);
+
+  // With the real check: a journal on disk that isn't JSON, or a newer Wheelhouse's, holds it back,
+  // and is left as it was.
+  fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
+  for (const journal of ['not json', '{"v":2,"runs":[]}']) {
+    fs.writeFileSync(journalFile(), journal);
+    assert.equal((await handle(tickOf(repo), live({ watchTick }))).pane.watcher, 'held', journal);
+    assert.equal(fs.readFileSync(journalFile(), 'utf8'), journal);
+  }
+  assert.deepEqual(asked, ['front-desk', 'foreman']);
+  fs.writeFileSync(journalFile(), JSON.stringify({ v: 1, runs: [] }));
+  assert.equal((await handle(tickOf(repo), live({ watchTick }))).pane.watcher, 'started');
+  assert.deepEqual(asked, ['front-desk', 'foreman', 'front-desk']);
 }));
 
 test('the answer line carries only its own fields', () => {

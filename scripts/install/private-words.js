@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { PRIVATE_SCAN_COMMITS } from '../lib/install-numbers.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { run as defaultRun, withoutGitVars } from '../lib/run.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const NO_LIST = 'No private list on this computer.';
 const BINARY_PROBE = 8000;
@@ -255,15 +256,7 @@ export async function checkPrivate({ root, file = privateListFile(), run = defau
   };
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   try {
     const { code, lines } = await checkPrivate({ root });

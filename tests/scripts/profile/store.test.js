@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews, readProfileViews,
+  PROFILE_BRANCH, PROFILE_HOLDS_KEYS, profileRemote, ensureProfileClone, writeProfileViews, readProfileViews,
 } from '../../../scripts/profile/store.js';
 import { profileDir, profileViewsDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { makeEvent, eventPath, confirmationFor } from '../../../scripts/state/events.js';
@@ -126,4 +126,28 @@ test('the profile views are built from the profile\'s events and read back', asy
     fs.writeFileSync(path.join(profileViewsDir(), 'settings.json'), '{');
     assert.equal(readProfileViews(), null, 'a damaged view reads as none');
   });
+});
+
+test('a computer joining a profile whose branch holds keys/ refuses it, in any case, taking nothing in (ruling R105)', async () => {
+  for (const folder of ['keys', 'Keys']) {
+    const remote = await makeBareRemote({ repo: 'o/profile' });
+    const outside = fs.mkdtempSync(path.join(shortHome(), 'outside-'));
+    try {
+      await g(outside, 'init', '-q', '-b', PROFILE_BRANCH);
+      fs.mkdirSync(path.join(outside, folder));
+      fs.writeFileSync(path.join(outside, folder, 'enrolled.json'), '[]\n');
+      fs.writeFileSync(path.join(outside, 'README.md'), 'profile\n');
+      await g(outside, 'add', '-f', '.');
+      await g(outside, 'commit', '-q', '-m', 'planted');
+      await g(outside, 'push', '-q', remote.url, PROFILE_BRANCH);
+      await as(shortHome(), async () => {
+        writeProfileJson(remoteFor(remote.url));
+        await assert.rejects(ensureProfileClone({ remote: profileRemote() }), { message: PROFILE_HOLDS_KEYS }, folder);
+        assert.equal(fs.existsSync(path.join(profileDir(), 'README.md')), false, folder);
+        assert.equal((await run('git', ['rev-parse', '--verify', '-q', `refs/heads/${PROFILE_BRANCH}`], { cwd: profileDir() })).code !== 0, true, folder);
+      });
+    } finally {
+      remote.cleanup();
+    }
+  }
 });

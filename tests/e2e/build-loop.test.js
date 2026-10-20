@@ -15,9 +15,8 @@
 // lineage check the hold lets through) and the foreman's (act.js and wake.js, which forward to
 // the helper; the helper runs them outside the sandbox as a child process, ruling R156). Hooks
 // run outside the sandbox (check 32), as do the helper and the watcher.
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,6 +50,7 @@ import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { lineageFixture, writeFiles } from '../helpers/lineage.js';
 import { writeSessionProvenance } from '../helpers/provenance.js';
+import { sandboxed as wallSandboxed, sandboxHolds as wallHolds } from '../helpers/sandbox-wall.js';
 
 const P = 'o__p';
 const T0 = Date.parse('2026-10-19T09:00:00.000Z');
@@ -67,81 +67,15 @@ const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomain
 
 // --- The sandbox ---
 
-// What the project's sandbox does to a feature session's commands (scripts/protection/settings.js:
-// denyRead and denyWrite on ~/.wheelhouse): every file call into the Wheelhouse home fails with
-// EPERM. Only calls made inside `sandboxed` are held, so the helper answering them in this same
-// process, whose requests arrive in the server's own context, is not.
-const walls = new AsyncLocalStorage();
-const denied = [];
-const TWO_PATHS = ['copyFileSync', 'cpSync', 'linkSync', 'renameSync', 'symlinkSync'];
-const HELD_CALLS = [
-  'accessSync', 'appendFileSync', 'chmodSync', 'copyFileSync', 'cpSync', 'existsSync', 'linkSync', 'lstatSync', 'mkdirSync',
-  'mkdtempSync', 'openSync', 'opendirSync', 'readFileSync', 'readdirSync', 'readlinkSync', 'realpathSync', 'renameSync',
-  'rmSync', 'rmdirSync', 'statSync', 'symlinkSync', 'unlinkSync', 'utimesSync', 'writeFileSync',
-];
-
-function walledOff(p) {
-  const held = walls.getStore();
-  if (!held) return false;
-  let text = null;
-  if (typeof p === 'string') text = p;
-  else if (Buffer.isBuffer(p)) text = p.toString();
-  else if (p instanceof URL) text = fileURLToPath(p);
-  if (text === null) return false;
-  const full = path.resolve(text);
-  return held.some((wall) => full === wall || full.startsWith(`${wall}${path.sep}`));
-}
-
-function refusal(call, p) {
-  denied.push(`${call} ${String(p)}`);
-  return Object.assign(new Error(`EPERM: operation not permitted, ${call} '${String(p)}'`), { code: 'EPERM', syscall: call, path: String(p) });
-}
-
-const originals = new Map();
-for (const call of HELD_CALLS) {
-  const original = fs[call];
-  if (typeof original !== 'function') continue;
-  originals.set(call, original);
-  const wrapped = function held(...args) {
-    for (const p of TWO_PATHS.includes(call) ? args.slice(0, 2) : args.slice(0, 1)) {
-      if (!walledOff(p)) continue;
-      if (call === 'existsSync') {
-        denied.push(`${call} ${String(p)}`);
-        return false;
-      }
-      throw refusal(call, p);
-    }
-    return original.apply(this, args);
-  };
-  if (call === 'realpathSync') {
-    wrapped.native = function heldNative(p, ...rest) {
-      if (walledOff(p)) throw refusal('realpathSync.native', p);
-      return original.native.call(this, p, ...rest);
-    };
-  }
-  fs[call] = wrapped;
-}
-after(() => {
-  for (const [call, original] of originals) fs[call] = original;
-});
-
-// Runs fn as a sandboxed command of the computer `world` runs, then checks it touched nothing
-// in the Wheelhouse home.
+// A feature session's commands, and the foreman's, run inside the sandbox stand-in
+// (tests/helpers/sandbox-wall.js), which shuts the Wheelhouse home to them.
 async function sandboxed(world, fn) {
-  const before = denied.length;
-  const result = await walls.run(world.walls, fn);
-  assert.deepEqual(denied.slice(before), [], 'a sandboxed command reached into the Wheelhouse home');
-  return result;
+  return wallSandboxed(world.walls, fn);
 }
 
 // The sandbox stand-in holds: a sandboxed read of the home fails, and is caught.
 async function sandboxHolds(world) {
-  const before = denied.length;
-  await walls.run(world.walls, async () => {
-    assert.throws(() => fs.readFileSync(path.join(world.home, 'computer.json')), { code: 'EPERM' });
-  });
-  assert.equal(denied.length, before + 1);
-  denied.length = before;
+  await wallHolds(world.walls, path.join(world.home, 'computer.json'));
 }
 
 // --- The host ---

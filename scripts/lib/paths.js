@@ -54,11 +54,16 @@ export function projectSlug(owner, name) {
   return `${owner}__${name}`;
 }
 
+// The folder holding one folder per project registered on this computer.
+export function projectsDir() {
+  return path.join(wheelhouseHome(), 'projects');
+}
+
 export function stateDir(project) {
   if (typeof project !== 'string' || !SAFE_PART.test(project) || /^\.+$/.test(project)) {
     throw new Error('A project folder name may use only letters, digits, dots, hyphens and underscores');
   }
-  return path.join(wheelhouseHome(), 'projects', project, 'state');
+  return path.join(projectsDir(), project, 'state');
 }
 
 export function keysDir() {

@@ -2,6 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readGitlabProtection, protectGitlabBranch } from '../../../scripts/host/protection.js';
+import { tempFolder } from '../../helpers/homes.js';
+
+// gh and glab are run from Wheelhouse's tools folder when setup fetched them there
+// (scripts/lib/host-tools.js); these tests name the bare tools, so they run with an empty one.
+process.env.WHEELHOUSE_HOME = tempFolder('wh-host-tools-');
 
 function fakeApi(...answers) {
   const calls = [];

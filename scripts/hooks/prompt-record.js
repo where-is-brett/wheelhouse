@@ -11,32 +11,61 @@
 // so a later reply with that code (scripts/mod/reply.js) can count as the click.
 // A Go ahead on a setup card becomes a signed setup action kept in
 // <wheelhouseHome()>/setup/clicks/, where the helper reads it, since there may be no state to
-// record it in yet (Task 13 copies the clicks into the state). In a folder being set up (no
-// project record yet: kit.js's beingSetUp) that is the one click recorded, and nothing else is.
+// record it in yet (Task 13 copies the clicks into the state). An answer to a question a setup
+// step asked becomes a signed setup-answer kept in setup/answers/ the same way. In a folder being
+// set up (no project record yet: kit.js's beingSetUp) those are the only clicks recorded, and
+// nothing else is. A setup card has no reply code, so it gets no shown record.
+// An answer on a setup card that said it records something in the project's state (steps 4 and
+// 5: the product's glossary entry and phase, the rules found; rulings R35, R59) earns those records
+// first, signed and kept pending as every signed record is (scripts/lib/setup-writes.js), and is
+// kept as a setup-answer only once they are, so a step never settles on an answer whose records
+// were not made; in a folder with no project record an answer that records something is kept
+// nowhere. A typed answer the engine won't take (rulings R125, R132) is kept, in any folder, but
+// records and claims nothing (ruling R137), judged by the engine's own rule (scripts/lib/setup-clicks.js).
 // The baseline card reads the private note's figures back (scripts/measures/baseline.js): in any
 // folder, a Record these on it becomes a signed baseline action kept in
 // <wheelhouseHome()>/measures/clicks/, naming only the hash of the figures, and a Not now on it
 // clears the figures waiting. Nothing of that card, not even its plain answer, goes to a project.
+// A trust card asks to trust another of the director's computers (ruling R80): in any folder, a
+// Trust it on it becomes a signed trust action kept in <wheelhouseHome()>/trust/, and that computer's
+// key is enrolled here, only when the enrolment the last fetch of the profile found names the same
+// computer, day and key fingerprint as the card's set line, and this computer doesn't already trust
+// that id with another key (scripts/lib/trust-clicks.js). Nothing of that card, not even its plain
+// answer, goes to a project, and it has no reply code.
+// Uninstall's card asks to remove Wheelhouse from a project (ruling R90): in any folder, a Remove it on
+// it becomes a signed uninstall action kept in setup/clicks/, as a setup click is, naming the project
+// and the full hash of the list, only on the very card the helper composed and recorded as shown for
+// a folder holding this session's folder, word for word. It has no reply code. Its plain answer goes
+// to a project as any card's does.
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { runAndExit, projectOf, beingSetUp } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
+import { readEnrolled, enrol, ownKey } from '../state/signing.js';
+import { trustedBy, keepTrustClick, fingerprint, keyHash } from '../lib/trust-clicks.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
+import { scanContent } from '../state/secret-scan.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
-import { setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine } from '../state/card-lines.js';
-import { keepClick, shownHash } from '../lib/setup-clicks.js';
+import {
+  setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
+  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine,
+} from '../state/card-lines.js';
+import {
+  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore,
+} from '../lib/setup-clicks.js';
+import { setupRecordsOf } from '../lib/setup-writes.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SHA12 = '([0-9a-f]{12})(?![0-9a-fA-F])';
@@ -47,6 +76,8 @@ const AMEND = new RegExp(`Change the approved (${ID}) to this, ${SHA12}`, 'g');
 const LIFT_INCIDENT = new RegExp(`End incident (${ID}) and let merges carry on`, 'g');
 const INCIDENT_FIX = new RegExp(`Merge pull request #([1-9][0-9]*) as the fix for incident (${ID})(?![a-z0-9-])`, 'g');
 const SETUP = new RegExp(`Set up step ([0-9]{1,2}) as listed, ${SHA12}`, 'g');
+const SETUP_LINE = new RegExp(`^${SETUP.source}$`);
+const CONFIRM_ALL_LINE = /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/;
 const CI_PUSH = new RegExp(`Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in`, 'g');
 const BASELINE_TEXT = BASELINE_WORDS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const BASELINE = new RegExp(`${BASELINE_TEXT}, ${SHA12}`, 'g');
@@ -255,15 +286,71 @@ function setupClickOf(cwd, { question, label, card }) {
   return shown === null ? null : { kind: 'action', data: { action: 'setup', runId: shown.runId, step, hash: shown.hash, question, label } };
 }
 
-// Signs each setup click and keeps it in setup/clicks/. One failing does not stop the rest.
-function keepSetupClicks(cwd, out, now) {
+// The signed record an answer to a setup step's question earns (ruling R30): the card is exactly
+// one setup asked, for a folder holding this session's folder, and the answer is one of its own
+// options, never Explain more or Not now, or, on a card that takes one, typed text in which no
+// secret is found. The record names the run and step the question was asked for, and its id.
+// Gives { made, asked }: the record to sign and the asked record it answers.
+function setupAnswerOf(cwd, { question, label, card, signable, typed }) {
+  if (PUT_OFF.includes(label) || !(signable || typed)) return null;
+  const asked = askedFor({ cwd, card });
+  if (asked === null || asked.card.question !== question) return null;
+  const data = { action: 'setup-answer', runId: asked.runId, step: asked.step, questionId: asked.id, question };
+  if (signable) return { asked, made: { kind: 'action', data: { ...data, label, text: null } } };
+  if (asked.typed !== true || label.trim() === '' || scanContent(label).length > 0) return null;
+  return { asked, made: { kind: 'action', data: { ...data, label: null, text: label } } };
+}
+
+// Signs each setup click and answer and keeps it in setup/clicks/ or setup/answers/. One failing
+// does not stop the rest. An answer that records something in the project's state has those
+// records kept pending in `project` first; they are given back, as keepEarned gives them, to be
+// sent. With no project, such an answer is not kept.
+function keepSetupClicks(cwd, out, now, project = null) {
+  const queued = [];
   for (const click of out) {
-    if (!click.signable) continue;
     try {
-      const made = setupClickOf(cwd, click);
-      if (made) keepClick(makeEvent({ ...made, now }));
-    } catch { /* not kept: the helper then refuses the step for want of a click, and the card is asked again */ }
+      const made = click.signable ? setupClickOf(cwd, click) : null;
+      if (made) {
+        keepClick(makeEvent({ ...made, now }));
+        continue;
+      }
+      const answer = setupAnswerOf(cwd, click);
+      if (!answer) continue;
+      // A typed answer the engine won't take (the choice handed back, or a first question on its
+      // question) is kept as given, so the card is asked again saying why, but it records nothing
+      // and claims nothing: the answer that follows, typed or clicked, is the one (ruling R137).
+      const { runId, step, questionId, question, label, text } = answer.made.data;
+      if (label === null && typedVerdict(text, typedBefore({ runId, step, questionId, question })) !== null) {
+        keepAnswer(makeEvent({ ...answer.made, now }));
+        continue;
+      }
+      const records = setupRecordsOf(answer.asked, answer.made.data, { now });
+      if (records.length === 0) {
+        keepAnswer(makeEvent({ ...answer.made, now }));
+        continue;
+      }
+      if (project === null) continue;
+      // An answer that records something is taken once, and its records are kept only with it: a
+      // second click on the same card records nothing, and records whose answer could not be kept
+      // are taken back, so the question asked again can't record them twice.
+      const claim = claimAnswer(answer.made.data);
+      if (claim === null) continue;
+      const kept = [];
+      try {
+        for (const { route, body } of records) {
+          const full = { project, ...body };
+          kept.push({ file: keep(project, route, full, now), body: full, route });
+        }
+        keepAnswer(makeEvent({ ...answer.made, now }));
+      } catch (error) {
+        for (const { file } of kept) fs.rmSync(file, { force: true });
+        releaseAnswer(claim);
+        throw error;
+      }
+      queued.push(...kept);
+    } catch { /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
   }
+  return queued;
 }
 
 // Acts on each click on the baseline card, in whatever folder: the card carries one set line, the
@@ -289,7 +376,62 @@ function keepBaselineClicks(out, now) {
   }
 }
 
-// What was answered, and which answers came from a click on a button the card offered.
+// Whether a question carries a trust card's set line: its answers stay on this computer.
+const carriesTrust = (question) => setLinesOf(question).some((line) => TRUST_LINE.test(line));
+
+// Acts on each Trust it on a trust card, in whatever folder: the card carries one set line, a trust
+// card's, and the enrolment the last fetch of the profile found names the same computer, day and
+// key fingerprint, with the full key hash the card was handed over for (trustedBy). The click is
+// signed and kept in trust/, naming those, the key's full hash and the set line alone, then the key
+// whose hash the signed record names is enrolled here. One failing does not stop the rest.
+function keepTrustClicks(out, now) {
+  for (const click of out) {
+    if (!click.signable || click.label !== TRUST_LABEL) continue;
+    try {
+      const line = setLineOf(click.question);
+      if (line === null || !TRUST_LINE.test(line)) continue;
+      const found = trustedBy(line, { enrolled: readEnrolled(), own: ownKey() });
+      if (found === null) continue;
+      const data = {
+        action: 'trust', computer: found.computer, at: found.at, fingerprint: fingerprint(found.publicKey), keyHash: keyHash(found.publicKey), question: line, label: TRUST_LABEL,
+      };
+      const kept = makeEvent({ kind: 'action', data, now });
+      if (kept.data.keyHash !== keyHash(found.publicKey)) continue;
+      keepTrustClick(kept);
+      enrol({ computer: found.computer, publicKey: found.publicKey, enrolledAt: now().toISOString() });
+    } catch { /* nothing trusted: the card is offered again at a later session start */ }
+  }
+}
+
+// The signed record a Remove it on uninstall's card earns (ruling R90): the card carries one set line,
+// uninstall's, and is the very card the helper composed for the list its twelve characters name, for
+// the project the line names and a folder holding this session's folder, word for word (its text,
+// header and options). The record names that project and the list's full hash, and its question is
+// the set line alone; the helper matches it against the list it works out again.
+function uninstallClickOf(cwd, { question, label, card }) {
+  if (label !== UNINSTALL_LABEL) return null;
+  const line = setLineOf(question);
+  const m = line === null ? null : UNINSTALL_LINE.exec(line);
+  if (!m) return null;
+  const shown = shownUninstall({ cwd, project: m[1], h12: m[2], card });
+  if (shown === null) return null;
+  return { kind: 'action', data: { action: 'uninstall', project: shown.project, hash: shown.hash, question: uninstallLine(shown.project, shown.hash), label } };
+}
+
+// Signs each Remove it on uninstall's card and keeps it in setup/clicks/, in whatever folder. One
+// failing does not stop the rest.
+function keepUninstallClicks(cwd, out, now) {
+  for (const click of out) {
+    if (!click.signable) continue;
+    try {
+      const made = uninstallClickOf(cwd, click);
+      if (made) keepUninstallClick(makeEvent({ ...made, now }));
+    } catch { /* not kept: the helper then refuses to remove anything for want of a click */ }
+  }
+}
+
+// What was answered, and which answers came from a click on a button the card offered
+// (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other).
 function clicks(input) {
   const ti = input.tool_input ?? {};
   const answers = ti.answers;
@@ -305,10 +447,12 @@ function clicks(input) {
     const q = asked.get(question);
     const offered = Array.isArray(q?.options) && !many && q.options.some((o) => o?.label === raw);
     const agrees = echo === null || (Object.hasOwn(echo, question) && JSON.stringify(echo[question]) === JSON.stringify(raw));
+    const single = Array.isArray(q?.options) && !many && q.multiSelect !== true && agrees;
     out.push({
       question,
       label: many ? raw.join(', ') : raw,
-      signable: offered && q.multiSelect !== true && agrees,
+      signable: offered && single,
+      typed: !offered && single,
       card: q,
     });
   }
@@ -335,7 +479,8 @@ export function keepEarned(project, got, { now, liftStop = defaultLift }) {
 
 // Sends one kept record, removing it once the helper has it. True when it was taken.
 export async function sendKept(api, left, { file, body, route }) {
-  const result = await left(route === 'profile-record' ? api.profile.record(body) : api.state.record(body));
+  const send = { 'profile-record': () => api.profile.record(body), write: () => api.state.write(body) }[route] ?? (() => api.state.record(body));
+  const result = await left(send());
   if (!taken(result)) return false;
   fs.rmSync(file, { force: true });
   return true;
@@ -355,7 +500,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    if (line === null) continue;
+    // A setup card, setup's card of the rules found, a trust card and uninstall's card have no reply
+    // code (rulings R36, R80, R90): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -381,17 +528,20 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   ]);
   keepBaselineClicks(answered, () => at);
   sweepStale(() => at);
+  keepTrustClicks(answered, () => at);
+  // The baseline card's answers and a trust card's stay on this computer: none is sent to the
+  // project, and none is kept as a setup answer, which a later step copies into the project's state.
+  const out = answered.filter((click) => !carrying.has(click.question) && !carriesTrust(click.question));
+  keepUninstallClicks(input.cwd, out, () => at);
   const found = find(input.cwd, { dir });
   if (!found) {
-    if (beingSetUp(input.cwd) !== null) keepSetupClicks(input.cwd, answered, () => at);
+    if (beingSetUp(input.cwd) !== null) keepSetupClicks(input.cwd, out, () => at);
     return undefined;
   }
   const project = found.project;
   const api = client ?? helperClient({ timeout: budget });
   const end = Date.now() + budget;
   const left = withinBudget(end);
-  // The baseline card's answers stay on this computer: none is sent to the project.
-  const out = answered.filter((click) => !carrying.has(click.question));
 
   // First the signed records, each written down before it is sent. The cards' shown records
   // go first and are dated a millisecond before the clicks, so a record a click earns sorts
@@ -399,7 +549,10 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   const queued = [];
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
-  keepSetupClicks(input.cwd, out, clock);
+  queued.push(...keepSetupClicks(input.cwd, out, clock, project));
+  // An answer on a card a setup step asked goes only to setup/answers/, or nowhere when it was
+  // refused (ruling R53): it earns no record in the state and is not sent as a card-answer.
+  const setupAsked = new Set(out.filter((c) => askedFor({ cwd: input.cwd, card: c.card }) !== null).map((c) => c.question));
   let cards = [];
   try {
     cards = shownFor(project, input, at, stopState, carrying);
@@ -414,7 +567,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     }
   }
   for (const click of out) {
-    if (!click.signable) continue;
+    if (!click.signable || setupAsked.has(click.question)) continue;
     try {
       const got = await earned({ project, ...click, client: api, now: clock, left, stopState });
       if (got) queued.push(keepEarned(project, got, { now: clock, liftStop }));
@@ -425,6 +578,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const kept of queued) await sendKept(api, left, kept);
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
+    if (setupAsked.has(question)) continue;
     const body = { project, kind: 'card-answer', data: { question, label } };
     try {
       const result = await left(api.state.write(body));
@@ -436,6 +590,6 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   return undefined;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'PostToolUse' });
 }

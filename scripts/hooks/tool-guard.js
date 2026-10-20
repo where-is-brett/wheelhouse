@@ -9,13 +9,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, registeredByPath, beingSetUp } from './kit.js';
 import { segments } from './shell-words.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { readConfig } from '../gate/guardrails.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -303,6 +304,6 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: true, event: 'PreToolUse' });
 }

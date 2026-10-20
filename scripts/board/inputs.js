@@ -2,8 +2,9 @@
 // Everything the board, the briefing and the glance need, gathered for the folder a session
 // works in. It reads files only and never runs git: the views as the last sync left them, the
 // raw events in the state clone, the settings views, the usage store, the sources report, STOP,
-// the project's record and the host facts' cache. The helper is asked only for whether it is
-// up, who holds the project's lock and, once a day, the host facts, each within HELPER_WAIT_MS
+// the project's record, the host facts' cache and setup's journal (whether its push test reached
+// the phone). The helper is asked only for whether it is up, who holds the project's lock and,
+// once a day, the host facts, each within HELPER_WAIT_MS
 // (or the shorter `waitMs` a caller with a limit of its own asks for) and all of them together
 // within it too.
 //
@@ -11,14 +12,15 @@
 // only what the glance needs is read, each a file of known size or a view by name: the waiting,
 // questions, work and features views, STOP, the weekly share from the allowance file alone, and
 // the small files health reads (the host facts' cache, the profile's address). No raw events,
-// other views, settings, usage days, sources or key files are read, and nothing is asked of the helper, so
-// the model is the glance's, not the board's.
+// other views, settings, usage days, sources, key files, setup journal or the project's
+// configuration are read, no browser is looked for, and nothing is asked of the helper, so the
+// model is the glance's, not the board's.
 //
 // Nothing here throws: what can't be read is passed on as missing, and boardModel names it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { boardModel } from './model.js';
-import { healthLines, readHostFacts } from './health.js';
+import { healthLines, readHostFacts, readScreens } from './health.js';
 import { projectOf } from '../hooks/kit.js';
 import { localViews } from '../hooks/session-start.js';
 import { listEvents } from '../state/events.js';
@@ -32,6 +34,7 @@ import { guardedReady } from '../windows/low.js';
 import { renewalDue } from '../host/connection.js';
 import { helperClient } from '../host/helper-client.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
+import { phonePushResult } from '../lib/setup-run.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -102,11 +105,12 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
   };
 }
 
-// loadBoardInputs({ cwd, client, address, now, offline, waitMs }) ->
+// loadBoardInputs({ cwd, client, address, now, offline, waitMs, findBrowser }) ->
 //   { project, model, usage, sources, settings } inside a Wheelhouse project, else { none }.
 // `settings` are the settings in force (effectiveSettings), `usage` the week's figures and
 // `sources` the weekly report, for the briefing and the settings text. `waitMs` (at most
-// HELPER_WAIT_MS, the default) is how long the helper is waited for.
+// HELPER_WAIT_MS, the default) is how long the helper is waited for. `findBrowser` stands in for
+// the helper's way of finding its browser (scripts/screens/browser.js) in tests.
 export async function loadBoardInputs(options = {}) {
   try {
     return await gather(isRecord(options) ? options : {});
@@ -115,7 +119,7 @@ export async function loadBoardInputs(options = {}) {
   }
 }
 
-async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked }) {
+async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked, findBrowser }) {
   // A wait too short to leave readHostFacts its margin is no wait at all, so it gives the usual one.
   const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= HELPER_WAIT_MS ? asked : HELPER_WAIT_MS;
   const found = attempt(() => (typeof cwd === 'string' && path.isAbsolute(cwd) ? projectOf(cwd) : null));
@@ -154,6 +158,11 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     platform: process.platform,
     realUsers: settings?.phase?.value === 'launched',
     builds,
+    // Whether an approval asks again after an update for want of Chrome: from the configuration in
+    // the project's main folder. The glance shows no line of its level, so offline it isn't looked for.
+    screens: offline ? null : attempt(() => readScreens({ folder: record.folder, ...(findBrowser ? { findBrowser } : {}) })),
+    // Offline, the setup journal isn't read: the glance shows no push test.
+    phonePush: offline ? null : attempt(() => phonePushResult()),
   }));
 
   const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, now: clock });

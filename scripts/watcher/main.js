@@ -40,7 +40,6 @@
 // lines and nothing else, and messages go to stderr.
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { makeBundler, readCursor, route, step, writeCursor } from './core.js';
 import { readHandled } from './handled.js';
 import { INTERVALS, LOOKBACK_MS, observe } from './sources.js';
@@ -49,6 +48,7 @@ import { foremanTools } from '../foreman/tools.js';
 import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { takeStartLock } from '../lib/start-lock.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // How often old wake files are pruned.
 const PRUNE_MS = 60 * 60 * 1000;
@@ -261,7 +261,7 @@ export function cliOptions(project) {
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   const project = process.argv[2];
   const stop = new AbortController();
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => stop.abort());

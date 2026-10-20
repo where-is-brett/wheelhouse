@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { stateDir } from '../lib/paths.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // This copy's root, holding lineage/ beside scripts/: the plugin's folder, or Locked's managed copy.
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -110,9 +111,18 @@ export function inspectLineage({ projectDir, root = ROOT, claudeHome = defaultCl
 // kept (whether the hold file now says so; false when it could not be written or removed),
 // and on a mismatch set (its mismatchSet) and recorded (whether the hold that stood already
 // had that set put in the state, so it is not recorded again).
-export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date() }) {
+//
+// With `pinsPending` (the project's setup run is open and has not yet done step 7, which installs
+// the kits; ruling R136), a kit not installed at all is setup's own expected state, not drift: it is
+// left out, so it writes no hold and no warning. Anything else that differs still holds. The kits
+// left out are given as `pending`, so the session's provenance still says what it loaded.
+export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date(), pinsPending = false }) {
   const file = holdFile(project);
-  const result = inspectLineage({ projectDir, root, claudeHome, locate });
+  const inspected = inspectLineage({ projectDir, root, claudeHome, locate });
+  const notInstalled = (m) => m.path === '*' && m.got === null && typeof m.upstream === 'string';
+  const left = pinsPending ? inspected.mismatches.filter((m) => !notInstalled(m)) : inspected.mismatches;
+  const pending = inspected.mismatches.filter((m) => !left.includes(m));
+  const result = { ...inspected, mismatches: left, ok: left.length === 0, ...(pending.length > 0 ? { pending } : {}) };
   let kept = true;
   let set = null;
   let recorded = false;
@@ -146,7 +156,8 @@ export function holdEvent(at, mismatches) {
 
 const shown = (relative) => ({ '*': 'not installed', '@commit': 'another commit' }[relative] ?? relative);
 
-function named(paths) {
+// The first NAMED_PATHS of an upstream's paths as the warning names them, then "and N more".
+export function namedPaths(paths) {
   const list = paths.slice(0, NAMED_PATHS).map(shown);
   if (paths.length > NAMED_PATHS) list.push(`and ${paths.length - NAMED_PATHS} more`);
   return list.join(', ');
@@ -164,7 +175,7 @@ export function warningLines(mismatches, { kept = true } = {}) {
   if (mismatches.some((m) => m.upstream === null)) return [kept ? MANIFEST_UNREADABLE : MANIFEST_UNREADABLE_NOT_HELD];
   const byUpstream = new Map();
   for (const m of mismatches) byUpstream.set(m.upstream, [...(byUpstream.get(m.upstream) ?? []), m.path]);
-  return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${named(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
+  return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${namedPaths(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
 }
 
 // Writes the session's provenance: what it runs on, and whether the fingerprints matched.
@@ -229,14 +240,6 @@ export function main(args, { cwd = process.cwd(), write = (line) => process.stdo
   return result.ok ? 0 : 1;
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

@@ -107,6 +107,12 @@ export function knownConcepts(settings) {
     .map(([key]) => key.slice('known:'.length));
 }
 
+// The alias a text spelt a term by ("PR" for "PR's" or "PRs"), or undefined when it used the term's own words.
+function aliasOf(term, word) {
+  const w = word.toLowerCase().replace(/\s+/g, ' ');
+  return (ALIASES[term.toLowerCase()] ?? []).find((a) => [a, `${a}s`, `${a}es`].map((x) => x.toLowerCase()).includes(w));
+}
+
 // How a text spells a term: its own words ("base"), a "plural", a "past" or an "ing" form.
 function spelling(term, word) {
   const w = word.toLowerCase().replace(/\s+/g, ' ');
@@ -156,7 +162,8 @@ function joined(text, index, length) {
 // meaning in a "Terms:" line at the end, so no term is left bare. `known` is the concepts the
 // director knows (see knownConcepts), or terms. Nothing is rewritten inside quotations, backticks,
 // command-, address-, path- or name-like tokens, or the `protect` strings: they are what the
-// director must recognise, type or click, and they are no use of a term.
+// director must recognise, type or click, and they are no use of a term. A term that stayed where the
+// text spelt it by an alias is listed with that spelling too: "pull request (PR) means …".
 export function plainWords(text, glossary, { explanations = 'plain', known = [], protect = [] } = {}) {
   if (typeof text !== 'string') return { text: '', terms: [] };
   const knows = new Set((Array.isArray(known) || known instanceof Set ? [...known] : []).map(conceptOf));
@@ -166,6 +173,8 @@ export function plainWords(text, glossary, { explanations = 'plain', known = [],
   const terms = [...new Set(matches.map((m) => m.term))];
   const replaced = new Set();
   const stayed = new Set();
+  // The alias each term stayed as, where one did, so the Terms line names the spelling the director sees.
+  const stayedAs = new Map();
   let out = '';
   let at = 0;
   matches.forEach((m, i) => {
@@ -187,6 +196,8 @@ export function plainWords(text, glossary, { explanations = 'plain', known = [],
     const named = form === 'base' && entry.takesName === true && name !== undefined && !NOT_NAMES.has(name.toLowerCase());
     if (explanations === 'some-terms' || replaced.has(m.term) || typeof phrase !== 'string' || phrase === '' || verb || named || compound) {
       stayed.add(m.term);
+      const alias = aliasOf(m.term, text.slice(m.index, end));
+      if (alias !== undefined && !stayedAs.has(m.term)) stayedAs.set(m.term, alias);
       return;
     }
     // A word that repeats the phrase's last word is taken in: "CI run" is "automatic check run".
@@ -213,7 +224,7 @@ export function plainWords(text, glossary, { explanations = 'plain', known = [],
   out += text.slice(at);
   const listed = terms.filter((t) => stayed.has(t) && !knows.has(conceptOf(t)));
   if (listed.length > 0) {
-    out += `\n\nTerms: ${listed.map((t) => `${t} means ${glossary[t].plain.replace(/[.\s]+$/, '')}`).join('; ')}.`;
+    out += `\n\nTerms: ${listed.map((t) => `${t}${stayedAs.has(t) ? ` (${stayedAs.get(t)})` : ''} means ${glossary[t].plain.replace(/[.\s]+$/, '')}`).join('; ')}.`;
   }
   return { text: out, terms };
 }

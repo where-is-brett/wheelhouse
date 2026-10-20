@@ -16,11 +16,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { readManifest } from '../lineage/manifest.js';
 import { run, withoutGitVars } from '../lib/run.js';
 import { readBrief } from './brief.js';
 import { surveyProject, upstreamsNeeded } from './survey.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const CLONE_WAIT_MS = 5 * 60 * 1000;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -122,15 +122,7 @@ export async function main(argv, {
   return 2;
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {

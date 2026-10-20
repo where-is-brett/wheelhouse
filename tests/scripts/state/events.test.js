@@ -382,10 +382,15 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
     const a = SHAPES['gate-asks'];
     const ci = { ...a, ask: 'ci-push', branch: 'feature/export-csv' };
     assert.deepEqual(makeEvent({ kind: 'gate-asks', data: ci }).data, ci);
+    // A CI push may name the head its update was made from, so the front desk can tell whether it was pushed (ruling F78).
+    const from = { ...ci, from: 'c'.repeat(40) };
+    assert.deepEqual(makeEvent({ kind: 'gate-asks', data: from }).data, from);
     for (const bad of [
       { ...a, ask: 'review' }, { ...a, pr: 0 }, { ...a, pr: '12' }, { ...a, sha: 'b'.repeat(12) }, { ...a, sha: 'B'.repeat(40) }, { ...a, work: 'Not A Slug' },
       // A branch only with a CI push, and a CI push only with one.
       { ...a, branch: 'feature/export-csv' }, { ...a, ask: 'ci-push' }, { ...ci, branch: '' }, { ...ci, branch: 7 },
+      // The head an update was made from only with a CI push, and in full.
+      { ...a, from: 'c'.repeat(40) }, { ...ci, from: 'c'.repeat(12) }, { ...ci, from: 7 },
     ]) assert.throws(() => makeEvent({ kind: 'gate-asks', data: bad }), /gate-asks event/, JSON.stringify(bad));
   });
 });
@@ -597,5 +602,44 @@ test('a question may say what answering it does to the checks, on one line', asy
     for (const checks of ['', 'Two\nlines', 'Two\u2028lines', 3, null]) {
       assert.throws(() => makeEvent({ kind: 'question', data: { ...question, checks }, now: at(1) }), /question event/, JSON.stringify(checks));
     }
+  });
+});
+
+test('a confirm-all action carries the full hash of the list and the ids of the rulings it recorded, each once', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const good = { action: 'confirm-all', hash: 'ab'.repeat(32), ids: ['r1', 'r2'], question: 'Confirm all 2 rules as listed, abababababab', label: 'Confirm all' };
+    const made = makeEvent({ kind: 'action', data: good, now: at(1) });
+    assert.equal(verify(made, readEnrolled()), true);
+    for (const [why, data] of [
+      ['short hash', { ...good, hash: 'ab'.repeat(6) }],
+      ['no ids', { ...good, ids: [] }],
+      ['an id twice', { ...good, ids: ['r1', 'r1'] }],
+      ['an id not text', { ...good, ids: ['r1', 2] }],
+      ['another label', { ...good, label: 'Let me correct some' }],
+      ['a field of another action', { ...good, step: 5 }],
+    ]) assert.throws(() => makeEvent({ kind: 'action', data, now: at(1) }), /action event/, why);
+  });
+});
+
+test('an uninstall action names the project and the full hash of the list, and carries only its set line (ruling R90)', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const hash = 'ab'.repeat(32);
+    const good = { action: 'uninstall', project: 'wh cafe menu Zoë', hash, question: 'Remove Wheelhouse from wh cafe menu Zoë as listed, abababababab', label: 'Remove it' };
+    const made = makeEvent({ kind: 'action', data: good, now: at(1) });
+    assert.equal(verify(made, readEnrolled()), true);
+    for (const [why, data] of [
+      ['short hash', { ...good, hash: 'ab'.repeat(6) }],
+      ['no project', { ...good, project: '' }],
+      ['a project on two lines', { ...good, project: 'wh\ncafe', question: 'Remove Wheelhouse from wh\ncafe as listed, abababababab' }],
+      ['another label', { ...good, label: 'Go ahead' }],
+      ['the whole card as its question', { ...good, question: `What this is: Remove Wheelhouse.\n${good.question}` }],
+      ['another project in its line', { ...good, question: 'Remove Wheelhouse from other as listed, abababababab' }],
+      ['another hash in its line', { ...good, question: 'Remove Wheelhouse from wh cafe menu Zoë as listed, cdcdcdcdcdcd' }],
+      ['a field of another action', { ...good, runId: 'run-0123456789' }],
+    ]) assert.throws(() => makeEvent({ kind: 'action', data, now: at(1) }), /action event/, why);
   });
 });

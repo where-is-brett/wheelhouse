@@ -8,10 +8,11 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, BASELINE_LABEL, baselineLine } from './card-lines.js';
+import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS } from '../lib/front-desk.js';
+import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
@@ -23,7 +24,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'baseline'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -37,10 +38,28 @@ const ACTION_OWN = {
   // A setup step's click: the run the card was shown for (so a click on one folder's card can't
   // stand for another's), the step and the full SHA-256 of the list of changes its card showed.
   setup: ['runId', 'step', 'hash'],
+  // The director's answer to a question a setup step asked (ruling R30): the run and step it was
+  // asked for, the question's id within the step, and the option clicked as `label` or, on a card
+  // that takes one, the text typed as `text`; the other is null.
+  'setup-answer': ['runId', 'step', 'questionId', 'text'],
+  // The director's Confirm all on setup's card of the rules found in a project (ruling R35): the
+  // full hash of the list the card's line names, and the ids of the rulings the click recorded from
+  // it, one per rule listed, each confirmed by its own confirmation.
+  'confirm-all': ['hash', 'ids'],
   // The baseline card's click: the full hash of the figures it read back. Its question is the
   // card's set line alone, so the click carries no figure. It is kept in
   // <wheelhouseHome()>/measures/clicks/ and never written to the state (writeEvent refuses it).
   baseline: ['hash'],
+  // The director's Trust it on a trust card (ruling R80): the other computer's id, when its key was
+  // added to the profile, the key's fingerprint and its full SHA-256 (ruling R107). Its question is
+  // the card's set line alone. It is kept in <wheelhouseHome()>/trust/ and never written to the
+  // state (writeEvent refuses it).
+  trust: ['computer', 'at', 'fingerprint', 'keyHash'],
+  // The director's Remove it on uninstall's card (ruling R90): the project its line names (the
+  // project's slug, or the folder's own name when none is registered there) and the full SHA-256 of
+  // the list uninstall puts back. Its question is the card's set line alone. It is kept in
+  // <wheelhouseHome()>/setup/clicks/, as a setup click is, where the helper reads it.
+  uninstall: ['project', 'hash'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, or put the card off: a click on one is never an answer.
@@ -56,7 +75,9 @@ function checkAction(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) bad('needs data');
   if (Object.keys(data).some((k) => !ACTION_KEYS.includes(k))) bad('has a field it should not');
   if (!ACTIONS.includes(data.action)) bad('names an action Wheelhouse does not know');
-  if (typeof data.question !== 'string' || typeof data.label !== 'string') bad('needs the question and the label');
+  // A setup answer typed in has no label: its own check below asks for one of the two.
+  const labelled = typeof data.label === 'string' || (data.action === 'setup-answer' && data.label === null);
+  if (typeof data.question !== 'string' || !labelled) bad('needs the question and the label');
   // A field that belongs to another action is refused here, before the action's own checks.
   const own = ACTION_OWN[data.action];
   if (Object.keys(data).some((k) => !['action', 'question', 'label'].includes(k) && !own.includes(k))) {
@@ -94,10 +115,38 @@ function checkAction(data) {
     if (!Object.hasOwn(SETUP_TITLES, data.step) || !Number.isInteger(data.step)) bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length}`);
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list of changes its card showed');
     if (data.label !== SETUP_LABEL) bad(`needs the ${SETUP_LABEL} label`);
+  } else if (data.action === 'setup-answer') {
+    if (typeof data.runId !== 'string' || !/^run-[0-9a-f]{10}$/.test(data.runId)) bad('needs the setup run its card was asked for');
+    if (!Object.hasOwn(SETUP_TITLES, data.step) || !Number.isInteger(data.step)) bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length}`);
+    if (typeof data.questionId !== 'string' || !SETUP_QUESTION_ID.test(data.questionId)) bad('needs the id of the question it answers');
+    const given = (x) => typeof x === 'string' && x !== '';
+    const one = (given(data.label) && data.text === null) || (data.label === null && given(data.text));
+    if (!one) bad('needs a label or a typed text, one of them, with the other null');
+    if (NOT_AN_ANSWER.includes(data.label)) bad('has a label that is not an answer');
+  } else if (data.action === 'confirm-all') {
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list of rules its card showed');
+    if (!Array.isArray(data.ids) || data.ids.length === 0 || !data.ids.every(isText) || new Set(data.ids).size !== data.ids.length) {
+      bad('needs the ids of the rulings it confirmed, each once');
+    }
+    if (data.label !== CONFIRM_ALL_LABEL) bad(`needs the ${CONFIRM_ALL_LABEL} label`);
   } else if (data.action === 'baseline') {
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the figures its card read back');
     if (data.label !== BASELINE_LABEL) bad(`needs the ${BASELINE_LABEL} label`);
     if (data.question !== baselineLine(data.hash)) bad('carries only the baseline card\'s set line as its question');
+  } else if (data.action === 'trust') {
+    if (typeof data.computer !== 'string' || !/^[0-9a-f]{8}$/.test(data.computer)) bad('needs the id of the computer it trusts');
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs when that computer\'s key was added');
+    if (typeof data.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(data.fingerprint)) bad('needs the fingerprint of the key it trusts');
+    if (typeof data.keyHash !== 'string' || !/^[0-9a-f]{64}$/.test(data.keyHash) || !data.keyHash.startsWith(data.fingerprint)) {
+      bad('needs the full hash of the key it trusts, which its fingerprint starts');
+    }
+    if (data.label !== TRUST_LABEL) bad(`needs the ${TRUST_LABEL} label`);
+    if (data.question !== trustLine(data.computer, data.at, data.fingerprint)) bad('carries only the trust card\'s set line as its question');
+  } else if (data.action === 'uninstall') {
+    if (!isLineName(data.project)) bad('needs the project it removes Wheelhouse from');
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list its card showed');
+    if (data.label !== UNINSTALL_LABEL) bad(`needs the ${UNINSTALL_LABEL} label`);
+    if (data.question !== uninstallLine(data.project, data.hash)) bad('carries only uninstall\'s card\'s set line as its question');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }
@@ -119,14 +168,17 @@ const PLAIN_SHAPES = {
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts'] },
+  // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
   asked: { must: ['cards'], may: [] },
   // The click the merge gate waits for (ruling R117): the director's approval of a pull request's
-  // head, or their CI push of the update merge `sha` to `branch`. Recorded by the foreman's merge.
-  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch'] },
+  // head, or their CI push of the update merge `sha` to `branch`, made from the head `from` when the
+  // host gave it (ruling F78), so a pushed update can be told from one not yet pushed. Recorded by
+  // the foreman's merge.
+  'gate-asks': { must: ['work', 'pr', 'ask', 'sha'], may: ['branch', 'from'] },
   // A session start held the project's edits and commands because the installed upstream skills
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card.
@@ -211,6 +263,7 @@ function checkPlain(kind, data) {
     if (data.importance !== undefined && !Number.isFinite(data.importance)) bad('has an importance that is not a number');
     optionalText('topic');
     optionalText('recommend');
+    optionalText('event');
     if (data.concepts !== undefined && !(Array.isArray(data.concepts) && data.concepts.every(isText))) bad('has concepts that are not a list of text');
   } else if (kind === 'reversal') {
     text('topic');
@@ -227,6 +280,9 @@ function checkPlain(kind, data) {
     if (typeof data.sha !== 'string' || !/^[0-9a-f]{40}$/.test(data.sha)) bad('needs the full commit');
     if (data.ask === 'ci-push' && !isText(data.branch)) bad('needs the branch the CI push is for');
     if (data.ask !== 'ci-push' && data.branch !== undefined) bad('has a branch it should not');
+    if (data.from !== undefined && (data.ask !== 'ci-push' || typeof data.from !== 'string' || !/^[0-9a-f]{40}$/.test(data.from))) {
+      bad('has a from that is not the full head a CI push\'s update was made from');
+    }
   } else if (kind === 'lineage-hold') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
     const one = (m) => isPlain(m) && Object.keys(m).length === 2 && isText(m.path)
@@ -375,11 +431,15 @@ export function carriesBaseline(event, { now = () => new Date() } = {}) {
   return carriesFigures(stringsIn(data).join('\n'), data?.header, { now });
 }
 
+// The words the state refuses a trust click with: it is kept on the computer it trusts on.
+export const TRUST_KEPT_HERE = 'A trust click is kept on the computer it was made on, never in the state';
+
 // `dir` and `branch` name another clone of events, such as the profile's; by default
 // the project's state clone and its state branch. An event carrying the baseline card is refused.
 export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH, now = () => new Date() }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
   if (carriesBaseline(event, { now })) throw new Error(CARRIES_BASELINE);
+  if (event.kind === 'action' && event.data?.action === 'trust') throw new Error(TRUST_KEPT_HERE);
   if (PROTECTED_KINDS.includes(event.kind) && !event.sig) {
     throw new Error(`A ${event.kind} event must be signed before it is written`);
   }
@@ -423,9 +483,9 @@ export async function writeEvent({ project, event, push, env, dir = stateDir(pro
 
 // Pulls, then pushes anything not yet pushed. Resolves with whether the pull
 // went through and how many commits the remote still lacks. `dir` and `branch`
-// as for writeEvent.
-export async function syncState({ project, push, env, dir = stateDir(project), branch = STATE_BRANCH }) {
-  const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
+// as for writeEvent; `pull`, when given, is a clone's own pull ({ code }), as the profile's is.
+export async function syncState({ project, push, pull, env, dir = stateDir(project), branch = STATE_BRANCH }) {
+  const pulled = pull ? await pull() : await git(dir, ['pull', '--rebase', 'origin', branch], env);
   if (pulled.code !== 0) await git(dir, ['rebase', '--abort'], env);
   await pushWithRetry(dir, push, env, branch);
   const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], env);

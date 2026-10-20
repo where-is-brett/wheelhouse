@@ -1,7 +1,8 @@
 // scripts/telemetry/main.js
 // The usage receiver as a process: listens on the computer itself, keeps the counts Claude
 // Code sends, summarises yesterday and prunes old counts once a day. Started detached by a
-// session start; it exits at once when another copy already holds the port.
+// session start; it exits at once when another copy already holds the port. The last uninstall on
+// this computer stops it (stopReceiver).
 //
 // It answers a request first and writes after: the write runs on the next turn of the event
 // loop, in the order the requests came, so a slow disk never holds up the session that sent
@@ -9,11 +10,12 @@
 // writes share series.json and are safe together only when one process does all of them.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { startReceiver } from './receiver.js';
 import { addPoints as addToStore, summariseDay, pruneUsage } from '../usage/store.js';
 import { TELEMETRY_PORT } from '../lib/core-numbers.js';
 import { usageDir } from '../lib/paths.js';
+import { pidAlive, processStartTime } from '../watcher/waker.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CHECK_EVERY_MS = 10 * 60 * 1000;
@@ -74,16 +76,40 @@ export async function startUsageReceiver({ port = receiverPort(), now = () => ne
   };
 }
 
-function startedAsScript() {
+// Where a running receiver writes its process id, so it can be found and stopped.
+export const receiverPidFile = () => path.join(usageDir(), 'receiver.pid');
+
+// How long after the receiver started it may have written its pid file.
+const PID_WRITTEN_MS = 2 * 60 * 1000;
+
+// Stops the usage receiver, as the last uninstall on this computer does (ruling R89): { stopped,
+// why? }, `why: 'not running'` when none runs. Only the process its pid file names is stopped, and
+// only while it is still that process: alive, and started before the file was written (a pid
+// reused since the receiver ended started later). A start time the system won't give stops nothing
+// (it fails closed), and says so.
+export async function stopReceiver({ alive = pidAlive, kill = process.kill, startTime = processStartTime } = {}) {
+  let pid;
+  let writtenMs;
   try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    const file = receiverPidFile();
+    writtenMs = fs.statSync(file).mtimeMs;
+    pid = Number.parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
   } catch {
-    return false;
+    return { stopped: false, why: 'not running' };
   }
+  if (!Number.isInteger(pid) || pid <= 0 || !alive(pid)) return { stopped: false, why: 'not running' };
+  const started = Date.parse((await startTime(pid)) ?? '');
+  if (!Number.isFinite(started) || started > writtenMs + PID_WRITTEN_MS) return { stopped: false, why: 'its process could not be told apart from another, so it was left running' };
+  try {
+    kill(pid, 'SIGTERM');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') return { stopped: false, why: `it could not be stopped (${error?.code ?? 'no reason given'})` };
+  }
+  return { stopped: true };
 }
 
-if (process.argv[1] && startedAsScript()) {
-  const pidFile = path.join(usageDir(), 'receiver.pid');
+if (startedAsScript(import.meta.url)) {
+  const pidFile = receiverPidFile();
   try {
     const receiver = await startUsageReceiver();
     // Only so the receiver can be found and stopped; removed when it ends.

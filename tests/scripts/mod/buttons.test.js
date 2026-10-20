@@ -1,11 +1,11 @@
 // tests/scripts/mod/buttons.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardButtons, isSetupCard, CANT_ANSWER, SETUP_ANSWER } from '../../../scripts/mod/buttons.js';
+import { cardButtons, isSetupCard, isTrustCard, isUninstallCard, CANT_ANSWER, SETUP_ANSWER, TRUST_ANSWER, UNINSTALL_ANSWER } from '../../../scripts/mod/buttons.js';
 import { composeCard, DECIDING } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { approvalLine, replyCode, replyCodeLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, replyCode, replyCodeLine, setLineOf, trustLine, uninstallLine } from '../../../scripts/state/card-lines.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { withHome } from '../../helpers/homes.js';
@@ -40,18 +40,37 @@ const INPUTS = {
   'lift-incident': { ...common, kind: 'lift-incident', recommend: 'End it', what: 'Incident bad-total, the wrong totals, has been corrected, so merging can start again.', options: [says('End it')], target: { incident: 'bad-total' } },
   'incident-fix': { ...common, kind: 'incident-fix', recommend: 'Merge the fix', what: 'Pull request #31 corrects the wrong totals in incident bad-total.', options: [says('Merge the fix')], target: { incident: 'bad-total', pr: 31 } },
   setup: { ...common, kind: 'setup', recommend: 'Go ahead', what: 'Setup step 1, checking this computer, changes nothing on it.', options: [says('Go ahead')], target: { step: 1, hash: DOC } },
+  'confirm-all': {
+    ...common, kind: 'confirm-all', recommend: 'Confirm all', what: 'Setup step 5 found 2 rules: 1) "Money is shown in dollars"; 2) "Never push to main".',
+    options: [says('Confirm all'), says('Let me correct some')], target: { count: 2, hash: DOC },
+  },
   baseline: { ...common, kind: 'baseline', recommend: 'Record these', what: 'The first version\'s figures from your note: US$100.00 for 4 merged pull requests.', options: [says('Record these')], target: { hash: DOC } },
+  trust: {
+    ...common, kind: 'trust', recommend: 'Trust it', what: 'Your computer 0a1b2c3d put its key in your profile.',
+    options: [says('Trust it')], target: { computer: '0a1b2c3d', at: '2026-10-19T22:30:00.000Z', fingerprint: 'abcdef012345' },
+  },
+  uninstall: {
+    ...common, kind: 'uninstall', recommend: 'Remove it', level: 4, checks: 'The checks no longer guard this project.',
+    what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.', options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
+  },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 // The event data the state keeps for a composed card.
 const dataOf = (kind) => composeCard(INPUTS[kind]).card;
 const SET_LINE_KINDS = Object.keys(DECIDING);
-// A setup card gets no button: its step goes ahead only by the director's click on the very card
-// setup showed, which only the prompt record counts. Its note sends the director to the chat
-// where setup asked it. Nor does the baseline card, for that reason; its note is the plain one.
-const NO_BUTTON_KINDS = ['setup', 'baseline'];
+// A setup card, and setup's card of the rules found, get no button: the step goes ahead only by the
+// director's click on the very card setup showed, which only the prompt record counts. Its note
+// sends the director to the chat where setup asked it. Nor does the baseline card, for that
+// reason; its note is the plain one. Nor does a trust card (ruling R80): another computer is trusted
+// only by the click on the card itself, in the chat where it was asked. Nor does uninstall's card
+// (ruling R90), for the same reason.
+const SETUP_KINDS = ['setup', 'confirm-all'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'uninstall'];
 const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
-const noButtonsFor = (kind) => (kind === 'setup' ? NO_BUTTONS : { buttons: [], note: CANT_ANSWER });
+const noButtonsFor = (kind) => {
+  if (SETUP_KINDS.includes(kind)) return NO_BUTTONS;
+  return { buttons: [], note: { trust: TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
+};
 
 test('each kind of card gets its own buttons, and only the options it offers', () => {
   for (const kind of SET_LINE_KINDS) {
@@ -138,7 +157,9 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
     const lines = data.question.split('\n');
     const broken = [
       lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
-      lines.filter((l) => !l.startsWith('Reply code:')).join('\n'),
+      // A setup card, a trust card and uninstall's have no reply code line to take away (rulings R36,
+      // R80, R90).
+      ...([...SETUP_KINDS, 'trust', 'uninstall'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       data.question.replace(/^While you decide:.*$/m, 'While you decide:'),
@@ -148,9 +169,39 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       const got = cardButtons({ ...data, question });
       assert.equal(got.buttons.some((b) => b.does === 'record'), false, `${kind}: ${question}`);
       assert.deepEqual(got.buttons, NO_BUTTON_KINDS.includes(kind) ? [] : [{ label: 'Explain more', does: 'turn' }], kind);
-      assert.equal(got.note, kind === 'setup' ? SETUP_ANSWER : CANT_ANSWER, kind);
+      assert.equal(got.note, NO_BUTTON_KINDS.includes(kind) ? noButtonsFor(kind).note : CANT_ANSWER, kind);
     }
   }
+});
+
+test('a trust card gets no button on the pane, by its kind or by its set line alone (ruling R80)', () => {
+  const data = dataOf('trust');
+  assert.equal(isTrustCard(data), true);
+  assert.equal(isSetupCard(data), false);
+  assert.deepEqual(cardButtons(data), { buttons: [], note: TRUST_ANSWER });
+  // Carried as another kind, or as a question, its set line still gives it no button.
+  for (const kind of ['approval', 'question', undefined]) {
+    assert.deepEqual(cardButtons({ ...data, kind }), { buttons: [], note: TRUST_ANSWER }, String(kind));
+  }
+  const line = trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345');
+  assert.equal(setLineOf(data.question), line);
+  assert.equal(isTrustCard({ question: `Trust it?\n${line}`, options: ['Trust it'] }), true);
+  assert.equal(isTrustCard(dataOf('approval')), false);
+});
+
+test('uninstall\'s card gets no button on the pane, by its kind or by its set line alone (ruling R90)', () => {
+  const data = dataOf('uninstall');
+  assert.equal(isUninstallCard(data), true);
+  assert.equal(isSetupCard(data), false);
+  assert.equal(isTrustCard(data), false);
+  assert.deepEqual(cardButtons(data), { buttons: [], note: UNINSTALL_ANSWER });
+  for (const kind of ['approval', 'question', undefined]) {
+    assert.deepEqual(cardButtons({ ...data, kind }), { buttons: [], note: UNINSTALL_ANSWER }, String(kind));
+  }
+  const line = uninstallLine('cafe menu', DOC);
+  assert.equal(setLineOf(data.question), line);
+  assert.equal(isUninstallCard({ question: `Remove it?\n${line}`, options: ['Remove it'] }), true);
+  assert.equal(isUninstallCard(dataOf('approval')), false);
 });
 
 test('a card whose kind and set line disagree, or that has no set line though its kind needs one, signs nothing', () => {
@@ -215,4 +266,17 @@ test('a setup card gets no button on the pane, whatever it offers and whatever k
   assert.deepEqual(cardButtons({ ...approval, kind: 'setup' }), NO_BUTTONS);
   assert.equal(isSetupCard(approval), false);
   for (const junk of [null, undefined, 5, 'text', [], {}]) assert.equal(isSetupCard(junk), false, String(junk));
+});
+
+test('setup\'s card of the rules found gets no button on the pane either, by its kind or by its line', () => {
+  const rules = dataOf('confirm-all');
+  assert.equal(isSetupCard(rules), true);
+  assert.deepEqual(rules.options, ['Confirm all', 'Let me correct some', 'Not now', 'Explain more']);
+  assert.equal(rules.code, null);
+  assert.deepEqual(cardButtons(rules), NO_BUTTONS);
+  for (const kind of ['approval', 'confirm', 'question', undefined]) {
+    assert.equal(isSetupCard({ ...rules, kind }), true, String(kind));
+    assert.deepEqual(cardButtons({ ...rules, kind }), NO_BUTTONS, String(kind));
+  }
+  assert.equal(isSetupCard({ ...dataOf('approval'), kind: 'confirm-all' }), true);
 });

@@ -26,3 +26,5 @@ export const HOST_FACTS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const LINE_CHARS = 200;
 // The longest the board, the briefing and the glance wait on any helper call.
 export const HELPER_WAIT_MS = 2000;
+// How long the director's click on a card stays good for the host helper: a CI push, a runbook step.
+export const CLICK_MS = 10 * 60 * 1000;

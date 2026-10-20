@@ -15,7 +15,7 @@ import { managedDir, lockedProjects } from './managed.js';
 import { sameFolder } from '../hooks/kit.js';
 import { credentialRules, cleanDomain } from './settings.js';
 import { readProject } from '../lib/projects.js';
-import { helperAddress, wheelhouseHome } from '../lib/paths.js';
+import { helperAddress, projectsDir, wheelhouseHome } from '../lib/paths.js';
 import { readConfig } from '../gate/guardrails.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -86,7 +86,7 @@ function domainsOf(folder) {
 function registeredDomains() {
   let names = [];
   try {
-    names = fs.readdirSync(path.join(wheelhouseHome(), 'projects')).sort();
+    names = fs.readdirSync(projectsDir()).sort();
   } catch {
     // None registered.
   }
@@ -99,7 +99,9 @@ function registeredDomains() {
 const filePath = (dir) => path.join(dir, 'managed-settings.json');
 const installedPath = (dir) => path.join(dir, 'wheelhouse', 'installed.json');
 const inPlace = (dir) => fs.existsSync(filePath(dir)) && fs.existsSync(installedPath(dir));
-const ownFile = (dir) => !fs.existsSync(filePath(dir)) || fs.existsSync(installedPath(dir));
+// Whether the computer-wide settings file in `dir` is Wheelhouse's to replace: absent, or put there
+// by Locked, with its record beside it.
+export const ownFile = (dir) => !fs.existsSync(filePath(dir)) || fs.existsSync(installedPath(dir));
 
 async function administrator(run, shell) {
   return run('osascript', ['-e', 'on run argv', '-e', 'do shell script (item 1 of argv) with administrator privileges', '-e', 'end run', '--', shell]);

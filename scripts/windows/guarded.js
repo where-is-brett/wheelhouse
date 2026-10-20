@@ -24,8 +24,8 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { run as runProgram } from '../lib/run.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // A command still running after this long is ended, with everything it started.
 export const GUARDED_TIMEOUT_MS = 30 * 60 * 1000;
@@ -298,6 +298,6 @@ export async function guarded(words, {
   return ended.code;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await guarded(process.argv.slice(2));
 }

@@ -12,6 +12,8 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
+import { NO_CHROME_LINE, phonePushLine } from '../../../scripts/board/health.js';
+import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
@@ -99,6 +101,31 @@ test('the inputs gather the views, events, settings, usage, sources and health f
   });
 });
 
+// This computer's setup journal with step 9 settled on the push test's answer.
+const PUSH_LINE = phonePushLine('2026-10-19T01:00:00.000Z');
+function settledPushTest(arrived) {
+  put(journalFile(), { v: 1, runs: [{ id: 'run-1', folder: '/x', startedAt: '2026-10-19T00:00:00.000Z', steps: { 9: { doneAt: '2026-10-19T01:00:00.000Z' } },
+    changes: [{ id: 'chg-1', step: 9, kind: 'answer', target: 'step 9', before: null, after: { pushArrived: arrived } }] }] });
+}
+
+test('a push test that didn\'t reach the phone, in setup\'s journal, is on the board\'s health; one that did isn\'t', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    keepEverything();
+    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE), false, 'no journal');
+    settledPushTest(false);
+    assert.ok(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE));
+    settledPushTest(true);
+    assert.equal(texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW })).includes(PUSH_LINE), false);
+    // A journal that can't be read adds no line, and the board still comes.
+    put(journalFile(), 'not json');
+    const found = await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW });
+    assert.equal(texts(found).includes(PUSH_LINE), false);
+    assert.equal(found.project, P);
+  });
+});
+
 test('a profile setting written but not confirmed is on the board, as the director\'s own', async () => {
   const home = shortHome();
   await as(home, async () => {
@@ -150,6 +177,30 @@ test('offline, the inputs ask the helper nothing and leave out what only it know
     assert.equal(fs.existsSync(path.join(stateDir(P), '..', 'host-facts-tried.json')), false);
     assert.deepEqual(found.model.director.waiting.map((w) => w.what), ['Approve the sign-in page']);
     assert.equal(found.model.director.budget.share, 34);
+  });
+});
+
+test('the Chrome line reads the pages the main folder\'s configuration lists, and the browser found (F74)', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const EDGE = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+    const said = async (found, options = {}) => texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW, findBrowser: () => found, ...options })).includes(NO_CHROME_LINE);
+    // No configuration, or one listing no pages: nothing, whatever the browser.
+    assert.equal(await said(null), false);
+    put(path.join(repo, '.claude', 'wheelhouse.json'), { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] });
+    assert.equal(await said(EDGE), false);
+    // Pages listed: the line with Edge alone or no browser, none with Chrome.
+    put(path.join(repo, '.claude', 'wheelhouse.json'), { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], pages: ['/'] });
+    assert.equal(await said(EDGE), true);
+    assert.equal(await said(null), true);
+    assert.equal(await said(CHROME), false);
+    // The glance shows no line of this level, so offline nothing is looked for.
+    assert.equal(await said(null, { offline: true }), false);
+    // A configuration that can't be read says nothing.
+    put(path.join(repo, '.claude', 'wheelhouse.json'), '{ "v": 1, "pages": [');
+    assert.equal(await said(null), false);
   });
 });
 
@@ -223,6 +274,7 @@ test('offline, only the files the glance needs are read: no other view, usage da
       path.join(stateDir(P), 'events', '2026', 'm2.json'),
       path.join(profileViewsDir(), 'settings.json'),
       path.join(sourcesDir(), 'report.json'),
+      journalFile(),
     ];
     for (const pipe of pipes) {
       fs.mkdirSync(path.dirname(pipe), { recursive: true });

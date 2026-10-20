@@ -13,8 +13,8 @@
 // It exits 0 and prints "Wheelhouse" on any failure, and within LIMIT_MS whatever the disk or
 // standard input does.
 import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { recordAllowance } from './usage/store.js';
+import { startedAsScript } from './lib/started-as-script.js';
 
 const LIMIT_MS = 450;
 const FALLBACK = 'Wheelhouse';
@@ -99,10 +99,4 @@ function main() {
   });
 }
 
-let direct = false;
-try {
-  direct = Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-} catch {
-  direct = false;
-}
-if (direct) main();
+if (startedAsScript(import.meta.url)) main();

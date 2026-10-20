@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STEPS, planHash, firstUnfinished } from '../../../scripts/setup/steps.js';
-import { admitFolder, runApply } from '../../../scripts/setup/engine.js';
+import { admitFolder, runApply, setupRoutes } from '../../../scripts/setup/engine.js';
+import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { setupLine, SETUP_TITLES, SETUP_LABEL, setLineOf } from '../../../scripts/state/card-lines.js';
 import { composeCard, DECIDING, HEADERS } from '../../../scripts/cards/compose.js';
 import { makeEvent } from '../../../scripts/state/events.js';
@@ -35,21 +36,6 @@ test('the ten steps are numbered 1 to 10 in the design\'s order, with its titles
   for (const step of STEPS) {
     assert.equal(typeof step.plan, 'function');
     assert.equal(typeof step.apply, 'function');
-  }
-});
-
-test('until its task fills it, each step lists no changes and its card composes with the setup line', async () => {
-  for (const step of STEPS) {
-    const ctx = { folder: '/tmp/x', step: step.n, now: () => NOW };
-    const planned = await step.plan(ctx);
-    assert.deepEqual(planned.changes, []);
-    assert.equal(typeof planned.director, 'string');
-    const hash = planHash(planned.changes);
-    const { question, card } = composeCard({ ...planned.card, target: { step: step.n, hash } });
-    assert.equal(setLineOf(question.question), setupLine(step.n, hash));
-    assert.equal(card.kind, 'setup');
-    assert.ok(question.question.includes(step.title), question.question);
-    assert.deepEqual(await step.apply(ctx, planned.changes), []);
   }
 });
 
@@ -97,7 +83,11 @@ test('the first unfinished step is the lowest one not done, whatever ran after i
   assert.equal(firstUnfinished({ steps: { 1: { doneAt: 'x' }, 2: { clickedAt: 'y' }, 3: { doneAt: 'z' } } }), 2);
   assert.equal(firstUnfinished({ steps: { 1: { doneAt: 'x' }, 2: { doneAt: 'y', failed: undefined }, 3: { doneAt: 'z' } } }), 4);
   const all = Object.fromEntries(STEPS.map((s) => [s.n, { doneAt: 'x' }]));
-  assert.equal(firstUnfinished({ steps: all }), null);
+  // The health check is finished only once its board has been green (ruling R67).
+  assert.equal(firstUnfinished({ steps: all }), 10);
+  const green = { step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: '2026-10-20T00:00:00.000Z' } };
+  assert.equal(firstUnfinished({ steps: all, changes: [green] }), null);
+  assert.equal(firstUnfinished({ steps: all, changes: [{ ...green, after: { health: {} } }] }), 10);
 });
 
 test('the hooks read where a run stands as setup does: the same steps, titles, journal reader and click keeper', () => {
@@ -139,6 +129,61 @@ test('the folder check admits ~/Projects folders, registered projects and setup 
     const away = fs.realpathSync.native(tempFolder('wh-away '));
     fs.symlinkSync(away, path.join(projects, 'link'), 'dir');
     assert.throws(() => admitFolder(path.join(projects, 'link'), { userHome: user }), /folder/);
+  });
+});
+
+test('a folder outside ~/Projects whose own settings switch the plugin on is admitted', () => {
+  // Ruling R34: the product's folder exists from step 1, with the plugin installed there, so an
+  // existing project outside ~/Projects (~/code/app, D:\\work\\app) can be set up.
+  withHome(() => {
+    const user = fs.realpathSync.native(tempFolder('wh-home Zoë '));
+    const on = (folder, name, value) => {
+      fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(folder, '.claude', name), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': value } }));
+      return folder;
+    };
+    const shared = on(fs.realpathSync.native(tempFolder('wh-code app ')), 'settings.json', true);
+    assert.equal(admitFolder(shared, { userHome: user }), shared);
+    const local = on(fs.realpathSync.native(tempFolder('wh-local-')), 'settings.local.json', true);
+    assert.equal(admitFolder(local, { userHome: user }), local);
+    // Switched off by the local file, which wins, another plugin, no settings at all, or the
+    // plugin on only in a folder above: refused.
+    const off = on(on(fs.realpathSync.native(tempFolder('wh-off-')), 'settings.json', true), 'settings.local.json', false);
+    assert.throws(() => admitFolder(off, { userHome: user }), /not under ~\/Projects/);
+    const otherPlugin = fs.realpathSync.native(tempFolder('wh-other-'));
+    fs.mkdirSync(path.join(otherPlugin, '.claude'));
+    fs.writeFileSync(path.join(otherPlugin, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'helper@wheelhouse': true } }));
+    assert.throws(() => admitFolder(otherPlugin, { userHome: user }), /not under ~\/Projects/);
+    const bare = fs.realpathSync.native(tempFolder('wh-bare-'));
+    assert.throws(() => admitFolder(bare, { userHome: user }), /not under ~\/Projects/);
+    fs.mkdirSync(path.join(shared, 'web'));
+    assert.throws(() => admitFolder(path.join(shared, 'web'), { userHome: user }), /not under ~\/Projects/);
+  });
+});
+
+test('the user\'s home, with the plugin on for every folder, is never set up, nor any folder holding it', async () => {
+  // The home folder's own .claude/settings.json is Claude Code's user-scope settings: the plugin
+  // switched on there is on everywhere, not installed for the home folder as a product.
+  await withHome(async () => {
+    const user = fs.realpathSync.native(tempFolder('wh-home on '));
+    fs.mkdirSync(path.join(user, '.claude'));
+    fs.writeFileSync(path.join(user, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true } }));
+    const app = path.join(user, 'code', 'app');
+    fs.mkdirSync(app, { recursive: true });
+    for (const folder of [user, path.dirname(user)]) assert.throws(() => admitFolder(folder, { userHome: user }), /home folder/, folder);
+    const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: user });
+    await assert.rejects(routes['/setup/plan']({ folder: user, step: 1 }), /home folder/);
+    assert.deepEqual(journal.readJournal().runs, [], 'no run was started at home');
+    assert.throws(() => admitFolder(app, { userHome: user }), /not under ~\/Projects/);
+    // A run at home from before carries nothing on beneath it, for the routes or the hooks.
+    startRun({ folder: user, now: () => NOW });
+    assert.throws(() => admitFolder(app, { userHome: user }), /not under ~\/Projects/);
+    assert.equal(beingSetUp(app, { home: user }), null);
+    // A product folder under home with the plugin switched on in its own settings is admitted.
+    fs.mkdirSync(path.join(app, '.claude'));
+    fs.writeFileSync(path.join(app, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'wheelhouse@wheelhouse': true } }));
+    assert.equal(admitFolder(app, { userHome: user }), app);
+    assert.equal(beingSetUp(app, { home: user })?.folder, app);
   });
 });
 
@@ -238,6 +283,33 @@ test('a long step\'s process past its deadline by the wall clock stops, after a 
   });
 });
 
+test('a long step\'s process stops one tick before its deadline, so an old process and a new one never overlap', async () => {
+  // Ruling R47: by the deadline the helper counts the step stopped and a fresh click may start it again.
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-tick '));
+    const hash = longWorld(home, folder);
+    const run = startRun({ folder, now: () => NOW });
+    markStep(run.id, 2, 'clickedAt', { now: () => NOW });
+    const tickMs = 5;
+    const deadline = 20 * MINUTE;
+    // Started at deadline - tickMs: it does nothing at all.
+    assert.equal(await runStep(childArgs({ folder, step: '2', hash, runId: run.id }), { now: () => at(deadline - tickMs), exit: () => {}, tickMs }), 1);
+    assert.equal(fs.existsSync(path.join(folder, 'x.json')), false);
+    // Started a millisecond earlier, it begins; its clock then reaches deadline - tickMs, and the
+    // next tick marks it failed and ends it.
+    const exited = [];
+    let clock = at(deadline - tickMs - 1);
+    const running = runStep(childArgs({ folder, step: '2', hash, runId: run.id }), { now: () => clock, exit: (code) => exited.push(code), tickMs });
+    await until(() => findRun(folder).changes.length === 1);
+    assert.deepEqual(exited, []);
+    clock = at(deadline - tickMs);
+    await until(() => exited.length === 1);
+    assert.match(findRun(folder).steps[2].failed, /still running/);
+    fs.writeFileSync(path.join(home, 'release-2'), '');
+    assert.equal(await running, 1);
+  });
+});
+
 test('a long step\'s process from an older click never marks the newer attempt done or failed', async () => {
   // The old process either finishes, or wakes past its own deadline, after a newer click started
   // the step again (the helper had counted the old attempt stuck).
@@ -308,6 +380,50 @@ test('a step records each change as it makes it, so one that fails part-way leav
   });
 });
 
+test('a running step\'s line for the director is kept on its entry, shown cleaned by status, and dropped by a new click', async () => {
+  await withHome(async () => {
+    const user = fs.realpathSync.native(tempFolder('wh-say '));
+    const folder = path.join(user, 'Projects', 'shop');
+    fs.mkdirSync(folder, { recursive: true });
+    const run = startRun({ folder, now: () => NOW });
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let saying;
+    const said = new Promise((resolve) => { saying = resolve; });
+    const step = { n: 3, title: SETUP_TITLES[3], plan: async () => ({ changes: [] }), apply: async (ctx) => {
+      ctx.say('two\nlines');
+      assert.equal(findRun(folder).steps[3].say.line, 'two lines', 'a line on several lines is put on one');
+      ctx.say('x'.repeat(900));
+      assert.equal(findRun(folder).steps[3].say.line.length, journal.SAY_CHARS, 'a long line is cut, never failing the step');
+      ctx.say('Type WXYZ-1234 at https://github.com/login/device, then click Authorise');
+      ctx.say('Then open https://someone:secret@example.com/page');
+      saying();
+      await held;
+      return [];
+    } };
+    markStep(run.id, 3, 'clickedAt', { now: () => NOW });
+    const current = (entry) => entry?.clickedAt === NOW.toISOString() && !entry.doneAt;
+    const applying = runApply({ step, runId: run.id, changes: [], ctx: { now: () => NOW }, current });
+    await said;
+    assert.deepEqual(findRun(folder).steps[3].say, { line: 'Then open https://someone:secret@example.com/page', at: NOW.toISOString() });
+    const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: user });
+    const { lines } = await routes['/setup/status']({ folder });
+    const at = lines.findIndex((l) => l.startsWith('Step 3,'));
+    assert.match(lines[at], /running since/);
+    assert.equal(lines[at + 1], '  Then open https://[hidden]@example.com/page');
+    release();
+    assert.deepEqual(await applying, { ok: true });
+    assert.ok(!(await routes['/setup/status']({ folder })).lines.some((l) => l.includes('Then open')), 'a finished step says nothing more');
+    // A new attempt says its own lines, never the last attempt's.
+    markStep(run.id, 3, 'clickedAt', { now: () => NOW });
+    assert.equal(findRun(folder).steps[3].say, undefined);
+    // An older attempt's process says nothing on a newer attempt's entry.
+    const old = { ...step, apply: async (ctx) => { ctx.say('an old code'); return []; } };
+    await runApply({ step: old, runId: run.id, changes: [], ctx: { now: () => NOW }, current: () => false });
+    assert.equal(findRun(folder).steps[3].say, undefined);
+  });
+});
+
 test('a long step that fails part-way leaves every change it made in the journal, each one put back', async () => {
   await withHome(async (home) => {
     const folder = fs.realpathSync.native(tempFolder('wh-long-fail '));
@@ -324,6 +440,6 @@ test('a long step that fails part-way leaves every change it made in the journal
     assert.deepEqual(changes.map((c) => [c.step, c.target, c.before, c.after]), [[2, path.join(folder, 'x.json'), 'theirs', 1], [2, path.join(folder, 'y.json'), null, 2]]);
     for (const change of [...changes].reverse()) assert.deepEqual(reverseChange(change), { put: true });
     assert.deepEqual(readJson(path.join(folder, 'x.json')), { a: 'theirs' });
-    assert.deepEqual(readJson(path.join(folder, 'y.json')), {});
+    assert.equal(fs.existsSync(path.join(folder, 'y.json')), false, 'the file the step made goes too (ruling R138)');
   });
 });

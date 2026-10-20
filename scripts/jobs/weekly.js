@@ -24,9 +24,9 @@
 // Git and the host are reached only through the helper (`client`).
 import fs from 'node:fs';
 import path from 'node:path';
-import { jobsDir, wheelhouseHome } from '../lib/paths.js';
+import { jobsDir, projectsDir } from '../lib/paths.js';
 import { WEEK_MS } from '../lib/core-numbers.js';
-import { readProject } from '../lib/projects.js';
+import { registeredProjects } from '../lib/projects.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { DEFAULT_SOURCES } from '../sources/list.js';
 import { runSourcesCheck } from '../sources/check.js';
@@ -91,25 +91,9 @@ const readJson = (file) => {
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// The registered projects: every folder under projects/ with a readable record.
-function registeredProjects() {
-  let names;
-  try {
-    names = fs.readdirSync(path.join(wheelhouseHome(), 'projects'));
-  } catch {
-    return [];
-  }
-  const found = [];
-  for (const name of names.sort()) {
-    const record = readProject(name);
-    if (record) found.push({ project: name, record });
-  }
-  return found;
-}
-
 // A project's settings view, as the helper last wrote it (`views.old` between its two renames).
 function settingsView(project) {
-  const base = path.join(wheelhouseHome(), 'projects', project, 'views');
+  const base = path.join(projectsDir(), project, 'views');
   for (const folder of [base, `${base}.old`]) {
     const view = readJson(path.join(folder, 'settings.json'));
     if (isObject(view)) return view;

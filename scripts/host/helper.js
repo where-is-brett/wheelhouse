@@ -26,11 +26,13 @@ import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { gateDecision } from '../gate/conditions.js';
 import { classifyChange, readConfig, CI_FILES } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
-import { deleteKey, readKey } from './keys.js';
-import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
+import { hide, cleanDeep } from '../lib/clean.js';
+import { readKey } from './keys.js';
+import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS } from '../state/events.js';
+import { cutAccess } from './cut-access.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -44,7 +46,7 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
-import { BUNDLE_PATH, PROFILE_BRANCH, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
+import { BUNDLE_PATH, PROFILE_BRANCH, PROFILE_HOLDS_KEYS, holdsKeys, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
@@ -54,11 +56,14 @@ import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } f
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
+import { CLICK_MS } from '../lib/core-numbers.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
+import { uninstallRoutes } from '../setup/uninstall.js';
 import { baselineRoutes } from '../measures/baseline.js';
+import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from '../lib/trust-clicks.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 export const LOCK_BRANCH = 'wheelhouse-lock';
@@ -75,7 +80,6 @@ const PROBE_MS = 1000;
 const PIPE = /^\\\\[.?]\\pipe\\/i;
 // Git for Windows reads "/dev/null" as its null device too.
 const NO_FILE = '/dev/null';
-const CLICK_MS = 10 * 60 * 1000;
 // A restore pull request may be merged under STOP for a day after the director's step 3 click.
 const RESTORE_MS = 24 * 60 * 60 * 1000;
 const CONTAIN_MS = 10 * 60 * 1000;
@@ -93,25 +97,37 @@ const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 // The most of one kept record that is read: a signed click is a few kilobytes.
 const PENDING_BYTES = 256 * 1024;
 
-// The ids of the records the hooks kept in projects/<p>/pending/ to send later:
-// a signed record's own id, or a write's given id. Only regular files of at
-// most PENDING_BYTES are read; anything else, or a file that won't read, is passed over.
-function pendingIds(project) {
-  const ids = new Set();
+// The records the hooks kept in projects/<p>/pending/ to send later, each { route, body }. Only
+// regular files of at most PENDING_BYTES are read; anything else, or a file that won't read, is
+// passed over.
+function pendingRecords(project) {
   let names = [];
   try {
     names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json'));
   } catch { /* none kept */ }
-  for (const name of names) {
+  return names.flatMap((name) => {
     try {
       const file = path.join(pendingDir(project), name);
       const stat = fs.lstatSync(file);
-      if (!stat.isFile() || stat.size > PENDING_BYTES) continue;
-      const { body } = JSON.parse(fs.readFileSync(file, 'utf8'));
-      for (const id of [body?.event?.id, body?.id]) if (typeof id === 'string') ids.add(id);
-    } catch { /* not a record */ }
-  }
-  return ids;
+      if (!stat.isFile() || stat.size > PENDING_BYTES) return [];
+      const { route, body } = JSON.parse(fs.readFileSync(file, 'utf8'));
+      return [{ route, body }];
+    } catch {
+      return []; // not a record
+    }
+  });
+}
+
+// The ids those records hold: a signed record's own id, the id of the event a kept confirmation
+// carries, or a write's given id.
+const idsOf = (records) => new Set(records.flatMap(({ body }) => [body?.event?.id, body?.target?.id, body?.id]).filter((id) => typeof id === 'string'));
+
+// Whether a write with this id is one a hook kept to send (a setup answer's glossary entry, ruling
+// R59): a kept write of that very kind and data under that id, and no other kept record holding it.
+function keptWrite(records, { kind, data, id }) {
+  const holding = records.filter(({ body }) => [body?.event?.id, body?.target?.id, body?.id].includes(id));
+  return holding.length > 0 && holding.every(({ route, body }) => route === 'write' && body?.id === id && body.kind === kind
+    && canonicalJson(body.data ?? null) === canonicalJson(data));
 }
 const MOST_OUTPUT = 2000;
 const MOST_KEPT = 64 * 1024;
@@ -548,8 +564,7 @@ export async function checkPush({
 }
 
 // --- keeping secrets out of answers ---
-
-const CREDENTIAL_URL = /([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@'"]+@/g;
+// `hide` and `cleanDeep` are in scripts/lib/clean.js, which the setup engine uses too.
 
 // The secrets in a connection's environment: the keys themselves, and the
 // header git is given, with the base64 inside it and the key that decodes from it.
@@ -575,25 +590,10 @@ export function secretsOf(env) {
   return [...out].sort((a, b) => b.length - a.length);
 }
 
-function hide(text, secrets) {
-  let out = String(text);
-  for (const s of secrets) out = out.split(s).join('[hidden]');
-  return out.replace(CREDENTIAL_URL, '$1[hidden]@');
-}
-
 // For refusals and errors: the adapter's scrub (key-like text), then every
 // secret and any credentials in an address.
 function clean(text, secrets) {
   return hide(scrub(hide(text, secrets), Object.fromEntries(secrets.map((s, i) => [i, s]))), secrets);
-}
-
-function cleanDeep(value, secrets) {
-  if (typeof value === 'string') return hide(value, secrets);
-  if (Array.isArray(value)) return value.map((v) => cleanDeep(v, secrets));
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cleanDeep(v, secrets)]));
-  }
-  return value;
 }
 
 // --- serving ---
@@ -692,7 +692,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // helper places the project from it.
 const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview'];
 
-const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/state/backup'];
+const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
 
 function checkProject(project) {
@@ -783,6 +783,10 @@ export async function startHelper({
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
   setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
+  // What the helper does once the last uninstall on this computer has finished (scripts/setup/
+  // uninstall.js): given its own close, by default it closes; the real helper (helper-main.js) then
+  // exits.
+  onStop = (close) => close(),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1230,8 +1234,12 @@ export async function startHelper({
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
     if (id !== undefined && listEvents(stateDir(project), { report: () => {} }).some((e) => e.id === id)) refuse('the state already holds an event with that id');
-    // A signed click a hook kept to send later must never find its id taken.
-    if (id !== undefined && pendingIds(project).has(id)) refuse('a record waiting to be sent from this computer has that id');
+    // A signed click a hook kept to send later must never find its id taken; the kept write itself,
+    // sent, is taken under its id.
+    if (id !== undefined) {
+      const kept = pendingRecords(project);
+      if (idsOf(kept).has(id) && !keptWrite(kept, { kind, data, id })) refuse('a record waiting to be sent from this computer has that id');
+    }
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
     }
@@ -1243,17 +1251,48 @@ export async function startHelper({
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
-  async function doRecord({ project, event }, ctx) {
+  const TARGET_KEYS = ['v', 'id', 'at', 'computer', 'kind', 'data'];
+  // The plain ruling or setting a confirmation carries (`target`): the event a hook made from the
+  // director's answer on a setup card that said it records it (rulings R35, R59), confirmed by that
+  // same click. The helper makes every other plain event itself, but a confirmation names its
+  // event's every field, its time among them, so this one comes whole, and is taken only as the
+  // event the signed confirmation names, by its id and its hash, made on this computer.
+  function checkTarget(target, event) {
+    const plain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+    if (event.kind !== 'confirmation') refuse('only a confirmation carries the event it confirms');
+    if (!plain(target) || Object.keys(target).some((k) => !TARGET_KEYS.includes(k)) || target.v !== 1 || !plain(target.data)) refuse('the confirmed event is not a whole plain event');
+    if (!CONFIRMABLE_KINDS.includes(target.kind) || target.kind === 'level') refuse('only a ruling or a setting comes with its confirmation');
+    if (typeof target.id !== 'string' || !RANDOM_UUID.test(target.id) || typeof target.at !== 'string' || !ISO_TIME.test(target.at)) refuse('the confirmed event needs a random id and its time');
+    if (target.computer !== computerId()) refuse('only an event made on this computer comes with its confirmation');
+    if (event.data?.confirms !== target.id || event.data?.confirmsHash !== eventHash(target)) refuse('the confirmation does not name the event it carries');
+    if (target.kind === 'setting') {
+      try { checkSetting(target.data.key, target.data.value, target.data.until); } catch (error) { refuse(error.message); }
+    }
+  }
+
+  async function doRecord({ project, event, target }, ctx) {
     if (!event || typeof event !== 'object' || Array.isArray(event)) refuse('the record must be an event');
     if (!PROTECTED_KINDS.includes(event.kind)) refuse('only a signed kind is recorded this way');
     if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
     if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
+    if (target !== undefined) checkTarget(target, event);
+    const events = listEvents(stateDir(project), { report: () => {} });
+    const held = events.filter((e) => e.id === event.id);
+    if (held.length > 0 && !held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('another event in the state carries this record\'s id, so it was not recorded');
+    // The confirmed event goes first, once, even when its confirmation is there already: a kept
+    // copy sent again finds it there, and a confirmation that reached the state alone gets it.
+    if (target !== undefined) {
+      const there = events.filter((e) => e.id === target.id);
+      if (there.some((e) => canonicalJson(e) !== canonicalJson(target))) refuse('another event in the state carries the confirmed event\'s id, so neither was recorded');
+      if (there.length === 0) {
+        await writeEvent({ project, event: target, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+        if (held.length > 0) await freshViews(() => writeViews(project, { now }));
+      }
+    }
     // The same record again has been taken (a hook sending its kept copy); another
     // event under its id has not, and says so in words a hook does not count as taken.
-    const held = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.id === event.id);
-    if (held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('the state already holds an event with that id');
-    if (held.length > 0) refuse('another event in the state carries this record\'s id, so it was not recorded');
+    if (held.length > 0) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
@@ -1278,14 +1317,20 @@ export async function startHelper({
   const PROFILE_TRACKING = `refs/remotes/${REMOTE}/${PROFILE_BRANCH}`;
   const inRebase = (dir) => ['rebase-merge', 'rebase-apply'].some((d) => fs.existsSync(path.join(dir, '.git', d)));
 
-  // Brings the profile clone up to date with a rebase. Two computers that back up the same
+  // Brings the profile clone up to date: the branch fetched into its tracking ref, then this
+  // computer's commits rebased onto it. A fetched tip holding anything under keys/ is never taken
+  // in (ruling R105): it fails closed, saying so. Two computers that back up the same
   // project on the same day each add backups/<project>/<date>.bundle: the same state, so
   // where the rebase stops only on bundles, the remote's copy is taken and this computer's
   // commit of it is dropped. A stop on anything else is abandoned and said.
   async function pullProfile(ctx) {
     const dir = profileDir();
     const env = ctx.gitEnv;
-    const pulled = await stateGit(dir, ['pull', '--rebase', REMOTE, PROFILE_BRANCH], env);
+    const fetched = await stateGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], env);
+    if (fetched.code !== 0) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
+    const keys = await holdsKeys(dir, PROFILE_TRACKING);
+    if (keys !== false) return { ok: false, keys: true, why: keys === null ? 'the profile\'s branch could not be read, so nothing was taken from it' : PROFILE_HOLDS_KEYS };
+    const pulled = await stateGit(dir, ['rebase', PROFILE_TRACKING], env);
     if (pulled.code === 0) return { ok: true };
     if (!inRebase(dir)) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
     for (let round = 0; round < 100 && inRebase(dir); round++) {
@@ -1431,17 +1476,47 @@ export async function startHelper({
     return profileWritten({ event, result });
   }
 
+  // The computers' keys the profile holds (ruling R81): the profile's branch fetched into its
+  // tracking ref, then each enrolments/<computer>.json read from that fetched tree, never from the
+  // working tree, and neither the working tree nor the helper's own branch changed. A file that
+  // isn't an enrolment of the computer it is named for is left out. When the fetch fails, what an
+  // earlier fetch brought is read, and `fetched` says so. Nothing here is trusted: the session start
+  // offers each on a card, and only the director's click there trusts it.
+  async function doProfileEnrolments(_body, ctx) {
+    const dir = profileDir();
+    const fetched = (await stateGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], ctx.gitEnv)).code === 0;
+    const listed = await stateGit(dir, ['ls-tree', '-z', '--full-tree', PROFILE_TRACKING, '--', 'enrolments/']);
+    if (listed.code !== 0) return { ok: true, fetched, enrolments: [] };
+    const enrolments = [];
+    for (const entry of listed.stdout.split('\0').filter(Boolean)) {
+      if (enrolments.length >= MAX_ENROLMENTS) break;
+      const m = /^100644 blob ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/s.exec(entry);
+      const file = m === null ? null : ENROLMENT_FILE.exec(m[2]);
+      if (file === null) continue;
+      const size = await stateGit(dir, ['cat-file', '-s', m[1]]);
+      if (size.code !== 0 || Number(size.stdout.trim()) > MAX_ENROLMENT_BYTES) continue;
+      const blob = await stateGit(dir, ['cat-file', 'blob', m[1]]);
+      const found = blob.code === 0 ? enrolmentOf(blob.stdout, file[1]) : null;
+      if (found !== null) enrolments.push(found);
+    }
+    return { ok: true, fetched, enrolments };
+  }
+
   // The answer carries the last push's refusal, when the push rules refused it.
   async function doProfileSync(_body, ctx) {
     await commitBackups();
-    await pullProfile(ctx); // what it can't settle, the push below says
+    // What it can't settle, the push below says; a tip holding keys/ stops the sync here.
+    const first = await pullProfile(ctx);
+    if (first.keys) return { ok: false, refused: first.why };
     let refused;
     const push = async () => {
       const pushed = await pushProfile(ctx);
       refused = pushed.refused;
       return pushed;
     };
-    const synced = await syncState({ push, env: ctx.gitEnv, ...inProfile() });
+    // Its pull is the profile's own, fenced as above.
+    const pull = async () => ({ code: (await pullProfile(ctx)).ok ? 0 : 1 });
+    const synced = await syncState({ push, pull, env: ctx.gitEnv, ...inProfile() });
     await freshViews(() => writeProfileViews({ now }));
     return refused === undefined ? { ok: true, ...synced } : { ok: false, ...synced, refused };
   }
@@ -2154,57 +2229,9 @@ export async function startHelper({
 
   const plainAnswer = (text, rest = {}) => ({ ok: true, message: text, ...rest });
 
-  // Step 2.
-  async function doCutAccess({ project }) {
-    const { connection, host, repo } = recordOf(project);
-    const base = host === 'gitlab' ? checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com') : null;
-    if (connection.mode !== 'narrow') {
-      if (host === 'github') {
-        return plainAnswer('Nothing was changed on this computer: the agents use the director\'s own GitHub sign-in, and only the director can revoke it. Still for the director: open the page below and revoke the sign-in that Wheelhouse uses.', { url: 'https://github.com/settings/applications' });
-      }
-      const apps = `${base}/-/user_settings/applications`;
-      const tokens = `${base}/-/user_settings/personal_access_tokens`;
-      return plainAnswer(`Nothing was changed on this computer: the agents use the director's own GitLab sign-in, and only the director can revoke it. Still for the director: revoke the sign-in on ${apps}, and check ${tokens} for any token of theirs that Wheelhouse uses.`, { url: apps });
-    }
-    if (host === 'github') {
-      let keys = null;
-      try { keys = readKey('github-app'); } catch { /* damaged: deleted below */ }
-      const id = Number.isInteger(keys?.installationId) && keys.installationId > 0 ? keys.installationId : null;
-      const url = id ? `https://github.com/settings/installations/${id}` : 'https://github.com/settings/installations';
-      deleteKey('github-app');
-      return plainAnswer('Done on this computer: the Wheelhouse app\'s keys were deleted from it, so nothing here can use them. Still for the director: the app is still installed on GitHub, and a copy of its keys would still work until the app is suspended or uninstalled. Open the page below and choose Suspend or Uninstall.', { url });
-    }
-    const name = `gitlab-project-${connection.projectId}`;
-    let key = null;
-    try { key = readKey(name); } catch { /* damaged: treated as none */ }
-    const pasted = key?.kind === 'pasted-token';
-    const url = pasted ? `${base}/-/user_settings/personal_access_tokens` : `${base}/${repo}/-/settings/access_tokens`;
-    if (typeof key?.token !== 'string' || key.token === '') {
-      return plainAnswer('No project key was found on this computer, so there was nothing to revoke from here. Still for the director: check the page below for any key that Wheelhouse made, and revoke it.', { url });
-    }
-    const api = gitlabApi({ baseUrl: base, token: key.token, fetch });
-    const statusOf = async (call) => { try { return (await call()).status; } catch { return null; } };
-    const revoked = (status) => status !== null && status >= 200 && status < 300;
-    let status = await statusOf(() => api.delete('/personal_access_tokens/self'));
-    // If GitLab will not revoke a key by itself, try it by its own number.
-    if (status !== null && !revoked(status) && status !== 401 && Number.isInteger(key.id) && key.id > 0) {
-      status = await statusOf(() => api.delete(`${projectPath(connection.projectId)}/access_tokens/${key.id}`));
-    }
-    if (revoked(status)) {
-      deleteKey(name);
-      return plainAnswer(pasted
-        ? 'Done: GitLab revoked the token. It was the director\'s own token, pasted in at setup, so it stops working anywhere else they used it too; its file was deleted from this computer. The page below lists their personal access tokens, to check it is gone.'
-        : 'Done: GitLab revoked the project key, and its file was deleted from this computer. Nothing is left for the director on this step.', { url });
-    }
-    if (status === 401) {
-      return plainAnswer(`GitLab no longer accepts this key (HTTP 401), so it no longer works; its file was kept on this computer. Still for the director: open the page below and check that the key is gone.`, { url });
-    }
-    return {
-      ok: false,
-      refused: `GitLab did not revoke the ${pasted ? 'token' : 'project key'}${status === null ? ' (it could not be reached)' : ` (HTTP ${status})`}, so its file was kept on this computer. For the director: open the page below, find ${pasted ? 'the token' : 'the key Wheelhouse made'}, and revoke it.`,
-      url,
-    };
-  }
+  // Step 2: the agents' keys taken away from this computer (scripts/host/cut-access.js, shared with
+  // uninstall, ruling R88).
+  const doCutAccess = ({ project }) => cutAccess({ record: recordOf(project), fetch });
 
   // Step 3, the first half: a pull request that puts the product back to an earlier release.
   async function doRestoreMain({ project, sha }, ctx) {
@@ -2469,9 +2496,16 @@ export async function startHelper({
   // desk can't reach it; a request that arrives all the same may get its card, but nothing is
   // recorded until STOP is lifted.
   const measures = baselineRoutes({ now, stopped, stopRefusal: STOP_REFUSAL });
+  // Uninstall's routes (scripts/setup/uninstall.js): plan and status answer under STOP; apply is
+  // refused, and starts the apply's own process only after the director's signed Remove it on the
+  // card naming the list the helper works out again (ruling R116). When the list stops the helper,
+  // it stops once the apply has finished: after the status answer that says so, or, when no one
+  // asks, a while after.
+  const uninstall = uninstallRoutes({ now, stopped, userHome, run, spawn, stopHelper: () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); } });
   const routes = {
     ...setup,
     ...measures,
+    ...uninstall,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -2496,15 +2530,18 @@ export async function startHelper({
     // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
     // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
     // `review`, the delegation review worked out from the project's events, { due, since, proposals }
-    // (ruling F41), for the front desk's `review`, which can't list them. Read-only, so STOP lets it through.
-    '/state/views': stateRoute(async ({ project, cards, review }) => {
+    // (ruling F41), for the front desk's `review`, which can't list them. With `answers`, the
+    // card-answer events, for the front desk's `views work` to tell a feature the director's Not now
+    // holds. Read-only, so STOP lets it through.
+    '/state/views': stateRoute(async ({ project, cards, review, answers }) => {
       const views = await writeViews(project, { now });
-      const events = cards === true || review === true ? listEvents(stateDir(project), { report: () => {} }) : [];
+      const events = cards === true || review === true || answers === true ? listEvents(stateDir(project), { report: () => {} }) : [];
       return {
         ok: true,
         views,
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
+        ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
         ...(review === true ? { review: delegationReview(events, { now, enrolled: readEnrolled(), views }) } : {}),
       };
     }),
@@ -2523,6 +2560,7 @@ export async function startHelper({
     '/profile/record': profileRoute(doProfileRecord),
     '/profile/sync': profileRoute(doProfileSync),
     '/profile/views': profileRoute(async () => ({ ok: true, views: await writeProfileViews({ now }) })),
+    '/profile/enrolments': profileRoute(doProfileEnrolments),
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),
@@ -2636,6 +2674,25 @@ export async function startHelper({
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
   };
 
+  // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
+  // a git process is working in can't be removed. Photographing and comparing stop after the
+  // picture under way.
+  let closed = null;
+  function close() {
+    closed ??= (async () => {
+      closing = true;
+      await new Promise((resolve) => {
+        server.close(() => {
+          if (!pipe) fs.rmSync(address, { force: true });
+          resolve();
+        });
+        server.closeAllConnections?.();
+      });
+      while (queues.size > 0) await Promise.allSettled([...queues.values()]);
+    })();
+    return closed;
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
     if (url.pathname === '/health') return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}) });
@@ -2678,6 +2735,10 @@ export async function startHelper({
         const answer = cleanDeep(await route(body), []);
         if (typeof answer?.refused === 'string') answer.refused = clean(answer.refused, []) || 'the request failed';
         if (Array.isArray(answer?.lines)) answer.lines = answer.lines.map((line) => `${/^\s*/.exec(String(line))[0]}${clean(line, [])}`);
+        // The last uninstall on this computer stops the helper, once the answer giving its end has gone.
+        if (url.pathname === '/setup/uninstall/status' && answer?.helperStops === true) {
+          res.once('finish', () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); });
+        }
         return send(res, 200, answer);
       } catch (error) {
         const message = error instanceof SetupRefusal || error instanceof Error ? error.message : '';
@@ -2738,21 +2799,5 @@ export async function startHelper({
     releaseStart();
   }
 
-  return {
-    address,
-    // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
-    // a git process is working in can't be removed. Photographing and comparing stop after the
-    // picture under way.
-    close: async () => {
-      closing = true;
-      await new Promise((resolve) => {
-        server.close(() => {
-          if (!pipe) fs.rmSync(address, { force: true });
-          resolve();
-        });
-        server.closeAllConnections?.();
-      });
-      while (queues.size > 0) await Promise.allSettled([...queues.values()]);
-    },
-  };
+  return { address, close };
 }

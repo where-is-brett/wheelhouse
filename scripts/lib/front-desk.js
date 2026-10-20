@@ -14,12 +14,20 @@ export const SCREEN_TIMEOUT_MS = 30000;
 // How long a page's own scripts may run, in the browser's time, before its picture is taken.
 export const SCREEN_SETTLE_MS = 5000;
 
+// The one file in a project's main folder the front desk writes a command's JSON input to when its
+// session has no scratchpad (ruling F85): git ignores `.wheelhouse/`, and the local settings let
+// the front desk write this file without asking. Relative to the project's folder.
+export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
+
 // What a card is about: the cards with a set line, and the one without. A baseline card reads
 // the private note's figures back (scripts/measures/baseline.js); the helper composes it, and it
-// is never a card event in the state.
+// is never a card event in the state. A trust card asks to trust another of the director's
+// computers here (ruling R80); the session start composes it, and its click is kept on this computer.
+// Uninstall's card asks to remove Wheelhouse from a project (ruling R90); the helper composes it, and
+// its click is kept on this computer, as a setup click is.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
-  'lift-incident', 'incident-fix', 'setup', 'baseline', 'question',
+  'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall', 'question',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me']);

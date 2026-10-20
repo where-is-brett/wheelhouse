@@ -1,21 +1,39 @@
 // scripts/board/health.js
 // How a project stands, in lines the board and the briefing show: STOP, the
 // protection level, the connection, the build-commands level on Windows, CI, the
-// lock, the helper, the key's renewal and the profile. What only the host knows
-// (protection, CI) comes from a cache kept for a day, so reading never waits on
-// the host.
+// approvals that ask again without Chrome, the lock, the helper, the key's renewal,
+// setup's push test when it didn't reach the phone, and the profile. What only the
+// host knows (protection, CI) comes from a cache kept for a day, so reading never
+// waits on the host.
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
+import { readConfig } from '../gate/guardrails.js';
+import { findBrowser as realFindBrowser, isChrome } from '../screens/browser.js';
+import { readSmallText } from '../hooks/kit.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
+import { QUICK_LINE } from '../lib/host-lines.js';
 
 // The STOP line starts with these words, alone or followed by ", since <date>".
 export const STOP_LINE = 'STOP is on';
-export const QUICK_LINE = 'Agents act with your full GitHub or GitLab access, across all your projects.';
+// The quick connection's line, shared with setup's step 3 (scripts/lib/host-lines.js).
+export { QUICK_LINE };
+// An approval carries over an update only when the pages look the same in Chrome's pictures
+// (check 34; rulings F61, F66, F74), so without Chrome each update after an approval asks again.
+export const NO_CHROME_LINE = 'Google Chrome isn\'t on this computer, so a change you approved asks for your click again once it is brought up to date; installing Chrome stops that';
+
+// Setup's push test didn't reach the phone (step 9, ruling R39), on the day it was recorded, `at`
+// (none when it doesn't read as a date). Claude skips a push while the director is at the
+// computer (check 4), so the line says so, with what to check, the second push option among it.
+export function phonePushLine(at) {
+  const on = dayMonthYear(at);
+  return `Setup's test notification didn't reach your phone${on ? ` on ${on}` : ''}. `
+    + 'Claude skips one while you are at the computer; check Remote Control, Push when actions required, and that your phone allows Claude\'s notifications';
+}
 
 // After a helper that did not answer in time, the next reading does not wait on it again for this long.
 const TRIED_FOR_MS = 10 * 60 * 1000;
@@ -125,9 +143,31 @@ export async function readHostFacts(project, { client, address, now = () => new 
   return cached?.facts ?? null;
 }
 
+// What the Chrome line needs: { pages, chrome }, whether the configuration in the project's main
+// `folder` lists any page and whether Chrome is on this computer, each null when it can't be told.
+export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
+  let pages = null;
+  let chrome = null;
+  try {
+    const text = typeof folder === 'string' && folder !== '' ? readSmallText(path.join(folder, '.claude', 'wheelhouse.json')) : undefined;
+    if (text !== undefined) pages = (readConfig(text).pages ?? []).length > 0;
+  } catch {
+    // A configuration that can't be read lists no page this line can speak for.
+  }
+  try {
+    chrome = isChrome(findBrowser());
+  } catch {
+    // Nor does a browser that can't be looked for.
+  }
+  return { pages, chrome };
+}
+
 // The lines for the board, in order. Each is { level: 'ok' | 'watch' | 'stop', text }. `builds` is
 // buildsShown's reading for this computer, { level, lockedUnattended }; missing, it shows nothing.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds } = {}) {
+// `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
+// is setup's push test as this computer's journal last recorded it, { arrived, at }
+// (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds, screens, phonePush } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -146,12 +186,14 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   }
   if (facts?.protection === 'none') add('watch', FREE_PLAN_LINE);
   if (facts?.ci === 'none') add('watch', 'This project has no CI, so nothing can merge');
+  if (screens?.pages === true && screens.chrome === false) add('ok', NO_CHROME_LINE);
   if (lock && lock.computer !== computerId()) add('watch', 'Another computer holds this project, so this one is read-only');
   if (helperUp === false) add('watch', NO_HELPER);
   if (renewal?.due) {
     const on = dayMonthYear(renewal.on);
     add('watch', on ? `Renew the host key by ${on}` : 'Renew the host key soon');
   }
+  if (phonePush?.arrived === false) add('watch', phonePushLine(phonePush.at));
   if (!profile) add('watch', 'Your profile isn\'t backed up off this computer yet');
   return lines;
 }

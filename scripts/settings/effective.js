@@ -59,6 +59,7 @@ export function sayValue(key, value) {
     const channels = value.channels.length ? value.channels.join(', ') : 'none';
     return value.quiet ? `${channels}, quiet from ${value.quiet.from} to ${value.quiet.to}` : channels;
   }
+  if (key === 'own-github-app') return value === null ? 'none' : `${value.slug}, on ${value.owner}`;
   if (key === 'hours') return value === null ? 'no set hours' : `${value.days.map((d) => DAYS[d]).join(', ')}, ${value.from} to ${value.to}`;
   if (key === 'briefingGapHours') return `${value} ${value === 1 ? 'hour' : 'hours'}`;
   if (key === 'delegationReviewDays') return `${value} days`;

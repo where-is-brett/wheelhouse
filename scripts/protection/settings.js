@@ -48,6 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { credentialPaths } from '../lib/credentials.js';
+import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
@@ -239,15 +240,18 @@ export function directorStatusLine({ claudeHome, projectDir }) {
   return null;
 }
 
-// The command that runs the front desk's script (scripts/frontdesk/cli.js), as its allow rule and
-// its playbook write it: `node`, then the script's full path in double quotes. On Windows the path
-// has forward slashes after its drive letter, which node and Git Bash both take, and which the
-// STOP guard reads as the same path. Null when the plugin's folder isn't a full path, or holds a
-// character that could end the quotes or change what the rule matches (a quote, `*`, a
-// parenthesis, `$`, a backtick, a backslash or a control character): that folder gets no rule, and
-// the command is asked about each time.
-export function frontDeskCommand(pluginRoot, { platform = process.platform } = {}) {
+// The command that runs one of the plugin's scripts (`script`, its path inside the plugin, such as
+// scripts/frontdesk/cli.js), as its allow rule and its playbook write it: `node`, then the
+// script's full path in double quotes. On Windows the path has forward slashes after its drive
+// letter, which node and Git Bash both take, and which the STOP guard reads as the same path. Null
+// when the plugin's folder isn't a full path, or holds a character that could end the quotes or
+// change what the rule matches (a quote, `*`, a parenthesis, `$`, a backtick, a backslash or a
+// control character): that folder gets no rule, and the command is asked about each time.
+export function pluginScriptCommand(pluginRoot, script, { platform = process.platform } = {}) {
   if (typeof pluginRoot !== 'string') return null;
+  if (typeof script !== 'string' || !/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(script) || script.split('/').includes('..')) {
+    throw new Error('The script must be a path inside the plugin, written with forward slashes');
+  }
   let root = pluginRoot;
   if (platform === 'win32') {
     if (!/^[A-Za-z]:[\\/]/.test(root)) return null;
@@ -256,24 +260,50 @@ export function frontDeskCommand(pluginRoot, { platform = process.platform } = {
     return null;
   }
   if (/["*()$`\\\p{Cc}]/u.test(root)) return null;
-  return `node "${root.replace(/\/+$/, '')}/scripts/frontdesk/cli.js"`;
+  return `node "${root.replace(/\/+$/, '')}/${script}"`;
+}
+
+// The front desk's command (scripts/frontdesk/cli.js), as pluginScriptCommand gives it.
+export function frontDeskCommand(pluginRoot, { platform = process.platform } = {}) {
+  return pluginScriptCommand(pluginRoot, 'scripts/frontdesk/cli.js', { platform });
+}
+
+// Setup's command (scripts/setup/cli.js), as pluginScriptCommand gives it. Setup's step 2 writes
+// its allow rule into the project's local settings by itself (ruling R43), so the playbook's
+// calls before step 7 are not asked about each time.
+export function setupCommand(pluginRoot, { platform = process.platform } = {}) {
+  return pluginScriptCommand(pluginRoot, 'scripts/setup/cli.js', { platform });
+}
+
+// The allow rule for one of these commands, in this file's `Bash(x:*)` form, the same as
+// `Bash(x *)`; null for a command that has none.
+export function allowRule(command) {
+  return command === null ? null : `Bash(${command}:*)`;
 }
 
 // The socket's path names this computer's home folder, so it stays out of the
 // shared file. The status line is added only when `node` and `pluginRoot` are given and the
 // director has none of their own (`ownStatusLine`, from directorStatusLine); otherwise theirs
-// stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command is
-// allowed by its full path, so the director's session isn't asked each time it composes a card or
-// records a decision; the path names this computer's folders too.
+// stays and the share comes from the mod alone. With `pluginRoot`, the front desk's command and
+// setup's are allowed by their full paths, so the director's session isn't asked each time it
+// composes a card, records a decision or asks setup for a step; the paths name this computer's
+// folders too. Beside the front desk's, writing the one file the front desk gives that command its
+// input from when its session has no scratchpad (FRONT_DESK_INPUT, ruling F85), by the
+// project-relative form, and nothing else in the project.
 export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   if (node && pluginRoot && !ownStatusLine) {
     settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
   }
-  const frontDesk = pluginRoot ? frontDeskCommand(pluginRoot, { platform }) : null;
-  // In this file's `Bash(x:*)` form, the same as `Bash(x *)`. Written on Windows too, unlike the build
-  // commands' rules: it reaches only Wheelhouse's own cli.js, by its full path, never `node` itself.
-  if (frontDesk !== null) settings.permissions = { allow: [`Bash(${frontDesk}:*)`] };
+  // Written on Windows too, unlike the build commands' rules: each reaches only one of Wheelhouse's
+  // own cli.js files, by its full path, never `node` itself.
+  const frontDesk = pluginRoot ? allowRule(frontDeskCommand(pluginRoot, { platform })) : null;
+  const setup = pluginRoot ? allowRule(setupCommand(pluginRoot, { platform })) : null;
+  const allow = [
+    ...(frontDesk === null ? [] : [frontDesk, `Edit(/${FRONT_DESK_INPUT})`]),
+    ...(setup === null ? [] : [setup]),
+  ];
+  if (allow.length > 0) settings.permissions = { allow };
   return settings;
 }
 

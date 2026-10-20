@@ -160,7 +160,7 @@ test('under STOP, the front desk\'s reading commands run by their exact words, a
         `node "${cli}" cards`,
         `node '${cli}' again 3`,
         `node "${cli}" again 12`,
-        ...['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels'].map((name) => `node "${cli}" views ${name}`),
+        ...['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work'].map((name) => `node "${cli}" views ${name}`),
         `node "${cli}" explain merge`,
         `node "${cli}" explain pull request`,
         `node "${cli}" explain "pull request"`,
@@ -256,6 +256,32 @@ test('under STOP, the foreman may read a wake and record it done, and nothing mo
         `node /elsewhere/scripts/foreman/wake.js read ${file}`,
       ]) assert.ok(denied(await guard(bash(main, bad), deps(base))), bad);
     } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('under STOP, uninstall\'s plan and status run in a project, and its apply does not (rulings R90, R91)', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const cli = `${PLUGIN}/scripts/setup/cli.js`;
+      for (const ok of [`node ${cli} uninstall plan`, `node '${cli}' uninstall status`, `node "${cli}" uninstall plan`]) {
+        assert.equal(await guard(bash(main, ok), deps(base)), undefined, ok);
+      }
+      for (const bad of [
+        `node ${cli} uninstall apply ${'a'.repeat(64)}`,
+        `node ${cli} uninstall apply`,
+        `node ${cli} uninstall`,
+        `node ${cli} uninstall plan now`,
+        `node ${cli} uninstall status ${'a'.repeat(64)}`,
+        `node ${cli} uninstall plan; rm -rf x`,
+        `node ${cli} uninstall status && node ${cli} uninstall apply ${'a'.repeat(64)}`,
+        `node /elsewhere/scripts/setup/cli.js uninstall plan`,
+      ]) assert.ok(denied(await guard(bash(main, bad), deps(base))), bad);
+    } finally {
+      liftStop();
       fs.rmSync(base, { recursive: true, force: true });
     }
   });

@@ -27,7 +27,6 @@
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { replyRecord as defaultReply } from './reply.js';
 import { pressCard as defaultPress } from './press.js';
 import { settingsRows as defaultRows, pressSetting as defaultSetting, effectiveFor as defaultEffective, ADVANCED } from './settings-pane.js';
@@ -35,6 +34,7 @@ import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
 import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
+import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { recordModReading, recordSession } from '../usage/store.js';
@@ -47,6 +47,7 @@ import { digestText as defaultDigest } from './digest.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 import { needsYou, courierWake as defaultCourierWake, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // The whole run for most requests, from reading the request to the answer.
 export const BRIDGE_MS = 5000;
@@ -106,6 +107,7 @@ const DEFAULTS = {
   liftStop: defaultLiftStop,
   sessionRole: defaultSessionRole,
   beingSetUp: defaultBeingSetUp,
+  journalTrouble: defaultJournalTrouble,
   digestText: defaultDigest,
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
@@ -302,10 +304,12 @@ async function helperAnswers(d) {
 }
 
 // The watcher's half of a tick (watch.js), which never holds up the rest: anything that throws
-// is a failure.
+// is a failure. While setup's journal can't be read, whether setup has finished isn't known, so
+// the watcher is `held` back, at the front desk (the pane's `watcher` says so) and in a foreman's
+// session alike, as the session start holds it back (ruling R72).
 function watching(found, role, client, d) {
   return Promise.resolve()
-    .then(() => d.watchTick({ project: found.project, role, client, now: d.now }))
+    .then(() => (d.journalTrouble() === null ? d.watchTick({ project: found.project, role, client, now: d.now }) : { watcher: 'held', submit: [] }))
     .catch(() => ({ watcher: 'failed', submit: [] }));
 }
 
@@ -478,7 +482,7 @@ export async function runBridge({ stdin = process.stdin, limitMs = BRIDGE_MS, wa
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   const line = await runBridge();
   // Waits for the write to be taken (a Windows pipe takes it asynchronously), then exits, so a
   // request or a timer still open can't hold the process.

@@ -3,11 +3,13 @@
 // the set line the prompt record signs against, and the reply code. The card's text and its
 // set line come from the same target, so a card can't read as one decision and sign another.
 // The front desk asks only what this returns (`cli.js card`), never a card it wrote itself. The
-// baseline card is composed by the helper and comes to the front desk from `scripts/measures/cli.js`.
+// baseline card is composed by the helper and comes to the front desk from `scripts/measures/cli.js`;
+// a trust card is composed by the session start, which hands it to the front desk as it is, and
+// uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, baselineLine, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
-  SETUP_LABEL, BASELINE_LABEL, BASELINE_HEADER, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
@@ -33,7 +35,10 @@ export const HEADERS = Object.freeze({
   'lift-incident': 'End incident',
   'incident-fix': 'Incident fix',
   setup: 'Setup',
+  'confirm-all': 'Rules found',
   baseline: BASELINE_HEADER,
+  trust: 'Trust',
+  uninstall: 'Uninstall',
   question: 'Question',
 });
 
@@ -50,12 +55,27 @@ export const DECIDING = Object.freeze({
   'lift-incident': 'End it',
   'incident-fix': 'Merge the fix',
   setup: SETUP_LABEL,
+  'confirm-all': CONFIRM_ALL_LABEL,
   baseline: BASELINE_LABEL,
+  trust: TRUST_LABEL,
+  uninstall: UNINSTALL_LABEL,
 });
 
-// The kinds whose card offers its deciding label and Not now, and no other put-off button: the
-// baseline card reads figures back, and there is nothing more to explain or show.
-const NOT_NOW_ONLY = Object.freeze(['baseline']);
+// The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
+// director's click on the card itself, never on a reply, so a code would make a shown record that
+// is never spent. Setup's card of the rules found (confirm-all, ruling R35) is one too, and so is a
+// trust card (ruling R80): another computer is trusted only by the click on the card itself; and so
+// is uninstall's card (ruling R90), which goes ahead only on the click on the card itself.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall']);
+
+// The put-off buttons a kind's card offers, where it isn't all of them: the baseline card reads
+// figures back, and there is nothing more to explain or show; a trust card has nothing to show, nor
+// has uninstall's card, whose whole list `cli.js uninstall status` gives.
+const PUT_OFF_OF = Object.freeze({
+  baseline: Object.freeze(['Not now']),
+  trust: Object.freeze(['Not now', 'Explain more']),
+  uninstall: Object.freeze(['Not now', 'Explain more']),
+});
 
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'that feature waits; the others carry on';
@@ -161,9 +181,23 @@ function lineFor(kind, target) {
     }
     return setupLine(t.step, t.hash);
   }
+  if (kind === 'confirm-all') {
+    if (!isCount(t.count) || !HEX.test(t.hash)) bad('needs how many rules it lists and the hash of that list');
+    return confirmAllLine(t.hash, t.count);
+  }
   if (kind === 'baseline') {
     if (!HEX.test(t.hash)) bad('needs the hash of the figures it reads back');
     return baselineLine(t.hash);
+  }
+  if (kind === 'trust') {
+    if (typeof t.computer !== 'string' || !/^[0-9a-f]{8}$/.test(t.computer) || dayOf(t.at) === null || typeof t.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(t.fingerprint)) {
+      bad('needs the other computer\'s id, when its key was added and the key\'s twelve-character fingerprint');
+    }
+    return trustLine(t.computer, t.at, t.fingerprint);
+  }
+  if (kind === 'uninstall') {
+    if (!isLineName(t.project) || !HEX.test(t.hash)) bad('needs the project, on one line, and the hash of the list uninstall puts back');
+    return uninstallLine(t.project, t.hash);
   }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
@@ -172,7 +206,9 @@ function lineFor(kind, target) {
 
 // The first part must name what the set line names, for every kind that names something: the
 // pull request (and the incident), the work, the incident, the runbook step's title, the branch,
-// the ruling's words, setup's step. It names no other pull request or commit than the set line's.
+// the ruling's words, setup's step, the computer a trust card trusts, the project uninstall removes
+// Wheelhouse from. It names no other pull request or commit than the set line's (the project's own
+// name aside, which may look like one).
 // An answer card, a lift-STOP card, a baseline card and a product question name nothing more:
 // a baseline card's first part is the figures themselves, which may hold any words or numbers.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
@@ -198,10 +234,14 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
   if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];
   if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
+  if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
+  if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
+  if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return null;
-  for (const token of what.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
+  const scanned = kind === 'uninstall' ? what.split(String(target.project)).join(' ') : what;
+  for (const token of scanned.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
     const looksLikeOne = /[0-9]/.test(token) && (/[a-f]/.test(token) || token.length >= 12);
     const same = commit.startsWith(token) || (abbreviated && token.startsWith(commit));
     if (looksLikeOne && !same) return `names commit ${token}, not the commit its set line names`;
@@ -237,10 +277,14 @@ function offered(kind, given, { build = false, target } = {}) {
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
-  const putOff = NOT_NOW_ONLY.includes(kind) ? ['Not now'] : PUT_OFF;
-  const allowed = [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
+  const putOff = PUT_OFF_OF[kind] ?? PUT_OFF;
+  // The card of the rules found offers its second answer in place of Show me (ruling R35).
+  const allowed = kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL, 'Not now', 'Explain more']
+    : [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
-  if (!list.some((o) => o.label === deciding)) fail(kind, 'options', `must describe ${deciding}`);
+  for (const must of kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL] : [deciding]) {
+    if (!list.some((o) => o.label === must)) fail(kind, 'options', `must describe ${must}`);
+  }
   return allowed.map((label) => ({ label, says: list.find((o) => o.label === label)?.says ?? PUT_OFF_SAYS[label] }));
 }
 
@@ -250,12 +294,16 @@ function offered(kind, given, { build = false, target } = {}) {
 // `because` is a clause after "because" ("the checks passed"); a trailing full stop is dropped.
 // `what` must name what the set line names (see sameThing). `glossary` (optional) is the glossary
 // whose terms found in the five parts and the checks line become the card's concepts when
-// `concepts` isn't given; it defaults to the starter's.
+// `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
+// the card is made from, which the card keeps so it is made once: a card with no set line (a
+// lineage hold's) is tied to its record by it, as an answer card is by its line.
 export function composeCard(input) {
   const kind = input?.kind;
   if (!CARD_KINDS.includes(kind)) throw new Error('A card needs its kind to be one the front desk knows');
   const { level } = input;
   if (![1, 2, 3, 4].includes(level)) fail(kind, 'level', 'must be 1, 2, 3 or 4');
+  // Removing Wheelhouse removes the gate, so uninstall's card is level 4 (ruling R90).
+  if (kind === 'uninstall' && level !== 4) fail(kind, 'level', 'must be 4: it removes the checks that guard the project');
   const what = words(kind, 'what', input.what);
   const why = words(kind, 'why', input.why);
   const because = words(kind, 'because', input.because);
@@ -270,6 +318,7 @@ export function composeCard(input) {
     fail(kind, 'concepts', 'must be a list of terms');
   }
   if (kind === 'question' && input.target !== undefined) fail(kind, 'target', 'is not needed: a product question has no set line');
+  if (input.event !== undefined && !(typeof input.event === 'string' && /^\S+$/.test(input.event))) fail(kind, 'event', 'must be the id of the record the card is made from');
 
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
@@ -277,7 +326,7 @@ export function composeCard(input) {
   const buttons = offered(kind, input.options, { build, target: input.target });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
-  const code = line === null ? null : replyCode(line);
+  const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
   // What the director reads as explanation: the five parts and the checks line, not the set line or the code.
   const explained = [
     `${PART_LABELS[0]} ${what}`,
@@ -287,7 +336,7 @@ export function composeCard(input) {
     `${PART_LABELS[4]} ${meanwhile}`,
     ...(checks === undefined ? [] : [`${PART_LABELS[5]} ${checks}`]),
   ];
-  const text = [...explained, ...(line === null ? [] : [line, replyCodeLine(code)])].join('\n');
+  const text = [...explained, ...(line === null ? [] : [line]), ...(code === null ? [] : [replyCodeLine(code)])].join('\n');
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
   // The baseline card's own words belong to it alone: on another card they would read as the
@@ -315,6 +364,7 @@ export function composeCard(input) {
     ...(input.importance === undefined ? {} : { importance: input.importance }),
     ...(topic === undefined ? {} : { topic }),
     concepts: [...(input.concepts ?? termsIn(explained.join('\n'), input.glossary ?? glossaryOf({})))],
+    ...(input.event === undefined ? {} : { event: input.event }),
   };
   return { question, card };
 }

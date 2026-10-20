@@ -20,7 +20,6 @@
 // from the helper.
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { run, withoutGitVars } from '../lib/run.js';
 import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions } from './files.js';
 import {
@@ -34,6 +33,7 @@ import { REPORT_WORDS } from '../lib/build-loop.js';
 import { readConfig } from '../gate/guardrails.js';
 import { parseProvenance, withBlock } from '../lineage/provenance.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -508,6 +508,6 @@ export async function main(argv, {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await main(process.argv.slice(2));
 }

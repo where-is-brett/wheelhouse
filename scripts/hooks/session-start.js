@@ -6,28 +6,41 @@
 // manifest (holding edits and commands on a mismatch, and recording the hold
 // in the state once) and records the session's provenance, and adds a short
 // reload as context. The reload names things; it never pastes whole files
-// (design section 19.1, point 5).
+// (design section 19.1, point 5). In the project's main folder it also keeps
+// `.wheelhouse/` in the main checkout's local git exclusions, as the foreman does.
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
 // five of them waiting for the helper to start, the rest for the records, the
 // sync, the views and the watcher, which is last and gets what is left. On Windows the Guarded
 // self-test (scripts/windows/low.js) runs after them, within its own 3 seconds or what is left,
 // when the level would be Guarded or the last result is missing or over a day old, and only once
-// the copy of Node.js it needs is whole; the copy itself is made in the background, never here. Context added by a hook is capped at 10,000 characters
+// the copy of Node.js it needs is whole; the copy itself is made in the background, never here.
+// The ask for the profile's enrolments (below) comes after all of that, with what is left. Context
+// added by a hook is capped at 10,000 characters
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
 //
 // In a folder being set up (no project record yet, or one setup registered and is still finishing:
 // kit.js's beingSetUp) it makes this computer's signing key when there is none, and enrols it when
 // this computer's list is empty (the plan's call: the first key is trusted on first use), starts
-// the helper, and says where setup stands. In a project setup is still finishing (step 3 has
+// the helper, and says where setup stands. In a folder Wheelhouse was removed from (uninstall closed
+// its run, ruling R89, and no new run has started) it says so, with what is left for the director:
+// removing the plugin. In a project setup is still finishing (step 3 has
 // registered it and step 7 made its first commit), the project's reload says where setup stands in
 // place of the front desk's line, so the session carries on with setup.
+//
+// Another of the director's computers (rulings R80, R81): in the front desk's session, and in a
+// folder being set up once step 3 is done, it asks the helper for the enrolments the profile holds
+// (/profile/enrolments) at most once an hour, keeping when it asked and what it found beside
+// weekly.json; between asks it reads what the last fetch found. Each computer this one doesn't trust
+// yet gets a trust card, composed here, for the session to ask as it is; a computer it trusts whose
+// enrolment holds another key gets a line saying nothing was trusted, never a card. It informs, so a
+// failure is passed over, within the budget.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp } from './kit.js';
+import { fileURLToPath } from 'node:url';
+import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
@@ -42,14 +55,19 @@ import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
 import { readProject } from '../lib/projects.js';
+import { ensureIgnored } from '../feature/files.js';
 import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
 } from '../windows/low.js';
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
+import { MARKETPLACE } from '../lineage/manifest.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
-import { SETUP_STEPS, firstUnfinished } from '../lib/setup-run.js';
+import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
+import { composeCard } from '../cards/compose.js';
+import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -70,6 +88,16 @@ export const FRONT_DESK_LINE = 'This is the front desk. Follow wheelhouse:front-
 export const NOT_SET_UP = 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.';
 export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. Follow wheelhouse:setup.`;
 export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
+// The plugin as setup's step 1 switches it on for the project (its enabledPlugins key), and the line
+// that says how it is removed, which is the director's to do in Claude Desktop.
+export const PLUGIN_KEY = `wheelhouse@${MARKETPLACE}`;
+export const REMOVE_PLUGIN = `remove the Wheelhouse plugin (${PLUGIN_KEY}) from this project in Claude Desktop`;
+// In a folder Wheelhouse was removed from (ruling R89): not "isn't set up yet".
+export const REMOVED = `Wheelhouse was removed from this folder. What is left is the director's: ${REMOVE_PLUGIN}. To set it up here again, follow wheelhouse:setup.`;
+// In a project's front desk, when setup's journal can't be read, whether setup has finished isn't
+// known, so the foreman is held back (ruling R72): a journal a newer Wheelhouse wrote, or anything else.
+export const FOREMAN_HELD_NEWER = 'The foreman is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.';
+export const FOREMAN_HELD_UNREADABLE = 'The foreman is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call, which Claude Code reads from 2.1.295; the mod's files load from CLAUDE_CODE_FLOOR
@@ -275,14 +303,14 @@ function recordHold(project, result, now) {
 // a mismatch and removes it on a match, records the hold in the state, and records this
 // session's provenance. Gives the warning lines. It informs, so anything that goes wrong is
 // passed over.
-function lineageCheck(found, input, version, { check, root, claudeHome, now }) {
+function lineageCheck(found, input, version, { check, root, claudeHome, now, pinsPending = false }) {
   try {
     const folder = found.record?.folder ?? readProject(found.project)?.folder;
-    const result = check({ project: found.project, projectDir: folder, root, claudeHome, now });
+    const result = check({ project: found.project, projectDir: folder, root, claudeHome, now, pinsPending });
     recordHold(found.project, result, now);
     try {
       writeProvenance({
-        project: found.project, sessionId: input.session_id, root, upstreams: result.upstreams, ok: result.ok,
+        project: found.project, sessionId: input.session_id, root, upstreams: result.upstreams, ok: result.ok && !(result.pending?.length > 0),
         claudeCode: version === null ? null : version.join('.'), transcript: input.transcript_path,
       });
     } catch { /* the session carries on without it */ }
@@ -293,7 +321,7 @@ function lineageCheck(found, input, version, { check, root, claudeHome, now }) {
 }
 
 // In a Shape 1 project, starts the watcher when it isn't running, as the
-// foreman's start script does (ruling R62). A watcher found running needs no
+// foreman's start script does (ruling R62), once setup has finished there (R44). A watcher found running needs no
 // configuration asked for. It informs, so anything that goes wrong is passed over.
 async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   try {
@@ -344,6 +372,43 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   return text;
 }
 
+// The most trust cards one session start hands over; the rest come at a later one.
+export const MAX_TRUST_CARDS = 2;
+// The words before a trust card's AskUserQuestion input, as JSON on the same line.
+export const TRUST_ASK = 'Another of the director\'s computers asks to be trusted here: ask the director this card with AskUserQuestion, exactly as given, as a question of its own: ';
+export const moreTrust = (n) => `${n} more of the director's computers ask to be trusted here; their cards come at a later session start.`;
+
+// The trust cards and lines for the enrolments the profile holds (rulings R80, R81). The helper is
+// asked at most once an hour, and only when it is up (`up`); the time is kept only when its answer
+// arrived (ruling R107), so a fetch slower than the budget is asked again at the next start, while
+// one whose fetch failed in the helper (an answer, `fetched: false`) waits the hour. Between asks,
+// what the last fetch found is read. Each card handed over has its key's full hash kept, which a
+// click must match (keepShownTrust). It informs, so anything that fails gives no lines.
+async function trustNotes({ client, left, up, now }) {
+  try {
+    if (up && seenDue(now)) {
+      const got = typeof client?.profile?.enrolments === 'function' ? await left(client.profile.enrolments({})) : null;
+      if (got?.ok === true && Array.isArray(got.enrolments)) keepSeen({ at: now().toISOString(), enrolments: got.enrolments });
+    }
+    const seen = readSeen();
+    if (seen === null) return [];
+    const { offers, clashes } = trustOffers({ enrolments: seen.enrolments, enrolled: readEnrolled(), own: ownKey() });
+    const lines = clashes.map(differentKeyLine);
+    const handed = [];
+    for (const enrolment of offers.slice(0, MAX_TRUST_CARDS)) {
+      try {
+        lines.push(`${TRUST_ASK}${JSON.stringify(composeCard(trustCardInput(enrolment)).question)}`);
+        handed.push(enrolment);
+      } catch { /* no card for an enrolment the composer refuses */ }
+    }
+    if (handed.length > 0) keepShownTrust(handed);
+    if (offers.length > MAX_TRUST_CARDS) lines.push(moreTrust(offers.length - MAX_TRUST_CARDS));
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
 // This computer's signing key, made when there is none (or kept when one was made before), and
 // enrolled in this computer's own list when the list is empty, so the director's first click can
 // be signed and checked. A computer that already has a list adds nothing to it here; a damaged
@@ -387,7 +452,22 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs,
   if (!up) lines.push(NO_HELPER);
   const note = setupNote(setup);
   if (note !== null) lines.push(note);
+  // Once step 3 is done, another computer's key may be trusted here, so its records count.
+  if (setup.run !== null && setup.run !== undefined && stepDone(setup.run, 3)) {
+    const client = given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
+    lines.push(...await trustNotes({ client, left: withinBudget(end), up: Boolean(up), now }));
+  }
   return lines.length === 0 ? undefined : answer.context('SessionStart', lines.join('\n'));
+}
+
+// In the project's main folder, `.wheelhouse/` in the main checkout's local exclusions, as the
+// foreman keeps it (ensureIgnored), so the front desk's input file (FRONT_DESK_INPUT) never shows
+// to git, even before the foreman first wakes (ruling F87). Best effort: a failure says nothing.
+function keepOutOfGit(found) {
+  try {
+    const folder = found.record?.folder ?? readProject(found.project)?.folder;
+    if (typeof folder === 'string') ensureIgnored(folder, { mainCheckout: folder });
+  } catch { /* the session carries on without it */ }
 }
 
 export async function decide(input, deps = {}) {
@@ -403,19 +483,28 @@ export async function decide(input, deps = {}) {
   const found = find(input.cwd, { dir });
   if (!found) {
     const setup = beingSetUp(input.cwd);
-    return setup === null ? undefined : setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now });
+    if (setup !== null) return setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now });
+    return removedFrom(input.cwd) === null ? undefined : answer.context('SessionStart', REMOVED);
   }
   const { project, locked } = found;
   markManaged(project, input.session_id, { self, dir: dir ?? managedDir(), now });
   const end = Date.now() + totalMs;
   const left = withinBudget(end);
   const notes = [];
+  // Whether setup is still finishing here, read once: it holds back the watcher and adds its note.
+  const setup = beingSetUp(input.cwd);
+  // Why setup's journal can't be read, when it can't, in a folder not being set up (beingSetUp
+  // counts such a folder as the project it is): it holds back the watcher and adds its note.
+  const trouble = setup === null ? journalTrouble() : null;
   // Each call may take no longer than the budget that is left.
   const clientNow = () => given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
 
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
-  const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now });
+  // While this folder's setup run is open and has not yet installed the kits (step 7), kits not
+  // installed are setup's own state, not drift, and write no hold (ruling R136).
+  const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
+  const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the sync below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
@@ -431,14 +520,23 @@ export async function decide(input, deps = {}) {
     if (synced?.ok !== true) notes.push(NOT_SYNCED);
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
-    await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
+    // Starting the foreman is the last thing setup does, once its health check's board is green
+    // (rulings R44, R67, scripts/setup/health.js): not while setup is finishing in this project,
+    // which it is until that board has been green, nor while setup's journal can't be read, when
+    // whether it has finished isn't known (beingSetUp counts such a folder as the project it is,
+    // so the rest of the session start goes on as in any project, and a line says why: R72).
+    if (setup === null && trouble === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
-  const setup = beingSetUp(input.cwd);
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
+  // The front desk's session: not a feature's, nor the foreman's own. Only it is told why the
+  // foreman is held back, as it is the session that speaks to the director, and only it is handed
+  // the trust cards, once step 3 is done here.
+  const deskSession = featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
+  if (trouble !== null && deskSession) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
   const stateRoot = stateDir(project);
   // The Guarded self-test, on Windows, when the level read as if it passed would be Guarded, or
@@ -461,6 +559,9 @@ export async function decide(input, deps = {}) {
       ready = guardedReady({ home, now, platform });
     } catch { /* not ready */ }
   }
+  // The trust cards come last, with whatever time is left: they inform, and a card missed now
+  // comes at a later session start.
+  if (deskSession && (setup === null || stepDone(setup.run, 3))) notes.push(...await trustNotes({ client: clientNow(), left, up: Boolean(up), now }));
   const windows = platform === 'win32' && firstForSession(project, input.session_id, now);
   // Anything that fails here, the computer's id included, shows Ask and leaves the rest of the
   // reload as it is.
@@ -470,13 +571,14 @@ export async function decide(input, deps = {}) {
       builds = buildsShown({ views, computer: computerId(), locked, guardedReady: ready }).level;
     } catch { /* shown as Ask */ }
   }
+  const frontDesk = setupLine === null && deskSession;
+  if (frontDesk) keepOutOfGit(found);
   const text = reload({
-    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds,
-    frontDesk: setupLine === null && featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk',
+    views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk,
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'SessionStart' });
 }

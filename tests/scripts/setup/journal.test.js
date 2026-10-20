@@ -5,12 +5,14 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  addChanges, applyJsonKey, findRun, journalFile, markStep, readJournal, reverseChange, startRun, stepTimes,
+  addChanges, applyJsonKey, closeRun, findRun, journalFile, markPutBack, markOnHost, markStep, readJournal, reverseChange, startRun, stepTimes, wouldReverse, heldNow,
+  reverseText,
 } from '../../../scripts/setup/journal.js';
 import {
   CLICK_FRESH_MS, NODE_FLOOR, PUSH_TEST_WAIT_MS, RETENTION_DAYS, STEP_TIMEOUT_MS, TARGET_MINUTES,
 } from '../../../scripts/lib/setup-numbers.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
+import { journalTrouble, NEWER_JOURNAL, NOT_A_JOURNAL, phonePushResult, runClosed } from '../../../scripts/lib/setup-run.js';
 
 const at = (iso) => () => new Date(iso);
 const readText = (file) => fs.readFileSync(file, 'utf8');
@@ -62,15 +64,15 @@ test('a key that was absent is removed again on reversal', () => {
     assert.equal(change.before, null);
     assert.deepEqual(readJson(file).plugins, { wheelhouse: { on: true } });
     assert.deepEqual(reverseChange(change), { put: true });
-    assert.deepEqual(readJson(file).plugins, {});
-    assert.equal(readJson(file).theme, 'dark');
-    // A file that was missing is made, and the key goes again on reversal.
+    // The object setup made above the key goes with it (ruling R138).
+    assert.deepEqual(readJson(file), { theme: 'dark' });
+    // A file that was missing is made, and goes again on reversal, the key and the file with it.
     const fresh = path.join(dir, 'sub', 'new.json');
     const made = applyJsonKey({ file: fresh, key: ['a'], value: 1 });
     assert.deepEqual(readJson(fresh), { a: 1 });
     assert.equal(made.before, null);
     assert.deepEqual(reverseChange(made), { put: true });
-    assert.deepEqual(readJson(fresh), {});
+    assert.equal(fs.existsSync(fresh), false);
     // A value that was there before is put back.
     const set = applyJsonKey({ file, key: ['theme'], value: 'light' });
     assert.deepEqual(reverseChange(set), { put: true });
@@ -143,7 +145,7 @@ test('a path with a space and an accent is written and put back', () => {
     const [kept] = findRun(dir).changes;
     assert.deepEqual(kept, change);
     assert.deepEqual(reverseChange(kept), { put: true });
-    assert.deepEqual(readJson(file), { café: 1, naïve: {} });
+    assert.deepEqual(readJson(file), { café: 1 });
     // A file and a folder with such a path are put back too.
     const note = path.join(dir, 'note é.txt');
     fs.writeFileSync(note, 'after');
@@ -198,6 +200,38 @@ test('a journal that is not JSON is refused, naming it, and never replaced', () 
     // A journal of another shape is refused too.
     fs.writeFileSync(journalFile(), '{"v":2,"runs":[]}');
     assert.throws(() => readJournal(), (error) => error.message.includes(journalFile()));
+  });
+});
+
+// Why the journal can't be read, for the session start's line and the mod's hold on the watcher
+// (ruling R72): a journal a newer Wheelhouse wrote, or anything else; told by the refusal's code.
+test('a journal that can\'t be read says why, by its refusal\'s code, and is left as it was', () => {
+  withHome(() => {
+    assert.equal(journalTrouble(), null, 'none at all reads as empty');
+    fs.mkdirSync(path.dirname(journalFile()), { recursive: true });
+    const cases = [
+      ['{"v":1,"runs":[]}', null, null],
+      ['{"v":1,"runs":[', NOT_A_JOURNAL, 'unreadable'],
+      ['null', NOT_A_JOURNAL, 'unreadable'],
+      ['[]', NOT_A_JOURNAL, 'unreadable'],
+      ['{"runs":[]}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":1,"runs":{}}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":0,"runs":[]}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":"2","runs":[]}', NOT_A_JOURNAL, 'unreadable'],
+      ['{"v":2,"runs":[]}', NEWER_JOURNAL, 'newer'],
+      ['{"v":7}', NEWER_JOURNAL, 'newer'],
+    ];
+    for (const [text, code, trouble] of cases) {
+      fs.writeFileSync(journalFile(), text);
+      if (code === null) assert.doesNotThrow(() => readJournal(), text);
+      else assert.throws(() => readJournal(), (error) => error.code === code && error.message.includes(journalFile()), text);
+      assert.equal(journalTrouble(), trouble, text);
+      assert.equal(readText(journalFile()), text);
+    }
+    // A journal that can't be opened is unreadable too.
+    fs.rmSync(journalFile());
+    fs.mkdirSync(journalFile());
+    assert.equal(journalTrouble(), 'unreadable');
   });
 });
 
@@ -437,4 +471,197 @@ test('the journal is written for its owner only', { skip: process.platform === '
 test('the journal\'s source names the byte order mark by its escape, not as a literal character', () => {
   const source = fs.readFileSync(new URL('../../../scripts/setup/journal.js', import.meta.url), 'utf8');
   assert.equal(source.includes('\uFEFF'), false);
+});
+
+// ---- Uninstall's marks (ruling R89) ----
+
+test('a push of setup\'s commit is marked as on the host once, never put back by it; nothing else is, and no step records it so (ruling R122)', () => {
+  withHome(() => {
+    const run = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    const push = { id: 'p1', step: 7, kind: 'host', target: 'o/r main', before: { branch: 'main', sha: 'a'.repeat(40) }, after: { action: 'push', branch: 'main', sha: 'b'.repeat(40) } };
+    const commit = { ...push, id: 'k1', after: { action: 'commit', branch: 'main' } };
+    addChanges(run.id, [commit, push]);
+    assert.equal(markOnHost('p1', { now: at('2026-10-20T01:00:00.000Z') }), true);
+    assert.equal(markOnHost('p1', { now: at('2026-10-20T02:00:00.000Z') }), false, 'the first mark stays');
+    const p1 = readJournal().runs[0].changes.find((c) => c.id === 'p1');
+    assert.deepEqual(p1.onHost, { at: '2026-10-20T01:00:00.000Z' });
+    assert.equal(p1.putBack, undefined);
+    assert.throws(() => markOnHost('k1'), /not a push/);
+    assert.throws(() => markOnHost('nope'), /nope/);
+    assert.throws(() => addChanges(run.id, [{ ...push, id: 'p2', onHost: { at: 'x' } }]), /found on the host/);
+  });
+});
+
+test('each change uninstall puts back is marked once, with when, whether it was put back and why', () => {
+  withHome(() => {
+    const run = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    const other = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    const change = (id) => ({ id, step: 6, kind: 'json-key', target: '/x/settings.json', key: ['a'], before: null, absent: true, after: 1 });
+    addChanges(run.id, [change('c1'), change('c2')]);
+    addChanges(other.id, [change('c3')]);
+    // Several at once, across runs, in one write.
+    assert.deepEqual(markPutBack(['c1', 'c3'], { put: true, now: at('2026-10-20T01:00:00.000Z') }), ['c1', 'c3']);
+    const marks = () => Object.fromEntries(readJournal().runs.flatMap((r) => r.changes).map((c) => [c.id, c.putBack]));
+    assert.deepEqual(marks(), { c1: { at: '2026-10-20T01:00:00.000Z', put: true }, c2: undefined, c3: { at: '2026-10-20T01:00:00.000Z', put: true } });
+    // One left, with why; a mark already made stays as it was, so nothing is reversed twice.
+    assert.deepEqual(markPutBack('c2', { put: false, why: 'changed since setup', now: at('2026-10-20T02:00:00.000Z') }), ['c2']);
+    assert.deepEqual(markPutBack(['c1', 'c2'], { put: false, why: 'again', now: at('2026-10-20T03:00:00.000Z') }), []);
+    assert.deepEqual(marks().c1, { at: '2026-10-20T01:00:00.000Z', put: true });
+    assert.deepEqual(marks().c2, { at: '2026-10-20T02:00:00.000Z', put: false, why: 'changed since setup' });
+    // An id the journal hasn't got is refused, and nothing is marked.
+    const text = readText(journalFile());
+    assert.throws(() => markPutBack(['c3', 'nope'], { put: true, now: at('2026-10-20T04:00:00.000Z') }), /nope/);
+    assert.equal(readText(journalFile()), text);
+    assert.throws(() => markPutBack([], { put: true, now: at('2026-10-20T04:00:00.000Z') }), /at least one/);
+    assert.throws(() => markPutBack('c1', { put: 'yes', now: at('2026-10-20T04:00:00.000Z') }), /true or false/);
+    assert.throws(() => markPutBack('c1', { put: false, why: '', now: at('2026-10-20T04:00:00.000Z') }), /why/i);
+    // A step never records a change as put back already.
+    assert.throws(() => addChanges(run.id, [{ ...change('c4'), putBack: { at: 'x', put: true } }]), /put back/);
+  });
+});
+
+test('a run uninstall has closed is marked closed, once, and a closed run no longer gives the phone push result', () => {
+  withHome(() => {
+    const run = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    markStep(run.id, 9, 'doneAt', { now: at('2026-10-19T04:00:00.000Z') });
+    addChanges(run.id, [{ id: 'c9', step: 9, kind: 'answer', target: 'step 9', before: null, after: { pushArrived: true } }]);
+    assert.equal(runClosed(readJournal().runs[0]), false);
+    assert.equal(phonePushResult().arrived, true);
+    assert.equal(closeRun(run.id, { at: at('2026-10-20T05:00:00.000Z'), by: 'uninstall' }), true);
+    const closed = readJournal().runs[0];
+    assert.equal(closed.closedAt, '2026-10-20T05:00:00.000Z');
+    assert.equal(closed.closedBy, 'uninstall');
+    assert.equal(runClosed(closed), true);
+    assert.equal(phonePushResult(), null, 'a computer that has left is asked the push test again');
+    // Closed once: a second close changes nothing.
+    assert.equal(closeRun(run.id, { at: at('2026-10-21T05:00:00.000Z'), by: 'uninstall' }), false);
+    assert.equal(readJournal().runs[0].closedAt, '2026-10-20T05:00:00.000Z');
+    assert.throws(() => closeRun('run-none', { at: at('2026-10-21T05:00:00.000Z'), by: 'uninstall' }), /no setup run/);
+    assert.throws(() => closeRun(run.id, { at: at('2026-10-21T05:00:00.000Z'), by: 'someone' }), /uninstall/);
+    assert.equal(runClosed(null), false);
+    assert.equal(runClosed({ closedAt: 7 }), false);
+  });
+});
+
+test('wouldReverse says what reverseChange would, and changes nothing', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-journal-');
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, '{"a":1}\n');
+    const key = applyJsonKey({ file, key: ['a'], value: 2, step: 6 });
+    const text = path.join(dir, 'note.txt');
+    const made = path.join(dir, 'made');
+    fs.mkdirSync(made);
+    const folder = { id: 'f', step: 3, kind: 'folder', target: made, before: null, after: {} };
+    const note = { id: 'n', step: 7, kind: 'file', target: text, before: null, after: 'setup\n' };
+    fs.writeFileSync(text, 'setup\n');
+    const before = [readText(file), readText(text)];
+    for (const c of [key, note, folder]) assert.deepEqual(wouldReverse(c), { put: true });
+    assert.deepEqual([readText(file), readText(text)], before);
+    assert.equal(fs.existsSync(made), true);
+    fs.writeFileSync(path.join(made, 'x'), '');
+    fs.writeFileSync(text, 'theirs\n');
+    fs.writeFileSync(file, '{"a":3}\n');
+    for (const c of [key, note, folder]) assert.deepEqual(wouldReverse(c), { put: false, why: 'changed since setup' });
+    assert.deepEqual(wouldReverse({ ...folder, before: {} }), { put: false, why: 'not made by setup' });
+    assert.deepEqual(wouldReverse({ id: 'e', kind: 'env', target: 'X', before: null, after: '1' }), { put: false, why: 'put back by its own step' });
+  });
+});
+
+test('heldNow reads what a key or a file holds now, changing nothing', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-journal-');
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, '{"a":{"b":null}}\n');
+    const key = (k) => ({ id: 'k', kind: 'json-key', target: file, key: k, before: null, after: 1 });
+    assert.deepEqual(heldNow(key(['a', 'b'])), { held: true, value: null });
+    assert.deepEqual(heldNow(key(['a', 'c'])), { held: false });
+    const note = { id: 'n', kind: 'file', target: path.join(dir, 'note.txt'), before: null, after: 'x' };
+    assert.deepEqual(heldNow(note), { held: false });
+    fs.writeFileSync(note.target, 'x');
+    assert.deepEqual(heldNow(note), { held: true, value: 'x' });
+    fs.writeFileSync(file, 'not json');
+    assert.deepEqual(heldNow(key(['a'])), { why: 'changed since setup' });
+    assert.equal(readText(file), 'not json');
+    assert.throws(() => heldNow({ id: 'e', kind: 'env', target: 'X', before: null, after: '1' }), /not a key or a file/);
+  });
+});
+
+test('reverseText puts a key or a file back in a copy held elsewhere, changing nothing here', () => {
+  const key = { id: 'chg-1', kind: 'json-key', target: '/p/.claude/settings.json', key: ['extraKnownMarketplaces'], before: null, absent: true, after: { w: 1 } };
+  const text = `${JSON.stringify({ enabledPlugins: { a: true }, extraKnownMarketplaces: { w: 1 } }, null, 2)}\n`;
+  assert.deepEqual(reverseText(key, text), { put: true, text: `${JSON.stringify({ enabledPlugins: { a: true } }, null, 2)}\n` });
+  // Holding what was there before: nothing to change. Neither: changed since setup.
+  const without = `${JSON.stringify({ enabledPlugins: { a: true } }, null, 2)}\n`;
+  assert.deepEqual(reverseText(key, without), { put: true, text: without });
+  assert.deepEqual(reverseText(key, '{"extraKnownMarketplaces":{"w":2}}'), { put: false, why: 'changed since setup' });
+  assert.deepEqual(reverseText(key, 'not json'), { put: false, why: 'changed since setup' });
+  assert.deepEqual(reverseText(key, null), { put: true, text: null });
+  assert.deepEqual(reverseText({ ...key, absent: undefined, before: 'mine' }, null), { put: false, why: 'changed since setup' });
+  assert.deepEqual(reverseText({ ...key, absent: undefined, before: { w: 0 } }, '{"extraKnownMarketplaces":{"w":1}}'), { put: true, text: '{"extraKnownMarketplaces":{"w":0}}' });
+  const file = { id: 'chg-2', kind: 'file', target: '/p/CLAUDE.md', before: null, after: '# Compact\n' };
+  assert.deepEqual(reverseText(file, '# Compact\n'), { put: true, text: null });
+  assert.deepEqual(reverseText(file, null), { put: true, text: null });
+  assert.deepEqual(reverseText(file, '# Theirs\n'), { put: false, why: 'changed since setup' });
+  assert.throws(() => reverseText({ id: 'chg-3', kind: 'folder', target: '/p/x', before: null, after: {} }, null));
+});
+
+// Ruling R138: what setup made on the way to a key goes when the key is put back, once it is empty:
+// the objects above the key that weren't there, and the file itself when setup made it.
+test('a key\'s parents and file that setup made are recorded, and removed when they are left empty on reversal (ruling R138)', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-made ');
+    // A file that wasn't there: its file and the object above the key are setup's.
+    const local = path.join(dir, 'settings.local.json');
+    const rule = applyJsonKey({ file: local, key: ['permissions', 'allow'], value: ['Bash(x:*)'] });
+    assert.deepEqual([rule.made, rule.fileMade], [['permissions'], true]);
+    assert.deepEqual(reverseChange(rule), { put: true });
+    assert.equal(fs.existsSync(local), false, 'the file setup made, left empty, is removed');
+
+    // A file the director had: the object setup made above two keys goes with the first key setup
+    // wrote there, the last put back; the file and the director's keys stay.
+    const user = path.join(dir, 'settings.json');
+    fs.writeFileSync(user, '{\n  "theme": "dark"\n}\n');
+    const one = applyJsonKey({ file: user, key: ['env', 'A'], value: '1' });
+    const two = applyJsonKey({ file: user, key: ['env', 'B'], value: '2' });
+    assert.deepEqual([one.made, one.fileMade, two.made], [['env'], undefined, undefined]);
+    reverseChange(two);
+    assert.deepEqual(readJson(user), { theme: 'dark', env: { A: '1' } });
+    reverseChange(one);
+    assert.equal(readText(user), '{\n  "theme": "dark"\n}\n');
+
+    // Something of the director's put there since stays, and so does what holds it; what setup
+    // made below it, left empty, goes.
+    const three = applyJsonKey({ file: user, key: ['outer', 'inner', 'C'], value: 3 });
+    assert.deepEqual(three.made, ['outer']);
+    const withOwn = readJson(user);
+    withOwn.outer.mine = true;
+    fs.writeFileSync(user, `${JSON.stringify(withOwn, null, 2)}\n`);
+    reverseChange(three);
+    assert.deepEqual(readJson(user), { theme: 'dark', outer: { mine: true } });
+  });
+});
+
+test('an object that was there before, empty, is left as it was (ruling R138)', () => {
+  withHome(() => {
+    const file = path.join(tempFolder('wh-made '), 'settings.json');
+    fs.writeFileSync(file, '{\n  "env": {}\n}\n');
+    const change = applyJsonKey({ file, key: ['env', 'A'], value: '1' });
+    assert.equal(change.made, undefined);
+    assert.equal(change.fileMade, undefined);
+    reverseChange(change);
+    assert.equal(readText(file), '{\n  "env": {}\n}\n');
+  });
+});
+
+test('reverseText takes out what setup made on the way too, and no file when setup made it (ruling R138)', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-made ');
+    const file = path.join(dir, 'settings.json');
+    const change = applyJsonKey({ file, key: ['permissions', 'allow'], value: ['x'] });
+    assert.deepEqual(reverseText(change, readText(file)), { put: true, text: null });
+    fs.writeFileSync(file, '{\n  "theme": "dark"\n}\n');
+    const kept = applyJsonKey({ file, key: ['env', 'A'], value: '1' });
+    assert.deepEqual(reverseText(kept, readText(file)), { put: true, text: '{\n  "theme": "dark"\n}\n' });
+  });
 });
