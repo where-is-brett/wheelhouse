@@ -6,6 +6,8 @@ import { canonicalJson } from '../lib/canonical.js';
 import { computerId, keysDir } from '../lib/paths.js';
 
 const keyFile = () => path.join(keysDir(), 'signing.pem');
+// Where this computer's signing key is kept: uninstall lists it for removal on the last project.
+export const signingKeyFile = keyFile;
 // The computers whose signatures count here, kept beside this computer's own key, where no git
 // operation reaches (ruling R105): never in the profile's clone, which anyone who can push to the
 // profile repository could change. A list kept in the clone before is not read.

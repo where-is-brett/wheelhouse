@@ -5,13 +5,13 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  addChanges, applyJsonKey, findRun, journalFile, markStep, readJournal, reverseChange, startRun, stepTimes,
+  addChanges, applyJsonKey, closeRun, findRun, journalFile, markPutBack, markStep, readJournal, reverseChange, startRun, stepTimes, wouldReverse,
 } from '../../../scripts/setup/journal.js';
 import {
   CLICK_FRESH_MS, NODE_FLOOR, PUSH_TEST_WAIT_MS, RETENTION_DAYS, STEP_TIMEOUT_MS, TARGET_MINUTES,
 } from '../../../scripts/lib/setup-numbers.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
-import { journalTrouble, NEWER_JOURNAL, NOT_A_JOURNAL } from '../../../scripts/lib/setup-run.js';
+import { journalTrouble, NEWER_JOURNAL, NOT_A_JOURNAL, phonePushResult, runClosed } from '../../../scripts/lib/setup-run.js';
 
 const at = (iso) => () => new Date(iso);
 const readText = (file) => fs.readFileSync(file, 'utf8');
@@ -470,4 +470,82 @@ test('the journal is written for its owner only', { skip: process.platform === '
 test('the journal\'s source names the byte order mark by its escape, not as a literal character', () => {
   const source = fs.readFileSync(new URL('../../../scripts/setup/journal.js', import.meta.url), 'utf8');
   assert.equal(source.includes('\uFEFF'), false);
+});
+
+// ---- Uninstall's marks (ruling R89) ----
+
+test('each change uninstall puts back is marked once, with when, whether it was put back and why', () => {
+  withHome(() => {
+    const run = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    const other = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    const change = (id) => ({ id, step: 6, kind: 'json-key', target: '/x/settings.json', key: ['a'], before: null, absent: true, after: 1 });
+    addChanges(run.id, [change('c1'), change('c2')]);
+    addChanges(other.id, [change('c3')]);
+    // Several at once, across runs, in one write.
+    assert.deepEqual(markPutBack(['c1', 'c3'], { put: true, now: at('2026-10-20T01:00:00.000Z') }), ['c1', 'c3']);
+    const marks = () => Object.fromEntries(readJournal().runs.flatMap((r) => r.changes).map((c) => [c.id, c.putBack]));
+    assert.deepEqual(marks(), { c1: { at: '2026-10-20T01:00:00.000Z', put: true }, c2: undefined, c3: { at: '2026-10-20T01:00:00.000Z', put: true } });
+    // One left, with why; a mark already made stays as it was, so nothing is reversed twice.
+    assert.deepEqual(markPutBack('c2', { put: false, why: 'changed since setup', now: at('2026-10-20T02:00:00.000Z') }), ['c2']);
+    assert.deepEqual(markPutBack(['c1', 'c2'], { put: false, why: 'again', now: at('2026-10-20T03:00:00.000Z') }), []);
+    assert.deepEqual(marks().c1, { at: '2026-10-20T01:00:00.000Z', put: true });
+    assert.deepEqual(marks().c2, { at: '2026-10-20T02:00:00.000Z', put: false, why: 'changed since setup' });
+    // An id the journal hasn't got is refused, and nothing is marked.
+    const text = readText(journalFile());
+    assert.throws(() => markPutBack(['c3', 'nope'], { put: true, now: at('2026-10-20T04:00:00.000Z') }), /nope/);
+    assert.equal(readText(journalFile()), text);
+    assert.throws(() => markPutBack([], { put: true, now: at('2026-10-20T04:00:00.000Z') }), /at least one/);
+    assert.throws(() => markPutBack('c1', { put: 'yes', now: at('2026-10-20T04:00:00.000Z') }), /true or false/);
+    assert.throws(() => markPutBack('c1', { put: false, why: '', now: at('2026-10-20T04:00:00.000Z') }), /why/i);
+    // A step never records a change as put back already.
+    assert.throws(() => addChanges(run.id, [{ ...change('c4'), putBack: { at: 'x', put: true } }]), /put back/);
+  });
+});
+
+test('a run uninstall has closed is marked closed, once, and a closed run no longer gives the phone push result', () => {
+  withHome(() => {
+    const run = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    markStep(run.id, 9, 'doneAt', { now: at('2026-10-19T04:00:00.000Z') });
+    addChanges(run.id, [{ id: 'c9', step: 9, kind: 'answer', target: 'step 9', before: null, after: { pushArrived: true } }]);
+    assert.equal(runClosed(readJournal().runs[0]), false);
+    assert.equal(phonePushResult().arrived, true);
+    assert.equal(closeRun(run.id, { at: at('2026-10-20T05:00:00.000Z'), by: 'uninstall' }), true);
+    const closed = readJournal().runs[0];
+    assert.equal(closed.closedAt, '2026-10-20T05:00:00.000Z');
+    assert.equal(closed.closedBy, 'uninstall');
+    assert.equal(runClosed(closed), true);
+    assert.equal(phonePushResult(), null, 'a computer that has left is asked the push test again');
+    // Closed once: a second close changes nothing.
+    assert.equal(closeRun(run.id, { at: at('2026-10-21T05:00:00.000Z'), by: 'uninstall' }), false);
+    assert.equal(readJournal().runs[0].closedAt, '2026-10-20T05:00:00.000Z');
+    assert.throws(() => closeRun('run-none', { at: at('2026-10-21T05:00:00.000Z'), by: 'uninstall' }), /no setup run/);
+    assert.throws(() => closeRun(run.id, { at: at('2026-10-21T05:00:00.000Z'), by: 'someone' }), /uninstall/);
+    assert.equal(runClosed(null), false);
+    assert.equal(runClosed({ closedAt: 7 }), false);
+  });
+});
+
+test('wouldReverse says what reverseChange would, and changes nothing', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-journal-');
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, '{"a":1}\n');
+    const key = applyJsonKey({ file, key: ['a'], value: 2, step: 6 });
+    const text = path.join(dir, 'note.txt');
+    const made = path.join(dir, 'made');
+    fs.mkdirSync(made);
+    const folder = { id: 'f', step: 3, kind: 'folder', target: made, before: null, after: {} };
+    const note = { id: 'n', step: 7, kind: 'file', target: text, before: null, after: 'setup\n' };
+    fs.writeFileSync(text, 'setup\n');
+    const before = [readText(file), readText(text)];
+    for (const c of [key, note, folder]) assert.deepEqual(wouldReverse(c), { put: true });
+    assert.deepEqual([readText(file), readText(text)], before);
+    assert.equal(fs.existsSync(made), true);
+    fs.writeFileSync(path.join(made, 'x'), '');
+    fs.writeFileSync(text, 'theirs\n');
+    fs.writeFileSync(file, '{"a":3}\n');
+    for (const c of [key, note, folder]) assert.deepEqual(wouldReverse(c), { put: false, why: 'changed since setup' });
+    assert.deepEqual(wouldReverse({ ...folder, before: {} }), { put: false, why: 'not made by setup' });
+    assert.deepEqual(wouldReverse({ id: 'e', kind: 'env', target: 'X', before: null, after: '1' }), { put: false, why: 'put back by its own step' });
+  });
 });

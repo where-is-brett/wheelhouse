@@ -14,12 +14,16 @@
 //     after: unknown,        what setup wrote; for `answer`, what a step settled on from the
 //                            director's answers (ruling R32), with nothing to put back
 //     project?: string,
+//     putBack?: { at, put: boolean, why?: string },  uninstall's mark, made once the change is put
+//                            back or left (ruling R89), so an uninstall cut short and resumed never
+//                            reverses a change twice
 //   }
 //
 //   Journal = { v: 1, runs: Array<{
 //     id, folder, project?, startedAt,
 //     steps: Record<number, { shownAt?, clickedAt?, doneAt?, failed?: string, say?: { line, at } }>,
 //     changes: Change[],
+//     closedAt?, closedBy?: 'uninstall',   the run is over: uninstall closed it, last of all
 //   }> }
 //
 // Every write is the whole file: a temporary file beside it, then a rename, so a crash leaves
@@ -229,10 +233,16 @@ function checkChange(change, { needStep = true } = {}) {
   }
 }
 
+// A change a step records is never put back already: only uninstall marks one (markPutBack).
+function checkNew(change) {
+  checkChange(change);
+  if (Object.hasOwn(change, 'putBack')) throw new Error(`Change ${change.id} is recorded as put back already; only uninstall marks a change put back`);
+}
+
 // Appends changes to a run. A change whose id is already there is refused, so a retry cannot double one.
 export function addChanges(runId, changes) {
   if (!Array.isArray(changes)) throw new Error('The changes must be a list');
-  changes.forEach((change) => checkChange(change));
+  changes.forEach(checkNew);
   update((journal) => {
     const run = runIn(journal, runId);
     const seen = new Set(run.changes.map((c) => c.id));
@@ -241,6 +251,53 @@ export function addChanges(runId, changes) {
       seen.add(change.id);
     }
     run.changes.push(...structuredClone(changes));
+  });
+}
+
+// ---- Uninstall's marks (ruling R89) ----
+
+// Marks changes, by id, in whichever runs they are, as uninstall has dealt with them: `put` true
+// when it put the change back, false when it left it, with `why`. All in one write, so a group put
+// back together is marked together. A change marked already keeps its mark: nothing is reversed
+// twice. An id the journal hasn't got is refused, and nothing is marked. Gives the ids marked now.
+export function markPutBack(ids, { put, why, now = () => new Date() } = {}) {
+  const list = typeof ids === 'string' ? [ids] : ids;
+  if (!Array.isArray(list) || list.length === 0 || !list.every((id) => typeof id === 'string' && id !== '')) {
+    throw new Error('Uninstall marks at least one change, by its id');
+  }
+  if (typeof put !== 'boolean') throw new Error('Whether a change was put back is true or false');
+  if (why !== undefined && (typeof why !== 'string' || why.trim() === '')) throw new Error('Why a change was left is a few words');
+  const mark = { at: stamp(now), put, ...(why === undefined ? {} : { why: why.trim() }) };
+  return update((journal) => {
+    const byId = new Map(journal.runs.flatMap((r) => (Array.isArray(r.changes) ? r.changes : [])).map((c) => [c.id, c]));
+    const missing = list.filter((id) => !byId.has(id));
+    if (missing.length > 0) throw new Error(`There is no change ${missing.join(', ')} in the setup journal`);
+    const marked = [];
+    for (const id of new Set(list)) {
+      const change = byId.get(id);
+      if (change.putBack !== undefined) continue;
+      change.putBack = { ...mark };
+      marked.push(id);
+    }
+    return marked;
+  });
+}
+
+// Who may close a run: uninstall alone, once it has put back what the run changed.
+const CLOSERS = ['uninstall'];
+
+// Closes a run, writing when (`at`) and by whom (`by`, 'uninstall'): the run is over, and the
+// readers in scripts/lib/setup-run.js pass it over (runClosed). A run closed already keeps its
+// first close. True when it was closed now.
+export function closeRun(runId, { at = () => new Date(), by } = {}) {
+  if (!CLOSERS.includes(by)) throw new Error(`A setup run is closed by ${CLOSERS.join(' or ')}`);
+  const closedAt = stamp(at);
+  return update((journal) => {
+    const run = runIn(journal, runId);
+    if (run.closedAt !== undefined) return false;
+    run.closedAt = closedAt;
+    run.closedBy = by;
+    return true;
   });
 }
 
@@ -364,7 +421,7 @@ function unreadable(target, error) {
   return { put: false, why: `could not read ${target}: ${error.code ?? error.message}` };
 }
 
-function reverseJsonKey(change) {
+function reverseJsonKey(change, write) {
   checkKey(change.key);
   let read;
   try {
@@ -375,13 +432,14 @@ function reverseJsonKey(change) {
   }
   const now = getAt(read.data, change.key);
   if (!now.found || canonicalJson(now.value) !== canonicalJson(change.after)) return CHANGED;
+  if (!write) return { put: true };
   if (change.absent === true) deleteAt(read.data, change.key);
   else setAt(read.data, change.key, structuredClone(change.before));
   writeObjectFile(change.target, read);
   return { put: true };
 }
 
-function reverseFile(change) {
+function reverseFile(change, write) {
   let text;
   try {
     text = fs.readFileSync(change.target, 'utf8');
@@ -389,14 +447,22 @@ function reverseFile(change) {
     return error.code === 'ENOENT' ? CHANGED : unreadable(change.target, error);
   }
   if (text !== change.after) return CHANGED;
+  if (!write) return { put: true };
   if (change.before === null) fs.rmSync(change.target);
   else writeAtomic(writePath(change.target), change.before);
   return { put: true };
 }
 
 // A folder setup made is removed only while it is empty.
-function reverseFolder(change) {
+function reverseFolder(change, write) {
   if (change.before !== null) return { put: false, why: 'not made by setup' };
+  if (!write) {
+    try {
+      return fs.readdirSync(change.target).length === 0 ? { put: true } : CHANGED;
+    } catch {
+      return CHANGED; // gone, or not a folder
+    }
+  }
   try {
     fs.rmdirSync(change.target);
   } catch {
@@ -405,17 +471,27 @@ function reverseFolder(change) {
   return { put: true };
 }
 
-// Puts a change back, but only while the thing still holds what setup wrote. Otherwise it is
-// left as it is and the reason is given. Kinds whose own step puts them back are not touched here.
-export function reverseChange(change) {
+function reverseOrSay(change, write) {
   checkChange(change, { needStep: false });
   switch (change.kind) {
-    case 'json-key': return reverseJsonKey(change);
-    case 'file': return reverseFile(change);
-    case 'folder': return reverseFolder(change);
+    case 'json-key': return reverseJsonKey(change, write);
+    case 'file': return reverseFile(change, write);
+    case 'folder': return reverseFolder(change, write);
     case 'answer': return NOTHING;
     default: return OWN_STEP;
   }
+}
+
+// Puts a change back, but only while the thing still holds what setup wrote. Otherwise it is
+// left as it is and the reason is given. Kinds whose own step puts them back are not touched here.
+export function reverseChange(change) {
+  return reverseOrSay(change, true);
+}
+
+// What reverseChange would give for the change as things stand, changing nothing: uninstall's
+// plan reads it to list a change as put back, or as left and why (Review Focus 2).
+export function wouldReverse(change) {
+  return reverseOrSay(change, false);
 }
 
 // ---- Times ----

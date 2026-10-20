@@ -117,6 +117,12 @@ export function firstUnfinished(run, steps = stepsFor(run)) {
   return steps.map((s) => s.n).sort((a, b) => a - b).find((n) => !stepDone(run, n)) ?? null;
 }
 
+// Whether uninstall has closed the run (its `closedAt`, ruling R89): it is over, and what it set
+// up has been put back, so nothing reads it as setup in progress or as this computer's own.
+export function runClosed(run) {
+  return typeof run?.closedAt === 'string';
+}
+
 // The step that tests a push to the director's phone (Phone notifications, ruling R39).
 export const PUSH_TEST_STEP = 9;
 
@@ -124,10 +130,13 @@ export const PUSH_TEST_STEP = 9;
 // { arrived, at, run } from the run whose step 9 settled last on the director's answer, or on an
 // earlier run's (its `answer` change, { pushArrived }), `at` when it settled and `run` its id; null
 // when no run's step 9 has. Phone notifications belong to the computer, so any project's run
-// counts. The board's health reads it, and a later run's step 9 settles on an arrival (R75).
+// counts, but not a run uninstall has closed (ruling R89): a computer that has left and is set up
+// again tests the push again. The board's health reads it, and a later run's step 9 settles on an
+// arrival (R75).
 export function phonePushResult(journal = readJournal()) {
   let found = null;
   for (const run of Array.isArray(journal?.runs) ? journal.runs : []) {
+    if (runClosed(run)) continue;
     const at = run?.steps?.[PUSH_TEST_STEP]?.doneAt;
     if (typeof at !== 'string' || Number.isNaN(Date.parse(at))) continue;
     const answer = (Array.isArray(run.changes) ? run.changes : [])
