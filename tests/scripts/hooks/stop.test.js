@@ -454,7 +454,7 @@ test('under STOP, each reading command may end in one 2>/dev/null, and in no oth
           '2>/dev/null', ' 2>/dev/nullx', ' 2>/dev/null; rm x', ' 2>/dev/null 2>/dev/null', ' 2>/dev/null|cat', ' 2>/dev/null | cat',
           ' 2>/dev/null &', ' 2>/dev/null && ls', ' 2>/dev/null\n', ' 2>/dev/null\nls', ' 2>/dev/null\r', ' > /dev/null', ' >/dev/null',
           ' 1>/dev/null', ' 2> /dev/null', ' 2>&1', ' 2>&1 | grep -v ERROR', ' &>/dev/null', ' 2>>/dev/null', ' 2>/tmp/x', ' 2>/dev/zero',
-          ' 2>/DEV/NULL', ' 2>NUL.txt', ' 2>/dev/null ', ' 2>/dev/null', ' 2>$(id)', ' 2>`id`', ' 2</dev/null', ' </dev/null',
+          ' 2>/DEV/NULL', ' 2>NUL.txt', ' 2>/dev/null\u00a0', '\u00a02>/dev/null', ' 2>$(id)', ' 2>`id`', ' 2</dev/null', ' </dev/null',
         ]) {
           for (const platform of ['linux', 'win32']) {
             assert.ok(denied(await ask(`${read}${tail}`, platform)), `${JSON.stringify(read + tail)} on ${platform}`);
