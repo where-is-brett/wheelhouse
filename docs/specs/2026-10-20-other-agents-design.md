@@ -2,7 +2,7 @@
 
 # Wheelhouse with other coding agents, starting with GitHub Copilot: design
 
-**Status:** draft for the director's approval, 20 October 2026. Nothing here is built.
+**Status:** draft for the director's approval, 20 October 2026. Nothing here is built. The extension's look (section 8.6) is the director's ruling of 20 October 2026.
 
 **What it covers:** how Wheelhouse runs with a coding agent other than Claude Code, starting with GitHub Copilot in VS Code, and how the same seam leaves room for Codex, Cursor and Gemini CLI later, without designing those now.
 
@@ -314,6 +314,34 @@ The mod's counterpart, doing the mod's jobs (main design, section 17.1) in VS Co
 
 It can't see the origin of a typed message, as the mod can, so on Copilot a typed "yes" never counts as an approval, and reply codes typed in the chat don't bind (main design, section 12.5). The extension is pinned like the plugin: installed at a version, with auto-update off for it. *Designer's call.*
 
+**How it looks: the director's ruling of 20 October 2026.** The director was shown a sketch of the extension and said: "If it can look like this - that would be good." The sketch has five parts:
+
+1. **The wheel icon.** A Wheelhouse wheel opens the pane.
+2. **The pane** sits on the right, in VS Code's secondary sidebar, beside Copilot's chat.
+3. **What the pane holds,** top to bottom:
+   - the name "Wheelhouse", with STOP at the top right, in red;
+   - the verdict, such as "Two things need you.", with "Nothing is broken." in green beneath;
+   - the cards, in Calm: the title, with **Not now** as a quiet blue word at the top right; one plain line on what it is; **See it ↗** and **Why?** as blue links; a filled blue **Approve**, with **Suggest a change…** outlined beneath it;
+   - smaller items below, each with an amber dot ("optional · 3 min");
+   - **Board**, **Settings** and **Briefing** at the foot.
+4. **The chat.** The front desk talks in Copilot's chat on the left. It says what needs the director and points to the pane for the card. The binding click is in the pane (section 6.3).
+5. **The status bar.** At the bottom right it reads "Wheelhouse · 2 need you"; a click opens the pane.
+
+**The visual system is Calm,** in the main design's section 23 (the interface session is writing it, on branch `claude/interface-design`). This document doesn't repeat it: the pane follows that section, drawn with VS Code's own theme colours, so it holds in light and dark themes.
+
+**What VS Code allows,** from its extension documentation (14 October 2026):
+
+- **The status bar item:** yes, as sketched. An extension can put an item on the right of the status bar, with its own text and a command that opens the pane.
+- **The pane in the secondary sidebar:** not directly. An extension can add its pane only to the activity bar, which opens it in the primary sidebar on the left, or to the bottom panel. VS Code says extensions "cannot contribute Views directly" to the secondary sidebar. A person can drag a pane there, and VS Code then remembers where it sits.
+
+**So the closest to the sketch,** *Designer's call*:
+
+- The extension adds its pane to the activity bar, with the wheel icon, so it works at once in every layout.
+- On the first run, the extension offers one click, **Put Wheelhouse on the right**, which moves the pane to the secondary sidebar if VS Code lets an extension move a view for the person (check C14). If it doesn't, the same message shows the drag in one picture, once. Either way VS Code remembers it.
+- Copilot's chat already sits in the secondary sidebar by default, so with Wheelhouse moved there too the two would share it as tabs. To put them side by side, as sketched, the chat goes to the left: the same first-run offer moves the chat to the primary sidebar, or the director keeps them as tabs. Which of these VS Code allows an extension to do is check C14.
+- Once the pane is in the secondary sidebar, its wheel sits at the top of that sidebar rather than in the activity bar; the status bar item opens it from anywhere.
+- If none of it can be moved for the director, the pane stays on the left with its wheel on the activity bar and the chat on the right: the sketch mirrored, with everything else as sketched.
+
 ### 8.7 Setup on Copilot
 
 The same steps as main design section 15, with these differences:
@@ -365,7 +393,7 @@ So each fits the adapter's parts, and each would get its own safety line. Gemini
 
 ## 11. Checks to run before relying on it
 
-Numbered C1 to C13 here; they get the next free numbers in `docs/checks/` when the plan is written. Most need a short sitting on a Mac and on a Windows computer with Copilot.
+Numbered C1 to C14 here; they get the next free numbers in `docs/checks/` when the plan is written. Most need a short sitting on a Mac and on a Windows computer with Copilot.
 
 1. **C1, the Claude harness:** whether VS Code's Claude harness loads Wheelhouse's plugin, its hooks (with `onFailure`), its sandbox and deny settings, and `AskUserQuestion` with its `PostToolUse` record, as Claude Code does; and on which plans and company settings it is available.
 2. **C2, the extension's contributions:** whether skills, custom agents and instructions an extension contributes reach Copilot-harness sessions, and survive a company's policy that limits customisations.
@@ -380,6 +408,7 @@ Numbered C1 to C13 here; they get the next free numbers in `docs/checks/` when t
 11. **C11, usage:** what credit and token figures Copilot's session output and GitHub's REST call give, with which sign-in.
 12. **C12, the phone:** whether a phone message can reach a Copilot session (Copilot CLI's remote sessions) and set STOP, and how a needs-you push reaches the phone.
 13. **C13, a clean reviewer session:** whether Copilot CLI can start a session that loads only Wheelhouse's reviewer agent, with the folder's and the person's own agents, instructions, hooks, MCP and language servers shut out, reading tools only, and its verdict in its output. Copilot merges nothing that needs a signed review until it passes.
+14. **C14, the pane's place:** whether an extension can move its own pane to the secondary sidebar, and Copilot's chat to the primary sidebar, for the person on one click (through a VS Code command it may run), and whether VS Code then keeps both there across restarts and updates; where the wheel icon shows once the pane is in the secondary sidebar; and how the pane looks at the secondary sidebar's narrow default width, on macOS and Windows.
 
 ## 12. Open questions for the director
 
@@ -410,6 +439,7 @@ Each goes to the director as a card, through the main session.
 - the extension for VS Code, with its contributions, and the plugin for Copilot CLI, from one repository with two manifests (section 8.2);
 - hooks registered by setup once per computer in the person's Copilot hook folder, checking for a Wheelhouse project first, never in the plugin's Copilot manifest (section 8.2);
 - VS Code's and the Copilot runtime's versions read by the extension (section 8.8);
+- the pane added to the activity bar, with a first-run offer to put it on the right beside the chat, and the sketch mirrored where it can't be moved (section 8.6);
 - the playbooks' tool names moved into a tool sheet per agent (section 8.3);
 - setup's first step reading what the computer and company allow (section 8.7);
 - VS Code and its Copilot runtime recorded rather than pinned, with the safety scenarios run on a change (section 8.8);
