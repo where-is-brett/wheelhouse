@@ -162,8 +162,10 @@ test('each card says whether the front desk has asked it, and an asked card neve
   const got = await courierOn(model);
   assert.deepEqual(got.sent, [`card:${fresh.id}`]);
   assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Send Claude's notification in one line, then ask any new cards now, once.`);
-  // The asked cards stay unwoken on later ticks too.
-  assert.deepEqual(await courierOn(model, { now: () => new Date(NOW.getTime() + 3600 * 1000) }), { submit: null, sent: [] });
+  // The asked cards stay unwoken on later ticks too, the one put off by Not now included; the card
+  // the wake named, still not asked, has its one reminder.
+  assert.deepEqual((await courierOn(model, { now: () => new Date(NOW.getTime() + 3600 * 1000) })).sent, [`remind:${fresh.id}`]);
+  assert.deepEqual(await courierOn(model, { now: () => new Date(NOW.getTime() + 7200 * 1000) }), { submit: null, sent: [] });
 }));
 
 test('a build question that holds up all work blocks and wakes while away; one that doesn\'t is held', () => withHome(async (home) => {

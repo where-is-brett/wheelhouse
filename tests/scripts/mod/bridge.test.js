@@ -485,13 +485,18 @@ test('the front desk\'s tick gives the pane, the glance and the status line, and
 
 test('the front desk\'s tick carries the courier\'s wake as submit, after the session\'s first tick marks what waits', () => withHome(async (home) => {
   const repo = registered(home);
-  const waiting = (...ids) => {
+  // The waiting cards, those in `asked` handed out by the front desk.
+  const waitingAsked = (asked, ...ids) => {
     const dir = path.join(home, 'projects', P, 'views');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'waiting.json'), JSON.stringify(ids.map((id, i) => ({
-      id, at: new Date(Date.UTC(2026, 9, 18, 9 + i)).toISOString(), data: { kind: 'question', header: 'Question', options: ['Yes'], question: `The words of ${id}?`, level: 3 }, asked: null,
+      id,
+      at: new Date(Date.UTC(2026, 9, 18, 9 + i)).toISOString(),
+      data: { kind: 'question', header: 'Question', options: ['Yes'], question: `The words of ${id}?`, level: 3 },
+      asked: asked.includes(id) ? { at: NOW.toISOString(), label: null } : null,
     }))));
   };
+  const waiting = (...ids) => waitingAsked([], ...ids);
   const later = (ticks) => () => new Date(NOW.getTime() + ticks * TICK_MS);
   waiting('c-old');
   // The session's first tick finds card 1 already waiting: the visit asks it, so nothing wakes.
@@ -522,11 +527,15 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   assert.equal(asked, false);
   assert.equal('submit' in late, false);
   assert.ok(!late.pane.missing.includes('The courier couldn\'t run this time'));
+  // Card 2, which the wake named, was never asked (its notification wasn't sent): its reminder
+  // comes with card 3's wake.
   const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
-  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3). Send Claude\'s notification in one line, then ask any new cards now, once.']);
+  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3); card 2 is still waiting. Send Claude\'s notification in one line, then ask them now, once.']);
+  assert.deepEqual(woken3.woken, ['card:c-third', 'remind:c-new']);
 
-  // A second front desk opening now marks nothing and wakes for nothing.
-  waiting('c-old', 'c-new', 'c-third', 'c-fourth');
+  // A second front desk opening now marks nothing and wakes for nothing. That wake's turn asked
+  // cards 2 and 3.
+  waitingAsked(['c-new', 'c-third'], 'c-old', 'c-new', 'c-third', 'c-fourth');
   const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
   assert.equal('submit' in second, false);
   const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));

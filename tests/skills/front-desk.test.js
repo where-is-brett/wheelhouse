@@ -288,6 +288,17 @@ test('under a courier\'s wake with no AskUserQuestion, the cards are said to be 
   assert.match(courier, /When `AskUserQuestion` can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the board\./);
 });
 
+test('a courier\'s card wake whose notification wasn\'t sent asks nothing, and its reminder asks the cards whatever the notification answers (ruling 68)', () => {
+  const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
+  assert.ok(courier, 'the courier\'s rule');
+  assert.match(courier, /cards still waiting \(by their numbers\)/);
+  assert.match(courier, /When the notification answers that it was not sent \("Not sent …"\) and the wake names new cards but no cards still waiting, STOP or incidents, run no `cards` and ask nothing/);
+  assert.match(courier, /When the wake names cards still waiting, that is the courier's one reminder: ask the cards whatever the notification answers\./);
+  const row = playbook.split('\n').find((line) => line.startsWith('| "The notification wasn\'t sent'));
+  assert.ok(row, 'a red flag for asking anyway');
+  assert.match(row, /Ask nothing and end the turn: the courier's reminder asks them later/);
+});
+
 test('asked what waits, the front desk names each waiting card in one line by its board number and offers to ask one again, never putting an asked card again unasked (ruling F103; scenario 5)', () => {
   // The plan's call 4: "Not now" keeps a card waiting, and the director asks for it again by its number on the board; design 5.3: each card asked once.
   const row = playbook.split('\n').find((line) => line.startsWith('| "Anything waiting on me?"'));

@@ -244,4 +244,5 @@ The first attempt showed this; the third ticked the same way.
 
 - **Not now.** The Mac sitting is done.
 - **When the changes above are made:** a short second sitting on the Mac for the steps not run (`/go` and a code typed in the Desktop session, `/digest`, a press during the writing), whether Desktop draws a separate status line, and the courier's notification after a real absence.
+  - If the courier's reminder ten minutes on is still "Not sent — this terminal is active", the phone's Claude app showing the session is the likely cause (the second reading). Then setup's notification step should tell the director to close the Claude app on the phone. That step is setup's, so it isn't changed here.
 - **Windows:** with that visit's other checks.
