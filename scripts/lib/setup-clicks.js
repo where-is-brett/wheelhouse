@@ -281,10 +281,12 @@ export function keptAnswers(runId) {
 
 // A typed answer that is no answer at first sight (ruling R125): a question (it ends with "?"), or,
 // alone, words that hand the choice back. Case and closing punctuation don't count, so "you
-// decide?" hands the choice back: it is never a question to be taken when typed again (R132).
+// decide?" hands the choice back: it is never a question to be taken when typed again (R132). A
+// text with no letter or digit in it ("?", "...") is no answer at all, and hands it back too (R143).
 export const HANDED_BACK = Object.freeze(['you decide', 'you choose', 'not sure', 'i don\'t know', 'skip', 'whatever']);
 export function handedBack(text) {
   if (typeof text !== 'string') return false;
+  if (!/[\p{L}\p{N}]/u.test(text)) return true;
   const plain = text.trim().replace(/[.!?\s]+$/u, '').replace(/\s+/gu, ' ').replaceAll('\u2019', '\'').toLowerCase();
   return HANDED_BACK.includes(plain);
 }
