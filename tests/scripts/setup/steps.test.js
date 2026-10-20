@@ -21,6 +21,7 @@ import * as setupRun from '../../../scripts/lib/setup-run.js';
 import * as setupClicks from '../../../scripts/lib/setup-clicks.js';
 import * as journal from '../../../scripts/setup/journal.js';
 import * as clicks from '../../../scripts/setup/clicks.js';
+import { until as waitUntil } from '../../helpers/until.js';
 
 const H = 'ab'.repeat(32);
 const TEST_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-steps.js');
@@ -189,11 +190,7 @@ test('the user\'s home, with the plugin on for every folder, is never set up, no
 
 const MINUTE = 60 * 1000;
 const at = (ms) => new Date(NOW.getTime() + ms);
-const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
-async function until(check) {
-  for (let i = 0; i < 1500 && !check(); i += 1) await sleep(10);
-  assert.ok(check(), 'it happened in time');
-}
+const until = (check) => waitUntil(check, { what: 'it to happen' });
 
 // A long step's process for `step` in `folder`, for the click at `clicked`, with its deadline
 // STEP_TIMEOUT_MS later; `home` is the user home it plans with.

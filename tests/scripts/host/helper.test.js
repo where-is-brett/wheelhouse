@@ -21,6 +21,7 @@ import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
+import { until } from '../../helpers/until.js';
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -909,10 +910,7 @@ test('the mirror drops its per-request refs, keeps the base, and tidies after th
       const refs = async () => (await run('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror })).stdout.trim();
       const collected = (from) => calls.slice(from).some((c) => c.args.includes('gc') && c.args.includes('--auto') && c.cwd === mirror);
       // The tidy runs after the answer, behind it on the same queue: wait until it has run.
-      const waitForGc = async (from) => {
-        for (let i = 0; i < 100 && !collected(from); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
-        return collected(from);
-      };
+      const waitForGc = (from) => until(() => collected(from), { what: 'git gc --auto on the mirror' });
       await withHelper(fakeAdapter({ prState: async () => openAt(prHead)() }), async (client) => {
         let mark = calls.length;
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true });

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { recordsHandler, receiverPort, maintain, stopReceiver, receiverPidFile } from '../../../scripts/telemetry/main.js';
+import { until } from '../../helpers/until.js';
 
 const MAIN = fileURLToPath(new URL('../../../scripts/telemetry/main.js', import.meta.url));
 const fixture = fs.readFileSync(new URL('../../fixtures/otlp-metrics.json', import.meta.url), 'utf8');
@@ -23,17 +24,6 @@ function freePort() {
   });
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function until(check, ms = 8000) {
-  const end = Date.now() + ms;
-  for (;;) {
-    const value = await check();
-    if (value) return value;
-    if (Date.now() > end) throw new Error('Timed out waiting');
-    await sleep(25);
-  }
-}
 
 async function health(port) {
   try {

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { withHome, tempFolder } from '../helpers/homes.js';
+import { nodeStartMs } from '../helpers/until.js';
 import { usageDir } from '../../scripts/lib/paths.js';
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'statusline.js');
@@ -68,6 +69,7 @@ test('a failure prints Wheelhouse and exits 0', () => withHome((home) => {
 
 test('input that never ends still gets a line, and quickly', async () => {
   const home = tempFolder('wh-statusline-');
+  const boot = await nodeStartMs();
   const child = spawn(process.execPath, [SCRIPT], { env: { ...process.env, WHEELHOUSE_HOME: home }, stdio: ['pipe', 'pipe', 'ignore'] });
   const started = Date.now();
   let out = '';
@@ -76,7 +78,8 @@ test('input that never ends still gets a line, and quickly', async () => {
   const code = await new Promise((resolve) => child.on('close', resolve));
   assert.equal(code, 0);
   assert.equal(out.trim(), 'Wheelhouse');
-  assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+  // Its limit counts from when Node has started it, which a loaded computer can make slow.
+  assert.ok(Date.now() - started - boot < 1500, `took ${Date.now() - started} ms, ${boot} ms of it to start Node`);
 });
 
 test('a share outside 0 to 100 is dropped rather than recorded', () => withHome((home) => {

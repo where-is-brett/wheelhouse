@@ -19,6 +19,8 @@
 
 **Completed by:** `docs/specs/2026-10-18-build-loop-design.md`, the build loop and lineage, approved by the director on 18 October 2026. It wins where the two differ; sections 4, 5.4, 7, 8, 10 and 12.4 point to it.
 
+**The interface:** section 23, Calm, chosen by the director on 20 October 2026. It wins over earlier sections on how anything looks or reads.
+
 **Marks:** *Designer's call* marks a choice the designer made, which the director may override. Section 21 lists every one. Section 22 lists what the director has decided.
 
 ## 1. Intent
@@ -184,7 +186,7 @@ The rules for cards:
 - Each card is asked once, kept on the waiting-on-you list until answered, and never re-pasted into later replies.
 - Cards are batched into one message per visit, most important first.
 - Unavoidable terms are explained in place, and every label comes from the glossary.
-- A card is presented with clickable options (Claude Code's multiple-choice question), plus free text: **Approve**, **Not now**, **Explain more**, **Show me**. They render as clickable options in Desktop on macOS and Windows (check 2, `docs/checks/02-clickable-questions.md`).
+- A card is presented with clickable options (Claude Code's multiple-choice question), plus free text: **Approve**, **Suggest a change…**, **Show me** and **Not now**, with Explain more left to the free text (section 23.4). They render as clickable options in Desktop on macOS and Windows (check 2, `docs/checks/02-clickable-questions.md`).
 - A click on a card, a press of its button in the mod's pane, or its reply code typed or sent from the phone is the only way to approve or confirm anything (section 17.1). A typed "yes" is read and acted on as an instruction, but it is not an approval (section 12.3).
 - A card carries one set line naming exactly what is being decided. There are five kinds: an approval (the pull request and its commit), a confirmation of a ruling, level or setting, lifting STOP, a CI push (the branch and its commit), and a runbook step. A click counts only if the card carries that line, and the answer is one of the options the card offered. Commits are named by their first 12 characters, because a shorter prefix can be matched by brute force in minutes. One script writes the lines and the prompt-record hook checks for them (section 12.5). *Designer's call.* The build loop adds five more, each with its reply code: approving a brief or a design, answering a feature's question, amending approved work, naming an incident's fix and ending the incident (build-loop design, section 10).
 - A card about a safety change (level 4, section 12.4) says in plain words what the change does to the checks, not just what it does to the product.
@@ -192,17 +194,17 @@ The rules for cards:
 **How cards are made.** *Designer's call* for each.
 
 - **By script, never by hand.** One composer (`scripts/cards/compose.js`) writes a card's five parts, its set line and its reply code from one input, so a card can't read as one decision and sign another. The front desk asks for each card through its command (`scripts/frontdesk/cli.js`) and passes it to the question tool as the command gives it. The parts the director reads are put in the glossary's plain words (section 5.5).
-- **Its options.** A card that decides something offers its deciding label (**Approve**, **Confirm**, **Push it** and so on), **Not now**, **Explain more** and **Show me**. A feature's question carries up to three of its own options and **Explain more**, or all four of its own with "explain more" left to the free-text answer; a product question with no set line carries its own options the same way. The question tool takes at most four, and dropping one of a feature's options would decide for the director. A proposal learnt from how the director works offers **Keep as is** in place of **Show me** (section 5.5).
+- **Its options.** A card that decides something offers its deciding label (**Approve**, **Confirm**, **Push it** and so on), **Suggest a change…**, **Show me** and **Not now** (section 23.4). A feature's question carries up to three of its own options and **Suggest a change…**, or all four of its own with a change left to the free-text answer; a product question with no set line carries its own options the same way. The question tool takes at most four, and dropping one of a feature's options would decide for the director. A proposal learnt from how the director works offers **Keep as is** in place of **Show me** (section 5.5).
 - **Checked by a hook.** Before the question tool runs, the card check refuses a card missing one of its five parts, one whose set line has no reply code or another card's, one with two set lines, and one whose first part names another pull request, commit or record than its set line. It informs rather than guards: if it fails itself it lets the card through, since the prompt record is what refuses a wrong click (section 12.3).
 - **Asked once.** The board-context hook tells the front desk how many cards wait that no visit has asked. Its command gives at most four, most important first (STOP or an incident; level 4; a question that holds up all work; level 3; the rest; then oldest first), and records them as asked, so a card dismissed with no answer isn't offered on every turn. Composing a card whose set line is already waiting gives back the waiting card.
-- **"Not now" keeps a card waiting.** So do **Explain more** and **Show me**. Only an option that decides, or a signed record carrying the card's question, closes it. A card put off isn't asked on the next visit: it stays on the board, and the director asks for it again by its number there.
+- **"Not now" keeps a card waiting.** So do **Show me** and asking why. **Suggest a change…** keeps it waiting until the revised card, with its own set line, closes it (section 23.3). Only an option that decides, or a signed record carrying the card's question, closes it. A card put off isn't asked on the next visit: it stays on the board, and the director asks for it again by its number there.
 - **The build loop's records become cards** when the front desk next asks: a feature's open question an answer card; a click the merge gate waits for (the build loop's `gate-asks`) an approval or CI-push card, made once, and a CI-push card asked again only when its click lapsed before the push; a lineage hold one card with no set line, saying in plain words which kits differ, that edits and commands are held, and that no click lifts it: the next session start whose check matches does (build-loop design, section 14.6).
 - **Under STOP** the front desk's command gives the Lift STOP card alone, recommending **Not now**, since the front desk can't know why STOP was set (section 12.7).
 - **The command's input** goes in a file, never a heredoc, which Claude Code refuses whatever the allow rules say (seen on 2.1.302, 20 October 2026). The front desk writes the JSON with its own file tool, to the session's scratchpad where its system prompt names one, otherwise to `.wheelhouse/front-desk.json` in the project, and runs `node "<plugin>/scripts/frontdesk/cli.js" <command> < <file>`. The project's local settings allow that command by its full path and that one file's writing, with no prompt; nothing reads the file as trusted. The session start keeps `.wheelhouse/` out of git in the project's main folder, before the front desk's first write.
 
 **Depth on demand:**
 
-1. **Explain more:** a plain explanation with an everyday example, and a simple picture if it helps, from the glossary where the card uses its terms; then the card is asked again, as it was composed.
+1. **Why?, or asking why:** in the pane, Why? opens the card's reasons in place (section 23.3); asked in the chat, a plain explanation with an everyday example, and a simple picture if it helps, from the glossary where the card uses its terms; then the card is asked again, as it was composed.
 2. **Show me:** the preview, screenshots, or a short visual page. The preview's address comes from the helper, read-only, for the pull request's latest commit (`cli.js preview <n>`).
 3. **Talk it through:** a conversation, one question at a time.
 
@@ -394,7 +396,10 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
 - **Views are built, not stored.** The rulebook, levels, glossary, ideas, rejections, the waiting list and `status.json` are built from the events by a script, on each computer. They are not committed, so they can't conflict either.
 - **Commits and pushes.** Each event is committed and pushed straight to the branch: no pull request and no CI, because these are working notes, not code. Pushes go through the host helper (section 11), which refuses a force-push. Before every push, a secret scan checks the new files, and the push is refused if it finds one (section 12.6).
 - **Who writes.** Only Wheelhouse's state command writes to the state clone, and it refuses the protected kinds (confirmations, approvals, reviews), which only hooks or a mod click write. Builders and reviewers can't reach the folder at all (section 12.2). Builders don't need it: each brief carries the rulings that apply.
-- **Protected records are signed.** Confirmations, approvals and reviews are signed by Wheelhouse's hooks with a key kept out of every agent's reach. Each computer's key is enrolled at setup, and the list of enrolled keys lives in the profile. The gate accepts only records signed by an enrolled key. So a record that arrives any other way, for example pushed to the branch from somewhere else, counts for nothing. *Designer's call.*
+- **Protected records are signed.** Confirmations, approvals and reviews are signed by Wheelhouse's hooks with a key kept out of every agent's reach. The gate accepts only records signed by an enrolled key. So a record that arrives any other way, for example pushed to the branch from somewhere else, counts for nothing. *Designer's call.*
+  - **The first key is trusted on first use.** In a folder being set up, the session start makes this computer's key when there is none, and enrols it in this computer's own list when the list is empty, so the director's first click can be signed and checked. A computer that already has a list adds nothing to it this way. On the Mac the key's file is out of agents' reach (the sandbox), so trusting it on first use is as safe as the key itself. *Designer's call.*
+  - **Other computers are trusted only on a click.** Each computer publishes its public key to the profile as `enrolments/<computer>.json`. Another computer's key counts on this one only after the director's **Trust it** click here, on a card naming that computer's id, the day it was added and the first 12 characters of its key's fingerprint; a known id with a different key is never offered (section 15). The profile repository can be written by the narrow connection's key too, so a key found there isn't trusted on sight. *Designer's call.*
+  - **The list of trusted keys** is kept on each computer beside its own key, where no git operation reaches it, never in the profile's clone, which anyone who can push to the profile could change. *Designer's call.*
 - **Confirmation.** A ruling, a level change or a settings change takes effect only when a matching confirmation exists: a signed record of the director's card click, or of their own message, reply code or press in the mod's pane (sections 12.5 and 17.1). A press on a card in the pane earns only what a click on that same card would; a press in the settings pane is the change and its confirmation at once (section 14.4). The state reload shows the director anything without one, first thing, and it has no effect meanwhile. A proposed ruling that a confirmed one has replaced is shown as superseded, not as waiting. *Designer's call.*
 - **One computer at a time.** A lock decides which computer holds the front desk and foreman.
   - **Taking it** is a push to a separate lock branch that must fast-forward from the version last seen. If another computer moved it first, the push is refused, so two computers can't both take it.
@@ -404,7 +409,7 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
   - **A damaged lock.** A lock file on the host that can't be read counts as taken, never as free, so no computer can take it. There is no repair route yet: the director must mend the file on the host by hand.
   - **Nothing captured is lost.** A computer without the lock can still push state events, because they never conflict. So a computer that wakes after a takeover first pushes whatever it saved while away (a ruling, a captured request), then shows the board read-only. A signed record that can't reach the helper at the time is kept as a pending file and sent, oldest first, at the next session start.
 - **Backup.** Once a week, a `git bundle` of the state branch goes into the profile's `backups/<project>/`, the newest eight kept, and the profile's private repository takes it off the computer. It runs in the weekly jobs, with the check of official sources and the profile's sync, through the helper: a session start runs them when a week has passed since the last run, since nothing else scheduled the backup. *Designer's call.*
-- **The profile** (section 5.5) lives on its own branch, `wheelhouse-profile`, of the private profile repository that setup makes, as events like the state's, with views built the same way. Each computer keeps a clone of it at `~/.wheelhouse/profile/`, changed only by the helper. A profile push may only add event files under `events/` and add or remove bundles under `backups/`: the enrolled keys, under `keys/`, are never committed, and anything else is refused. Moving enrolled keys between computers is setup's. *Designer's call.*
+- **The profile** (section 5.5) lives on its own branch, `wheelhouse-profile`, of the private profile repository that setup makes, as events like the state's, with views built the same way. Each computer keeps a clone of it at `~/.wheelhouse/profile/`, changed only by the helper. A profile push may only add event files under `events/` and add or remove bundles under `backups/`: nothing is ever committed under `keys/`, the helper refuses to take in a profile that holds anything there, and anything else is refused. Publishing a computer's enrolment is setup's, pushed with the director's own sign-in rather than by the helper (section 15). *Designer's call.*
 - **What stays on `main`:** a feature's pitch, design and plan, which are reviewed in its first pull request, and a short handover file that points at the state.
 
 | Built view, or file | Holds | Written by |
@@ -427,8 +432,8 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
 **Adopting a project that already has rules.** *Designer's call.*
 
 - **Finding them.** Setup reads `CLAUDE.md`, the README and the project's docs, and lists every rule it finds, quoting where each comes from.
-- **Original wording.** Where past session transcripts exist, each rule is matched back to the director's own words. Otherwise it is marked "paraphrase".
-- **Confirming.** The director sees the list once, as one card with **Confirm all** and **Let me correct some**, because the rules are already in force. Any correction becomes a new ruling.
+- **Original wording.** Where past session transcripts exist, each rule is matched back to the director's own words. Otherwise it is marked "paraphrase". A transcript counts for the folder by the folder its entries name, not by Claude Code's folder names, and setup's own session doesn't count as the director's past words. The rules are found once per setup, so the list doesn't move between the card and the click. *Designer's call.*
+- **Confirming.** The director sees the list once, with **Confirm all** and **Let me correct some**, because the rules are already in force. The card's line, `Confirm all <n> rules as listed, <hash>`, names the list by its hash, and one click records a confirmation for each ruling, each by its own. A project with more rules than one card holds (about six) gets one such card for each part of the list. **Let me correct some** asks one card per rule, answered by a typed correction, or by leaving the rule out. Any correction becomes a new ruling. *Designer's call.*
 - **Secrets.** The secret scan runs on every quote before it is saved, since transcripts can hold pasted passwords.
 
 ### 9.1 Usage
@@ -436,7 +441,7 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
 **No usage ceiling** (the director's ruling, section 22). Instead the system is careful by design (section 19), and it watches for waste.
 
 - **Two sources of usage.** Telemetry gives the tokens and their split; the mod gives the weekly allowance and each session's running cost in dollars, so Desktop shows dollars and the share before setup switches telemetry on. Both write under `~/.wheelhouse/usage/`, kept 14 days raw and 90 days as daily summaries, and one script adds them up. *Designer's call.*
-- **Token use, per session and per subagent.** Claude Code's documented telemetry (OpenTelemetry) is the source. It reports tokens by session, model, and main session or subagent. The system runs a small local receiver for it, listening only on the computer itself (127.0.0.1), and a script adds the figures up, so reading them costs no reasoning. The receiver is its own process, on port 14318 unless `usage/receiver.json` names another, started by the session start like the helper, so it never holds Claude up and isn't part of the helper. It keeps one word beside the counts, telemetry's `query_source`, so the subagents' share can be shown (section 12.8). *Designer's call.* Telemetry can't be switched on by a project: a project's `env` settings didn't reach a Desktop session (check 7, `docs/checks/07-telemetry.md`). So setup switches it on per computer, with the director's consent and with every option that would record prompt or tool content left off. Which per-computer route reaches Desktop sessions on both systems (the user settings' `env`, or the environment Desktop starts with) is settled in the setup plan. The receiver needs nothing beyond Node.js, on macOS and Windows (check 7). The session logs are not used: their format is internal and changes between versions. Source: https://code.claude.com/docs/en/monitoring-usage
+- **Token use, per session and per subagent.** Claude Code's documented telemetry (OpenTelemetry) is the source. It reports tokens by session, model, and main session or subagent. The system runs a small local receiver for it, listening only on the computer itself (127.0.0.1), and a script adds the figures up, so reading them costs no reasoning. The receiver is its own process, on port 14318 unless `usage/receiver.json` names another, started by the session start like the helper, so it never holds Claude up and isn't part of the helper. It keeps one word beside the counts, telemetry's `query_source`, so the subagents' share can be shown (section 12.8). *Designer's call.* Telemetry can't be switched on by a project: a project's `env` settings didn't reach a Desktop session (check 7, `docs/checks/07-telemetry.md`). So setup switches it on per computer, with the director's consent and with every option that would record prompt or tool content left off. The setup plan built both per-computer routes: the user settings' `env`, written by key, and the environment Desktop starts with (on the Mac `launchctl setenv`, with a login item that sets it again at each log-in; on Windows the user's environment variables), each with a Desktop restart where needed, and each put back by uninstall. The documentation and a command-line trial say both reach a new session and a project's settings can't; whether Desktop's sessions take each one waits for the director's sittings on the Mac and Windows (check 36, `docs/checks/36-telemetry.md`). Until then setup uses the user settings, the cheaper route, named by one constant, so the sitting's answer changes one line. Where the director already has a telemetry variable of their own, setup sets none and names theirs on its card. *Designer's call.* The receiver needs nothing beyond Node.js, on macOS and Windows (check 7). The session logs are not used: their format is internal and changes between versions. Source: https://code.claude.com/docs/en/monitoring-usage
 - **The weekly allowance.** On a Pro or Max plan, Claude Code gives the share of the 5-hour and weekly limits used, and when each resets. The status line receives it as `rate_limits.seven_day.used_percentage`, and a mod as `$.session.usage().rateLimits`, with an event whenever it changes. Sources: https://code.claude.com/docs/en/statusline and https://code.claude.com/docs/en/plugins/mods/reference
   - **In Desktop, only a mod receives it.** Desktop never calls a status line (check 6). Telemetry gives tokens, not the share of the allowance. The mod's first piece (section 17.1) reads it, with each session's cost, and writes the reading to `usage/allowance.json`; the terminal's status line writes the same file.
 - **What the director sees.** Usage this week appears in the briefing and on the board. It is shown as tokens and the API-equivalent dollar figure, and as the share of the weekly allowance used. The board's build tab shows it per part (front desk, foreman, feature builders) and the subagents' tokens.
@@ -527,8 +532,13 @@ The host is detected from the git remote and can be overridden in project settin
 - **Narrow on GitHub: the Wheelhouse GitHub App.** A Wheelhouse organisation on GitHub owns it (the director's decision, section 22). The organisation requires two-factor sign-in of every member and keeps as few owners as it can. The app is never given a private key: the code sign-in needs only its public client ID, so no key exists that could act on users' repositories. The Wheelhouse project registers one public GitHub App, asking for Contents, Pull requests, Issues and Metadata only, never Workflows or Administration. The director signs in to it with a code, as `gh auth login` does, and installs it on chosen repositories: the project and the profile. The helper keeps the renewal key in `~/.wheelhouse/` and makes 8-hour access keys from it. Renewing needs only the app's client ID, which is public, so the plugin ships no client secret (check 20, `docs/checks/20-github-app.md`).
   - **A later project** can't be added to the installation by the helper: GitHub refused it with the app's key and with the director's own `gh` sign-in alike (check 20). So setup opens the app's settings page and the director ticks the new repository, one click. Installing on **All repositories** instead, so that later projects need nothing, stays available, but isn't recommended: the key could then reach every repository's code, pull requests and issues, though still no settings (the director's decision, section 22). Nothing is pasted either way.
   - **What the key can't do.** A settings change was refused with the app's key, as the table says (check 20).
-  - Pull requests show the director's name, via the app, on GitHub only (on GitLab, see below). Without the Workflows permission, a change to CI needs the director's own hand, which is a guardrail in itself (section 12.4). Making the organisation and registering the app are a level-4 step for the director, before the pilot.
-- **Narrow on GitHub: their own app.** For organisations that block third-party apps, or people who want to trust nobody else. Setup opens GitHub's new-app page, for their account or one of their organisations, with every field filled in from Wheelhouse's app manifest (the same permissions as Wheelhouse's app, and no more). They tick **Enable Device Flow**, which GitHub can't fill in, and click **Create**. Setup reads the app back with their sign-in, refuses it if it asks for more than the manifest, and records its client ID in their profile in place of Wheelhouse's, so each of their computers uses it. Everything after that is as with Wheelhouse's app, and Locked allows it. *Designer's call:* the page is filled in by link rather than by GitHub's manifest flow, which would make a private key and need a page served on this computer.
+  - Pull requests show the director's name, via the app, on GitHub only (on GitLab, see below). Without the Workflows permission, a change to CI needs the director's own hand, which is a guardrail in itself (section 12.4). Making the organisation and registering the app are a level-4 step for the director, before the pilot. Until then `scripts/host/app.json` holds no client ID, and setup's card on GitHub offers only their own app and Quick (section 15).
+- **Narrow on GitHub: their own app.** For organisations that block third-party apps, or people who want to trust nobody else. Setup opens GitHub's new-app page with every field filled in from Wheelhouse's app manifest (`scripts/host/app-manifest.json`: Contents, Pull requests and Issues to write, Metadata to read, and never Workflows, Administration or Secrets). They tick **Enable Device Flow**, which GitHub can't fill in, and click **Create**. Setup reads the app back with their sign-in, refuses it if it asks for more than the manifest or is owned by anyone else, and records its client ID in their profile in place of Wheelhouse's, so each of their computers uses it. Everything after that is as with Wheelhouse's app, and Locked allows it. *Designer's call:* the page is filled in by link rather than by GitHub's manifest flow, which would make a private key and need a page served on this computer. As built by the setup plan (19 and 20 October 2026), each a *Designer's call*:
+  - **It is private** (`public=false`, whatever the manifest says), so only the account that owns it can install it; Wheelhouse's own app is public, so every user can.
+  - **It is made on the product repository's own account,** named "Wheelhouse <account>", since a private app installs only there. The card names the account and the app, and there is no separate card to choose an organisation.
+  - **Its client ID counts only once the director confirms it.** It is kept as a profile setting, `own-github-app`, and is used only when the profile shows it confirmed; an unconfirmed or unreadable entry is ignored, so a setting any writer could add can't redirect the narrow keys. A newer proposal waiting beside it hides it, failing closed; step 3 then offers one card that proposes the confirmed app again, so it is never hidden for good.
+  - **It is read again before each code sign-in,** on every computer, since its owner can widen its permissions on GitHub at any time: a sign-in is refused, naming what grew, once it asks for more than the manifest. GitHub's "device flow disabled" answer is said as "Tick Enable Device Flow on your app's page", with the page opened, and asked again.
+  - **One narrow GitHub app per computer.** The keys file holds one app's keys, with its installation on each account; a later project on another account with the same app gets that account's Install page, and their own app on another account waits, with a line saying to use the Wheelhouse app or Quick there.
 - **Narrow on GitLab: a project key.** GitLab has no installable app like GitHub's, and its own code sign-in can't be narrowed to one project, only to a kind of access (check 22, `docs/checks/22-gitlab-keys.md`). So setup uses the director's sign-in once to make a project access token, a "project key", and keeps it in `~/.wheelhouse/`, with nothing to copy or paste. `glab`'s own sign-in is accepted for this (check 22).
   - **Which plans.** By the documentation, project keys come with GitLab.com Premium and Ultimate, and with any self-managed or Dedicated plan. But the trial made one on GitLab.com Free, against the documentation, so the plan is no reliable guide. Setup tries the key first on every plan, and falls back to the pasted token only if GitLab refuses (check 22).
   - **What it reaches.** The key needs two scopes: `write_repository` to push, and `api` to open and merge merge requests. `api` covers the whole project's API, settings included, so the key is limited to that one project, with its code, merge requests and settings API. That is wider than GitHub's app, whose key can't reach settings (check 22). Whether the key can change settings depends on its role, below.
@@ -537,7 +547,7 @@ The host is detected from the git remote and can be overridden in project settin
   - **Merge requests show the key's bot user,** a member of the project made with the key, not the director (check 22).
   - **The pasted token.** Where GitLab refuses a project key, setup opens GitLab's fine-grained token page and the director pastes the token into the system's own box (check 14, `docs/checks/14-token.md`). It is a personal access token of the director's, so it reaches more than a project key, and the card says so (check 22).
 - **Renewal.** Where a key expires, the board raises its renewal 14 days ahead as a card. A GitLab project key lives at most 365 days, and renewing it means making a new one, since a project key can't make another (check 22).
-- **Server-side protection** is turned on at setup with the director's sign-in, whichever way is chosen (section 12.3). On GitLab it protects `main` on every plan, which carries much of the load. GitLab's own default lets Maintainers push to `main`, so setup doesn't stop at "protected": it sets push to "No one", merge to "Developers + Maintainers" and force-push off, reads the result back and shows the director what it found. This worked from the director's sign-in on GitLab.com Free (check 23). *Designer's call.*
+- **Server-side protection** is turned on at setup with the director's sign-in, whichever way is chosen (section 12.3), at the end of setup's step 7, once setup's own commit is on the default branch (section 15). On GitLab it protects `main` on every plan, which carries much of the load. GitLab's own default lets Maintainers push to `main`, so setup doesn't stop at "protected": it sets push to "No one", merge to "Developers + Maintainers" and force-push off, reads the result back and shows the director what it found. This worked from the director's sign-in on GitLab.com Free (check 23). *Designer's call.*
 
 **Scope.** Supporting GitLab means the system can run a project hosted there. Both halves of the adapter are tested against recorded command output. The project key and the protection have been tried live on a test project (checks 22 and 23); a live run of the whole adapter waits until a real GitLab project exists. *Designer's call.*
 
@@ -567,7 +577,7 @@ Chosen at setup (the director's decision, section 22):
 
 **What Standard can't stop.** Its hooks and settings live in files the director's account can change. An agent set on getting round them could, in principle, edit the plugin's hook scripts or a personal setting, where the sandbox doesn't cover them, or a mod could approve something a hook refused. Standard is built for mistakes and misdirection, not for that.
 
-A director's own settings can weaken Standard too. A `sandbox.excludedCommands` list lets named commands out of the sandbox, and `enabledPlugins` and `extraKnownMarketplaces` can bring in other code. Setup keeps the director's settings when it adds its own, and is meant to name each of these on its card so the director decides; that is not built yet (section 12.9).
+A director's own settings can weaken Standard too. A `sandbox.excludedCommands` list lets named commands out of the sandbox, and `enabledPlugins` and `extraKnownMarketplaces` can bring in other code. Setup keeps the director's settings when it adds its own, and names each of these on step 6's card, one by one with what it does (each excluded command, each other plugin switched on, each other marketplace), changing none of them, so the director decides (section 15). It reads them from the director's user settings. On a computer already set up for another project, where step 6 has nothing to change and needs no card, it names them in a line of setup's progress instead. *Designer's call.*
 
 **Locked adds** a computer-wide settings file holding:
 
@@ -789,10 +799,10 @@ STOP and the runbook are evaluation scenario 12 (section 18).
 
 ### 12.8 Data and retention
 
-A short data note (`docs/data.md`, shipped with Wheelhouse) tells the director, in plain words, where everything goes:
+A short data note (`docs/data.md`, shipped with Wheelhouse since the setup plan, 20 October 2026) tells the director, in plain words, where everything goes, and also what uninstall removes and what it keeps (section 15):
 
 - **Conversations** go to Anthropic to be processed, as with any use of Claude.
-- **Transcripts** are stored on the computer, kept for 30 days (`cleanupPeriodDays`). *Designer's call.*
+- **Transcripts** are stored on the computer, kept for 30 days (`cleanupPeriodDays`). *Designer's call.* Setup sets 30 days even over a longer period of the director's, and its card says that older transcripts are then removed for good and that uninstall can't bring them back. *Designer's call.*
 - **Remote Control:** while it's connected, the transcript is also kept on Anthropic's servers.
 - **Telemetry** stays on the computer and records counts, not content. Claude Code sends the director's email and account IDs with every figure; the receiver keeps only the session, model, kind, count and time, and one short word for where in the session the tokens went (`source`, telemetry's `query_source`, such as `main`), and the data note says nothing else is stored (check 7). The mod adds only each session's running cost and the allowance's share used. Summaries are kept for 90 days. *Designer's call.*
 - **State** lives on the project's host, on its state branch, for as long as the project does. If the repository is ever made public, the state branch's history goes public with it. That fact is on the level-4 card for changing visibility.
@@ -807,7 +817,8 @@ The safety build leaves these out, and they are not promised for any date:
 - **The keychain inside the sandbox.** A project's sandboxed commands run without asking, and the sandbox doesn't hold the keychain (check 11), so nothing stops an agent calling `security find-generic-password … -w` to read the director's Claude Code or `gh` sign-in from it. A deny rule would match only the command line, not a program that calls it. Not verified: nobody fetched a secret. It needs the director's view.
 - **What the agents plan names.** Who writes the unsaved marker (section 10), the feature branch's name and the ledger's file name (section 9), and the runbook's description of containment (section 12.7).
 - **The board** now says when a project has no CI ("This project has no CI, so nothing can merge"), built by the board-and-usage plan; the gate already refused a merge without it. "No CI" needs both no checks or pipelines on the default branch's head and no CI configuration there (`.github/workflows/` or `.gitlab-ci.yml`); a read that fails means unknown, never "no CI". *Designer's call.*
-- **Setup naming the director's own settings.** Setup does not yet name a director's `sandbox.excludedCommands`, `enabledPlugins` and `extraKnownMarketplaces` (section 12.1); that comes with setup.
+- **Setup naming the director's own settings** is now built, by the setup plan: step 6's card names each `sandbox.excludedCommands` entry, each other plugin in `enabledPlugins` and each other marketplace in `extraKnownMarketplaces`, and changes none of them (section 12.1).
+- **Git settings that make setup's git run a program or reach elsewhere.** Setup's own git calls shut out the director's global and system git settings, switch off hooks, and refuse a repository whose own settings hold any key outside a short allowed list, naming the key, so no program an agent can configure runs with the director's sign-in in setup's name (section 15). Left open: the proxy and certificate settings of the environment, which a director behind a company proxy needs, still pass through (a proxy sees which host setup talks to, not the key); a setting changed between setup's look and git's read gets past the look, which needs an agent's process running during setup; on Windows, how the switched-off hooks folder, line endings and certificate settings behave with the system settings shut out is untried, and an ordinary project's harmless keys (submodules, large files, maintenance) are refused until added to the list; and the other plans' git calls (the foreman's, the install's, lineage's, a feature session's, Guarded's and some of the helper's) have no such list at all. This goes with the director's security-gaps item.
 - **GitLab.** A Developer key merging, and merged-results pipelines, are untried live (section 11).
 
 ## 13. Notifications
@@ -828,7 +839,7 @@ The safety build leaves these out, and they are not promised for any date:
 
 ## 14. Settings
 
-Settings let the director change how the system behaves without briefing it again. Each everyday setting has a few named levels and a default. *The list and defaults are the designer's calls.*
+Settings let the director change how the system behaves without briefing it again. Each everyday setting has a few named levels and a default. The names the director sees are section 23.6's. *The list and defaults are the designer's calls.*
 
 **The catalogue** (`scripts/settings/catalogue.js`) names every setting by key, with its levels or its check, its default and where it lives (section 14.3). A value it doesn't allow is refused, and only presence can carry an end time.
 
@@ -844,11 +855,11 @@ The catalogue holds a setting before everything that obeys it is built, as secti
 |---|---|---|
 | **Autonomy** | Cautious · **Balanced** · Trusting | Shifts the defaults in section 6. Cautious moves level-2 work to level 3. Trusting lets small visual changes inside existing patterns go live and be shown afterwards. Level 4 never moves |
 | **Show before build** | Always · **Visual changes** · Only when asked | Section 7.3 |
-| **Presence** | **Here** · Away until… · Do not disturb | Away: features run to the end, and only breakages and questions that block all work notify. Do not disturb: only STOP-worthy problems and live harm notify. A briefing waits on return either way |
+| **Availability** (`presence`) | **Here** · Away until… · Do not disturb | Away: features run to the end, and only breakages and questions that block all work notify. Do not disturb: only STOP-worthy problems and live harm notify. A briefing waits on return either way |
 | **Feature milestones** | Midpoint demos · Run to the end · **Ask per feature** | Section 7.4, step 5 |
-| **Token efficiency** | Lean · **Balanced** · Thorough | Lean: the mid-sized model for all well-defined work and routine front-desk turns, one builder at a time, screenshots only on request. Thorough: the most capable model more widely, a second reviewer on critical-area work, more evaluation trials. Required reviews, tests and the merge gate never change |
+| **Thoroughness** (`efficiency`) | Lean · **Balanced** · Thorough | Lean: the mid-sized model for all well-defined work and routine front-desk turns, one builder at a time, screenshots only on request. Thorough: the most capable model more widely, a second reviewer on critical-area work, more evaluation trials. Required reviews, tests and the merge gate never change |
 | **Budget** | **Report only** · Weekly share · Per feature | Report only is the director's ruling (section 9.1). Budget allocation is in the backlog, by the director's decision of 18 October 2026; the other two levels come only if it is taken up |
-| **Pace** | 1 · 2 · **3** builders at once | How fast features move, and how much usage they draw at once. The default is the build-loop design's limit of three, which wins over this design's earlier two. *Designer's call* |
+| **Builders at once** (`pace`) | 1 · 2 · **3** | How fast features move, and how much usage they draw at once. The default is the build-loop design's limit of three, which wins over this design's earlier two. *Designer's call* |
 | **Briefing** | Short (about 80 words) · **Standard (about 150)** · Detailed (about 300) | Section 5.2. The gap before a briefing, two hours by default, is set here too |
 | **Explanations** | **Plain** · Some technical terms | How question cards and briefings are written |
 | **Notifications** | Channels, and quiet hours | Section 13 |
@@ -886,7 +897,7 @@ There are two kinds, kept apart:
 ### 14.4 How settings change
 
 - **By saying it.** "I'm away till 6" or "be more careful this week". The front desk reads the change back in one line, and it takes effect on the director's confirmation (section 9). A temporary change carries its end time and reverts on its own.
-- **In the mod's settings pane** (section 17.1), with no Claude turn. A press is both the change and the director's confirmation of it, signed as a Confirm click on its card would be, so it is in force at once. Each row shows its current choice and where it comes from. Presence has six set choices (Here; Away for 2 hours; Away until 18:00; Away until 09:00 tomorrow; Do not disturb until 09:00 tomorrow; Do not disturb until I change it), whose end time is worked out at the press, in the computer's own time zone, and a choice whose time has passed isn't offered. Protection, notifications, working hours and the briefing gap are changed through the front desk, so their rows offer only **Ask the front desk**; the budget shows its one level while budget allocation is in the backlog; the advanced settings stay with the front desk. Under STOP a press records nothing and says so. *Designer's call.*
+- **In the mod's settings pane** (section 17.1), with no Claude turn. A press is both the change and the director's confirmation of it, signed as a Confirm click on its card would be, so it is in force at once. Each row shows its current choice and where it comes from. Presence has six set choices (Here; Away for 2 hours; Away until 18:00; Away until 09:00 tomorrow; Do not disturb until 09:00 tomorrow; Do not disturb until I change it), whose end time is worked out at the press, in the computer's own time zone, and a choice whose time has passed isn't offered. Protection, notifications, working hours and the briefing gap are changed through the front desk, so their rows offer only **Change…**, which asks the front desk (section 23.6); the budget shows its one level while budget allocation is in the backlog; the advanced settings stay with the front desk. Under STOP a press records nothing and says so. *Designer's call.*
 - **Learnt from how the director works** (section 5.5): each is a one-line card, in force only on the director's Confirm, except a concept set back to not known, which makes explanations longer at once.
 - **Only the director changes them.** Agents are denied writes to the settings files, and every change is logged with its date.
 - **Build commands on Windows** moves away from Ask only by the director's click on its card, never by saying it; back to Ask, by either (section 12.2).
@@ -905,40 +916,63 @@ Wheelhouse's own non-negotiables:
 
 ## 15. Setup
 
-**The aim:** a non-technical person finishes setup in about 15 minutes, with clicks and their computer password. No terminal, no editing files, no secret pasted into the chat.
+**The aim:** a non-technical person finishes setup in about 15 minutes, with clicks and their computer password. No terminal, no editing files, no secret pasted into the chat. Built by the setup plan (`docs/superpowers/plans/2026-10-18-wheelhouse-setup.md`, 18 to 20 October 2026); the rulings it was built by are in section 21.
 
 **Before starting** (not counted in the 15 minutes):
 
 - a Claude plan that includes Claude Code, and Claude Desktop installed. Setup installs git where it is missing, on Windows as on the Mac (check 19, `docs/checks/19-setup-time.md`);
-- an account on GitHub or GitLab. Setup links to the sign-up page if there isn't one.
+- an account on GitHub or GitLab. Setup links to the sign-up page if there isn't one;
+- **Node.js 22 or later, before Wheelhouse.** The helper and every hook are Node.js, so setup can't install it: a session with the plugin and no Node.js refuses every tool call (measured with the command line standing in for Desktop; check 35, `docs/checks/35-node.md`). The README's install section says, before the install line, to install the LTS from nodejs.org where Node.js is missing or older, then to ask again in the same conversation, or start a new session if it still refuses. Setup's step 2 checks the version and, below 22, stops with the same words.
 
-**Long installs start first.** On a fresh computer there can be three installers of up to about 150 MB each, each with a password or administrator prompt, plus Apple's command-line tools on a Mac, which can take well over five minutes. Setup begins them first and asks its questions while they run; that is needed to stay near 15 minutes (check 19). Where a tool's official package isn't signed (`gh` on macOS), the setup plan looks for a signed route, so the director isn't shown a warning to get past.
+**Long installs start first.** On a fresh computer git's installer can take well over five minutes: Apple's command-line tools on a Mac, or Git for Windows, fetched into an empty folder and checked against its published checksum before it opens. Setup starts it first, at step 2, and asks step 3's questions while it runs. `gh` and `glab` are not installed at all: setup fetches the one the project's host needs from its official release archive into the helper's own folder, checks it against the release's checksums and unpacks it only then, so there is no installer, password or warning for it. Only the helper runs them. On the Mac both are signed and notarised, carry no quarantine mark, and took about 5 to 7 seconds; Windows waits for its sitting (check 38, `docs/checks/38-host-tools.md`).
 
-**Setup never depends on the command-line Claude being signed in.** It runs in Desktop, whose sign-in can work where the command line's fails (check 1).
+**Setup never depends on the command-line Claude being signed in.** It runs in Desktop, whose sign-in can work where the command line's fails (check 1). The one `claude` command it runs, installing the pinned kits at step 7, needs no sign-in (check 37).
 
-**The steps:**
+**How each step happens.**
+
+- **The playbook only talks.** In a folder with no project record, the session start says "This folder isn't set up for Wheelhouse yet. Follow wheelhouse:setup."; in one part-way through, which step is next. The playbook (`skills/setup/SKILL.md`) asks the cards and says one line of progress a step. It never installs, edits a file or runs `git` itself.
+- **The setup click.** Each step's card lists every change it will make, in plain words. Its line, `Set up step <n> as listed, <hash>`, names the step and a hash of exactly that list, and its button is **Go ahead**. The hooks sign the click. The helper, outside the sandbox, works the list out again and makes the changes only when its hash is the one the click names and the click is under 10 minutes old. A list that changed meanwhile (git got installed, say) is refused, and its new card asked.
+- **Questions are cards too.** What a step needs to know is asked as a card of its own and answered by a click, signed the same way, before its Go-ahead card. A step whose answers change nothing outside setup's own records needs no Go ahead: steps 4, 5 and 9 end on their answers, step 1 settles at once, and a step with nothing to do settles by itself. The next step's questions are asked while a long step runs.
+- **The journal.** Every change is recorded as it is made, with its value before, so uninstall can put back exactly what setup changed and leave what the director has changed since. Every file is changed by key, never replaced whole, so the director's own settings stay as they were. Each step also records when its card was shown, clicked and finished, so the timed runs read the journal, not a stopwatch. Before the project's state branch exists, the clicks are kept beside the keys, and copied into state once it does.
+- **Stopping and carrying on.** The director can stop at any card, or type "stop" or "that's all for today", and the playbook stops. The next session start names the first unfinished step; a finished one is never run again. While setup is part-way, the front desk, the pane and the foreman stay off, and the lineage hold doesn't count the pinned kits as missing before step 7 has installed them. A journal that can't be read holds the foreman back, and the session start says why.
+- **Typed answers.** Only a click answers a card, except where the card says typing counts (step 3's owner and name, step 4's description). A typed answer that hands the choice back ("you decide", "skip", "not sure", or nothing but punctuation) is never taken, and is kept nowhere; one that ends in "?" is refused once, with the reason. Either way the playbook says why, says the choice is the director's, gives the card's recommendation and asks again; after a "?" refusal, whatever is typed next on that card is the answer.
+- **Setup's cards** carry no reply code, and the mod's pane shows them with no buttons: they are answered in setup's chat.
+
+**The steps** (the director's minutes are estimates until the timed run, check 19):
 
 | # | Step | What the director does | About |
 |---|---|---|---|
-| 1 | **Install.** In a Claude Desktop session, opened on the project's folder, paste the line from Wheelhouse's README: `/plugin install wheelhouse --marketplace <owner>/wheelhouse#<tag>`. Claude asks to confirm the source, then where to install it; the director picks "this project". Then it asks for a reload, after which setup starts. If the line doesn't work in Desktop, the README gives the plugin browser's clicks instead (check 15). A new product with no folder gets one under `~/Projects` | Paste, press Enter, two clicks, one click to reload | 2 min |
-| 2 | **Tools.** Setup checks for git, Node.js and the host's command-line tool, and starts the official installer for any that is missing | A click and their password for each one missing | 0 to 5 min, mostly while step 4 runs |
-| 3 | **The host.** Sign in through the browser, unless `gh` or `glab` already is. A new product gets a private repository. Setup makes the private profile repository and turns on server-side protection where the plan allows (on GitLab, "pipelines must succeed" only where the project has a pipeline, or after asking: section 12.3). Then one card: **Quick** (the existing sign-in, with its warning) or **Narrow** (section 11). Narrow on GitHub is a code, **Authorise**, and the app's **Install** page, where setup recommends ticking the project and profile repositories rather than **All repositories** (the director's decision, section 22). On GitLab, setup tries to make a project key first, on any plan, and only if GitLab refuses asks for a token pasted into the system's own box (check 22). A Locked project skips the card: it is Narrow | One click (Quick); or a code, two clicks and two ticks (Narrow) | 1 to 3 min; the app's part took under 4 minutes on a fresh account, including registering the app (check 20) |
-| 4 | **Three questions,** as cards: what the product is and who uses it; does it have live data (section 12.6); does it have real users (if yes, Locked is offered, on macOS for now: section 12.1) | Three clicks | 2 min |
-| 5 | **Rules found** in an existing project, as one card (section 9) | One click | 1 min |
-| 6 | **Changes to this computer,** listed on one card: telemetry on this computer only, transcript retention, Wheelhouse never updating on its own, this computer's signing key, phone notifications (Claude Code's mobile push), and any of the director's own settings that would weaken Standard, each named (not built yet, section 12.9) | One click | 1 min |
-| 7 | **Locked only:** the system's own password prompt | Their password | 1 min |
-| 8 | **Phone notifications:** setup shows where to switch on Remote Control in Claude Desktop, switches on both push options (on the step-6 card), and asks the director to allow Claude's notifications on their phone. Remote Control alone isn't enough (check 4). It then asks the director to lock the screen for two minutes, sends one test, and asks on their return whether it arrived, since a push is skipped while they are at the computer | One switch, one on the phone, a locked screen | 3 min |
-| 9 | **Health check:** setup runs every check against a scratch copy (the gate refuses a bad merge, STOP halts, `.env` can't be read, an agent can't reach the host) and shows a green board | Nothing | 1 min |
+| 1 | **Install.** In a Claude Desktop session, opened on the product's folder (for a new product, an empty folder made under `Projects` in the folder picker), paste the line from Wheelhouse's README: `/plugin install wheelhouse --marketplace where-is-brett/wheelhouse#<tag>`. Claude asks to confirm the source, then where to install it: the director picks **this project**, not "for you". Then it asks for a reload, after which setup starts. If the line doesn't work in Desktop, the README gives the plugin browser's clicks (checks 15 and 37). Setup records when the session's first message came, for the timed runs; there is no card | Paste, press Enter, two clicks, one click to reload | 2 min |
+| 2 | **Tools.** Setup checks git, Node.js and the host's tool. One card lists git's installer, if git is missing, the fetch of `gh` or `glab`, and the permission rule that lets the playbook's own command run without asking; the installer starts at once | One click, and the installer's own click and password if git is missing | 0 to 5 min, mostly while step 3's questions are asked |
+| 3 | **The host and the connection.** First, whether the product has real users (with real users, on a Mac, whether to use Locked: section 12.1). In a folder holding nothing but the install, whether it is a new product or one from the director's other computer. Then the sign-in through the browser, unless `gh` or `glab` already is. A new product gets a private repository on the director's account, with the folder connected to it in place; the private profile repository is made once. Then one card for the connection: on GitHub **the Wheelhouse app** (recommended, offered once it is registered), **my own app** or **Quick** (with its warning); on GitLab **Narrow** or **Quick** (section 11). A Locked project is never offered Quick. Narrow on GitHub is a code (shown in setup's progress line), **Authorise**, and the app's **Install** page, where setup recommends ticking the project and profile repositories rather than **All repositories**; their own app adds GitHub's filled-in new-app page, one tick and **Create**, then a Confirm. On GitLab, setup makes a project key, or where GitLab refuses asks for a token pasted into the system's own box (check 22). The Go-ahead card also names the protection step 7 will switch on, and this computer's key, published to the profile | Three to five clicks (Quick); or also a code, **Authorise** and two ticks (Narrow) | 1 to 3 min; the app's part took under 4 minutes on a fresh account, including registering the app (check 20) |
+| 4 | **The questions:** what the product is and who uses it (typed, or the README's own words, or later), and whether it has live data (section 12.6; agents get test data only, and the director is told once). The real-users question was asked at step 3. Each answer is recorded by its click, with its confirmation: the product's glossary entry and its phase (launched or before launch, from the real-users answer) | A typed line or a click, and a click | 2 min |
+| 5 | **Rules found** in an existing project, as **Confirm all** cards (section 9) | One click a card | 1 min |
+| 6 | **Changes to this computer,** listed on one card: telemetry on this computer only (section 9.1); transcripts kept 30 days, saying older ones go for good (section 12.8); Wheelhouse never updating on its own, and Claude Code on its stable channel at or above Wheelhouse's floor (a higher minimum of the director's is kept); phone notifications ("Push when Claude decides"); this computer's signing key, named so the director knows it exists; and each of the director's own settings that would weaken Standard, named and left as they are (section 12.1) | One click | 1 min |
+| 7 | **The project's files, pins and protection.** The project's `.claude/settings.json` and `.claude/wheelhouse.json`, and `CLAUDE.md`'s "Compact instructions" (section 10), go up in one commit, "Set up Wheelhouse", pushed straight to the default branch with the director's own sign-in; this computer's `.claude/settings.local.json` is written by key and kept out of git with `.wheelhouse/`. The pinned kits are installed for the project. Then server-side protection is switched on with the director's sign-in, read back and shown (on GitLab, "pipelines must succeed" only where the project has a pipeline, or after asking: section 12.3). Where a shared file holds the director's own changes not yet committed, a card first asks whether they go up in setup's commit | One click | 1 min, while the kits install |
+| 8 | **Locked only,** on the Mac: the system's own password prompt | Their password | 1 min |
+| 9 | **Phone notifications:** one card of plain steps: switch on Remote Control in Claude Desktop, check both push options ("Push when Claude decides", which step 6 switched on, and "Push when actions required"), allow Claude's notifications on the phone (check 4). On **Ready**, the director locks the screen until the phone buzzes, or for three minutes; the session sends one test two minutes after the click, since a push is skipped while they are at the computer, and on their return asks **It arrived** or **It didn't**. A test that didn't arrive is a line on the board's health. **Later** stops setup there for now | One switch, one on the phone, two clicks, a locked screen | 3 min |
+| 10 | **Health check:** after its card's click, the helper tries a merge the gate must refuse on a trial pull request, STOP with the real stop guard, the pinned kits and the protection; then the session tries, from inside its sandbox, that `.env` can't be read, the keys folder can't be reached and an agent can't reach the host. The board shows green; only then is setup finished, the foreman started and the first briefing given. A red board says what failed and what to do, and the step can be run again | One click | 1 min |
 
-**Undoing it.** `/wheelhouse:uninstall` removes everything setup added, including the changes to the computer. Leaving Locked asks for the password.
+The step order is the build's: the setup commit goes up before protection is switched on, and the project's settings before Locked, whose hook refuses commands in a Locked project until its settings switch the sandbox on, which would refuse the playbook's own command too. Each step waits for the ones it needs: step 3 for step 2's tools (though its questions are asked meanwhile), steps 4 and 5 for the records step 3 sets up, step 7 for steps 3 and 4, Locked for steps 3 and 7, phone notifications for steps 6 and 8, and the health check for every other step.
 
-**A later project,** with the narrow connection on GitHub, opens the app's settings page, and the director ticks the new repository: one click. The helper can't add it itself (check 20). On GitLab, setup makes the new project its own key, or, where GitLab refuses one, asks for a pasted token (section 11).
+**A later project,** on a computer already set up, runs the same steps, but steps 2, 6 and 9 settle by themselves when there is nothing to change (step 2 keeps its card when the new folder's permission rule is its only change). With the narrow connection on GitHub it opens the app's settings page, and the director ticks the new repository: one click, read back. The helper can't add it itself (check 20). On GitLab, setup makes the new project its own key, or, where GitLab refuses one, asks for a pasted token (section 11).
 
-**A second computer** runs steps 1, 2, 3 (signing in, and for Narrow its own sign-in to the app or its own project key), 6, 7 and 8. The project and profile come from the host.
+**A second computer** joining a product set up on another: the director opens Desktop on an empty folder under `Projects` and pastes the install line. At step 3 they choose "<name>, from my other computer", or type its owner and name; after the sign-in, setup finds the one repository of theirs holding Wheelhouse's state and checks it out into the folder, the committed settings winning over the install's. It then runs steps 1, 2, 3 (its own sign-in, and for Narrow its own app sign-in or project key), 6, 7 (this computer's own files and the pins only: no commit and no protection), 8 and 9, and is finished with no health check. A joining computer of a launched product is never offered Quick, and on a Mac asks about Locked at step 8. Each computer publishes its key to the profile, and each other computer asks **Trust it** on its own card before that computer's records count there (section 9).
+
+**Undoing it.** `/wheelhouse:uninstall`, or asking setup to remove Wheelhouse, puts back what setup changed:
+
+- **Its own click.** One card lists everything, in groups, and names each thing it will keep because the director changed it since setup; its line, `Remove Wheelhouse from <project> as listed, <hash>`, covers the whole list, and its button is **Remove it**, at level 4. When the list is too long for the card, the card points to `uninstall status`, which the playbook shows first. It is refused under STOP: the director lifts STOP first.
+- **In a fixed order:** stop the project's foreman and watcher; leave Locked (the password again); take Wheelhouse's files and pinned kits out of the project by a pull request the director merges on the host's page, since the gate goes with it (or straight from the folder, if setup's commit never reached the host); put back the changes to this computer; remove or revoke the keys (a GitLab project key is revoked; for the GitHub app, its installation page opens for the director to untick or remove it there); and last, Wheelhouse's own folders. It runs on by itself and reports its progress, so a password window or a slow host never cuts it short; one cut short anyway carries on where it stopped, never putting anything back twice.
+- **This computer's changes** (the 30 days, telemetry, the update channel, phone notifications, the tools, the app's keys, the signing key, the receiver and the helper) go only with the last project on this computer that uses Wheelhouse, counting any folder still part-way through setup. With that last project nothing of Wheelhouse's is left in the home folder but what the director keeps: the signing key goes last of all, so a cut-short uninstall can still be clicked again, and if only the very end fails the director is told to start a new session and ask again.
+- **Kept unless the director says otherwise,** each on its own level-4 card with **Keep** recommended: the product's repository (only one setup made), the state branch and the profile repository. Deleting the branch is a push with the director's sign-in; deleting a repository opens its settings page for the director's own click there. Server-side protection stays on, and the card says so. Setup's journal stays, as do git's history, the tools git's installer put on the computer, and the project's `.wheelhouse/` folder with the front desk's and the foreman's files, with the line keeping it out of git.
+- **A shared project** (one this computer joined, or where it trusts another computer's key) is left as it is for the others: no pull request, no Delete card, nothing to untick; only this computer's key leaves the profile.
+- Last, the director removes the plugin from the project in Claude Desktop themselves. What uninstall removes and keeps is in the data note (section 12.8).
 
 **Practice copies of live data** are made through small per-provider steps, starting with what the first projects need (for example, a free branch of a Neon database). Where no provider step exists yet, agents get test data only, and the director is told once. *Designer's call.*
 
-**The target is tested,** not assumed: a timed run on a fresh account on macOS and on Windows (section 20).
+**Not yet tried for real** (each needs the director, a sitting or a computer that isn't there yet): what Desktop does with the pasted line, which scope it writes and whether setup starts by itself after the reload (check 37); a real second computer, with its sign-in and **Trust it** on both sides; the Wheelhouse app on a second account, which waits for the app's registration; uninstall for real (the password, the **Merge** on the host, unticking the repository, removing the plugin); Windows throughout; and the timed run.
+
+**The target is tested,** not assumed: a timed run on a fresh account on the Mac, and on Windows the steps that need neither administrator rights nor the host (2, 4, 6 and 9), timed by replaying the Mac run's cards for those steps to the director in their own account and timing each from the session's transcript, since a stand-in host can't run on Windows (ruling R148); the note names the two biases (the cards seen before, and steps 2 and 6 worded differently on Windows). A full Windows run waits for a Windows account that allows both. Both are held for the director's sitting (check 19, run sheet `probes/19-setup-time/run.md`).
 
 ## 16. Open source
 
@@ -979,12 +1013,12 @@ In Desktop on Windows, a reply from another Desktop session reached the mod as a
 | Job | How | Effect |
 |---|---|---|
 | **At a glance** | The side pane and the status line under the prompt (board 2), drawn from the pane's model, which the bridge keeps as the project's `status.json` | The director sees the state without asking |
-| **Card buttons** | A card's deciding option (such as **Approve**) and **Not now** write the signed record and the answer straight into state, with no Claude turn. **Explain more** and **Show me** start a front-desk turn. A button shows at once that its press was taken, so buttons stay live while a turn runs; they are switched off during a turn only if check 41 finds a press made then is lost (check 9) | Approvals cost no tokens. A click is also the strongest proof that the yes came from the director |
+| **Card buttons** | A card's deciding option (such as **Approve**) and **Not now** write the signed record and the answer straight into state, with no Claude turn. **Why?** opens the card's reasons in place, **Show me** opens the preview or starts a front-desk turn, and **Suggest a change…** hands the front desk the director's words (section 23.3). A button shows at once that its press was taken, so buttons stay live while a turn runs; they are switched off during a turn only if check 41 finds a press made then is lost (check 9) | Approvals cost no tokens. A click is also the strongest proof that the yes came from the director |
 | **Prompt record** | Its `prompt.submit` hook records a message as the director's only when its origin is `composer` or `bridge`, and sets STOP for a phone message that is just "stop" (check 4) | Typed and phone approvals count, safely |
 | **STOP** | A button heading the pane that sets STOP at once, and **Lift STOP** in its place while STOP is on (section 12.7) | Everything halts without waiting for a Claude turn |
 | **`/digest`** | The briefing since the last one, from the state files, as the command's own output | A briefing with no Claude turn |
 | **Watching** | Keeps the build loop's watcher running, which polls CI and PR state and wakes the foreman only when something changed: under Shape 1 the front desk's mod starts the background watcher again if it stops; under Shape 2 the mod's timer in the foreman's session runs the watcher's loop | No turns spent waiting on CI |
-| **Settings pane** | The everyday settings of section 14 as buttons, with the current choice shown; a press is the change and its confirmation | Changing how the system works costs no tokens |
+| **Settings pane** | The everyday settings of section 14 as a grouped list with pop-up menus (section 23.6), with the current choice shown; a press is the change and its confirmation | Changing how the system works costs no tokens |
 | **Courier** | Reads state for what is new, through the pane's model, and wakes the front desk only for needs-you items, by the director's presence. Other Wheelhouse sessions' messages are kept out of the front desk's conversation and only refresh the pane | The director's conversation is never interrupted by routine traffic |
 
 **Its first piece is built with the core** (the director's decision, section 22), because in Desktop only a mod can do these jobs (checks 6 and 9):
@@ -1009,11 +1043,11 @@ In Desktop on Windows, a reply from another Desktop session reached the mod as a
 
 - **One tick per period.** On a timer the mod sends the bridge one `tick`, naming the session, its folder, whether a turn is running and where it is drawn. The bridge works out the pane, the courier and the watcher in that one run, and answers what to draw, how often to tick and any prompt to hand the session. The front desk ticks every 15 seconds, a Shape 2 foreman every 30, a session in a project still being set up every 15 with nothing drawn (so the pane opens once setup ends), and any other session not at all. One tick runs at a time; a press or traffic that asks for one meanwhile gets one more after it. The first tick doesn't hold up the session's start.
 - **Who a session is** is the bridge's to say. A foreman the app starts is known only from its first prompt, after the mod's first tick, so a tick that finds the session is the foreman's closes the pane it opened.
-- **The pane's model is `status.json`.** The bridge writes it at each front-desk tick, so what the pane shows can be read without the mod, and the courier knows what was there before. The pane shows the glance; STOP or Lift STOP; the waiting cards one at a time ("Card n of m", with **Back** and **Next**), each card's text whole, as plain text, so nothing in it can be a link or a heading; what is building, the health lines and usage; and what couldn't be read, with when the views were last synced. When the latest can't be read, or what is shown is three ticks old, it says "Couldn't read the latest at <time>; showing <time>'s", in the computer's own time, and shows no figures as current.
+- **The pane's model is `status.json`.** The bridge writes it at each front-desk tick, so what the pane shows can be read without the mod, and the courier knows what was there before. The pane shows the glance; STOP or Lift STOP; the waiting cards one at a time ("Card n of m", with **Back** and **Next**), each card as its parts, drawn as section 23.3 says, with nothing in its words drawn as a link or a heading; what is building, the health lines and usage; and what couldn't be read, with when the views were last synced. When the latest can't be read, or what is shown is three ticks old, it says "Couldn't read the latest at <time>; showing <time>'s", in the computer's own time, and shows no figures as current.
 - **The pane opens by itself** only at the front desk's session start and on `/wheelhouse`. A pane the director closed stays closed.
-- **Each card's buttons** (`scripts/mod/buttons.js`). A card whose form passes the same check the card hook uses gets its deciding button and **Not now**, which record, and **Explain more** and **Show me**, which start a front-desk turn. A card whose form fails gets only **Explain more**. A question with no set line offers its own options, each handed to the front desk. Setup's cards, the baseline card and the build-commands card for unattended running on Windows get no buttons, with a line saying where they are answered. A build-loop question no card asks yet is a line with no buttons.
-- **A press is the director's** under the origin `pane`, which only a button's press handler sets (the mod's press functions, which the proof checks by name). The press names the card and the hash of the text drawn, so a card that changed, closed or was spent since it was drawn records nothing, and the pane says why in one line. The bridge signs for it only what a click on the same card would earn, through the prompt record's own code. An agent's own run of the bridge with `pane` can't read the signing key on the Mac (check 32); on Windows the known gap of section 11 applies, as it does to reply codes. A prompt a press hands the front desk names the card by number and by id: "Wheelhouse pane: the director pressed Explain more on card 2 (<id>)." One press is recorded at a time: meanwhile the other buttons but STOP are plain text, so a double click sends once.
-- **Under STOP** the helper refuses plain writes but takes signed records. So a deciding press still records and closes its card by its signed record; **Not now** and a setting record nothing and say so; **Explain more** and **Show me** still start their turn, since reading and explaining carry on.
+- **Each card's buttons** (`scripts/mod/buttons.js`). A card whose form passes the same check the card hook uses gets its deciding button and **Not now**, which record; **Why?**, which opens in place; **Show me**, which opens the preview or starts a front-desk turn; and **Suggest a change…**, which starts one with the director's words (section 23.3). A card whose form fails gets only **Why?**, which then starts a front-desk turn. A question with no set line offers its own options, each handed to the front desk. Setup's cards, the baseline card and the build-commands card for unattended running on Windows get no buttons, with a line saying where they are answered. A build-loop question no card asks yet is a line with no buttons.
+- **A press is the director's** under the origin `pane`, which only a button's press handler sets (the mod's press functions, which the proof checks by name). The press names the card and the hash of the text drawn, so a card that changed, closed or was spent since it was drawn records nothing, and the pane says why in one line. The bridge signs for it only what a click on the same card would earn, through the prompt record's own code. An agent's own run of the bridge with `pane` can't read the signing key on the Mac (check 32); on Windows the known gap of section 11 applies, as it does to reply codes. A prompt a press hands the front desk names the card by number and by id: "Wheelhouse pane: the director pressed Show me on card 2 (<id>)." One press is recorded at a time: meanwhile the other buttons but STOP are plain text, so a double click sends once.
+- **Under STOP** the helper refuses plain writes but takes signed records. So a deciding press still records and closes its card by its signed record; **Not now** and a setting record nothing and say so; **Why?**, **Show me** and **Suggest a change…** still work, since reading and explaining carry on.
 - **The settings pane** is section 14.4's.
 - **`/digest`** answers with the briefing since the last one as the command's own output, with no model turn (check 40). It is the briefing the hook gives after a gap, and counts as a briefing given (section 5.2).
 - **The courier reads state,** through the pane's model, since the build-loop design replaced the foreman's messages with state. It wakes the front desk only for needs-you items: STOP turned on, an open incident, a health line at its stop level, a card the front desk hasn't asked yet, and a feature finished. By the director's presence: **here** lets them all through; **away**, only STOP, an incident, health at its stop level and a card that holds up all work (ranked by the front desk's own importance order); **do not disturb**, and the quiet hours, only STOP and an incident. Each item wakes once across every session of the project; wakes are at least ten minutes apart, except for STOP and an incident; nothing wakes during a turn; and a session's first tick records what it finds and wakes for nothing, or every old card would wake it at each session start. The wake carries counts and card numbers, never an event's words, and asks for Claude's notification first, then the new cards (section 13): "Wheelhouse courier: 2 new cards (3 and 4). Send Claude's notification in one line, then ask any new cards now, once."
@@ -1043,7 +1077,9 @@ Everything is built in one programme, in this order. Each step is usable before 
 
    Built: the foreman, builder and reviewer by the build-loop plan (18 and 19 October 2026), and the front desk by its own plan (18 to 20 October 2026): its cards, what the director sees through it, learning, and the screenshot comparison (sections 5, 6 and 12.3).
 3. **Setup and uninstall** (section 15), with the timed runs.
-4. **The evaluation** (section 18), then a pilot on one small feature of the first project.
+
+   Built by the setup plan (18 to 20 October 2026): the setup click and the journal, the ten steps, a second computer and a later project, uninstall, the playbook, the README's install section and the data note, tried end to end against a stand-in host (`tests/e2e/setup.test.js`). Its checks 35 to 38 are Partly, waiting for the director's sittings; the timed run, check 19, is held for the director's sitting (section 20). Next, by the director's decision of 19 October 2026: step 4's evaluation as a whole, on a build with every designed piece in it; then Wheelhouse used for all work on the first project; and the first public release (step 7) once the measures have held for two weeks.
+4. **The evaluation** (section 18), then a pilot on one small feature of the first project. The pilot was replaced by the director's decision of 19 October 2026: every designed piece is built first, then the evaluation as a whole, then Wheelhouse used for all work on the first project, with no small-feature pilot and no cut-down version.
 5. **Install into the first project** and retire the old Command Centre skill it replaces.
 6. **The rest of the mod.** Built on 19 and 20 October 2026, ahead of steps 4 and 5, by the director's decision of 19 October 2026: every designed piece is built first, then tested in real use (section 17.1). Its Desktop check, 41, is Deferred (held for the director's sitting; section 20).
 7. **The first public release** (section 16), proposed to the director once the pilot has met the measures in section 18 for two weeks. *Designer's call.*
@@ -1105,7 +1141,7 @@ Everything is built in one programme, in this order. Each step is usable before 
 
 On 20 October 2026 both passed three trials of three with Wheelhouse's lines and failed without them: without them the front desk took the prompt for text that wasn't the director's and did nothing it asked. Since those runs the playbook's section on the baseline from the private note has come in from `main`, so both variants now hold it as well; it doesn't touch the lines these scenarios test. The same day both were run again, one trial each, with each session kept from the director's own as the front desk's are: each passed with the lines and failed without (`docs/evals/mod.md`); those reruns are the counted results.
 
-**Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **A pilot** runs on one small feature of the first project before wider use.
+**Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **Real use** follows the evaluation as a whole: Wheelhouse is used for all work on the first project, with no small-feature pilot first (the director's decision of 19 October 2026, section 17.2).
 
 **Measures:**
 
@@ -1173,7 +1209,7 @@ The added costs are:
 **Left to the builder:**
 
 - file formats beyond those named;
-- the board's script and layout, following the mock-up;
+- the board's script and layout, following section 23;
 - the hook implementation details;
 - feature-flag mechanics;
 - the secret scan's patterns;
@@ -1199,7 +1235,7 @@ The added costs are:
 16. **The password-style box:** that setup can open the operating system's own dialog for the token from Desktop, on macOS and Windows, so the token never enters the chat. **Answer:** Yes, on both systems. `docs/checks/16-secret-box.md`
 17. **Keyless signing** of release tags in CI, and how a director or contributor can check one. **Answer:** Deferred to the release plan. `docs/checks/17-keyless-signing.md`
 18. **Connectors:** whether claude.ai connectors reach local sessions, so a rule on `mcp__*` tools could cover them. **Answer:** Yes. The allowlist is held by a hook, not a deny rule (section 12.2). `docs/checks/18-connectors.md`
-19. **Setup time:** a timed run on a fresh account on macOS and on Windows, including installing git, Node.js and the host tool. **Answer:** Deferred to the setup plan. `docs/checks/19-setup-time.md`
+19. **Setup time:** a timed run on a fresh account on macOS and on Windows, including installing git, Node.js and the host tool. **Answer:** Deferred (held for the director's sitting). Setup is built (section 15), and the run reads each step's minutes from setup's journal, not a stopwatch. Not measured yet: the timed run is the director's, on a throwaway Mac account, from the pasted line to the green board; on Windows, steps 2, 4, 6 and 9 are timed by replaying the Mac run's cards for those steps to the director in their own account and timing each from the session's transcript, since a stand-in host can't run on Windows (ruling R148); the note names the two biases (the cards seen before, and steps 2 and 6 worded differently on Windows). A full Windows run waits for a Windows account with administrator rights and the host. The run waits for check 37's sitting and a release tag on the host. Run sheet `probes/19-setup-time/run.md`. `docs/checks/19-setup-time.md`
 
 **Added after the first checks** (the director's decision on connecting to the host, section 22):
 
@@ -1216,6 +1252,13 @@ The added costs are:
 **Added by the front desk plan** (`docs/superpowers/plans/2026-10-18-wheelhouse-front-desk.md`):
 
 34. **Screenshots from a hidden browser:** whether the helper can photograph a web page with an installed Chrome or Edge, headless, with no npm install, on macOS and Windows; whether two photographs of the same unchanged page give the same pixels; and how long one takes. **Answer:** Partly. On the Mac, the installed Chrome photographs a page with no install in about half a second to two seconds, and two pictures of the same still page always had the same pixels, at both sizes and across runs; a page its script draws late was photographed drawn. Neither browser quits on the Mac after its picture, so the helper stops Chrome as soon as its picture is a whole file. Edge photographs its own error page when a page fails to load, and says nothing, so only Chrome's pictures count until the Windows run shows how Edge reports a failed load (section 12.3). Windows waits for the Windows sitting. `docs/checks/34-screens.md`
+
+**Added by the setup plan** (`docs/superpowers/plans/2026-10-18-wheelhouse-setup.md`). Its timed runs answer check 19, above.
+
+35. **Node.js and the hooks on a fresh account:** whether the hooks find `node` in Claude Desktop once the official installer has run, on macOS and Windows, and what a session with the plugin does when `node` isn't there at all. **Answer:** Partly. With the command line standing in for Desktop, a session with no `node` refuses every tool call, and a `node` put on its PATH meanwhile lets the next call through without a restart; so Node.js comes before the plugin, and the README says what to do when a session refuses. Whether Desktop on a fresh account finds an installed `node`, and the PATH it gives a hook, wait for the director's sittings on the Mac and Windows. `docs/checks/35-node.md`
+36. **Telemetry in Desktop sessions:** which per-computer route switches telemetry on for Desktop sessions, the user settings' `env` or the environment Desktop starts with, and that a project's settings can't. **Answer:** Partly. The documentation and a command-line trial say both routes work and a project's settings can't, which explains check 7's Windows result. Both are built, and setup uses the user settings until the director's sittings show what Desktop's sessions take (section 9.1). `docs/checks/36-telemetry.md`
+37. **The pasted line in Desktop:** what the install line does when pasted into a Desktop session: its confirmations, where the scope is chosen, the reload, whether a project's settings install the pinned kits, and whether Desktop asks to trust the folder. **Answer:** Partly. The line is documented only in its two halves; with the command line standing in for Desktop, the combined line installed the tag's commit, and the project's settings registered Wheelhouse's marketplace but installed neither kit, so the helper installs each at project scope at step 7. The director is told to choose **this project**. What Desktop shows, the trust question, which scope it writes and whether setup starts by itself after the reload wait for the director's sitting; the README keeps the plugin browser's clicks as the fall-back. `docs/checks/37-install-line.md`
+38. **`gh` and `glab` without an installer:** whether a script can fetch them from their official release archives, check them against the published checksums and run them from Wheelhouse's own folder, with no installer, password or warning. **Answer:** Partly. On the Mac (Apple silicon) both were fetched, matched their checksums, unpacked and ran in about 5 to 7 seconds, signed and notarised, with no quarantine mark; Windows waits for the Windows sitting, which needs only an agent. `docs/checks/38-host-tools.md`
 
 **Added by the mod plan** (`docs/superpowers/plans/2026-10-19-wheelhouse-mod.md`). The install plan's count gives it 40 to 49; it uses 40 and 41.
 
@@ -1413,8 +1456,80 @@ The added costs are:
 - the briefing's words counted after the plain words, with its Terms line, and a blocked pull request in what to watch in Wheelhouse's own words (section 5.2). *Designer's call.*
 - pages: at most 20, public pages only, a bad list making the configuration unreadable (section 12.4); a picture taken after a five-second settle, so a page its script draws is drawn; only Chrome's pictures counting until check 34's Windows run; the approved commit's pictures only from those taken at its approval; a preview counting only while current, at a public `https` address its commit doesn't share with the approved one; the hashes kept beside the state clone for 30 days (section 12.3). *Designer's call.*
 - evaluation sessions kept apart from the director's own: an allowlisted environment, no MCP servers or Desktop tools, and the sandbox, which also keeps their commands from the director's data and the judges; the keychain's command denied by name (section 18). *Designer's call.*
+- Calm's details: the tint as the theme's blue, not Claude's orange; the four shapes of what can be pressed; Why? opening in place; Not now in the card's corner; the pane's own box for Suggest a change…; the revised proposal as a new card; Undo for a minute; the phone's pane opening choices on their own page (section 23). *Designer's call.*
 
-Cards A and B of the safety plan, Cards 1 and 2 of the board-and-usage plan, and Card 1 of the front desk plan, answered by the director, are in section 22. The build loop's own designer's calls are in `docs/specs/2026-10-18-build-loop-design.md`, section 17.
+**From the setup plan** (`docs/superpowers/plans/2026-10-18-wheelhouse-setup.md`, 18 October 2026), each settled without the director:
+
+- setup built once the front-desk plan had merged, since every card comes from its composer (section 17.2). *Designer's call.*
+- setup changing nothing itself from the session: the playbook asks, and the helper makes the changes after a signed click naming the exact list (section 15). *Designer's call.*
+- a journal of every change with its value before, so uninstall puts back exactly what setup changed and leaves what the director has changed since (section 15). *Designer's call.*
+- the first key trusted on first use: the session start makes it and enrols it on a computer with no list; other computers trusted only on the director's click there (section 9). *Designer's call.*
+- the setup clicks kept beside the keys until a state branch exists, then copied into it (section 15). *Designer's call.*
+- `gh` and `glab` fetched from their release archives into the helper's own folder, checked, so there is no installer, password or warning for them (section 15, check 38). *Designer's call.*
+- the setup commit going straight to the default branch, with the director's own sign-in, before protection is switched on; every later change to those files a guardrail pull request (section 15). *Designer's call.*
+- **Confirm all** as one card with one set line naming the list's hash, confirming each ruling by its own confirmation (section 9). *Designer's call.*
+- uninstall's change to the project a pull request the director merges on the host's page, since the gate goes with it; the state branch and the profile repository kept unless the director asks on their own card (section 15). *Designer's call.*
+- the Windows timed run measuring only the steps that need neither administrator rights nor the host, until a Windows account that allows both is available (sections 15 and 20). *Designer's call.* Amended while building it (ruling R148, under "Made while building it" below): those steps are timed by replaying the Mac run's cards, not with a stand-in host.
+- a person's own GitHub App registered from a filled-in link, GitHub's URL-parameter form of Wheelhouse's manifest, not its manifest flow, which would make a private key and need a page served on this computer; its client ID kept in the profile, so every computer of theirs uses it (section 11). *Designer's call.*
+
+**Its builder check** (19 October 2026, read against section 15 and the plans it calls):
+
+- the step order: the setup commit up before protection is switched on, and the project's settings before Locked, whose hook would otherwise refuse the playbook's own commands; so the steps are numbered 1 to 10, the project's files, pins and protection becoming step 7, and the cards keep this design's titles (section 15). *Designer's call.*
+- Node.js before the plugin, always: the helper and the hooks are Node.js, so they can't install it, and step 2 installs git and fetches `gh` or `glab` only (section 15). *Designer's call.*
+- in a folder being set up, the session start starting the helper and the prompt record taking setup's clicks, and nothing else; the guards acting there from the first session (section 15). *Designer's call.*
+- past transcripts matched to the folder by the folder their entries name, not by Claude Code's folder names (section 9). *Designer's call.*
+- a second computer opening an empty folder, choosing the project on a card, and the helper checking it out there (section 15). *Designer's call.*
+- the composer's `setup` kind added to the front desk's composer (section 5.3). *Designer's call.*
+
+**Made while building it** (19 and 20 October 2026):
+
+- a step's own questions asked as cards with no set line, answered by a click (or typed where the card says), signed and kept by the prompt record only on the exact card asked, and never also recorded as a plain card answer; the answers read into the step's list, so the hash a Go ahead names includes them (section 15). *Designer's call.*
+- a step whose answers change nothing outside setup's records settling with no Go ahead, and a step with nothing to do settling by itself; a later project's step 2 keeping its card when the new folder's permission rule is its only change (section 15). *Designer's call.*
+- STOP halting setup's changes but not its bookkeeping: a step's plan and status answer under STOP, and a step settles on an answer already signed, while applying is refused (sections 12.7 and 15). *Designer's call.*
+- a card cleaned of any address's sign-in before it is shown and stored, so the record is exactly what the director read (section 15). *Designer's call.*
+- setup's cards carrying no reply code, and the mod's pane showing them with no buttons, so they are answered only in setup's chat (sections 15 and 17.1). *Designer's call.*
+- the real-users question, and on a Mac with real users the Locked one, asked at step 3, since its connection card depends on them; the answer written as the `phase` setting (launched or before launch), with no separate real-users key in the configuration (sections 14.1 and 15). *Designer's call.*
+- step 4's answers (the product's glossary entry and the phase) written by the prompt record from the director's click, the click being the confirmation; steps 4 and 5 waiting for the records step 3 sets up (sections 9 and 15). *Designer's call.*
+- the rules found once per run, the setup session's own transcripts not counting as the director's words, and as many **Confirm all** cards as the card's length needs, about six rules each (section 9). *Designer's call.*
+- a product's folder existing from step 1: a new product's repository made with a first commit on `main`, and the folder connected to it in place (section 15). *Designer's call.*
+- step 3 running on by itself, its sign-in code and Install page shown as lines of setup's progress (section 15). *Designer's call.*
+- installers started detached and recorded before setup waits on them, never a second one while one is open; a step's Go-ahead card offered only once the steps it needs are done, its questions asked meanwhile where it says so, as step 3's are while step 2 installs (section 15). *Designer's call.*
+- the permission rule for setup's own command written at step 2, so the playbook's calls don't ask before step 7 writes the rest (section 15). *Designer's call.*
+- the setup commit holding three files, `.claude/settings.json`, `.claude/wheelhouse.json` and `CLAUDE.md`, authored as the host account and pushed by its exact commit; this computer's `.claude/settings.local.json` written by key and never committed, and kept out of git with `.wheelhouse/` (section 15). *Designer's call.*
+- where a shared file holds the director's own changes not yet committed, step 7 asking whether they go up in setup's commit rather than telling them to commit (section 15). *Designer's call.*
+- the pinned kits installed by the helper with `claude plugin install <kit>@wheelhouse --scope project` in the project's folder, which needs no sign-in, since the project's settings alone don't install them (check 37; section 15). *Designer's call.*
+- telemetry's route one constant, the user settings, until check 36's sitting; both routes built and put back by uninstall; a telemetry variable of the director's own left and named (section 9.1). *Designer's call.*
+- transcripts kept 30 days even over a longer period of the director's, with the card saying older ones go for good and can't be brought back (section 12.8). *Designer's call.*
+- a minimum Claude Code version of the director's at or above Wheelhouse's floor kept, never lowered (section 15). *Designer's call.*
+- the weakening settings read from the user settings, named one by one on step 6's card, or, where step 6 has nothing to change, in a line of setup's progress (section 12.1). *Designer's call.*
+- the phone test: the screen locked until the phone buzzes or for three minutes, the one push sent two minutes after **Ready**, so it goes out while the screen is locked; **Ready** and **Later** on the first card; a **Ready** too old to have been followed by a push asking that card again, so a push never sent is never recorded as not arrived (section 15). *Designer's call.*
+- the health check split: the helper's own checks on a trial pull request left open for the session's merge trial, then the session's trials from inside its sandbox; setup finished only once the board is green and every other step done, and only then the foreman started and the first briefing given, once (section 15). *Designer's call.*
+- a journal that can't be read, or one a newer Wheelhouse wrote, holding the foreman back, the session start telling the front desk's session why; nothing rewriting it (section 15). *Designer's call.*
+- while this folder's setup is part-way and step 7 hasn't installed the pinned kits, the lineage hold not counting them as missing; every other lineage reason still holding (section 15; build-loop design, section 14). *Designer's call.*
+- a run's own list of steps: a computer joining a product runs 1, 2, 3, 6, 7, 8 and 9, its step 7 writing only this computer's files and the pins, and is finished with no health check (section 15). *Designer's call.*
+- step 1 settling at once, recording when the session's first message came (section 15). *Designer's call.*
+- the join question asked in a folder holding nothing but the install, labelled with the repository it will search; once a repository is found its owner and name kept in the list, a failed listing refusing rather than reading as none, and a joined folder never asked again; the committed `.claude/settings.json` left as committed, byte for byte (section 15). *Designer's call.*
+- each computer's enrolment published to the profile from a scratch repository, by its exact commit, with the director's own sign-in; the trusted-keys list kept beside the key, out of every git operation's reach, and a profile holding anything under `keys/` refused; a trust card naming the computer, the day and the key's fingerprint, and a click recording the key's whole hash (section 9). *Designer's call.*
+- other computers' enrolments read from the profile at most hourly by the session start, without touching its clone (section 9). *Designer's call.*
+- the GitHub app's keys holding its installation on each account, and the project record naming its own installation (section 11). *Designer's call.*
+- setup's git with the director's global and system git settings shut out, hooks switched off, only `https` allowed, and a repository refused whose own settings hold any key outside a short allowed list, naming the key; the open remainder listed in section 12.9 (sections 12.9 and 15). *Designer's call.*
+- uninstall with its own click and set line, at level 4, over a hash of the whole list, the card fitted to its length and pointing to `uninstall status` where the list doesn't fit; refused under STOP (section 15). *Designer's call.*
+- uninstall putting back each change by its kind: files and keys newest first through each retry back to the director's value, folders and host objects once from their earliest value; anything changed since setup left and named (section 15). *Designer's call.*
+- this computer's changes put back only by the last project's uninstall, counting any folder with a setup still part-way; Wheelhouse's own folders removed whole, never named as changed (section 15). *Designer's call.*
+- uninstall in a fixed order: the foreman and the watcher stopped first (and, with the last project, the usage receiver), then Locked left, the project's files, this computer's changes and the keys, then the Keep or Delete answers acted on, and last Wheelhouse's own folders, with the helper stopped after its answer; each thing marked as it is put back so a cut-short uninstall carries on and never puts anything back twice; running on by itself and reporting its progress, so a password window or a slow host never cuts it short (section 15). *Designer's call.*
+- uninstall's host re-check: no branch on the host means setup's push never happened and uninstall goes on locally; a commit found there marked as pushed, so its pull request is planned (section 15). *Designer's call.*
+- a level-4 Keep or Delete answer counting only when given after that card was last asked in this uninstall (section 15). *Designer's call.*
+- deleting the state branch a push with the director's sign-in, and deleting a repository the director's own click on its settings page (section 15). *Designer's call.*
+- revoking access done by one piece of code shared by the runbook and uninstall; the app's keys deleted only when no other project here uses the app (sections 12.7 and 15). *Designer's call.*
+- a shared project, one this computer joined or where it trusts another computer's key, left as it is for the others: no pull request, no Delete card, nothing to untick, only this computer's enrolment withdrawn, and the "no longer guarded" line only where protection really goes (section 15). *Designer's call.*
+- the project's `.wheelhouse/` folder never touched by uninstall, and its line keeping it out of git kept while it is there (section 15). *Designer's call.*
+- the last uninstall leaving nothing of Wheelhouse's in the home folder but what the director keeps: the trusted-keys list, then everything else, then the signing key; from the list's removal on, a failure left and named rather than halting; and when only the run's close fails, `uninstall status` and the plan's answer saying to start a new session (section 15). *Designer's call.*
+- a typed answer handing the choice back, or holding no letter or digit, refused every time; one ending in "?" refused once, the director told that whatever they type next on the card is taken; a refused answer kept nowhere and leaving its card free (section 15). *Designer's call.*
+- the Windows part of the timed run replaying the Mac run's cards for steps 2, 4, 6 and 9 to the director in their own account, one at a time in a scratch session, and timing each from that session's transcript, since a stand-in host can't run on Windows (the end-to-end test's world is skipped there, and the plugin has no stand-in mode); the note names the two biases, the cards seen before and steps 2 and 6 worded differently on Windows (ruling R148; sections 15 and 20). *Designer's call.*
+- the timed run's "about 15 minutes" read as up to 17 minutes, fixed before the run rather than after it (ruling R149; section 20). *Designer's call.*
+- the timed run undone by setup's own uninstall in the throwaway account, which also tries uninstall for real and takes that computer's enrolment off the profile, with deleting the account as the backstop; the times read before it, since uninstall removes setup's records of the questions and answers (ruling R150; section 20). *Designer's call.*
+
+Cards A and B of the safety plan, Cards 1 and 2 of the board-and-usage plan, Card 1 of the front desk plan and Card 1 of the setup plan, answered by the director, are in section 22. The build loop's own designer's calls are in `docs/specs/2026-10-18-build-loop-design.md`, section 17.
 
 ## 22. Decided by the director
 
@@ -1436,7 +1551,7 @@ Answered on 17 October 2026:
 | Locked on Windows (check 12) | Offered on macOS only until the computer-wide file has been tried on a Windows computer with admin rights. Windows projects use Standard meanwhile (section 12.1) |
 | The designer's calls from the checks | Kept: approvals by card click until the mod's first piece; lifting STOP by card click; nothing urgent relying on the phone alone; setup asking to allow Claude's notifications on the phone |
 | How Wheelhouse connects to GitHub and GitLab | Decided 18 October 2026, after research: two ways, chosen at setup. Quick uses the director's existing sign-in, with its risks shown plainly; narrow uses a Wheelhouse GitHub App, or a GitLab project key or token (section 11). "Offer a tier of using existing sign in … easy to set up, likely fine for most personal hobby vibe coders. But do warn implications" |
-| Who owns the Wheelhouse GitHub App (Card 1 of the setup plan) | Decided 19 October 2026: a new organisation for Wheelhouse, and "go with best practice", with setup always offering a way in without the app. So setup offers three ways to connect to GitHub: the Wheelhouse app (recommended; the organisation requires two-factor sign-in, has as few owners as it can, and the app is never given a private key); their own app, filled in from Wheelhouse's manifest, for organisations that block third-party apps or trust nobody else; and quick, which allows Standard but not Locked (section 11) |
+| Who owns the Wheelhouse GitHub App (Card 1 of the setup plan) | Decided 19 October 2026: a new organisation for Wheelhouse, and "go with best practice", with setup always offering a way in without the app. So setup offers three ways to connect to GitHub: the Wheelhouse app (recommended; the organisation requires two-factor sign-in, has as few owners as it can, and the app is never given a private key); their own app, filled in from Wheelhouse's manifest, for organisations that block third-party apps or trust nobody else; and quick, which allows Standard but not Locked (section 11). Built by the setup plan (19 and 20 October 2026): their own app is private, made on the product repository's own account, and its client ID counts only once the director confirms it in their profile; it is read again at every code sign-in and refused once it asks for more than the manifest. The organisation and the Wheelhouse app's registration are still to come with the director, so until then setup offers their own app and quick on GitHub (section 11) |
 | Which repositories the Wheelhouse GitHub App goes on (check 20) | Decided 18 October 2026: setup recommends installing it on chosen repositories, and each new project opens the app's settings page for one tick. **All repositories** stays available, but isn't the recommendation (section 11) |
 | Changes to CI files (card A of the safety plan) | Decided 18 October 2026: "One click from me." The helper never pushes a CI change with the connection's key; the agent drafts it, a card says what it changes, and the director's click pushes that commit with their own sign-in, except a restore on GitLab, which the project key pushes (section 12.4) |
 | What Locked changes on the Mac (card B of the safety plan) | Decided 18 October 2026: "Locked projects only." Locked's file holds the hooks, the deny rules safe everywhere and the sandbox's limits, but doesn't switch the sandbox on computer-wide; the director's other projects stay as they are (section 12.1) |
@@ -1447,6 +1562,8 @@ Answered on 17 October 2026:
 | The build loop and lineage | Approved, 18 October 2026: one Claude session per feature, one thin foreman per project, Superpowers' and Matt Pocock's skills used as they are with a written override on top, the director approving designs and briefs but not plans, Superpowers' debugging only, and a green upgrade landing as a briefing line. The rest of its answers are in `docs/specs/2026-10-18-build-loop-design.md`, section 18 |
 | When to build the board, briefing and usage (Card 1 of its plan) | Decided 18 October 2026: "Start now", alongside the build loop. Running both at once draws on the weekly allowance faster, and the two touch a few of the same files, each change a small addition |
 | Answering a card by typing or from the phone (Card 2 of that plan) | Decided 18 October 2026: "both". Reply codes now: a message typed or sent from the phone that is just a card's code and an option ("K7QD Approve") counts as the click. When the rest of the mod draws card buttons, the codes stay beside them, as the way to answer from the phone and a backup to the buttons. A plain typed "yes" never counts (section 17.1) |
+| The interface | Decided 20 October 2026, after three rounds of mock-ups: Calm (section 23). The director had found the pane's card "really ugly, as though it has never been designed, and hard to read too". Round two dropped the denser direction and remade the other two "the way Apple would design them". On Calm's buttons, "the buttons are busy", so each card has two, as an Apple alert does. Then: "Better but the text are to similar to the non clickable text below. The settings UI doesnt look apple too me. But i have decided on A". So everything that can be pressed takes one tint, and Settings became a grouped list. Last: "Yes, write it up", with the four plainer setting names |
+| Suggest a change | Decided 20 October 2026: every card offers Suggest a change, in the pane, the chat and on the phone. The director's words go to the front desk, and a new proposal comes back as a new card. Typed words steer but never approve (sections 12.3 and 23.3) |
 | Comparing screenshots to save a second approval (Card 1 of the front desk plan) | Decided 18 October 2026: **Compare them**, for fewer repeat approvals; any doubt still asks again. When a branch is brought up to date after the director approved it, the helper opens the change's preview in a hidden browser on this computer, with a fresh empty profile, and the approval carries over only when every page looks exactly the same. No setting to always ask again was built; a project that lists no pages always asks (section 12.3) |
 
 **Still the director's to decide, later:**
@@ -1454,3 +1571,277 @@ Answered on 17 October 2026:
 - when the first release happens (section 17.2), proposed once the pilot meets its measures.
 
 **In the backlog:** budget allocation (section 9.1), by the director's decision of 18 October 2026.
+
+## 23. The interface: Calm
+
+The director chose **Calm** on 20 October 2026, after three rounds of mock-ups. Round one had three directions. Round two dropped one and remade the other two on Apple's design principles. Round three settled Calm's buttons and Settings. The mock-ups are kept privately.
+
+**Calm** is laid out like a well-made settings screen. It opens with one sentence that answers "do I need to do anything?", then puts each thing in its own quiet group. Each card has two buttons. This section wins over earlier sections on how anything looks or reads. Sections 5.2, 5.3, 13, 14 and 17.1 point here. What each part of Wheelhouse must change is in section 23.9.
+
+**Why it needed a design.** The director found the pane's card "really ugly, as though it has never been designed, and hard to read too". The pane drew each card as one block of plain text, with its part labels ("What this is:", "Why it's coming to you:") inside it.
+
+### 23.1 The principles
+
+Apple's Human Interface Guidelines, as far as each place can draw them. Where a place can't draw what Apple would do, this section says so and gives the closest honest fallback.
+
+- **The answer first.** The pane, the briefing and the board open with the same verdict: "Two things need you. Nothing is broken."
+- **One main button per card.** Size and weight rank everything else.
+- **Group, don't decorate.** What belongs together sits in one rounded group. There are no icons for their own sake, no capital-letter labels and no colour as ornament.
+- **Each colour means one thing** (section 23.2). A status colour always sits beside its word.
+- **What you can press looks pressable.** It is one tint and also a shape. Plain words never take the tint.
+- **The common path first, more one press away.** Why? opens the full reasons in place, and the board holds the rest.
+- **No motion of our own.** A press shows "Recording…" at once.
+- **Claude's own typeface and theme,** so Wheelhouse feels part of the app. Light, dark and higher contrast follow the director's theme, because only theme colours are used.
+
+### 23.2 The system
+
+**Type: five styles,** from the pane's five text sizes. Emphasis comes from semibold, never capitals, and labels are in sentence case. Nothing is smaller than a footnote except the checking line.
+
+| Style | Size | Used for |
+|---|---|---|
+| Title | `title`, semibold | The verdict ("Two things need you."), "STOP is on", a page's name |
+| Heading | `heading`, semibold | A card's question; a group's one fact |
+| Body | `body` | Sentences, rows |
+| Footnote | `footnote`, dim | A card's small line, a group's note, a row's value |
+| Caption | `caption`, even-width, dim | The checking line and reply code, word for word |
+
+**Colour: theme keys only,** each for one meaning, never a literal colour:
+
+| Key | Means |
+|---|---|
+| `text` | Words |
+| dim text | Secondary words: labels, values, notes |
+| `subtle` | The outline of a group or a quiet button |
+| `suggestion` | **The tint: everything you can press,** and nothing else |
+| `error` | STOP |
+| `warning` | To watch; out of date |
+| `success` | All well |
+
+The tint is the theme's blue, not Claude's orange accent, because orange sits too close to the amber of "to watch". Blue is also Apple's default tint. *Designer's call.*
+
+**Spacing.** The pane's spacing steps, from `xs` to `xl`: small inside a group, large between groups, so the grouping shows without extra lines. The pane keeps one inset on both sides.
+
+**What you can press: one tint, four shapes.** Everything you can press takes the tint and is also a shape, so colour is never the only sign:
+
+| Shape | How it's drawn | Used for |
+|---|---|---|
+| **Filled** | `Button`, `variant="primary"` | The one thing to press: a card's deciding answer (Approve, Confirm, Push it, Do it), Lift STOP, Send, Done |
+| **Outlined** | `Button`, `variant="secondary"`, label in the tint | The other choice: Suggest a change…, Cancel, a feature question's other options |
+| **Small outlined** | the same, at footnote size | Why?, Not now, Back, Next, Board, Settings, Undo, Change… |
+| **Link** | `Link`, ending "↗" | What opens elsewhere: "See 'save a search' ↗" |
+
+- **STOP** is the one exception. It is outlined with its label in `error`, sits apart at the top, and is never beside a filled button, so it can't be pressed by habit.
+- **Three dots** on a label ("Suggest a change…", "Change…") mean "this needs more from you".
+- **Not a ×.** Claude's close mark closes the whole pane, so it never stands for one card.
+
+**States:**
+
+- **Pressed:** the button reads "Recording…" at once. The other buttons except STOP become plain dim text until the press lands, so a double click sends once (section 17.1).
+- **Done:** a one-line note ("Approved. It goes live within the hour."), and the next card takes its place.
+- **Changed:** "That card changed while you were reading. Here is the new one."
+- **Out of date:** "Couldn't read the latest at 14:05. Showing 14:02's.", in `warning`. No figures are shown as current.
+- **Nothing waits:** "Nothing needs you.", in `success`, then what is being built.
+- **STOP on:** the pane leads with it until the director lifts it.
+
+### 23.3 The pane
+
+**Top to bottom:**
+
+1. **The glance** is the pane's title and the status line: "Wheelhouse · 2 waiting · 3 building · launch 3 of 5 · week 34%", plus "· STOP on" while it is on. Launch progress joins while a project has launch blockers. It stays at most 80 characters. Where the title is narrower, the week's share drops first, since the pane shows it below.
+2. **STOP,** outlined with a red label, with "Halts every builder at once." beside it. Under STOP, the "STOP is on" group replaces it: since when, what still carries on, the filled Lift STOP, and "Only you can lift it."
+3. **The verdict,** as a title, with one line under it: "Nothing is broken. Since you were last here at 09:10."
+4. **The card,** one at a time (below). Under it, the next card's subject ("Next: how exported files are named · optional · 3 min") and small Back and Next buttons.
+5. **Being built:** one row per piece of work, with its state and when the director will see it.
+6. **Launch:** "3 of 5 blockers cleared", "+1 since 09:10", a thin bar where Desktop draws one, and what's next, marking the director's own.
+7. **Health and this week:** all well (or what to watch), the protection level, the week's share of usage and spend, and ideas ("4 ideas · 1 new since yesterday").
+8. **The foot:** small Board and Settings buttons, and "Updated 14:02".
+
+**A card, part by part:**
+
+1. **The header row:** its kind and place ("Approval · 1 of 2"), dim, with a small Not now at the right.
+2. **The question,** as a heading: "Put 'save a search' live?"
+3. **The small line,** in footnote: its size, why it is the director's and how long it has waited ("Small feature · changes what users see · asked 2 hours ago"). An optional card adds "optional · 3 min".
+4. **The recommendation and why,** in one sentence of body text.
+5. **The thing itself and Why?** "See 'save a search' ↗" is a link where the work has a preview address. Where it has none, it is a small "Show me" button that starts a front-desk turn. Why? is a small button that opens, in place and with no Claude turn: why it's the director's, what each choice means, and what happens meanwhile. It then reads "Hide why".
+6. **Two buttons,** as an Apple alert has them: the filled deciding answer, and Suggest a change….
+7. **The checking line,** in caption, at the foot: the card's set line and its reply code, word for word ("Approve pull request #42 at commit 3f9c2a7b81d0 · K7QD").
+
+The card's five parts are all still there (section 5.3). The pane shows them as parts, never with their labels. The card's own words are still never drawn as a link or a heading. The only link is the one the bridge builds from the helper's preview address. *Designer's call* for each.
+
+**Which buttons a card gets.** These are as section 17.1 says, drawn in Calm's shapes:
+
+- **A card that decides something:** its deciding answer and Suggest a change…, with Not now in the corner and Why?.
+- **A feature's question:** its own options, the recommended one filled and the rest outlined, then Suggest a change…. The pane isn't bound by the question tool's four.
+- **A card whose form fails the check:** only Why?, which then starts a front-desk turn, since its parts can't be trusted to show.
+- **Setup's cards and the others with no buttons:** still none, with the line saying where each is answered.
+
+**Suggest a change… in the pane.** The director's ruling of 20 October 2026 (section 22):
+
+- **A box opens inside the card,** with "What would you change?", a filled Send (switched off while the box is empty) and an outlined Cancel. The pane draws its own box because it can't move the cursor into the chat's message box. `$.prompt.fill` may be refused in Desktop, so it isn't relied on.
+- **Send hands the front desk a prompt** naming the card, as a press does (section 17.1): "Wheelhouse pane: the director suggested a change on card 2 (<id>): <their words>". A toast says "Sent to the front desk. A new proposal will follow."
+- **The card stays waiting,** marked "You suggested a change at 14:10. A new proposal is on its way, and nothing goes live meanwhile."
+- **The revised proposal is a new card,** with its own commit, set line and reply code, headed "Approval · revised", with a "What changed:" sentence. The old card closes when it arrives. Nothing approved before can stand for the new one.
+- **The words steer and never approve** (section 12.3). The prompt record never counts them as an answer, and they record nothing.
+- **Where the pane can't draw a box** (a phone's pane, which has no text input), the button says "Type your change in the chat, and I'll know it's about card 1."
+
+### 23.4 Cards in the chat and on the phone
+
+Claude draws the question box itself, already as things to press, so the chat matches the pane in words and order, not in looks:
+
+- **The header** is the card's kind, at most 12 characters ("Approval").
+- **The question text:** the question; one plain line on what it is; why it's the director's; what happens meanwhile; and "To know more, just ask."
+- **The checking line and the reply code,** each on its own line ("Reply code: K7QD").
+- **The options, in the pane's order:** the deciding answer, its meaning led by "Recommended:" when it is; **Suggest a change…** ("Tell me what you'd change; I'll come back with a new proposal."); **Show me**; **Not now**.
+- **Explain more leaves the list.** The director asks why in the typed answer Claude always adds.
+- **Picking Suggest a change…** makes the front desk ask "What would you change?" in one line.
+- **A feature's question:** up to three of its own options and Suggest a change…. With all four of its own, a change goes in the typed answer, which the question names. A proposal still offers Keep as is in place of Show me (section 5.5).
+- **On the phone,** the same box comes through Remote Control, and the reply code still answers.
+
+### 23.5 The briefing, `/digest` and the board
+
+These are written into the chat, so Claude's own headings, lists and tables draw them. The first mock-up's features come back in this shape:
+
+- **The verdict first,** the same sentence as the pane's, then "Since 09:10, about 5 hours".
+- **Waiting on you, numbered.** Each item has its title, one line and its recommendation. An optional one is marked with its time ("optional · 3 min").
+- **"Since you were last here"** marks anything new wherever it appears, with counts ("+2").
+- **Section labels in sentence case,** never coloured or in capitals.
+- **Tables where you compare.** The board's work table keeps the "You'll see it" column.
+- **Empty parts fold away** into one dim line, never a heading saying "None".
+- **The briefing's foot:** usage on track, spend, "ask me anything", and the full board.
+- **The board's director view,** in order: the verdict and when it was updated; waiting on you, each card with its small line ("Small feature · level 3 · asked 2 hours ago. If not now, it waits."); on the way to launch ("3 of 5 blockers cleared, 1 since you were last here", what is still open with the director's own marked, and what's next in order); being built; changed for your users, with "Plus 9 changes behind the scenes you don't need to see."; ideas with their order; health and this week; and rulings, "For a glance, not a decision. Disagree? Say so and it becomes a question for you."
+- **The build view** (`/board build`) opens with a one-sentence headline. Then: each feature, what it is and its parts in plain words with their state; changes waiting to join, each with what its review found; quality this week; decisions along the way; and shortcuts and risks, each with what it would cost later.
+- **Not carried:** the first mock-up's serif headline and coloured section labels. The chat draws in Claude's own style.
+
+### 23.6 Settings
+
+Settings is a grouped, inset list, like System Settings on the Mac and Settings on the iPhone. The director's yes covered its four plainer names.
+
+- **The header:** "Settings", and a filled Done that goes back to the pane.
+- **A row is one setting:** its name on the left, as a noun, and its value on the right in plain words ("Autonomy: Balanced"), never a sentence.
+- **A setting with levels** shows them in a pop-up menu (`Select`). In Desktop that is the Mac's own pop-up button, the one System Settings uses.
+- **A setting the front desk changes** shows its value and a small "Change…" button, which asks the front desk. These are Protection, Build commands on Windows, Notifications, Working hours and the briefing gap.
+- **A setting with nothing to change** shows its value alone. Budget is "Report only" while budget allocation is in the backlog.
+- **Each group** has a short dim note under it, saying what the group is.
+
+**The groups, in order:**
+
+1. **STOP:** "Builders · Working", and the STOP button. Note: "STOP halts every builder at once. Only you can lift it."
+2. **This project:** Autonomy, Show before building, Feature milestones, Builders at once, Thoroughness, Product phase, Build commands on Windows, Budget, Protection. Note: "Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them."
+3. **You, in every project:** Availability, Briefing length, Hours before a new briefing, Explanations, Board opens on, Notifications, Working hours. Note: "These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you."
+4. **Advanced settings,** with Change…, which opens the front desk, as "Advanced settings: ask the front desk" did.
+
+**Four plainer names,** shown in the pane, the board and `/wheelhouse:settings`. The keys stay as they are.
+
+| Key | Was | Now |
+|---|---|---|
+| `presence` | Presence | Availability |
+| `pace` | Pace (builders at once) | Builders at once |
+| `efficiency` | Token efficiency | Thoroughness |
+| `boardTab` | Board tab shown first | Board opens on |
+
+**How a pick behaves:**
+
+- **A pick is the change and its confirmation,** as a press is today (section 14.4).
+- **The row then shows "Changed just now"** and a small Undo, for a minute. Undo picks the value before, recorded and confirmed the same way.
+- **Availability's six choices** are its pop-up's options, worked out when the pane is drawn (section 14.4).
+- **Under STOP** a pick records nothing. The pop-up goes back to the value in force, and the pane says "Settings can't change while STOP is on. Lift STOP first."
+
+**What the pane can't draw, and the fallback:**
+
+- **A switch.** The pane has none, and a picture of one can't be pressed, because a button holds only words. No setting is simply on or off today. One that becomes so gets a pop-up with On and Off.
+- **A pop-up on a phone's pane.** It has no `Select`, so it does what iPhone Settings does: each row shows its value and "›", and a press opens the choices on their own page, headed "‹ Settings", with a tick on the one in force. The "›" appears only there. On the Mac a pop-up opens in place, as in System Settings, so it needs none.
+- **A whole row you press.** Desktop would draw it as one wide button, so on the Mac a row is its name and its pop-up. Only the phone's pane makes the row the button.
+- **A raised group.** The theme has no colour for one, so each group is a rounded `subtle` outline.
+
+*Designer's call* for each, apart from the names.
+
+### 23.7 The voice
+
+Wheelhouse speaks as the front desk: a calm, capable manager who has done the reading, so the director doesn't have to. Calm uses the voice sparingly: short lines, with the reasons one press away.
+
+**Seven rules:**
+
+1. **The answer first:** "Two things need you. Nothing is broken."
+2. **Say what happens, not how it works:** "It goes live within the hour."
+3. **"I" and "you".** The front desk is "I", and the agents are "the builders".
+4. **One idea a sentence,** about 20 words at most.
+5. **Plain words.** Each technical word is explained once, in place (section 5.5).
+6. **Read back what was asked,** the choices I'll make unless told otherwise, and when the director will see it.
+7. **No alarm and no cheer:** no "Oops", no "Great news!", no exclamation marks.
+
+**Set words:**
+
+- **Buttons keep their exact words,** since a press is checked by them: Approve, Confirm, Not now, Why?, Show me (in the chat), STOP, Lift STOP, Do it, Push it, Done and Undo.
+- **Suggest a change…** is on every card, and **Change…** on a setting the front desk changes. Neither is ever a word that approves.
+- **"Since you were last here"** marks anything new since the last visit.
+- **Numbers and dates.** Times are in 24 hours on the director's own clock (14:05). Dates read like 20 October. Numbers are figures: 2 waiting, 3 of 5, about $84.
+- **British spelling** throughout.
+
+**The checking line and the reply code** stay word for word, because a press is checked against them. They sit at the card's foot, small, in even-width letters, never inside a sentence.
+
+**Phrases kept from the first mock-up:**
+
+- "Small feature. It changes what users see, so I'll show you before it goes live."
+- "Two choices I'll make unless you say otherwise: …"
+- "Plus 9 changes behind the scenes you don't need to see."
+- "For a glance, not a decision. Disagree? Say so and it becomes a question for you."
+- "If not now, it waits; nothing else is held up."
+- "Noted. Started."
+
+**The pane's messages, as they become:**
+
+| Today | Calm |
+|---|---|
+| Recording Approve on card 1 | Recording… |
+| Wheelhouse couldn't hand that to the front desk | That didn't reach the front desk. Type it in the chat instead. |
+| This project is still being set up: its pane opens once setup finishes | Setup is still running. This pane opens when it finishes. |
+| Wheelhouse's pane belongs to the project's front desk: type /wheelhouse there | This pane lives in the front desk's chat. Type /wheelhouse there. |
+| Settings change once STOP is lifted | Settings can't change while STOP is on. Lift STOP first. |
+| Couldn't read the latest at 14:05; showing 14:02's | Couldn't read the latest at 14:05. Showing 14:02's. |
+
+### 23.8 Setup, notifications and toasts
+
+- **A setup step in the chat** names its place and time ("Step 3 of 9 · about 2 minutes") and what it is ("Connecting to GitHub"). It says what has happened in one line, and what carries on meanwhile ("Meanwhile, Node.js is still installing. Nothing for you to do there."). Its question box gives each option's meaning, led by "Recommended." where it is.
+- **The phone step** says what reaches the phone: "Only things that need you, finished features and breakages reach your phone. Routine progress waits for your next visit."
+- **The health check** ends setup with one verdict ("All 4 checks passed. Wheelhouse is ready.") and one plain line for each check.
+- **Notifications** have the title "Wheelhouse", plus "· STOP is on" when it is. They carry counts and card numbers only, never a card's words (section 13): "2 waiting on you: cards 3 and 4." and "Every builder has halted. Open Claude to see why."
+- **Toasts in the pane** are one line each: what happened, then what to do, if anything. "Approved. It goes live within the hour." "Away until 18:00. Undo in the pane for a minute." "Sent to the front desk. A new proposal will follow."
+
+### 23.9 What each part needs changed
+
+| Part | Files | The change |
+|---|---|---|
+| **The card's model** | `scripts/cards/compose.js`, `scripts/hooks/card-check.js` | The composer gives each card's parts separately as well as its text: kind, question, small line, recommendation, each option with its meaning, why it's yours, meanwhile, set line and reply code. The chat's text is built from the parts in section 23.4's order. The check reads the parts, so a card is still refused if it is missing one. The options change: the deciding answer, Suggest a change…, Show me and Not now, with Explain more left to the typed answer; feature questions as section 23.4 says. A typed or picked "Suggest a change…" keeps the card waiting until its revised card closes it |
+| **The pane's model** | `scripts/mod/status.js`, `scripts/mod/buttons.js` | The bridge sends each card's parts and its buttons by shape (filled, outlined, small, link), never one text, with the preview address for the link where the helper has one. It also sends the glance with launch progress, the verdict line, "since you were last here", and the launch, health and ideas groups |
+| **Suggest a change** | `scripts/mod/press.js`, `scripts/mod/bridge.js`, `hooks/mod/cards.tsx` | A new pane press: Send hands the front desk the prompt of section 23.3, naming the card. The card is marked as steered. The prompt record never counts the words as an answer, and nothing is recorded |
+| **The pane's drawing** | `hooks/mod/pane.tsx`, `hooks/mod/cards.tsx` | Draw sections 23.2 and 23.3 from the parts: the type styles, the theme keys, the four shapes, Why? opening in place, Not now in the card's corner, the box for Suggest a change…, and no × for a card |
+| **Settings** | `hooks/mod/settings.tsx`, `scripts/mod/settings-pane.js`, `scripts/settings/catalogue.js` | Draw section 23.6: groups, rows, pop-ups, Change…, notes, Undo for a minute, Done. A pop-up's pick raises `ui.select`, not `ui.press`, so the one-press-at-a-time claim, "Recording…", the signed confirmation and the STOP refusal must cover it. Undo is a pick of the value before. The phone's pane opens the choices on their own page. Use the four plainer names |
+| **Messages and toasts** | `hooks/mod/messages.ts`, `scripts/mod/` | Section 23.7's words and section 23.8's toasts |
+| **The board and the briefing** | `scripts/board/render.js`, `scripts/briefing/text.js` | Section 23.5's order and words: the verdict first, "since you were last here", sentence-case labels, empty parts folded away, the glance's launch progress (`glanceLine()`, still at most 80 characters, the week's share dropping first) |
+| **`/digest`** | `scripts/mod/digest.js` | The briefing as section 23.5 has it |
+| **Setup** | `scripts/setup/` | Section 23.8's step heading, meanwhile line, phone step and health-check verdict |
+| **Notifications** | `scripts/mod/courier.js`, the front desk's skill | The words of section 23.8, still counts and card numbers only |
+| **Learning and the evaluations** | `scripts/frontdesk/`, section 18's scenarios | Where learning (section 5.5) counts **Explain more**, it counts a press of Why? or a question asking why. Section 18's scenario 36, and the designer's calls in section 21 that name Explain more, read as Why? in the pane and asking why in the chat |
+| **Tests** | `tests/` | The words above are set words, so tests hold them. The mod proof (`npm run mod-check`) covers the new press and the `ui.select` handler |
+
+### 23.10 To check at the Mac sitting
+
+These can only be seen on the real thing. Each has its fallback, so none holds up the build.
+
+- **Whether Desktop shows a theme colour inside its own button.** If not, the outline alone marks a button, and nothing plain is ever blue.
+- **Whether Desktop's link colour is the tint.** If not, the link still reads as a link (its ↗ and Desktop's link look), or becomes a small outlined button.
+- **The main button's fill.** If Desktop fills it with Claude's dark colour rather than the tint, Approve is still the one filled button.
+- **Contrast.** The light theme's blue on white is about 4.4 to 1, a touch under Apple's 4.5 for small text. Check it, and again with higher contrast on. If it falls short, labels go back to `text`, and the outline carries them.
+- **Desktop's outline and background for a group,** from `subtle`, and Box bars for launch progress. If no bar is drawn, the count and "+1" stand alone.
+- **How a screen reader reads the pane:** in order, with each button's name.
+- **Whether the pane shows on the phone at all,** and if so, without a text box or pop-ups.
+- **Whether `$.prompt.fill` works in Desktop.** The pane's own box doesn't depend on it.
+
+### 23.11 Set aside
+
+- **Signal,** a denser, coloured direction, dropped in round two.
+- **Letter,** which read like a written summary, with settings as sentences. Set aside on 20 October 2026: friendlier to read, but slower to scan when several things wait.
+- **Ideas set aside for Calm's buttons:**
+  - one button and a "More choices" list (it hides choices behind a press);
+  - small text links under two buttons (still five things on every card);
+  - choices that appear when you point at the card (a phone can't point, and nobody can see that they exist).

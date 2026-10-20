@@ -20,13 +20,12 @@ import { keepClick, clicksDir, answersFor } from '../../../scripts/setup/clicks.
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { planHash } from '../../../scripts/setup/steps.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { until } from '../../helpers/until.js';
 
 const STEPS_MODULE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-steps.js');
 const T0 = new Date('2026-10-19T03:00:00.000Z');
 const MINUTE = 60 * 1000;
 const NAME = 'My Prodüct';
-
-const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 function setWorld(home, world) {
   fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify(world));
@@ -184,11 +183,10 @@ test('a long step runs on and reports its progress in status', async () => {
     const started = await client.setup.apply({ folder, step: 2, hash: card.hash });
     assert.deepEqual(started, { ok: true, started: true });
     // While it runs: its first change is in the journal, and status says it is running.
-    let lines = [];
-    for (let i = 0; i < 750 && !lines.some((l) => l.includes('x.json')); i += 1) {
-      await sleep(20);
-      lines = (await client.setup.status({ folder })).lines ?? [];
-    }
+    const lines = await until(async () => {
+      const got = (await client.setup.status({ folder })).lines ?? [];
+      return got.some((l) => l.includes('x.json')) ? got : null;
+    }, { what: 'the first change in the status' });
     assert.ok(lines.some((l) => /^Step 2, Tools: running since /.test(l)), lines.join('\n'));
     assert.ok(lines.some((l) => l.includes('x.json')), lines.join('\n'));
     assert.ok(!lines.some((l) => l.includes('y.json')), lines.join('\n'));
@@ -198,8 +196,7 @@ test('a long step runs on and reports its progress in status', async () => {
     // The helper goes; the step runs on in its own process and finishes.
     await close();
     fs.writeFileSync(path.join(home, 'release-2'), '');
-    for (let i = 0; i < 1500 && !runOf(folder).steps[2]?.doneAt; i += 1) await sleep(20);
-    assert.ok(runOf(folder).steps[2].doneAt, 'the step finished');
+    await until(() => runOf(folder).steps[2]?.doneAt, { what: 'the step to finish' });
     assert.equal(runOf(folder).changes.length, 2);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(user, 'y.json'), 'utf8')), { b: 'two' });
     const next = await startOne(home, user);
@@ -375,7 +372,7 @@ test('a short step still working in the helper past its time is not started agai
     const card = await routes['/setup/plan']({ folder, step: 1 });
     click(1, card.hash);
     const first = routes['/setup/apply']({ folder, step: 1, hash: card.hash });
-    for (let i = 0; i < 500 && !runOf(folder).steps[1]?.clickedAt; i += 1) await sleep(10);
+    await until(() => runOf(folder).steps[1]?.clickedAt, { what: 'the click in the journal' });
     // Past STEP_TIMEOUT_MS by the clock, the journal alone would read it as stuck.
     clock = new Date(T0.getTime() + 25 * MINUTE);
     click(1, card.hash, { at: new Date(clock.getTime() - MINUTE) });

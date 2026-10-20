@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { NAMES, MARKERS, summarise, holds, agree, choose } from '../../../probes/50-switch-off/findings.js';
 import { makeFixtures, parseOptions, findDesktopClaude, pluginNames, MODEL_PROMPT, runLive, live } from '../../../probes/50-switch-off/run.js';
+import { until } from '../../helpers/until.js';
 
 const runJs = fileURLToPath(new URL('../../../probes/50-switch-off/run.js', import.meta.url));
 const PLUGIN = `${NAMES.plugin}@wheelhouse-probe-switch`;
@@ -286,9 +287,7 @@ test('a session that times out is stopped, then killed, and stays listed until i
   const result = await runLive(process.execPath, ['-e', stubborn], { timeoutMs: 400, graceMs: 400 });
   assert.equal(result.timedOut, true);
   if (process.platform !== 'win32') assert.equal(live.size, 1, 'still listed while it runs');
-  const until = Date.now() + 10_000;
-  while (live.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal(live.size, 0, 'killed after the grace');
+  await until(() => live.size === 0, { what: 'the session to be killed after the grace' });
 });
 
 test('a session with no timeout given gets the default one, not none', async () => {

@@ -26,7 +26,9 @@
 //                        (not its notes), then show `board`, and `briefing` when there is one
 //   uninstall plan       uninstall's list worked out by the helper, its card and its level 4
 //                        cards: { hash, card, asks: [{ id, about, card }], last }. Each ask card is
-//                        asked exactly as given, before uninstall's own card
+//                        asked exactly as given, before uninstall's own card. Once an uninstall has
+//                        stopped past the trusted-keys list's removal, { lines } instead, the first
+//                        saying to start a new session, and no card
 //   uninstall apply <hash>  asks the helper to put back what setup changed, with the full hash
 //                        `uninstall plan` gave; it goes ahead only after the director's Remove it on
 //                        the card naming it, in its own process: { started: true }

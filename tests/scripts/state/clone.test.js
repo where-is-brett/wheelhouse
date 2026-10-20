@@ -230,7 +230,8 @@ test('a start lock whose process has gone is taken over at once, and a live hold
       fs.writeFileSync(lock, `${gone}\n`);
       const started = Date.now();
       const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
-      assert.ok(Date.now() - started < 5000, 'no waiting for a dead holder');
+      // A live holder is waited for six minutes; the clone itself can take seconds on a loaded computer.
+      assert.ok(Date.now() - started < 60 * 1000, 'no waiting for a dead holder');
       assert.deepEqual(fs.readdirSync(path.dirname(dir)), ['state'], 'the lock and its taken-over copy are gone');
       // a holder that is alive (this process) is waited for
       fs.writeFileSync(lock, `${process.pid}\n`);

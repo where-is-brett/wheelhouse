@@ -13,9 +13,14 @@
 // own file kept, as that much time passing would leave it. The bridge's time zone is one where it
 // is about midday now, so Away until 18:00 is on offer and no quiet hours apply.
 //
+// The programs no test may reach for real are stand-ins first on the PATH for the whole file
+// (tests/helpers/host-stand-ins.js), for the helper's own calls by name and the bridge's child: the
+// board's host facts read protection with `gh api` when their cache doesn't cover the prompt's
+// time. Each test asserts none of them ran.
+//
 // On Windows the bridge finds the helper at the user's own named pipe, which no test may take,
 // so this file runs on macOS and Linux only.
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,8 +59,13 @@ import { projectConfig } from '../../scripts/watcher/main.js';
 import { readWake } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
+import { standInTools } from '../helpers/host-stand-ins.js';
 import { prOnHost } from '../helpers/pr-on-host.js';
 import { matchingBody } from '../helpers/provenance.js';
+import { waitLongerOnTheHelper, WAIT_MS } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 const BRIDGE = fileURLToPath(new URL('../../scripts/mod/bridge.js', import.meta.url));
 const SKIP = process.platform === 'win32' ? 'the bridge finds the helper at the user\'s own named pipe on Windows' : false;
@@ -64,7 +74,7 @@ const PR = 7;
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 // The child's limit: the bridge answers within its own, and a test machine running every file at once is given longer.
-const CHILD_MS = 60000;
+const CHILD_MS = 2 * WAIT_MS;
 // A folder that is never created, so no managed copy of the hooks is found.
 const NO_MANAGED = path.join(tempFolder('wh-no-managed-'), 'absent');
 // The project's configuration on its default branch: Shape 2, so no tick starts a watcher process.
@@ -117,12 +127,19 @@ async function makeFolder() {
   return folder;
 }
 
-// The host facts as a fresh cache, so reading the board never asks the stand-in host.
+// The host facts as a fresh cache, so reading the board never asks the host. It is kept from four
+// hours ago, before the earliest prompt a test makes (three hours back), and is under a day old at
+// the latest (two hours on).
 function freshFacts() {
   const file = path.join(stateDir(PROJECT), '..', 'host-facts.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify({ at: new Date(Date.now() - MINUTE).toISOString(), facts: { protection: 'on', ci: 'present' } })}\n`);
+  fs.writeFileSync(file, `${JSON.stringify({ at: new Date(Date.now() - 4 * HOUR).toISOString(), facts: { protection: 'on', ci: 'present' } })}\n`);
 }
+
+// The host's tools, stood in for while this file runs.
+let tools;
+before(() => { tools = standInTools(); });
+after(() => tools.restore());
 
 // One computer: a home with an enrolled key, the project registered with its state on a bare
 // repository and pull request 7 there, the profile on its own, and a helper on the home's socket.
@@ -131,6 +148,7 @@ function freshFacts() {
 // The helper is closed inside the home too: a request a bridge gave up on (its own time limit,
 // under load) is still being answered then, and outside the home it would write the real one.
 async function onComputer({ register = true } = {}, body) {
+  tools.reset();
   const remote = await makeBareRemote({ repo: 'o/p' });
   const profileRemote = await makeBareRemote({ repo: 'o/profile' });
   await seedMain(remote.url);
@@ -162,6 +180,7 @@ async function onComputer({ register = true } = {}, body) {
         await helper.close();
       }
     });
+    assert.deepEqual(tools.calls(), [], 'no host tool ran');
   } finally {
     remote.cleanup();
     profileRemote.cleanup();

@@ -35,6 +35,10 @@ import { REAL_USERS } from '../../../scripts/setup/host.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
 import { listEvents } from '../../../scripts/state/events.js';
+import { waitLongerOnTheHelper } from '../../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 const PROJECT = 'o__p';
 const TOKEN = 'ghs_STANDINTOKEN0123456789abcdef';
