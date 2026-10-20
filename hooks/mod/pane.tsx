@@ -155,8 +155,14 @@ async function show($: EngineInterface, answer: Answer, session: string, now: nu
   if (answer.role === FRONT_DESK && answer.pane !== undefined) {
     const title = answer.glance ?? PLAIN_TITLE
     if ((await $.state.get(OPENED)).value !== session) {
-      // Kept only once the pane is open: with no surface yet, the next tick opens it.
-      if (await openOnSurface($, title)) await $.state.set(OPENED, session)
+      // Kept once the pane is open, or the open was refused: with no surface yet, the next tick
+      // opens it; any other refusal is not retried every tick.
+      try {
+        if (await openOnSurface($, title)) await $.state.set(OPENED, session)
+      } catch (error) {
+        await $.state.set(OPENED, session)
+        throw error
+      }
     } else if (await paneIsOpen($)) {
       await openOnSurface($, title)
     }
