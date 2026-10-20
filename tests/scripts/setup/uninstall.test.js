@@ -12,7 +12,7 @@ import path from 'node:path';
 import {
   uninstallPlan, uninstallRoutes, planLines, readProgress, writeProgress, PHASES, WHAT_CHARS, PLUGIN_LINE, ASK_STEP,
   UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP, UNINSTALL_RUNNING, UNINSTALL_RUN,
-  NEVER_PUSHED,
+  NEVER_PUSHED, FOLDER_NOTE,
 } from '../../../scripts/setup/uninstall.js';
 import { applyUninstall, runUninstall, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
 import {
@@ -41,6 +41,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
+import { EXCLUDE_LINE, WHEELHOUSE_LINE } from '../../../scripts/setup/project-files.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
 
 const NOW = () => new Date('2026-10-20T03:00:00.000Z');
@@ -527,8 +528,13 @@ test('Locked\'s file that was never Wheelhouse\'s is never touched; it is kept a
 test('the card names the groups, what is kept, that removed transcripts can\'t come back, and fits', async () => {
   await withHome(async () => {
     const world = makeWorld();
-    fullSetup(world);
+    const { r: setupRun } = fullSetup(world);
+    // Step 7's .wheelhouse/ line too, with the project's .wheelhouse/ folder there (ruling R131).
+    const exclude = path.join(world.folder, '.git', 'info', 'exclude');
+    setupRun.file(7, exclude, `${readText(exclude)}${WHEELHOUSE_LINE}\n`, { line: WHEELHOUSE_LINE });
+    writeText(path.join(world.folder, '.wheelhouse', 'front-desk.json'), '{}\n');
     const got = await plan(world);
+    assert.ok(got.card.what.includes(FOLDER_NOTE));
     const { card } = got;
     assert.equal(card.kind, 'uninstall');
     assert.equal(card.level, 4);
@@ -550,10 +556,16 @@ test('the card names the groups, what is kept, that removed transcripts can\'t c
     const many = await plan(world);
     assert.ok(many.keep.length > 30);
     assert.match(many.card.what, /and \d+ more: cli\.js uninstall status/);
-    assert.ok(many.card.what.length + many.card.target.project.length <= WHAT_CHARS, `${many.card.what.length}`);
+    // With nothing more to leave out, only the .wheelhouse/ note (ruling R131) may take it past.
+    assert.ok(many.card.what.length + many.card.target.project.length <= WHAT_CHARS + FOLDER_NOTE.length + 1, `${many.card.what.length}`);
+    // Shared with another computer whose key this one trusts (ruling R124), its parts the longest.
+    enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
+    const shared = await plan(world);
+    assert.equal(shared.shared, true);
+    assert.ok(shared.card.what.includes(FOLDER_NOTE));
     // Each card composes as uninstall's own kind (Task 15c), within the composer's limit, and passes
     // the card check; its set line names the project and the list's hash.
-    for (const one of [got, many]) {
+    for (const one of [got, many, shared]) {
       const { question, card: data } = composeCard(one.card);
       assert.ok(question.question.length <= CARD.chars, `${question.question.length}`);
       assert.deepEqual(cardProblems(question.question), []);
@@ -582,6 +594,9 @@ test('uninstall\'s card composes within the limit for the longest names and the 
     }
     writeText(world.settings, `${JSON.stringify({ ...settings, ...theirs }, null, 2)}\n`);
     for (let i = 0; i < 5; i++) r.key(6, world.settings, [`ours${i}`], i);
+    // Step 7's .wheelhouse/ line, with the project's .wheelhouse/ folder there (ruling R131).
+    r.file(7, path.join(folder, '.git', 'info', 'exclude'), `${WHEELHOUSE_LINE}\n`, { line: WHEELHOUSE_LINE });
+    fs.mkdirSync(path.join(folder, '.wheelhouse'));
     // Alone, then shared with another computer whose key this one trusts (ruling R124).
     for (const trusting of [false, true]) {
       if (trusting) enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
@@ -593,6 +608,7 @@ test('uninstall\'s card composes within the limit for the longest names and the 
         assert.ok(question.question.length <= CARD.chars, `${slug}: ${question.question.length}`);
         assert.deepEqual(cardProblems(question.question), []);
         assert.match(got.card.what, /and \d+ more: cli\.js uninstall status/);
+        assert.ok(got.card.what.includes(FOLDER_NOTE));
       }
     }
   });
@@ -1944,5 +1960,76 @@ test('a first computer that trusts another computer\'s key treats the project as
     world.register('o__Other', fs.realpathSync.native(tempFolder('wh-other ')), 'o/Other');
     const notLast = await plan(world);
     assert.equal(notLast.changes.some((c) => c.put === 'untick-repository'), false);
+  });
+});
+
+// Ruling R131: step 7's `.wheelhouse/` exclude line stays while the project's .wheelhouse/ folder
+// (the front desk's and the foreman's files) is there, named on the card as kept with it; the
+// folder's files are never touched. Without the folder, the line goes as the others do.
+test('the .wheelhouse/ exclude line stays while the project\'s .wheelhouse/ folder is there, named on the card; without the folder it goes (ruling R131)', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    world.lockedDir = tempFolder('wh-locked ');
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    // Step 7's two lines, as it writes them: the one for this computer's settings, then Wheelhouse's own.
+    const exclude = path.join(world.folder, '.git', 'info', 'exclude');
+    const before = '# git ls-files --others --exclude-from=.git/info/exclude\n';
+    writeText(exclude, before);
+    const settingsLine = r.file(7, exclude, `${before}${EXCLUDE_LINE}\n`, { line: EXCLUDE_LINE });
+    const ownLine = r.file(7, exclude, `${before}${EXCLUDE_LINE}\n${WHEELHOUSE_LINE}\n`, { line: WHEELHOUSE_LINE });
+    const frontDesk = path.join(world.folder, '.wheelhouse', 'front-desk.json');
+    writeText(frontDesk, '{"command":"status"}\n');
+    writeText(path.join(world.folder, '.wheelhouse', 'foreman', 'wakes', 'w1.json'), '{}\n');
+
+    const got = await plan(world);
+    const stays = got.keep.filter((k) => /\.wheelhouse\//.test(k.what));
+    assert.equal(stays.length, 2, 'the line and the folder, each named as kept');
+    assert.deepEqual(stays.find((k) => k.ids !== undefined).ids, [ownLine.id]);
+    assert.ok(stays.every((k) => /front desk's and the foreman's files/.test(k.why)), JSON.stringify(stays));
+    assert.match(got.card.what, / \.wheelhouse\/ stays, out of git: the front desk's and foreman's files\. /);
+    assert.ok(planLines(got, world.folder, world.userHome).some((l) => /^Stays: \.wheelhouse\/ in /.test(l)));
+    // Only the settings line is put back, Wheelhouse's own staying where it was.
+    const reversing = got.changes.filter((c) => c.put === 'reverse' && c.change.target === exclude);
+    assert.deepEqual(reversing.map((c) => c.ids), [[settingsLine.id]]);
+    assert.equal(reversing[0].change.before, `${before}${WHEELHOUSE_LINE}\n`);
+    assert.deepEqual(accounted(got), recordedIds());
+
+    const f = fakes(world);
+    const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+    assert.equal(done.ok, true, done.refused);
+    assert.equal(readText(exclude), `${before}${WHEELHOUSE_LINE}\n`);
+    assert.equal(readText(frontDesk), '{"command":"status"}\n', 'nothing in the folder is touched');
+    assert.ok(fs.existsSync(path.join(world.folder, '.wheelhouse', 'foreman', 'wakes', 'w1.json')));
+    assert.equal(markOf(settingsLine.id).put, true);
+    assert.equal(markOf(ownLine.id).put, false);
+    assert.match(markOf(ownLine.id).why, /front desk's and the foreman's files/);
+  });
+
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    const exclude = path.join(world.folder, '.git', 'info', 'exclude');
+    const before = '# git ls-files --others --exclude-from=.git/info/exclude\n';
+    writeText(exclude, before);
+    r.file(7, exclude, `${before}${EXCLUDE_LINE}\n`, { line: EXCLUDE_LINE });
+    r.file(7, exclude, `${before}${EXCLUDE_LINE}\n${WHEELHOUSE_LINE}\n`, { line: WHEELHOUSE_LINE });
+    // With the folder there the card is one list; the folder gone before the click, it is another.
+    fs.mkdirSync(path.join(world.folder, '.wheelhouse'));
+    const withFolder = await plan(world);
+    fs.rmdirSync(path.join(world.folder, '.wheelhouse'));
+    const got = await plan(world);
+    assert.notEqual(got.hash, withFolder.hash);
+    assert.equal(got.keep.some((k) => /\.wheelhouse\//.test(k.what)), false);
+    assert.doesNotMatch(got.card.what, /\.wheelhouse\//);
+    assert.equal(got.changes.filter((c) => c.put === 'reverse' && c.change.target === exclude).length, 2);
+    world.lockedDir = tempFolder('wh-locked ');
+    const f = fakes(world);
+    const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+    assert.equal(done.ok, true, done.refused);
+    assert.equal(readText(exclude), before, 'the line goes as before');
   });
 });

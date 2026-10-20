@@ -44,6 +44,12 @@
 // request), no Delete card is offered for what is on the host, the app's installation is left as it
 // is (no untick, no Uninstall), and only this computer's own enrolment is withdrawn.
 //
+// The project's .wheelhouse/ folder (ruling R131): the front desk's and the foreman's files, which
+// setup did not make, stay with the project, and uninstall never touches them. While the folder is
+// there, step 7's line keeping it out of git (R108) stays too, and both are named on the card as
+// kept; the folder's being there is read from the world, so its coming or going between the card
+// and the click changes the list. Without the folder, the line is put back as setup's others are.
+//
 // What each kind gives (R87): see the entries below. The order is binding (R89): Stop, Locked, the
 // project's files (a pull request the director merges), this computer, keys, kept, last; newest
 // first within a phase; then the trusted-keys list and the signing key; the helper stops last of
@@ -115,7 +121,7 @@ import { readJournal, heldNow } from './journal.js';
 import { launchVarState } from './telemetry.js';
 import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
 import { PROFILE_REPO } from './host.js';
-import { SETUP_FILES } from './project-files.js';
+import { SETUP_FILES, WHEELHOUSE_LINE } from './project-files.js';
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
 
@@ -139,6 +145,12 @@ const KEEP_LABEL = 'Keep it';
 export const NEVER_PUSHED = 'it stays in this folder\'s history';
 // Why what other computers use stays as it is, on a shared project (ruling R124).
 const OTHERS_USE = 'your other computers use it, so it stays';
+// Why step 7's .wheelhouse/ exclude line stays, and the project's .wheelhouse/ folder with it
+// (ruling R131): uninstall never touches the files in that folder.
+export const FOLDER_STAYS = 'it holds the front desk\'s and the foreman\'s files, which stay with the project';
+export const LINE_STAYS = 'the project\'s .wheelhouse/ folder stays, with the front desk\'s and the foreman\'s files, so this line keeps it out of git';
+// The two, as the card names them.
+export const FOLDER_NOTE = '.wheelhouse/ stays, out of git: the front desk\'s and foreman\'s files.';
 export const DELETE_LABEL = 'Delete it';
 
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
@@ -252,8 +264,13 @@ function cardWhat({ name, changes, keep, asks, pullRequest }) {
   ].filter(Boolean);
   const head = `Remove Wheelhouse from ${name}: ${groups.join(', ')}.`;
   const changed = keep.filter((k) => k.why === 'changed since setup').map((k) => k.brief ?? k.what);
-  const others = keep.length - changed.length;
-  const tail = `${others > 0 ? ` ${plural(others, 'other thing')} stay as they are.` : ''}${asks.length > 0 ? ' Repositories and records stay unless their own cards say otherwise.' : ''} ${TRANSCRIPTS}`;
+  // The project's .wheelhouse/ folder and its exclude line are named (ruling R131), not counted.
+  // Short, as it is said on every card of a project the foreman ran in: with many things left as
+  // the director changed them, the first part can pass WHAT_CHARS by this note alone (the card
+  // stays within the composer's limit, which the composition tests hold it to).
+  const named = keep.filter((k) => k.why === FOLDER_STAYS || k.why === LINE_STAYS).length;
+  const others = keep.length - changed.length - named;
+  const tail = `${named > 0 ? ` ${FOLDER_NOTE}` : ''}${others > 0 ? ` ${plural(others, 'other thing')} stay as they are.` : ''}${asks.length > 0 ? ' Repositories and records stay unless their own cards say otherwise.' : ''} ${TRANSCRIPTS}`;
   const left = (list) => {
     const more = changed.length - list.length;
     if (changed.length === 0) return '';
@@ -322,6 +339,26 @@ function walkChain(group) {
     else changed.push(e);
   }
   return { listed, already, changed };
+}
+
+// The text a file holds with step 7's .wheelhouse/ line kept: the line taken out where it is, and
+// added at the end as step 7 adds it.
+function withOwnLine(text) {
+  const rest = (text ?? '').split('\n').filter((l) => l !== WHEELHOUSE_LINE).join('\n');
+  return `${rest}${rest !== '' && !rest.endsWith('\n') ? '\n' : ''}${WHEELHOUSE_LINE}\n`;
+}
+
+// Step 7's .wheelhouse/ exclude line kept (ruling R131), when a file group holds it as setup wrote
+// it and the file holds it now: { line, rest }, its own links and the others, each of those read
+// with the line kept, so putting them back takes out setup's other lines and leaves this one.
+// Otherwise null, and the group is walked as it is.
+function keepWheelhouseLine(group) {
+  const line = group.filter((e) => e.c.kind === 'file' && e.c.line === WHEELHOUSE_LINE);
+  if (line.length === 0) return null;
+  const now = heldNow(newest(group));
+  if (now.held !== true || !now.value.split(/\r?\n/).includes(WHEELHOUSE_LINE)) return null;
+  const rest = group.filter((e) => !line.includes(e)).map((e) => ({ ...e, c: { ...e.c, before: withOwnLine(e.c.before), after: withOwnLine(e.c.after) } }));
+  return { line, rest };
 }
 
 // What uninstall would do for the folder, worked out without changing anything: the same world
@@ -410,6 +447,13 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     else kept(`setup's commit on ${branch}, never pushed`, NEVER_PUSHED, idsOf(commitGroup));
   }
   const sharedFile = (target) => SETUP_FILES.some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
+  // The project's .wheelhouse/ folder: while it is there, step 7's line keeping it out of git stays
+  // (ruling R131).
+  const ownFolder = path.join(real, '.wheelhouse');
+  let ownFolderThere = false;
+  try {
+    ownFolderThere = fs.statSync(ownFolder).isDirectory();
+  } catch { /* not there */ }
   const projectSettings = path.join(real, '.claude', 'settings.json');
   const numberedPrs = new Set(all.map((g) => /^(.+) pull request \d+$/.exec(g[0].c.target)?.[1]).filter(Boolean));
 
@@ -440,9 +484,16 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           kept(describe(c, userHome), 'the project\'s own file, as committed: it stays', list);
           break;
         }
-        const walked = walkChain(group);
+        const keeping = ownFolderThere ? keepWheelhouseLine(group) : null;
+        if (keeping !== null) {
+          kept(`${WHEELHOUSE_LINE} in ${shown(c.target, userHome)}`, LINE_STAYS, idsOf(keeping.line));
+          kept('the project\'s .wheelhouse/ folder', FOLDER_STAYS);
+          if (keeping.rest.length === 0) break;
+        }
+        const links = keeping?.rest ?? group;
+        const walked = walkChain(links);
         if (walked.why !== undefined) {
-          kept(describe(c, userHome), walked.why, list, brief(c));
+          kept(describe(c, userHome), walked.why, idsOf(links), brief(c));
           break;
         }
         const phase = inProject ? 'files' : 'computer';

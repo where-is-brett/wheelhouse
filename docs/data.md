@@ -54,6 +54,7 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 - Branch protection on the host stays on.
 - Setup's journal stays in `~/.wheelhouse`, so what setup did stays on record, and so does uninstall's own record of how it went. So do the usage counts already gathered, which hold counts only; delete that folder yourself if you want them gone.
 - Your git history stays, setup's commit included.
+- The project's `.wheelhouse` folder stays, with the front desk's and the foreman's files in it, which uninstall never touches. So does the line setup added to keep that folder out of git, so its files don't show up as changes. If the folder isn't there when you remove Wheelhouse, that line comes out with setup's other changes.
 - git, and anything else setup installed with its official installer, stays on your computer.
 - Transcripts already removed by the 30 days can't come back.
 
