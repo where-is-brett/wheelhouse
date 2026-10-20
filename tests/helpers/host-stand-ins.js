@@ -10,8 +10,12 @@
 // Every stand-in in one folder is found ahead of the real program only while the PATH starts with
 // it, so a child process the test gives a PATH of its own has none.
 //
-// The stand-ins are shell scripts: a test using them runs on macOS and Linux, as the files that
-// use them do.
+// The stand-ins are shell scripts, so they shadow the real programs on macOS and Linux only. On
+// Windows they shadow nothing (a shell script doesn't shadow `gh.exe`), so there the "no host tool
+// ran" check proves nothing: the files that run on Windows too (tests/e2e/board-and-usage.test.js,
+// tests/e2e/front-desk.test.js, and the setup tests through tests/helpers/setup-answers.js) rely on
+// what the test gives instead, the e2e files on their day-old host facts cache. Stand-ins for
+// Windows are on the security-gaps list.
 import fs from 'node:fs';
 import path from 'node:path';
 import { tempFolder } from './homes.js';

@@ -15,8 +15,9 @@
 //                                                account: its ~/.wheelhouse is its own only)
 //   node run.js gone <owner/name> [--want absent|present]
 //                                                asks the host, with the signed-in `gh`, whether the
-//                                                repository is there: a 404 is "absent" (at the
-//                                                sitting only; never in a test)
+//                                                repository is there: a 404 is "absent" only for
+//                                                the login's own repository (at the sitting only;
+//                                                never in a test)
 //   node run.js asked <transcript.jsonl> [...]   Windows: how long each AskUserQuestion card in a
 //                                                session's transcript waited for its answer
 //   node run.js cards <cards.json> [--steps 2,4,6,9]
@@ -24,7 +25,7 @@
 //   node run.js cleanup <root>                   removes a shared folder made by `setup`
 //
 // The pure parts (stepTimes, summarise, notesSection, installLineOf, desktopNote, statusOf,
-// askedDurations, pickRun) are exported for tests/probes/19-setup-time/run.test.js. This script is
+// askedDurations, pickRun), and setup, are exported for tests/probes/19-setup-time/run.test.js. This script is
 // copied into the shared folder and run from there in the throwaway account, so it imports nothing
 // from the plugin: `stepTimes` is journal.js's own, copied, and TARGET_MINUTES is
 // scripts/lib/setup-numbers.js's; the test holds both to the plugin's. It runs on Node.js 20 too,
@@ -257,7 +258,9 @@ function realRun(file, args) {
 }
 
 // Whether owner/name is on the host, asked with the signed-in `gh`: a private repository answers
-// 404 to anyone not signed in, so a 404 counts only once `gh` says who it is signed in as.
+// 404 to anyone who can't see it, so a 404 counts only once `gh` says who it is signed in as, and
+// only for a repository of that login's own (the run sheet names no organisation); any other
+// owner's 404 is "can't tell".
 export async function gone(args, { run = realRun, gh = 'gh', say = console.log } = {}) {
   const repo = args.find((a) => !a.startsWith('--') && a !== option(args, '--want'));
   const want = option(args, '--want') ?? 'absent';
@@ -272,9 +275,13 @@ export async function gone(args, { run = realRun, gh = 'gh', say = console.log }
   }
   const got = await run(gh, ['api', '-i', `repos/${repo}`]);
   const status = statusOf(`${got.stdout}\n${got.stderr}`);
-  const absent = status === 404;
+  // GitHub's logins are not case-sensitive.
+  const own = repo.split('/')[0].toLowerCase() === login.toLowerCase();
+  const absent = status === 404 && own;
   const ok = want === 'absent' ? absent : status === 200;
-  say(`${repo}: HTTP ${status ?? 'unknown'} (asked as ${login}): ${absent ? 'absent' : status === 200 ? 'present' : 'unclear'}; wanted ${want}: ${ok ? 'yes' : 'NO'}`);
+  const read = absent ? 'absent' : status === 200 ? 'present'
+    : status === 404 ? `can't tell, as ${login} doesn't own it and may not see it` : 'unclear';
+  say(`${repo}: HTTP ${status ?? 'unknown'} (asked as ${login}): ${read}; wanted ${want}: ${ok ? 'yes' : 'NO'}`);
   return { ok, status, login };
 }
 
@@ -310,7 +317,7 @@ function readJsonl(file) {
 
 // ---- Commands ----
 
-function setup(args) {
+export function setup(args) {
   const root = assertScratch(option(args, '--root') ?? (process.platform === 'win32' ? fs.mkdtempSync(path.join(os.tmpdir(), `${PREFIX}-`)) : SHARED_ROOT));
   fs.mkdirSync(root, { recursive: true });
   fs.copyFileSync(SELF, path.join(root, 'run.js'));
@@ -318,10 +325,16 @@ function setup(args) {
   if (fs.existsSync(guide)) fs.copyFileSync(guide, path.join(root, 'run.md'));
   const notes = path.join(root, 'notes.md');
   if (!fs.existsSync(notes)) fs.writeFileSync(notes, '# Check 19 notes\n\nThe timed run\'s results, appended as they are made (see run.md).\n\n## Starting point\n\n');
-  // Readable and writable by any account on this computer, so the throwaway account can write its
-  // times here and the director's account can read them.
-  if (process.platform !== 'win32') fs.chmodSync(root, 0o777);
-  for (const name of fs.readdirSync(root)) if (process.platform !== 'win32') fs.chmodSync(path.join(root, name), 0o666);
+  // The folder is readable and writable by any account on this computer, so the throwaway account
+  // can write its times here and the director's account can read them; of the files, only the
+  // notes are writable by every account. The script the throwaway account runs, and this sheet,
+  // are writable by the director's account alone. (The folder isn't sticky, so the director's
+  // account can remove the throwaway account's files at the end; another account could still
+  // replace a file by name, which is accepted for a folder that lasts one sitting.)
+  if (process.platform !== 'win32') {
+    fs.chmodSync(root, 0o777);
+    for (const name of fs.readdirSync(root)) fs.chmodSync(path.join(root, name), name === 'notes.md' ? 0o666 : 0o644);
+  }
   console.log(JSON.stringify({ root, notes }, null, 2));
 }
 

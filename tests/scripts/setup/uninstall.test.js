@@ -38,6 +38,7 @@ import { writeKey, readKey } from '../../../scripts/host/keys.js';
 import { openInstaller } from '../../../scripts/setup/tools.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
+import { standInTools } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
@@ -1491,43 +1492,51 @@ test('through the helper, uninstall runs in its own process, and the helper stop
   const user = fs.realpathSync.native(tempFolder('wh-user zoë '));
   const folder = path.join(user, 'Projects', 'Shop');
   fs.mkdirSync(folder, { recursive: true });
-  await as(home, async () => {
-    const { computer, publicKey } = makeSigningKey();
-    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    let stopped = false;
-    // The list of a folder nothing was set up in, on the last project: the receiver's stop (no
-    // receiver runs in this home), setup's own records removed, the plugin's line, the helper.
-    const helper = await startHelper({
-      address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), userHome: user,
-      onStop: (close) => { stopped = true; return close(); },
-    });
-    try {
-      const client = helperClient({ address: helper.address });
-      const shown = await client.setup.uninstall.plan({ folder });
-      assert.equal(shown.ok, true, shown.refused);
-      assert.equal(shown.last, true);
-      removeIt('Shop', shown.hash, new Date(Date.now() - 60 * 1000));
-      assert.deepEqual(await client.setup.uninstall.apply({ folder, hash: shown.hash }), { ok: true, started: true });
-      let got = null;
-      for (let i = 0; i < 300; i++) {
-        got = await client.setup.uninstall.status({ folder });
-        if (got.uninstall?.state !== 'running') break;
-        await new Promise((resolve) => { setTimeout(resolve, 100); });
+  // The helper and uninstall's own process run host tools by name with the real `run`, so stand-ins
+  // come first on the PATH (tests/helpers/host-stand-ins.js), and the test asserts none ran.
+  const tools = standInTools();
+  try {
+    await as(home, async () => {
+      const { computer, publicKey } = makeSigningKey();
+      enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+      let stopped = false;
+      // The list of a folder nothing was set up in, on the last project: the receiver's stop (no
+      // receiver runs in this home), setup's own records removed, the plugin's line, the helper.
+      const helper = await startHelper({
+        address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), userHome: user,
+        onStop: (close) => { stopped = true; return close(); },
+      });
+      try {
+        const client = helperClient({ address: helper.address });
+        const shown = await client.setup.uninstall.plan({ folder });
+        assert.equal(shown.ok, true, shown.refused);
+        assert.equal(shown.last, true);
+        removeIt('Shop', shown.hash, new Date(Date.now() - 60 * 1000));
+        assert.deepEqual(await client.setup.uninstall.apply({ folder, hash: shown.hash }), { ok: true, started: true });
+        let got = null;
+        for (let i = 0; i < 300; i++) {
+          got = await client.setup.uninstall.status({ folder });
+          if (got.uninstall?.state !== 'running') break;
+          await new Promise((resolve) => { setTimeout(resolve, 100); });
+        }
+        assert.equal(got.ok, true, got.refused);
+        assert.equal(got.uninstall.state, 'done', got.lines.join('\n'));
+        assert.equal(got.helperStops, true);
+        assert.ok(got.lines.includes('The usage receiver: not running.'));
+        assert.ok(got.lines.includes(`${PLUGIN_LINE}.`));
+        for (let i = 0; i < 50 && !stopped; i++) await new Promise((resolve) => { setTimeout(resolve, 20); });
+        assert.equal(stopped, true);
+        assert.equal((await client.health()).ok, false, 'the helper no longer answers');
+        // The answer is kept: the record says the helper was stopped for it.
+        assert.equal(typeof readProgress(folder).helperStoppedAt, 'string');
+        assert.deepEqual(tools.calls(), [], 'no host tool ran');
+      } finally {
+        await helper.close();
       }
-      assert.equal(got.ok, true, got.refused);
-      assert.equal(got.uninstall.state, 'done', got.lines.join('\n'));
-      assert.equal(got.helperStops, true);
-      assert.ok(got.lines.includes('The usage receiver: not running.'));
-      assert.ok(got.lines.includes(`${PLUGIN_LINE}.`));
-      for (let i = 0; i < 50 && !stopped; i++) await new Promise((resolve) => { setTimeout(resolve, 20); });
-      assert.equal(stopped, true);
-      assert.equal((await client.health()).ok, false, 'the helper no longer answers');
-      // The answer is kept: the record says the helper was stopped for it.
-      assert.equal(typeof readProgress(folder).helperStoppedAt, 'string');
-    } finally {
-      await helper.close();
-    }
-  });
+    });
+  } finally {
+    tools.restore();
+  }
 });
 
 test('a finished last uninstall nobody asks about stops the helper a while after its process ended', async () => {

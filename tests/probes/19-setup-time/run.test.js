@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   stepTimes, summarise, notesSection, installLineOf, desktopNote, statusOf, gone, askedDurations, pickRun, questionTimes,
-  assertScratch, times, minutes, TARGET_MINUTES, TITLES, PREFIX,
+  assertScratch, times, setup, minutes, TARGET_MINUTES, TITLES, PREFIX,
 } from '../../../probes/19-setup-time/run.js';
 import { stepTimes as journalStepTimes } from '../../../scripts/setup/journal.js';
 import { TARGET_MINUTES as DESIGN_TARGET } from '../../../scripts/lib/setup-numbers.js';
@@ -183,6 +183,41 @@ test('gone: a 404 counts only once gh says who it is signed in as', async () => 
   assert.equal(signedOut.calls.length, 1, 'the repository is not asked about when gh is signed out');
   await assert.rejects(gone(['not a repo'], { run: signedOut.run, say }), /Usage/);
   assert.ok(lines.some((l) => l.includes('HTTP 404 (asked as a-director): absent')));
+});
+
+test('gone: a 404 for a repository the signed-in login doesn\'t own can\'t tell', async () => {
+  const lines = [];
+  const say = (line) => lines.push(line);
+  const other = standInGh({
+    'api user --jq .login': { code: 0, stdout: 'someone-else\n', stderr: '' },
+    'api -i repos/a-director/wh19-trial': { code: 1, stdout: 'HTTP/2.0 404 Not Found\n\n{}', stderr: 'gh: Not Found (HTTP 404)' },
+  });
+  assert.deepEqual(await gone(['a-director/wh19-trial'], { run: other.run, say }), { ok: false, status: 404, login: 'someone-else' });
+  assert.ok(lines.some((l) => l.includes('HTTP 404 (asked as someone-else): can\'t tell')), lines.join('\n'));
+  // GitHub's logins are not case-sensitive.
+  const cased = standInGh({
+    'api user --jq .login': { code: 0, stdout: 'A-Director\n', stderr: '' },
+    'api -i repos/a-director/wh19-trial': { code: 1, stdout: 'HTTP/2.0 404 Not Found\n\n{}', stderr: 'gh: Not Found (HTTP 404)' },
+  });
+  assert.equal((await gone(['a-director/wh19-trial'], { run: cased.run, say })).ok, true);
+});
+
+test('setup: of the shared folder\'s files only the notes are writable by every account', { skip: process.platform === 'win32' ? 'no account modes on Windows' : false }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `${PREFIX}-test-`));
+  const log = console.log;
+  try {
+    console.log = () => {};
+    setup(['--root', root]);
+    console.log = log;
+    const mode = (name) => fs.statSync(path.join(root, name)).mode & 0o777;
+    assert.equal(fs.statSync(root).mode & 0o777, 0o777);
+    assert.equal(mode('notes.md'), 0o666);
+    assert.equal(mode('run.js'), 0o644);
+    assert.equal(mode('run.md'), 0o644);
+  } finally {
+    console.log = log;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Windows: each AskUserQuestion card is timed from its call to its result', () => {
