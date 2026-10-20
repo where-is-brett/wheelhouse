@@ -92,6 +92,17 @@ test('while held, Edit, Write and Bash are refused, and reading and halting are 
   });
 });
 
+test('while held, the tool search that loads a schema runs, and the notification tool stays held', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    assert.equal(await decide(call(main, 'ToolSearch', { query: 'select:PushNotification', max_results: 1 }), deps(home)), undefined);
+    for (const tool of ['PushNotification', 'Edit', 'SendMessage']) {
+      assert.ok(denied(await decide(call(main, tool, { message: 'x' }), deps(home))), tool);
+    }
+  });
+});
+
 test('a folder with only .claude/wheelhouse.json and no registration is neither warned nor held', async () => {
   await withHome(async (home) => {
     makeProject();

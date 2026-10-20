@@ -478,6 +478,29 @@ test('Claude Code\'s notification tool is let through under STOP, by its exact n
   });
 });
 
+test('the tool search that loads a tool\'s schema is let through under STOP; the tools it loads still meet the guard', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      assert.ok(READ_TOOLS.includes('ToolSearch'));
+      // The courier's STOP wake: the session loads the notification tool, then sends it.
+      for (const query of ['select:PushNotification', 'select:Edit,Write', 'notification']) {
+        assert.equal(await guard(call(main, 'ToolSearch', { tool_input: { query, max_results: 5 } }), deps(base)), undefined, query);
+      }
+      assert.equal(await guard(call(main, 'PushNotification', { tool_input: { message: 'STOP is on', status: 'proactive' } }), deps(base)), undefined);
+      // What it loads is refused as before.
+      for (const tool of ['Edit', 'Write', 'SendMessage', 'RemoteTrigger', 'Bash', 'toolsearch']) {
+        const out = await guard(call(main, tool, { tool_input: { command: 'ls' } }), deps(base));
+        assert.ok(denied(out), tool);
+        assert.equal(out.hookSpecificOutput.permissionDecisionReason, DENIED);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('in a Locked project without the sandbox, the notification tool is not held to the sandbox, and Bash still is', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();

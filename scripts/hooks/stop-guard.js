@@ -1,7 +1,7 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
-// only reading, reporting, Claude Code's notification, the runbook, the foreman's reading and
-// closing of a wake, and the front desk's and setup's reading commands (uninstall's among them)
+// only reading, reporting, loading a tool's schema (ToolSearch), Claude Code's notification, the
+// runbook, the foreman's reading and closing of a wake, and the front desk's and setup's reading commands (uninstall's among them)
 // through. On SessionEnd it clears the session's bypass marker and says nothing. It acts in a registered project and in a folder
 // being set up (kit.js's beingSetUp), as in a project.
 import path from 'node:path';
@@ -17,7 +17,9 @@ import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
-export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite'];
+// ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
+// nothing, and every tool it loads still meets this guard and the lineage hold.
+export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite', 'ToolSearch'];
 // They only halt work that is already running.
 export const HALT_TOOLS = ['TaskStop', 'KillShell'];
 // Claude Code's own notification, so the courier's wake for STOP can still reach the director's
