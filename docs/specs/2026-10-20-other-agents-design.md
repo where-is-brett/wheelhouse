@@ -131,7 +131,8 @@ VS Code now runs a chat session on one of several **harnesses**, and almost ever
 | Superpowers' and Matt Pocock's skills | **Carries over**, to be proved | They are `SKILL.md` files, but Superpowers' loops dispatch subagents in Claude Code's words. Check C10 runs them on Copilot before anything relies on them |
 | The sandbox | **Differently** | Copilot's own sandbox, switched on per project and per computer where Copilot allows it (check C4). Where it can't be on, the board says so, as for Claude Code on Windows today |
 | Deny rules | **Adapter** | The tool guard carries the list itself, as it already does for most of it, and the sessions Wheelhouse starts carry `--deny-tool` flags as well |
-| Standard and Locked | **Adapter**, rebuilt for a governance review (section 6.4) | Controls off the computer first; on the computer, the strongest level it allows: Copilot's sandbox, Guarded, or Ask, as Claude Code does on Windows |
+| Standard and Locked | **Adapter**, rebuilt for a governance review (section 6.4) | Three tiers by what the workplace allows: Lean (VS Code alone, building in the person's own chat), Middle (background builders and a code host) and Full (the sandbox, Locked or company settings, and approval on the code host) |
+| The code host | **Carries over**, and **optional** | GitHub and GitLab at Middle and Full; none at Lean, where history, state and merges stay on the computer; other hosts by a new half of the adapter (section 8.10) |
 | Locked | **Adapter**, needs admin | Copilot's policy hooks and managed settings (section 6.4) |
 | The guardrails | **Adapter** | The list grows by Copilot's own control files (section 6.5) |
 | The board, the briefing, health, settings, the profile, the runbook | **Carries over** | The health line names the agent and its safety line |
@@ -191,15 +192,67 @@ So on Copilot:
 - **Where Copilot's sandbox is off, on any system,** a command running at the person's own level can read the helper's keys file and sign anything: an approval, a confirmation or a review. That is so on Windows without the sandbox, as with Claude Code on Windows today (main design, section 11), and on a Mac older than macOS 15 or where the sandbox is off. Guarded narrows it, where Windows lets Wheelhouse label the keys folder unreadable to its runner (check 52), and Ask narrows it to the allowances the person clicked. Section 6.4 keeps the controls that matter most off the computer for this reason.
 - **On Windows with Copilot's sandbox** (a recent Windows 11), the keys folder may be deniable to agents. If check C4 shows it is, Copilot on those computers holds more than Claude Code on Windows does today, and the board says so.
 
-### 6.4 The levels on Copilot, built for a governance review
+### 6.4 Three tiers: Lean, Middle and Full
 
-**The director's bar** (20 October 2026): "We need this to be compliance/governance robust", and, for the worst case, "we need to prepare for the worse - what if sandbox cant be run?". So Wheelhouse on Copilot must still build on a Windows computer with no Copilot sandbox, no cloud agent and no admin rights, where Copilot in VS Code is all there is. That is also the director's own situation with Claude Code on a Windows computer, which the main design already handles (sections 12.2 and 14.1, ruling R49). This section reuses that design for Copilot. It sorts the controls by where they live, because a reviewer trusts most what the person's computer can't change.
+**The director's bar** (20 October 2026): "We need this to be compliance/governance robust"; for the worst case, "we need to prepare for the worse - what if sandbox cant be run?"; and then, since the first tester's workplace doesn't use GitHub, "let's assume little from what can be accessed. there should be a lean version with minimal access but still works then the full fletched version, perhaps also in between."
 
-#### Controls on the host
+So Wheelhouse on Copilot comes in three tiers, set by what the workplace allows, not by any one product:
+
+| | **Lean** | **Middle** | **Full** |
+|---|---|---|---|
+| **Needs** | VS Code with Copilot, git, and the Wheelhouse extension (or, where extensions are blocked, the helper's own window) | Lean, plus Copilot's command-line agent (Copilot CLI), and a code host the company already uses with its protection switched on | Middle, plus Copilot's sandbox, and Locked or the company's own Copilot settings, and the person's approval recorded on the code host itself (check C15) |
+| **No need for** | A code host, Copilot CLI, a sandbox, admin rights, or anything installed beyond git | A sandbox or admin rights | |
+| **Who builds** | Copilot in the person's own chat, one feature at a time, asking before each step | Background builders, several features at once, using Guarded or Ask on the computer (below) | Background builders inside Copilot's sandbox |
+| **Version history** | Local git on the computer, so every change can be undone | On the code host, as well as the computer | On the code host |
+| **Reviews** | A separate, read-only chat | A clean, read-only background session | The same |
+| **What changes the main version** | The person's Approve, then Wheelhouse merges on the computer | A pull request that passes the code host's own checks, then the gate | The same, and the code host itself waits for the person's approval |
+| **Copy off the computer** | Only the backup to a folder the person chooses | The code host | The code host, and on the company's route its own audit log |
+| **For projects with real users** | No (below) | Yes | Yes |
+
+**Everything a director meets works in every tier:** the front desk, intake, the board and briefing, cards, ideas, rulings, planning and designs, STOP and the runbook's steps that apply. What changes between the tiers is who builds, where history and records are kept, and how much a compliance reviewer can rely on.
+
+**Setup finds the highest tier** the computer and workplace allow, and says so in one plain sentence ("This computer can run Wheelhouse at Middle: background builders, with each build step checked with you"). A project moves up later, once the workplace allows more: its local history and record are pushed to the code host as they stand, and the record's chain carries on. *Designer's call.*
+
+#### Lean
+
+*Designer's call* for each point, with checks C16 and C17.
+
+- **Building.** Copilot builds in the person's own chat in VS Code, one feature at a time, with Copilot asking the person before each command, which is the Ask level by nature. Nothing builds while the person is away.
+- **Where the work goes.** Each feature is a branch in local git. The main version changes only when the person clicks **Approve** in the pane (or the helper's window); Wheelhouse then merges it on the computer, keeping a merge commit, so every change can be undone with one click. *Designer's call.*
+- **Tests.** The project's tests run in the chat, each run asked for. Their result is recorded with the commit. No other computer runs them.
+- **Reviews.** The pane's **Review** button opens a fresh chat with Wheelhouse's reviewer agent, which has reading and searching tools only. The person presses send, since VS Code doesn't let an extension send a chat itself. Such a chat loads the project's own instructions, so a builder could have steered it; the review is recorded as a chat review, not an independent one.
+- **The helper's jobs** (state, the gate, signing the pane's clicks, the backup) run inside the extension, in VS Code's own process, so nothing beyond git needs installing. *Designer's call.*
+- **Wheelhouse's guards.** On Copilot, a guard is a program Copilot starts before each tool call. Lean has no Node.js of its own to run one. Whether the extension can answer Copilot's checks itself, or whether a Node.js the company already allows can be used, is check C16. Without either, Lean has no guards of its own, and relies on Copilot asking before every command and on VS Code's own rules: edits only inside the project, and asking before any edit to a guarded file (`.env*`, the agent-control files of section 6.5), set in the project's VS Code settings.
+- **State and the record** live in a local git repository in Wheelhouse's folder, chained as on the code host, with one computer only, so there is no lock to take.
+- **The backup.** Once a week, a copy of the project's history and Wheelhouse's record goes to a folder the person picks, such as a company drive, so it outlives the computer. *Designer's call.*
+
+**What Lean can promise a compliance reviewer:**
+
+- Every change the agents make is in version history, with who approved it and when, and can be undone.
+- Nothing changes the main version without the person's Approve.
+- Every command an agent ran was asked for, and allowed by the person at the time.
+- Every request, approval and review is in a chained record that shows if an entry is taken out.
+
+**What Lean can't promise:**
+
+- **Nothing is held off the computer**, beyond the weekly backup. A command the person allowed runs with their full access and could change the history, the record or Wheelhouse itself, and nothing outside would show it.
+- **No independent tests,** since nothing but the person's computer runs them.
+- **No independent reviews,** for the reason above.
+- **No check of who clicked:** an approval shows only that someone at the person's computer clicked.
+- **Without check C16, no Wheelhouse guards,** only Copilot's own asking.
+- **One feature at a time,** and only while the person is there.
+
+So Lean suits building and trying out a product, not looking after one that real users depend on.
+
+#### Middle and Full
+
+Middle and Full keep everything below. Middle has the code host's controls, Copilot CLI and the computer's levels Guarded and Ask; Full adds the sandbox, Locked or the company's settings, and the approval on the code host. The controls are sorted by where they live, because a reviewer trusts most what the person's computer can't change.
+
+#### Middle and Full: controls on the code host
 
 These live on the host, so nothing on the person's computer can change them, with one exception said plainly below. *Designer's call* for each.
 
-1. **Nothing reaches `main` except a pull request that passes the project's CI on the host.** Setup sets the host's protection: no direct push and no force-push to `main` or the state branch, and the required checks pinned to the host's own CI, so a status posted from the computer can't stand in for them. Where the host's plan can't protect `main` at all (GitHub Free with a private repository), Copilot doesn't build that project; the board says why and what plan would.
+1. **Nothing reaches `main` except a pull request that passes the project's CI on the host.** Setup sets the host's protection: no direct push and no force-push to `main` or the state branch, and the required checks pinned to the host's own CI, so a status posted from the computer can't stand in for them. Where the code host can't protect `main` at all (GitHub Free with a private repository), the project runs at Lean; the board says why and what plan would.
 2. **CI is treated as the builder's own work, not as proof.** A pull request controls its own tests and scripts. So the project's secrets are kept out of every CI run a pull request starts, and live only in the host's protected environments, which a pull request's run can't reach. The setup card says so; moving the project's existing secrets is a level-4 step for the person.
 3. **The person's approval, on the host,** where the host can hold one: the host itself refuses the merge until the person, signed in to the host, has approved that exact commit there. Without it the narrow key alone could merge a pull request whose CI passed. How Wheelhouse can do that on GitHub and GitLab, with no secret shipped, is check C15: for example, a required check that waits on a protected environment the person must approve, or the pull request opened by another identity so the person's review counts. **Until C15 passes,** a merge rests on Wheelhouse's signed approval, kept on the computer. So until then build commands run unattended (levels 1 and 2 below) only where the level's test shows they can't read the signing key or the connection key; anywhere else the level is Ask.
 4. **The narrow connection's key reaches only the project's code, pull requests and issues.** It can't change the repository's settings, its protection or its CI files (main design, section 11). A change to CI needs the person's own sign-in, on one click (main design, section 12.4, card A). The quick connection isn't offered for building on Copilot.
@@ -207,11 +260,11 @@ These live on the host, so nothing on the person's computer can change them, wit
 
 **The exception: the person's own sign-in.** On a repository the person owns, they are its admin, and their sign-in can switch the protection off, push to `main` and rewrite the record branch. Copilot itself needs a GitHub sign-in on the computer, and git usually keeps one too. So on the personal route these host controls hold against agents only as long as nothing an agent runs reaches the person's sign-ins: true at the sandbox and Guarded levels for build commands, and not true during an Ask allowance or at Unattended. **On the organisation route** the repositories belong to the company, the person isn't their admin, and the company's own audit log records every push and every change to the protection: there the host controls hold whatever happens on the computer.
 
-#### Controls on the computer, outside the agent
+#### Middle and Full: controls on the computer, outside the agent
 
 The merge gate in the helper, signed reviews in a clean session, the watcher and the capture of each session's activity all run on the person's computer, as programs at the person's own level. They hold while nothing an agent runs reaches that level: at the sandbox and Guarded levels, a build command can't change them. During an Ask allowance or at Unattended, a command could rewrite them, or skip them and call the host directly with the narrow key. That is why the host's own controls come first, and why the audit report checks the computer's record against the host's (below).
 
-#### What stays exposed on the computer
+#### Middle and Full: what stays exposed on the computer
 
 - **The person's sign-ins:** the browser's, git's and `gh`'s stored sign-ins (including Windows' credential store), Copilot's own, and SSH keys.
 - **Wheelhouse's keys:** the narrow connection's key and its renewal key, and the signing key.
@@ -221,7 +274,7 @@ The merge gate in the helper, signed reviews in a clean session, the watcher and
 
 **How likely a harmful command is.** An agent doesn't set out to do this on its own. The realistic routes are instructions hidden in something it reads (a web page, an issue, a dependency's notes) and a harmful package whose install or test script runs on the computer. The guards and reviews make the first unlikely to succeed by accident. The levels below are what narrow the second.
 
-#### The levels: the strongest the computer allows
+#### Middle and Full: the levels on the computer
 
 Wheelhouse finds, at setup and at each session start, the strongest level the computer allows, and uses it for the commands feature sessions run. *Designer's call.*
 
@@ -248,7 +301,7 @@ Wheelhouse finds, at setup and at each session start, the strongest level the co
 - **Copilot's fetch tool:** held to the project's listed domains by Copilot's own web rules. These hold Copilot's tool, not the network: a command reaches the network as the level allows.
 - **The person's own chat** (the front desk) is interactive: Copilot asks the person before each command it hasn't been told to allow, as Claude Code does on Windows. Wheelhouse allows only its own command there.
 
-**Where Copilot's command-line agent can't run.** A company can switch Copilot CLI off, or its program rules can block the person installing it, and then Wheelhouse can't start background sessions at all. Wheelhouse then builds in the person's own chat in VS Code, one feature at a time, with Copilot asking before every command, which is Ask by its nature, and nothing runs while the person is away. Reviews run in a fresh chat with Wheelhouse's reviewer agent; since such a chat loads the project's own instructions, those reviews are recorded as unsigned, and a merge then needs the person's approval on the host (check C15). Until C15 passes, such a computer can build but not merge, and the person merges from another computer or in the host's own pages. *Designer's call.*
+**Where Copilot's command-line agent can't run,** because a company switches Copilot CLI off or its program rules block it, there are no background builders, and the project runs at Lean.
 
 **The tests.** Before using a level, Wheelhouse tests it:
 
@@ -268,9 +321,10 @@ A script turns the record into an audit report: for each merged change, the requ
 
 *Designer's call*, put to the director as question 2 of section 12:
 
-- **The host's controls required:** a host that can protect `main`, the narrow connection, and the person's approval on the host once check C15 gives one.
+- **Middle or Full only, never Lean,** since Lean holds nothing off the computer.
 - **Never Unattended.**
-- **Any of levels 1 to 3,** the strongest the computer allows, with Locked or the company's settings recommended where they can be had.
+- **The person's approval on the code host** once check C15 gives one there.
+- **At Middle, the strongest level the computer allows,** with Locked or the company's settings recommended where they can be had.
 
 #### Locked and company settings on Copilot
 
@@ -318,6 +372,10 @@ The same paths are shut to agents' writes, as `.claude/` is today. This applies 
 ### 6.6 Plainly: what Copilot can't enforce
 
 These go on the board's health line for a Copilot project, in the audit report and in the data note:
+
+**At Lean, nothing is held off the computer** beyond the weekly backup, tests and reviews aren't independent, and Wheelhouse's own guards run only if check C16 finds a way. Lean isn't for projects with real users.
+
+At Middle and Full:
 
 1. **Without Copilot's sandbox, the computer holds only what Guarded or Ask hold.** At Guarded the network is open and only labelled folders are unreadable to builds; at Ask, an allowed command can do whatever the person's account can, and leave lasting changes; at Unattended, nothing holds on the computer.
 2. **The person's sign-ins and Wheelhouse's keys stay on the computer.** On the personal route the person's sign-in can switch the host's protection off, so the host's controls hold against agents only while nothing an agent runs reaches it. Until the person's approval is on the host (check C15), the narrow key alone could merge a pull request that passed CI, which is why builds run unattended only where the keys are unreadable to them. The audit report checks every merge against the host's own history.
@@ -443,7 +501,7 @@ It can't see the origin of a typed message, as the mod can, so on Copilot a type
 The same steps as main design section 15, with these differences:
 
 1. **Install:** the extension from the Marketplace (one click), which brings the setup skill. Without VS Code, `copilot plugin install`, from the README. Setup then installs the plugin for the background sessions itself.
-2. **"Can Wheelhouse run here?"** Before anything else, setup reads what this computer and the person's company allow: the Copilot harness, hooks, Copilot CLI, the sandbox and its Windows build, Guarded's self-test, whether a Node.js the person installs may run, extensions, and any company-managed settings. It then says in plain words which level this computer gets (section 6.4) and what that holds, and stops kindly only if Wheelhouse can't run at all. *Designer's call.*
+2. **"Can Wheelhouse run here?"** Before anything else, setup reads what this computer and the person's workplace allow: git, the Copilot harness, Copilot CLI, the code host and its protection, the sandbox and its Windows build, Guarded's self-test, whether a Node.js the person installs may run, extensions, and any company-managed settings. It then says in one plain sentence which tier this computer gets (Lean, Middle or Full, section 6.4) and, at Middle, which level, and what that holds. It stops kindly only if Wheelhouse can't run at all, as without git. *Designer's call.*
 3. **Tools:** git, Node.js 22 or later, `gh` or `glab`, Copilot CLI and, on Windows, PowerShell 7, each installed for this person only, without admin, where an official route allows it. Whether VS Code's Copilot already brings a usable `copilot` command is check C9.
 4. **The host,** the three questions, the rules found: as now, with the host's protection of `main` and the narrow connection required for building (section 6.4). A project with real users can't then be set to Unattended, and setup recommends Locked or the organisation route where they can be had, writing the request to the company's admin in plain words with Wheelhouse's published baseline attached.
 5. **Changes to this computer,** on one card: the sign-in start (section 8.5), Copilot's sandbox for this person, the extension's auto-update off, the signing key.
@@ -462,6 +520,22 @@ The 15-minute target holds; check C9's timed run on a fresh Windows account says
 ### 8.9 Models
 
 The routing table gains a column per agent. Copilot names models its own way and a company may limit which are allowed, so setup reads the list Copilot offers and the table pins full names from it. A pin moves only after the evaluation passes on Copilot, as now (main design, section 9.1).
+
+### 8.10 Other code hosts
+
+Wheelhouse supports GitHub and GitLab today, through one host adapter (main design, section 11), and Lean needs no code host at all. A company on another code host gets Middle and Full once that host has its own half of the adapter. Nothing in the core changes. Each new host needs:
+
+1. **The adapter's operations:** open and update a pull request; read and watch the checks on a commit; check whether it can merge; merge an exact commit; work items and a checklist; push branches, state events and the lock.
+2. **A narrow connection:** a key limited to the project, made at setup without pasting where the host allows it.
+3. **The host's protection,** set and read back by setup: pull requests required, checks required, force-pushes refused, and its approval rules.
+4. **Tests against recorded output,** and a check on a real test project.
+
+| Host | What it offers, from its documentation, to be checked when its adapter is designed |
+|---|---|
+| **Azure DevOps** | A full web API and an official command-line tool. Branch policies can require reviewers and a passing build, and have a setting that lets a pull request's author approve their own, which could give the person's approval on the host directly. Its keys are per person and reach every project the person can in an organisation, wider than GitHub's app; a narrower route through the company's identity provider is to be looked at |
+| **Bitbucket** (Cloud, and Data Center) | A web API but no official command-line tool. Branch restrictions and merge checks; enforcing merge checks may need a paid plan. Keys limited to one repository exist |
+
+Each is about the size of GitLab's half of the adapter, plus setup's protection step. Neither is designed here. Once the tester's workplace's host is known, it gets its own short design. *Designer's call.*
 
 ## 9. The evaluation on Copilot
 
@@ -489,7 +563,7 @@ So each fits the adapter's parts, and each would get its own safety line. Gemini
 
 ## 11. Checks to run before relying on it
 
-Numbered C1 to C15 here; they get the next free numbers in `docs/checks/` when the plan is written. Most need a short sitting on a Mac and on a Windows computer with Copilot.
+Numbered C1 to C17 here; they get the next free numbers in `docs/checks/` when the plan is written. Most need a short sitting on a Mac and on a Windows computer with Copilot.
 
 1. **C1, the Claude harness:** whether VS Code's Claude harness loads Wheelhouse's plugin, its hooks (with `onFailure`), its sandbox and deny settings, and `AskUserQuestion` with its `PostToolUse` record, as Claude Code does; and on which plans and company settings it is available.
 2. **C2, the extension's contributions:** whether skills, custom agents and instructions an extension contributes reach Copilot-harness sessions, and survive a company's policy that limits customisations.
@@ -506,13 +580,15 @@ Numbered C1 to C15 here; they get the next free numbers in `docs/checks/` when t
 13. **C13, a clean reviewer session:** whether Copilot CLI can start a session that loads only Wheelhouse's reviewer agent, with the folder's and the person's own agents, instructions, hooks, MCP and language servers shut out, reading tools only, and its verdict in its output. Copilot merges nothing that needs a signed review until it passes.
 14. **C14, the pane's place:** whether an extension can move its own pane to the secondary sidebar, and Copilot's chat to the primary sidebar, for the person on one click (through a VS Code command it may run), and whether VS Code then keeps both there across restarts and updates; where the wheel icon shows once the pane is in the secondary sidebar; and how the pane looks at the secondary sidebar's narrow default width, on macOS and Windows.
 15. **C15, an approval on the host:** whether the host itself can refuse a merge until the named person, signed in to the host, has approved that exact commit there, with no secret shipped in Wheelhouse: on GitHub, a required check that waits on a protected environment the person must approve, or the pull request opened by another identity so the person's review counts, on personal and company plans; on GitLab, approval rules and whether the author may approve. Also that the narrow key can't make that approval itself.
+16. **C16, Lean's guards:** whether a Copilot check before each tool call can be answered by the extension itself, with no Node.js installed (a hook sent to the extension on the computer, or a small program the extension provides), whether that refuses when the extension doesn't answer, and whether a Node.js the company already allows can serve instead.
+17. **C17, Lean in VS Code alone:** whether the extension can run git and the helper's jobs inside VS Code's own process on a locked-down Windows computer; whether the pane can open a fresh chat with the reviewer agent ready to send; whether the project's VS Code settings can make Copilot ask before editing a guarded file and keep "Allow all" off; and the weekly backup to a folder the person picks.
 
 ## 12. Open questions for the director
 
 Each goes to the director as a card, through the main session.
 
 1. **How Copilot users click to approve. Decided by the director on 20 October 2026:** "Assume VS Code addon available. But do have a fail-safe approach for if addons are not available." So approvals come from the Wheelhouse extension's buttons in VS Code, and the helper's own window is the fail-safe wherever the extension isn't there (Copilot CLI alone, or a company that blocks extensions). This was the recommended option; the others were the system's window always, or the chat's clickable choices, accepting that an agent could forge an approval at Standard.
-2. **What Copilot's protection promises.** Asked first on 20 October 2026. The director answered: "Please elaborate. We need this to be compliance/governance robust", and then, of building only with the sandbox: "So what is the solution for windows copilot then? … I think we need to prepare for the worse - what if sandbox cant be run?". Section 6.4 now builds on every computer: the host's controls first, then the strongest level the computer allows (Copilot's sandbox, Guarded, Ask), with Locked or the company's settings on top where available, and an audit report checked against the host's own history. The question goes back as a new card about projects with real users. Options: the host's controls required, the person's approval on the host once check C15 gives one, and never Unattended (recommended); as that, and also Locked or the company's settings on the computer; or no difference for projects with real users.
+2. **What Copilot's protection promises.** Asked first on 20 October 2026. The director asked for it to be "compliance/governance robust", then to "prepare for the worse - what if sandbox cant be run?", and then, since the tester's workplace doesn't use GitHub: "let's assume little from what can be accessed. there should be a lean version with minimal access but still works then the full fletched version, perhaps also in between. I dont understand the technicals here so help me by using simpler terms". Section 6.4 now has three tiers set by what the workplace allows: Lean, Middle and Full. The question goes back as a new card about which tiers a project with real users may use. Options: Middle and Full (recommended); Full only; or any tier, Lean included, with its gaps stated.
 3. **VS Code's Claude agent. Decided by the director on 20 October 2026:** "I think both but my friend who is goinf to test this wont be able to use claude agents via vs code or github copilot". So both routes are offered, but the Copilot route is the primary one and stands complete on its own: nothing in it leans on the Claude agent route. The Claude agent route is offered only where check C1 passes and the company allows it, and it is built after the Copilot route.
 4. **When to build it. Decided by the director on 20 October 2026:** "Checks now, build later". The checks (section 11) run now; the Copilot adapter is built later.
 
@@ -541,7 +617,10 @@ Each goes to the director as a card, through the main session.
 - setup's first step reading what the computer and company allow (section 8.7);
 - VS Code and its Copilot runtime recorded rather than pinned, with the safety scenarios run on a change (section 8.8);
 - four Copilot scenarios added to the evaluation (section 9);
-- for the governance bar, pending the director's answer on projects with real users: the host's controls first (protection pinned to the host's own CI, the project's secrets kept out of pull requests' CI runs, the person's approval on the host once check C15 gives one, the narrow connection only, the record pushed as it happens), said plainly to hold against agents on the personal route only while nothing reaches the person's sign-in; the strongest level the computer allows, enforced by Copilot's own permission rules from a clean settings folder and environment, and unattended only where the keys are unreadable to builds until C15 passes; Guarded on Copilot keeping the control files at the normal level and removing links out of the worktree; new keys and a renewed connection after Unattended and after weeks with Ask allowances; building in the person's own chat where Copilot CLI can't run; the audit report checked against the host's own history; Unattended only by its own card and never for a project with real users; Locked on Copilot forcing the sandbox for all Copilot work on the computer; the baseline setting `forceRemoteSettingsRefresh` and recommending device management too; IT's approval named up front on a work computer, with no start-up entry (sections 6.4 and 8.5).
+- three tiers by what the workplace allows, found by setup and moved up later without losing history: Lean, Middle and Full (section 6.4);
+- at Lean: building in the person's own chat; local git with merges on the person's Approve; reviews in a separate read-only chat, recorded as chat reviews; the helper's jobs inside the extension; state and the record in a local repository; a weekly backup to a folder the person picks; and no Wheelhouse guards unless check C16 finds a way (section 6.4);
+- other code hosts each by a new half of the host adapter, designed once the tester's host is known (section 8.10);
+- at Middle and Full, pending the director's answer on which tiers a project with real users may use: the host's controls first (protection pinned to the host's own CI, the project's secrets kept out of pull requests' CI runs, the person's approval on the host once check C15 gives one, the narrow connection only, the record pushed as it happens), said plainly to hold against agents on the personal route only while nothing reaches the person's sign-in; the strongest level the computer allows, enforced by Copilot's own permission rules from a clean settings folder and environment, and unattended only where the keys are unreadable to builds until C15 passes; Guarded on Copilot keeping the control files at the normal level and removing links out of the worktree; new keys and a renewed connection after Unattended and after weeks with Ask allowances; building in the person's own chat where Copilot CLI can't run; the audit report checked against the host's own history; Unattended only by its own card and never for a project with real users; Locked on Copilot forcing the sandbox for all Copilot work on the computer; the baseline setting `forceRemoteSettingsRefresh` and recommending device management too; IT's approval named up front on a work computer, with no start-up entry (sections 6.4 and 8.5).
 
 **Decided by the director on 20 October 2026:** how Copilot users approve (question 1); both routes, with the Copilot route standing on its own (question 3); checks now, build later (question 4).
 
