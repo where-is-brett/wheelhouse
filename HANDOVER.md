@@ -156,7 +156,7 @@ The director is a product owner, not a developer. They want their product built 
          - under STOP, the guard lets through the tool search that loads PushNotification, and the front desk's read commands;
          - the connector guard rules on the app's own `mcp__ccd_*` tools: it refused the wrap-up tool;
          - `hooks/mod/messages.ts` reads the `Wheelhouse:` line inside the `<cross-session-message>` wrapper, for origins `sdk` (SendMessage) and `peer` (the app's send_message);
-         - the front desk's playbook reads a pressed card before explaining it, and records a product question's answer given in the chat;
+         - the front desk's playbook reads a pressed card before explaining it, and checks `views waiting` after an answer in the chat instead of guessing it went unrecorded;
          - the mod's first `ui.open` stays quiet before Desktop attaches a surface.
        - *Not run or not confirmed:* `/go` and a code typed in Desktop, `/digest`, a press during the writing, and whether Desktop draws a separate status line. A short second Mac sitting follows the changes.
    - **Left for Windows:** check 41's run (and check 33's), with one foreman wake on the mod's timer if check 27 gives Shape 2 there. `tests/e2e/mod.test.js` is skipped on Windows (the bridge's child looks for the helper on the user's own named pipe), so Windows is covered only by the in-process tests.

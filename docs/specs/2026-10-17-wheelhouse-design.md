@@ -1173,7 +1173,7 @@ The added costs are:
    - under STOP the guard refuses loading the notification tool and the front desk's read commands;
    - the connector guard refuses the app's own `mcp__ccd_*` tools;
    - another session's `Wheelhouse:` line arrives wrapped (origins `sdk` and `peer`), so the traffic rule reads the line inside the wrapper;
-   - the front desk reads a pressed card before explaining it, and records a product question's answer given in the chat;
+   - the front desk reads a pressed card before explaining it, and checks `views waiting` after an answer in the chat instead of guessing it went unrecorded;
    - the mod's first opening of the pane stays quiet before Desktop attaches a surface.
 
    Not confirmed: whether Desktop draws a separate status line.

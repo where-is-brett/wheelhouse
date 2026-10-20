@@ -16,7 +16,7 @@
   - under STOP the STOP guard refuses loading the notification tool and the front desk's own read commands;
   - Wheelhouse's connector guard refuses the app's own turn tools;
   - a `Wheelhouse:` line from another session reaches the conversation, because Desktop wraps it so its first line isn't the message's own;
-  - the front desk explained the wrong card on a pane's Explain more, and didn't record a product question's answer given in the chat;
+  - the front desk explained the wrong card on a pane's Explain more, and wrongly told the director their answer to a question in the chat may not have been recorded;
   - the mod's first opening of the pane shows an error line before Desktop is ready, though the pane opens.
 - **Not confirmed:** whether Desktop draws a separate status line (41-1).
 - **Not run, at the director's request:** typing in the Desktop session (33-2's `/go`, 33-3's typed code, 41-9's `/digest`), and a press made while the session is still writing.
@@ -200,7 +200,7 @@ The first attempt showed this; the third ticked the same way.
 
   On the first reading, the wake came too soon after the director left and nothing tries again once they are truly away. A push after a real absence, in the second sitting, decides between them.
 
-**The locked-screen card's answer (finding, the front desk's).** On return the director answered the photo card **The product** in the chat. The session said the card "came without an answer line or reply code, so your choice may not have been recorded". Only a card answer was recorded: the front desk didn't record the answer to the product question.
+**The locked-screen card's answer (finding, the front desk's).** On return the director answered the photo card **The product** in the chat. The session said the card "came without an answer line or reply code, so your choice may not have been recorded". The prompt record had in fact written a `card-answer` "The product" at 09:36:32, so the answer was on record, and the session's words were wrong. Whether that answer closed the card wasn't checked before the tidy-up.
 
 **41-8: neither line was kept out.** Both arrived after the director answered that card, at 09:36:39 and 09:36:47:
 
@@ -235,7 +235,7 @@ The first attempt showed this; the third ticked the same way.
 - **Traffic from other sessions** (section 17.1; `hooks/mod/messages.ts`, Ruling 49): **change needed.** For origins `sdk` and `peer`, the rule should read the first line inside the `<cross-session-message>` wrapper, after any leading system-reminder block or "Another Claude session sent a message:" line, and keep it out when that line is led `Wheelhouse:`.
 - **The front desk's playbook** (section 17.1, Explain more; Ruling 11): **change needed.**
   - On "Explain more on card N (id)", the front desk reads that card first (`again N`, checking its id) and explains only that card.
-  - An answer to a product question asked in the chat is recorded.
+  - After a question's answer in the chat, the front desk checks `views waiting` and says only what it shows, never guessing that the answer went unrecorded.
   - The command finding a card by its id stays a front desk build item.
 - **The mod's first `ui.open`**: it runs before Desktop has a surface and shows an error line though the pane opens. It should stay quiet, or open on the first tick once a surface is attached.
 - **Check 33** (section 20): the mod reads the weekly figure in Desktop, and every phone line made a record that verifies. The typed-in-Desktop steps remain to be seen.
