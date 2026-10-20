@@ -2023,6 +2023,74 @@ test('an uninstall whose run\'s close fails after the signing key went says in i
   }
 });
 
+// Ruling R146: a director who asks for uninstall again in that session, past status's new-session
+// line, is given the same line by plan, and no card to click: a Remove it there could not be signed,
+// so asking it would only begin the click loop. Plan writes nothing then, and once the next session
+// start has made and enrolled a key, it gives the card again.
+test('uninstall\'s plan, after an uninstall stopped past the trusted-keys list\'s removal, leads with the new-session line and gives no card, writing nothing (rulings R146, R142)', async (t) => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      const f = fakes(world);
+      const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run });
+      // The card the director clicked, shown as plan gives it while a click here can count.
+      const shownFirst = await routes['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(typeof shownFirst.hash, 'string');
+      assert.equal(shownFirst.lines, undefined);
+      const { renameSync } = fs;
+      const mock = t.mock.method(fs, 'renameSync', (from, to, ...rest) => {
+        if (to === journalFile() && fs.readFileSync(from, 'utf8').includes('"closedBy"')) throw Object.assign(new Error(`EBUSY: resource busy or locked, '${to}'`), { code: 'EBUSY' });
+        return renameSync(from, to, ...rest);
+      });
+      const first = await applyPlan(world, f);
+      mock.mock.restore();
+      assert.equal(first.done.ok, false);
+      assert.equal(fs.existsSync(signingKeyFile()), false, 'cut short after the signing key went');
+      const clickedAt = new Date(READY().getTime() - 60 * 1000).toISOString();
+      const deadline = new Date(Date.parse(clickedAt) + 20 * 60 * 1000).toISOString();
+      const record = {
+        folder: world.folder, project: first.got.card.target.project, hash: first.got.hash, clickedAt, deadline,
+        startedAt: READY().toISOString(), state: 'stopped', refused: first.done.refused, lines: first.done.lines, pages: first.done.pages,
+      };
+      writeProgress(world.folder, record);
+      const status = await routes['/setup/uninstall/status']({ folder: world.folder });
+      assert.equal(status.lines[0], UNINSTALL_NEW_SESSION);
+
+      // Asked again in this session: the same line first, the same lines as status, and no card.
+      const shownBefore = uninstallShownFor(world.folder);
+      const journalBefore = fs.readFileSync(journalFile(), 'utf8');
+      const again = await routes['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(again.ok, true);
+      assert.equal(again.lines[0], UNINSTALL_NEW_SESSION);
+      assert.deepEqual(again.lines, status.lines);
+      for (const k of ['hash', 'card', 'asks', 'last']) assert.equal(again[k], undefined, k);
+      assert.deepEqual(uninstallShownFor(world.folder), shownBefore, 'no card noted as shown');
+      assert.equal(fs.readFileSync(journalFile(), 'utf8'), journalBefore, 'no card asked');
+      assert.deepEqual(readProgress(world.folder), record);
+      // So, too, for one cut short there and past its time.
+      const { refused, ...running } = record; // eslint-disable-line no-unused-vars
+      writeProgress(world.folder, { ...running, state: 'running' });
+      const later = uninstallRoutes({ now: () => new Date(Date.parse(deadline) + 1000), userHome: world.userHome, platform: 'darwin', run: f.run });
+      const stuck = await later['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(stuck.lines[0], UNINSTALL_NEW_SESSION);
+      assert.equal(stuck.card, undefined);
+      writeProgress(world.folder, record);
+
+      // The next session start makes and enrols a key: plan gives the card again.
+      await sessionStart({ cwd: world.folder, session_id: 's1', hook_event_name: 'SessionStart' }, {
+        client: { health: async () => ({ ok: true }) }, spawn: () => { throw new Error('nothing is started'); }, dir: tempFolder('wh-managed-'),
+      });
+      const fresh = await routes['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(fresh.lines, undefined);
+      assert.equal(typeof fresh.hash, 'string');
+      assert.equal(typeof fresh.card.question, 'string');
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
 // A computer that joined the project another computer set up (step 3's join answer): registered,
 // with the app's keys, this computer's enrolment published in the profile, its own key trusted.
 function joiningWorld(host) {

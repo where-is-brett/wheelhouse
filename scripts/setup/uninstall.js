@@ -781,7 +781,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
 //   plan   { folder }        -> { ok, hash, card, asks: [{ id, about, card }], last }: the list worked
 //                               out, its card composed (cleaned first) and kept as shown for the
 //                               folder (noteUninstallShown), and each level 4 card asked; read-only
-//                               but for setup's own records, so it answers under STOP
+//                               but for setup's own records, so it answers under STOP. Once an
+//                               uninstall has stopped past the trusted-keys list's removal, it gives
+//                               { ok, lines } instead, status's lines with UNINSTALL_NEW_SESSION
+//                               first, and no card, writing nothing (ruling R146)
 //   apply  { folder, hash }  -> { ok, started: true }: only after the director's Remove it on the
 //                               card naming this project and this hash, signed and fresh, the card
 //                               shown for this folder, and the hash of the list worked out again
@@ -818,8 +821,8 @@ export const UNINSTALL_CHANGED = 'the list has changed since the card: ask for u
 export const UNINSTALL_OWN_LIST = 'the helper works out uninstall\'s list itself: a request names only the folder and the hash on the card';
 export const UNINSTALL_STOP = { ok: false, refused: 'STOP is on, so nothing is removed: lift STOP first, then ask for uninstall\'s plan again' };
 export const UNINSTALL_RUNNING = 'uninstall is already running for this folder: ask for its status';
-// Status's first line for an uninstall that stopped, or did not finish, once a click made in this
-// session can no longer count: past the trusted-keys list's removal (ruling R142).
+// Status's and plan's first line for an uninstall that stopped, or did not finish, once a click made
+// in this session can no longer count: past the trusted-keys list's removal (rulings R142, R146).
 export const UNINSTALL_NEW_SESSION = 'Start a new session on this folder, then ask for uninstall\'s plan again: this computer\'s key for your clicks is gone, so a Remove it clicked in this session can\'t count.';
 // The setup step uninstall's level 4 cards are asked under (see above).
 export const ASK_STEP = HEALTH_STEP;
@@ -936,9 +939,31 @@ export function uninstallRoutes({
     return true;
   };
 
+  // Whether a folder's recorded uninstall still stands for it: while it runs, or until another card
+  // has been shown since it started.
+  const standing = (folder, record) => {
+    const shown = uninstallShownFor(folder);
+    return record !== null && (runningNow(record, now) || shown === null || (shown.hash === record.hash && Date.parse(shown.at) <= Date.parse(record.startedAt)));
+  };
+  // Whether a recorded uninstall stopped, or did not finish in its time.
+  const cutShort = (record) => record.state === 'stopped' || (record.state === 'running' && !runningNow(record, now));
+  // Cut short past the trusted-keys list's removal: no Remove it clicked in this session can count,
+  // so status and plan both say first to start a new session, never to ask the card again (rulings
+  // R142, R146).
+  const newSessionFirst = (record) => cutShort(record) && !clickCountsHere();
+  // How a cut-short uninstall stands, then what is left.
+  const cutShortLines = async (folder, record) => [
+    ...(newSessionFirst(record) ? [UNINSTALL_NEW_SESSION] : []), ...progressLines(record, now),
+    'What is left:', ...planLines(await planFor(folder), folder, userHome),
+  ];
+
   async function plan(body) {
     only(body, ['folder']);
     const folder = admitFolder(body.folder, { userHome });
+    // Past the trusted-keys list's removal, status's lines and no card: a Remove it clicked here
+    // could not be signed. Nothing is noted as shown or asked then.
+    const record = readProgress(folder);
+    if (standing(folder, record) && newSessionFirst(record)) return { ok: true, lines: await cutShortLines(folder, record) };
     const got = await planFor(folder);
     // The card as the director sees it, cleaned before it is composed, so the stored card is the
     // one sent (ruling R33).
@@ -1020,17 +1045,8 @@ export function uninstallRoutes({
       folder = realOr(body.folder);
     }
     const record = readProgress(folder);
-    const shown = uninstallShownFor(folder);
-    // The recorded uninstall, while it runs, or until another card has been shown since it started.
-    const since = shown === null || (shown.hash === record?.hash && Date.parse(shown.at) <= Date.parse(record.startedAt));
-    if (record !== null && (runningNow(record, now) || since)) {
-      const lines = progressLines(record, now);
-      if (record.state === 'stopped' || (record.state === 'running' && !runningNow(record, now))) {
-        // Stopped past the trusted-keys list's removal: no Remove it clicked in this session can
-        // count, so it says first to start a new session, never to ask the card again (ruling R142).
-        if (!clickCountsHere()) lines.unshift(UNINSTALL_NEW_SESSION);
-        lines.push('What is left:', ...planLines(await planFor(folder), folder, userHome));
-      }
+    if (standing(folder, record)) {
+      const lines = cutShort(record) ? await cutShortLines(folder, record) : progressLines(record, now);
       const { state, refused, pages = [] } = record;
       const answer = { ok: true, lines, uninstall: { state: runningNow(record, now) || state !== 'running' ? state : 'stuck', lines: record.lines ?? [], pages, ...(refused ? { refused } : {}) } };
       // The answer that gives a finished last uninstall stops the helper once it is sent.
