@@ -336,7 +336,7 @@ function readObjectFile(file) {
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return { data: {}, indent: 2, eol: '\n', bom: '', newline: true };
+    if (error.code === 'ENOENT') return { data: {}, indent: 2, eol: '\n', bom: '', newline: true, missing: true };
     throw error;
   }
   return objectOf(file, text);
@@ -410,9 +410,26 @@ function deleteAt(data, key) {
   if (parent.found && isObject(parent.value)) delete parent.value[key[key.length - 1]];
 }
 
+// The objects above `key` that setup made on the way to it (`made`, the outermost of them, ruling
+// R138), taken out again from the deepest up, each only while it is left empty: anything put in one
+// since keeps it, and what holds it.
+function pruneMade(data, key, made) {
+  if (!Array.isArray(made) || made.length === 0 || made.length >= key.length) return;
+  for (let depth = key.length - 1; depth >= made.length; depth -= 1) {
+    const at = getAt(data, key.slice(0, depth));
+    if (!at.found || !isObject(at.value) || Object.keys(at.value).length > 0) return;
+    deleteAt(data, key.slice(0, depth));
+  }
+}
+
+// Whether a reversed key leaves nothing of a file setup made (`fileMade`, ruling R138).
+const leftEmpty = (change, data) => change.fileMade === true && isObject(data) && Object.keys(data).length === 0;
+
 // Sets one key in a JSON file, leaving every other key and the file's layout as they were.
 // The change it returns has the value before (null, with `absent: true`, when the key was not
-// there). A file that is not a JSON object is refused, naming it, never replaced. `record`, when
+// there), and what setup made on the way (ruling R138): `made`, the outermost object above the key
+// that wasn't there, and `fileMade` when the file wasn't; putting the key back takes those out
+// again while nothing else is in them. A file that is not a JSON object is refused, naming it, never replaced. `record`, when
 // given, is called with the change before the file is written, so the journal holds it first;
 // if it throws, the file is left as it was. A change recorded whose write then never happened is
 // safe to reverse: the file does not hold `after`, so it is left alone.
@@ -423,6 +440,9 @@ export function applyJsonKey({ file, key, value, step, project, record }) {
   const read = readObjectFile(file);
   const was = getAt(read.data, key);
   const before = was.found ? was.value : null;
+  // The outermost object on the way to the key that isn't there, which setup makes (ruling R138).
+  const missingAt = key.slice(0, -1).findIndex((_, i) => !getAt(read.data, key.slice(0, i + 1)).found);
+  const made = missingAt < 0 ? null : key.slice(0, missingAt + 1);
   if (!setAt(read.data, key, structuredClone(value))) {
     throw new Error(`${file} holds something that is not an object at ${key.join('.')}, so setup has left it as it was`);
   }
@@ -434,6 +454,8 @@ export function applyJsonKey({ file, key, value, step, project, record }) {
     key: [...key],
     before: structuredClone(before),
     ...(was.found ? {} : { absent: true }),
+    ...(made === null ? {} : { made }),
+    ...(read.missing === true ? { fileMade: true } : {}),
     after: structuredClone(value),
     ...(project === undefined ? {} : { project }),
   };
@@ -462,9 +484,12 @@ function reverseJsonKey(change, write) {
   const now = getAt(read.data, change.key);
   if (!now.found || canonicalJson(now.value) !== canonicalJson(change.after)) return CHANGED;
   if (!write) return { put: true };
-  if (change.absent === true) deleteAt(read.data, change.key);
-  else setAt(read.data, change.key, structuredClone(change.before));
-  writeObjectFile(change.target, read);
+  if (change.absent === true) {
+    deleteAt(read.data, change.key);
+    pruneMade(read.data, change.key, change.made);
+  } else setAt(read.data, change.key, structuredClone(change.before));
+  if (leftEmpty(change, read.data)) fs.rmSync(writePath(change.target), { force: true });
+  else writeObjectFile(change.target, read);
   return { put: true };
 }
 
@@ -536,9 +561,11 @@ export function reverseText(change, text) {
     }
     const now = getAt(read.data, change.key);
     if (now.found && canonicalJson(now.value) === canonicalJson(change.after)) {
-      if (change.absent === true) deleteAt(read.data, change.key);
-      else setAt(read.data, change.key, structuredClone(change.before));
-      return { put: true, text: objectText(read) };
+      if (change.absent === true) {
+        deleteAt(read.data, change.key);
+        pruneMade(read.data, change.key, change.made);
+      } else setAt(read.data, change.key, structuredClone(change.before));
+      return { put: true, text: leftEmpty(change, read.data) ? null : objectText(read) };
     }
     const before = change.absent === true ? !now.found : now.found && canonicalJson(now.value) === canonicalJson(change.before);
     return before ? { put: true, text } : CHANGED;

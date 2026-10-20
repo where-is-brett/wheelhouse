@@ -21,7 +21,7 @@ import {
 } from '../../scripts/hooks/session-start.js';
 import { decide as stopGuard } from '../../scripts/hooks/stop-guard.js';
 import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
-import { UNINSTALL_NEEDS_CLICK } from '../../scripts/setup/uninstall.js';
+import { UNINSTALL_NEEDS_CLICK, UNINSTALL_NEW_SESSION } from '../../scripts/setup/uninstall.js';
 import { HEALTH_STEP } from '../../scripts/lib/setup-run.js';
 import { setStop } from '../../scripts/lib/stop.js';
 import { as, shortHome } from '../helpers/homes.js';
@@ -137,6 +137,20 @@ test('the playbook closes the gaps its pressure runs found', () => {
   assert.match(playbook, /`status` says step 10's "own checks finished"/);
 });
 
+// Task R N1: uninstall's shortest cards point to `uninstall status` for the list, so the playbook
+// runs it and shows its lines before asking the card. Ruling R142: once a stopped uninstall's status
+// says first to start a new session, the card is not asked again in this one.
+test('the playbook shows uninstall\'s list when its card points to status, and stops asking the card when status says to start a new session', () => {
+  const uninstall = playbook.split('\n## Uninstall\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(uninstall, /When uninstall's card points to `uninstall status`, run it first and show its lines plainly, then ask the card\./);
+  assert.match(read('scripts/setup/uninstall.js'), /\$\{head\}[^\n]*What else stays: \$\{STATUS_FORM\}/, 'the card points so');
+  assert.ok(UNINSTALL_NEW_SESSION.startsWith('Start a new session on this folder, then ask for uninstall\'s plan again'));
+  assert.match(uninstall, /If status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
+  const command = read('commands/uninstall.md');
+  assert.match(command, /If the card points to `uninstall status`, first run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/setup\/cli\.js" uninstall status` and show its lines as they are\./);
+  assert.match(command, /If status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
+});
+
 test('the README gives the Node.js line and the install line as they are', () => {
   assert.ok(readme.includes(NODE_LINE), 'NODE_LINE');
   assert.ok(readme.includes(INSTALL_LINE), 'INSTALL_LINE');
@@ -153,13 +167,16 @@ test('the playbook\'s reading forms run under STOP', async () => {
   });
 });
 
-// Ruling R125: a typed question or the choice handed back comes back as `unanswered`; the playbook
-// says the choice is the director's and gives the card's recommendation before asking it again.
-test('the playbook acts on a typed answer the helper did not take, as ruling R125 says', () => {
-  assert.match(NOT_AN_ANSWER, /not taken as the answer/);
-  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*comes back with `unanswered`[^\n]*the choice is theirs, give the card's own recommendation and reason, then ask the same card again/);
+// Rulings R125, R132: a typed question or the choice handed back comes back as `unanswered`, a
+// line for the director saying why; the playbook tells them that line as it is, says the choice is
+// theirs and gives the card's recommendation before asking it again.
+test('the playbook acts on a typed answer the helper did not take, as rulings R125 and R132 say', () => {
+  // Ruling R135: after a question, whatever the director types next on that card is taken, and the line says so.
+  assert.match(NOT_AN_ANSWER.question, /^What you typed ends with a question mark[^\n]*Whatever you type on this card next is taken as your answer, so ask any question in the chat\.$/);
+  assert.match(NOT_AN_ANSWER.handedBack, /^What you typed hands the choice back[^\n]*not taken as your answer/);
+  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken \(after a question, whatever they type next on that card is taken\)\. Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again/);
   assert.doesNotMatch(playbook, /whatever they type is their answer, even a question/);
-  assert.match(playbook, /\| "They typed a question on the owner\/name card[^\n]*`unanswered`[^\n]*recommendation/);
+  assert.match(playbook, /\| "They typed a question on the owner\/name card[^\n]*with `unanswered`, tell them its line[^\n]*recommendation/);
 });
 
 // Task 16's must-fix Minors 3 to 6: step 10's trials are the never list's one exception; step 10's

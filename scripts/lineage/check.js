@@ -111,9 +111,18 @@ export function inspectLineage({ projectDir, root = ROOT, claudeHome = defaultCl
 // kept (whether the hold file now says so; false when it could not be written or removed),
 // and on a mismatch set (its mismatchSet) and recorded (whether the hold that stood already
 // had that set put in the state, so it is not recorded again).
-export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date() }) {
+//
+// With `pinsPending` (the project's setup run is open and has not yet done step 7, which installs
+// the kits; ruling R136), a kit not installed at all is setup's own expected state, not drift: it is
+// left out, so it writes no hold and no warning. Anything else that differs still holds. The kits
+// left out are given as `pending`, so the session's provenance still says what it loaded.
+export function checkLineage({ project, projectDir, root = ROOT, claudeHome = defaultClaudeHome(), locate = locateInstalled, now = () => new Date(), pinsPending = false }) {
   const file = holdFile(project);
-  const result = inspectLineage({ projectDir, root, claudeHome, locate });
+  const inspected = inspectLineage({ projectDir, root, claudeHome, locate });
+  const notInstalled = (m) => m.path === '*' && m.got === null && typeof m.upstream === 'string';
+  const left = pinsPending ? inspected.mismatches.filter((m) => !notInstalled(m)) : inspected.mismatches;
+  const pending = inspected.mismatches.filter((m) => !left.includes(m));
+  const result = { ...inspected, mismatches: left, ok: left.length === 0, ...(pending.length > 0 ? { pending } : {}) };
   let kept = true;
   let set = null;
   let recorded = false;

@@ -22,13 +22,17 @@
 // an earlier project's uninstall left them: steps 2, 6 and 9 (but for what they wrote inside the
 // project's folder, which is the project's); the profile's clone and profile.json;
 // the profile repository; the app's keys and the profile's own GitLab key; the own app recorded in
-// the profile; this computer's enrolment; and, recorded nowhere, the signing key and the
-// trusted-keys list beside it, removed last of all (ruling R123), after every change that can stop
-// uninstall, so an uninstall cut short can still be clicked again. Wheelhouse's own folders and
-// files (the tools it fetched, the profile's clone and profile.json, setup's clicks, answers and the
-// like, the trust clicks and the record of the profile's enrolments last fetched, the Windows
-// installer's temporary folder, and the project's own folder under projects/) are removed whole,
-// never named as changed since setup. journal.json, and uninstall's own progress record, are kept.
+// the profile; this computer's enrolment; and, recorded nowhere, the trusted-keys list and the
+// signing key beside it, removed last of all (ruling R123), after every change that can stop
+// uninstall, so an uninstall cut short can still be clicked again. The list goes first (ruling
+// R128): one that could not be removed leaves the key it trusts. Everything else of the last phase
+// (this computer's id, the emptied folders) goes after the list and before the key, and from the
+// list's removal on nothing stops uninstall but the run's own close: what can't be removed there is
+// left and named (ruling R142). Wheelhouse's own folders and files (the tools it fetched, the profile's clone and
+// profile.json, setup's clicks, answers and the like, the trust clicks and the record of the
+// profile's enrolments last fetched, the Windows installer's temporary folder, and the project's own
+// folder under projects/) are removed whole, never named as changed since setup. journal.json, and
+// uninstall's own progress record, are kept.
 //
 // The setup commit counts as on the host only when the journal or the folder shows it went up:
 // step 7 finished, or recorded protection after the push, or the folder's copy of the
@@ -42,10 +46,16 @@
 // request), no Delete card is offered for what is on the host, the app's installation is left as it
 // is (no untick, no Uninstall), and only this computer's own enrolment is withdrawn.
 //
+// The project's .wheelhouse/ folder (ruling R131): the front desk's and the foreman's files, which
+// setup did not make, stay with the project, and uninstall never touches them. While the folder is
+// there, step 7's line keeping it out of git (R108) stays too, and both are named on the card as
+// kept; the folder's being there is read from the world, so its coming or going between the card
+// and the click changes the list. Without the folder, the line is put back as setup's others are.
+//
 // What each kind gives (R87): see the entries below. The order is binding (R89): Stop, Locked, the
 // project's files (a pull request the director merges), this computer, keys, kept, last; newest
-// first within a phase; then the signing key and the trusted-keys list; the helper stops last of
-// all, after its answer.
+// first within a phase; then the trusted-keys list, this computer's id, the emptied folders, the
+// signing key and the keys folder (R142); the helper stops last of all, after its answer.
 //
 //   Plan = {
 //     project: string | null,  the registered project the folder is, or null
@@ -87,6 +97,7 @@
 //                                            this repository
 //       'revoke-key' { key, pasted, line }   a GitLab key revoked through the API, then deleted
 //       'remove' { target }                  a file, or a folder whole, of Wheelhouse's own
+//       'remove-empty' { target }            a folder of Wheelhouse's own, only once it is empty
 //       'remove-plugin' { line }             the line the director follows in Claude Desktop
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -100,7 +111,7 @@ import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, writeWhole } from '../lib/setup-clicks.js';
-import { HOST_TOOLS, toolFolder } from '../lib/host-tools.js';
+import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
 import { trustDir, seenFile } from '../lib/trust-clicks.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
@@ -113,7 +124,7 @@ import { readJournal, heldNow } from './journal.js';
 import { launchVarState } from './telemetry.js';
 import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
 import { PROFILE_REPO } from './host.js';
-import { SETUP_FILES } from './project-files.js';
+import { SETUP_FILES, WHEELHOUSE_LINE } from './project-files.js';
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
 
@@ -137,6 +148,15 @@ const KEEP_LABEL = 'Keep it';
 export const NEVER_PUSHED = 'it stays in this folder\'s history';
 // Why what other computers use stays as it is, on a shared project (ruling R124).
 const OTHERS_USE = 'your other computers use it, so it stays';
+// Why step 7's .wheelhouse/ exclude line stays, and the project's .wheelhouse/ folder with it
+// (ruling R131): uninstall never touches the files in that folder.
+export const FOLDER_STAYS = 'it holds the front desk\'s and the foreman\'s files, which stay with the project';
+export const LINE_STAYS = 'the project\'s .wheelhouse/ folder stays, with the front desk\'s and the foreman\'s files, so this line keeps it out of git';
+// The two, as the card names them, and in short when the card has no room for more.
+export const FOLDER_NOTE = '.wheelhouse/ stays, out of git: the front desk\'s and foreman\'s files.';
+export const FOLDER_NOTE_SHORT = '.wheelhouse/ stays, out of git.';
+// Where the whole list is read.
+const STATUS_FORM = 'cli.js uninstall status';
 export const DELETE_LABEL = 'Delete it';
 
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
@@ -159,6 +179,9 @@ export function realOr(p) {
 const exists = (p) => fs.existsSync(p);
 const profileFile = () => path.join(wheelhouseHome(), 'profile.json');
 const projectFolder = (slug) => path.join(projectsDir(), slug);
+// This computer's id (scripts/lib/paths.js, computerId), removed in the last phase of the last
+// uninstall (R138), before the signing key (R142).
+export const computerFile = () => path.join(wheelhouseHome(), 'computer.json');
 const repoName = (repo) => (typeof repo === 'string' ? repo.split('/').at(-1) : null);
 // A host target `<host>:<owner/name>` or `<host>:<owner/name>:<file>`.
 export function hostTarget(target) {
@@ -182,7 +205,7 @@ function computerWide(c, run) {
 }
 
 // A path for the card, with the home folder as ~.
-function shown(p, userHome) {
+export function shown(p, userHome) {
   return within(userHome, p) ? path.join('~', path.relative(userHome, p)) : p;
 }
 
@@ -226,12 +249,16 @@ function deleteCard({ what, why, deletes, keeps, because }) {
   };
 }
 
-// The card's first part: the groups with their counts, then each item left because it changed
-// since setup while there is room, then how many more and where to read them (ruling R90), what
-// else stays, and the retention line (R64).
-function cardWhat({ name, changes, keep, asks, pullRequest }) {
+// The card's first part, as texts from the fullest to the shortest: the groups with their counts,
+// then each item left because it changed since setup while there is room (WHAT_CHARS), then how
+// many more and where to read them (ruling R90), what else stays, and the retention line (R64).
+// The plan takes the first that fits (fitWhat): the shorter ones say less of what stays, and the
+// shortest names no group of what is removed either, only that the whole list is in `cli.js
+// uninstall status`. Each shorter one points there, and the playbook runs it and shows its lines
+// before asking such a card; the hash covers the whole list whichever is shown.
+function cardWhats({ name, changes, keep, asks, pullRequest }) {
   const count = (test) => changes.filter(test).length;
-  // The signing key and the trusted-keys list, removed last of all, are keys on the card.
+  // The trusted-keys list and the signing key, removed last of all, are keys on the card.
   const keyFile = (c) => c.put === 'remove' && (samePath(c.target, signingKeyFile()) || samePath(c.target, enrolledFile()));
   const files = count((c) => c.phase === 'files' && ['in-pull-request', 'reverse'].includes(c.put));
   const trial = count((c) => c.phase === 'files' && ['close-pull-request', 'delete-branch'].includes(c.put));
@@ -250,16 +277,47 @@ function cardWhat({ name, changes, keep, asks, pullRequest }) {
   ].filter(Boolean);
   const head = `Remove Wheelhouse from ${name}: ${groups.join(', ')}.`;
   const changed = keep.filter((k) => k.why === 'changed since setup').map((k) => k.brief ?? k.what);
-  const others = keep.length - changed.length;
-  const tail = `${others > 0 ? ` ${plural(others, 'other thing')} stay as they are.` : ''}${asks.length > 0 ? ' Repositories and records stay unless their own cards say otherwise.' : ''} ${TRANSCRIPTS}`;
+  // The project's .wheelhouse/ folder and its exclude line are named (ruling R131), not counted.
+  const named = keep.some((k) => k.why === FOLDER_STAYS || k.why === LINE_STAYS);
+  const others = keep.length - changed.length - keep.filter((k) => k.why === FOLDER_STAYS || k.why === LINE_STAYS).length;
+  const note = named ? ` ${FOLDER_NOTE}` : '';
+  const shortNote = named ? ` ${FOLDER_NOTE_SHORT}` : '';
+  const othersLine = others > 0 ? ` ${plural(others, 'other thing')} ${others === 1 ? 'stays as it is' : 'stay as they are'}.` : '';
+  const asksLine = asks.length > 0 ? ' Repositories and records stay unless their own cards say otherwise.' : '';
+  const transcripts = ` ${TRANSCRIPTS}`;
   const left = (list) => {
     const more = changed.length - list.length;
     if (changed.length === 0) return '';
-    return ` Left as you changed them: ${[...list, ...(more > 0 ? [`and ${more} more: cli.js uninstall status`] : [])].join('; ')}.`;
+    return ` Left as you changed them: ${[...list, ...(more > 0 ? [`and ${more} more: ${STATUS_FORM}`] : [])].join('; ')}.`;
   };
+  const counted = changed.length > 0 ? ` ${changed.length} left as you changed them: ${STATUS_FORM}.` : '';
   let fitting = changed;
-  while (fitting.length > 0 && (head + left(fitting) + tail).length + name.length > WHAT_CHARS) fitting = fitting.slice(0, -1);
-  return `${head}${left(fitting)}${tail}`;
+  while (fitting.length > 0 && (head + left(fitting) + note + othersLine + asksLine + transcripts).length + name.length > WHAT_CHARS) fitting = fitting.slice(0, -1);
+  return [
+    `${head}${left(fitting)}${note}${othersLine}${asksLine}${transcripts}`,
+    `${head}${counted}${note}${othersLine}${asksLine}${transcripts}`,
+    `${head}${counted}${shortNote}${othersLine}${asksLine}${transcripts}`,
+    `${head}${counted}${shortNote} What else stays: ${STATUS_FORM}.${transcripts}`,
+    `${head}${shortNote} What stays, and why: ${STATUS_FORM}.${transcripts}`,
+    `Remove Wheelhouse from ${name}: the whole list is in ${STATUS_FORM}.${shortNote}${transcripts}`,
+  ];
+}
+
+// The first of the card's texts that fits: within WHAT_CHARS with the name, and composed within the
+// composer's limit (CARD.chars), so uninstall's card can always be shown (rulings R131, R134). The
+// budget never costs the groups or the count of what changed since setup (the first COUNTED texts
+// keep both); past it, the first that composes at all.
+const COUNTED = 4;
+function fitWhat(whats, base, name) {
+  const composes = (what) => {
+    try {
+      composeCard(cleanDeep({ ...base, what }, []));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return whats.slice(0, COUNTED).find((w) => w.length + name.length <= WHAT_CHARS && composes(w)) ?? whats.find(composes) ?? whats.at(-1);
 }
 
 const same = (a, b) => canonicalJson(a ?? null) === canonicalJson(b ?? null);
@@ -320,6 +378,27 @@ function walkChain(group) {
     else changed.push(e);
   }
   return { listed, already, changed };
+}
+
+// The text a file holds with step 7's .wheelhouse/ line kept: as it is when it holds the line
+// already (an earlier run's step 7 added it before this link), otherwise with the line added at the
+// end, as step 7 adds it.
+function withOwnLine(text) {
+  if (typeof text === 'string' && text.split(/\r?\n/).includes(WHEELHOUSE_LINE)) return text;
+  return `${text ?? ''}${text && !text.endsWith('\n') ? '\n' : ''}${WHEELHOUSE_LINE}\n`;
+}
+
+// Step 7's .wheelhouse/ exclude line kept (ruling R131), when a file group holds it as setup wrote
+// it and the file holds it now: { line, rest }, its own links and the others, each of those read
+// with the line kept, so putting them back takes out setup's other lines and leaves this one.
+// Otherwise null, and the group is walked as it is.
+function keepWheelhouseLine(group) {
+  const line = group.filter((e) => e.c.kind === 'file' && e.c.line === WHEELHOUSE_LINE);
+  if (line.length === 0) return null;
+  const now = heldNow(newest(group));
+  if (now.held !== true || !now.value.split(/\r?\n/).includes(WHEELHOUSE_LINE)) return null;
+  const rest = group.filter((e) => !line.includes(e)).map((e) => ({ ...e, c: { ...e.c, before: withOwnLine(e.c.before), after: withOwnLine(e.c.after) } }));
+  return { line, rest };
 }
 
 // What uninstall would do for the folder, worked out without changing anything: the same world
@@ -408,6 +487,13 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     else kept(`setup's commit on ${branch}, never pushed`, NEVER_PUSHED, idsOf(commitGroup));
   }
   const sharedFile = (target) => SETUP_FILES.some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
+  // The project's .wheelhouse/ folder: while it is there, step 7's line keeping it out of git stays
+  // (ruling R131).
+  const ownFolder = path.join(real, '.wheelhouse');
+  let ownFolderThere = false;
+  try {
+    ownFolderThere = fs.statSync(ownFolder).isDirectory();
+  } catch { /* not there */ }
   const projectSettings = path.join(real, '.claude', 'settings.json');
   const numberedPrs = new Set(all.map((g) => /^(.+) pull request \d+$/.exec(g[0].c.target)?.[1]).filter(Boolean));
 
@@ -438,9 +524,16 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           kept(describe(c, userHome), 'the project\'s own file, as committed: it stays', list);
           break;
         }
-        const walked = walkChain(group);
+        const keeping = ownFolderThere ? keepWheelhouseLine(group) : null;
+        if (keeping !== null) {
+          kept(`${WHEELHOUSE_LINE} in ${shown(c.target, userHome)}`, LINE_STAYS, idsOf(keeping.line));
+          kept('the project\'s .wheelhouse/ folder', FOLDER_STAYS);
+          if (keeping.rest.length === 0) break;
+        }
+        const links = keeping?.rest ?? group;
+        const walked = walkChain(links);
         if (walked.why !== undefined) {
-          kept(describe(c, userHome), walked.why, list, brief(c));
+          kept(describe(c, userHome), walked.why, idsOf(links), brief(c));
           break;
         }
         const phase = inProject ? 'files' : 'computer';
@@ -588,10 +681,21 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   if (!last && usedApp && shared) kept(`the GitHub app's access to ${own.record.repo}`, OTHERS_USE);
 
   // The project's own folder under projects/, and on the last project Wheelhouse's own folders and
-  // files, recorded or not; the signing key with the trusted-keys list beside it go last of all
-  // (ruling R123), below.
+  // files, recorded or not; the trusted-keys list and the signing key go last of all (rulings R123,
+  // R128), below.
   if (slug !== null) remove(projectFolder(slug), 'last');
-  const closing = last ? [signingKeyFile(), enrolledFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })) : [];
+  // Last of all: the trusted-keys list, this computer's id, the folders the project's records and
+  // the fetched tools were in (each only once nothing is left in it, ruling R138), then the signing
+  // key, and the keys folder it was in. Everything else goes before the key (ruling R142); from the
+  // list's removal on, a click made in this session can't count, so nothing there stops uninstall
+  // but the run's own close (uninstall-run.js).
+  const asRemove = (put) => (target) => ({ phase: 'last', put, target });
+  const closing = last ? [
+    ...[enrolledFile(), computerFile()].filter(exists).map(asRemove('remove')),
+    ...[projectsDir(), toolsDir()].filter(exists).map(asRemove('remove-empty')),
+    ...[signingKeyFile()].filter(exists).map(asRemove('remove')),
+    ...[keysDir()].filter(exists).map(asRemove('remove-empty')),
+  ] : [];
   if (last) {
     for (const p of [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile()]) if (exists(p)) remove(p, 'last');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card
@@ -644,11 +748,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   // the same name and nothing recorded would otherwise give the same list.
   const hash = listHash({ folder: real, changes, keep, asks: asks.map((a) => ({ id: a.id, put: a.put, target: a.target, ids: a.ids })), done });
   const name = slug ?? path.basename(real);
-  const card = {
+  const base = {
     kind: 'uninstall',
     level: 4,
     target: { project: name, hash },
-    what: cardWhat({ name, changes, keep, asks, pullRequest }),
     why: shared
       ? `You asked for it. It takes Wheelhouse off this computer for this project; the project stays on ${HOSTS[own?.record.host] ?? 'the host'} for your other computers.`
       : 'You asked for it, and it takes away the checks that guard this project.',
@@ -667,6 +770,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
         : 'The checks no longer guard this project; protection stays as it is.',
   };
+  const card = { ...base, what: fitWhat(cardWhats({ name, changes, keep, asks, pullRequest }), base, name) };
   return { project: slug, last, shared, changes, keep, asks, done, card, hash };
 }
 
@@ -714,6 +818,9 @@ export const UNINSTALL_CHANGED = 'the list has changed since the card: ask for u
 export const UNINSTALL_OWN_LIST = 'the helper works out uninstall\'s list itself: a request names only the folder and the hash on the card';
 export const UNINSTALL_STOP = { ok: false, refused: 'STOP is on, so nothing is removed: lift STOP first, then ask for uninstall\'s plan again' };
 export const UNINSTALL_RUNNING = 'uninstall is already running for this folder: ask for its status';
+// Status's first line for an uninstall that stopped, or did not finish, once a click made in this
+// session can no longer count: past the trusted-keys list's removal (ruling R142).
+export const UNINSTALL_NEW_SESSION = 'Start a new session on this folder, then ask for uninstall\'s plan again: this computer\'s key for your clicks is gone, so a Remove it clicked in this session can\'t count.';
 // The setup step uninstall's level 4 cards are asked under (see above).
 export const ASK_STEP = HEALTH_STEP;
 // The apply's own process.
@@ -739,6 +846,21 @@ export function readProgress(folder) {
 // Writes a folder's uninstall progress record whole.
 export function writeProgress(folder, record) {
   writeWhole(progressFile(folder), `${JSON.stringify(record, null, 2)}\n`);
+}
+
+// Whether a Remove it clicked in this session can count: this computer's id, its signing key, and
+// that key on the trusted-keys list under that id are all here. Read as they are, so no id is made
+// (signing with none here would make a new one, not the enrolled one).
+function clickCountsHere() {
+  let id;
+  let publicKey;
+  try {
+    id = JSON.parse(fs.readFileSync(computerFile(), 'utf8'))?.id;
+    publicKey = crypto.createPublicKey(crypto.createPrivateKey(fs.readFileSync(signingKeyFile()))).export({ type: 'spki', format: 'der' }).toString('base64');
+  } catch {
+    return false;
+  }
+  return typeof id === 'string' && readEnrolled().some((e) => e?.computer === id && e?.publicKey === publicKey);
 }
 
 // Whether a record says its apply is still running: recorded so, and within its time.
@@ -772,6 +894,7 @@ function entryLine(e, userHome) {
     case 'untick-repository': return `give the app's installation page, to untick ${e.repo}`;
     case 'revoke-key': return e.line;
     case 'remove': return `remove ${shown(e.target, userHome)}`;
+    case 'remove-empty': return `remove ${shown(e.target, userHome)} once it is empty`;
     case 'remove-plugin': return e.line;
     default: return e.put;
   }
@@ -903,6 +1026,9 @@ export function uninstallRoutes({
     if (record !== null && (runningNow(record, now) || since)) {
       const lines = progressLines(record, now);
       if (record.state === 'stopped' || (record.state === 'running' && !runningNow(record, now))) {
+        // Stopped past the trusted-keys list's removal: no Remove it clicked in this session can
+        // count, so it says first to start a new session, never to ask the card again (ruling R142).
+        if (!clickCountsHere()) lines.unshift(UNINSTALL_NEW_SESSION);
         lines.push('What is left:', ...planLines(await planFor(folder), folder, userHome));
       }
       const { state, refused, pages = [] } = record;

@@ -19,7 +19,9 @@
 // 5: the product's glossary entry and phase, the rules found; rulings R35, R59) earns those records
 // first, signed and kept pending as every signed record is (scripts/lib/setup-writes.js), and is
 // kept as a setup-answer only once they are, so a step never settles on an answer whose records
-// were not made. In a folder with no project record such an answer is kept nowhere.
+// were not made; in a folder with no project record an answer that records something is kept
+// nowhere. A typed answer the engine won't take (rulings R125, R132) is kept, in any folder, but
+// records and claims nothing (ruling R137), judged by the engine's own rule (scripts/lib/setup-clicks.js).
 // The baseline card reads the private note's figures back (scripts/measures/baseline.js): in any
 // folder, a Record these on it becomes a signed baseline action kept in
 // <wheelhouseHome()>/measures/clicks/, naming only the hash of the figures, and a Not now on it
@@ -54,7 +56,9 @@ import {
   setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
   TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine,
 } from '../state/card-lines.js';
-import { keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall } from '../lib/setup-clicks.js';
+import {
+  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore,
+} from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
@@ -312,6 +316,14 @@ function keepSetupClicks(cwd, out, now, project = null) {
       }
       const answer = setupAnswerOf(cwd, click);
       if (!answer) continue;
+      // A typed answer the engine won't take (the choice handed back, or a first question on its
+      // question) is kept as given, so the card is asked again saying why, but it records nothing
+      // and claims nothing: the answer that follows, typed or clicked, is the one (ruling R137).
+      const { runId, step, questionId, question, label, text } = answer.made.data;
+      if (label === null && typedVerdict(text, typedBefore({ runId, step, questionId, question })) !== null) {
+        keepAnswer(makeEvent({ ...answer.made, now }));
+        continue;
+      }
       const records = setupRecordsOf(answer.asked, answer.made.data, { now });
       if (records.length === 0) {
         keepAnswer(makeEvent({ ...answer.made, now }));

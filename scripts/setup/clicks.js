@@ -42,14 +42,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
-import { readEnrolled, verify } from '../state/signing.js';
+import { readEnrolled } from '../state/signing.js';
 import { eventPath } from '../state/events.js';
 import { helperClient } from '../host/helper-client.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import {
   HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, writeWhole, shownCard, readShown,
-  readAsked, uninstallShownFile, readUninstallShown,
+  readAsked, uninstallShownFile, readUninstallShown, keptIn, ownSigned, keptAnswers, typedVerdict,
 } from '../lib/setup-clicks.js';
 import { isLineName } from '../state/card-lines.js';
 
@@ -111,27 +111,7 @@ export function askedIn(runId, step) {
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
-// Every event kept in one of setup's folders on this computer; a file that isn't one is passed over.
-function keptIn(dir) {
-  let names;
-  try {
-    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
-  } catch {
-    return [];
-  }
-  return names.flatMap((name) => {
-    try {
-      const event = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
-      return event && typeof event === 'object' ? [event] : [];
-    } catch {
-      return [];
-    }
-  });
-}
 const keptClicks = () => keptIn(clicksDir());
-
-// Made on this computer and signed by its enrolled key.
-const ownSigned = (e, me, enrolled) => e.computer === me && e.sig?.computer === me && EVENT_ID.test(String(e.id)) && verify(e, enrolled);
 
 const used = (event) => fs.existsSync(path.join(usedDir(), String(event.id)));
 
@@ -151,25 +131,32 @@ export function freshClicks({ runId, step, hash, now = () => new Date() }) {
   }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
-// A typed answer that is no answer (ruling R125): a question (it ends with "?"), or, alone, words
-// that hand the choice back. Case and a closing full stop or exclamation mark don't count.
-export const HANDED_BACK = Object.freeze(['you decide', 'you choose', 'not sure', 'i don\'t know', 'skip', 'whatever']);
-export function notAnAnswer(text) {
-  if (typeof text !== 'string') return false;
-  const said = text.trim();
-  if (said.endsWith('?')) return true;
-  const plain = said.replace(/[.!\s]+$/u, '').replace(/\s+/gu, ' ').replaceAll('\u2019', '\'').toLowerCase();
-  return HANDED_BACK.includes(plain);
-}
+// A typed answer that is no answer at first sight, and the rule for when it counts (rulings R125,
+// R132, R137), live in scripts/lib/setup-clicks.js, which the prompt record reads too.
+export { HANDED_BACK, handedBack, notAnAnswer } from '../lib/setup-clicks.js';
 
-// This run's setup-answers kept here, made on this computer and signed by its enrolled key, oldest
-// first.
-function keptAnswers(runId) {
-  if (!RUN_ID.test(String(runId))) return [];
-  const enrolled = readEnrolled();
-  const me = computerId();
-  return keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
-    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+// This run's setup-answers to the questions its steps last asked, in the same words, oldest first,
+// each with whether it counts and, for a typed text that does not, why: 'handedBack' (the choice
+// handed back, every time) or 'question' (it ends with "?", the first time only on that question:
+// any typed answer to it after one such refusal counts, ruling R132). Read from the signed records
+// alone, so it holds across sessions.
+function verdicts(runId) {
+  const typedSoFar = new Map();
+  const list = [];
+  for (const e of keptAnswers(runId)) {
+    const { step, questionId, question, label, text } = e.data;
+    const asked = askedRecord(runId, step, questionId);
+    if (asked === null || asked.card.question !== question) continue;
+    const key = `${step}.${questionId}`;
+    if (typeof label === 'string') {
+      list.push({ e, key, counts: text === null && !PUT_OFF.includes(label) && asked.card.options.some((o) => o.label === label) });
+    } else if (label === null && typeof text === 'string' && text !== '' && asked.typed === true) {
+      const why = typedVerdict(text, typedSoFar.get(key) ?? []);
+      typedSoFar.set(key, [...(typedSoFar.get(key) ?? []), text]);
+      list.push({ e, key, counts: why === null, ...(why === null ? {} : { why }) });
+    }
+  }
+  return list;
 }
 
 // Every answer the director has given to this run's questions, as each step's plan reads it in
@@ -177,31 +164,26 @@ function keptAnswers(runId) {
 // setup-answer naming this run, made on this computer and signed by its enrolled key, and the
 // question it answers is the one its step last asked under that id, in the same words, with the
 // label one of that card's own options (never a put-off) or, on a card that takes one, a typed
-// text that is an answer (notAnAnswer: never a question, nor the choice handed back, ruling R125;
-// the record stays as it was kept, and is passed over here). Answers are never used up and never
-// go stale: the newest for each question counts.
+// text that is an answer (verdicts: never the choice handed back, and a question only once it was
+// refused on that question before, rulings R125, R132; a refused record stays as it was kept, and
+// is passed over here). Answers are never used up and never go stale: the newest for each question
+// counts.
 export function answersFor(runId) {
   const answers = {};
-  for (const e of keptAnswers(runId)) {
-    const { step, questionId, question, label, text } = e.data;
-    const asked = askedRecord(runId, step, questionId);
-    if (asked === null || asked.card.question !== question) continue;
-    const fits = typeof label === 'string'
-      ? text === null && !PUT_OFF.includes(label) && asked.card.options.some((o) => o.label === label)
-      : label === null && typeof text === 'string' && text !== '' && asked.typed === true && !notAnAnswer(text);
-    if (fits) answers[`${step}.${questionId}`] = { label, text, at: e.at };
+  for (const { e, key, counts } of verdicts(runId)) {
+    if (counts) answers[key] = { label: e.data.label, text: e.data.text, at: e.at };
   }
   return answers;
 }
 
-// Whether the newest typed answer to this question since its card was last asked, in the same
-// words, is no answer (notAnAnswer): the step asks the card again, saying why (ruling R125).
-export function typedNotAnswered(runId, step, id) {
+// Why the newest typed answer to this question since its card was last asked, in the same words,
+// was not taken ('question' or 'handedBack', as verdicts gives it), or null: the step asks the card
+// again, saying why (rulings R125, R132).
+export function typedRefused(runId, step, id) {
   const asked = askedRecord(runId, step, id);
-  if (asked === null || asked.typed !== true) return false;
-  const since = keptAnswers(runId).filter((e) => e.data.step === step && e.data.questionId === id && e.data.question === asked.card.question
-    && Date.parse(e.at) >= Date.parse(asked.at)).at(-1);
-  return since !== undefined && since.data.label === null && notAnAnswer(since.data.text);
+  if (asked === null || asked.typed !== true) return null;
+  const since = verdicts(runId).filter((v) => v.key === `${step}.${id}` && Date.parse(v.e.at) >= Date.parse(asked.at)).at(-1);
+  return since?.why ?? null;
 }
 
 // Records uninstall's card as shown for a folder (ruling R90): the project its line names, the full

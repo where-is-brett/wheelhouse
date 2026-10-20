@@ -897,6 +897,34 @@ test('an installed Superpowers file that differs raises the warning and writes t
   });
 });
 
+test('a session start in a project whose setup has not reached step 7 holds nothing for kits not installed yet; once step 7 is done, it does (ruling R136)', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-ss-setting-up-'));
+    writeProject(P, { folder, remoteUrl: 'https://github.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {} });
+    // Nothing installed for this folder: the fixture's installs are for another.
+    const fixture = lineageFixture(tempFolder('wh-ss-elsewhere-'));
+    const run = startRun({ folder, now: () => new Date('2026-10-20T03:00:00.000Z') });
+    for (const n of [1, 2, 3, 4, 5, 6]) markStep(run.id, n, 'doneAt', { now: () => new Date('2026-10-20T03:00:00.000Z') });
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    const said = text(await lineageRun(f, fixture, folder, {}, { cwd: folder }));
+    assert.doesNotMatch(said, /Lineage/);
+    assert.match(said, /Setup is part-way through: step 7/);
+    assert.equal(fs.existsSync(holdFile(P)), false, 'no hold: setup installs the kits at step 7');
+    assert.equal(await hold({ ...call(folder, 'Edit'), cwd: folder }, { projectOf: () => ({ project: P }) }), undefined);
+    // A kit installed but differing still holds while setup is part-way.
+    const differs = lineageFixture(folder);
+    differs.put({ LICENSE: 'another licence\n' });
+    assert.match(text(await lineageRun(f, differs, folder, {}, { cwd: folder })), /Lineage/);
+    assert.equal(fs.existsSync(holdFile(P)), true);
+    // Once step 7 has installed them, kits not installed hold again.
+    markStep(run.id, 7, 'doneAt', { now: () => new Date('2026-10-20T03:00:00.000Z') });
+    fs.rmSync(holdFile(P));
+    assert.equal(text(await lineageRun(f, fixture, folder, {}, { cwd: folder })).split('\n')[0], LINEAGE_LINE('not installed'));
+    assert.equal(fs.existsSync(holdFile(P)), true);
+  });
+});
+
 test('a hold is recorded in the state once for each set of mismatches, through the kept records (R146)', async () => {
   await withHome(async () => {
     const folder = tempFolder('wh-ss-project-');

@@ -9,8 +9,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { wheelhouseHome } from './paths.js';
+import { wheelhouseHome, computerId } from './paths.js';
 import { isLineName } from '../state/card-lines.js';
+import { readEnrolled, verify } from '../state/signing.js';
 
 export const HASH = /^[0-9a-f]{64}$/;
 export const RUN_ID = /^run-[0-9a-f]{10}$/;
@@ -243,4 +244,70 @@ export function shownUninstall({ cwd, project, h12, card }) {
   const nearest = Math.max(...found.map(depth));
   const chosen = found.filter((r) => depth(r) === nearest).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
   return { project: chosen.project, folder: chosen.folder, hash: chosen.hash };
+}
+
+// ---- Kept answers, and the rule for a typed one ----
+
+// Every event kept in one of setup's folders on this computer; a file that isn't one is passed over.
+export function keptIn(dir) {
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    try {
+      const event = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      return event && typeof event === 'object' ? [event] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+// Made on this computer and signed by its enrolled key.
+export const ownSigned = (e, me, enrolled) => e.computer === me && e.sig?.computer === me && EVENT_ID.test(String(e.id)) && verify(e, enrolled);
+
+// This run's setup-answers kept here, made on this computer and signed by its enrolled key, oldest
+// first.
+export function keptAnswers(runId) {
+  if (!RUN_ID.test(String(runId))) return [];
+  const enrolled = readEnrolled();
+  const me = computerId();
+  return keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
+    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+// A typed answer that is no answer at first sight (ruling R125): a question (it ends with "?"), or,
+// alone, words that hand the choice back. Case and closing punctuation don't count, so "you
+// decide?" hands the choice back: it is never a question to be taken when typed again (R132). A
+// text with no letter or digit in it ("?", "...") is no answer at all, and hands it back too (R143).
+export const HANDED_BACK = Object.freeze(['you decide', 'you choose', 'not sure', 'i don\'t know', 'skip', 'whatever']);
+export function handedBack(text) {
+  if (typeof text !== 'string') return false;
+  if (!/[\p{L}\p{N}]/u.test(text)) return true;
+  const plain = text.trim().replace(/[.!?\s]+$/u, '').replace(/\s+/gu, ' ').replaceAll('\u2019', '\'').toLowerCase();
+  return HANDED_BACK.includes(plain);
+}
+export function notAnAnswer(text) {
+  return typeof text === 'string' && (text.trim().endsWith('?') || handedBack(text));
+}
+
+// Why a typed answer on a setup card is not taken, or null when it is (rulings R125, R132): the
+// choice handed back, every time ('handedBack'); a question, the first time on its question only
+// ('question'). `earlier` are the texts typed before it on that question, in the same words, oldest
+// first. The one rule, read by the engine for what counts and by the prompt record before it records
+// anything an answer writes (ruling R137).
+export function typedVerdict(text, earlier = []) {
+  if (handedBack(text)) return 'handedBack';
+  if (notAnAnswer(text) && !earlier.some((t) => !handedBack(t) && notAnAnswer(t))) return 'question';
+  return null;
+}
+
+// The texts typed before on a question of a run, in the same words, as this computer kept them,
+// oldest first: what typedVerdict reads as `earlier`.
+export function typedBefore({ runId, step, questionId, question }) {
+  return keptAnswers(runId).filter((e) => e.data.step === step && e.data.questionId === questionId && e.data.question === question
+    && e.data.label === null && typeof e.data.text === 'string' && e.data.text !== '').map((e) => e.data.text);
 }

@@ -64,15 +64,15 @@ test('a key that was absent is removed again on reversal', () => {
     assert.equal(change.before, null);
     assert.deepEqual(readJson(file).plugins, { wheelhouse: { on: true } });
     assert.deepEqual(reverseChange(change), { put: true });
-    assert.deepEqual(readJson(file).plugins, {});
-    assert.equal(readJson(file).theme, 'dark');
-    // A file that was missing is made, and the key goes again on reversal.
+    // The object setup made above the key goes with it (ruling R138).
+    assert.deepEqual(readJson(file), { theme: 'dark' });
+    // A file that was missing is made, and goes again on reversal, the key and the file with it.
     const fresh = path.join(dir, 'sub', 'new.json');
     const made = applyJsonKey({ file: fresh, key: ['a'], value: 1 });
     assert.deepEqual(readJson(fresh), { a: 1 });
     assert.equal(made.before, null);
     assert.deepEqual(reverseChange(made), { put: true });
-    assert.deepEqual(readJson(fresh), {});
+    assert.equal(fs.existsSync(fresh), false);
     // A value that was there before is put back.
     const set = applyJsonKey({ file, key: ['theme'], value: 'light' });
     assert.deepEqual(reverseChange(set), { put: true });
@@ -145,7 +145,7 @@ test('a path with a space and an accent is written and put back', () => {
     const [kept] = findRun(dir).changes;
     assert.deepEqual(kept, change);
     assert.deepEqual(reverseChange(kept), { put: true });
-    assert.deepEqual(readJson(file), { café: 1, naïve: {} });
+    assert.deepEqual(readJson(file), { café: 1 });
     // A file and a folder with such a path are put back too.
     const note = path.join(dir, 'note é.txt');
     fs.writeFileSync(note, 'after');
@@ -604,4 +604,64 @@ test('reverseText puts a key or a file back in a copy held elsewhere, changing n
   assert.deepEqual(reverseText(file, null), { put: true, text: null });
   assert.deepEqual(reverseText(file, '# Theirs\n'), { put: false, why: 'changed since setup' });
   assert.throws(() => reverseText({ id: 'chg-3', kind: 'folder', target: '/p/x', before: null, after: {} }, null));
+});
+
+// Ruling R138: what setup made on the way to a key goes when the key is put back, once it is empty:
+// the objects above the key that weren't there, and the file itself when setup made it.
+test('a key\'s parents and file that setup made are recorded, and removed when they are left empty on reversal (ruling R138)', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-made ');
+    // A file that wasn't there: its file and the object above the key are setup's.
+    const local = path.join(dir, 'settings.local.json');
+    const rule = applyJsonKey({ file: local, key: ['permissions', 'allow'], value: ['Bash(x:*)'] });
+    assert.deepEqual([rule.made, rule.fileMade], [['permissions'], true]);
+    assert.deepEqual(reverseChange(rule), { put: true });
+    assert.equal(fs.existsSync(local), false, 'the file setup made, left empty, is removed');
+
+    // A file the director had: the object setup made above two keys goes with the first key setup
+    // wrote there, the last put back; the file and the director's keys stay.
+    const user = path.join(dir, 'settings.json');
+    fs.writeFileSync(user, '{\n  "theme": "dark"\n}\n');
+    const one = applyJsonKey({ file: user, key: ['env', 'A'], value: '1' });
+    const two = applyJsonKey({ file: user, key: ['env', 'B'], value: '2' });
+    assert.deepEqual([one.made, one.fileMade, two.made], [['env'], undefined, undefined]);
+    reverseChange(two);
+    assert.deepEqual(readJson(user), { theme: 'dark', env: { A: '1' } });
+    reverseChange(one);
+    assert.equal(readText(user), '{\n  "theme": "dark"\n}\n');
+
+    // Something of the director's put there since stays, and so does what holds it; what setup
+    // made below it, left empty, goes.
+    const three = applyJsonKey({ file: user, key: ['outer', 'inner', 'C'], value: 3 });
+    assert.deepEqual(three.made, ['outer']);
+    const withOwn = readJson(user);
+    withOwn.outer.mine = true;
+    fs.writeFileSync(user, `${JSON.stringify(withOwn, null, 2)}\n`);
+    reverseChange(three);
+    assert.deepEqual(readJson(user), { theme: 'dark', outer: { mine: true } });
+  });
+});
+
+test('an object that was there before, empty, is left as it was (ruling R138)', () => {
+  withHome(() => {
+    const file = path.join(tempFolder('wh-made '), 'settings.json');
+    fs.writeFileSync(file, '{\n  "env": {}\n}\n');
+    const change = applyJsonKey({ file, key: ['env', 'A'], value: '1' });
+    assert.equal(change.made, undefined);
+    assert.equal(change.fileMade, undefined);
+    reverseChange(change);
+    assert.equal(readText(file), '{\n  "env": {}\n}\n');
+  });
+});
+
+test('reverseText takes out what setup made on the way too, and no file when setup made it (ruling R138)', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-made ');
+    const file = path.join(dir, 'settings.json');
+    const change = applyJsonKey({ file, key: ['permissions', 'allow'], value: ['x'] });
+    assert.deepEqual(reverseText(change, readText(file)), { put: true, text: null });
+    fs.writeFileSync(file, '{\n  "theme": "dark"\n}\n');
+    const kept = applyJsonKey({ file, key: ['env', 'A'], value: '1' });
+    assert.deepEqual(reverseText(kept, readText(file)), { put: true, text: '{\n  "theme": "dark"\n}\n' });
+  });
 });

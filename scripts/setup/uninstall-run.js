@@ -17,8 +17,9 @@
 // applyUninstall walks the plan's changes in their order (the phases, newest first within each,
 // ruling R89) and marks each change in the journal as it is dealt with (markPutBack: put true when
 // put back, false with why when left as it is), straight after it is done, so an uninstall cut short
-// resumes with a fresh plan and never puts anything back twice. Anything that fails stops it there,
-// with nothing after it done and the run left open: the next plan lists what is left, on a new card.
+// resumes with a fresh plan and never puts anything back twice. Anything that fails before the
+// trusted-keys list's removal stops it there, with nothing after it done and the run left open: the
+// next plan lists what is left, on a new card (after the list, see Resuming below).
 // Locked is left first, with the director's password, before anything that removes the project's
 // record. The level 4 cards (the asks) are acted on after the keys, and only on a Delete it given
 // since the card was last asked (ruling R117): the state branch is deleted with the director's own
@@ -31,10 +32,14 @@
 // there, the push is marked as on the host (markOnHost) before uninstall stops, so the next plan
 // plans the pull request. A commit never pushed is marked kept as soon as setup's files are put back
 // here, so a resume never looks for it again; and once everything before the last phase is done, a
-// resume carries on without the project's record (which the last phase removes). The signing key
-// and the trusted-keys list are the plan's last removals (ruling R123): once the first is removed,
-// nothing stops uninstall before its runs are closed, so a resume never needs a click this computer
-// can no longer sign.
+// resume carries on without the project's record (which the last phase removes). The trusted-keys
+// list is the first of the plan's last removals and the signing key all but the last (rulings R123,
+// R128, R142): a list that could not be removed stops uninstall with the key still trusting it, so
+// a resume's click is signed and checked as before. Once the list is removed, a click made in this
+// session can't count, so nothing stops uninstall but the run's own close: a removal that fails is
+// left and named in what uninstall says, for the director to remove or the next uninstall to take.
+// If the close itself fails, status says first to start a new session (which makes and enrols a
+// key while the run is open) and then ask again (UNINSTALL_NEW_SESSION).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -66,7 +71,7 @@ import { withdrawEnrolment } from './computers.js';
 import { enrolledFile, signingKeyFile } from '../state/signing.js';
 import { answersFor, askedRecord } from './clicks.js';
 import {
-  uninstallPlan, readProgress, writeProgress, describe, hostTarget, samePath, within, keyOf, realOr,
+  uninstallPlan, readProgress, writeProgress, describe, shown, hostTarget, samePath, within, keyOf, realOr,
   ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL, NEVER_PUSHED, PHASES,
 } from './uninstall.js';
 
@@ -259,10 +264,13 @@ export async function applyUninstall({
     for (const k of neverPushed) mark(k.ids, false, k.why);
   };
   const afterFiles = (entry) => PHASES.indexOf(entry.phase) > PHASES.indexOf('files');
-  // The signing key and the trusted-keys list: from the first of them on, nothing stops uninstall
-  // (ruling R123).
+  // The trusted-keys list and the signing key: from the first of them on, nothing stops uninstall,
+  // STOP or a removal that fails, but the run's own close (rulings R123, R142). Once the list is gone
+  // a Remove it clicked in this session can't count, so a stop there would ask for a click that
+  // can't be given: what can't be removed is left, and named.
   const keyFile = (e) => e.put === 'remove' && (samePath(e.target, signingKeyFile()) || samePath(e.target, enrolledFile()));
   const firstKeyFile = plan.changes.findIndex(keyFile);
+  let pastKeys = false;
 
   // The level 4 cards, on Delete it alone.
   const asked = async () => {
@@ -291,6 +299,32 @@ export async function applyUninstall({
   let helperStops = false;
   let askedYet = false;
   let removed = 0;
+  // A removal of the list, throwing when it can't be made.
+  const removeOne = (entry) => {
+    if (entry.put === 'remove') {
+      const recorded = (entry.ids ?? []).some((id) => byId.get(id)?.kind === 'folder' && samePath(byId.get(id).target, entry.target) && typeof byId.get(id).after?.installer === 'string');
+      if (!within(wheelhouseHome(), entry.target) && !recorded) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
+      const there = fs.existsSync(entry.target);
+      fs.rmSync(entry.target, { recursive: true, force: true });
+      if (there) removed += 1;
+      mark(entry.ids, true);
+      return;
+    }
+    // Left as it is while anything is in it: only an emptied folder of Wheelhouse's goes (R138).
+    if (!within(wheelhouseHome(), entry.target)) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
+    let left = null;
+    try {
+      left = fs.readdirSync(entry.target);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    try {
+      if (left !== null && left.length === 0) fs.rmdirSync(entry.target);
+    } catch (error) {
+      // Something put in it meanwhile keeps it, as anything in it would.
+      if (error?.code !== 'ENOTEMPTY' && error?.code !== 'EEXIST') throw error;
+    }
+  };
   try {
     if (unpushed !== undefined && !(record === null && reachedLast)) {
       // Read by ls-remote (ruling R118): no such branch on the host means the push never went up,
@@ -321,7 +355,16 @@ export async function applyUninstall({
       // Past the project's files, setup's files are put back here: the commit never pushed is kept.
       if (afterFiles(entry)) keepCommit();
       const closing = firstKeyFile !== -1 && i > firstKeyFile;
+      if (closing) pastKeys = true;
       if (entry.put !== 'stop' && !closing && stopped()) halt('STOP came on, so uninstall stopped here; once STOP is lifted, ask for uninstall\'s plan again');
+      if (closing && ['remove', 'remove-empty'].includes(entry.put)) {
+        try {
+          removeOne(entry);
+        } catch (error) {
+          say(`Left: ${shown(entry.target, userHome)}, as it could not be removed (${error?.code ?? (error instanceof Error ? error.message : 'no reason given')}): remove it yourself, or it goes with the next uninstall.`);
+        }
+        continue;
+      }
       if (entry.phase === 'last' && !askedYet) {
         askedYet = true;
         await asked();
@@ -485,14 +528,10 @@ export async function applyUninstall({
           say(got.found ? `${entry.line}.` : `No GitLab key was kept on this computer; check ${got.url} for any Wheelhouse made.`);
           break;
         }
-        case 'remove': {
-          const recorded = (entry.ids ?? []).some((id) => byId.get(id)?.kind === 'folder' && samePath(byId.get(id).target, entry.target) && typeof byId.get(id).after?.installer === 'string');
-          if (!within(wheelhouseHome(), entry.target) && !recorded) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
-          if (fs.existsSync(entry.target)) removed += 1;
-          fs.rmSync(entry.target, { recursive: true, force: true });
-          mark(entry.ids, true);
+        case 'remove':
+        case 'remove-empty':
+          removeOne(entry);
           break;
-        }
         case 'remove-plugin':
           say(`${entry.line}.`);
           break;
@@ -500,6 +539,8 @@ export async function applyUninstall({
           halt(`uninstall's list holds a change it can't make (${entry.put})`);
       }
     }
+    // Past the list's removal, whatever is left is the run's close.
+    if (firstKeyFile !== -1) pastKeys = true;
     if (!askedYet) await asked();
     keepCommit();
     for (const d of plan.done) mark(d.ids, true, d.why);
@@ -509,7 +550,10 @@ export async function applyUninstall({
     return { ok: true, lines, pages, ...(helperStops ? { helperStops: true } : {}) };
   } catch (error) {
     const why = error instanceof Halt ? error.message : `something went wrong: ${error instanceof Error ? error.message : 'no reason given'}`;
-    return { ok: false, refused: `Uninstall stopped: ${why}. What it did before is marked and is not done again; ask for uninstall's plan again for what is left.`, lines, pages };
+    // Past the trusted-keys list, only the run's close stops it, and a click made in this session
+    // can't count: status says first to start a new session (UNINSTALL_NEW_SESSION, ruling R142).
+    const next = pastKeys ? '.' : '; ask for uninstall\'s plan again for what is left.';
+    return { ok: false, refused: `Uninstall stopped: ${why}. What it did before is marked and is not done again${next}`, lines, pages };
   }
 }
 

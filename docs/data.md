@@ -43,8 +43,8 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 - Its settings, its configuration, its part of `CLAUDE.md` and the pinned kits come out of the project's files, by a pull request you merge (or straight from the folder, if setup's own commit never reached the host).
 - The project's records on this computer are removed.
 - The changes setup made to this computer (the 30 days for transcripts, the usage counts, Claude Code's update channel and phone notifications) are put back, but only with the last project on this computer that uses Wheelhouse, since the others still need them. While another project here still uses the GitHub app, the app stays, and you get its installation page to untick this project's repository there.
-- With that last project, the keys it made are deleted or withdrawn (for the GitHub app you get its page, to remove it there), this computer's key leaves your profile, the usage receiver and the host helper stop, and Wheelhouse's own folders and files in `~/.wheelhouse` are removed: the tools it fetched, the copy of your profile, its records of your clicks and answers, the computers you trusted and its note of which computers your profile lists, and last of all this computer's own signing key.
-- A setting you changed yourself after setup is left as you set it, and the card names it.
+- With that last project, the keys it made are deleted or withdrawn (for the GitHub app you get its page, to remove it there), this computer's key leaves your profile, the usage receiver and the host helper stop, and Wheelhouse's own folders and files in `~/.wheelhouse` are removed: the tools it fetched, the copy of your profile, its records of your clicks and answers, the computers you trusted and its note of which computers your profile lists, and last of all this computer's own signing key and its id.
+- A setting you changed yourself after setup is left as you set it, and the card names it. A settings file or section setup made for its own keys goes with them once nothing else is in it.
 
 **A project your other computers use too** (one this computer joined, or where this computer trusts another computer's key): uninstall takes Wheelhouse off this computer only. The project's files stay as committed, nothing on GitHub or GitLab is offered for deletion, the GitHub app stays installed with nothing to untick, and only this computer's key leaves your profile. Your other computers keep Wheelhouse's checks for the project.
 
@@ -54,6 +54,7 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 - Branch protection on the host stays on.
 - Setup's journal stays in `~/.wheelhouse`, so what setup did stays on record, and so does uninstall's own record of how it went. So do the usage counts already gathered, which hold counts only; delete that folder yourself if you want them gone.
 - Your git history stays, setup's commit included.
+- The project's `.wheelhouse` folder stays, with the front desk's and the foreman's files in it, which uninstall never touches. So does the line setup added to keep that folder out of git, so its files don't show up as changes. If the folder isn't there when you remove Wheelhouse, that line comes out with setup's other changes.
 - git, and anything else setup installed with its official installer, stays on your computer.
 - Transcripts already removed by the 30 days can't come back.
 
