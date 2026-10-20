@@ -4,8 +4,8 @@
 // beingSetUp), as in a project: refuses
 // secrets (.env files, the credential folders, Wheelhouse's own home), writes to
 // the places that hold the guardrails, the host tools (gh, glab, git push) and
-// connectors the project has not listed (the Claude app's own drawing tools pass
-// unlisted). It backs up the deny rules and the
+// connectors the project has not listed (the Claude Desktop app's own drawing tools
+// pass unlisted in a session it started). It backs up the deny rules and the
 // sandbox; it does not replace them. Any other tool passes untouched.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -259,22 +259,29 @@ function serverOf(input) {
 }
 
 // The Claude Desktop app's own tools that only draw in the app (its task list, its wrap-up box
-// and its panes) pass without the project listing them. Each is named whole, so every other
-// mcp__ccd_* tool, and one the app adds later, stays with the connector list.
+// and its panes) pass without the project listing them, and only in a session the app started.
+// Each is named whole, so every other mcp__ccd_* tool, and one the app adds later, stays with
+// the connector list.
 //
-// Why the names can be trusted: Desktop starts each session's Claude Code with its own
-// deniedMcpServers setting, which names ccd_turn and ccd_view among the app's servers, so a
-// configured server of either name is not loaded there (Claude Code matches the name exactly,
-// and the app's own servers come in through the SDK, which that setting does not hold). Claude
-// Code itself reserves neither name, so a session started elsewhere could load one, and a server
-// called `ccd.turn` takes the same tool names, since Claude Code writes each character outside
-// letters, digits, `_` and `-` as `_`. So a project whose connector list or .mcp.json names
-// either server is refused both servers' tools, these included.
+// Why the names can be trusted. Claude Code itself reserves neither ccd_turn nor ccd_view, and
+// writes each character of a server's name outside letters, digits, `_` and `-` as `_`. So in a
+// session it starts on its own, a tool of one of these names can come from a user or local
+// server (~/.claude.json), a --mcp-config server, a project's .mcp.json, or a tool a mod
+// registers ($.tool.register), whose server is the bare plugin name, so a plugin named ccd_turn
+// takes mcp__ccd_turn__wrap_up. What keeps those off the pass is the entrypoint: the six pass
+// only when CLAUDE_CODE_ENTRYPOINT, which the app sets and hooks inherit, is the app's own. The
+// app starts its sessions with a deniedMcpServers setting that names ccd_turn and ccd_view, so
+// no configured server of either exact name loads there (its own come in through the SDK, which
+// that setting does not hold). That setting matches the name exactly, so `ccd.turn` would slip
+// past it; and so a project whose connector list or .mcp.json names either server, in any
+// spelling, is refused both servers' tools, these included.
 const APP_TOOLS = new Set([
   'mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up',
   'mcp__ccd_view__show_pane', 'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view',
 ]);
 const APP_SERVERS = ['ccd_turn', 'ccd_view'];
+// The values of CLAUDE_CODE_ENTRYPOINT in a session the Desktop app started.
+const APP_ENTRYPOINTS = new Set(['claude-desktop', 'claude-desktop-3p']);
 
 // A server's name as Claude Code writes it in its tools' names.
 const asInToolNames = (name) => name.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -319,14 +326,14 @@ function configurationNamesAppServer(allowed, mainFolder, cwd) {
   return [...files].some(mcpJsonNamesAppServer);
 }
 
-function connectorRefusal(input, server, mainFolder) {
+function connectorRefusal(input, server, mainFolder, entrypoint) {
   const allowed = mainFolder ? allowedServers(mainFolder) : null;
   const appTool = APP_TOOLS.has(input.tool_name);
   if (allowed !== null && (appTool || APP_SERVERS.includes(server))) {
     if (configurationNamesAppServer(allowed, mainFolder, input.cwd)) {
       return answer.deny(`This project's configuration names ccd_turn or ccd_view, which the Claude app keeps for its own tools: ${HELPER}`);
     }
-    if (appTool) return null;
+    if (appTool && APP_ENTRYPOINTS.has(entrypoint)) return null;
   }
   if (server === null || server === '' || allowed === null || !allowed.includes(server)) {
     return answer.deny(`This project has not listed that connector: ${HELPER}`);
@@ -334,7 +341,7 @@ function connectorRefusal(input, server, mainFolder) {
   return null;
 }
 
-export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT } = {}) {
+export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT } = {}) {
   const tool = input.tool_name;
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
@@ -353,7 +360,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
         main = undefined;
       }
     }
-    return connectorRefusal(input, serverOf(input), main) ?? undefined;
+    return connectorRefusal(input, serverOf(input), main, entrypoint) ?? undefined;
   }
   if (SHELL_TOOLS.includes(tool)) {
     const command = input.tool_input?.command;

@@ -204,31 +204,33 @@ test('a connector is refused unless the configuration lists its server', async (
 
 const APP_TOOLS = ['mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up', 'mcp__ccd_view__show_pane',
   'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view'];
+// A call as from a session the Claude Desktop app started, unless another entrypoint is given.
+const desk = (base, home, input, entrypoint = 'claude-desktop') => decide(input, { dir: path.join(base, 'managed'), home, platform: process.platform, pluginRoot: PLUGIN, entrypoint });
 
 test('the Claude app\'s own drawing tools pass unlisted, each by its whole name; its other tools stay with the list', async () => {
   await withHome(async (home) => {
     for (const config of [undefined, { v: 1, criticalAreas: [], ciFiles: [], mcpServers: ['figma'], webDomains: [] }]) {
       const { base, main } = makeProject(config);
       try {
-        for (const tool of APP_TOOLS) assert.equal(await run(base, home, call(main, tool)), undefined, `${tool} ${JSON.stringify(config)}`);
+        for (const tool of APP_TOOLS) assert.equal(await desk(base, home, call(main, tool)), undefined, `${tool} ${JSON.stringify(config)}`);
         for (const tool of ['mcp__ccd_turn__other', 'mcp__ccd_turn__wrap_up_now', 'mcp__ccd_turn__wrap_up__x', 'mcp__ccd_turnx__wrap_up',
           'mcp__CCD_TURN__wrap_up', 'mcp__ccd_view__show_pane2', 'mcp__plugin_x_ccd_turn__wrap_up', 'mcp__ccd_session_mgmt__delete_session',
           'mcp__ccd_session__spawn_task', 'mcp__ccd_host__clean_up_worktrees', 'mcp__ccd_settings__set_setting', 'mcp__ccd_turn', 'mcp__ccd_view__']) {
-          assert.ok(denied(await run(base, home, call(main, tool))), tool);
+          assert.ok(denied(await desk(base, home, call(main, tool))), tool);
         }
-        assert.ok(denied(await run(base, home, call(main, 'ReadMcpResourceTool', { server: 'ccd_turn', uri: 'x://y' }))));
+        assert.ok(denied(await desk(base, home, call(main, 'ReadMcpResourceTool', { server: 'ccd_turn', uri: 'x://y' }))));
       } finally { fs.rmSync(base, { recursive: true, force: true }); }
     }
     // Listing another of the app's servers lets it through by the list, as any connector.
     const listed = makeProject({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: ['ccd_session_mgmt'], webDomains: [] });
     try {
-      assert.equal(await run(listed.base, home, call(listed.main, 'mcp__ccd_session_mgmt__list_sessions')), undefined);
-      assert.equal(await run(listed.base, home, call(listed.main, 'mcp__ccd_turn__wrap_up')), undefined);
+      assert.equal(await desk(listed.base, home, call(listed.main, 'mcp__ccd_session_mgmt__list_sessions')), undefined);
+      assert.equal(await desk(listed.base, home, call(listed.main, 'mcp__ccd_turn__wrap_up')), undefined);
     } finally { fs.rmSync(listed.base, { recursive: true, force: true }); }
     // A configuration that can't be read refuses them with every connector.
     const unreadable = makeProject('not json');
     try {
-      for (const tool of APP_TOOLS) assert.ok(denied(await run(unreadable.base, home, call(unreadable.main, tool))), tool);
+      for (const tool of APP_TOOLS) assert.ok(denied(await desk(unreadable.base, home, call(unreadable.main, tool))), tool);
     } finally { fs.rmSync(unreadable.base, { recursive: true, force: true }); }
   });
 });
@@ -251,11 +253,11 @@ test('a project whose configuration names ccd_turn or ccd_view is refused those 
       try {
         if (mcp !== undefined) fs.writeFileSync(path.join(main, '.mcp.json'), mcp);
         for (const tool of [...APP_TOOLS, 'mcp__ccd_turn__other', 'mcp__ccd_view__other']) {
-          const out = await run(base, home, call(main, tool));
+          const out = await desk(base, home, call(main, tool));
           assert.ok(denied(out), `${label}: ${tool}`);
           assert.match(out.hookSpecificOutput.permissionDecisionReason, /ccd_turn or ccd_view/, `${label}: ${tool}`);
         }
-        assert.ok(denied(await run(base, home, call(main, 'ListMcpResourcesTool', { server: 'ccd_view' }))), label);
+        assert.ok(denied(await desk(base, home, call(main, 'ListMcpResourcesTool', { server: 'ccd_view' }))), label);
       } finally { fs.rmSync(base, { recursive: true, force: true }); }
     }
     // A .mcp.json naming other servers, or none, leaves the app's tools passing.
@@ -263,7 +265,7 @@ test('a project whose configuration names ccd_turn or ccd_view is refused those 
       const { base, main } = makeProject(plain);
       try {
         fs.writeFileSync(path.join(main, '.mcp.json'), mcp);
-        for (const tool of APP_TOOLS) assert.equal(await run(base, home, call(main, tool)), undefined, `${mcp}: ${tool}`);
+        for (const tool of APP_TOOLS) assert.equal(await desk(base, home, call(main, tool)), undefined, `${mcp}: ${tool}`);
       } finally { fs.rmSync(base, { recursive: true, force: true }); }
     }
     // A .mcp.json in the session's own folder, or a folder above it, counts as well as the main folder's.
@@ -272,10 +274,39 @@ test('a project whose configuration names ccd_turn or ccd_view is refused those 
       const deep = path.join(main, 'app', 'web');
       fs.mkdirSync(deep, { recursive: true });
       fs.writeFileSync(path.join(main, 'app', '.mcp.json'), mcpJson(['ccd_turn']));
-      assert.equal(await run(base, home, call(main, 'mcp__ccd_turn__wrap_up')), undefined);
-      assert.ok(denied(await run(base, home, call(deep, 'mcp__ccd_turn__wrap_up'))));
-      assert.ok(denied(await run(base, home, call(path.join(main, 'app'), 'mcp__ccd_view__get_layout'))));
+      assert.equal(await desk(base, home, call(main, 'mcp__ccd_turn__wrap_up')), undefined);
+      assert.ok(denied(await desk(base, home, call(deep, 'mcp__ccd_turn__wrap_up'))));
+      assert.ok(denied(await desk(base, home, call(path.join(main, 'app'), 'mcp__ccd_view__get_layout'))));
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('the app\'s drawing tools pass only in a session the Desktop app started, by its entrypoint', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: ['figma'], webDomains: [] });
+    const before = process.env.CLAUDE_CODE_ENTRYPOINT;
+    try {
+      for (const entrypoint of ['claude-desktop', 'claude-desktop-3p']) {
+        for (const tool of APP_TOOLS) assert.equal(await desk(base, home, call(main, tool), entrypoint), undefined, `${entrypoint}: ${tool}`);
+      }
+      for (const entrypoint of ['cli', 'sdk-ts', 'claude-desktopx', 'Claude-Desktop', '', null]) {
+        for (const tool of APP_TOOLS) {
+          const out = await desk(base, home, call(main, tool), entrypoint);
+          assert.ok(denied(out), `${entrypoint}: ${tool}`);
+          assert.match(out.hookSpecificOutput.permissionDecisionReason, /has not listed that connector/, `${entrypoint}: ${tool}`);
+        }
+      }
+      // By default the entrypoint is read from the hook's environment; missing refuses.
+      delete process.env.CLAUDE_CODE_ENTRYPOINT;
+      for (const tool of APP_TOOLS) assert.ok(denied(await run(base, home, call(main, tool))), `missing: ${tool}`);
+      process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-desktop';
+      for (const tool of APP_TOOLS) assert.equal(await run(base, home, call(main, tool)), undefined, `from the environment: ${tool}`);
+      // A listed figma is held by the list whatever the entrypoint.
+      assert.equal(await desk(base, home, call(main, 'mcp__figma__get_design'), 'cli'), undefined);
+    } finally {
+      if (before === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT; else process.env.CLAUDE_CODE_ENTRYPOINT = before;
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 
