@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome } from '../../scripts/lib/paths.js';
 import { SETUP_TITLES } from '../../scripts/state/card-lines.js';
+import { until } from './until.js';
 
 function world() {
   try {
@@ -64,11 +65,7 @@ const questionCard = (n, { options, what }) => ({
 
 async function released(n) {
   const file = path.join(wheelhouseHome(), `release-${n}`);
-  const until = Date.now() + 30000;
-  while (!fs.existsSync(file)) {
-    if (Date.now() > until) throw new Error('the test never released the step');
-    await new Promise((resolve) => { setTimeout(resolve, 20); });
-  }
+  await until(() => fs.existsSync(file), { what: `the test to release step ${n}` });
 }
 
 function step(n, { long = false } = {}) {

@@ -23,6 +23,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { SETUP_STEPS, journalFile } from '../../../scripts/lib/setup-run.js';
 import { courierFile } from '../../../scripts/mod/courier.js';
+import { beforeTimer } from '../../helpers/until.js';
 
 const BRIDGE = fileURLToPath(new URL('../../../scripts/mod/bridge.js', import.meta.url));
 const P = 'owner__name';
@@ -966,8 +967,8 @@ test('a tick says when the helper is down, and when the views were last synced',
 
 test('a helper that never answers is waited for no longer than HELPER_MS', () => withHome(async (home) => {
   const repo = registered(home);
-  const started = Date.now();
-  const got = await handle(tickOf(repo), live({ client: { ...fakeClient(), health: () => new Promise(() => {}) } }));
-  assert.ok(Date.now() - started < HELPER_MS + 1500);
+  const handled = await beforeTimer(() => handle(tickOf(repo), live({ client: { ...fakeClient(), health: () => new Promise(() => {}) } })), HELPER_MS + 1500);
+  assert.equal(handled.inTime, true, 'still waiting on the helper');
+  const got = handled.value;
   assert.ok(got.pane.missing.includes(NO_HELPER));
 }));

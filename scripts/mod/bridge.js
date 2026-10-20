@@ -36,6 +36,7 @@ import { pressCard as defaultPress } from './press.js';
 import { settingsRows as defaultRows, pressSetting as defaultSetting, effectiveFor as defaultEffective, ADVANCED } from './settings-pane.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
+import { helperGrace } from '../lib/helper-grace.js';
 import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
 import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
 import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
@@ -57,6 +58,9 @@ import { startedAsScript } from '../lib/started-as-script.js';
 export const BRIDGE_MS = 5000;
 // How long the helper is waited for, inside BRIDGE_MS.
 export const HELPER_MS = 3000;
+// The waits as kept: each with the time a test on a loaded computer adds (helper-grace.js).
+const helperMs = () => HELPER_MS + helperGrace();
+const bridgeMs = () => BRIDGE_MS + helperGrace();
 // The time the courier needs inside BRIDGE_MS: its wait for courier.json's lock, and the file. A
 // front desk's tick with less left skips the courier, so a wake is never marked sent and then
 // lost to the late answer.
@@ -143,7 +147,7 @@ function siteOf(cwd, d) {
 }
 
 function clientOf(d) {
-  d.client ??= helperClient({ timeout: HELPER_MS });
+  d.client ??= helperClient({ timeout: helperMs() });
   return d.client;
 }
 
@@ -176,7 +180,7 @@ async function reply(req, d) {
   if (!fromDirector(req.origin)) return no(SAYS.notDirector);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says } = await d.replyRecord({ project, text: req.text, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: HELPER_MS });
+  const { made, says } = await d.replyRecord({ project, text: req.text, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs() });
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 
@@ -199,7 +203,7 @@ async function press(req, d) {
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
   const { made, says, submit } = await d.pressCard({
-    project, card: req.card, hash: req.hash, label: req.label, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: HELPER_MS,
+    project, card: req.card, hash: req.hash, label: req.label, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs(),
   });
   const answer = { ok: made === true || strings(submit) };
   if (typeof says === 'string') answer.says = says;
@@ -223,7 +227,7 @@ async function setting(req, d) {
   if (req.origin !== PANE) return no(SAYS.notPane);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: HELPER_MS });
+  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: helperMs() });
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 
@@ -251,7 +255,7 @@ async function go(req, d) {
     return no(lifting ? SAYS.cantLift : SAYS.cantSign);
   }
   try {
-    await sendKept(clientOf(d), withinBudget(Date.now() + HELPER_MS), kept);
+    await sendKept(clientOf(d), withinBudget(Date.now() + helperMs()), kept);
   } catch {
     // Kept in pending/ for the next session start to send.
   }
@@ -298,7 +302,7 @@ function roleOf(req, d) {
 // Whether the host helper answers its health check within HELPER_MS. Never throws.
 async function helperAnswers(d) {
   let timer;
-  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(false), HELPER_MS); });
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(false), helperMs()); });
   try {
     return await Promise.race([Promise.resolve().then(() => clientOf(d).health()).then((got) => got?.ok === true, () => false), late]);
   } catch {
@@ -496,7 +500,7 @@ async function within(work, ms) {
 // runBridge({ stdin, limitMs, watchMs, deps }) -> the answer's line. Never throws. The request is
 // read within `limitMs`; the time to answer it starts once it is read, `watchMs` for a foreman's
 // tick and `limitMs` for anything else, and the late answer comes if it isn't done by then.
-export async function runBridge({ stdin = process.stdin, limitMs = BRIDGE_MS, watchMs = WATCH_BRIDGE_MS, deps } = {}) {
+export async function runBridge({ stdin = process.stdin, limitMs = bridgeMs(), watchMs = WATCH_BRIDGE_MS, deps } = {}) {
   try {
     const read = await within(requestFrom(stdin), limitMs);
     if (!Object.hasOwn(read, 'request')) return lineOf(read);

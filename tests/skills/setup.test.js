@@ -138,17 +138,17 @@ test('the playbook closes the gaps its pressure runs found', () => {
 });
 
 // Task R N1: uninstall's shortest cards point to `uninstall status` for the list, so the playbook
-// runs it and shows its lines before asking the card. Ruling R142: once a stopped uninstall's status
-// says first to start a new session, the card is not asked again in this one.
-test('the playbook shows uninstall\'s list when its card points to status, and stops asking the card when status says to start a new session', () => {
+// runs it and shows its lines before asking the card. Rulings R142, R146: once a stopped uninstall's
+// status, or plan, says first to start a new session, the card is not asked again in this one.
+test('the playbook shows uninstall\'s list when its card points to status, and stops asking the card when plan or status says to start a new session', () => {
   const uninstall = playbook.split('\n## Uninstall\n')[1]?.split('\n## ')[0] ?? '';
   assert.match(uninstall, /When uninstall's card points to `uninstall status`, run it first and show its lines plainly, then ask the card\./);
   assert.match(read('scripts/setup/uninstall.js'), /\$\{head\}[^\n]*What else stays: \$\{STATUS_FORM\}/, 'the card points so');
   assert.ok(UNINSTALL_NEW_SESSION.startsWith('Start a new session on this folder, then ask for uninstall\'s plan again'));
-  assert.match(uninstall, /If status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
+  assert.match(uninstall, /If plan's or status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
   const command = read('commands/uninstall.md');
   assert.match(command, /If the card points to `uninstall status`, first run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/setup\/cli\.js" uninstall status` and show its lines as they are\./);
-  assert.match(command, /If status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
+  assert.match(command, /If plan's or status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
 });
 
 test('the README gives the Node.js line and the install line as they are', () => {

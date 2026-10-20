@@ -6,7 +6,7 @@
 // `decide` functions and the mod's bridge are called with what Claude Code and
 // the mod send; the usage receiver runs as its own process, as a session start
 // starts it.
-import { test } from 'node:test';
+import { test, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -35,7 +35,12 @@ import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { approvalLine, confirmLine, replyCode, replyCodeLine } from '../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
+import { standInTools } from '../helpers/host-stand-ins.js';
 import { matchingBody } from '../helpers/provenance.js';
+import { waitLongerOnTheHelper, until, WAIT_MS } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -50,20 +55,9 @@ const RECEIVER = fileURLToPath(new URL('../../scripts/telemetry/main.js', import
 // A folder that is never created, so no managed copy of the hooks is found.
 const NO_MANAGED = path.join(tempFolder('wh-no-managed-'), 'absent');
 // The hook's own limit is 2 seconds; a test machine running every file at once is given longer.
-const HOOK_WAIT_MS = 10000;
+const HOOK_WAIT_MS = WAIT_MS;
 
 const sha = (n) => crypto.createHash('sha1').update(String(n)).digest('hex');
-const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
-
-async function until(check, ms = 8000) {
-  const end = Date.now() + ms;
-  for (;;) {
-    const value = await check();
-    if (value) return value;
-    if (Date.now() > end) throw new Error('Timed out waiting');
-    await sleep(25);
-  }
-}
 
 // gh and glab stood in for: pull request 7 open at `pr.head`, CI green on it, main the default branch.
 function fakeAdapter(pr) {
@@ -110,6 +104,16 @@ async function seedPr(remoteUrl, files) {
   await g(work, 'push', '-q', 'origin', `${head}:refs/pull/${PR}/head`);
   return head;
 }
+
+// The programs no test may reach for real, stand-ins first on the PATH while this file runs
+// (tests/helpers/host-stand-ins.js): the helper's own host facts read protection with `gh api` by
+// name when the cache doesn't cover the board's time, and a child the test starts inherits the
+// PATH. Each test ends with none of them run.
+let tools;
+before(() => { tools = standInTools(); });
+beforeEach(() => tools.reset());
+afterEach(() => assert.deepEqual(tools.calls(), [], 'no host tool ran'));
+after(() => tools.restore());
 
 // The host facts as a day-old-at-most cache, so reading the board never asks the stand-in host.
 function freshFacts(at) {

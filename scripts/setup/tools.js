@@ -2,9 +2,9 @@
 // Setup's step 2, the tools (design section 15): git, Node.js, and the host's command-line tool.
 //
 // Node.js comes before the plugin, always: the helper and every hook are Node.js, so this step
-// cannot install it. The README's first pasted line has Claude check for it and start its
-// official installer before Wheelhouse is installed; here a Node.js missing or below NODE_FLOOR
-// stops setup with the README's own line (NODE_LINE), and nothing is installed.
+// cannot install it. The README's install section has the director check for it and install the
+// LTS from nodejs.org themselves before Wheelhouse is installed; here a Node.js missing or below
+// NODE_FLOOR stops setup with the README's own line (NODE_LINE), and nothing is installed.
 //
 // git is installed by its official route, started first and detached, so it runs while the
 // director answers the next steps' questions: on macOS Apple's own command-line tools window

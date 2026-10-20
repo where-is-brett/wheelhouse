@@ -16,7 +16,7 @@
 // a feature session), and the gate's asks (act merge). The watcher runs as runWatcher runs it, its
 // waker in Shape 2, which starts nothing and prints its wakes. Pictures of a preview are taken by a
 // stand-in for scripts/screens/shoot.js, in a browser whose path is Chrome's (ruling F61).
-import { test } from 'node:test';
+import { test, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -40,9 +40,14 @@ import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
 import { makeWaker } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
+import { standInTools } from '../helpers/host-stand-ins.js';
 import { writeFiles } from '../helpers/lineage.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed } from '../helpers/sandbox-wall.js';
+import { waitLongerOnTheHelper, until as waitUntil, WAIT_MS } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 const P = 'o__p';
 const T0 = Date.parse('2026-10-19T09:00:00.000Z');
@@ -60,7 +65,7 @@ const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomain
 // A folder that is never created, so no managed copy of the hooks is found.
 const NO_MANAGED = path.join(tempFolder('wh-no-managed-'), 'absent');
 // The hook's own limit is 2 seconds; a test machine running every file at once is given longer.
-const HOOK_WAIT_MS = 10000;
+const HOOK_WAIT_MS = WAIT_MS;
 const short = (sha) => sha.slice(0, 7);
 
 // --- The sandbox ---
@@ -210,6 +215,16 @@ async function frontDesk(world, argv, input) {
   }
 }
 
+// The programs no test may reach for real, stand-ins first on the PATH while this file runs
+// (tests/helpers/host-stand-ins.js): the helper's own host facts read protection with `gh api` by
+// name when the cache doesn't cover the board's time, and a child the test starts inherits the
+// PATH. Each test ends with none of them run.
+let tools;
+before(() => { tools = standInTools(); });
+beforeEach(() => tools.reset());
+afterEach(() => assert.deepEqual(tools.calls(), [], 'no host tool ran'));
+after(() => tools.restore());
+
 // The host facts as a day-old-at-most cache, so reading the board never asks the stand-in host.
 function freshFacts(at) {
   const file = path.join(stateDir(P), '..', 'host-facts.json');
@@ -321,13 +336,7 @@ const keptFor = (sha) => {
   }
 };
 
-async function until(check, what) {
-  const end = Date.now() + 20 * SECOND;
-  while (!(await check())) {
-    if (Date.now() > end) throw new Error(`waited too long for ${what}`);
-    await new Promise((resolve) => { setTimeout(resolve, 25); });
-  }
-}
+const until = (check, what) => waitUntil(check, { what });
 
 // --- The watcher ---
 

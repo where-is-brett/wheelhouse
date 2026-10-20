@@ -98,7 +98,7 @@ When the director asks to remove Wheelhouse from the project, or types `/wheelho
 4. Run `uninstall status` about once a minute, saying nothing in between, until its first line says uninstall is done, stopped or did not finish. Show its lines plainly, each `Open <what>: <url>` line as a link: the pull request the director merges, and any installation page.
 5. Tell them the last step is theirs: remove the Wheelhouse plugin from this project in Claude Desktop.
 
-If apply says the list has changed, start again at 1. If it says uninstall needs the director's Remove it, start again at 1 and ask the card again; never apply without its click. If it says STOP is on, they lift STOP first. If status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session. Otherwise, if status says uninstall stopped or did not finish, show what it says, then start again at 1: nothing is done twice.
+If apply says the list has changed, start again at 1. If it says uninstall needs the director's Remove it, start again at 1 and ask the card again; never apply without its click. If it says STOP is on, they lift STOP first. If plan's or status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session. Otherwise, if status says uninstall stopped or did not finish, show what it says, then start again at 1: nothing is done twice.
 
 ## Red flags
 

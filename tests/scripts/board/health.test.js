@@ -11,6 +11,7 @@ import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { HOST_FACTS_MAX_AGE_MS } from '../../../scripts/lib/core-numbers.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { beforeTimer, WAIT_MS } from '../../helpers/until.js';
 
 // This computer's ID is made and kept in the home, so the tests that read it use their own.
 process.env.WHEELHOUSE_HOME = shortHome();
@@ -255,9 +256,9 @@ test('a helper that fails, refuses or is slow falls back to the old cache, and w
     ];
     for (const fail of failures) {
       fs.rmSync(path.dirname(cacheFile('o__p')), { recursive: true, force: true });
-      const started = Date.now();
-      assert.equal(await readHostFacts('o__p', { client: fakeClient(fail), now: at(0), waitMs: 50 }), null);
-      assert.ok(Date.now() - started < 2000);
+      const read = await beforeTimer(() => readHostFacts('o__p', { client: fakeClient(fail), now: at(0), waitMs: 50 }), 2000);
+      assert.equal(read.inTime, true, 'given up in good time');
+      assert.equal(read.value, null);
       keep('o__p', { at: new Date(NOW.getTime() - 3 * HOST_FACTS_MAX_AGE_MS).toISOString(), facts: FACTS });
       assert.deepEqual(await readHostFacts('o__p', { client: fakeClient(fail), now: at(0), waitMs: 50 }), FACTS, 'the old cache is used');
       assert.deepEqual(JSON.parse(fs.readFileSync(cacheFile('o__p'), 'utf8')).facts, FACTS, 'and left as it was');
@@ -315,12 +316,12 @@ test('a helper that accepts and never answers is given up on in about two second
   await new Promise((resolve) => server.listen(address, resolve));
   try {
     await as(home, async () => {
-      const started = Date.now();
-      assert.equal(await readHostFacts('o__p', { address, now: at(0), waitMs: 300 }), null);
-      assert.ok(Date.now() - started < 2000, 'returned in good time');
+      const read = await beforeTimer(() => readHostFacts('o__p', { address, now: at(0), waitMs: 300 }), 2000);
+      assert.equal(read.inTime, true, 'returned in good time');
+      assert.equal(read.value, null);
       assert.equal(connections.length, 1);
       // The client closed the request itself: the helper's side sees the connection end.
-      await Promise.race([Promise.all(closed), new Promise((_, reject) => setTimeout(() => reject(new Error('the request was left open')), 2000))]);
+      assert.equal((await beforeTimer(Promise.all(closed), WAIT_MS)).inTime, true, 'the request was left open');
       assert.equal(fs.existsSync(triedFile('o__p')), true, 'and the next reading will not wait');
     });
   } finally {

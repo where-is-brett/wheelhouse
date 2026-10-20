@@ -12,6 +12,7 @@ import { readSeen, markSeen, seenFile } from '../../../scripts/briefing/seen.js'
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { profileViewsDir, sourcesDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { as, shortHome } from '../../helpers/homes.js';
+import { beforeTimer } from '../../helpers/until.js';
 
 const P = 'owner__name';
 const NOW = '2026-10-19T12:00:00.000Z';
@@ -150,18 +151,18 @@ test('a helper that never answers still leaves the briefing, inside the bridge\'
   putMerge('2026-10-19T09:00:00.000Z', 'New: saved searches');
   const never = () => new Promise(() => {});
   const hung = { health: never, lock: { read: never } };
-  const started = Date.now();
-  const got = await digestText({ cwd: repo, now: at(NOW), client: hung });
-  assert.ok(Date.now() - started < BRIDGE_MS, `${Date.now() - started} ms`);
+  const given = await beforeTimer(() => digestText({ cwd: repo, now: at(NOW), client: hung }), BRIDGE_MS);
+  assert.equal(given.inTime, true, 'still waiting on the helper');
+  const got = given.value;
   assert.equal(got.ok, true);
   assert.match(got.text, /Approve the sign-in page/);
   assert.match(got.text, /New: saved searches/);
 
   // The same through the bridge, whose own client is the one that hangs (the first briefing was marked given).
   fs.rmSync(seenFile(P));
-  const bridgeStarted = Date.now();
-  const viaBridge = await handle({ cmd: 'digest', origin: 'composer', cwd: repo }, { now: () => new Date(NOW), client: hung });
-  assert.ok(Date.now() - bridgeStarted < BRIDGE_MS, `${Date.now() - bridgeStarted} ms`);
+  const handled = await beforeTimer(() => handle({ cmd: 'digest', origin: 'composer', cwd: repo }, { now: () => new Date(NOW), client: hung }), BRIDGE_MS);
+  assert.equal(handled.inTime, true, 'still waiting on the helper');
+  const viaBridge = handled.value;
   assert.equal(viaBridge.ok, true);
   assert.match(viaBridge.text, /New: saved searches/);
 }));

@@ -112,7 +112,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing? }: step 10's board, answered under STOP
       // Uninstall (scripts/setup/uninstall.js), naming the folder, a full path.
       uninstall: {
-        plan: post('/setup/uninstall/plan'), //     { folder } -> { ok, hash, card, asks, last }: answered under STOP
+        plan: post('/setup/uninstall/plan'), //     { folder } -> { ok, hash, card, asks, last } | { ok, lines }: the lines, with no card, once an uninstall cut short past the trusted-keys list's removal needs a new session first (ruling R146); answered under STOP
         apply: post('/setup/uninstall/apply'), //   { folder, hash } -> { ok, started }: only after the director's Remove it on the card naming that hash, the apply then running in its own process; refused under STOP
         status: post('/setup/uninstall/status'), // { folder } -> { ok, lines, uninstall?: { state, lines, pages, refused? }, helperStops? }: how a started uninstall stands, else the whole list; answered under STOP
       },
