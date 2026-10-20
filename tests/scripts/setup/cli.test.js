@@ -87,6 +87,21 @@ test('resume gives where setup stands and the card of the first step neither don
   assert.deepEqual(done.calls.map(([name]) => name), ['status']);
 });
 
+// A step that settles says its line at once (rulings R101, R120): plan and resume pass `said`
+// through, cleaned of line breaks as status's lines are; a settling with nothing said has none.
+test('a settled step\'s said line comes with its plan and with resume, and none when it said nothing', async () => {
+  const said = 'Setup step 6, Changes to this computer: every setting is already as Wheelhouse needs.\nYour own settings that weaken Standard: docker runs outside the sandbox.';
+  const one = 'Setup step 6, Changes to this computer: every setting is already as Wheelhouse needs. Your own settings that weaken Standard: docker runs outside the sandbox.';
+  const c = fakeClient({
+    plan: { ok: true, done: true, said },
+    status: { ok: true, lines: ['Next: step 6, Changes to this computer.'], next: 6, ask: 6 },
+  });
+  assert.deepEqual(JSON.parse((await run(['plan', '6'], { client: c })).out), { step: 6, title: 'Changes to this computer', done: true, said: one });
+  assert.deepEqual(JSON.parse((await run(['resume'], { client: c })).out).plan, { step: 6, title: 'Changes to this computer', done: true, said: one });
+  const quiet = fakeClient({ plan: { ok: true, done: true } });
+  assert.deepEqual(JSON.parse((await run(['plan', '2'], { client: quiet })).out), { step: 2, title: 'Tools', done: true });
+});
+
 // Step 10 (ruling R41): the session hands in the lines its sandboxed trials printed, as they are,
 // and gets back the joined board; with none, it learns which pull request and project to try.
 test('health hands the trial lines to the helper, as they are, and gives back the board', async () => {

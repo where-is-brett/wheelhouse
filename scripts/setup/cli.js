@@ -7,7 +7,8 @@
 //                        { step, title, ask: { step, id, card } }; or { step, title, wait, why },
 //                        nothing to ask for `wait` milliseconds, with `waitsFor`, the step it waits
 //                        for, when it is waiting for another step to finish; or
-//                        { step, title, done: true }, the step settled on the director's answers
+//                        { step, title, done: true }, the step settled on the director's answers,
+//                        with `said`, a line for the director, when it said one as it settled
 //   apply <step> <hash>  asks the helper to apply the step, with the full hash `plan` gave; the
 //                        helper goes ahead only after the director's click on the card naming it
 //   status               where setup stands in this folder, as plain lines
@@ -81,7 +82,8 @@ async function plan(client, folder, step) {
   const named = { step, title: SETUP_TITLES[step] };
   if (got.ask !== undefined) return { ...named, ask: got.ask };
   if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why, ...(Number.isInteger(got.waitsFor) ? { waitsFor: got.waitsFor } : {}) };
-  if (got.done === true) return { ...named, done: true };
+  // A settled step's line for the director, said at once (rulings R101, R120), on one line as status's are.
+  if (got.done === true) return { ...named, done: true, ...(typeof got.said === 'string' && got.said.trim() !== '' ? { said: got.said.replace(BREAKS, ' ').trim() } : {}) };
   return { ...named, hash: got.hash, director: got.director, changes: got.changes, card: got.card };
 }
 

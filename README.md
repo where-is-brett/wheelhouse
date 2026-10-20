@@ -10,7 +10,7 @@ Wheelhouse is a Claude Code plugin that lets one person who is not a developer d
 
 **Status:** built, and not yet released. Its tests pass, and the next step is trying it from start to finish on a real product before the first release. The design is in `docs/specs/2026-10-17-wheelhouse-design.md`, and where things stand is in `HANDOVER.md`.
 
-**Visibility:** private until the first release, then open source. The licence will be Apache 2.0, and the public repository will start from a fresh history.
+**Visibility:** public and open source, under the Apache 2.0 licence (`LICENSE`).
 
 **First project:** a pilot project, where the first version of this system (the "Command Centre") ran from 12 to 17 October 2026.
 
