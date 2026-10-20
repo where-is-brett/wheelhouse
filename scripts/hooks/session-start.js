@@ -303,14 +303,14 @@ function recordHold(project, result, now) {
 // a mismatch and removes it on a match, records the hold in the state, and records this
 // session's provenance. Gives the warning lines. It informs, so anything that goes wrong is
 // passed over.
-function lineageCheck(found, input, version, { check, root, claudeHome, now }) {
+function lineageCheck(found, input, version, { check, root, claudeHome, now, pinsPending = false }) {
   try {
     const folder = found.record?.folder ?? readProject(found.project)?.folder;
-    const result = check({ project: found.project, projectDir: folder, root, claudeHome, now });
+    const result = check({ project: found.project, projectDir: folder, root, claudeHome, now, pinsPending });
     recordHold(found.project, result, now);
     try {
       writeProvenance({
-        project: found.project, sessionId: input.session_id, root, upstreams: result.upstreams, ok: result.ok,
+        project: found.project, sessionId: input.session_id, root, upstreams: result.upstreams, ok: result.ok && !(result.pending?.length > 0),
         claudeCode: version === null ? null : version.join('.'), transcript: input.transcript_path,
       });
     } catch { /* the session carries on without it */ }
@@ -501,7 +501,10 @@ export async function decide(input, deps = {}) {
 
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
-  const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now });
+  // While this folder's setup run is open and has not yet installed the kits (step 7), kits not
+  // installed are setup's own state, not drift, and write no hold (ruling R136).
+  const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
+  const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the sync below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);

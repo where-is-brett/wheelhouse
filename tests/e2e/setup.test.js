@@ -313,14 +313,10 @@ test('setup stopped at step 3\'s host card resumes there in the next session, wi
   }
 });
 
-// Found end to end (Task 17): a session started between step 3, which registers the project, and
-// step 7, which installs the pinned kits, runs the lineage check, finds the kits not installed and
-// writes the lineage hold, and the hold's guard refuses the playbook's own command
-// (scripts/hooks/session-start.js lineageCheck, scripts/hooks/lineage-hold.js): setup can't go on
-// in that session, and only step 7, which runs through that command, installs the kits.
-const LINEAGE_BUG = 'engine bug: a session started after step 3 and before step 7 writes the lineage hold (the kits are not installed yet) and the hold refuses setup\'s own cli.js, so setup can\'t resume (session-start.js lineageCheck, lineage-hold.js)';
-
-test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SKIP || LINEAGE_BUG }, async () => {
+// A session started between step 3, which registers the project, and step 7, which installs the
+// pinned kits, holds nothing for kits not yet installed, so the playbook's own command passes the
+// lineage hold's guard (ruling R136; found end to end by Task 17).
+test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SKIP }, async () => {
   const { a } = fresh();
   try {
     await a.start();
@@ -339,9 +335,8 @@ test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SK
     // The next session: a helper started afresh, with nothing of the last one's in memory, and the
     // session start's reload, which says where setup stands.
     await a.start();
-    // It says where setup stands; and the playbook's own command must still pass the hooks (the
-    // lineage hold's among them) for the session to carry on.
-    assert.ok((await a.sessionStart()).includes(partWay(4, SETUP_TITLES[4])));
+    // It says where setup stands, and nothing of a lineage hold: setup installs the kits at step 7.
+    assert.deepEqual(await a.sessionStart(), [partWay(4, SETUP_TITLES[4])]);
     const resumed = await a.cli('resume');
     assert.equal(resumed.next, 4);
     assert.equal(resumed.plan.step, 4);
