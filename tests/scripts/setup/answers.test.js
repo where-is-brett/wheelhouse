@@ -13,7 +13,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { findRun, markStep, reverseChange } from '../../../scripts/setup/journal.js';
-import { answersFor, noteAsked, notAnAnswer } from '../../../scripts/setup/clicks.js';
+import { answersFor, noteAsked, notAnAnswer, handedBack } from '../../../scripts/setup/clicks.js';
 import { planHash } from '../../../scripts/setup/steps.js';
 import { runStep } from '../../../scripts/setup/run-step.js';
 import { main as cli } from '../../../scripts/setup/cli.js';
@@ -343,14 +343,18 @@ test('a setup answer is an action naming the run, the step, the question and its
   });
 });
 
-// Ruling R125: a typed question, or the choice handed back, is no answer.
-test('only a question or the choice handed back, alone, is no answer; any other typed text is one (ruling R125)', () => {
-  for (const text of ['what do you mean?', 'Which one is cheaper ? ', 'you decide', 'You Choose.', 'not sure', 'I don\'t know', 'I don\u2019t know!', 'SKIP', ' whatever ', 'you  decide']) {
+// Ruling R125: a typed question, or the choice handed back, is no answer at first sight; ruling
+// R132: a hand-back never is, and a question only the first time on its card.
+test('only a question or the choice handed back, alone, is no answer at first sight; any other typed text is one (rulings R125, R132)', () => {
+  for (const text of ['what do you mean?', 'Which one is cheaper ? ', 'you decide', 'You Choose.', 'not sure', 'I don\'t know', 'I don’t know!', 'SKIP', ' whatever ', 'you  decide', 'you decide?']) {
     assert.equal(notAnAnswer(text), true, text);
   }
   for (const text of ['A menu for the café, with prices.', 'Skip the prices for now', 'whatever sells best on Fridays', 'I don\'t know the name yet, call it Café', 'Not sure about colours, but a menu', null, 7]) {
     assert.equal(notAnAnswer(text), false, String(text));
   }
+  // Handed back, a closing question mark too: never a question to be taken when typed again.
+  for (const text of ['you decide?', 'Not sure?', 'whatever ?!', 'skip']) assert.equal(handedBack(text), true, text);
+  for (const text of ['Tide tables for sailors?', 'Skip the prices for now', null]) assert.equal(handedBack(text), false, String(text));
 });
 
 test('a typed question or "you decide" on a setup card is not taken as the answer: the card is asked again, saying why once, and a real answer then counts (ruling R125)', async () => {
@@ -360,8 +364,8 @@ test('a typed question or "you decide" on a setup card is not taken as the answe
     const asked = await client.setup.plan({ folder, step: 4 });
     assert.equal(asked.unanswered, undefined);
     const run = findRun(folder);
-    const texts = ['what do you mean?', 'you decide', 'Not sure.'];
-    for (const [i, text] of texts.entries()) {
+    const texts = [['what do you mean?', NOT_AN_ANSWER.question], ['you decide', NOT_AN_ANSWER.handedBack], ['Not sure.', NOT_AN_ANSWER.handedBack]];
+    for (const [i, [text, why]] of texts.entries()) {
       clock = new Date(T0.getTime() + (i + 1) * MINUTE);
       // Typed after the card was last asked.
       await choose(folder, asked.ask.card, text, { at: new Date(clock.getTime() - 1000) });
@@ -371,7 +375,7 @@ test('a typed question or "you decide" on a setup card is not taken as the answe
       assert.equal(again.ok, true, again.refused);
       assert.equal(again.ask?.id, 'name', text);
       assert.deepEqual(again.ask.card, asked.ask.card, 'the same card, asked again');
-      assert.equal(again.unanswered, NOT_AN_ANSWER, text);
+      assert.equal(again.unanswered, why, text);
     }
     // Said once: asked again with nothing new typed, the line is not repeated.
     clock = new Date(T0.getTime() + 10 * MINUTE);
@@ -384,12 +388,86 @@ test('a typed question or "you decide" on a setup card is not taken as the answe
     let out = '';
     const code = await cli(['plan', '4'], { client, cwd: folder, out: (t) => { out += t; }, err: () => {} });
     assert.equal(code, 0);
-    assert.equal(JSON.parse(out).unanswered, NOT_AN_ANSWER);
+    assert.equal(JSON.parse(out).unanswered, NOT_AN_ANSWER.handedBack);
     // A typed answer that is one counts, and the step settles on it.
     clock = new Date(T0.getTime() + 12 * MINUTE);
     await choose(folder, asked.ask.card, 'A menu for the café, with prices.', { at: new Date(clock.getTime() - 1000) });
     assert.equal(answersFor(run.id)['4.name'].text, 'A menu for the café, with prices.');
     const settled = await client.setup.plan({ folder, step: 4 });
     assert.equal(settled.done, true, JSON.stringify(settled));
+  }, { now: () => clock });
+});
+
+// Ruling R132: a typed answer ending in "?" is refused once per question, with why; the next typed
+// answer to that question counts. Hand-back words never count, and each time say why.
+test('a typed answer ending in "?" is refused once with why, and the next typed answer to that question is taken, the same or another (ruling R132)', async () => {
+  let clock = T0;
+  await withSetup(async ({ client, home, folder, other }) => {
+    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true }] }, settle: [4] });
+    for (const [where, second] of [[folder, 'Tide tables for sailors?'], [other, 'A tide table, with a map?']]) {
+      clock = new Date(clock.getTime() + MINUTE);
+      const asked = await client.setup.plan({ folder: where, step: 4 });
+      const run = findRun(where);
+      clock = new Date(clock.getTime() + MINUTE);
+      await choose(where, asked.ask.card, 'Tide tables for sailors?', { at: new Date(clock.getTime() - 1000) });
+      assert.deepEqual(answersFor(run.id), {}, 'refused the first time');
+      let out = '';
+      assert.equal(await cli(['plan', '4'], { client, cwd: where, out: (t) => { out += t; }, err: () => {} }), 0);
+      const again = JSON.parse(out);
+      assert.equal(again.ask?.id, 'name');
+      assert.equal(again.unanswered, NOT_AN_ANSWER.question, 'with why, for the director');
+      // Typed again (the same words, or others), it is the answer, read from the signed records alone.
+      clock = new Date(clock.getTime() + MINUTE);
+      await choose(where, again.ask.card, second, { at: new Date(clock.getTime() - 1000) });
+      assert.equal(answersFor(run.id)['4.name']?.text, second);
+      const settled = await client.setup.plan({ folder: where, step: 4 });
+      assert.equal(settled.done, true, JSON.stringify(settled));
+    }
+  }, { now: () => clock });
+});
+
+test('a hand-back is refused every time with why, even after a "?" was refused on the same card, so the description is never "you decide" (ruling R132)', async () => {
+  let clock = T0;
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true }] }, settle: [4] });
+    const asked = await client.setup.plan({ folder, step: 4 });
+    const run = findRun(folder);
+    const texts = [['you decide', NOT_AN_ANSWER.handedBack], ['you decide', NOT_AN_ANSWER.handedBack], ['What would you pick?', NOT_AN_ANSWER.question],
+      ['you decide?', NOT_AN_ANSWER.handedBack], ['Not sure.', NOT_AN_ANSWER.handedBack]];
+    for (const [text, why] of texts) {
+      clock = new Date(clock.getTime() + MINUTE);
+      await choose(folder, asked.ask.card, text, { at: new Date(clock.getTime() - 1000) });
+      assert.deepEqual(answersFor(run.id), {}, text);
+      const again = await client.setup.plan({ folder, step: 4 });
+      assert.equal(again.ask?.id, 'name', text);
+      assert.equal(again.unanswered, why, text);
+    }
+  }, { now: () => clock });
+});
+
+test('a "?" refused on one question lets no other question\'s "?" through (ruling R132)', async () => {
+  let clock = T0;
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, {
+      ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true, what: 'What is the product called?' }, { id: 'about', options: ['A menu'], typed: true, what: 'What is the product for?' }] },
+      settle: [4],
+    });
+    const run = () => findRun(folder);
+    const name = await client.setup.plan({ folder, step: 4 });
+    assert.equal(name.ask.id, 'name');
+    clock = new Date(clock.getTime() + MINUTE);
+    await choose(folder, name.ask.card, 'Tide Tables?', { at: new Date(clock.getTime() - 1000) });
+    assert.equal((await client.setup.plan({ folder, step: 4 })).unanswered, NOT_AN_ANSWER.question);
+    clock = new Date(clock.getTime() + MINUTE);
+    await choose(folder, name.ask.card, 'Tide Tables?', { at: new Date(clock.getTime() - 1000) });
+    const about = await client.setup.plan({ folder, step: 4 });
+    assert.equal(about.ask?.id, 'about', 'the first question answered');
+    assert.equal(about.unanswered, undefined);
+    clock = new Date(clock.getTime() + MINUTE);
+    await choose(folder, about.ask.card, 'For sailors?', { at: new Date(clock.getTime() - 1000) });
+    assert.deepEqual(Object.keys(answersFor(run().id)), ['4.name'], 'its own first "?" is refused');
+    const again = await client.setup.plan({ folder, step: 4 });
+    assert.equal(again.ask?.id, 'about');
+    assert.equal(again.unanswered, NOT_AN_ANSWER.question);
   }, { now: () => clock });
 });

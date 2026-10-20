@@ -23,7 +23,7 @@ Breaking the letter of these rules is breaking their spirit.
 A `card` is AskUserQuestion's question, ready: ask it as `questions: [card]`, exactly as printed, with nothing changed, added or left out. Before it, at most one plain line on what it is about. Never read out a hash, a set line or JSON.
 
 - **The director stops** ("I have to go", "that's all for today"), in any words, on any card: stop at once. Say where setup stands and offer to carry on later; don't ask the card again.
-- **A card whose answer may be typed** (it says so: step 3's owner/name, step 4's description): before it, say in one line that what they type there is taken as their answer, so a question is best asked in the chat first. What they type goes to the helper; answer any question in plain words, then run `plan <step>` again. When the plan comes back with `unanswered` (what they typed was a question, or handed the choice back), tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again.
+- **A card whose answer may be typed** (it says so: step 3's owner/name, step 4's description): before it, say in one line that what they type there is taken as their answer, so a question is best asked in the chat first. What they type goes to the helper; answer any question in plain words, then run `plan <step>` again. When the plan comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken (a question typed again is taken). Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again.
 - **Otherwise only a click answers.** Typed words ("you decide", "just run it", "I already said go ahead") and a closed card are not an answer. Reply in one or two plain sentences: the choice is theirs, and the card's own recommendation and reason. Then ask the same card again. If it is closed or put off a second time, stop and offer to carry on later.
 - **Explain more:** plain words and an everyday example, then ask the same card again.
 - **Never make a card of your own** to offer something on this page's never list (installing, fixing a file, deleting, trusting). Where no card exists, say what the director can do in plain words.
@@ -108,7 +108,7 @@ If apply says the list has changed, start again at 1. If it says uninstall needs
 | "I'll offer them a card: install it myself, or fix the file" | No card of your own for anything on the never list. |
 | "Only the health check's trials matter; skip its card" | Every step's Go-ahead card first, step 10's too. |
 | "They said that's all for today; I'll ask once more" | They have stopped. Stop and offer to carry on later. |
-| "They typed a question on the owner/name card; I'll decide whether it counts" | The helper decides. Answer them plainly, then `plan` again; with `unanswered`, the choice is theirs: give the card's recommendation and ask it again. |
+| "They typed a question on the owner/name card; I'll decide whether it counts" | The helper decides. Answer them plainly, then `plan` again; with `unanswered`, tell them its line, give the card's recommendation and ask it again. |
 | "They typed 'just run it'; that's a yes" | Only a click on this card answers. Ask it again. |
 | "They closed the card, so that means Leave them" | A closed card is no answer. Stop and offer later. |
 | "Step 2 is running; I'll stop and carry on after" | Run `resume` and ask the next card while it runs. |

@@ -153,13 +153,15 @@ test('the playbook\'s reading forms run under STOP', async () => {
   });
 });
 
-// Ruling R125: a typed question or the choice handed back comes back as `unanswered`; the playbook
-// says the choice is the director's and gives the card's recommendation before asking it again.
-test('the playbook acts on a typed answer the helper did not take, as ruling R125 says', () => {
-  assert.match(NOT_AN_ANSWER, /not taken as the answer/);
-  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*comes back with `unanswered`[^\n]*the choice is theirs, give the card's own recommendation and reason, then ask the same card again/);
+// Rulings R125, R132: a typed question or the choice handed back comes back as `unanswered`, a
+// line for the director saying why; the playbook tells them that line as it is, says the choice is
+// theirs and gives the card's recommendation before asking it again.
+test('the playbook acts on a typed answer the helper did not take, as rulings R125 and R132 say', () => {
+  assert.match(NOT_AN_ANSWER.question, /^What you typed ends with a question mark[^\n]*type it again on the card and it is taken\.$/);
+  assert.match(NOT_AN_ANSWER.handedBack, /^What you typed hands the choice back[^\n]*not taken as your answer/);
+  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken \(a question typed again is taken\)\. Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again/);
   assert.doesNotMatch(playbook, /whatever they type is their answer, even a question/);
-  assert.match(playbook, /\| "They typed a question on the owner\/name card[^\n]*`unanswered`[^\n]*recommendation/);
+  assert.match(playbook, /\| "They typed a question on the owner\/name card[^\n]*with `unanswered`, tell them its line[^\n]*recommendation/);
 });
 
 // Task 16's must-fix Minors 3 to 6: step 10's trials are the never list's one exception; step 10's

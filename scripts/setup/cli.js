@@ -4,9 +4,9 @@
 //   plan <step>          the step's list of changes and its card, as AskUserQuestion's question,
 //                        with the list's hash: { step, title, hash, director, changes, card };
 //                        or a question the step asks first, its card to be asked exactly as given:
-//                        { step, title, ask: { step, id, card } }, with `unanswered`, a line saying
-//                        why, when it is asked again because what was typed on it was a question or
-//                        handed the choice back (ruling R125); or { step, title, wait, why },
+//                        { step, title, ask: { step, id, card } }, with `unanswered`, a line for the
+//                        director saying why, when it is asked again because what was typed on it
+//                        was not taken (rulings R125, R132); or { step, title, wait, why },
 //                        nothing to ask for `wait` milliseconds, with `waitsFor`, the step it waits
 //                        for, when it is waiting for another step to finish; or
 //                        { step, title, done: true }, the step settled on the director's answers,
