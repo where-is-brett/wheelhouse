@@ -96,6 +96,7 @@
 //                                            this repository
 //       'revoke-key' { key, pasted, line }   a GitLab key revoked through the API, then deleted
 //       'remove' { target }                  a file, or a folder whole, of Wheelhouse's own
+//       'remove-empty' { target }            a folder of Wheelhouse's own, only once it is empty
 //       'remove-plugin' { line }             the line the director follows in Claude Desktop
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -177,6 +178,8 @@ export function realOr(p) {
 const exists = (p) => fs.existsSync(p);
 const profileFile = () => path.join(wheelhouseHome(), 'profile.json');
 const projectFolder = (slug) => path.join(projectsDir(), slug);
+// This computer's id (scripts/lib/paths.js, computerId), removed last on the last uninstall (R138).
+export const computerFile = () => path.join(wheelhouseHome(), 'computer.json');
 const repoName = (repo) => (typeof repo === 'string' ? repo.split('/').at(-1) : null);
 // A host target `<host>:<owner/name>` or `<host>:<owner/name>:<file>`.
 export function hostTarget(target) {
@@ -678,7 +681,13 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   // files, recorded or not; the trusted-keys list, then the signing key beside it, go last of all
   // (rulings R123, R128), below.
   if (slug !== null) remove(projectFolder(slug), 'last');
-  const closing = last ? [enrolledFile(), signingKeyFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })) : [];
+  // Then this computer's id, and the folders those and the project's records and the fetched tools
+  // were in, each only once nothing is left in it (ruling R138): nothing setup made stays behind.
+  const emptied = [keysDir(), projectsDir(), path.dirname(toolFolder(HOST_TOOLS[0]))];
+  const closing = last ? [
+    ...[enrolledFile(), signingKeyFile(), computerFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })),
+    ...emptied.filter(exists).map((target) => ({ phase: 'last', put: 'remove-empty', target })),
+  ] : [];
   if (last) {
     for (const p of [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile()]) if (exists(p)) remove(p, 'last');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card
@@ -859,6 +868,7 @@ function entryLine(e, userHome) {
     case 'untick-repository': return `give the app's installation page, to untick ${e.repo}`;
     case 'revoke-key': return e.line;
     case 'remove': return `remove ${shown(e.target, userHome)}`;
+    case 'remove-empty': return `remove ${shown(e.target, userHome)} once it is empty`;
     case 'remove-plugin': return e.line;
     default: return e.put;
   }

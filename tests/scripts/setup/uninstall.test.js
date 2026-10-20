@@ -253,7 +253,14 @@ test('setup then uninstall lists every change setup made, by phase, newest first
     assert.equal(keys[0].put, 'delete-key');
     assert.equal(keys[0].key, 'github-app');
     assert.equal(keys.some((c) => c.put === 'remove'), false);
-    assert.deepEqual(got.changes.slice(-4, -1).map((c) => c.target ?? c.put), ['remove-plugin', enrolledFile(), signingKeyFile()]);
+    // Then this computer's id, and the folders they and the project's records were in, each once
+    // it is empty (ruling R138).
+    const closing = got.changes.slice(got.changes.findIndex((c) => c.put === 'remove-plugin'), -1);
+    assert.deepEqual(closing.map((c) => c.target ?? c.put), [
+      'remove-plugin', enrolledFile(), signingKeyFile(), ...(fs.existsSync(path.join(wheelhouseHome(), 'computer.json')) ? [path.join(wheelhouseHome(), 'computer.json')] : []),
+      keysDir(), path.join(wheelhouseHome(), 'projects'), ...(fs.existsSync(path.dirname(toolFolder('gh'))) ? [path.dirname(toolFolder('gh'))] : []),
+    ]);
+    assert.ok(closing.filter((c) => [keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))].includes(c.target)).every((c) => c.put === 'remove-empty'));
     // Last: the project's own folder, Wheelhouse's own folders and files, the plugin's line.
     const last = of(got, 'last');
     assert.equal(last[0].target, path.join(wheelhouseHome(), 'projects', SLUG));
@@ -281,9 +288,8 @@ test('putting back what the plan lists leaves this computer\'s files as they wer
     for (const c of got.changes.filter((x) => x.put === 'reverse')) assert.deepEqual(reverseChange(c.change), { put: true }, c.change.target);
     assert.equal(readText(world.settings), before);
     assert.equal(fs.existsSync(path.join(world.userHome, 'Library', 'LaunchAgents', 'wheelhouse.telemetry.plist')), false);
-    const local = readJson(path.join(world.folder, '.claude', 'settings.local.json'));
-    assert.equal(local.statusLine, undefined);
-    assert.equal(local.permissions.allow, undefined);
+    // Setup made the local settings file, so with its keys put back it goes too (ruling R138).
+    assert.equal(fs.existsSync(path.join(world.folder, '.claude', 'settings.local.json')), false);
     assert.equal(fs.existsSync(path.join(world.folder, '.git', 'info', 'exclude')), false);
   });
 });
@@ -1025,8 +1031,7 @@ test('setup then uninstall leaves this computer\'s files as they were, the proje
       assert.equal(readText(world.settings), world.before);
       assert.equal(fs.existsSync(path.join(world.userHome, 'Library', 'LaunchAgents', 'wheelhouse.telemetry.plist')), false);
       assert.deepEqual(f.seen.unset, ['CLAUDE_CODE_ENABLE_TELEMETRY']);
-      const local = readJson(path.join(world.folder, '.claude', 'settings.local.json'));
-      assert.deepEqual(local, { permissions: {} });
+      assert.equal(fs.existsSync(path.join(world.folder, '.claude', 'settings.local.json')), false, 'setup made it (ruling R138)');
       assert.equal(fs.existsSync(path.join(world.folder, '.git', 'info', 'exclude')), false);
       // Locked is left, with the password once.
       assert.equal(f.seen.password, 1);
@@ -1046,6 +1051,10 @@ test('setup then uninstall leaves this computer\'s files as they were, the proje
       assert.deepEqual(await filesOn(host.profile.url, 'wheelhouse-profile'), ['enrolments/ffff0000.json']);
       // Keys, and Wheelhouse's own folders and files, are gone; the journal stays.
       for (const p of [path.join(keysDir(), 'github-app.json'), signingKeyFile(), enrolledFile(), toolFolder('gh'), profileDir(), path.join(wheelhouseHome(), 'profile.json'), path.join(wheelhouseHome(), 'projects', SLUG), clicksDir(), trustDir(), seenFile()]) {
+        assert.equal(fs.existsSync(p), false, p);
+      }
+      // This computer's id, and the folders those were in, emptied, go too (ruling R138).
+      for (const p of [path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]) {
         assert.equal(fs.existsSync(p), false, p);
       }
       assert.ok(fs.existsSync(journalFile()));
@@ -1092,7 +1101,7 @@ test('uninstall from a setup stopped at step 4 puts back only what was done (Rev
       const { done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
       assert.equal(readText(world.settings), world.before, 'step 6 never ran: its settings are untouched');
-      assert.deepEqual(readJson(path.join(world.folder, '.claude', 'settings.local.json')), { permissions: {} });
+      assert.equal(fs.existsSync(path.join(world.folder, '.claude', 'settings.local.json')), false, 'setup made it (ruling R138)');
       assert.equal(fs.existsSync(toolFolder('gh')), false);
       assert.deepEqual(f.seen.prs, []);
       assert.equal(f.seen.password, 0);
@@ -1799,11 +1808,34 @@ test('the trusted-keys list and the signing key go last of all: an uninstall cut
       const again = await plan(world, { run: f.run });
       const click = removeIt(again.card.target.project, again.hash);
       assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id]);
-      assert.deepEqual(again.changes.slice(-3).map((c) => c.target ?? c.what), [enrolledFile(), signingKeyFile(), 'helper']);
+      assert.deepEqual(again.changes.slice(-7).map((c) => c.target ?? c.what), [
+        enrolledFile(), signingKeyFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), 'helper',
+      ]);
       const { done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
       for (const p of [signingKeyFile(), enrolledFile()]) assert.equal(fs.existsSync(p), false, p);
       assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall');
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('the last uninstall takes this computer\'s id and Wheelhouse\'s emptied folders out, but leaves a folder still holding something (ruling R138)', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      // Something not setup's in the keys folder: it is left, and the folder with it.
+      writeText(path.join(keysDir(), 'theirs.txt'), 'kept\n');
+      const f = fakes(world);
+      const { got, done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      assert.deepEqual(got.changes.filter((c) => c.put === 'remove-empty').map((c) => c.target), [keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]);
+      assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'computer.json')), false);
+      assert.deepEqual(fs.readdirSync(keysDir()), ['theirs.txt']);
+      assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'projects')), false);
+      assert.deepEqual(unmarked(), []);
     });
   } finally {
     host.cleanup();
@@ -1844,10 +1876,14 @@ test('the trusted-keys list goes before the signing key: a failed removal of the
       assert.match(first.done.refused, /EBUSY/);
       // Both are still here, so this computer can still sign, and the run is still open.
       for (const p of [enrolledFile(), signingKeyFile()]) assert.ok(fs.existsSync(p), p);
-      assert.deepEqual(first.got.changes.slice(-3).map((c) => c.target ?? c.what), [enrolledFile(), signingKeyFile(), 'helper']);
+      const tail = first.got.changes.slice(first.got.changes.findIndex((c) => c.target === enrolledFile()));
+      assert.deepEqual(tail.slice(0, 2).map((c) => c.target), [enrolledFile(), signingKeyFile()]);
+      assert.equal(tail.at(-1).what, 'helper');
       assert.equal(readJournal().runs.find((x) => x.id === run.id).closedAt, undefined);
       const again = await plan(world, { run: f.run });
-      assert.deepEqual(again.changes.slice(-3).map((c) => c.target ?? c.what), [enrolledFile(), signingKeyFile(), 'helper']);
+      assert.deepEqual(again.changes.slice(-7).map((c) => c.target ?? c.what), [
+        enrolledFile(), signingKeyFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), 'helper',
+      ]);
       const click = removeIt(again.card.target.project, again.hash);
       assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id]);
       const { done } = await applyPlan(world, f);

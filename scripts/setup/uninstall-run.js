@@ -495,6 +495,16 @@ export async function applyUninstall({
           mark(entry.ids, true);
           break;
         }
+        case 'remove-empty': {
+          // Left as it is while anything is in it: only an emptied folder of Wheelhouse's goes (R138).
+          if (!within(wheelhouseHome(), entry.target)) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
+          let left = null;
+          try {
+            left = fs.readdirSync(entry.target);
+          } catch { /* gone already */ }
+          if (left !== null && left.length === 0) fs.rmdirSync(entry.target);
+          break;
+        }
         case 'remove-plugin':
           say(`${entry.line}.`);
           break;

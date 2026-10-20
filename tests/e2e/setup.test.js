@@ -485,16 +485,6 @@ test('a second computer joins, and its records count on the first only after Tru
   }
 });
 
-// What uninstall leaves that is not the director's (Task 17, reported for a ruling): the empty
-// parents of keys it put back, this computer's id, and Wheelhouse's emptied folders. docs/data.md
-// says Wheelhouse's own files in ~/.wheelhouse are removed, and names none of these as kept.
-const LEFT_BY_UNINSTALL = {
-  home: ['computer.json', 'keys', 'projects', 'tools'],
-  // The local settings file step 2 made, with each key it wrote put back, and the user settings'
-  // `env`, emptied of the telemetry variables step 6 put in it.
-  user: ['Projects/Café Menu/.claude/settings.local.json'],
-};
-
 test('uninstall after setup leaves the home folder as it was, but for what the director keeps', { skip: SKIP }, async () => {
   const { host, a } = fresh();
   try {
@@ -560,25 +550,25 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     const user = differences(before.user, now.user);
     // Kept in Wheelhouse's home, as docs/data.md says: setup's journal and uninstall's record.
     const kept = (p) => p === 'setup' || p === 'setup/journal.json' || p === 'setup/uninstalls' || /^setup\/uninstalls\/[0-9a-f]+\.json$/.test(p);
-    assert.deepEqual(home.added.filter((p) => !kept(p) && !LEFT_BY_UNINSTALL.home.includes(p)), [], 'nothing else of Wheelhouse\'s is left');
+    // Nothing else of Wheelhouse's is left (ruling R138): the signing key, the trusted-keys list and
+    // this computer's id, the project's records and the gh setup fetched, and their folders, all gone.
+    assert.deepEqual(home.added.filter((p) => !kept(p)), [], 'nothing else of Wheelhouse\'s is left');
     assert.deepEqual([...home.removed, ...home.changed], []);
-    assert.deepEqual(fs.readdirSync(path.join(a.home, 'keys')), [], 'the signing key and the trusted-keys list removed last');
-    assert.deepEqual(fs.readdirSync(path.join(a.home, 'projects')), [], 'the project\'s records removed');
-    assert.deepEqual(fs.readdirSync(path.join(a.home, 'tools')), [], 'the gh setup fetched removed');
     // In the user's home: the product's checkout of the repository the director kept, exactly as
     // committed on main (setup's commit with its three files, which the pull request takes out once
     // merged); Claude Code's own record and copy of the pinned kits it installed for the project;
-    // and in the user settings the director's own retention, kept, with setup's other keys gone.
+    // and in the user settings the director's own retention, kept, with setup's other keys gone, and
+    // the `env` setup made for them (ruling R138).
     const folder = 'Projects/Café Menu/';
     const checkout = (p) => p.startsWith(`${folder}.git`) || ['README.md', 'CLAUDE.md', '.claude/wheelhouse.json', '.claude/settings.json'].includes(p.slice(folder.length));
     const kits = (p) => p === 'claude config/plugins' || p.startsWith('claude config/plugins/');
-    assert.deepEqual(user.added.filter((p) => !checkout(p) && !kits(p) && !LEFT_BY_UNINSTALL.user.includes(p)), []);
+    assert.deepEqual(user.added.filter((p) => !checkout(p) && !kits(p)), [], 'the local settings file setup made is gone too');
     assert.deepEqual(user.removed, []);
     assert.deepEqual(user.changed, [`${folder}.claude/settings.json`, 'claude config/settings.json']);
     assert.equal(await g(a.folder, 'rev-parse', 'HEAD'), main);
     assert.equal(await g(a.folder, 'status', '--porcelain'), '', 'every file in the checkout as committed');
-    assert.deepEqual(JSON.parse(fs.readFileSync(userSettings, 'utf8')), { ...settingsBefore, cleanupPeriodDays: 90, env: {} });
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(a.folder, '.claude', 'settings.local.json'), 'utf8')), { permissions: {} });
+    assert.deepEqual(JSON.parse(fs.readFileSync(userSettings, 'utf8')), { ...settingsBefore, cleanupPeriodDays: 90 });
+    assert.equal(fs.existsSync(path.join(a.folder, '.claude', 'settings.local.json')), false);
     assert.equal(fs.readFileSync(path.join(a.folder, '.git', 'info', 'exclude'), 'utf8').includes('.wheelhouse'), false, 'no .wheelhouse/ folder, so its line went too (ruling R131)');
 
     assert.deepEqual(a.refused, []);

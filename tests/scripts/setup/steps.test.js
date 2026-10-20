@@ -440,6 +440,6 @@ test('a long step that fails part-way leaves every change it made in the journal
     assert.deepEqual(changes.map((c) => [c.step, c.target, c.before, c.after]), [[2, path.join(folder, 'x.json'), 'theirs', 1], [2, path.join(folder, 'y.json'), null, 2]]);
     for (const change of [...changes].reverse()) assert.deepEqual(reverseChange(change), { put: true });
     assert.deepEqual(readJson(path.join(folder, 'x.json')), { a: 'theirs' });
-    assert.deepEqual(readJson(path.join(folder, 'y.json')), {});
+    assert.equal(fs.existsSync(path.join(folder, 'y.json')), false, 'the file the step made goes too (ruling R138)');
   });
 });
