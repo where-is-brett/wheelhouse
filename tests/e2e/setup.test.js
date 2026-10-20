@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  standInHost, makeClock, makeComputer, shimTools, follow, listing, differences,
+  standInHost, makeClock, makeComputer, shimTools, shutOutGitConfig, follow, listing, differences,
 } from '../helpers/setup-e2e.js';
 import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, PROFILE_REPO, fromOtherComputer } from '../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
@@ -40,9 +40,10 @@ import { readProject } from '../../scripts/lib/projects.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { toolPath } from '../../scripts/lib/host-tools.js';
 import { STATE_BRANCH } from '../../scripts/state/clone.js';
-import { run as realRun } from '../../scripts/lib/run.js';
+import { run as realRun, withoutGitVars } from '../../scripts/lib/run.js';
 import { g } from '../helpers/git-fixture.js';
 import { transcript, typed } from '../helpers/setup-answers.js';
+import { tempFolder } from '../helpers/homes.js';
 
 // The session start hook finds the helper at the director's own named pipe on Windows, which a test
 // must never reach (as tests/e2e/mod.test.js).
@@ -51,10 +52,19 @@ const SKIP = process.platform === 'win32' ? 'the session start and setup\'s endi
 const REPO = 'a-director/Cafe-Menu';
 const SLUG = 'a-director__Cafe-Menu';
 
-// Programs run by name are stand-ins for the whole file (tests/helpers/setup-e2e.js, shimTools).
+// Programs run by name are stand-ins for the whole file (tests/helpers/setup-e2e.js, shimTools), and
+// git runs with the global and system config shut out (shutOutGitConfig, ruling R144).
 let shims;
-before(() => { if (!SKIP) shims = shimTools(); });
-after(() => shims?.restore());
+let gitConfig;
+before(() => {
+  if (SKIP) return;
+  shims = shimTools();
+  gitConfig = shutOutGitConfig();
+});
+after(() => {
+  shims?.restore();
+  gitConfig?.restore();
+});
 
 // A stand-in host and the director's first computer on it, on one clock, with nothing run by name
 // yet.
@@ -81,6 +91,33 @@ const keptClicks = (c) => c.act(() => fs.readdirSync(clicksDir()).map((name) => 
   .map((event) => ({ event, used: fs.existsSync(path.join(usedDir(), event.id)), signed: verify(event, readEnrolled()) })));
 
 const lsRemote = async (url, ref) => (await realRun('git', ['ls-remote', url, ref])).stdout.trim();
+
+// Ruling R144: the tests' git, the world's and the helper's alike, runs as setup's own does (R109),
+// with the global and system config shut out, so nothing in the developer's own git config (a hooks
+// path, commit signing, an insteadOf) changes what it does. A global config of the test's own, where
+// git looks for one, is read by a git that isn't shut out, and by none of these.
+test('the end-to-end tests\' git reads no global or system config (ruling R144)', { skip: SKIP }, async () => {
+  const { a } = fresh();
+  const xdg = tempFolder('wh-xdg-');
+  fs.mkdirSync(path.join(xdg, 'git'));
+  fs.writeFileSync(path.join(xdg, 'git', 'config'), '[wheelhouse]\n\tprobe = global\n');
+  const dir = tempFolder('wh-git-');
+  const was = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = xdg;
+  try {
+    const probe = ['config', '--get', 'wheelhouse.probe'];
+    // Read, by a git with the config not shut out.
+    assert.equal((await realRun('git', probe, { cwd: dir, baseEnv: withoutGitVars(process.env) })).stdout.trim(), 'global');
+    // Not read by the tests' own git, the fixture's, or the world's (as the helper calls it, with
+    // every inherited GIT_* variable taken out).
+    assert.notEqual((await realRun('git', probe, { cwd: dir })).code, 0);
+    await assert.rejects(g(dir, ...probe));
+    assert.notEqual((await a.run('git', probe, { cwd: dir, baseEnv: withoutGitVars(process.env) })).code, 0);
+  } finally {
+    if (was === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = was;
+    await a.cleanup();
+  }
+});
 
 test('a new product: every step\'s card, its click, and a green board at the end', { skip: SKIP }, async () => {
   const { host, a } = fresh();

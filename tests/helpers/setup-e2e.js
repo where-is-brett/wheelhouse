@@ -22,7 +22,9 @@
 //     (shimTools), for the helper's own calls by name, which take no stand-in of the test's;
 //   - step 2 fetches gh from a stand-in of its release page, as a computer without gh would;
 //   - the foreman's watcher is stood in for by a sleeping child process holding the watcher's lock,
-//     so setup's ending finds it running and starts no real one (which could wake a session).
+//     so setup's ending finds it running and starts no real one (which could wake a session);
+//   - git runs with the global and system config shut out (shutOutGitConfig, and the computer's own
+//     `run`), as setup's own git does, so the developer's git config changes nothing (ruling R144).
 // Each command and click goes through the hooks Claude Code would call first: the PreToolUse
 // guards for the playbook's Bash command, and the card check for each card.
 import crypto from 'node:crypto';
@@ -78,6 +80,26 @@ const noFetch = async (url) => { throw new Error(`nothing is fetched in this tes
 export function makeClock(start = Date.now()) {
   let t = start;
   return { now: () => new Date(t), tick: (ms = 1000) => { t += ms; } };
+}
+
+// ---- git with the developer's own config shut out (ruling R144) ----
+
+// No system config and an empty global one, as setup's own git has (R109): a hooks path, commit
+// signing or an insteadOf in the developer's git config never changes what the tests' git does.
+export const NO_GIT_CONFIG = Object.freeze({ GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull });
+
+// Shuts the config out for every git this process runs that keeps the GIT_* variables it inherits
+// (the tests' own, the fixture's, the code's), until `restore`.
+export function shutOutGitConfig() {
+  const before = Object.fromEntries(Object.keys(NO_GIT_CONFIG).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, NO_GIT_CONFIG);
+  return {
+    restore: () => {
+      for (const [k, v] of Object.entries(before)) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+    },
+  };
 }
 
 // ---- Programs run by name ----
@@ -287,10 +309,13 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     refused: [], calls: [], children: [], helper: null, client: null, watcher: null,
   };
 
-  // `gh`, `claude` and git as this computer runs them; anything else is refused and noted.
+  // `gh`, `claude` and git as this computer runs them; anything else is refused and noted. Git has
+  // the config shut out even where its caller took out the GIT_* variables it inherits, as the
+  // helper does for its own calls (ruling R144).
   c.run = async (file, args = [], options = {}) => {
     const tool = path.basename(file).replace(/\.(exe|cmd)$/i, '');
-    if (tool === 'git' || file === process.execPath) return realRun(file, args, options);
+    if (tool === 'git') return realRun(file, args, { ...options, env: { ...options.env, ...NO_GIT_CONFIG } });
+    if (file === process.execPath) return realRun(file, args, options);
     c.calls.push([tool, ...args]);
     if (tool === 'gh') return gh(args);
     if (tool === 'claude') return claude(args, options);
