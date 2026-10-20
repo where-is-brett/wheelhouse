@@ -6,6 +6,11 @@
 // /setup/plan on the real steps; `answer(card, label)` is the director's click on that card, as the
 // prompt record sees it (a minute before T0, unless `at` says when), with a stand-in helper that
 // takes every record and keeps what was sent.
+//
+// The real steps run their programs through the real `run`, so for each project the programs no
+// test may reach for real are stand-ins first on the PATH (tests/helpers/host-stand-ins.js), and a
+// project whose test finished with any of them run fails.
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setupRoutes } from '../../scripts/setup/engine.js';
@@ -14,6 +19,7 @@ import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { writeProject } from '../../scripts/lib/projects.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { as, shortHome, tempFolder } from './homes.js';
+import { standInTools } from './host-stand-ins.js';
 
 export const T0 = new Date('2026-10-20T03:00:00.000Z');
 export const REPO = 'o/Cafe-Menu';
@@ -48,6 +54,7 @@ export async function withProject(fn, { files = {}, connected = true } = {}) {
   lay(folder, files);
   const before = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = config;
+  const tools = standInTools();
   try {
     return await as(home, async () => {
       const { computer, publicKey } = makeSigningKey();
@@ -78,9 +85,12 @@ export async function withProject(fn, { files = {}, connected = true } = {}) {
         }, { client, now: () => at });
         return sent.slice(from);
       };
-      return fn({ home, user, config, folder, plan, answer, sent, connect });
+      const result = await fn({ home, user, config, folder, plan, answer, sent, connect });
+      assert.deepEqual(tools.calls(), [], 'no host tool ran');
+      return result;
     });
   } finally {
+    tools.restore();
     if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = before;
   }
 }

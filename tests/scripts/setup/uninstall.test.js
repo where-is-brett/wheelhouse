@@ -38,6 +38,7 @@ import { writeKey, readKey } from '../../../scripts/host/keys.js';
 import { openInstaller } from '../../../scripts/setup/tools.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
+import { standInTools } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
@@ -1491,43 +1492,51 @@ test('through the helper, uninstall runs in its own process, and the helper stop
   const user = fs.realpathSync.native(tempFolder('wh-user zoë '));
   const folder = path.join(user, 'Projects', 'Shop');
   fs.mkdirSync(folder, { recursive: true });
-  await as(home, async () => {
-    const { computer, publicKey } = makeSigningKey();
-    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    let stopped = false;
-    // The list of a folder nothing was set up in, on the last project: the receiver's stop (no
-    // receiver runs in this home), setup's own records removed, the plugin's line, the helper.
-    const helper = await startHelper({
-      address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), userHome: user,
-      onStop: (close) => { stopped = true; return close(); },
-    });
-    try {
-      const client = helperClient({ address: helper.address });
-      const shown = await client.setup.uninstall.plan({ folder });
-      assert.equal(shown.ok, true, shown.refused);
-      assert.equal(shown.last, true);
-      removeIt('Shop', shown.hash, new Date(Date.now() - 60 * 1000));
-      assert.deepEqual(await client.setup.uninstall.apply({ folder, hash: shown.hash }), { ok: true, started: true });
-      let got = null;
-      for (let i = 0; i < 300; i++) {
-        got = await client.setup.uninstall.status({ folder });
-        if (got.uninstall?.state !== 'running') break;
-        await new Promise((resolve) => { setTimeout(resolve, 100); });
+  // The helper and uninstall's own process run host tools by name with the real `run`, so stand-ins
+  // come first on the PATH (tests/helpers/host-stand-ins.js), and the test asserts none ran.
+  const tools = standInTools();
+  try {
+    await as(home, async () => {
+      const { computer, publicKey } = makeSigningKey();
+      enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+      let stopped = false;
+      // The list of a folder nothing was set up in, on the last project: the receiver's stop (no
+      // receiver runs in this home), setup's own records removed, the plugin's line, the helper.
+      const helper = await startHelper({
+        address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), userHome: user,
+        onStop: (close) => { stopped = true; return close(); },
+      });
+      try {
+        const client = helperClient({ address: helper.address });
+        const shown = await client.setup.uninstall.plan({ folder });
+        assert.equal(shown.ok, true, shown.refused);
+        assert.equal(shown.last, true);
+        removeIt('Shop', shown.hash, new Date(Date.now() - 60 * 1000));
+        assert.deepEqual(await client.setup.uninstall.apply({ folder, hash: shown.hash }), { ok: true, started: true });
+        let got = null;
+        for (let i = 0; i < 300; i++) {
+          got = await client.setup.uninstall.status({ folder });
+          if (got.uninstall?.state !== 'running') break;
+          await new Promise((resolve) => { setTimeout(resolve, 100); });
+        }
+        assert.equal(got.ok, true, got.refused);
+        assert.equal(got.uninstall.state, 'done', got.lines.join('\n'));
+        assert.equal(got.helperStops, true);
+        assert.ok(got.lines.includes('The usage receiver: not running.'));
+        assert.ok(got.lines.includes(`${PLUGIN_LINE}.`));
+        for (let i = 0; i < 50 && !stopped; i++) await new Promise((resolve) => { setTimeout(resolve, 20); });
+        assert.equal(stopped, true);
+        assert.equal((await client.health()).ok, false, 'the helper no longer answers');
+        // The answer is kept: the record says the helper was stopped for it.
+        assert.equal(typeof readProgress(folder).helperStoppedAt, 'string');
+        assert.deepEqual(tools.calls(), [], 'no host tool ran');
+      } finally {
+        await helper.close();
       }
-      assert.equal(got.ok, true, got.refused);
-      assert.equal(got.uninstall.state, 'done', got.lines.join('\n'));
-      assert.equal(got.helperStops, true);
-      assert.ok(got.lines.includes('The usage receiver: not running.'));
-      assert.ok(got.lines.includes(`${PLUGIN_LINE}.`));
-      for (let i = 0; i < 50 && !stopped; i++) await new Promise((resolve) => { setTimeout(resolve, 20); });
-      assert.equal(stopped, true);
-      assert.equal((await client.health()).ok, false, 'the helper no longer answers');
-      // The answer is kept: the record says the helper was stopped for it.
-      assert.equal(typeof readProgress(folder).helperStoppedAt, 'string');
-    } finally {
-      await helper.close();
-    }
-  });
+    });
+  } finally {
+    tools.restore();
+  }
 });
 
 test('a finished last uninstall nobody asks about stops the helper a while after its process ended', async () => {
@@ -2017,6 +2026,74 @@ test('an uninstall whose run\'s close fails after the signing key went says in i
       for (const p of [signingKeyFile(), enrolledFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]) {
         assert.equal(fs.existsSync(p), false, p);
       }
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+// Ruling R146: a director who asks for uninstall again in that session, past status's new-session
+// line, is given the same line by plan, and no card to click: a Remove it there could not be signed,
+// so asking it would only begin the click loop. Plan writes nothing then, and once the next session
+// start has made and enrolled a key, it gives the card again.
+test('uninstall\'s plan, after an uninstall stopped past the trusted-keys list\'s removal, leads with the new-session line and gives no card, writing nothing (rulings R146, R142)', async (t) => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      const f = fakes(world);
+      const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run });
+      // The card the director clicked, shown as plan gives it while a click here can count.
+      const shownFirst = await routes['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(typeof shownFirst.hash, 'string');
+      assert.equal(shownFirst.lines, undefined);
+      const { renameSync } = fs;
+      const mock = t.mock.method(fs, 'renameSync', (from, to, ...rest) => {
+        if (to === journalFile() && fs.readFileSync(from, 'utf8').includes('"closedBy"')) throw Object.assign(new Error(`EBUSY: resource busy or locked, '${to}'`), { code: 'EBUSY' });
+        return renameSync(from, to, ...rest);
+      });
+      const first = await applyPlan(world, f);
+      mock.mock.restore();
+      assert.equal(first.done.ok, false);
+      assert.equal(fs.existsSync(signingKeyFile()), false, 'cut short after the signing key went');
+      const clickedAt = new Date(READY().getTime() - 60 * 1000).toISOString();
+      const deadline = new Date(Date.parse(clickedAt) + 20 * 60 * 1000).toISOString();
+      const record = {
+        folder: world.folder, project: first.got.card.target.project, hash: first.got.hash, clickedAt, deadline,
+        startedAt: READY().toISOString(), state: 'stopped', refused: first.done.refused, lines: first.done.lines, pages: first.done.pages,
+      };
+      writeProgress(world.folder, record);
+      const status = await routes['/setup/uninstall/status']({ folder: world.folder });
+      assert.equal(status.lines[0], UNINSTALL_NEW_SESSION);
+
+      // Asked again in this session: the same line first, the same lines as status, and no card.
+      const shownBefore = uninstallShownFor(world.folder);
+      const journalBefore = fs.readFileSync(journalFile(), 'utf8');
+      const again = await routes['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(again.ok, true);
+      assert.equal(again.lines[0], UNINSTALL_NEW_SESSION);
+      assert.deepEqual(again.lines, status.lines);
+      for (const k of ['hash', 'card', 'asks', 'last']) assert.equal(again[k], undefined, k);
+      assert.deepEqual(uninstallShownFor(world.folder), shownBefore, 'no card noted as shown');
+      assert.equal(fs.readFileSync(journalFile(), 'utf8'), journalBefore, 'no card asked');
+      assert.deepEqual(readProgress(world.folder), record);
+      // So, too, for one cut short there and past its time.
+      const { refused, ...running } = record; // eslint-disable-line no-unused-vars
+      writeProgress(world.folder, { ...running, state: 'running' });
+      const later = uninstallRoutes({ now: () => new Date(Date.parse(deadline) + 1000), userHome: world.userHome, platform: 'darwin', run: f.run });
+      const stuck = await later['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(stuck.lines[0], UNINSTALL_NEW_SESSION);
+      assert.equal(stuck.card, undefined);
+      writeProgress(world.folder, record);
+
+      // The next session start makes and enrols a key: plan gives the card again.
+      await sessionStart({ cwd: world.folder, session_id: 's1', hook_event_name: 'SessionStart' }, {
+        client: { health: async () => ({ ok: true }) }, spawn: () => { throw new Error('nothing is started'); }, dir: tempFolder('wh-managed-'),
+      });
+      const fresh = await routes['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(fresh.lines, undefined);
+      assert.equal(typeof fresh.hash, 'string');
+      assert.equal(typeof fresh.card.question, 'string');
     });
   } finally {
     host.cleanup();

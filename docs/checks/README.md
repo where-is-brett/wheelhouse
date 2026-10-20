@@ -15,7 +15,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 15 | Installing at a pinned release | Yes | [15-install-and-pinning.md](15-install-and-pinning.md) |
 | 17 | Keyless signing of releases | Deferred | [17-keyless-signing.md](17-keyless-signing.md) |
 | 18 | Connectors and the deny rule | Yes | [18-connectors.md](18-connectors.md) |
-| 19 | Setup time | Deferred | [19-setup-time.md](19-setup-time.md) |
+| 19 | Setup time | Deferred (held for the director's sitting) | [19-setup-time.md](19-setup-time.md) |
 | 8 | The prompt-record hook | Yes | [08-prompt-record.md](08-prompt-record.md) |
 | 11 | The host helper | Partly | [11-host-helper.md](11-host-helper.md) |
 | 16 | The password-style box | Yes | [16-secret-box.md](16-secret-box.md) |
