@@ -274,7 +274,9 @@ function serverOf(input) {
 // no configured server of either exact name loads there (its own come in through the SDK, which
 // that setting does not hold). That setting matches the name exactly, so `ccd.turn` would slip
 // past it; and so a project whose connector list or .mcp.json names either server, in any
-// spelling, is refused both servers' tools, these included.
+// spelling, is refused both servers' tools, these included. A user or local server spelled so in
+// ~/.claude.json isn't checked here, so it would load there and pass: that file is the director's
+// own to write, not a project's.
 const APP_TOOLS = new Set([
   'mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up',
   'mcp__ccd_view__show_pane', 'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view',
@@ -307,15 +309,21 @@ function mcpJsonNamesAppServer(file) {
 }
 
 // Whether the project's configuration names one of the app's servers: its connector list, the
-// main folder's .mcp.json, or a .mcp.json in the session's folder or any folder above it.
-function configurationNamesAppServer(allowed, mainFolder, cwd) {
+// main folder's .mcp.json, or a .mcp.json in the session's folder, the folder the session started
+// in (CLAUDE_PROJECT_DIR, whose .mcp.json the session loaded, though its cwd may have moved),
+// or any folder above either, as given and by its real path.
+function configurationNamesAppServer(allowed, mainFolder, cwd, projectDir) {
   if (namesAppServer(allowed)) return true;
   const files = new Set([path.join(mainFolder, '.mcp.json')]);
-  const starts = [path.resolve(cwd)];
-  try {
-    starts.push(fs.realpathSync.native(cwd));
-  } catch {
-    // The folder as given is still looked at.
+  const starts = [];
+  for (const folder of [cwd, projectDir]) {
+    if (typeof folder !== 'string' || folder === '') continue;
+    starts.push(path.resolve(folder));
+    try {
+      starts.push(fs.realpathSync.native(folder));
+    } catch {
+      // The folder as given is still looked at.
+    }
   }
   for (const start of starts) {
     for (let folder = start; ; folder = path.dirname(folder)) {
@@ -326,11 +334,11 @@ function configurationNamesAppServer(allowed, mainFolder, cwd) {
   return [...files].some(mcpJsonNamesAppServer);
 }
 
-function connectorRefusal(input, server, mainFolder, entrypoint) {
+function connectorRefusal(input, server, mainFolder, entrypoint, projectDir) {
   const allowed = mainFolder ? allowedServers(mainFolder) : null;
   const appTool = APP_TOOLS.has(input.tool_name);
   if (allowed !== null && (appTool || APP_SERVERS.includes(server))) {
-    if (configurationNamesAppServer(allowed, mainFolder, input.cwd)) {
+    if (configurationNamesAppServer(allowed, mainFolder, input.cwd, projectDir)) {
       return answer.deny(`This project's configuration names ccd_turn or ccd_view, which the Claude app keeps for its own tools: ${HELPER}`);
     }
     if (appTool && APP_ENTRYPOINTS.has(entrypoint)) return null;
@@ -341,7 +349,7 @@ function connectorRefusal(input, server, mainFolder, entrypoint) {
   return null;
 }
 
-export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT } = {}) {
+export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR } = {}) {
   const tool = input.tool_name;
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
@@ -360,7 +368,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
         main = undefined;
       }
     }
-    return connectorRefusal(input, serverOf(input), main, entrypoint) ?? undefined;
+    return connectorRefusal(input, serverOf(input), main, entrypoint, projectDir) ?? undefined;
   }
   if (SHELL_TOOLS.includes(tool)) {
     const command = input.tool_input?.command;

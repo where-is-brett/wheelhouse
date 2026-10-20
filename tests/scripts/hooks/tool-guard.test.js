@@ -205,7 +205,9 @@ test('a connector is refused unless the configuration lists its server', async (
 const APP_TOOLS = ['mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up', 'mcp__ccd_view__show_pane',
   'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view'];
 // A call as from a session the Claude Desktop app started, unless another entrypoint is given.
-const desk = (base, home, input, entrypoint = 'claude-desktop') => decide(input, { dir: path.join(base, 'managed'), home, platform: process.platform, pluginRoot: PLUGIN, entrypoint });
+const desk = (base, home, input, entrypoint = 'claude-desktop', projectDir = undefined) => decide(input, {
+  dir: path.join(base, 'managed'), home, platform: process.platform, pluginRoot: PLUGIN, entrypoint, projectDir: projectDir ?? null,
+});
 
 test('the Claude app\'s own drawing tools pass unlisted, each by its whole name; its other tools stay with the list', async () => {
   await withHome(async (home) => {
@@ -278,6 +280,76 @@ test('a project whose configuration names ccd_turn or ccd_view is refused those 
       assert.ok(denied(await desk(base, home, call(deep, 'mcp__ccd_turn__wrap_up'))));
       assert.ok(denied(await desk(base, home, call(path.join(main, 'app'), 'mcp__ccd_view__get_layout'))));
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('the session\'s start folder (CLAUDE_PROJECT_DIR), a linked folder\'s real path and an unreadable .mcp.json count too', async () => {
+  await withHome(async (home) => {
+    const plain = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+    const mcpJson = (servers) => JSON.stringify({ mcpServers: Object.fromEntries(servers.map((s) => [s, { command: 'node' }])) });
+    const ccd = (out, label) => {
+      assert.ok(denied(out), label);
+      assert.match(out.hookSpecificOutput.permissionDecisionReason, /ccd_turn or ccd_view/, label);
+    };
+
+    // The session started in a worktree whose folder above holds a .mcp.json, and its cwd has
+    // since moved to the main folder, where nothing names the app's servers.
+    {
+      const { base, main } = makeProject(plain);
+      const before = process.env.CLAUDE_PROJECT_DIR;
+      try {
+        const start = path.join(main, 'trees', 'one');
+        fs.mkdirSync(start, { recursive: true });
+        fs.writeFileSync(path.join(main, 'trees', '.mcp.json'), mcpJson(['ccd_turn']));
+        assert.equal(await desk(base, home, call(main, 'mcp__ccd_turn__wrap_up')), undefined, 'no start folder given');
+        ccd(await desk(base, home, call(main, 'mcp__ccd_turn__wrap_up'), 'claude-desktop', start), 'the start folder walked');
+        ccd(await desk(base, home, call(main, 'mcp__ccd_view__get_layout'), 'claude-desktop', start), 'the start folder walked, ccd_view');
+        // By default the start folder is read from the hook's environment.
+        process.env.CLAUDE_PROJECT_DIR = start;
+        ccd(await decide(call(main, 'mcp__ccd_turn__wrap_up'), { dir: path.join(base, 'managed'), home, platform: process.platform, pluginRoot: PLUGIN, entrypoint: 'claude-desktop' }), 'from the environment');
+        delete process.env.CLAUDE_PROJECT_DIR;
+        assert.equal(await decide(call(main, 'mcp__ccd_turn__wrap_up'), { dir: path.join(base, 'managed'), home, platform: process.platform, pluginRoot: PLUGIN, entrypoint: 'claude-desktop' }), undefined, 'none in the environment');
+      } finally {
+        if (before === undefined) delete process.env.CLAUDE_PROJECT_DIR; else process.env.CLAUDE_PROJECT_DIR = before;
+        fs.rmSync(base, { recursive: true, force: true });
+      }
+    }
+
+    // A cwd reached through a link: the folders above its real path are walked too.
+    if (process.platform !== 'win32') {
+      const { base, main } = makeProject(plain);
+      try {
+        fs.mkdirSync(path.join(main, 'app', 'web'), { recursive: true });
+        fs.writeFileSync(path.join(main, 'app', '.mcp.json'), mcpJson(['ccd_view']));
+        const link = path.join(main, 'linked');
+        fs.mkdirSync(link);
+        fs.symlinkSync(path.join(main, 'app', 'web'), path.join(link, 'web'));
+        // As given, the link's folders hold no .mcp.json naming one; its real path's do.
+        ccd(await desk(base, home, call(path.join(link, 'web'), 'mcp__ccd_turn__wrap_up')), 'a linked cwd');
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    }
+
+    // A .mcp.json that is there but can't be read counts as naming one: a folder, and a file
+    // its owner can't read (where the platform keeps that from the owner).
+    {
+      const { base, main } = makeProject(plain);
+      try {
+        fs.mkdirSync(path.join(main, '.mcp.json'));
+        ccd(await desk(base, home, call(main, 'mcp__ccd_turn__wrap_up')), 'EISDIR');
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    }
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      const { base, main } = makeProject(plain);
+      const file = path.join(main, '.mcp.json');
+      try {
+        fs.writeFileSync(file, mcpJson(['figma']));
+        fs.chmodSync(file, 0o000);
+        ccd(await desk(base, home, call(main, 'mcp__ccd_turn__wrap_up')), 'EACCES');
+      } finally {
+        fs.chmodSync(file, 0o600);
+        fs.rmSync(base, { recursive: true, force: true });
+      }
+    }
   });
 });
 
