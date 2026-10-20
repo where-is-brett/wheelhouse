@@ -29,7 +29,7 @@ import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
-import { childEnv } from './connection.js';
+import { childEnv, installationOf } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
@@ -2238,7 +2238,8 @@ export async function startHelper({
     if (host === 'github') {
       let keys = null;
       try { keys = readKey('github-app'); } catch { /* damaged: deleted below */ }
-      const id = Number.isInteger(keys?.installationId) && keys.installationId > 0 ? keys.installationId : null;
+      // The project's own installation of the app, on its account (ruling R83).
+      const id = installationOf(connection, keys);
       const url = id ? `https://github.com/settings/installations/${id}` : 'https://github.com/settings/installations';
       deleteKey('github-app');
       return plainAnswer('Done on this computer: the Wheelhouse app\'s keys were deleted from it, so nothing here can use them. Still for the director: the app is still installed on GitHub, and a copy of its keys would still work until the app is suspended or uninstalled. Open the page below and choose Suspend or Uninstall.', { url });

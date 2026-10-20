@@ -1,8 +1,12 @@
 // scripts/host/keys.js
 // The connection's keys, one file each under keys/ in the Wheelhouse folder:
-//   github-app.json            the GitHub App's client ID and installation ID,
-//                              the access key, the renewal key and their
-//                              expiries; never a client secret (check 20).
+//   github-app.json            the GitHub App's client ID, its installations as
+//                              `installations` { <account, lower case>: id }
+//                              with `installationId` the first of them (a file
+//                              written before kept only that one), the access
+//                              key, the renewal key and their expiries; never
+//                              a client secret (check 20). One file per app:
+//                              its access key works across every installation.
 //   gitlab-project-<id>.json   { kind: 'project-key' | 'pasted-token', token,
 //                              expiresAt, id? } for one GitLab project (check 22);
 //                              id is the token's own number, kept when the key is

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   MANIFEST_FILE, NEVER, DEVICE_FLOW_OFF, PROFILE_TARGET, readManifest, newAppUrl, appName, appSlug, readOwnApp, grownPermissions,
-  ownAppCode, checkOwnApp, ensureOwnApp, recordOwnApp, putBackOwnApp, helperProfile, appSettingsUrl, ownAppFrom,
+  ownAppCode, checkOwnApp, ensureOwnApp, recordOwnApp, putBackOwnApp, helperProfile, appSettingsUrl, ownAppFrom, shadowedOwnApp,
 } from '../../../scripts/setup/own-app.js';
 import { appFor } from '../../../scripts/setup/host.js';
 import { reverseChange } from '../../../scripts/setup/journal.js';
@@ -379,6 +379,41 @@ test('a record never confirmed is put back so that a later Confirm of its card n
     // While any newer proposal waits, a confirmed app counts for nothing: a proposal only takes trust away.
     assert.equal(ownAppFrom({ settings: { [OWN_GITHUB_APP_KEY]: { value: OWN } }, unconfirmed: [] }).slug, OWN.slug);
     assert.equal(ownAppFrom({ settings: { [OWN_GITHUB_APP_KEY]: { value: OWN } }, unconfirmed: [{ kind: 'setting', key: OWN_GITHUB_APP_KEY, data: { value: OWN } }] }), null);
+  });
+});
+
+test('a change waiting no longer hides the confirmed app for good: setup proposes it again, and Confirm restores it (ruling R84)', async () => {
+  await withHome(async () => {
+    const profile = memoryProfile();
+    await recordOwnApp(OWN, { profile });
+    profile.accept();
+    assert.equal(await recordOwnApp(OWN, { profile }), null, 'confirmed with nothing waiting: nothing written');
+    assert.equal(shadowedOwnApp(await profile.views()), null);
+    // A stray writer proposes another app: the confirmed one counts for nothing while it waits.
+    const stray = { clientId: 'Iv23li.stray0001', slug: 'helpful-app', owner: 'mallory' };
+    profile.state.unconfirmed.push({ kind: 'setting', id: 'ev-stray', key: OWN_GITHUB_APP_KEY, data: { key: OWN_GITHUB_APP_KEY, value: stray } });
+    assert.equal(ownAppFrom(await profile.views()), null);
+    assert.deepEqual(shadowedOwnApp(await profile.views()), { accepted: OWN, waiting: stray });
+    // Setup writes the accepted app again, as a newer proposal, recorded first.
+    const recorded = [];
+    const again = await recordOwnApp(OWN, { profile, record: (c) => recorded.push(c) });
+    assert.deepEqual([again.kind, again.target, again.before, again.after], ['host', 'profile own-github-app', OWN, OWN]);
+    assert.deepEqual(recorded, [again]);
+    assert.deepEqual(profile.writes.at(-1).data.value, OWN);
+    assert.deepEqual(shadowedOwnApp(await profile.views()), { accepted: OWN, waiting: OWN });
+    // Already the newest change waiting: not written again.
+    const writes = profile.writes.length;
+    assert.equal(await recordOwnApp(OWN, { profile }), null);
+    assert.equal(profile.writes.length, writes);
+    // The director's Confirm of it: the views list nothing older as waiting, and the app counts again.
+    profile.accept();
+    profile.state.unconfirmed = profile.state.unconfirmed.filter((u) => u.key !== OWN_GITHUB_APP_KEY);
+    assert.deepEqual(ownAppFrom(await profile.views()), OWN);
+    // A put back to none waiting names no app.
+    profile.state.unconfirmed.push({ kind: 'setting', id: 'ev-none', key: OWN_GITHUB_APP_KEY, data: { key: OWN_GITHUB_APP_KEY, value: null } });
+    assert.deepEqual(shadowedOwnApp(await profile.views()), { accepted: OWN, waiting: null });
+    // Nothing accepted: no app is hidden, whatever waits.
+    assert.equal(shadowedOwnApp({ settings: {}, unconfirmed: [{ kind: 'setting', key: OWN_GITHUB_APP_KEY, data: { value: OWN } }] }), null);
   });
 });
 

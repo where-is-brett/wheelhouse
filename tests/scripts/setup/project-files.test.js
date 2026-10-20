@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   projectFilesStep, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
-  EXCLUDE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
+  EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply } from '../../../scripts/setup/engine.js';
@@ -554,8 +554,48 @@ test('this computer\'s settings are kept out of git, unless the product already 
   });
   await withHome(async () => {
     const w = await world({ gitignore: '.claude/settings.local.json\n' });
-    assert.ok(!(await w.plan()).changes.some((c) => c.line !== undefined));
+    assert.ok(!(await w.plan()).changes.some((c) => c.line === EXCLUDE_LINE));
   });
+});
+
+test('.wheelhouse/ is kept out of git by step 7, listed on its card and recorded with its value before, unless the folder\'s list holds it in any form (ruling R108)', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const exclude = path.join(w.folder, '.git', 'info', 'exclude');
+    const before = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : null;
+    const planned = await w.plan();
+    assert.deepEqual(planned.changes.filter((c) => c.line !== undefined).map((c) => [c.target, c.line]), [[exclude, EXCLUDE_LINE], [exclude, WHEELHOUSE_LINE]]);
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /\.wheelhouse\/ kept out of git/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const lines = fs.readFileSync(exclude, 'utf8').split('\n');
+    assert.ok(lines.includes(EXCLUDE_LINE) && lines.includes(WHEELHOUSE_LINE), 'both lines written');
+    // Each line recorded just before it was written, with the list as it was, so uninstall reverses both.
+    const made = done.run.changes.filter((c) => c.target === exclude);
+    assert.deepEqual(made.map((c) => [c.kind, c.line]), [['file', EXCLUDE_LINE], ['file', WHEELHOUSE_LINE]]);
+    assert.equal(made[0].before, before);
+    assert.equal(made[1].before, made[0].after);
+    assert.equal(made[1].after, fs.readFileSync(exclude, 'utf8'));
+    fs.mkdirSync(path.join(w.folder, '.wheelhouse'), { recursive: true });
+    fs.writeFileSync(path.join(w.folder, '.wheelhouse', 'note'), 'x\n');
+    assert.equal(await g(w.folder, 'status', '--porcelain', '--', '.wheelhouse'), '', 'git sees nothing in .wheelhouse/');
+  });
+  for (const form of ['/.wheelhouse', '.wheelhouse', '/.wheelhouse/', '  .wheelhouse/  ']) {
+    await withHome(async () => {
+      const w = await world();
+      const exclude = path.join(w.folder, '.git', 'info', 'exclude');
+      fs.mkdirSync(path.dirname(exclude), { recursive: true });
+      fs.writeFileSync(exclude, `# git ls-files --others --exclude-from=.git/info/exclude\n${form}\n`);
+      const planned = await w.plan();
+      assert.deepEqual(planned.changes.filter((c) => c.line !== undefined).map((c) => c.line), [EXCLUDE_LINE], form);
+      const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+      assert.doesNotMatch(text, /\.wheelhouse\//, form);
+      const done = await w.apply(planned.changes);
+      assert.equal(done.ok, true, done.reason);
+      assert.equal(fs.readFileSync(exclude, 'utf8').split('\n').filter((l) => l.includes('.wheelhouse')).length, 1, `${form}: nothing added for it`);
+    });
+  }
 });
 
 test('on GitLab: the default branch and protection through glab\'s sign-in, the author\'s no-reply address, and the pipelines line', async () => {
@@ -810,7 +850,7 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
     assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
     const local = path.join(w.folder, '.claude', 'settings.local.json');
     assert.deepEqual(planned.changes.map((c) => (c.kind === 'process' ? c.target : c.line ?? `${c.kind} ${path.relative(w.folder, c.target)}`)), [
-      `file ${path.join('.claude', 'settings.local.json')}`, EXCLUDE_LINE, `superpowers@${MARKETPLACE}`, `mattpocock-skills@${MARKETPLACE}`,
+      `file ${path.join('.claude', 'settings.local.json')}`, EXCLUDE_LINE, WHEELHOUSE_LINE, `superpowers@${MARKETPLACE}`, `mattpocock-skills@${MARKETPLACE}`,
     ]);
     assert.ok(!planned.changes.some((c) => c.kind === 'host'), 'no commit, no push, no protection');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
@@ -827,7 +867,8 @@ test('a joining computer\'s step 7 lists only this computer\'s files and pins, w
     const mine = JSON.parse(fs.readFileSync(local, 'utf8'));
     assert.deepEqual(mine.sandbox.network.allowUnixSockets, [ADDRESS]);
     assert.ok(mine.permissions.allow.includes(`Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`));
-    assert.ok(fs.readFileSync(path.join(w.folder, '.git', 'info', 'exclude'), 'utf8').split('\n').includes(EXCLUDE_LINE));
+    const excluded = fs.readFileSync(path.join(w.folder, '.git', 'info', 'exclude'), 'utf8').split('\n');
+    assert.ok(excluded.includes(EXCLUDE_LINE) && excluded.includes(WHEELHOUSE_LINE), 'this computer\'s settings and .wheelhouse/ kept out of git (ruling R108)');
     assert.equal(checkInstalled({ manifest: w.manifest, projectDir: w.folder, claudeHome: w.claudeHome }).ok, true);
     for (const rel of SETUP_FILES) assert.equal(fs.readFileSync(path.join(w.folder, rel), 'utf8'), before[rel], rel);
     assert.equal(await g(w.folder, 'status', '--porcelain', '--', '.claude/settings.json', '.claude/wheelhouse.json'), '', 'git sees no change to them');

@@ -103,7 +103,7 @@ import { joinedRepo, JOIN_STEP } from '../lib/setup-run.js';
 import { profileRemote, ensureProfileClone, readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl } from './tools.js';
 import {
-  appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin,
+  appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin, shadowedOwnApp,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
 import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
@@ -138,9 +138,19 @@ export const KEY_NAME = 'Wheelhouse agents';
 export const KEY_DAYS = 365;
 
 // Said when the person's own app, as their profile records it, belongs to another account than the
-// project's: a private app reaches only its own account's repositories, and this computer keeps one
-// app's keys. The step waits, with this line, rather than show a Go ahead apply could only refuse.
-export const ownAppElsewhere = (app, where) => `Your own GitHub App, ${app.slug}, belongs to ${app.owner}, and an app of your own reaches only its own account's repositories, so it can't reach ${where}`;
+// project's: a private app reaches only its own account's repositories, and a second app of their
+// own waits for a later update (rulings R58, R83). The step waits, with this line, rather than show
+// a Go ahead apply could only refuse.
+export const ownAppElsewhere = (app, where) => `Your own GitHub App, ${app.slug}, belongs to ${app.owner}, and an app of your own reaches only its own account's repositories, so it can't reach ${where}: choose the Wheelhouse app or Quick for it`;
+// Said when their own app, as accepted in their profile, is shadowed by a newer change to it that
+// waits for the director's Confirm (ruling R84): the step waits, rather than offer to make another.
+export const ownAppWaiting = ({ accepted, waiting }) => {
+  const named = (app) => `${app.slug} on ${app.owner}`;
+  const change = waiting === null ? 'no app of your own' : named(waiting);
+  return waiting !== null && waiting.clientId === accepted.clientId && waiting.slug === accepted.slug && sameLogin(waiting.owner, accepted.owner)
+    ? `Your own GitHub App, ${named(accepted)}, waits for your Confirm again in your profile, so step 3 waits: click Confirm on its card, then ask again`
+    : `Your profile holds your own GitHub App, ${named(accepted)}, but a newer change to it waits for your Confirm (${change}), so step 3 waits rather than make another app: decide that change on its card, then ask again`;
+};
 export const OWN_APP_WAIT_MS = 10 * 60 * 1000;
 // Said when this computer's one `github-app` keys entry holds an installation of another app than
 // the one a project would use (ruling R58): signing in to the other would overwrite the keys that
@@ -203,6 +213,16 @@ export function wheelhouseApp({ appFile = APP_FILE } = {}) {
 export function ownApp({ views = readProfileViews } = {}) {
   try {
     return ownAppFrom(views());
+  } catch {
+    return null;
+  }
+}
+
+// Their own app as accepted in their profile, when it is hidden only by a newer change to it that
+// waits for the director's Confirm (ruling R84): { accepted, waiting }, or null.
+function ownAppShadowed({ views = readProfileViews } = {}) {
+  try {
+    return shadowedOwnApp(views());
   } catch {
     return null;
   }
@@ -846,14 +866,16 @@ function writeText(file, text) {
   }
 }
 
-// The connection a repository is reached with, as the project record and profile.json keep it.
-function connectionFor({ host, mode, repo, id, locked = false }) {
+// The connection a repository is reached with, as the project record and profile.json keep it; on
+// GitHub narrow, the project record's carries the app's installation on the project's account.
+function connectionFor({ host, mode, repo, id, locked = false, installationId = null }) {
   return {
     host,
     mode,
     project: repo,
     ...(host === 'gitlab' ? { baseUrl: GITLAB_URL, ...(mode === 'narrow' ? { projectId: id } : {}) } : {}),
     ...(locked ? { locked: true } : {}),
+    ...(host === 'github' && mode === 'narrow' && validId(installationId) ? { installationId } : {}),
   };
 }
 
@@ -914,9 +936,14 @@ export async function makeRepos({
 
 const GITHUB_API = 'https://api.github.com';
 
-// The app's installation on the signed-in account (GET /user/installations), by the app's client
-// ID, or its name; null while there is none.
-export async function findInstallation({ accessToken, app, fetch = globalThis.fetch }) {
+const validId = (id) => Number.isInteger(id) && id > 0;
+// A GitHub repository's account, in lower case: the app's installation that reaches it is that
+// account's.
+const accountOf = (repo) => repo.split('/')[0].toLowerCase();
+
+// The app's installations the signed-in director can reach (GET /user/installations), by the app's
+// client ID or its name: { <account, lower case>: id }.
+async function listInstallations({ accessToken, app, fetch }) {
   let response;
   try {
     response = await fetch(`${GITHUB_API}/user/installations?per_page=100`, {
@@ -932,9 +959,31 @@ export async function findInstallation({ accessToken, app, fetch = globalThis.fe
     body = await response.json();
   } catch { /* read below as no list */ }
   if (!Array.isArray(body?.installations)) throw new Error('GitHub\'s list of the app\'s installations could not be read');
-  const found = body.installations.find((i) => i?.client_id === app.clientId || i?.app_slug === app.slug);
-  return Number.isInteger(found?.id) && found.id > 0 ? found.id : null;
+  const found = {};
+  for (const i of body.installations) {
+    const login = i?.account?.login;
+    if ((i?.client_id === app.clientId || i?.app_slug === app.slug) && typeof login === 'string' && validId(i.id)) found[login.toLowerCase()] = i.id;
+  }
+  return found;
 }
+
+// The app's installation on `account` (its login, whatever its case), or null while the app isn't
+// installed there. Never another account's installation of the app (ruling R83).
+export async function findInstallation({ accessToken, app, account, fetch = globalThis.fetch }) {
+  if (typeof account !== 'string' || account === '') throw new Error('Setup needs the account to find the app\'s installation on');
+  return (await listInstallations({ accessToken, app, fetch }))[account.toLowerCase()] ?? null;
+}
+
+// The installations kept keys hold, { <account, lower case>: id }, or null when they keep it only as
+// `installationId` (a keys file written before installations were kept per account).
+function keptInstallations(kept) {
+  const map = kept?.installations;
+  if (map === null || typeof map !== 'object' || Array.isArray(map)) return null;
+  return Object.fromEntries(Object.entries(map).filter(([, id]) => validId(id)));
+}
+
+// Whether kept keys hold an installation of their app, on any account.
+const hasInstallation = (kept) => validId(kept?.installationId) || Object.keys(keptInstallations(kept) ?? {}).length > 0;
 
 // Whether a key file is there, without reading what is in it into anything said.
 function keyKept(name) {
@@ -956,13 +1005,19 @@ function keysFor(app) {
 }
 
 // How far this computer is with the app (design section 15): 'installed', its keys kept with the
-// installation, so a later project needs only a tick on the installation's settings page;
-// 'signed-in', its keys kept without an installation (an Install page left unfinished), so the
-// Install page is next, with no new code; or null, a code sign-in first.
-export function appKeysState(app) {
+// installation on `account` (the project's), so a later project needs only a tick on the
+// installation's settings page; 'other-account', its keys kept with installations on other
+// accounts only, so the Install page is next for this one, with no new code; 'signed-in', its keys
+// kept without an installation (an Install page left unfinished), so the Install page is next, with
+// no new code; or null, a code sign-in first. Keys kept before installations were kept per account
+// read as 'installed' on any account; apply asks GitHub.
+export function appKeysState(app, account = null) {
   const kept = keysFor(app);
   if (kept === null) return null;
-  return Number.isInteger(kept.installationId) && kept.installationId > 0 ? 'installed' : 'signed-in';
+  if (!hasInstallation(kept)) return 'signed-in';
+  const map = keptInstallations(kept);
+  if (typeof account === 'string' && account !== '' && map !== null && !validId(map[account.toLowerCase()])) return 'other-account';
+  return 'installed';
 }
 
 // The client ID of the app whose keys this computer keeps with an installation (so they serve a
@@ -970,7 +1025,7 @@ export function appKeysState(app) {
 export function keptAppInstalled() {
   try {
     const kept = readKey('github-app');
-    return kept && typeof kept.clientId === 'string' && Number.isInteger(kept.installationId) && kept.installationId > 0 ? kept.clientId : null;
+    return kept && typeof kept.clientId === 'string' && hasInstallation(kept) ? kept.clientId : null;
   } catch {
     return null;
   }
@@ -992,17 +1047,22 @@ export function keptAppKeys(app) {
 // is signed in afresh (the code sign-in), since only the helper's connection renews it.
 const FRESH_MS = 10 * 60 * 1000;
 
-// Narrow on GitHub. With the app's keys and installation kept, its reach is read at once. Otherwise:
-// the code sign-in, unless keys for the app are kept and fresh (an earlier attempt's, whose Install
-// page was not finished); the keys kept; then the Install page opened with the repositories to tick
-// said, and the installation looked up, for INSTALL_WAIT_MS from when the page opens, and kept with
-// the keys. Then the installation's reach is read back and said as it is: a repository it can't
-// reach opens its settings page, where the director ticks it, for INSTALL_WAIT_MS more. STOP is
-// read in every wait (`halt`), and once the code sign-in has returned, before anything is kept.
-// `startCode` asks for the sign-in's code: for the person's own app, ownAppCode, which reads the app
-// again first.
+// Narrow on GitHub. With the app's keys and an installation kept, its reach is read at once.
+// Otherwise: the code sign-in, unless keys for the app are kept and fresh (an earlier attempt's,
+// whose Install page was not finished); the keys kept, with any installations they held. Each read
+// of the reach asks GitHub which accounts the app is installed on and keeps each installation with
+// the keys by its account (ruling R83), so a repository is read against its own account's
+// installation, never another's. An account the app isn't installed on gets the Install page, with
+// the account and its repositories to tick said, and its installation is looked for, for
+// INSTALL_WAIT_MS from when the page opens. A repository an installation can't reach opens that
+// installation's settings page, where the director ticks it, for INSTALL_WAIT_MS more. The reach is
+// read back until every repository is reached, and said as it is. STOP is read in every wait
+// (`halt`), and once the code sign-in has returned, before anything is kept. `startCode` asks for
+// the sign-in's code: for the person's own app, ownAppCode, which reads the app again first. Gives
+// the installation on each account of `repos`, { <account, lower case>: id }.
 async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, record, halt = () => {}, startCode }) {
   const named = repos.map((r) => `${r} on GitHub`).join(' and ');
+  const onGithub = (list) => list.map((r) => `${r} on GitHub`);
   const waitFrom = () => {
     const until = now().getTime() + INSTALL_WAIT_MS;
     return (what) => {
@@ -1010,28 +1070,48 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
       if (now().getTime() >= until) throw new Error(`${what} after ${INSTALL_WAIT_MS / 60000} minutes; a fresh Go ahead asks again`);
     };
   };
-  const reach = async () => {
-    const missing = [];
-    let settingsUrl = null;
-    for (const repo of repos) {
-      const got = await installationCovers({ host: 'github', mode: 'narrow', project: repo }, { fetch, now });
-      if (!got.covered) {
-        missing.push(repo);
-        settingsUrl = got.settingsUrl;
-      }
+  const previous = keysFor(app);
+  let keys = previous;
+  // The app's installations as GitHub lists them now, kept with the keys by account; the first one
+  // that serves a project stays `installationId`, which readers of keys written before still use.
+  const accounts = repos.map(accountOf);
+  let listed = {};
+  const lookUp = async () => {
+    listed = await listInstallations({ accessToken: keys.accessToken, app, fetch });
+    const kept = keptInstallations(keys) ?? {};
+    const installations = { ...kept, ...listed };
+    const first = validId(keys.installationId) ? keys.installationId : accounts.map((a) => installations[a]).find(validId);
+    if (canonicalJson(installations) !== canonicalJson(kept) || first !== keys.installationId) {
+      keys = { ...keys, clientId: app.clientId, ...(first === undefined ? {} : { installationId: first }), installations };
+      writeKey('github-app', keys);
     }
-    return { missing, settingsUrl };
+    return listed;
   };
-  let first = null;
-  let keys = keysFor(app);
-  if (keys !== null && Number.isInteger(keys.installationId)) {
+  // What the app can't reach yet: each repository on an account it isn't installed on, then each
+  // its account's installation doesn't reach, with that installation's settings page.
+  const reach = async () => {
+    const found = await lookUp();
+    const missing = [];
+    for (const repo of repos) {
+      const id = found[accountOf(repo)];
+      if (!validId(id)) {
+        missing.push({ repo, account: accountOf(repo), install: true });
+        continue;
+      }
+      const got = await installationCovers({ host: 'github', mode: 'narrow', project: repo, installationId: id }, { fetch, now });
+      if (!got.covered) missing.push({ repo, account: accountOf(repo), settingsUrl: got.settingsUrl });
+    }
+    return missing;
+  };
+  let missing = null;
+  if (keys !== null && hasInstallation(keys)) {
     try {
-      first = await reach();
+      missing = await reach();
     } catch {
       keys = null; // they no longer work: signed in again below
     }
   }
-  if (first === null) {
+  if (missing === null) {
     const fresh = keys !== null && (keys.accessExpiresAt == null || Date.parse(keys.accessExpiresAt) - now().getTime() > FRESH_MS);
     if (!fresh) {
       const code = await (startCode ?? (() => startDeviceSignIn({ clientId: app.clientId, fetch })))();
@@ -1043,35 +1123,46 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
       });
       halt();
       record({ id: newId('chg'), kind: 'host', target: 'key github-app', before: keyKept('github-app') ? { kept: true } : null, after: { key: 'github-app', clientId: app.clientId, app: app.slug } });
-      keys = { clientId: app.clientId, ...signed };
+      // The installations the earlier keys held are the app's still: the new sign-in reaches them.
+      const held = previous !== null && hasInstallation(previous)
+        ? { ...(validId(previous.installationId) ? { installationId: previous.installationId } : {}), installations: keptInstallations(previous) ?? {} }
+        : {};
+      keys = { clientId: app.clientId, ...signed, ...held };
       writeKey('github-app', keys);
     }
-    say(`On the app's Install page, choose Only select repositories, tick ${named} (not All repositories), then click Install`);
-    await open(installUrl(app.slug));
-    const late = waitFrom();
-    let installationId = null;
-    for (;;) {
-      installationId = await findInstallation({ accessToken: keys.accessToken, app, fetch });
-      if (installationId !== null) break;
-      late('The app was not installed');
-      await sleep(INSTALL_POLL_MS);
-    }
-    halt();
-    writeKey('github-app', { ...keys, clientId: app.clientId, installationId });
-    first = await reach();
+    missing = await reach();
   }
-  let { missing } = first;
-  if (missing.length > 0) {
-    say(`The app can't reach ${missing.map((r) => `${r} on GitHub`).join(' or ')} yet: tick it on the page that opens, then click Save`);
-    await open(first.settingsUrl);
-    const late = waitFrom();
-    while (missing.length > 0) {
-      late(`The app still can't reach ${missing.join(' or ')}`);
-      await sleep(INSTALL_POLL_MS);
-      ({ missing } = await reach());
+  while (missing.length > 0) {
+    const install = missing.find((m) => m.install);
+    if (install) {
+      const there = missing.filter((m) => m.install && m.account === install.account).map((m) => m.repo);
+      const owner = install.repo.split('/')[0];
+      say(`On the app's Install page, install it on ${owner}: choose Only select repositories, tick ${onGithub(there).join(' and ')} (not All repositories), then click Install`);
+      await open(installUrl(app.slug));
+      const late = waitFrom();
+      for (;;) {
+        if (validId((await lookUp())[install.account])) break;
+        late('The app was not installed');
+        await sleep(INSTALL_POLL_MS);
+      }
+      halt();
+    } else {
+      const page = missing[0].settingsUrl;
+      const here = missing.filter((m) => m.settingsUrl === page).map((m) => m.repo);
+      say(`The app can't reach ${onGithub(here).join(' or ')} yet: tick it on the page that opens, then click Save`);
+      await open(page);
+      const late = waitFrom();
+      do {
+        late(`The app still can't reach ${here.join(' or ')}`);
+        await sleep(INSTALL_POLL_MS);
+        missing = await reach();
+      } while (missing.some((m) => !m.install && m.settingsUrl === page));
+      continue;
     }
+    missing = await reach();
   }
   say(`The app can reach ${named}, and nothing else you didn't tick`);
+  return Object.fromEntries(repos.map((r) => [accountOf(r), listed[accountOf(r)]]));
 }
 
 // Narrow on GitLab: a project key at Developer level for each project, made with the director's own
@@ -1163,6 +1254,7 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   } else if (app.own && typeof app.clientId !== 'string') {
     parts.push(`your own GitHub App${app.name ? ` ${app.name} on ${app.account}` : ''}, filled in from Wheelhouse's: tick Enable Device Flow, click Create, then a code and ticks on its Install page (not All repositories); kept in your profile`);
   } else if (appKeys === 'installed') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked`);
+  else if (appKeys === 'other-account') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: install it on ${owner} and tick this project on its Install page, not All repositories`);
   else if (appKeys === 'signed-in') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick the project and profile on its Install page, not All repositories`);
   else parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}: a code on GitHub, then tick the project and profile on its Install page, not All repositories`);
   parts.push('the project\'s record and state branch');
@@ -1191,6 +1283,7 @@ function directorFor({ signedIn, way, host, app, appKeys, joining = false }) {
     if (app.own && typeof app.clientId !== 'string' && joining) parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page (and, if your app is not in your profile, Enable Device Flow ticked and Create clicked first)');
     else if (app.own && typeof app.clientId !== 'string') parts.push('Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub, Authorise, and two ticks on the Install page');
     else if (appKeys === 'installed') parts.push('a tick on the app\'s settings page, if the project is not ticked');
+    else if (appKeys === 'other-account') parts.push('a tick on the app\'s Install page for the project\'s account');
     else if (appKeys === 'signed-in') parts.push('two ticks on the app\'s Install page');
     else parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page');
   }
@@ -1267,6 +1360,9 @@ export function hostStep({
           // that holds the project; else one made (or found) on that account at apply. A new
           // product's account is the director's, known once they are signed in.
           const own = ownApp({ views });
+          // Their accepted app hidden by a change waiting is never made again: the step waits.
+          const shadowed = own === null ? ownAppShadowed({ views }) : null;
+          if (shadowed !== null) return { wait: OWN_APP_WAIT_MS, why: ownAppWaiting(shadowed) };
           if (own && owner && !sameLogin(own.owner, owner)) return { wait: OWN_APP_WAIT_MS, why: ownAppElsewhere(own, where) };
           app = own ? { clientId: own.clientId, slug: own.slug, own: true, owner: own.owner }
             : { own: true, account: owner ?? null, name: owner ? appName(owner) : null };
@@ -1295,7 +1391,7 @@ export function hostStep({
         }
       }
       // How far this computer is with the app: a later project needs no new code (design section 15).
-      const appKeys = typeof app?.clientId === 'string' ? appKeysState(app) : null;
+      const appKeys = typeof app?.clientId === 'string' ? appKeysState(app, owner) : null;
       const changes = [];
       if (!signedIn) changes.push({ kind: 'host', target: host, action: 'sign-in' });
       if (product.isNew) {
@@ -1443,6 +1539,8 @@ export function hostStep({
         if (connection.mode === 'quick' && launchedIn(slug)) throw new Error(quickLaunched(project.repo));
         halt();
       }
+      // The app's installation on the project's account, kept in its record (ruling R83).
+      let installationId = null;
       if (connection.mode === 'narrow') {
         // The profile's own repository joins when its connection is narrow on this host too.
         const withProfile = profile.connection?.mode === 'narrow' && profile.host === host && profile.repo !== project.repo;
@@ -1469,10 +1567,11 @@ export function hostStep({
           if (keptId !== null && keptId !== app.clientId) {
             throw new Error(oneAppLine({ kept: appWords(keptId, { appFile, views }), using: own ? 'your own app' : 'the Wheelhouse app', where: `${project.repo} on ${NAME[host]}` }));
           }
-          await connectGithubApp({
+          const installations = await connectGithubApp({
             app, repos: [project.repo, ...(withProfile && appReachesProfile ? [profile.repo] : [])], fetch, say, open: opener, sleep, now, record, halt,
             ...(own ? { startCode: () => ownAppCode({ app, account: projectOwner, run, fetch, say, open: opener, sleep, now, halt }) } : {}),
           });
+          installationId = installations[accountOf(project.repo)] ?? null;
           // Their own app, once connected, kept in the profile for their other computers.
           if (own) {
             halt();
@@ -1486,7 +1585,7 @@ export function hostStep({
         }
       }
       halt();
-      const kept = { folder: ctx.folder, remoteUrl, host, repo: project.repo, connection: connectionFor({ host, mode: connection.mode, repo: project.repo, id: project.id, locked: connection.locked === true }) };
+      const kept = { folder: ctx.folder, remoteUrl, host, repo: project.repo, connection: connectionFor({ host, mode: connection.mode, repo: project.repo, id: project.id, locked: connection.locked === true, installationId }) };
       const file = projectFile(slug);
       record({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: `${JSON.stringify(kept, null, 2)}\n` });
       writeProject(slug, kept);

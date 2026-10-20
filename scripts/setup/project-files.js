@@ -11,7 +11,8 @@
 //      .claude/settings.local.json merged with localSettings (the helper's socket, the status line
 //      and the allow rules for the front desk's and setup's commands, ruling R43), which holds this
 //      computer's paths and is never committed, and kept out of git by a line in the folder's own
-//      .git/info/exclude unless the product already ignores it; and CLAUDE.md's "Compact
+//      .git/info/exclude unless the product already ignores it; `.wheelhouse/` kept out of git by
+//      another line there (ruling R108) unless the list holds it already; and CLAUDE.md's "Compact
 //      instructions" section (design section 10), added once;
 //   2. the pins, Superpowers and Matt Pocock's skills, each installed by the documented command,
 //      `claude plugin install <plugin>@wheelhouse --scope project`, run in the project's folder
@@ -58,7 +59,7 @@
 //
 // On a computer joining a project set up on another (ruling R78), the step runs in its "this
 // computer" form: this computer's .claude/settings.local.json key by key, the .git/info/exclude
-// line and the pins, with no commit and no protection, which the first computer made. The
+// lines and the pins, with no commit and no protection, which the first computer made. The
 // configuration is the project's as committed (.claude/wheelhouse.json), so step 4's answers,
 // which a joining run never has, are not read; its `after` of step 4 counts as done there
 // (scripts/lib/setup-run.js, stepDone). A shared file that differs from what is committed is left
@@ -106,6 +107,13 @@ const [SETTINGS, CONFIG, CLAUDE] = SETUP_FILES;
 const LOCAL = '.claude/settings.local.json';
 // The line that keeps this computer's settings out of git, in the folder's own .git/info/exclude.
 export const EXCLUDE_LINE = '/.claude/settings.local.json';
+// The line that keeps Wheelhouse's own folder in the project out of git, in the same list (ruling
+// R108), and every form of it ensureIgnored (scripts/feature/files.js) takes as already there.
+export const WHEELHOUSE_LINE = '.wheelhouse/';
+const WHEELHOUSE_FORMS = Object.freeze(['.wheelhouse/', '/.wheelhouse/', '.wheelhouse', '/.wheelhouse']);
+// Whether an ignore list's text holds the line already, in any form that counts as it.
+const holdsLine = (text, line) => text !== null && text.split(/\r?\n/)
+  .some((l) => (line === WHEELHOUSE_LINE ? WHEELHOUSE_FORMS.includes(l.trim()) : l === line));
 // What step 1's project-scope install writes into the project's shared settings (check 37): the
 // plugin switched on. Setup's commit takes it up with its own keys.
 const STEP_ONE_SETTINGS = Object.freeze({ enabledPlugins: Object.freeze({ [`wheelhouse@${MARKETPLACE}`]: true }) });
@@ -485,15 +493,17 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined);
   const shared = files.filter((c) => !c.target.endsWith('settings.local.json'));
   const excluded = changes.some((c) => c.line === EXCLUDE_LINE);
+  const ours = changes.some((c) => c.line === WHEELHOUSE_LINE);
   const parts = [];
   if (shared.length > 0) {
     const section = shared.some((c) => c.section) ? ', and a "Compact instructions" section into CLAUDE.md' : '';
     parts.push(`Wheelhouse's settings and configuration go into .claude${section}, keeping yours`);
   }
-  if (files.length > shared.length) parts.push(`this computer's own settings into .claude/settings.local.json, which stays here${excluded ? ', kept out of git' : ''}`);
-  else if (excluded) parts.push('.claude/settings.local.json kept out of git');
+  if (files.length > shared.length) parts.push(`this computer's settings into .claude/settings.local.json, which stays here${excluded ? `${ours ? '; it and .wheelhouse/' : ','} kept out of git` : ''}`);
+  else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/' : ''} kept out of git`);
+  if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
-  if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at Wheelhouse's tested versions`);
+  if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
   // The director's own changes setup's commit takes up, as they chose (ruling R95).
   const yours = up?.action === 'commit' && Array.isArray(up.yours) && up.yours.length > 0 ? `, with your own changes to ${listed(up.yours.map((y) => y.file))}` : '';
@@ -508,7 +518,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
     kind: 'setup',
     level: 3,
     what,
-    why: 'Agents start from these files; protection sends every later change through Wheelhouse\'s checks.',
+    why: 'Agents start from these files; protection sends later changes through Wheelhouse\'s checks.',
     options: [
       { label: SETUP_LABEL, says: 'Setup makes these changes and says what protection reads back.' },
       { label: 'Not now', says: 'Setup waits here; nothing changes.' },
@@ -527,13 +537,13 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const cut = (text) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
   if (joining) {
     const mine = [
-      ...(files.length > 0 || excluded ? ['this computer\'s settings'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
+      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
       'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
     return card(`Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${mine.join(', ')}. Wheelhouse never updates itself.`);
   }
   const short = [
-    ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded ? ['this computer\'s settings'] : []),
+    ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
     ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit up to ${cut(branch)} on ${NAME[host]}${yours === '' ? '' : ', with your changes'}`] : []),
     `${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`,
   ];
@@ -565,14 +575,21 @@ export function projectFilesStep({
   };
   const lineage = (folder) => checkInstalled({ manifest: manifest(), projectDir: folder, claudeHome: claudeHome(), locate });
   // This computer's part of the list, for either form: the line that keeps its settings out of git
-  // (unless the product already ignores them), then each pin not installed as the manifest has it.
+  // (unless the product already ignores them), the line that keeps .wheelhouse/ out of git (unless
+  // the folder's own list holds it in any form, ruling R108), then each pin not installed as the
+  // manifest has it.
   const computerParts = async (git, folder) => {
     const parts = [];
-    if (!(await git.ok(['check-ignore', '-q', '--', LOCAL]))) {
-      const exclude = await git.out(['rev-parse', '--git-path', 'info/exclude']);
-      if (exclude === null) throw new Error('git could not say where this folder keeps its own ignore list');
-      parts.push({ kind: 'file', target: path.resolve(folder, exclude), line: EXCLUDE_LINE });
-    }
+    let excludeFile = null;
+    const exclude = async () => {
+      if (excludeFile !== null) return excludeFile;
+      const at = await git.out(['rev-parse', '--git-path', 'info/exclude']);
+      if (at === null) throw new Error('git could not say where this folder keeps its own ignore list');
+      excludeFile = path.resolve(folder, at);
+      return excludeFile;
+    };
+    if (!(await git.ok(['check-ignore', '-q', '--', LOCAL]))) parts.push({ kind: 'file', target: await exclude(), line: EXCLUDE_LINE });
+    if (!holdsLine(readText(await exclude()), WHEELHOUSE_LINE)) parts.push({ kind: 'file', target: await exclude(), line: WHEELHOUSE_LINE });
     const kits = manifest();
     const wrong = new Set(lineage(folder).mismatches.map((m) => m.upstream));
     for (const u of kits.upstreams.filter((x) => wrong.has(x.name))) parts.push({ kind: 'process', target: `${u.plugin}@${MARKETPLACE}`, action: 'install', scope: 'project' });
@@ -714,7 +731,7 @@ export function projectFilesStep({
           writeRecorded(ctx, { target: c.target, before, after: withSection(before), project });
         } else if (c.kind === 'file' && c.line !== undefined) {
           const before = readText(c.target);
-          if (before !== null && before.split(/\r?\n/).includes(c.line)) continue;
+          if (holdsLine(before, c.line)) continue;
           const after = `${before ?? ''}${before && !before.endsWith('\n') ? '\n' : ''}${c.line}\n`;
           writeRecorded(ctx, { target: c.target, before, after, line: c.line, project });
         } else if (c.kind === 'file') {

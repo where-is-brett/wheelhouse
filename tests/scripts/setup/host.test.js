@@ -14,8 +14,10 @@ import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined,
+  checkOutJoined, findInstallation,
 } from '../../../scripts/setup/host.js';
+import { installationCovers } from '../../../scripts/host/connection.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
 import { setupGit } from '../../../scripts/setup/git.js';
 import { questionsStep } from '../../../scripts/setup/questions.js';
 import { rulesStep } from '../../../scripts/setup/rules.js';
@@ -148,9 +150,10 @@ function standIn(state = {}) {
 
 // `reach` is the list of repositories the installation reaches; a test adds to it as the director
 // would tick one.
-// `app` is the app installed; `flowOff` how many times GitHub first answers that its device flow is
-// switched off.
-function github({ installedAfter = 1, reach = [], onSignedIn = () => {}, app = { clientId: CLIENT_ID, slug: 'wheelhouse-test' }, flowOff = 0 } = {}) {
+// `app` is the app installed, on `account`; `flowOff` how many times GitHub first answers that its
+// device flow is switched off. `others` are the app's installations on other accounts, each
+// { id, account, reach, installedAfter } (`installedAfter` counted in looks, as above).
+function github({ installedAfter = 1, reach = [], onSignedIn = () => {}, app = { clientId: CLIENT_ID, slug: 'wheelhouse-test' }, flowOff = 0, account = USER, others = [] } = {}) {
   const calls = [];
   let pending = 1;
   let installLooks = 0;
@@ -170,10 +173,21 @@ function github({ installedAfter = 1, reach = [], onSignedIn = () => {}, app = {
     }
     if (url.startsWith('https://api.github.com/user/installations?')) {
       installLooks += 1;
-      return reply(200, { installations: installLooks > installedAfter ? [{ id: 77, client_id: app.clientId, app_slug: app.slug }] : [{ id: 5, client_id: 'Iv1.someoneelse', app_slug: 'other' }] });
+      const ours = (id, login) => ({ id, client_id: app.clientId, app_slug: app.slug, account: { login, type: 'User' } });
+      return reply(200, {
+        installations: [
+          { id: 5, client_id: 'Iv1.someoneelse', app_slug: 'other', account: { login: account } },
+          ...(installLooks > installedAfter ? [ours(77, account)] : []),
+          ...others.filter((o) => installLooks > (o.installedAfter ?? 0)).map((o) => ours(o.id, o.account)),
+        ],
+      });
     }
-    if (url.startsWith('https://api.github.com/user/installations/77/repositories')) {
-      return reply(200, { repositories: reach.map((full_name) => ({ full_name })) });
+    const listing = /^https:\/\/api\.github\.com\/user\/installations\/(\d+)\/repositories/.exec(url);
+    if (listing) {
+      const id = Number(listing[1]);
+      const other = others.find((o) => o.id === id);
+      if (id !== 77 && !other) return reply(404, {});
+      return reply(200, { repositories: (id === 77 ? reach : other.reach).map((full_name) => ({ full_name })) });
     }
     return reply(404, {});
   };
@@ -639,7 +653,7 @@ test('narrow on GitHub: the code and the Install page are said, the installation
     assert.equal(keys.installationId, 77, 'the reach check needs the installation');
     assert.equal(keys.accessToken, ACCESS);
     const record = readProject(slugFor(`${USER}/shop`));
-    assert.deepEqual(record.connection, { host: 'github', mode: 'narrow', project: `${USER}/shop` });
+    assert.deepEqual(record.connection, { host: 'github', mode: 'narrow', project: `${USER}/shop`, installationId: 77 });
     assert.equal(profileRemote().connection.mode, 'narrow');
     // No key in the journal or anything said.
     const kept = JSON.stringify(run) + lines.join('\n');
@@ -896,7 +910,8 @@ test('a retry after the Install page timed out goes straight to the Install page
     assert.match(again.card.what, /as signed in already: tick the project and profile on its Install page/);
     const codes = gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length;
     opened.length = 0;
-    const installed = github({ installedAfter: 0, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
+    // Installed once the page has opened: setup looks first, then opens it.
+    const installed = github({ installedAfter: 1, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
     const retry = stepFor(w, { appFile: registered, fetch: installed.fetch, sleep: time.sleep, open: async (url) => { opened.push(url); } });
     const { lines } = await applyStep(retry, folder, again.changes, { answers: again.answers, now: time.now });
     assert.equal(codes, 1);
@@ -1136,6 +1151,38 @@ test('a second computer uses the app the profile records, and refuses its code s
     const elsewhere = await answerAll(step, ctxFor(other), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
     assert.equal(elsewhere.changes, undefined);
     assert.match(elsewhere.why, /Your own GitHub App, wheelhouse-a-director, belongs to a-director, .* so it can't reach acme\/app on GitHub/);
+    // A second app of their own waits for a later update (rulings R58, R83): the line says what to choose there.
+    assert.match(elsewhere.why, /choose the Wheelhouse app or Quick for it$/);
+  });
+});
+
+test('their accepted app hidden by a newer change waiting is never made again: step 3 waits with a line naming the change (ruling R84)', async () => {
+  await withHome(async () => {
+    const w = standIn({ apps: { [OWN.slug]: { ...OWN, permissions: MANIFEST_PERMISSIONS } } });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const stray = { clientId: 'Iv23li.stray0001', slug: 'helpful-app', owner: 'mallory' };
+    const waiting = (value) => ({
+      settings: { 'own-github-app': { key: 'own-github-app', value: OWN } },
+      unconfirmed: [{ kind: 'setting', id: 'ev-9', key: 'own-github-app', data: { key: 'own-github-app', value } }],
+    });
+    for (const [value, words] of [
+      [stray, /holds your own GitHub App, wheelhouse-a-director on a-director, but a newer change to it waits for your Confirm \(helpful-app on mallory\), so step 3 waits rather than make another app/],
+      [null, /a newer change to it waits for your Confirm \(no app of your own\)/],
+      [OWN, /Your own GitHub App, wheelhouse-a-director on a-director, waits for your Confirm again in your profile/],
+    ]) {
+      const views = waiting(value);
+      const step = stepFor(w, { profileRoutes: memoryProfile(views.settings), views: () => views });
+      const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+      assert.equal(planned.changes, undefined, 'no Go ahead, so no app is made');
+      assert.equal(planned.wait, OWN_APP_WAIT_MS);
+      assert.match(planned.why, words);
+    }
+    // With nothing accepted, a change waiting is a first record not confirmed yet: made or found by its name, as before.
+    const first = { settings: {}, unconfirmed: [{ kind: 'setting', id: 'ev-1', key: 'own-github-app', data: { key: 'own-github-app', value: OWN } }] };
+    const planned = await answerAll(stepFor(w, { profileRoutes: memoryProfile(), views: () => first }), ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
+    assert.ok(planned.changes.some((c) => c.action === 'own-app'));
   });
 });
 
@@ -1146,7 +1193,7 @@ test('their own app on an organisation is made there only by an owner, and reach
     await w.add('acme/app');
     const folder = productFolder('app');
     await withOrigin(folder, 'https://github.com/acme/app.git');
-    const gh = github({ app: acme, reach: ['acme/app'] });
+    const gh = github({ app: acme, account: 'acme', reach: ['acme/app'] });
     const opened = [];
     const open = async (url) => {
       opened.push(url);
@@ -1165,7 +1212,7 @@ test('their own app on an organisation is made there only by an owner, and reach
     assert.ok(opened.some((u) => u.startsWith('https://github.com/organizations/acme/settings/apps/new?')));
     assert.match(lines.find((l) => l.includes('Install page')), /tick acme\/app on GitHub \(not All repositories\)/);
     assert.equal(profileRemote().connection.mode, 'quick');
-    assert.deepEqual(readProject(slugFor('acme/app')).connection, { host: 'github', mode: 'narrow', project: 'acme/app' });
+    assert.deepEqual(readProject(slugFor('acme/app')).connection, { host: 'github', mode: 'narrow', project: 'acme/app', installationId: 77 });
     assert.deepEqual(profile.writes.map((x) => x.data.value), [{ clientId: acme.clientId, slug: acme.slug, owner: 'acme' }]);
   });
 });
@@ -1261,6 +1308,159 @@ test('one app\'s keys per computer: a project on another app waits, and apply ne
     await assert.rejects(applyStep(step, shop, list, { now: time.now }), /keeps one GitHub App's keys, and they serve your other projects through the Wheelhouse app/);
     assert.equal(readKey('github-app').clientId, CLIENT_ID, 'the keys serving the earlier project are as they were');
     assert.equal(gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length, 0);
+  });
+});
+
+// ---- A later project, on the same account or another (rulings R82, R83) ----
+
+// The first project, a-director/shop, connected narrow through the Wheelhouse app, whose
+// installation 77 is on the director's own account; `others` are the app's installations on other
+// accounts, which a test may add to as the director would install it. What the browser opens is
+// noted, and `onOpen` acts as the director does there.
+async function firstNarrowProject({ others = [] } = {}) {
+  const w = standIn();
+  await w.add(`${USER}/shop`);
+  const folder = productFolder('shop');
+  await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+  const gh = github({ reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`], others });
+  const opened = [];
+  const world = { w, gh, others, opened, folder, onOpen: async () => {} };
+  const open = async (url) => {
+    opened.push(url);
+    await world.onOpen(url);
+  };
+  world.step = stepFor(w, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch, open });
+  world.pick = choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse });
+  const planned = await answerAll(world.step, ctxFor(folder), world.pick);
+  await applyStep(world.step, folder, planned.changes, { answers: planned.answers });
+  opened.length = 0;
+  world.codes = () => gh.calls.filter((c) => c.url === 'https://github.com/login/device/code').length;
+  // A later project in its own folder, its repository on the stand-in host.
+  world.later = async (repo) => {
+    await w.add(repo);
+    const next = productFolder(repo.split('/')[1]);
+    await withOrigin(next, `https://github.com/${repo}.git`);
+    return next;
+  };
+  // The repositories installationCovers asked GitHub about, by installation.
+  world.asked = () => gh.calls.map((c) => /\/user\/installations\/(\d+)\/repositories/.exec(c.url)?.[1]).filter(Boolean).map(Number);
+  return world;
+}
+
+test('a later project on GitHub opens the app\'s page and reads the tick back', async () => {
+  await withHome(async () => {
+    const first = await firstNarrowProject();
+    const { gh, opened } = first;
+    const next = await first.later(`${USER}/next`);
+    first.onOpen = async (url) => { if (url === 'https://github.com/settings/installations/77') gh.reach.push(`${USER}/next`); };
+    const codes = first.codes();
+    const planned = await answerAll(first.step, ctxFor(next), first.pick);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'installed');
+    assert.match(planned.card.what, /the Wheelhouse app, as signed in already: tick this project on its settings page if it is not ticked/);
+    assert.match(planned.director, /a tick on the app's settings page/);
+    const { lines } = await applyStep(first.step, next, planned.changes, { answers: planned.answers });
+    assert.equal(first.codes(), codes, 'no new code sign-in');
+    assert.deepEqual(opened, ['https://github.com/settings/installations/77'], 'the installation\'s settings page, never the Install page');
+    assert.match(lines[0], /^The app can't reach a-director\/next on GitHub yet: tick it on the page that opens, then click Save$/);
+    assert.match(lines.at(-2), /^The app can reach a-director\/next on GitHub and a-director\/wheelhouse-profile on GitHub/);
+    assert.deepEqual(readProject(slugFor(`${USER}/next`)).connection, { host: 'github', mode: 'narrow', project: `${USER}/next`, installationId: 77 });
+    assert.deepEqual(readKey('github-app').installations, { [USER]: 77 });
+  });
+});
+
+test('a later project on another account with the app installed there uses that account\'s installation, and the first project keeps its own (ruling R83)', async () => {
+  await withHome(async () => {
+    // The app is installed on acme too (installation 88), not yet reaching acme/app.
+    const first = await firstNarrowProject({ others: [{ id: 88, account: 'acme', reach: ['acme/website'] }] });
+    const { gh, opened, others } = first;
+    assert.deepEqual(readKey('github-app').installations, { [USER]: 77, acme: 88 }, 'every installation of the app kept by its account');
+    assert.equal(readKey('github-app').installationId, 77, 'the first one kept as installationId');
+    // findInstallation picks the account's own installation, whatever the case of its login.
+    const { accessToken } = readKey('github-app');
+    const app = { clientId: CLIENT_ID, slug: 'wheelhouse-test' };
+    assert.equal(await findInstallation({ accessToken, app, account: 'ACME', fetch: gh.fetch }), 88);
+    assert.equal(await findInstallation({ accessToken, app, account: USER, fetch: gh.fetch }), 77);
+    assert.equal(await findInstallation({ accessToken, app, account: 'globex', fetch: gh.fetch }), null, 'never another account\'s installation');
+    await assert.rejects(findInstallation({ accessToken, app, fetch: gh.fetch }), /needs the account/);
+
+    const next = await first.later('acme/app');
+    first.onOpen = async (url) => { if (url === 'https://github.com/settings/installations/88') others[0].reach.push('acme/app'); };
+    const planned = await answerAll(first.step, ctxFor(next), first.pick);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'installed');
+    gh.calls.length = 0;
+    const { lines } = await applyStep(first.step, next, planned.changes, { answers: planned.answers });
+    assert.deepEqual(opened, ['https://github.com/settings/installations/88'], 'acme\'s installation\'s settings page, where acme/app can be ticked');
+    assert.match(lines[0], /can't reach acme\/app on GitHub yet/);
+    assert.match(lines.at(-2), /The app can reach acme\/app on GitHub and a-director\/wheelhouse-profile on GitHub/);
+    // acme/app was read against 88 only, the profile against 77 only.
+    assert.ok(first.asked().includes(88) && first.asked().includes(77));
+    const record = readProject(slugFor('acme/app'));
+    assert.equal(record.connection.installationId, 88, 'the project record carries its installation');
+    // installationCovers reads the record's installation; the first project's is untouched and still used for it.
+    const shop = readProject(slugFor(`${USER}/shop`));
+    assert.equal(shop.connection.installationId, 77);
+    gh.calls.length = 0;
+    assert.deepEqual(await installationCovers(record.connection, { fetch: gh.fetch, now: () => NOW }), { covered: true });
+    assert.deepEqual(await installationCovers(shop.connection, { fetch: gh.fetch, now: () => NOW }), { covered: true });
+    assert.deepEqual(first.asked(), [88, 77]);
+    assert.deepEqual(readKey('github-app').installations, { [USER]: 77, acme: 88 });
+    assert.equal(readKey('github-app').installationId, 77);
+  });
+});
+
+test('a later project on an account the app is not installed on gets the Install page, and the tick is read back (ruling R83)', async () => {
+  await withHome(async () => {
+    const first = await firstNarrowProject();
+    const { opened, others } = first;
+    const next = await first.later('acme/app');
+    const codes = first.codes();
+    // The director installs it on acme but leaves acme/app unticked, then ticks it on the settings page.
+    first.onOpen = async (url) => {
+      if (url === 'https://github.com/apps/wheelhouse-test/installations/new') others.push({ id: 88, account: 'acme', reach: [] });
+      if (url === 'https://github.com/settings/installations/88') others[0].reach.push('acme/app');
+    };
+    const planned = await answerAll(first.step, ctxFor(next), first.pick);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'other-account');
+    assert.match(planned.card.what, /the Wheelhouse app, as signed in already: install it on acme and tick this project on its Install page, not All repositories/);
+    assert.match(planned.director, /a tick on the app's Install page for the project's account/);
+    composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
+    const { lines } = await applyStep(first.step, next, planned.changes, { answers: planned.answers });
+    assert.equal(first.codes(), codes, 'no new code sign-in: the access key works across the app\'s installations');
+    assert.deepEqual(opened, ['https://github.com/apps/wheelhouse-test/installations/new', 'https://github.com/settings/installations/88']);
+    assert.match(lines[0], /^On the app's Install page, install it on acme: choose Only select repositories, tick acme\/app on GitHub \(not All repositories\), then click Install$/);
+    assert.match(lines[1], /can't reach acme\/app on GitHub yet/);
+    assert.match(lines.at(-2), /The app can reach acme\/app on GitHub and a-director\/wheelhouse-profile on GitHub/);
+    assert.equal(readProject(slugFor('acme/app')).connection.installationId, 88);
+    assert.deepEqual(readKey('github-app').installations, { [USER]: 77, acme: 88 });
+    assert.equal(readProject(slugFor(`${USER}/shop`)).connection.installationId, 77);
+  });
+});
+
+test('a key file and project record written before installations were kept per account still work for their project', async () => {
+  await withHome(async () => {
+    const first = await firstNarrowProject();
+    const { gh, others } = first;
+    // As an earlier Wheelhouse left them: the installation only as installationId, none in the record.
+    const { installations, ...old } = readKey('github-app');
+    writeKey('github-app', old);
+    const shop = readProject(slugFor(`${USER}/shop`));
+    const { installationId, ...oldConnection } = shop.connection;
+    writeProject(slugFor(`${USER}/shop`), { ...shop, connection: oldConnection });
+    gh.calls.length = 0;
+    assert.deepEqual(await installationCovers(oldConnection, { fetch: gh.fetch, now: () => NOW }), { covered: true });
+    assert.deepEqual(first.asked(), [77]);
+    // Such keys read as installed; a later project on another account finds out from GitHub which
+    // account each installation is on, so the old record goes on finding its own.
+    const next = await first.later('acme/app');
+    first.onOpen = async (url) => { if (url === 'https://github.com/apps/wheelhouse-test/installations/new') others.push({ id: 88, account: 'acme', reach: ['acme/app'] }); };
+    const planned = await answerAll(first.step, ctxFor(next), first.pick);
+    assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'installed');
+    await applyStep(first.step, next, planned.changes, { answers: planned.answers });
+    assert.deepEqual(readKey('github-app').installations, { [USER]: 77, acme: 88 });
+    assert.equal(readKey('github-app').installationId, 77);
+    gh.calls.length = 0;
+    assert.deepEqual(await installationCovers(oldConnection, { fetch: gh.fetch, now: () => NOW }), { covered: true });
+    assert.deepEqual(first.asked(), [77], 'the old record\'s project read against its own account\'s installation');
   });
 });
 
