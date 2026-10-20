@@ -55,6 +55,7 @@ import { buildManifest, checkInstalled } from '../../scripts/lineage/manifest.js
 import { lockFile } from '../../scripts/watcher/main.js';
 import { g } from './git-fixture.js';
 import { shortHome, tempFolder, testAddress } from './homes.js';
+import { standInTools } from './host-stand-ins.js';
 
 // Where the computers' worlds are kept for the steps module the helper loads (setup-e2e-steps.js):
 // globalThis[WORLDS], a Map from each computer's Wheelhouse home to its world.
@@ -105,36 +106,12 @@ export function shutOutGitConfig() {
 // ---- Programs run by name ----
 
 // The programs no test here may reach for real, each found first on the PATH as a stand-in that
-// notes its arguments in `log` and refuses, but for `gh pr close`, which it takes: the helper's own
-// routes run `gh` by name with no stand-in of the test's to give them (the trial pull request's
-// close, scripts/setup/health.js's closeOpenTrial), so this is where the host's tool is stood in
-// for them. `calls()` gives what was run, one line each.
-const SHIMMED = ['gh', 'glab', 'claude', 'launchctl', 'osascript', 'open', 'xdg-open', 'security', 'brew', 'sudo', 'installer', 'softwareupdate'];
+// notes its arguments in `log` and refuses (tests/helpers/host-stand-ins.js), but for `gh pr close`,
+// which it takes: the helper's own routes run `gh` by name with no stand-in of the test's to give
+// them (the trial pull request's close, scripts/setup/health.js's closeOpenTrial), so this is where
+// the host's tool is stood in for them. `calls()` gives what was run, one line each.
 export function shimTools() {
-  const dir = tempFolder('wh-shims-');
-  const log = path.join(dir, 'calls.log');
-  fs.writeFileSync(log, '');
-  const quote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
-  for (const name of SHIMMED) {
-    const script = [
-      '#!/bin/sh',
-      `printf '%s\\n' "${name} $*" >> ${quote(log)}`,
-      ...(name === 'gh' ? ['if [ "$1" = pr ] && [ "$2" = close ]; then exit 0; fi'] : []),
-      `echo '${name} is not run in this test' >&2`,
-      'exit 1',
-      '',
-    ].join('\n');
-    fs.writeFileSync(path.join(dir, name), script, { mode: 0o755 });
-  }
-  const before = process.env.PATH;
-  process.env.PATH = `${dir}${path.delimiter}${before}`;
-  return {
-    dir,
-    log,
-    calls: () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean),
-    reset: () => fs.writeFileSync(log, ''),
-    restore: () => { process.env.PATH = before; },
-  };
+  return standInTools({ accept: { gh: [['pr', 'close']] } });
 }
 
 // ---- gh's official release, and a computer without gh ----

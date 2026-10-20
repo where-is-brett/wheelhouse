@@ -16,7 +16,7 @@
 // a feature session), and the gate's asks (act merge). The watcher runs as runWatcher runs it, its
 // waker in Shape 2, which starts nothing and prints its wakes. Pictures of a preview are taken by a
 // stand-in for scripts/screens/shoot.js, in a browser whose path is Chrome's (ruling F61).
-import { test } from 'node:test';
+import { test, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -40,6 +40,7 @@ import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
 import { makeWaker } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
+import { standInTools } from '../helpers/host-stand-ins.js';
 import { writeFiles } from '../helpers/lineage.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed } from '../helpers/sandbox-wall.js';
@@ -209,6 +210,16 @@ async function frontDesk(world, argv, input) {
     return said.out;
   }
 }
+
+// The programs no test may reach for real, stand-ins first on the PATH while this file runs
+// (tests/helpers/host-stand-ins.js): the helper's own host facts read protection with `gh api` by
+// name when the cache doesn't cover the board's time, and a child the test starts inherits the
+// PATH. Each test ends with none of them run.
+let tools;
+before(() => { tools = standInTools(); });
+beforeEach(() => tools.reset());
+afterEach(() => assert.deepEqual(tools.calls(), [], 'no host tool ran'));
+after(() => tools.restore());
 
 // The host facts as a day-old-at-most cache, so reading the board never asks the stand-in host.
 function freshFacts(at) {
