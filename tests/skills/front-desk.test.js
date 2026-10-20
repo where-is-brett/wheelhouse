@@ -319,7 +319,7 @@ test('a press of Explain more finds the pressed card by its id in views waiting,
   assert.ok(press, 'the press\'s rule');
   // First `views waiting`, read-only, for the pressed card's number now; then `again` that number.
   assert.match(press, /In this order: first `views waiting`, which names each card's id: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close; that it moved is not news for the director\./);
-  assert.ok(lines.some((line) => line.startsWith('| "I\'ll tell them the pressed card is now number 1" | Say nothing but the one sentence')), 'a red flag for telling them the number moved');
+  assert.ok(lines.some((line) => line.startsWith('| "I\'ll tell them the pressed card is now number 1" | Say nothing of its number: only the one sentence, or Show me\'s link')), 'a red flag for telling them the number moved');
   assert.match(press, /When no card has that id, it no longer waits: say so in one line and ask nothing\./);
   assert.match(press, /Then `again <its number now>`/);
   assert.ok(press.indexOf('`views waiting`') < press.indexOf('`again <its number now>`'), 'views waiting before again');
@@ -347,10 +347,11 @@ test('a press of Show me and a choice in the pane find the card by its id in vie
   // Show me: the pressed card's number now, by the prompt's id, then Show me for it and `again` that number.
   const show = lines.find((line) => line.startsWith('  - **"pressed Show me on card n (id)"**')) ?? '';
   assert.ok(show, 'the Show me press\'s rule');
-  assert.match(show, /^  - \*\*"pressed Show me on card n \(id\)"\*\*: write no text but what this line gives the director, not even a note to yourself\./);
-  assert.match(show, /First `views waiting`: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close\./);
+  assert.match(show, /^  - \*\*"pressed Show me on card n \(id\)"\*\*: write no text until the preview's link, not even a note to yourself such as the card's number now or the pull request it names: the director sees every line\./);
+  assert.match(show, /First `views waiting`: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close; that it moved is not news for the director\./);
   assert.match(show, /When no card has that id, it no longer waits: say so in one line and ask nothing\./);
-  assert.match(show, /Then Show me for that card \(see Cards\), then `again <its number now>`, alone\./);
+  // The preview is the pull request's the card names, never the card's own number.
+  assert.match(show, /Then `preview` with the number of the pull request that card names, never the card's number, and its address as a link, alone; when there is none, as Cards says\. Then `again <its number now>`, and `AskUserQuestion` with what it gave, alone\./);
   assert.match(show, /Never a card's id\./);
   assert.ok(show.indexOf('`views waiting`') < show.indexOf('`again <its number now>`'), 'views waiting before again');
   assert.doesNotMatch(show, /`again <n>`|Show me for card n/);
@@ -359,6 +360,9 @@ test('a press of Show me and a choice in the pane find the card by its id in vie
   assert.ok(chose, 'the choice\'s rule');
   assert.match(chose, /Run `views waiting`: if a card with the prompt's id is still there, the choice wasn't noted; say so in one line, without its id, and don't act on it\./);
   assert.doesNotMatch(chose, /card n is still there|with the words you asked it with/);
+  // The red flag for a note between the calls (scenario 36's Show me leg wrote one each time).
+  const note = lines.find((line) => line.startsWith('| "I\'ll say the card is now number 1 and names pull request #12"')) ?? '';
+  assert.match(note, /Write nothing: every line reaches the director\. Run `preview` straight after `views waiting`/);
   // The red flag.
   const row = lines.find((line) => line.startsWith('| "Show me is for card n, as the prompt numbers it"')) ?? '';
   assert.ok(row, 'a red flag for showing card n by its number');
