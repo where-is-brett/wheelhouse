@@ -245,14 +245,14 @@ test('setup then uninstall lists every change setup made, by phase, newest first
     ]);
     // Step 2's allow rule is in the folder's own settings, so it is the project's, not this computer's.
     assert.equal(computer.at(-1).change.target, path.join(world.folder, '.claude', 'settings.local.json'));
-    // Keys: the app's keys deleted on the last project, its installation page given. The signing
-    // key and the trusted-keys list beside it are removed last of all, after the plugin's line and
-    // just before the helper stops (ruling R123).
+    // Keys: the app's keys deleted on the last project, its installation page given. The
+    // trusted-keys list and then the signing key beside it are removed last of all, after the
+    // plugin's line and just before the helper stops (rulings R123, R128).
     const keys = of(got, 'keys');
     assert.equal(keys[0].put, 'delete-key');
     assert.equal(keys[0].key, 'github-app');
     assert.equal(keys.some((c) => c.put === 'remove'), false);
-    assert.deepEqual(got.changes.slice(-4, -1).map((c) => c.target ?? c.put), ['remove-plugin', signingKeyFile(), enrolledFile()]);
+    assert.deepEqual(got.changes.slice(-4, -1).map((c) => c.target ?? c.put), ['remove-plugin', enrolledFile(), signingKeyFile()]);
     // Last: the project's own folder, Wheelhouse's own folders and files, the plugin's line.
     const last = of(got, 'last');
     assert.equal(last[0].target, path.join(wheelhouseHome(), 'projects', SLUG));
@@ -1768,7 +1768,7 @@ test('a commit never pushed is marked kept once setup\'s files are put back here
   }
 });
 
-test('the signing key and the trusted-keys list go last of all: an uninstall cut short in its last phase can still be clicked and resumed (ruling R123)', async () => {
+test('the trusted-keys list and the signing key go last of all: an uninstall cut short in its last phase can still be clicked and resumed (ruling R123)', async () => {
   const host = await standIn();
   try {
     await withHome(async () => {
@@ -1784,7 +1784,7 @@ test('the signing key and the trusted-keys list go last of all: an uninstall cut
       const again = await plan(world, { run: f.run });
       const click = removeIt(again.card.target.project, again.hash);
       assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id]);
-      assert.deepEqual(again.changes.slice(-3).map((c) => c.target ?? c.what), [signingKeyFile(), enrolledFile(), 'helper']);
+      assert.deepEqual(again.changes.slice(-3).map((c) => c.target ?? c.what), [enrolledFile(), signingKeyFile(), 'helper']);
       const { done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
       for (const p of [signingKeyFile(), enrolledFile()]) assert.equal(fs.existsSync(p), false, p);
@@ -1795,15 +1795,49 @@ test('the signing key and the trusted-keys list go last of all: an uninstall cut
   }
 });
 
-test('STOP read after the signing key is removed never stops uninstall before its runs are closed (ruling R123)', async () => {
+test('STOP read after the trusted-keys list is removed never stops uninstall before its runs are closed (ruling R123)', async () => {
   const host = await standIn();
   try {
     await withHome(async () => {
       const { world, run } = await applyWorld({ host });
       const f = fakes(world);
-      const { done } = await applyPlan(world, f, { stopped: () => !fs.existsSync(signingKeyFile()) });
+      const { done } = await applyPlan(world, f, { stopped: () => !fs.existsSync(enrolledFile()) });
       assert.equal(done.ok, true, done.refused);
-      assert.equal(fs.existsSync(enrolledFile()), false);
+      assert.equal(fs.existsSync(signingKeyFile()), false);
+      assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall');
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('the trusted-keys list goes before the signing key: a failed removal of the list leaves the key, and the resume\'s click is accepted and finishes (ruling R128)', async (t) => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world, run } = await applyWorld({ host });
+      const f = fakes(world);
+      // The list can't be removed this once, as a file held open by another program on Windows.
+      const rmSync = fs.rmSync;
+      const failing = t.mock.method(fs, 'rmSync', (target, ...rest) => {
+        if (target === enrolledFile()) throw Object.assign(new Error(`EBUSY: resource busy or locked, rm '${target}'`), { code: 'EBUSY' });
+        return rmSync(target, ...rest);
+      });
+      const first = await applyPlan(world, f);
+      failing.mock.restore();
+      assert.equal(first.done.ok, false);
+      assert.match(first.done.refused, /EBUSY/);
+      // Both are still here, so this computer can still sign, and the run is still open.
+      for (const p of [enrolledFile(), signingKeyFile()]) assert.ok(fs.existsSync(p), p);
+      assert.deepEqual(first.got.changes.slice(-3).map((c) => c.target ?? c.what), [enrolledFile(), signingKeyFile(), 'helper']);
+      assert.equal(readJournal().runs.find((x) => x.id === run.id).closedAt, undefined);
+      const again = await plan(world, { run: f.run });
+      assert.deepEqual(again.changes.slice(-3).map((c) => c.target ?? c.what), [enrolledFile(), signingKeyFile(), 'helper']);
+      const click = removeIt(again.card.target.project, again.hash);
+      assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id]);
+      const { done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      for (const p of [enrolledFile(), signingKeyFile()]) assert.equal(fs.existsSync(p), false, p);
       assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall');
     });
   } finally {

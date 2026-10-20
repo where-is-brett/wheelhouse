@@ -22,13 +22,15 @@
 // an earlier project's uninstall left them: steps 2, 6 and 9 (but for what they wrote inside the
 // project's folder, which is the project's); the profile's clone and profile.json;
 // the profile repository; the app's keys and the profile's own GitLab key; the own app recorded in
-// the profile; this computer's enrolment; and, recorded nowhere, the signing key and the
-// trusted-keys list beside it, removed last of all (ruling R123), after every change that can stop
-// uninstall, so an uninstall cut short can still be clicked again. Wheelhouse's own folders and
-// files (the tools it fetched, the profile's clone and profile.json, setup's clicks, answers and the
-// like, the trust clicks and the record of the profile's enrolments last fetched, the Windows
-// installer's temporary folder, and the project's own folder under projects/) are removed whole,
-// never named as changed since setup. journal.json, and uninstall's own progress record, are kept.
+// the profile; this computer's enrolment; and, recorded nowhere, the trusted-keys list and then the
+// signing key beside it, removed last of all (ruling R123), after every change that can stop
+// uninstall, so an uninstall cut short can still be clicked again. The list goes first (ruling
+// R128): one that could not be removed leaves the key it trusts, and a key left after the list has
+// gone is trusted again by the next session start, so either way the next click can be signed and
+// checked. Wheelhouse's own folders and files (the tools it fetched, the profile's clone and
+// profile.json, setup's clicks, answers and the like, the trust clicks and the record of the
+// profile's enrolments last fetched, the Windows installer's temporary folder, and the project's own
+// folder under projects/) are removed whole, never named as changed since setup. journal.json, and uninstall's own progress record, are kept.
 //
 // The setup commit counts as on the host only when the journal or the folder shows it went up:
 // step 7 finished, or recorded protection after the push, or the folder's copy of the
@@ -44,7 +46,7 @@
 //
 // What each kind gives (R87): see the entries below. The order is binding (R89): Stop, Locked, the
 // project's files (a pull request the director merges), this computer, keys, kept, last; newest
-// first within a phase; then the signing key and the trusted-keys list; the helper stops last of
+// first within a phase; then the trusted-keys list and the signing key; the helper stops last of
 // all, after its answer.
 //
 //   Plan = {
@@ -231,7 +233,7 @@ function deleteCard({ what, why, deletes, keeps, because }) {
 // else stays, and the retention line (R64).
 function cardWhat({ name, changes, keep, asks, pullRequest }) {
   const count = (test) => changes.filter(test).length;
-  // The signing key and the trusted-keys list, removed last of all, are keys on the card.
+  // The trusted-keys list and the signing key, removed last of all, are keys on the card.
   const keyFile = (c) => c.put === 'remove' && (samePath(c.target, signingKeyFile()) || samePath(c.target, enrolledFile()));
   const files = count((c) => c.phase === 'files' && ['in-pull-request', 'reverse'].includes(c.put));
   const trial = count((c) => c.phase === 'files' && ['close-pull-request', 'delete-branch'].includes(c.put));
@@ -588,10 +590,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   if (!last && usedApp && shared) kept(`the GitHub app's access to ${own.record.repo}`, OTHERS_USE);
 
   // The project's own folder under projects/, and on the last project Wheelhouse's own folders and
-  // files, recorded or not; the signing key with the trusted-keys list beside it go last of all
-  // (ruling R123), below.
+  // files, recorded or not; the trusted-keys list, then the signing key beside it, go last of all
+  // (rulings R123, R128), below.
   if (slug !== null) remove(projectFolder(slug), 'last');
-  const closing = last ? [signingKeyFile(), enrolledFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })) : [];
+  const closing = last ? [enrolledFile(), signingKeyFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })) : [];
   if (last) {
     for (const p of [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile()]) if (exists(p)) remove(p, 'last');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card

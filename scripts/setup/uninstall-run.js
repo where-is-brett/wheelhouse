@@ -31,10 +31,12 @@
 // there, the push is marked as on the host (markOnHost) before uninstall stops, so the next plan
 // plans the pull request. A commit never pushed is marked kept as soon as setup's files are put back
 // here, so a resume never looks for it again; and once everything before the last phase is done, a
-// resume carries on without the project's record (which the last phase removes). The signing key
-// and the trusted-keys list are the plan's last removals (ruling R123): once the first is removed,
-// nothing stops uninstall before its runs are closed, so a resume never needs a click this computer
-// can no longer sign.
+// resume carries on without the project's record (which the last phase removes). The trusted-keys
+// list and then the signing key are the plan's last removals (rulings R123, R128): once the first is
+// removed, nothing stops uninstall before its runs are closed, so a resume never needs a click this
+// computer can no longer sign. A removal that fails stops it as any change does: the list not
+// removed leaves the key it trusts; the key not removed, with the list gone, is trusted again by the
+// next session start.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -259,7 +261,7 @@ export async function applyUninstall({
     for (const k of neverPushed) mark(k.ids, false, k.why);
   };
   const afterFiles = (entry) => PHASES.indexOf(entry.phase) > PHASES.indexOf('files');
-  // The signing key and the trusted-keys list: from the first of them on, nothing stops uninstall
+  // The trusted-keys list and the signing key: from the first of them on, nothing stops uninstall
   // (ruling R123).
   const keyFile = (e) => e.put === 'remove' && (samePath(e.target, signingKeyFile()) || samePath(e.target, enrolledFile()));
   const firstKeyFile = plan.changes.findIndex(keyFile);
