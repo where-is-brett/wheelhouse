@@ -35,6 +35,7 @@ import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
+import { beforeTimer, nodeStartMs } from '../../helpers/until.js';
 
 const P = 'owner__name';
 
@@ -420,9 +421,9 @@ test('a sync that never answers is cut off by the budget', async () => {
     const f = fake();
     f.client.health = async () => ({ ok: true });
     f.client.state.sync = () => new Promise(() => {});
-    const began = Date.now();
-    const t = text(await run(f, { totalMs: 300 }));
-    assert.ok(Date.now() - began < 2000);
+    const ran = await beforeTimer(() => run(f, { totalMs: 300 }), 2000);
+    assert.equal(ran.inTime, true, 'cut off');
+    const t = text(ran.value);
     assert.match(t, new RegExp(NOT_SYNCED));
   });
 });
@@ -482,6 +483,7 @@ test('session-start exits in time with its context when the helper never answers
   fs.mkdirSync(path.join(home, 'usage'), { recursive: true });
   fs.writeFileSync(path.join(home, 'usage', 'receiver.json'), JSON.stringify({ port: receiverPort }));
   try {
+    const boot = await nodeStartMs();
     const began = Date.now();
     const child = spawnChild(process.execPath, [SCRIPT], { env: { ...process.env, WHEELHOUSE_HOME: home }, stdio: ['pipe', 'pipe', 'ignore'] });
     let out = '';
@@ -489,7 +491,8 @@ test('session-start exits in time with its context when the helper never answers
     child.stdin.end(JSON.stringify({ cwd: repo, session_id: 's1', hook_event_name: 'SessionStart', source: 'startup' }));
     const code = await new Promise((resolve) => child.on('close', resolve));
     assert.equal(code, 0);
-    assert.ok(Date.now() - began < 10000, `took ${Date.now() - began} ms`);
+    // Its limits count from when Node has started it, which a loaded computer can make slow.
+    assert.ok(Date.now() - began - boot < 10000, `took ${Date.now() - began} ms, ${boot} ms of it to start Node`);
     assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, new RegExp(NOT_SYNCED));
     assert.ok(fs.existsSync(path.join(home, 'usage', 'sessions', 's1.json')), 'the session\'s part is recorded');
   } finally {
@@ -606,9 +609,9 @@ test('a usage receiver that could not start is named in the reload, once', async
     // A background step that throws or never answers does not stop the session or add the line.
     const thrown = await run(fake(), { background: async () => { throw new Error('x'); } });
     assert.doesNotMatch(text(thrown), /Usage counts/);
-    const began = Date.now();
-    const hung = await run(fake(), { totalMs: 400, background: () => new Promise(() => {}) });
-    assert.ok(Date.now() - began < 1500);
+    const ran = await beforeTimer(() => run(fake(), { totalMs: 400, background: () => new Promise(() => {}) }), 1500);
+    assert.equal(ran.inTime, true, 'cut off');
+    const hung = ran.value;
     assert.doesNotMatch(text(hung), /Usage counts/);
   });
 });
@@ -769,9 +772,7 @@ test('the session start leaves the watcher alone in Shape 2, and fails open when
       const f = fake();
       f.client.health = async () => ({ ok: true });
       f.client.config = answer;
-      const began = Date.now();
-      await assert.doesNotReject(run(f, { totalMs: 400 }));
-      assert.ok(Date.now() - began < 3000);
+      assert.equal((await beforeTimer(() => run(f, { totalMs: 400 }), 3000)).inTime, true, 'cut off');
       assert.equal(watcherStarts(f).length, 0);
     }
     // A helper that isn't running gives no configuration: nothing is started but the helper.

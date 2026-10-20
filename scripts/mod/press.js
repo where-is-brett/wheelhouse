@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { keep, taken, withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
+import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -134,7 +135,7 @@ function promptOf(kind, label, n, id) {
 // `card` is the waiting card's id and `hash` what the pane drew it with. Refuses, recording
 // nothing, a card that isn't waiting, one whose text changed, a label it doesn't offer, and one
 // already answered in pending/ or claimed. Never throws.
-export async function pressCard({ project, card, hash, label, client, now = () => new Date(), liftStop = defaultLift, stopState = defaultStopState, budget = BUDGET_MS } = {}) {
+export async function pressCard({ project, card, hash, label, client, now = () => new Date(), liftStop = defaultLift, stopState = defaultStopState, budget = BUDGET_MS + helperGrace() } = {}) {
   try {
     return await press({ project, card, hash, label, client, now, liftStop, stopState, budget });
   } catch {

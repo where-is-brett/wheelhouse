@@ -34,6 +34,7 @@ import { guardedReady } from '../windows/low.js';
 import { renewalDue } from '../host/connection.js';
 import { helperClient } from '../host/helper-client.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
+import { helperGrace } from '../lib/helper-grace.js';
 import { phonePushResult } from '../lib/setup-run.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
@@ -109,8 +110,9 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
 //   { project, model, usage, sources, settings } inside a Wheelhouse project, else { none }.
 // `settings` are the settings in force (effectiveSettings), `usage` the week's figures and
 // `sources` the weekly report, for the briefing and the settings text. `waitMs` (at most
-// HELPER_WAIT_MS, the default) is how long the helper is waited for. `findBrowser` stands in for
-// the helper's way of finding its browser (scripts/screens/browser.js) in tests.
+// HELPER_WAIT_MS, the default, and what a test adds: helper-grace.js) is how long the helper is
+// waited for. `findBrowser` stands in for the helper's way of finding its browser
+// (scripts/screens/browser.js) in tests.
 export async function loadBoardInputs(options = {}) {
   try {
     return await gather(isRecord(options) ? options : {});
@@ -121,7 +123,8 @@ export async function loadBoardInputs(options = {}) {
 
 async function gather({ cwd, client, address, now = () => new Date(), offline = false, waitMs: asked, findBrowser }) {
   // A wait too short to leave readHostFacts its margin is no wait at all, so it gives the usual one.
-  const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= HELPER_WAIT_MS ? asked : HELPER_WAIT_MS;
+  const most = HELPER_WAIT_MS + helperGrace();
+  const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= most ? asked : most;
   const found = attempt(() => (typeof cwd === 'string' && path.isAbsolute(cwd) ? projectOf(cwd) : null));
   if (!found) return { none: NOT_A_PROJECT };
   const { project, record, locked } = found;

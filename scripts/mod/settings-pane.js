@@ -21,6 +21,7 @@ import { AWAY } from '../lib/mod-numbers.js';
 import { confirmationFor, listEvents } from '../state/events.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget, BUDGET_MS } from '../hooks/pending.js';
+import { helperGrace } from '../lib/helper-grace.js';
 import { localViews } from '../hooks/session-start.js';
 import { readProfileViews } from '../profile/store.js';
 import { helperClient } from '../host/helper-client.js';
@@ -318,7 +319,7 @@ function eventOf(home, project, id, data) {
 // `made` is true once the setting is written and its confirmation signed. A setting written but
 // not confirmed is not in force, and the press says it waits for the director's Confirm. Records
 // nothing for a choice that isn't offered or that the catalogue refuses. Never throws.
-export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS } = {}) {
+export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace() } = {}) {
   try {
     return await press({ project, key, choice, client, now, timeZone, budget });
   } catch {

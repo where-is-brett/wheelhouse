@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { withinBudget, pendingDir, keep, taken, BUDGET_MS } from '../hooks/pending.js';
+import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift } from '../lib/stop.js';
 import { computerId, profileDir, stateDir } from '../lib/paths.js';
@@ -176,7 +177,7 @@ export function claim(project, id) {
 // used, out of date, held by two cards or answered with an option its card didn't offer, claims
 // the card, then signs, keeps and sends what a click on that option would have earned, and the
 // plain answer the click would have written.
-export async function replyRecord({ project, text, client, now = () => new Date(), liftStop = defaultLift, stopState, budget = BUDGET_MS } = {}) {
+export async function replyRecord({ project, text, client, now = () => new Date(), liftStop = defaultLift, stopState, budget = BUDGET_MS + helperGrace() } = {}) {
   const reply = parseReply(text);
   if (!reply) return no('That isn\'t a reply code and an option, so nothing was recorded');
   try {

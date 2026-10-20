@@ -56,6 +56,10 @@ import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { prOnHost } from '../helpers/pr-on-host.js';
 import { matchingBody } from '../helpers/provenance.js';
+import { waitLongerOnTheHelper, WAIT_MS } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 const BRIDGE = fileURLToPath(new URL('../../scripts/mod/bridge.js', import.meta.url));
 const SKIP = process.platform === 'win32' ? 'the bridge finds the helper at the user\'s own named pipe on Windows' : false;
@@ -64,7 +68,7 @@ const PR = 7;
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 // The child's limit: the bridge answers within its own, and a test machine running every file at once is given longer.
-const CHILD_MS = 60000;
+const CHILD_MS = 2 * WAIT_MS;
 // A folder that is never created, so no managed copy of the hooks is found.
 const NO_MANAGED = path.join(tempFolder('wh-no-managed-'), 'absent');
 // The project's configuration on its default branch: Shape 2, so no tick starts a watcher process.

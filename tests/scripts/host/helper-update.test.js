@@ -22,6 +22,7 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+import { until as waitUntil } from '../../helpers/until.js';
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -482,13 +483,7 @@ function keepPictures(sha, address = previewOf(sha)) {
   fs.writeFileSync(path.join(screensDir(), `${sha}.json`), `${JSON.stringify({ address, shots })}\n`);
 }
 
-async function until(check, what) {
-  const end = Date.now() + 20 * 1000;
-  while (!check()) {
-    if (Date.now() > end) throw new Error(`waited too long for ${what}`);
-    await new Promise((resolve) => { setTimeout(resolve, 25); });
-  }
-}
+const until = (check, what) => waitUntil(check, { what });
 
 // Pull request 7 with a CLEAN review and the director's approval of its first head, brought up
 // to date after the default branch moved on. `base` is the default branch's first commit.

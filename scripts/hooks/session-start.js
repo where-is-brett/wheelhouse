@@ -68,6 +68,7 @@ import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/s
 import { composeCard } from '../cards/compose.js';
 import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { helperGrace } from '../lib/helper-grace.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -448,7 +449,7 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs,
   if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) lines.push(OLD_CLAUDE_CODE);
-  const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
+  const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   if (!up) lines.push(NO_HELPER);
   const note = setupNote(setup);
   if (note !== null) lines.push(note);
@@ -474,7 +475,7 @@ export async function decide(input, deps = {}) {
   const {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,
-    self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS, totalMs = TOTAL_MS, pause = sleep,
+    self = SELF, pluginRoot = PLUGIN_ROOT, startWaitMs = START_WAIT_MS + helperGrace(), totalMs = TOTAL_MS + helperGrace(), pause = sleep,
     background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome, env = process.env,
     guardedSelfTest = selfTest, run = runProgram, lowNodeReady: copyReady = lowNodeReady,
   } = deps;
@@ -505,7 +506,7 @@ export async function decide(input, deps = {}) {
   // installed are setup's own state, not drift, and write no hold (ruling R136).
   const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
   const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
-  const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000, totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
+  const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the sync below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;

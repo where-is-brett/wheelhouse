@@ -15,6 +15,7 @@ import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { NO_CHROME_LINE, phonePushLine } from '../../../scripts/board/health.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { beforeTimer } from '../../helpers/until.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const P = 'owner__name';
@@ -146,9 +147,10 @@ test('the inputs wait at most 2 seconds for the helper and then use what they ha
     keepEverything();
     const never = () => new Promise(() => {});
     const started = Date.now();
-    const found = await loadBoardInputs({ cwd: repo, client: fakeClient({ health: never, lock: never }), address: testAddress(home), now: () => NOW });
+    // Done before a timer half as long again, set at the same moment, however busy the computer is.
+    const { inTime, value: found } = await beforeTimer(() => loadBoardInputs({ cwd: repo, client: fakeClient({ health: never, lock: never }), address: testAddress(home), now: () => NOW }), HELPER_WAIT_MS * 1.5);
     const took = Date.now() - started;
-    assert.ok(took < 2600, `took ${took} ms`);
+    assert.ok(inTime, `still waiting after ${took} ms`);
     assert.ok(took >= 1900, `gave up after ${took} ms`);
     // What the files hold is all there; the helper counts as not answering, and the lock as unknown.
     assert.deepEqual(found.model.director.waiting.map((w) => w.what), ['Approve the sign-in page']);
@@ -165,9 +167,9 @@ test('offline, the inputs ask the helper nothing and leave out what only it know
     const repo = register(home);
     keepEverything();
     const client = fakeClient({ health: { ok: false, refused: 'down' }, lock: { ok: true, result: { computer: 'ffffffff' } } });
-    const started = Date.now();
-    const found = await loadBoardInputs({ cwd: repo, client, address: testAddress(home), now: () => NOW, offline: true });
-    assert.ok(Date.now() - started < 450, `took ${Date.now() - started} ms`);
+    // Offline, done before a timer of 450 ms set at the same moment, as the status line needs.
+    const { inTime, value: found } = await beforeTimer(() => loadBoardInputs({ cwd: repo, client, address: testAddress(home), now: () => NOW, offline: true }), 450);
+    assert.ok(inTime, 'it took 450 ms or more');
     assert.deepEqual(client.calls, []);
     const lines = texts(found);
     assert.equal(lines.includes(NO_HELPER), false);
@@ -239,10 +241,8 @@ test('a helper that takes the request and never answers still leaves the cached 
     const server = net.createServer((socket) => { held.add(socket); socket.on('close', () => held.delete(socket)); socket.on('error', () => {}); });
     await new Promise((resolve) => server.listen(address, resolve));
     try {
-      const started = Date.now();
-      const found = await loadBoardInputs({ cwd: repo, address, now: () => NOW });
-      const took = Date.now() - started;
-      assert.ok(took < 2200, `took ${took} ms`);
+      const { inTime, value: found } = await beforeTimer(() => loadBoardInputs({ cwd: repo, address, now: () => NOW }), HELPER_WAIT_MS * 1.5);
+      assert.ok(inTime, 'still waiting on the helper');
       const lines = texts(found);
       assert.ok(lines.includes(NO_CI), 'the old cache still speaks');
       assert.ok(lines.includes(NO_HELPER));
@@ -303,11 +303,13 @@ test('a shorter waitMs is how long a helper that never answers is waited for', a
     keepEverything();
     const never = () => new Promise(() => {});
     const hung = { health: never, lock: { read: never } };
-    for (const [waitMs, under] of [[300, 1000], [undefined, HELPER_WAIT_MS + 1000], [10, HELPER_WAIT_MS + 1000]]) {
+    // Each is done before a timer set at the same moment: 300 ms before the usual wait, and the
+    // usual wait before one half as long again.
+    for (const [waitMs, under] of [[300, HELPER_WAIT_MS], [undefined, HELPER_WAIT_MS * 1.5], [10, HELPER_WAIT_MS * 1.5]]) {
       const started = Date.now();
-      const found = await loadBoardInputs({ cwd: repo, client: hung, now: () => NOW, waitMs });
+      const { inTime, value: found } = await beforeTimer(() => loadBoardInputs({ cwd: repo, client: hung, now: () => NOW, waitMs }), under);
       const took = Date.now() - started;
-      assert.ok(took < under, `${waitMs}: ${took} ms`);
+      assert.ok(inTime, `${waitMs}: still waiting after ${took} ms`);
       // Too short a wait gives the usual one.
       if (waitMs !== 300) assert.ok(took >= HELPER_WAIT_MS - 50, `${waitMs}: ${took} ms`);
       assert.equal(found.project, P);
