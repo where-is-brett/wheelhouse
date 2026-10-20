@@ -8,13 +8,16 @@
 // journal's putBack, so an uninstall cut short resumes and never reverses twice), grouped by
 // (kind, target, key):
 //   - `json-key` and `file`: each change of the group, newest first, put back by reverseChange, so
-//     each retry's `before` (setup's own earlier `after`) chains back to the director's value. While
-//     the newest no longer holds what setup wrote, the group is left and named (Review Focus 2);
+//     each retry's `before` (setup's own earlier `after`) chains back to the director's value. The
+//     chain is walked on what the target holds now: a link whose `after` it holds is listed, one
+//     whose `before` it holds is already put back (an uninstall cut short before its mark), and from
+//     the first link it holds neither of, the rest is left and named (Review Focus 2);
 //   - `folder` and `host`: the group once, with the earliest change's `before` and the latest's
 //     `after`, since a retry records {}, { kept: true } or { origin: null } for what it found.
 //
 // Whose changes (R86). The project's own are always put back. This computer's are put back only by
-// the uninstall of the last project registered here, and then from every run in the journal, since
+// the uninstall of the last project on this computer (no other project registered, and no other
+// folder with a setup run not closed, ruling R114), and then from every run in the journal, since
 // an earlier project's uninstall left them: steps 2, 6 and 9 (but for what they wrote inside the
 // project's folder, which is the project's); the profile's clone and profile.json;
 // the profile repository; the app's keys and the profile's own GitLab key; the own app recorded in
@@ -24,25 +27,34 @@
 // temporary folder, and the project's own folder under projects/) are removed whole, never named as
 // changed since setup. journal.json is kept.
 //
+// The setup commit counts as on the host only when the journal or the folder shows it went up:
+// step 7 finished, or recorded a change after the push (protection), or the folder's copy of the
+// branch on the host holds it. Step 7 records the push before making it, so a push that failed
+// leaves the files and pins to be put back here, and the commit named as kept in the folder.
+//
 // What each kind gives (R87): see the entries below. The order is binding (R89): Stop, Locked, the
 // project's files (a pull request the director merges), this computer, keys, kept, last; newest
 // first within a phase; the helper stops last of all, after its answer.
 //
 //   Plan = {
 //     project: string | null,  the registered project the folder is, or null
-//     last: boolean,           no other project is registered on this computer
+//     last: boolean,           no other project on this computer (ruling R114)
 //     changes: Entry[],        in the order they are applied
 //     keep: Array<{ what, why, brief?, ids? }>,   left as they are; each changed since setup is
 //                              named on the card, by `brief` where it is given
 //     asks: Array<{ id, about, phase: 'kept', put, target, ids, card }>,   level 4 cards (a question's
 //                              input), recommended Keep: the product's repository setup made, the
 //                              state branch, and on the last project the profile repository
+//     done: Array<{ ids, why }>,   changes with nothing left to put back (put back already, closed
+//                              by the health check, not made by setup), marked put true as they are
 //     card,                    uninstall's own card input (kind 'uninstall', composed by Task 15c)
 //     hash,                    SHA-256 of the list, which the card's set line names
 //   }
-//   Entry = { phase, put, ids?, ... }: `ids` are the journal's changes it deals with, marked once it
-//     is done (markPutBack, all of an entry's ids in one write); an entry with none comes from the
-//     world, not the journal. A kept item with `ids` is marked too, as left (put false, its why).
+//   Entry = { phase, put, ids?, ... }: `ids` are the journal's changes it deals with, marked straight
+//     after it is done (markPutBack, all of an entry's ids in one write); an entry with none comes
+//     from the world, not the journal. A kept item with `ids` is marked too, as left (put false, its
+//     why), and an ask's ids once it is answered. Every recorded change but the answers is in one of
+//     changes, keep, asks or done.
 //     `put` is one of:
 //       'stop' { what: foreman | watcher | receiver | helper }
 //       'leave-locked' { project }           leaveLocked, with the director's password
@@ -51,7 +63,8 @@
 //                                            ids hold theirs too, so they are marked with it
 //       'in-pull-request' { change }         a project file or pin, taken out by that pull request
 //       'close-pull-request' { repo, number?, branch? }, 'delete-branch' { repo, branch, sha }
-//       'reverse' { change }                 reverseChange, here
+//       'reverse' { change }                 reverseChange, here (a pin with no pull request: its
+//                                            key in the project's settings, as a json-key change)
 //       'unset-env' { target, where }        only while it still holds what setup set
 //       'put-back-own-app' { change }        own-app.js's putBackOwnApp
 //       'remove-enrolment' { target }        this computer's key off the profile, with the sign-in
@@ -67,18 +80,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
-import { wheelhouseHome, keysDir, profileDir, stateDir } from '../lib/paths.js';
+import { wheelhouseHome, keysDir, profileDir, projectsDir } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { listHash } from '../lib/setup-writes.js';
-import { joinedRepo } from '../lib/setup-run.js';
+import { joinedRepo, runClosed } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir } from '../lib/setup-clicks.js';
 import { HOST_TOOLS, toolFolder } from '../lib/host-tools.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { enrolledFile, signingKeyFile } from '../state/signing.js';
 import { RETENTION_DAYS } from '../lib/setup-numbers.js';
-import { readJournal, wouldReverse } from './journal.js';
+import { canonicalJson } from '../lib/canonical.js';
+import { readProfileViews } from '../profile/store.js';
+import { readJournal, wouldReverse, heldNow } from './journal.js';
 import { readLaunchVar } from './telemetry.js';
-import { PROFILE_TARGET } from './own-app.js';
+import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
 import { PROFILE_REPO } from './host.js';
 import { SETUP_FILES } from './project-files.js';
 
@@ -119,7 +134,7 @@ function realOr(p) {
 }
 const exists = (p) => fs.existsSync(p);
 const profileFile = () => path.join(wheelhouseHome(), 'profile.json');
-const projectFolder = (slug) => path.dirname(stateDir(slug));
+const projectFolder = (slug) => path.join(projectsDir(), slug);
 const repoName = (repo) => (typeof repo === 'string' ? repo.split('/').at(-1) : null);
 // A host target `<host>:<owner/name>` or `<host>:<owner/name>:<file>`.
 function hostTarget(target) {
@@ -148,7 +163,7 @@ function shown(p, userHome) {
 }
 
 // What a change is, in a few words.
-function named(c, userHome) {
+function describe(c, userHome) {
   if (c.kind === 'json-key') return `${c.key.join('.')} in ${shown(c.target, userHome)}`;
   if (c.kind === 'env') return `${c.target}, a variable for your account`;
   if (c.kind === 'process' && c.after?.plugin) return `the pinned kit ${String(c.after.plugin).split('@')[0]}`;
@@ -216,9 +231,69 @@ function cardWhat({ name, changes, keep, asks, pullRequest }) {
     if (changed.length === 0) return '';
     return ` Left as you changed them: ${[...list, ...(more > 0 ? [`and ${more} more: cli.js uninstall status`] : [])].join('; ')}.`;
   };
-  let named = changed;
-  while (named.length > 0 && (head + left(named) + tail).length + name.length > WHAT_CHARS) named = named.slice(0, -1);
-  return `${head}${left(named)}${tail}`;
+  let fitting = changed;
+  while (fitting.length > 0 && (head + left(fitting) + tail).length + name.length > WHAT_CHARS) fitting = fitting.slice(0, -1);
+  return `${head}${left(fitting)}${tail}`;
+}
+
+const same = (a, b) => canonicalJson(a ?? null) === canonicalJson(b ?? null);
+
+// A ref of the folder's own git (`refs/heads/main`), read from its files, a loose ref then
+// packed-refs, changing nothing; null when it can't be read.
+function refOf(folder, ref) {
+  if (ref.split('/').some((part) => part === '' || part === '..' || part === '.')) return null;
+  let dir = path.join(folder, '.git');
+  try {
+    if (fs.statSync(dir).isFile()) {
+      const pointed = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dir, 'utf8'));
+      if (!pointed) return null;
+      dir = path.resolve(folder, pointed[1].trim());
+    }
+  } catch {
+    return null;
+  }
+  const dirs = [dir];
+  try {
+    dirs.push(path.resolve(dir, fs.readFileSync(path.join(dir, 'commondir'), 'utf8').trim()));
+  } catch { /* not a worktree's */ }
+  const SHA = /^[0-9a-f]{40,64}$/;
+  for (const d of dirs) {
+    try {
+      const text = fs.readFileSync(path.join(d, ...ref.split('/')), 'utf8').trim();
+      if (SHA.test(text)) return text;
+    } catch { /* not loose */ }
+    try {
+      for (const line of fs.readFileSync(path.join(d, 'packed-refs'), 'utf8').split(/\r?\n/)) {
+        const [sha, name] = line.split(' ');
+        if (name === ref && SHA.test(sha)) return sha;
+      }
+    } catch { /* none packed */ }
+  }
+  return null;
+}
+
+// Walks a json-key or file group, newest first, on what its target holds now (ruling R85): the links
+// to put back, those put back already, and from the first link that holds neither its after nor its
+// before, the rest, changed since setup. `why` when the target can't be read as setup wrote it.
+function walkChain(group) {
+  const state = heldNow(newest(group));
+  if (state.why !== undefined) return { why: state.why };
+  let held = state;
+  const holds = (value, absent) => (absent ? !held.held : held.held && same(held.value, value));
+  const listed = [];
+  const already = [];
+  const changed = [];
+  for (const e of [...group].reverse()) {
+    const link = e.c;
+    const beforeAbsent = link.kind === 'json-key' ? link.absent === true : link.before === null;
+    if (changed.length > 0) changed.push(e);
+    else if (holds(link.after, false)) {
+      listed.push(e);
+      held = beforeAbsent ? { held: false } : { held: true, value: link.before };
+    } else if (holds(link.before, beforeAbsent)) already.push(e);
+    else changed.push(e);
+  }
+  return { listed, already, changed };
 }
 
 // What uninstall would do for the folder, worked out without changing anything: the same world
@@ -229,10 +304,13 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   const real = realOr(folder);
   const own = projectForFolder(real);
   const slug = own?.project ?? null;
-  const others = registeredProjects().filter((p) => p.project !== slug);
-  const last = others.length === 0;
   const journal = readJournal();
   const mine = (r) => typeof r?.folder === 'string' && keyOf(realOr(r.folder)) === keyOf(real);
+  // The last project on this computer: no other registered, and no other folder whose setup run
+  // isn't closed, so a half set-up folder keeps what it needs (ruling R114).
+  const others = registeredProjects().filter((p) => p.project !== slug);
+  const settingUp = new Set(journal.runs.filter((r) => typeof r?.folder === 'string' && !runClosed(r) && !mine(r)).map((r) => keyOf(realOr(r.folder))));
+  const last = others.length === 0 && settingUp.size === 0;
 
   // Every change not yet put back, in the journal's order (`seq`), with whether it is this
   // folder's, grouped by (kind, target, key).
@@ -260,9 +338,11 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   const items = []; // { phase, seq, entry }
   const keep = [];
   const asks = [];
+  const done = [];
   const removals = new Map(); // path -> { phase, ids, seq }
   const add = (phase, at, entry) => items.push({ phase, seq: at, entry: { phase, ...entry } });
-  const kept = (what, why, list, brief) => keep.push({ what, why, ...(brief && brief !== what ? { brief } : {}), ...(list ? { ids: list } : {}) });
+  const kept = (what, why, list, short) => keep.push({ what, why, ...(short && short !== what ? { brief: short } : {}), ...(list ? { ids: list } : {}) });
+  const settled = (list, why) => { if (list.length > 0) done.push({ ids: list, why }); };
   const remove = (target, phase, list = [], at = -1) => {
     const key = resolved(target);
     const was = removals.get(key) ?? { target, phase, ids: [], seq: -1 };
@@ -271,14 +351,24 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     removals.set(key, was);
   };
 
-  // The setup commit and its push, put back by a pull request only once pushed; the project's
-  // files and pins go into it, or are put back here when nothing went up.
+  // The setup commit and its push: on the host only when the journal or the folder shows it went up
+  // (step 7 recorded the push before making it). Then a pull request takes the project's files and
+  // pins out; otherwise they are put back here, and a commit made in the folder is kept there.
   const commitGroup = all.find((g) => g[0].c.kind === 'host' && ['commit', 'push'].includes(newest(g).after?.action));
-  const pullRequest = commitGroup !== undefined && newest(commitGroup).after.action === 'push';
-  if (commitGroup !== undefined && !pullRequest) {
-    kept(`setup's commit on ${asOne(commitGroup).after.branch}, never pushed`, 'it stays in this folder\'s history', idsOf(commitGroup));
+  let pullRequest = false;
+  if (commitGroup !== undefined) {
+    const { c, run: pushRun } = commitGroup.at(-1);
+    const branch = c.after.branch;
+    if (c.after.action === 'push') {
+      const runChanges = Array.isArray(pushRun.changes) ? pushRun.changes : [];
+      const afterPush = runChanges.slice(runChanges.findIndex((x) => x.id === c.id) + 1).some((x) => x.step === 7);
+      pullRequest = typeof pushRun.steps?.[7]?.doneAt === 'string' || afterPush || refOf(real, `refs/remotes/origin/${branch}`) === c.after.sha;
+      if (!pullRequest) kept(`setup's commit on ${branch}, never pushed`, 'it stays in this folder\'s history', idsOf(commitGroup));
+    } else if (refOf(real, `refs/heads/${branch}`) === commitGroup[0].c.before?.sha) settled(idsOf(commitGroup), 'the commit was never made');
+    else kept(`setup's commit on ${branch}, never pushed`, 'it stays in this folder\'s history', idsOf(commitGroup));
   }
   const sharedFile = (target) => SETUP_FILES.some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
+  const projectSettings = path.join(real, '.claude', 'settings.json');
   const numberedPrs = new Set(all.map((g) => /^(.+) pull request \d+$/.exec(g[0].c.target)?.[1]).filter(Boolean));
 
   for (const group of all) {
@@ -299,18 +389,19 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         }
         const shared = sharedFile(c.target);
         if (shared && joining) {
-          kept(named(c, userHome), 'the project\'s own file, as committed: it stays', list);
+          kept(describe(c, userHome), 'the project\'s own file, as committed: it stays', list);
           break;
         }
-        const now = wouldReverse(c);
-        if (!now.put) {
-          kept(named(c, userHome), now.why, list, brief(c));
+        const walked = walkChain(group);
+        if (walked.why !== undefined) {
+          kept(describe(c, userHome), walked.why, list, brief(c));
           break;
         }
         const phase = shared ? 'files' : 'computer';
         const put = shared && pullRequest ? 'in-pull-request' : 'reverse';
-        // Newest first: each retry's before chains back to the director's value.
-        for (const e of [...group].reverse()) add(phase, e.seq, { put, change: e.c, ids: [e.c.id] });
+        for (const e of walked.listed) add(phase, e.seq, { put, change: e.c, ids: [e.c.id] });
+        settled(walked.already.map((e) => e.c.id), 'already put back');
+        if (walked.changed.length > 0) kept(describe(c, userHome), 'changed since setup', walked.changed.map((e) => e.c.id), brief(c));
         break;
       }
       case 'folder': {
@@ -318,19 +409,24 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         if (path.basename(c.target) === '.git') kept(shown(c.target, userHome), 'the folder\'s git history is kept', list);
         else if (slug !== null && within(projectFolder(slug), c.target)) remove(projectFolder(slug), 'last', list, at);
         else if (samePath(c.target, profileDir()) || within(path.join(wheelhouseHome(), 'tools'), c.target) || typeof c.after?.installer === 'string') remove(c.target, 'last', list, at);
-        else {
-          const now = wouldReverse(one);
-          if (now.put) add('computer', at, { put: 'reverse', change: one, ids: list });
-          else if (one.before === null) kept(shown(c.target, userHome), 'not empty: what is in it stays', list);
-        }
+        else if (one.before !== null) settled(list, 'not made by setup');
+        else if (!exists(c.target)) settled(list, 'already put back');
+        else if (wouldReverse(one).put) add('computer', at, { put: 'reverse', change: one, ids: list });
+        else kept(shown(c.target, userHome), 'not empty: what is in it stays', list);
         break;
       }
       case 'host': {
         const one = asOne(group);
         const h = hostTarget(c.target);
         const trial = /^(.+) (pull request (\d+)|pull request from (.+)|branch (.+))$/.exec(c.target);
-        if (c.target === PROFILE_TARGET) add('computer', at, { put: 'put-back-own-app', change: one, ids: list });
-        else if (c.target === 'key github-app') add('keys', at, { put: 'delete-key', key: 'github-app', before: one.before, ids: list });
+        if (c.target === PROFILE_TARGET) {
+          // While the profile holds setup's app, or setup's record was never confirmed, putBackOwnApp
+          // puts it back; an app the director recorded since is theirs.
+          const views = readProfileViews();
+          const current = views === null ? undefined : acceptedOwnApp(views);
+          if (current === undefined || same(current, one.after) || same(current, one.before)) add('computer', at, { put: 'put-back-own-app', change: one, ids: list });
+          else kept('your own GitHub App in your profile', 'changed since setup', list, 'own-github-app');
+        } else if (c.target === 'key github-app') add('keys', at, { put: 'delete-key', key: 'github-app', before: one.before, ids: list });
         else if (/^key gitlab-project-\d+$/.test(c.target)) {
           const pasted = c.after?.kind === 'pasted-token';
           add('keys', at, {
@@ -359,25 +455,42 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         } else if (one.after?.action === 'protect') kept(`protection on ${one.after.branch} of ${c.target.replace(/ protection$/, '')}`, 'left on, as the host keeps it', list);
         else if (trial?.[3] !== undefined) {
           if (c.after?.state === 'open') add('files', at, { put: 'close-pull-request', repo: trial[1], number: Number(trial[3]), ids: list });
+          else settled(list, 'closed by the health check');
         } else if (trial?.[4] !== undefined) {
           if (c.after?.state === 'opening' && !numberedPrs.has(trial[1])) add('files', at, { put: 'close-pull-request', repo: trial[1], branch: trial[4], ids: list });
+          else settled(list, 'its pull request is recorded by its number');
         } else if (trial?.[5] !== undefined) {
           if (c.after !== null) add('files', at, { put: 'delete-branch', repo: trial[1], branch: trial[5], sha: c.after?.sha ?? null, ids: list });
+          else settled(list, 'deleted by the health check');
         } else kept(c.target, 'left as it is on the host', list);
         break;
       }
       case 'process': {
-        if (c.after?.plugin && pullRequest && !joining) add('files', at, { put: 'in-pull-request', change: c, ids: list });
-        else if (c.after?.plugin) kept(named(c, userHome), 'it stays installed for this folder', list);
-        else kept(named(c, userHome), 'it stays installed', list);
+        const plugin = typeof c.after?.plugin === 'string' ? c.after.plugin : null;
+        if (plugin === null) kept(describe(c, userHome), 'it stays installed', list);
+        else if (joining) kept(describe(c, userHome), 'it stays installed for this folder', list);
+        else if (pullRequest) add('files', at, { put: 'in-pull-request', change: c, ids: list });
+        else {
+          // No pull request: the pin is switched off here, by its key in the project's settings,
+          // unless setup's own key edits there put it back already.
+          const key = ['enabledPlugins', plugin];
+          const pin = { id: c.id, step: c.step, kind: 'json-key', target: projectSettings, key, before: null, absent: true, after: true };
+          if (groups.has(JSON.stringify(['json-key', projectSettings, key]))) settled(list, 'its key goes back with the project\'s settings');
+          else if (wouldReverse(pin).put) add('files', at, { put: 'reverse', change: pin, ids: list });
+          else settled(list, 'not switched on in the project\'s settings');
+        }
         break;
       }
       case 'env': {
         const one = asOne(group);
-        if (one.before === one.after) break; // it held setup's value before setup: nothing to put back
+        if (one.before === one.after) {
+          settled(list, 'it held this before setup');
+          break;
+        }
         const value = await readLaunchVar(c.target, { platform, run });
         if (value === c.after) add('computer', at, { put: 'unset-env', target: c.target, where: c.where ?? null, ids: list });
-        else kept(named(c, userHome), 'changed since setup', list, brief(c));
+        else if (value === one.before) settled(list, 'already put back');
+        else kept(describe(c, userHome), 'changed since setup', list, brief(c));
         break;
       }
       case 'locked': {
@@ -387,7 +500,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         break;
       }
       default:
-        kept(named(c, userHome), 'left as it is', list);
+        kept(describe(c, userHome), 'left as it is', list);
     }
   }
 
@@ -414,7 +527,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     const ownPaths = [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile(), clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir()];
     for (const p of ownPaths) if (exists(p)) remove(p, 'last');
   } else {
-    kept('Wheelhouse\'s helper, telemetry, tools, profile and this computer\'s signing key', `another project on this computer still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
+    kept('Wheelhouse\'s helper, telemetry, tools, profile and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }
   // The project's folder first in its phase, as the newest, then the others in their order.
   const projectKey = slug === null ? null : resolved(projectFolder(slug));
@@ -451,7 +564,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     { phase: 'last', put: 'remove-plugin', line: PLUGIN_LINE },
     ...(last ? [{ phase: 'last', put: 'stop', what: 'helper', when: 'after the answer' }] : []),
   ];
-  const hash = listHash({ changes, keep, asks: asks.map((a) => ({ id: a.id, put: a.put, target: a.target, ids: a.ids })) });
+  const hash = listHash({ changes, keep, asks: asks.map((a) => ({ id: a.id, put: a.put, target: a.target, ids: a.ids })), done });
   const name = slug ?? path.basename(real);
   const card = {
     kind: 'uninstall',
@@ -470,5 +583,5 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
       ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
       : 'The checks no longer guard this project; protection stays as it is.',
   };
-  return { project: slug, last, changes, keep, asks, card, hash };
+  return { project: slug, last, changes, keep, asks, done, card, hash };
 }

@@ -312,10 +312,13 @@ export function ownAppFrom(views) {
   return { clientId, slug, owner };
 }
 
-const accepted = (views) => {
+// The app the profile's `own-github-app` holds as accepted, or null: what putBackOwnApp compares
+// with setup's record, and uninstall's plan reads from the views kept on this computer.
+export const acceptedOwnApp = (views) => {
   const value = views?.settings?.[OWN_GITHUB_APP_KEY]?.value;
   return value !== undefined && isAllowed(OWN_GITHUB_APP_KEY, value) ? value : null;
 };
+const accepted = acceptedOwnApp;
 
 async function writeValue(profile, value) {
   return profile.write({ kind: 'setting', data: { key: OWN_GITHUB_APP_KEY, value, words: settingWords(OWN_GITHUB_APP_KEY, value) } });

@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { uninstallPlan, PHASES, WHAT_CHARS, PLUGIN_LINE } from '../../../scripts/setup/uninstall.js';
 import {
-  startRun, addChanges, applyJsonKey, markPutBack, markStep, newId, readJournal, reverseChange, journalFile,
+  startRun, addChanges, applyJsonKey, markPutBack, markStep, newId, readJournal, reverseChange, journalFile, closeRun,
 } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { wheelhouseHome, profileDir, stateDir, keysDir } from '../../../scripts/lib/paths.js';
@@ -164,6 +164,12 @@ function snapshot(world) {
   return files;
 }
 
+// Every change the journal holds but the answers, by id; and every id a plan accounts for.
+const recordedIds = () => readJournal().runs.flatMap((r) => r.changes).filter((c) => c.kind !== 'answer').map((c) => c.id).sort();
+const accounted = (got) => [...new Set([
+  ...got.changes.flatMap((c) => c.ids ?? []), ...got.keep.flatMap((k) => k.ids ?? []), ...got.asks.flatMap((a) => a.ids), ...got.done.flatMap((d) => d.ids),
+])].sort();
+
 const plan = (world, extra = {}) => uninstallPlan({ folder: world.folder, userHome: world.userHome, platform: 'darwin', run: launchEnv({ CLAUDE_CODE_ENABLE_TELEMETRY: '1' }), ...extra });
 const of = (got, phase) => got.changes.filter((c) => c.phase === phase);
 const ids = (list) => list.flatMap((c) => c.ids);
@@ -222,11 +228,10 @@ test('setup then uninstall lists every change setup made, by phase, newest first
     const removed = last.filter((c) => c.put === 'remove').map((c) => c.target);
     for (const p of [toolFolder('gh'), profileDir(), path.join(wheelhouseHome(), 'profile.json')]) assert.ok(removed.includes(p), p);
     assert.ok(last.some((c) => c.put === 'remove-plugin' && c.line === PLUGIN_LINE));
-    // Every change setup recorded is listed, kept, or asked about, except the answers and the trial's
-    // pull request, which step 10 closed itself.
-    const recorded = readJournal().runs.flatMap((r) => r.changes).filter((c) => c.kind !== 'answer' && !/pull request/.test(c.target)).map((c) => c.id).sort();
-    const named = [...new Set([...ids(got.changes.filter((c) => c.ids)), ...got.keep.flatMap((k) => k.ids ?? []), ...got.asks.flatMap((a) => a.ids)])].sort();
-    assert.deepEqual(named, recorded);
+    // Every change setup recorded is listed, kept, asked about or settled, except the answers: the
+    // trial's pull request, which step 10 closed itself, is settled.
+    assert.deepEqual(accounted(got), recordedIds());
+    assert.deepEqual(got.done.map((d) => d.why).sort(), ['closed by the health check', 'its pull request is recorded by its number']);
     // The git history is kept, and git's folder never removed.
     assert.ok(got.keep.some((k) => k.what.endsWith('.git') && k.why === 'the folder\'s git history is kept'));
   });
@@ -378,6 +383,7 @@ test('a second project keeps the helper, telemetry and the signing key', async (
     // The second project's own uninstall, now the last, puts back this computer's changes from the
     // first project's runs too.
     fs.rmSync(path.join(wheelhouseHome(), 'projects', SLUG), { recursive: true });
+    closeRun(readJournal().runs[0].id, { at: NOW, by: 'uninstall' });
     const lastOne = await uninstallPlan({ folder: second, userHome: world.userHome, platform: 'darwin', run: launchEnv({ CLAUDE_CODE_ENABLE_TELEMETRY: '1' }) });
     assert.equal(lastOne.last, true);
     assert.ok(lastOne.changes.some((c) => c.change?.step === 6));
@@ -501,8 +507,12 @@ test('the card names the groups, what is kept, that removed transcripts can\'t c
     const settings = readJson(world.settings);
     const run = startRun({ folder: world.folder, now: NOW });
     const r = recorder(run.id);
-    for (let i = 0; i < 30; i++) r.key(6, world.settings, [`someLongSettingName${i}`], i);
-    writeText(world.settings, `${JSON.stringify(settings, null, 2)}\n`);
+    const theirs = {};
+    for (let i = 0; i < 30; i++) {
+      r.key(6, world.settings, [`someLongSettingName${i}`], i);
+      theirs[`someLongSettingName${i}`] = 'theirs';
+    }
+    writeText(world.settings, `${JSON.stringify({ ...settings, ...theirs }, null, 2)}\n`);
     const many = await plan(world);
     assert.ok(many.keep.length > 30);
     assert.match(many.card.what, /and \d+ more: cli\.js uninstall status/);
@@ -532,5 +542,181 @@ test('the own app recorded in the profile is put back through putBackOwnApp, on 
     const own = got.changes.find((c) => c.put === 'put-back-own-app');
     assert.equal(own.phase, 'computer');
     assert.equal(own.change.before, null);
+  });
+});
+
+// ---- Fix round 1 ----
+
+// Setup up to step 7's commit and its push, recorded, with step 7 not finished: the push failed.
+function stoppedAtPush(world) {
+  const { folder, settings } = world;
+  world.register();
+  const run = startRun({ folder, now: NOW });
+  const r = recorder(run.id);
+  r.key(6, settings, ['cleanupPeriodDays'], 30);
+  r.folder(3, path.join(folder, '.git'), { origin: `https://github.com/${REPO}.git`, branch: 'main' });
+  writeText(path.join(folder, '.git', 'refs', 'heads', 'main'), `${'b'.repeat(40)}\n`);
+  writeText(path.join(folder, '.claude', 'settings.json'), '{}\n');
+  r.key(7, path.join(folder, '.claude', 'settings.json'), ['extraKnownMarketplaces'], { wheelhouse: { ref: 'v1' } });
+  r.file(7, path.join(folder, 'CLAUDE.md'), '# Compact instructions\n');
+  const pin = r.add(7, { kind: 'process', target: 'claude plugin install superpowers@wheelhouse --scope project', before: null, after: { plugin: 'superpowers@wheelhouse', scope: 'project', folder } });
+  r.key(7, path.join(folder, '.claude', 'settings.json'), ['enabledPlugins', 'other@wheelhouse'], false);
+  writeText(path.join(folder, '.claude', 'settings.json'), `${JSON.stringify({ ...readJson(path.join(folder, '.claude', 'settings.json')), enabledPlugins: { ...readJson(path.join(folder, '.claude', 'settings.json')).enabledPlugins, 'superpowers@wheelhouse': true } }, null, 2)}\n`);
+  r.add(7, { kind: 'host', target: `${REPO} main`, before: { branch: 'main', sha: 'a'.repeat(40) }, after: { action: 'commit', branch: 'main', message: 'Set up Wheelhouse', files: [], folder } });
+  r.add(7, { kind: 'host', target: `${REPO} main`, before: { branch: 'main', sha: 'a'.repeat(40) }, after: { action: 'push', branch: 'main', sha: 'b'.repeat(40) } });
+  markStep(run.id, 7, 'failed', { now: NOW, reason: 'the setup commit could not be pushed' });
+  return { run, r, pin };
+}
+
+test('a push recorded but never made plans no pull request: setup\'s files and pin are put back here, and the commit kept (Review Focus 1)', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { pin } = stoppedAtPush(world);
+    const got = await plan(world);
+    assert.equal(got.changes.some((c) => c.put === 'pull-request' || c.put === 'in-pull-request'), false);
+    const files = of(got, 'files');
+    assert.ok(files.every((c) => c.put === 'reverse'));
+    assert.deepEqual(files.map((c) => (c.change.key ?? [path.basename(c.change.target)]).join('.')), ['enabledPlugins.other@wheelhouse', 'enabledPlugins.superpowers@wheelhouse', 'CLAUDE.md', 'extraKnownMarketplaces']);
+    // The pin is switched off by its key, as a json-key change reverseChange can put back.
+    const pinEntry = files.find((c) => c.ids[0] === pin.id);
+    assert.deepEqual(pinEntry.change.key, ['enabledPlugins', 'superpowers@wheelhouse']);
+    assert.ok(got.keep.some((k) => /setup's commit on main, never pushed/.test(k.what)));
+    assert.match(got.card.checks, /protection stays as it is/);
+    for (const c of files) assert.deepEqual(reverseChange(c.change), { put: true }, JSON.stringify(c.change.key));
+    assert.deepEqual(readJson(path.join(world.folder, '.claude', 'settings.json')), { enabledPlugins: {} });
+    assert.equal(fs.existsSync(path.join(world.folder, 'CLAUDE.md')), false);
+    assert.deepEqual(accounted(got), recordedIds());
+  });
+});
+
+test('a push counts as made once step 7 finished, recorded a later change, or the folder\'s copy of the branch holds it', async () => {
+  for (const shows of ['done', 'later', 'tracked']) {
+    await withHome(async () => {
+      const world = makeWorld();
+      const { run, r } = stoppedAtPush(world);
+      if (shows === 'done') markStep(run.id, 7, 'doneAt', { now: NOW });
+      if (shows === 'later') r.add(7, { kind: 'host', target: `${REPO} protection`, before: { on: false, available: true }, after: { action: 'protect', branch: 'main', on: true } });
+      if (shows === 'tracked') fs.writeFileSync(path.join(world.folder, '.git', 'packed-refs'), `# pack-refs with: peeled\n${'b'.repeat(40)} refs/remotes/origin/main\n`);
+      const got = await plan(world);
+      assert.ok(got.changes.some((c) => c.put === 'pull-request'), shows);
+      assert.ok(got.changes.some((c) => c.put === 'in-pull-request' && c.change.kind === 'process'), shows);
+    });
+  }
+});
+
+test('a commit recorded but never made is settled, not named as kept in the folder', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    writeText(path.join(world.folder, '.git', 'refs', 'heads', 'main'), `${'a'.repeat(40)}\n`);
+    const made = r.add(7, { kind: 'host', target: `${REPO} main`, before: { branch: 'main', sha: 'a'.repeat(40) }, after: { action: 'commit', branch: 'main', message: 'Set up Wheelhouse', files: [], folder: world.folder } });
+    const got = await plan(world);
+    assert.equal(got.keep.some((k) => /commit/.test(k.what)), false);
+    assert.deepEqual(got.done, [{ ids: [made.id], why: 'the commit was never made' }]);
+    // Made, then not pushed: kept, and named.
+    writeText(path.join(world.folder, '.git', 'refs', 'heads', 'main'), `${'b'.repeat(40)}\n`);
+    assert.ok((await plan(world)).keep.some((k) => /setup's commit on main, never pushed/.test(k.what)));
+  });
+});
+
+test('an uninstall cut short after putting back, before marking, finds those put back already, never changed since setup', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    fullSetup(world);
+    const first = await plan(world);
+    const reverse = first.changes.filter((c) => c.put === 'reverse');
+    for (const c of reverse) reverseChange(c.change);
+    // The account variable unset too, and none of it marked.
+    const next = await plan(world, { run: launchEnv({}) });
+    assert.equal(next.changes.some((c) => c.put === 'reverse' || c.put === 'unset-env'), false);
+    assert.equal(next.keep.some((k) => k.why === 'changed since setup'), false);
+    assert.doesNotMatch(next.card.what, /Left as you changed them/);
+    const already = next.done.filter((d) => d.why === 'already put back').flatMap((d) => d.ids).sort();
+    const expected = [...reverse.flatMap((c) => c.ids), ...first.changes.filter((c) => c.put === 'unset-env').flatMap((c) => c.ids)].sort();
+    assert.deepEqual(already, expected);
+    assert.deepEqual(accounted(next), recordedIds());
+  });
+});
+
+test('a key retried twice, then changed by the director, is kept and named, never put back (Review Focus 2)', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    const a = r.key(6, world.settings, ['cleanupPeriodDays'], 30);
+    const b = r.key(6, world.settings, ['cleanupPeriodDays'], 30);
+    writeText(world.settings, `${JSON.stringify({ ...readJson(world.settings), cleanupPeriodDays: 14 }, null, 2)}\n`);
+    const got = await plan(world);
+    assert.equal(got.changes.some((c) => c.change?.key?.[0] === 'cleanupPeriodDays'), false);
+    const kept = got.keep.find((k) => k.brief === 'cleanupPeriodDays');
+    assert.deepEqual(kept.ids.sort(), [a.id, b.id].sort());
+    assert.match(got.card.what, /cleanupPeriodDays/);
+  });
+});
+
+test('a value the director changed between two retries: the newer link is put back, the older one kept and named', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    const first = r.key(6, world.settings, ['cleanupPeriodDays'], 30);
+    writeText(world.settings, `${JSON.stringify({ ...readJson(world.settings), cleanupPeriodDays: 14 }, null, 2)}\n`);
+    const second = r.key(6, world.settings, ['cleanupPeriodDays'], 30);
+    assert.equal(second.before, 14);
+    const got = await plan(world);
+    assert.deepEqual(got.changes.filter((c) => c.change?.key?.[0] === 'cleanupPeriodDays').map((c) => c.ids[0]), [second.id]);
+    assert.deepEqual(got.keep.find((k) => k.brief === 'cleanupPeriodDays').ids, [first.id]);
+    assert.match(got.card.what, /cleanupPeriodDays/);
+    reverseChange(second);
+    assert.equal(readJson(world.settings).cleanupPeriodDays, 14, 'the director\'s value stays');
+  });
+});
+
+test('the own app the director recorded since setup is kept and named; setup\'s, or one never confirmed, is put back', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    const run = startRun({ folder: world.folder, now: NOW });
+    const setupApp = { clientId: 'Iv1.setupapp01', slug: 'mine', owner: 'o' };
+    recorder(run.id).add(3, { kind: 'host', target: PROFILE_TARGET, before: null, after: setupApp });
+    const views = (value) => writeText(path.join(wheelhouseHome(), 'profile-views', 'settings.json'), JSON.stringify({ 'own-github-app': { value } }));
+    views(setupApp);
+    assert.ok((await plan(world)).changes.some((c) => c.put === 'put-back-own-app'));
+    views({ clientId: 'Iv1.theirapp01', slug: 'theirs', owner: 'o' });
+    const got = await plan(world);
+    assert.equal(got.changes.some((c) => c.put === 'put-back-own-app'), false);
+    assert.equal(got.keep.find((k) => k.brief === 'own-github-app').why, 'changed since setup');
+  });
+});
+
+test('a folder half set up elsewhere keeps this computer\'s things: the last project counts open setup runs (ruling R114)', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    fullSetup(world);
+    const half = fs.realpathSync.native(tempFolder('wh-half '));
+    const other = startRun({ folder: half, now: NOW });
+    const got = await plan(world);
+    assert.equal(got.last, false);
+    assert.equal(got.changes.some((c) => c.what === 'helper' || c.put === 'delete-key' || c.change?.step === 6), false);
+    closeRun(other.id, { at: NOW, by: 'uninstall' });
+    assert.equal((await plan(world)).last, true);
+  });
+});
+
+test('nothing recorded is left out of the plan: a folder setup didn\'t make, and a variable that held setup\'s value before, are settled', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    const theirs = path.join(world.folder, 'theirs');
+    fs.mkdirSync(theirs);
+    r.add(3, { kind: 'folder', target: theirs, before: {}, after: { made: false } });
+    r.add(6, { kind: 'env', target: 'X_VAR', before: '1', after: '1', where: 'launchctl' });
+    const got = await plan(world);
+    assert.deepEqual(got.done.map((d) => d.why).sort(), ['it held this before setup', 'not made by setup']);
+    assert.deepEqual(accounted(got), recordedIds());
   });
 });

@@ -14,7 +14,7 @@
 // here, never from a request.
 import fs from 'node:fs';
 import path from 'node:path';
-import { stateDir } from './paths.js';
+import { stateDir, projectsDir } from './paths.js';
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
@@ -83,7 +83,7 @@ export function readProject(project) {
 export function registeredProjects() {
   let names;
   try {
-    names = fs.readdirSync(path.join(stateDir('x'), '..', '..'));
+    names = fs.readdirSync(projectsDir());
   } catch {
     return [];
   }
@@ -132,7 +132,7 @@ export function projectForFolder(folder) {
   const inside = keyOf(target);
   let names;
   try {
-    names = fs.readdirSync(path.join(stateDir('x'), '..', '..'));
+    names = fs.readdirSync(projectsDir());
   } catch {
     return null;
   }

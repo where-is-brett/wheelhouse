@@ -488,6 +488,33 @@ export function reverseChange(change) {
   return reverseOrSay(change, true);
 }
 
+// What a `json-key` or `file` change's target holds now, changing nothing: { held: false } when the
+// key or file is not there, { held: true, value } when it is (the key's value, or the file's text),
+// or { why } when it can't be read as setup wrote it (a file no longer a JSON object reads as changed
+// since setup). Uninstall's plan walks a chain of retries on it (ruling R85).
+export function heldNow(change) {
+  checkChange(change, { needStep: false });
+  if (change.kind === 'json-key') {
+    checkKey(change.key);
+    let read;
+    try {
+      read = readObjectFile(change.target);
+    } catch (error) {
+      return error.notJson ? { why: CHANGED.why } : { why: unreadable(change.target, error).why };
+    }
+    const at = getAt(read.data, change.key);
+    return at.found ? { held: true, value: at.value } : { held: false };
+  }
+  if (change.kind === 'file') {
+    try {
+      return { held: true, value: fs.readFileSync(change.target, 'utf8') };
+    } catch (error) {
+      return error.code === 'ENOENT' ? { held: false } : { why: unreadable(change.target, error).why };
+    }
+  }
+  throw new Error(`Change ${change.id} is not a key or a file`);
+}
+
 // What reverseChange would give for the change as things stand, changing nothing: uninstall's
 // plan reads it to list a change as put back, or as left and why (Review Focus 2).
 export function wouldReverse(change) {

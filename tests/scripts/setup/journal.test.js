@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  addChanges, applyJsonKey, closeRun, findRun, journalFile, markPutBack, markStep, readJournal, reverseChange, startRun, stepTimes, wouldReverse,
+  addChanges, applyJsonKey, closeRun, findRun, journalFile, markPutBack, markStep, readJournal, reverseChange, startRun, stepTimes, wouldReverse, heldNow,
 } from '../../../scripts/setup/journal.js';
 import {
   CLICK_FRESH_MS, NODE_FLOOR, PUSH_TEST_WAIT_MS, RETENTION_DAYS, STEP_TIMEOUT_MS, TARGET_MINUTES,
@@ -547,5 +547,24 @@ test('wouldReverse says what reverseChange would, and changes nothing', () => {
     for (const c of [key, note, folder]) assert.deepEqual(wouldReverse(c), { put: false, why: 'changed since setup' });
     assert.deepEqual(wouldReverse({ ...folder, before: {} }), { put: false, why: 'not made by setup' });
     assert.deepEqual(wouldReverse({ id: 'e', kind: 'env', target: 'X', before: null, after: '1' }), { put: false, why: 'put back by its own step' });
+  });
+});
+
+test('heldNow reads what a key or a file holds now, changing nothing', () => {
+  withHome(() => {
+    const dir = tempFolder('wh-journal-');
+    const file = path.join(dir, 'settings.json');
+    fs.writeFileSync(file, '{"a":{"b":null}}\n');
+    const key = (k) => ({ id: 'k', kind: 'json-key', target: file, key: k, before: null, after: 1 });
+    assert.deepEqual(heldNow(key(['a', 'b'])), { held: true, value: null });
+    assert.deepEqual(heldNow(key(['a', 'c'])), { held: false });
+    const note = { id: 'n', kind: 'file', target: path.join(dir, 'note.txt'), before: null, after: 'x' };
+    assert.deepEqual(heldNow(note), { held: false });
+    fs.writeFileSync(note.target, 'x');
+    assert.deepEqual(heldNow(note), { held: true, value: 'x' });
+    fs.writeFileSync(file, 'not json');
+    assert.deepEqual(heldNow(key(['a'])), { why: 'changed since setup' });
+    assert.equal(readText(file), 'not json');
+    assert.throws(() => heldNow({ id: 'e', kind: 'env', target: 'X', before: null, after: '1' }), /not a key or a file/);
   });
 });
