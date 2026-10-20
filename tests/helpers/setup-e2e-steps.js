@@ -1,0 +1,82 @@
+// tests/helpers/setup-e2e-steps.js
+// Setup's ten real steps for the end-to-end tests (tests/e2e/setup.test.js), loaded by a real helper
+// as its setup steps module. Each step is made afresh on every call from the world of the computer
+// whose Wheelhouse home is in use (WHEELHOUSE_HOME), which the test keeps on
+// globalThis.wheelhouseSetupE2e, a Map from that home to { run, hostUrl, config, manifest,
+// managedDir, adapterFor, switchOn, protectionStatus, readProtection, checkPins, toolsRun, fetch } (tests/helpers/
+// setup-e2e.js, makeComputer). `run` stands in for `gh` and `claude` and passes git to the real git,
+// which reaches only bare repositories in temporary folders. Step 2 runs on a fake computer with every
+// tool in but gh, which it fetches from a stand-in of gh's release page (`toolsRun`, `fetch`); step 6
+// on one where every tool is in (`quietRun`, as setup-quiet-steps.js has it). Nothing real is installed,
+// signed in to, fetched or pushed beyond those folders.
+import os from 'node:os';
+import path from 'node:path';
+import { wheelhouseHome, helperAddress } from '../../scripts/lib/paths.js';
+import { SETUP_TITLES } from '../../scripts/state/card-lines.js';
+import { installStep } from '../../scripts/setup/install-step.js';
+import { toolsStep } from '../../scripts/setup/tools.js';
+import { hostStep } from '../../scripts/setup/host.js';
+import { questionsStep } from '../../scripts/setup/questions.js';
+import { rulesStep } from '../../scripts/setup/rules.js';
+import { computerStep, lockedStep } from '../../scripts/setup/computer.js';
+import { projectFilesStep } from '../../scripts/setup/project-files.js';
+import { notifyStep } from '../../scripts/setup/notify.js';
+import { healthStep } from '../../scripts/setup/health.js';
+
+const world = () => {
+  const found = globalThis.wheelhouseSetupE2e?.get(wheelhouseHome());
+  if (!found) throw new Error('no end-to-end world for this Wheelhouse home');
+  return found;
+};
+// The fake computer: every tool on the path, at a version good enough.
+async function quietRun(file, args = []) {
+  const name = file.split(/[\\/]/).pop();
+  const said = (stdout, code = 0) => ({ code, stdout, stderr: '' });
+  if (name === 'which' || name === 'where') return said(`/usr/bin/${args[0]}\n`);
+  if (name === 'xcode-select' && args[0] === '-p') return said('/Library/Developer/CommandLineTools\n');
+  if (args[0] === '--version') return said(name === 'node' ? 'v22.3.0\n' : `${name} version 2.40.0\n`);
+  return said('');
+}
+const nothing = async () => { throw new Error('nothing is run here'); };
+const noApp = path.join(os.tmpdir(), 'wh-no-such-app.json');
+const git = async () => ({ ok: true, path: 'git' });
+
+const MAKE = {
+  1: () => installStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
+  2: () => toolsStep({ run: world().toolsRun, fetch: world().fetch, env: {} }),
+  3: () => hostStep({
+    run: world().run, fetch: nothing, appFile: noApp, hostUrl: world().hostUrl, findGit: git, gitlab: nothing,
+    open: async () => {}, sleep: async () => {},
+  }),
+  4: () => questionsStep(),
+  5: () => rulesStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
+  6: () => computerStep({ run: quietRun, env: { CLAUDE_CONFIG_DIR: world().config }, manifest: { claudeCode: { floor: '2.1.100' } }, port: 14318 }),
+  7: () => projectFilesStep({
+    run: world().run, findGit: git, gitlab: nothing, claude: () => ({ kind: 'direct', file: 'claude' }),
+    manifest: () => world().manifest, claudeHome: () => world().config, switchOn: world().switchOn, protectionStatus: world().protectionStatus,
+    address: () => helperAddress(), node: process.execPath,
+  }),
+  8: () => lockedStep({ run: nothing, dir: world().managedDir, mdmPlist: path.join(world().managedDir, 'no-such-profile.plist') }),
+  9: () => notifyStep(),
+  10: () => healthStep({
+    run: world().run, adapterFor: world().adapterFor, findGit: git,
+    checkPins: world().checkPins, readProtection: world().readProtection,
+  }),
+};
+
+// A step made afresh from the world on each call, with its number, title, `long`, `after` and
+// `asksDuring` as the real step has them.
+const fresh = (n) => {
+  const made = MAKE[n]();
+  return {
+    n,
+    title: made.title,
+    ...(made.long ? { long: true } : {}),
+    ...(made.after ? { after: made.after } : {}),
+    ...(made.asksDuring ? { asksDuring: made.asksDuring } : {}),
+    plan: (ctx) => MAKE[n]().plan(ctx),
+    apply: (ctx, changes) => MAKE[n]().apply(ctx, changes),
+  };
+};
+
+export const STEPS = Object.keys(SETUP_TITLES).map(Number).sort((a, b) => a - b).map(fresh);
