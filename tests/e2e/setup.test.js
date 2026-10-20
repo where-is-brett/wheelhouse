@@ -44,6 +44,10 @@ import { run as realRun, withoutGitVars } from '../../scripts/lib/run.js';
 import { g } from '../helpers/git-fixture.js';
 import { transcript, typed } from '../helpers/setup-answers.js';
 import { tempFolder } from '../helpers/homes.js';
+import { waitLongerOnTheHelper } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 // The session start hook finds the helper at the director's own named pipe on Windows, which a test
 // must never reach (as tests/e2e/mod.test.js).

@@ -44,6 +44,10 @@ import { standInTools } from '../helpers/host-stand-ins.js';
 import { writeFiles } from '../helpers/lineage.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed } from '../helpers/sandbox-wall.js';
+import { waitLongerOnTheHelper, until as waitUntil, WAIT_MS } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 const P = 'o__p';
 const T0 = Date.parse('2026-10-19T09:00:00.000Z');
@@ -61,7 +65,7 @@ const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomain
 // A folder that is never created, so no managed copy of the hooks is found.
 const NO_MANAGED = path.join(tempFolder('wh-no-managed-'), 'absent');
 // The hook's own limit is 2 seconds; a test machine running every file at once is given longer.
-const HOOK_WAIT_MS = 10000;
+const HOOK_WAIT_MS = WAIT_MS;
 const short = (sha) => sha.slice(0, 7);
 
 // --- The sandbox ---
@@ -332,13 +336,7 @@ const keptFor = (sha) => {
   }
 };
 
-async function until(check, what) {
-  const end = Date.now() + 20 * SECOND;
-  while (!(await check())) {
-    if (Date.now() > end) throw new Error(`waited too long for ${what}`);
-    await new Promise((resolve) => { setTimeout(resolve, 25); });
-  }
-}
+const until = (check, what) => waitUntil(check, { what });
 
 // --- The watcher ---
 

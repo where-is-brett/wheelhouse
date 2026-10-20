@@ -489,10 +489,16 @@ test('a failure adds nothing and lets the prompt through', async () => {
 
     // Past its time, it adds nothing, and what finishes later marks nothing.
     const raised = [];
-    const slow = (options) => new Promise((resolve) => { setTimeout(() => resolve(import('../../../scripts/board/inputs.js').then((m) => m.loadBoardInputs(options))), 200); });
+    let finished;
+    const slow = (options) => {
+      finished = new Promise((resolve) => { setTimeout(() => resolve(import('../../../scripts/board/inputs.js').then((m) => m.loadBoardInputs(options))), 200); });
+      return finished;
+    };
     const late = '2026-10-19T18:00:00.000Z';
     assert.equal(await run(repo, 'Hello', late, { load: slow, waitMs: 50, markRaised: (ids) => raised.push(...ids) }), undefined);
-    await new Promise((resolve) => { setTimeout(resolve, 400); });
+    // Once the late reading has finished, and a while for anything after it.
+    await finished;
+    await new Promise((resolve) => { setTimeout(resolve, 200); });
     assert.deepEqual(readSeen(P, { now: at(late) }), { promptAt: late, briefedAt: '2026-10-19T08:00:00.000Z', weeklyAt: null });
     assert.deepEqual(raised, []);
 

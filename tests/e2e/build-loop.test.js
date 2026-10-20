@@ -51,6 +51,10 @@ import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { lineageFixture, writeFiles } from '../helpers/lineage.js';
 import { writeSessionProvenance } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed, sandboxHolds as wallHolds } from '../helpers/sandbox-wall.js';
+import { waitLongerOnTheHelper } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 const P = 'o__p';
 const T0 = Date.parse('2026-10-19T09:00:00.000Z');

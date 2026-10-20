@@ -68,6 +68,7 @@ import { CARD } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { helperGrace } from '../lib/helper-grace.js';
 
 export const WAIT_MS = 2000;
 // How long learning may take on a visit's first prompt; with WAIT_MS it stays well inside the hook's 10 s.
@@ -304,7 +305,7 @@ async function learn({ project, cwd, client, at, boardAsks }) {
   const profile = { events: attempt(() => listEvents(profileDir(), { report: () => {} }), []), settings, unconfirmed };
   const enrolled = readEnrolled();
   const words = wordsOf(project, settings, null);
-  const asker = client ?? helperClient({ timeout: LEARN_WAIT_MS });
+  const asker = client ?? helperClient({ timeout: LEARN_WAIT_MS + helperGrace() });
   const tried = async (write) => {
     try {
       await write();
@@ -343,7 +344,7 @@ export function reviewOf(project, settings, at) {
 
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
 async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve }) {
-  const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS });
+  const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS + helperGrace() });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
   const room = CONTEXT_CHARS - HEADINGS[want].length - 2 - reserve;
@@ -370,7 +371,7 @@ async function build(want, { project, cwd, at, client, load, command, since, wee
 export async function decide(input, deps = {}) {
   try {
     const {
-      dir, now = () => new Date(), env = process.env, client, load = loadBoardInputs, waitMs = WAIT_MS, learnWaitMs = LEARN_WAIT_MS,
+      dir, now = () => new Date(), env = process.env, client, load = loadBoardInputs, waitMs = WAIT_MS + helperGrace(), learnWaitMs = LEARN_WAIT_MS + helperGrace(),
       briefingModel = realBriefingModel, markRaised = realMarkRaised,
     } = deps;
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;

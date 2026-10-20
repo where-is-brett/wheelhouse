@@ -9,6 +9,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { runAndExit, projectOf, answer, readTailEntries } from './kit.js';
 import { keep, taken, withinBudget, BUDGET_MS } from './pending.js';
+import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { stateDir } from '../lib/paths.js';
 import { makeEvent } from '../state/events.js';
@@ -92,7 +93,7 @@ function writeCount(file, count) {
   }
 }
 
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS } = {}) {
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace() } = {}) {
   const role = ROLES[input.agent_type];
   if (role === undefined) return undefined;
   const found = find(input.cwd, { dir });

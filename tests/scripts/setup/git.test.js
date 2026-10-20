@@ -31,7 +31,9 @@ async function repository() {
   const bare = path.join(root, 'repo.git');
   const plain = (args, cwd = root, env = {}) => run('git', args, { cwd, env: { GIT_TERMINAL_PROMPT: '0', ...env } });
   await plain(['init', '-q', '--bare', bare]);
-  const commit = (await plain(['-c', 'user.name=T', '-c', 'user.email=t@invalid', 'commit-tree', EMPTY_TREE, '-m', 'first'], bare)).stdout.trim();
+  // A commit of its own, named by its folder: two made alike in the same second would be one
+  // commit, and a test could not tell which repository git read.
+  const commit = (await plain(['-c', 'user.name=T', '-c', 'user.email=t@invalid', 'commit-tree', EMPTY_TREE, '-m', `first, in ${path.basename(root)}`], bare)).stdout.trim();
   await plain(['update-ref', 'refs/heads/main', commit], bare);
   return { root, bare, commit, mark: path.join(root, 'hook-ran'), plain };
 }
@@ -239,7 +241,10 @@ test('a remote named by setup\'s own address sends plain git\'s ls-remote and pu
     const t = await workTree();
     await t.plain(['config', `remote.${address}.url`, planted.bare]);
     const seen = await t.plain(['ls-remote', address, 'refs/heads/main']);
-    assert.match(seen.stdout, new RegExp(planted.commit), `${address}: plain git reads the planted remote's address`);
+    // Plain git reads the planted remote's address, unless it will not take the address as a
+    // remote's name: git 2.54 will not take one beginning with "/", says so, and reads the path itself.
+    const notAName = /remote shorthand cannot begin with '\/'/.test(seen.stderr);
+    assert.match(seen.stdout, new RegExp(notAName ? named.commit : planted.commit), `${address}: plain git reads the ${notAName ? 'address itself' : 'planted remote\'s address'}`);
     const counted = counting();
     const git = setupGit({ run: counted, env: reaching(setupGitEnv({ host: 'github' }), address), cwd: t.work, workTree: t.work });
     await assert.rejects(git(['push', '-q', address, 'HEAD:refs/heads/setup']), { message: unlistedSettingsLine([`remote.${address}.url`]) }, address);

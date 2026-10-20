@@ -19,6 +19,7 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
 import { rulesCard as rulesInput } from '../../../scripts/setup/rules.js';
+import { beforeTimer } from '../../helpers/until.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -375,9 +376,8 @@ test('a signed record is written down before it is sent and stays when the helpe
     const c = fake();
     c.state.record = () => new Promise(() => {});
     c.state.write = () => new Promise(() => {});
-    const started = Date.now();
-    await decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(c), budget: 150 });
-    assert.ok(Date.now() - started < 2000);
+    const decided = await beforeTimer(() => decide(input({ [LIFT_STOP]: 'Lift STOP' }), { ...deps(c), budget: 150 }), 2000);
+    assert.equal(decided.inTime, true, 'the budget cut the waiting short');
     const folder = path.join(home, 'projects', P, 'pending');
     const kept = fs.readdirSync(folder).map((f) => JSON.parse(fs.readFileSync(path.join(folder, f), 'utf8')));
     assert.deepEqual(kept.map((k) => k.route).sort(), ['record', 'write']);

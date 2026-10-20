@@ -31,6 +31,10 @@ import { as, shortHome, testAddress } from '../helpers/homes.js';
 import { startHttpHost } from '../helpers/http-host.js';
 import { hostKeyEnv } from '../helpers/host-key.js';
 import { matchingBody } from '../helpers/provenance.js';
+import { waitLongerOnTheHelper } from '../helpers/until.js';
+
+// These tests run the real helper and check what reaches it, however loaded the computer is.
+waitLongerOnTheHelper();
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();

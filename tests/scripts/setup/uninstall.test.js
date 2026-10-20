@@ -44,6 +44,7 @@ import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
 import { EXCLUDE_LINE, WHEELHOUSE_LINE } from '../../../scripts/setup/project-files.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
+import { until } from '../../helpers/until.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 
 const NOW = () => new Date('2026-10-20T03:00:00.000Z');
@@ -1513,19 +1514,16 @@ test('through the helper, uninstall runs in its own process, and the helper stop
         assert.equal(shown.last, true);
         removeIt('Shop', shown.hash, new Date(Date.now() - 60 * 1000));
         assert.deepEqual(await client.setup.uninstall.apply({ folder, hash: shown.hash }), { ok: true, started: true });
-        let got = null;
-        for (let i = 0; i < 300; i++) {
-          got = await client.setup.uninstall.status({ folder });
-          if (got.uninstall?.state !== 'running') break;
-          await new Promise((resolve) => { setTimeout(resolve, 100); });
-        }
+        const got = await until(async () => {
+          const now = await client.setup.uninstall.status({ folder });
+          return now.uninstall?.state === 'running' ? null : now;
+        }, { what: 'the uninstall to end' });
         assert.equal(got.ok, true, got.refused);
         assert.equal(got.uninstall.state, 'done', got.lines.join('\n'));
         assert.equal(got.helperStops, true);
         assert.ok(got.lines.includes('The usage receiver: not running.'));
         assert.ok(got.lines.includes(`${PLUGIN_LINE}.`));
-        for (let i = 0; i < 50 && !stopped; i++) await new Promise((resolve) => { setTimeout(resolve, 20); });
-        assert.equal(stopped, true);
+        assert.equal(await until(() => stopped, { what: 'the helper to stop' }), true);
         assert.equal((await client.health()).ok, false, 'the helper no longer answers');
         // The answer is kept: the record says the helper was stopped for it.
         assert.equal(typeof readProgress(folder).helperStoppedAt, 'string');
@@ -1554,7 +1552,7 @@ test('a finished last uninstall nobody asks about stops the helper a while after
     removeIt('Shop', shown.hash);
     await routes['/setup/uninstall/apply']({ folder, hash: shown.hash });
     assert.deepEqual(await Promise.all(children), [0]);
-    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    await until(() => stops > 0, { what: 'the helper to be stopped' });
     assert.equal(stops, 1);
     // Status afterwards still gives its end, and asks no second stop.
     const got = await routes['/setup/uninstall/status']({ folder });
