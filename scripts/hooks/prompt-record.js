@@ -19,9 +19,9 @@
 // 5: the product's glossary entry and phase, the rules found; rulings R35, R59) earns those records
 // first, signed and kept pending as every signed record is (scripts/lib/setup-writes.js), and is
 // kept as a setup-answer only once they are, so a step never settles on an answer whose records
-// were not made. A typed answer the engine won't take (rulings R125, R132) is kept, but records and
-// claims nothing (ruling R137), judged by the engine's own rule (scripts/lib/setup-clicks.js). In
-// a folder with no project record such an answer is kept nowhere.
+// were not made; in a folder with no project record an answer that records something is kept
+// nowhere. A typed answer the engine won't take (rulings R125, R132) is kept, in any folder, but
+// records and claims nothing (ruling R137), judged by the engine's own rule (scripts/lib/setup-clicks.js).
 // The baseline card reads the private note's figures back (scripts/measures/baseline.js): in any
 // folder, a Record these on it becomes a signed baseline action kept in
 // <wheelhouseHome()>/measures/clicks/, naming only the hash of the figures, and a Not now on it

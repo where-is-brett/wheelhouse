@@ -12,18 +12,12 @@ import { wheelhouseHome } from '../../scripts/lib/paths.js';
 import { toolsStep } from '../../scripts/setup/tools.js';
 import { computerStep } from '../../scripts/setup/computer.js';
 import { STEPS as TEST_STEPS } from './setup-steps.js';
+import { quietRun } from './quiet-run.js';
 
 const world = () => JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'quiet-world.json'), 'utf8'));
 
-// The fake computer: every tool on the path, at a version good enough.
-export async function quietRun(file, args = []) {
-  const name = file.split(/[\\/]/).pop();
-  const answer = (stdout, code = 0) => ({ code, stdout, stderr: '' });
-  if (name === 'which' || name === 'where') return answer(`/usr/bin/${args[0]}\n`);
-  if (name === 'xcode-select' && args[0] === '-p') return answer('/Library/Developer/CommandLineTools\n');
-  if (args[0] === '--version') return answer(name === 'node' ? 'v22.3.0\n' : `${name} version 2.40.0\n`);
-  return answer('');
-}
+// The fake computer: every tool on the path, at a version good enough (quiet-run.js).
+export { quietRun };
 
 const tools = () => toolsStep({ run: quietRun, fetch: async () => { throw new Error('no fetch in this test'); }, pluginRoot: world().pluginRoot, env: {} });
 const computer = () => {

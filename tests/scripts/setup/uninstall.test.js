@@ -43,6 +43,7 @@ import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
 import { EXCLUDE_LINE, WHEELHOUSE_LINE } from '../../../scripts/setup/project-files.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
+import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 
 const NOW = () => new Date('2026-10-20T03:00:00.000Z');
 const SLUG = 'o__Cafe-Menu';
@@ -1895,6 +1896,63 @@ test('the trusted-keys list goes before the signing key: a failed removal of the
     host.cleanup();
   }
 });
+
+// Ruling R140 (b): an uninstall cut short anywhere in its last phase, after the signing key has
+// gone (at this computer's id, at each emptied folder, or at the run's close), finishes on resume.
+// The next session start in the folder, still being set up while its run is open, makes a key (and
+// an id, when that went too) and enrols it, and the director's click on the new card is signed by it.
+const CUT_POINTS = {
+  'this computer\'s id': { rm: () => path.join(wheelhouseHome(), 'computer.json') },
+  'the keys folder': { rmdir: () => keysDir() },
+  'the projects folder': { rmdir: () => path.join(wheelhouseHome(), 'projects') },
+  'the tools folder': { rmdir: () => path.dirname(toolFolder('gh')) },
+  'the run\'s close': { close: true },
+};
+for (const [where, cut] of Object.entries(CUT_POINTS)) {
+  test(`an uninstall cut short in its last phase at ${where} finishes on resume, with the key the next session start makes (ruling R140)`, async (t) => {
+    const host = await standIn();
+    try {
+      await withHome(async () => {
+        const { world, run } = await applyWorld({ host });
+        const f = fakes(world);
+        const busy = (target) => Object.assign(new Error(`EBUSY: resource busy or locked, '${target}'`), { code: 'EBUSY' });
+        const { rmSync, rmdirSync, renameSync } = fs;
+        const mocks = [];
+        if (cut.rm) mocks.push(t.mock.method(fs, 'rmSync', (target, ...rest) => { if (target === cut.rm()) throw busy(target); return rmSync(target, ...rest); }));
+        if (cut.rmdir) mocks.push(t.mock.method(fs, 'rmdirSync', (target, ...rest) => { if (target === cut.rmdir()) throw busy(target); return rmdirSync(target, ...rest); }));
+        if (cut.close) {
+          mocks.push(t.mock.method(fs, 'renameSync', (from, to, ...rest) => {
+            if (to === journalFile() && fs.readFileSync(from, 'utf8').includes('"closedBy"')) throw busy(to);
+            return renameSync(from, to, ...rest);
+          }));
+        }
+        const first = await applyPlan(world, f);
+        for (const m of mocks) m.mock.restore();
+        assert.equal(first.done.ok, false, where);
+        assert.match(first.done.refused, /EBUSY/);
+        assert.equal(fs.existsSync(signingKeyFile()), false, 'cut short after the signing key went');
+        assert.equal(readJournal().runs.find((x) => x.id === run.id).closedAt, undefined, 'the run still open');
+
+        // The next session start in the folder: it is still being set up, so a key is made and enrolled.
+        await sessionStart({ cwd: world.folder, session_id: 's1', hook_event_name: 'SessionStart' }, {
+          client: { health: async () => ({ ok: true }) }, spawn: () => { throw new Error('nothing is started'); }, dir: tempFolder('wh-managed-'),
+        });
+        assert.ok(fs.existsSync(signingKeyFile()), 'a new key');
+        const again = await plan(world, { run: f.run });
+        const click = removeIt(again.card.target.project, again.hash);
+        assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id], 'signed with the new key, and counted');
+        const { done } = await applyPlan(world, f);
+        assert.equal(done.ok, true, done.refused);
+        assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall');
+        for (const p of [signingKeyFile(), enrolledFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]) {
+          assert.equal(fs.existsSync(p), false, p);
+        }
+      });
+    } finally {
+      host.cleanup();
+    }
+  });
+}
 
 // A computer that joined the project another computer set up (step 3's join answer): registered,
 // with the app's keys, this computer's enrolment published in the profile, its own key trusted.

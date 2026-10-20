@@ -218,3 +218,23 @@ test('a run uninstall closed is never carried on: status says setup hasn\'t star
     assert.match((await routes['/setup/status']({ folder })).lines.join('\n'), /card shown at/);
   }, { done: [1, 2, 3], joining: false });
 });
+
+// Ruling R140 (a): setup run again in a registered folder whose run finished never opens a new run
+// there, so the session start's waiver for kits not yet installed (R136) can't arise in a project
+// setup has finished: every step's plan and apply is refused as done, and the folder is not being set up.
+test('a registered folder whose setup run finished is never given a new run: every plan and apply is refused as done (ruling R140)', async () => {
+  await withJoining(async ({ folder, run, routes }) => {
+    writeProject('o__Cafe-Menu', { folder: fs.realpathSync.native(folder), remoteUrl: 'https://github.com/o/Cafe-Menu.git', host: 'github', repo: 'o/Cafe-Menu', connection: {} });
+    addChanges(run.id, [{ ...GREEN, id: newId('chg') }]);
+    assert.equal(beingSetUp(folder), null, 'finished: not being set up');
+    for (let n = 1; n <= 10; n += 1) {
+      await assert.rejects(routes['/setup/plan']({ folder, step: n }), /is already done/, `plan of step ${n}`);
+      await assert.rejects(routes['/setup/apply']({ folder, step: n, hash: 'a'.repeat(64) }), /is already done/, `apply of step ${n}`);
+    }
+    const status = await routes['/setup/status']({ folder });
+    assert.equal(status.next, null);
+    assert.equal(status.ask, null);
+    assert.deepEqual(readJournal().runs.map((r) => r.id), [run.id], 'no new run');
+    assert.equal(beingSetUp(folder), null);
+  }, { done: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], joining: false });
+});

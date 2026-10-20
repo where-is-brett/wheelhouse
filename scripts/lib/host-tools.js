@@ -10,9 +10,12 @@ import { wheelhouseHome } from './paths.js';
 export const HOST_TOOLS = ['gh', 'glab'];
 
 // The folder setup keeps a fetched tool in: <wheelhouseHome()>/tools/<tool>.
+// Wheelhouse's folder of fetched host tools.
+export const toolsDir = () => path.join(wheelhouseHome(), 'tools');
+
 export function toolFolder(tool) {
   if (!HOST_TOOLS.includes(tool)) throw new Error(`There is no host tool named ${tool}`);
-  return path.join(wheelhouseHome(), 'tools', tool);
+  return path.join(toolsDir(), tool);
 }
 
 // The fetched tool's program: <toolFolder(tool)>/bin/<tool>, with .exe on Windows.

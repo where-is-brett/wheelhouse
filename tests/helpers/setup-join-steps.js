@@ -4,7 +4,7 @@
 // puts on globalThis.wheelhouseJoiningWorld before the routes load this module:
 //   { run, hostUrl, pluginRoot, config, claudeHome, manifest, managedDir, address }
 // `run` stands in for `gh`, `claude` and git (git runs for real against bare remotes in temporary
-// folders); step 2 and step 6 run on the fake computer where every tool is in (setup-quiet-steps.js).
+// folders); step 2 and step 6 run on the fake computer where every tool is in (quiet-run.js).
 // Steps 4, 5 and 10, which a joining run never has, are the engine tests' own.
 import path from 'node:path';
 import os from 'node:os';
@@ -14,7 +14,7 @@ import { hostStep } from '../../scripts/setup/host.js';
 import { computerStep, lockedStep } from '../../scripts/setup/computer.js';
 import { projectFilesStep } from '../../scripts/setup/project-files.js';
 import { notifyStep } from '../../scripts/setup/notify.js';
-import { quietRun } from './setup-quiet-steps.js';
+import { quietRun } from './quiet-run.js';
 import { STEPS as TEST_STEPS } from './setup-steps.js';
 
 const world = () => globalThis.wheelhouseJoiningWorld;

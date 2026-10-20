@@ -8,8 +8,8 @@
 // the card check; every click and typed answer is the prompt record's decide, as Claude Code calls
 // it after AskUserQuestion, and every session start the session start hook's. Nothing real is
 // installed, signed in to, fetched or pushed beyond the scratch folders: see
-// tests/helpers/setup-e2e.js for what stands in for what. Two tests are skipped for engine bugs this
-// file found, each named where it is skipped.
+// tests/helpers/setup-e2e.js for what stands in for what. The tests on step 4's resume and on step 4's
+// first card found engine bugs (rulings R136, R137), named where they stand.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -32,6 +32,7 @@ import { UNINSTALL_BRANCH } from '../../scripts/setup/uninstall-run.js';
 import { PLUGIN_LINE } from '../../scripts/setup/uninstall.js';
 import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
 import { listEvents, eventPath } from '../../scripts/state/events.js';
+import { readJournal } from '../../scripts/setup/journal.js';
 import { healthGreen, firstUnfinished, runClosed, stepsFor, joinedRepo, SETUP_STEPS, JOINING_STEPS } from '../../scripts/lib/setup-run.js';
 import { clicksDir, usedDir } from '../../scripts/lib/setup-clicks.js';
 import { readEnrolled, ownKey, verify } from '../../scripts/state/signing.js';
@@ -150,6 +151,10 @@ test('a new product: every step\'s card, its click, and a green board at the end
     // Once setup is finished, the folder is a project like any other: the session start says no
     // more about setup.
     assert.ok(!(await a.sessionStart()).some((l) => /setup/i.test(l) && /Follow wheelhouse:setup/.test(l)));
+    // Setup followed again there finds every step done and opens no run of its own (ruling R140).
+    assert.equal((await a.cli('resume')).plan, null);
+    for (const { n } of SETUP_STEPS) assert.match((await a.cliTry('plan', String(n))).refused, /is already done/, `step ${n}`);
+    assert.deepEqual(await a.act(() => readJournal().runs.map((r) => r.id)), [run.id]);
 
     // On the host: the product's private repository, setup's one commit of its three files on main,
     // the state branch, the profile with this computer's key, protection on, and the trial pull
@@ -398,6 +403,8 @@ test('step 4\'s first card refuses a hand-back and a first question, records nei
     assert.equal(views.views.glossary['Cafe-Menu'].data.plain, 'Tide tables for sailors?');
     const glossary = await a.act(() => listEvents(stateDir(SLUG), { report: () => {} }).filter((e) => e.kind === 'glossary').map((e) => e.data.plain));
     assert.deepEqual(glossary, ['Tide tables for sailors?']);
+    assert.deepEqual(a.refused, []);
+    assert.deepEqual(shims.calls(), []);
   } finally {
     await a.cleanup();
   }
@@ -560,7 +567,9 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     // and in the user settings the director's own retention, kept, with setup's other keys gone, and
     // the `env` setup made for them (ruling R138).
     const folder = 'Projects/Café Menu/';
-    const checkout = (p) => p.startsWith(`${folder}.git`) || ['README.md', 'CLAUDE.md', '.claude/wheelhouse.json', '.claude/settings.json'].includes(p.slice(folder.length));
+    const checkout = (p) => p === `${folder}.git` || p.startsWith(`${folder}.git/`) || ['README.md', 'CLAUDE.md', '.claude/wheelhouse.json', '.claude/settings.json'].includes(p.slice(folder.length));
+    // Anything under Claude Code's plugins folder is Claude Code's own: its record and copies of the
+    // kits it installed for the project, which the director removes in Desktop with the plugin.
     const kits = (p) => p === 'claude config/plugins' || p.startsWith('claude config/plugins/');
     assert.deepEqual(user.added.filter((p) => !checkout(p) && !kits(p)), [], 'the local settings file setup made is gone too');
     assert.deepEqual(user.removed, []);

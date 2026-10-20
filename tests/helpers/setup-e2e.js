@@ -54,6 +54,9 @@ import { lockFile } from '../../scripts/watcher/main.js';
 import { g } from './git-fixture.js';
 import { shortHome, tempFolder, testAddress } from './homes.js';
 
+// Where the computers' worlds are kept for the steps module the helper loads (setup-e2e-steps.js):
+// globalThis[WORLDS], a Map from each computer's Wheelhouse home to its world.
+export const WORLDS = 'wheelhouseSetupE2e';
 export const STEPS_MODULE = fileURLToPath(new URL('./setup-e2e-steps.js', import.meta.url));
 // The plugin's own folder, as the playbook names its command.
 export const PLUGIN_ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -352,8 +355,8 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     // The pins step 7 installed, checked against the kits' manifest as step 10 checks them.
     checkPins: ({ folder }) => (checkInstalled({ manifest: k.manifest, projectDir: folder, claudeHome: config }).ok ? 'match' : 'differ'),
   };
-  globalThis.wheelhouseSetupE2e ??= new Map();
-  globalThis.wheelhouseSetupE2e.set(home, world);
+  globalThis[WORLDS] ??= new Map();
+  globalThis[WORLDS].set(home, world);
   c.world = world;
 
   // As this computer: its homes in the environment while fn runs.
@@ -420,9 +423,12 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
   });
   // Desktop closed: the helper goes, and whatever was in memory with it.
   c.stop = async () => {
-    await c.settle();
-    if (c.helper !== null) await c.act(() => c.helper.close());
-    c.helper = null;
+    try {
+      await c.settle();
+    } finally {
+      if (c.helper !== null) await c.act(() => c.helper.close());
+      c.helper = null;
+    }
   };
 
   // The playbook's command, scripts/setup/cli.js, in the product folder: its answer as JSON when it
@@ -504,7 +510,7 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
       await c.stop();
     } finally {
       c.stopWatcher();
-      globalThis.wheelhouseSetupE2e.delete(home);
+      globalThis[WORLDS].delete(home);
     }
   };
   return c;

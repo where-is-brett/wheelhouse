@@ -110,7 +110,7 @@ import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, writeWhole } from '../lib/setup-clicks.js';
-import { HOST_TOOLS, toolFolder } from '../lib/host-tools.js';
+import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
 import { trustDir, seenFile } from '../lib/trust-clicks.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
@@ -683,7 +683,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   if (slug !== null) remove(projectFolder(slug), 'last');
   // Then this computer's id, and the folders those and the project's records and the fetched tools
   // were in, each only once nothing is left in it (ruling R138): nothing setup made stays behind.
-  const emptied = [keysDir(), projectsDir(), path.dirname(toolFolder(HOST_TOOLS[0]))];
+  const emptied = [keysDir(), projectsDir(), toolsDir()];
   const closing = last ? [
     ...[enrolledFile(), signingKeyFile(), computerFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })),
     ...emptied.filter(exists).map((target) => ({ phase: 'last', put: 'remove-empty', target })),

@@ -501,8 +501,15 @@ export async function applyUninstall({
           let left = null;
           try {
             left = fs.readdirSync(entry.target);
-          } catch { /* gone already */ }
-          if (left !== null && left.length === 0) fs.rmdirSync(entry.target);
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+          }
+          try {
+            if (left !== null && left.length === 0) fs.rmdirSync(entry.target);
+          } catch (error) {
+            // Something put in it meanwhile keeps it, as anything in it would.
+            if (error?.code !== 'ENOTEMPTY' && error?.code !== 'EEXIST') throw error;
+          }
           break;
         }
         case 'remove-plugin':

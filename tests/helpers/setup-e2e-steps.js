@@ -2,12 +2,12 @@
 // Setup's ten real steps for the end-to-end tests (tests/e2e/setup.test.js), loaded by a real helper
 // as its setup steps module. Each step is made afresh on every call from the world of the computer
 // whose Wheelhouse home is in use (WHEELHOUSE_HOME), which the test keeps on
-// globalThis.wheelhouseSetupE2e, a Map from that home to { run, hostUrl, config, manifest,
+// globalThis[WORLDS] (setup-e2e.js), a Map from that home to { run, hostUrl, config, manifest,
 // managedDir, adapterFor, switchOn, protectionStatus, readProtection, checkPins, toolsRun, fetch } (tests/helpers/
 // setup-e2e.js, makeComputer). `run` stands in for `gh` and `claude` and passes git to the real git,
 // which reaches only bare repositories in temporary folders. Step 2 runs on a fake computer with every
 // tool in but gh, which it fetches from a stand-in of gh's release page (`toolsRun`, `fetch`); step 6
-// on one where every tool is in (`quietRun`, as setup-quiet-steps.js has it). Nothing real is installed,
+// on one where every tool is in (quiet-run.js). Nothing real is installed,
 // signed in to, fetched or pushed beyond those folders.
 import os from 'node:os';
 import path from 'node:path';
@@ -22,21 +22,14 @@ import { computerStep, lockedStep } from '../../scripts/setup/computer.js';
 import { projectFilesStep } from '../../scripts/setup/project-files.js';
 import { notifyStep } from '../../scripts/setup/notify.js';
 import { healthStep } from '../../scripts/setup/health.js';
+import { quietRun } from './quiet-run.js';
+import { WORLDS } from './setup-e2e.js';
 
 const world = () => {
-  const found = globalThis.wheelhouseSetupE2e?.get(wheelhouseHome());
+  const found = globalThis[WORLDS]?.get(wheelhouseHome());
   if (!found) throw new Error('no end-to-end world for this Wheelhouse home');
   return found;
 };
-// The fake computer: every tool on the path, at a version good enough.
-async function quietRun(file, args = []) {
-  const name = file.split(/[\\/]/).pop();
-  const said = (stdout, code = 0) => ({ code, stdout, stderr: '' });
-  if (name === 'which' || name === 'where') return said(`/usr/bin/${args[0]}\n`);
-  if (name === 'xcode-select' && args[0] === '-p') return said('/Library/Developer/CommandLineTools\n');
-  if (args[0] === '--version') return said(name === 'node' ? 'v22.3.0\n' : `${name} version 2.40.0\n`);
-  return said('');
-}
 const nothing = async () => { throw new Error('nothing is run here'); };
 const noApp = path.join(os.tmpdir(), 'wh-no-such-app.json');
 const git = async () => ({ ok: true, path: 'git' });
