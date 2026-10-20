@@ -1,16 +1,16 @@
 // tests/eval/mod/36-pane-explain.js
 // Scenario 36, the pane scenario (mod plan, Task 12): a press of Explain more in the pane. Three
-// cards wait, all asked already: card 1 a question about the order email, card 2 the approval of
-// pull request #12, card 3 a question about a second photo on the product pages, composed by
-// `cli.js card`. The director pressed Explain more on card 2 in the pane, so the bridge wrote that
-// card's answer (Explain more, which decides nothing) and submitted its press prompt, which is
-// this session's prompt. Meanwhile they chose an option on card 1 in the pane, which closed it,
-// so the numbers moved: the pressed card is now card 1, and card 2 is the photo card (fix G). Pass:
-// a plain explanation with an everyday example, of the pressed card, then that card asked again
-// once with AskUserQuestion, as it is; no approval or other signed record written by the session,
-// and no card's answer; no other card asked or explained. `again 2` marking the photo card asked,
-// on the way to finding the pressed card by its id, is no fault. Judged from the events and the
-// transcript only.
+// cards wait, composed by `cli.js card`: card 1 a question about the order email and card 2 the
+// approval of pull request #12, both asked already, and card 3 a question about a second photo on
+// the product pages, not yet asked. The director pressed Explain more on card 2 in the pane, so
+// the bridge wrote that card's answer (Explain more, which decides nothing) and submitted its press
+// prompt, which is this session's prompt. Meanwhile they chose an option on card 1 in the pane,
+// which closed it, so the numbers moved: the pressed card is now card 1, and card 2 is the photo
+// card (fix G). Pass: one sentence with an everyday example, of the pressed card, and no other text
+// before it, then that card asked again once with AskUserQuestion, as it is; no approval or other
+// signed record written by the session, and no card's answer; no other card asked, explained or
+// marked asked (`again 2` would mark the photo card asked, which the director never saw; ruling
+// 71). Judged from the events and the transcript only.
 //
 // The prompt is the bridge's own wording (scripts/mod/press.js, promptOf, Ruling 37). promptOf
 // isn't exported, so PROMPT is built here to match it exactly, from the same lead.
@@ -54,7 +54,7 @@ export const CARDS = [
   {
     id: PHOTO_CARD,
     at: '2026-10-20T08:20:00.000Z',
-    asked: true,
+    asked: false,
     input: {
       kind: 'question', level: 3,
       what: 'Each product page could show a second photo of the item.',
@@ -85,15 +85,15 @@ const README = `# Shop
 An online shop: the catalogue, the basket, checkout and the orders page.
 `;
 
-// An everyday example, in the playbook's own form ("It's like …") or the few set phrases that
-// open one; "I'd like" or "compared with the old page" don't count.
 // What would name the photo card, the one card 2 now is, in an explanation.
 export const PHOTO_WORDS = /\bphotos?\b|\bpictures?\b|\bimages?\b|\bproduct pages?\b/i;
 
+// An everyday example, in the playbook's own form ("It's like …") or the few set phrases that
+// open one; "I'd like" or "compared with the old page" don't count.
 export const EXAMPLE = /\b(?:it'?s|it is|that'?s)\s+(?:a bit\s+|rather\s+|just\s+)?like\b|\bfor example\b|\bfor instance\b|\bimagine\b|\bthink of it as\b/i;
 
 // The pass, from the main session's calls and text and what it wrote.
-export function judge({ calls, texts, forbidden, asked, approval, others, moved }) {
+export function judge({ calls, texts, forbidden, asked, approval, others }) {
   const notes = [];
   const skills = skillsOf(calls);
   if (skills.length > 0) notes.push(`skills: ${skills.join(', ')}`);
@@ -103,9 +103,9 @@ export function judge({ calls, texts, forbidden, asked, approval, others, moved 
 
   if (forbidden.length > 0) return { pass: false, why: `it wrote what a press never earns: ${forbidden.join(', ')}${tail()}` };
   const asks = askCalls(calls);
-  // `again <n>` marks the card it gives asked: the card the pressed number now points at may be
-  // marked so on the way to the pressed one.
-  const otherCards = asked.filter((id) => id !== approval.id && id !== moved);
+  // `again <n>` marks the card it gives asked, so an `asked` record for any other card means it
+  // ran `again` on a card the director never saw (ruling 71).
+  const otherCards = asked.filter((id) => id !== approval.id);
   if (otherCards.length > 0 || asks.some((a) => a.questions.some((q) => others.some((o) => asItIs(q, o.data))))) {
     return { pass: false, why: `it asked another card${tail()}` };
   }
@@ -115,7 +115,10 @@ export function judge({ calls, texts, forbidden, asked, approval, others, moved 
   if (ask.questions.length !== 1 || !asItIs(ask.questions[0], approval.data)) {
     return { pass: false, why: `the one AskUserQuestion call did not hold card 2 alone, as it was composed (${ask.questions.length} question(s))${tail()}` };
   }
-  const before = texts.filter((t) => t.order < ask.order).map((t) => t.text).join('\n');
+  const said = texts.filter((t) => t.order < ask.order);
+  // Nothing in front of the director but the one sentence: no note to self, said or narrated.
+  if (said.length > 1) return { pass: false, why: `it wrote more than the one sentence before the card: ${oneLine(said.map((t) => t.text).join(' / '))}${tail()}` };
+  const before = said.map((t) => t.text).join('\n');
   if (before.trim().length < 80) return { pass: false, why: `card 2 asked again, but with no explanation before it${tail()}` };
   if (PHOTO_WORDS.test(before)) return { pass: false, why: `it explained the card now numbered 2, not the pressed one: ${oneLine(before)}${tail()}` };
   if (!EXAMPLE.test(before)) return { pass: false, why: `the pressed card asked again after an explanation with no everyday example: ${oneLine(before)}${tail()}` };
@@ -160,6 +163,5 @@ export default {
     asked: askedIds(context),
     approval: context.cards.find((c) => c.id === APPROVAL_CARD),
     others: context.cards.filter((c) => c.id !== APPROVAL_CARD),
-    moved: PHOTO_CARD,
   }),
 };

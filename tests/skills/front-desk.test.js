@@ -313,25 +313,31 @@ test('asked what waits, the front desk names each waiting card in one line by it
   assert.match(row, /Never put a card already asked to them again unless they ask for that card/);
 });
 
-test('a press of Explain more reads the pressed card first with again, matched by its id, and the one sentence goes with AskUserQuestion (fix G)', () => {
+test('a press of Explain more finds the pressed card by its id in views waiting, asks it with again, and says only the one sentence (fix G, ruling 71)', () => {
   const lines = playbook.split('\n');
   const press = lines.find((line) => line.startsWith('  - **"pressed Explain more on card n (id)"**')) ?? '';
   assert.ok(press, 'the press\'s rule');
-  // First the card itself: `again <n>`, its id checked against the prompt's, `views waiting` when the numbers moved.
-  assert.match(press, /in this order: first `again <n>`, and check that the `id` it prints is the prompt's\./);
-  assert.match(press, /If it isn't, the numbers have moved: `views waiting` finds the card with the prompt's id, and `again` its number\./);
-  assert.ok(press.indexOf('`again <n>`') < press.indexOf('`explain <term>`'), 'again comes before explain');
-  // The one sentence, in the message with the AskUserQuestion call, not with `again`.
-  assert.match(press, /one sentence to the director, at most 30 words, in the message with the `AskUserQuestion` call, before it, not with `again`/);
+  // First `views waiting`, read-only, for the pressed card's number now; then `again` that number.
+  assert.match(press, /In this order: first `views waiting`, which names each card's id: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close; that it moved is not news for the director\./);
+  assert.ok(lines.some((line) => line.startsWith('| "I\'ll tell them the pressed card is now number 1" | Say nothing but the one sentence')), 'a red flag for telling them the number moved');
+  assert.match(press, /When no card has that id, it no longer waits: say so in one line and ask nothing\./);
+  assert.match(press, /Then `again <its number now>`/);
+  assert.ok(press.indexOf('`views waiting`') < press.indexOf('`again <its number now>`'), 'views waiting before again');
+  assert.ok(press.indexOf('`again <its number now>`') < press.indexOf('`explain <term>`'), 'again before explain');
+  // The one sentence, with the AskUserQuestion call, and nothing else in front of the director.
+  assert.match(press, /one sentence to the director, at most 30 words, in the message with the `AskUserQuestion` call, before it/);
   assert.match(press, /Only that one sentence: Claude shows longer text before a card only as a summary\./);
-  assert.doesNotMatch(press, /in the same message as the `again <n>` call/);
-  // After an answer in the chat, only what `views waiting` shows.
+  assert.match(press, /^  - \*\*"pressed Explain more on card n \(id\)"\*\*: write no text until the one sentence below, not even a note to yourself\./);
+  assert.match(press, /Never a card's id\./);
+  assert.doesNotMatch(press, /in the same message as the `again <n>` call|first `again <n>`/);
+  // Card ids never reach the director.
   const chat = lines.find((line) => line.startsWith('- **An answer in the chat:**')) ?? '';
   assert.ok(chat, 'a line for an answer in the chat');
-  assert.match(chat, /say only what `views waiting` shows/);
-  assert.match(chat, /never a guess that the answer wasn't recorded/);
+  assert.match(chat, /say only what `views waiting` shows of it, without its id, never a guess that the answer wasn't recorded/);
+  const chose = lines.find((line) => line.startsWith('  - **"chose "<option>" on card n"**')) ?? '';
+  assert.match(chose, /say so in one line, without its id,/);
   // The red flag.
   const row = lines.find((line) => line.startsWith('| "I know which card n is"')) ?? '';
   assert.ok(row, 'a red flag for guessing card n');
-  assert.match(row, /Run `again <n>` and match its id with the prompt's first/);
+  assert.match(row, /Find the prompt's id in `views waiting` first, and `again` the number it has there/);
 });

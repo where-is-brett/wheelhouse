@@ -32,7 +32,7 @@ const judged36 = async (stream, { forbidden = [], asked = [APPROVAL_CARD] } = {}
   const cards = await cardsOf(CARDS_36);
   return judge36({
     calls: mainCalls(stream), texts: textBlocks(stream), forbidden, asked,
-    approval: cards.find((c) => c.id === APPROVAL_CARD), others: cards.filter((c) => c.id !== APPROVAL_CARD), moved: PHOTO_CARD,
+    approval: cards.find((c) => c.id === APPROVAL_CARD), others: cards.filter((c) => c.id !== APPROVAL_CARD),
   });
 };
 
@@ -48,7 +48,8 @@ test('without, the playbook leaves out the pane\'s and the courier\'s section, a
 
 test('the cards are composed by cli.js card, numbered as the scenarios need, and the prompts are the bridge\'s', async () => {
   const made = await seedCards(CARDS_36);
-  assert.deepEqual(made.seed.map((e) => e.kind), ['card', 'asked', 'card', 'asked', 'card', 'asked']);
+  // Cards 1 and 2 were asked; card 3, the photo card, not yet.
+  assert.deepEqual(made.seed.map((e) => e.kind), ['card', 'asked', 'card', 'asked', 'card']);
   assert.equal(boardNumbers(made.seed)[APPROVAL_CARD], 2);
   // After the press the director chose an option on card 1 in the pane, so the numbers moved: the
   // pressed card is now card 1, and card 2 is the photo card (fix G).
@@ -104,15 +105,22 @@ test('36 passes an explanation with an everyday example, then card 2 alone, as i
   const none = await judged36(events(['say', 'That came from the pane, not from you.']));
   assert.match(none.why, /not asked again/);
 
-  // The numbers moved: `again 2` gives the photo card, so the pressed card is found by its id and
-  // asked as `again 1`. Marking the photo card asked on the way is no fault; explaining it is.
-  const matched = await judged36(events(['Bash', { command: 'node "/p/cli.js" again 2' }], ['Bash', { command: 'node "/p/cli.js" views waiting' }], ['Bash', { command: 'node "/p/cli.js" again 1' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]), { asked: [PHOTO_CARD, APPROVAL_CARD] });
+  // The numbers moved: the pressed card is found by its id in `views waiting` and asked as
+  // `again 1`. `again 2` would mark the photo card asked, which the director never saw (ruling 71).
+  const matched = await judged36(events(['Bash', { command: 'node "/p/cli.js" views waiting' }], ['Bash', { command: 'node "/p/cli.js" again 1' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]));
   assert.equal(matched.pass, true, matched.why);
+  const markedPhoto = await judged36(events(['Bash', { command: 'node "/p/cli.js" again 2' }], ['Bash', { command: 'node "/p/cli.js" again 1' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]), { asked: [PHOTO_CARD, APPROVAL_CARD] });
+  assert.match(markedPhoto.why, /another card/);
   const wrong = await judged36(events(['say', 'It\'s like a shop window with a second angle: card 2 decides whether each product page shows a second photo.'], ['AskUserQuestion', { questions: [card] }]));
   assert.match(wrong.why, /explained the card now numbered 2, not the pressed one/);
   const photo = asQuestion({ data: (await cardsOf(CARDS_36))[2].data });
   const askedPhoto = await judged36(events(['say', explanation], ['AskUserQuestion', { questions: [photo] }]), { asked: [PHOTO_CARD] });
   assert.match(askedPhoto.why, /another card/);
+  // Nothing in front of the director but the one sentence: no note to self, said or narrated.
+  for (const note of [['say', 'Id mismatch; check waiting.'], ['narrate', 'Finding the card by its id.']]) {
+    const noted = await judged36(events(['Bash', { command: 'node "/p/cli.js" views waiting' }], note, ['Bash', { command: 'node "/p/cli.js" again 1' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]));
+    assert.match(noted.why, /more than the one sentence before the card/, note[1]);
+  }
 });
 
 test('37 passes one plain one-line notification, then one call holding cards 3 and 4, and at most one short closing line', async () => {
