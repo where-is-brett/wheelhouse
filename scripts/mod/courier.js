@@ -31,9 +31,6 @@ const ASK = 'Send Claude\'s notification in one line, then ask any new cards now
 const REMIND_ASK = (cards) => `Send Claude's notification in one line, then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
-// A card item naming a build question no card asks yet (the board names it `q:<question id>`):
-// the front desk makes its card when it can, which the courier can't know, so it has no reminder.
-const BUILD_QUESTION = 'card:q:';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
@@ -206,12 +203,14 @@ const NOTHING = Object.freeze({ submit: null, sent: [] });
 // aside), is due its reminder (`remind:<card id>`) REMIND_MS after that wake, once; it is let
 // through, held and marked as a new item is, and its wake asks for the cards whatever the
 // notification answers. While STOP is among the items no reminder is due, since under STOP the
-// front desk asks only Lift STOP; it is due again once STOP is lifted. STOP, an incident and a
-// build question no card asks yet have no reminder.
+// front desk asks only Lift STOP; it is due again once STOP is lifted. A build question no card
+// asks yet (`card:q:<question id>`) has its reminder too, since its wake may have asked nothing
+// (ruling 72): the reminder's `cards` makes its card when it can. STOP and an incident have none.
 // `sent` names the items marked sent by this call: each once the wake that carries it is handed
 // back. A wake's marks name its session, its stamp (`at`, handed back with the wake) and the
-// lastWakeAt before it, so courierUnsent can put them back. Another session holding courier.json past LOCK_WAIT_MS is a quiet wait for the next
-// tick. Throws when courier.json can't be kept, so nothing is lost.
+// lastWakeAt before it, so courierUnsent can put them back. Another session holding courier.json
+// past LOCK_WAIT_MS is a quiet wait for the next tick. Throws when courier.json can't be kept, so
+// nothing is lost.
 export async function courierWake({ project, session, items, presence, quiet, idle, now = () => new Date(), timeZone } = {}) {
   const t = instantOf(now);
   if (!Number.isFinite(t) || !isSession(session)) return NOTHING;
@@ -232,7 +231,7 @@ export async function courierWake({ project, session, items, presence, quiet, id
     // The latest mark of each id is the one in force, as writeKept keeps it.
     const marks = new Map(kept.sent.map((entry) => [entry.id, entry]));
     const sentIds = new Set(marks.keys());
-    const reminders = found.filter((i) => i.kind === 'card' && !i.id.startsWith(BUILD_QUESTION)).map((i) => ({ item: i, id: `remind:${i.id.slice('card:'.length)}` }));
+    const reminders = found.filter((i) => i.kind === 'card').map((i) => ({ item: i, id: `remind:${i.id.slice('card:'.length)}` }));
     const stopped = found.some((i) => i.kind === 'stop');
     const current = new Set([...found.map((i) => i.id), ...reminders.map((r) => r.id)]);
     const fresh = found.filter((i) => !sentIds.has(i.id) && sentIds.add(i.id));

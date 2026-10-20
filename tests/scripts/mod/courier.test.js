@@ -73,9 +73,9 @@ test('a new card, STOP, an incident, a health stop and a finished feature are ea
   assert.equal(first.submit, `${LEADS.courier} 3 new cards (1, 2 and 3); STOP is on; 1 incident open; 1 health line at its stop level; 1 feature finished. ${ASK}`);
   assert.deepEqual(first.sent, items.map((i) => i.id));
   // The same items, later, with STOP lifted, wake only for the reminder of the cards still not
-  // asked (not the build question, which has no card yet); then nothing: each was sent once.
+  // asked, the build question's too (ruling 72); then nothing: each was sent once.
   const lifted = items.filter((i) => i.kind !== 'stop');
-  assert.deepEqual((await wake(lifted, { now: () => at(T0 + COURIER_GAP_MS * 2) })).sent, ['remind:c-plain', 'remind:c-block']);
+  assert.deepEqual((await wake(lifted, { now: () => at(T0 + COURIER_GAP_MS * 2) })).sent, ['remind:c-plain', 'remind:c-block', 'remind:q:q-1']);
   assert.deepEqual(await wake(lifted, { now: () => at(T0 + COURIER_GAP_MS * 4) }), { submit: null, sent: [] });
 }));
 
@@ -475,14 +475,28 @@ test('a reminder waits for the gap after the card\'s own wake, and is held while
   });
 }));
 
-test('a build question no card asks yet gets no reminder: the courier can\'t know it can be made a card', () => opened(async () => {
+test('a build question no card asks yet gets its one reminder too, held while STOP is on (ruling 72)', () => opened(async () => {
   const items = [cardItem('q:q-1', 1, true), cardItem('c-2', 2)];
   assert.deepEqual((await wake(items)).sent, ['card:q:q-1', 'card:c-2']);
   const later = await wake(items, { now: () => at(T0 + COURIER_GAP_MS) });
-  assert.equal(later.submit, `${LEADS.courier} card 2 is still waiting. ${REMIND('it')}`);
-  assert.deepEqual(later.sent, ['remind:c-2']);
+  assert.equal(later.submit, `${LEADS.courier} cards 1 and 2 are still waiting. ${REMIND('them')}`);
+  assert.deepEqual(later.sent, ['remind:q:q-1', 'remind:c-2']);
+  // Once: a later tick wakes for it no more.
   assert.deepEqual(await wake(items, { now: () => at(T0 + 3 * COURIER_GAP_MS) }), { submit: null, sent: [] });
-  assert.ok(!sentIds().some((id) => id.startsWith('remind:q:')));
+
+  // Under STOP it is held, as a card's is, and comes once STOP is lifted.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    await wake([cardItem('q:q-1', 1, true)]);
+    const stopped = [cardItem('q:q-1', 1, true), { id: 'stop:s', kind: 'stop' }];
+    assert.deepEqual((await wake(stopped, { now: () => at(T0 + 6 * MIN) })).sent, ['stop:s']);
+    assert.deepEqual(await wake(stopped, { now: () => at(T0 + 6 * MIN + 2 * COURIER_GAP_MS) }), { submit: null, sent: [] }, 'held while STOP is on');
+    assert.ok(!sentIds().includes('remind:q:q-1'));
+    const lifted = await wake([cardItem('q:q-1', 1, true)], { now: () => at(T0 + 6 * MIN + 2 * COURIER_GAP_MS + TICK_MS) });
+    assert.equal(lifted.submit, `${LEADS.courier} card 1 is still waiting. ${REMIND('it')}`);
+    assert.deepEqual(lifted.sent, ['remind:q:q-1']);
+    assert.deepEqual(await wake([cardItem('q:q-1', 1, true)], { now: () => at(T0 + 6 * MIN + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  });
 }));
 
 test('no reminder for a card answered, set aside, asked or reminded already, or not woken by a wake', () => opened(async () => {
