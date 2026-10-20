@@ -30,7 +30,8 @@
 // checked. Wheelhouse's own folders and files (the tools it fetched, the profile's clone and
 // profile.json, setup's clicks, answers and the like, the trust clicks and the record of the
 // profile's enrolments last fetched, the Windows installer's temporary folder, and the project's own
-// folder under projects/) are removed whole, never named as changed since setup. journal.json, and uninstall's own progress record, are kept.
+// folder under projects/) are removed whole, never named as changed since setup. journal.json, and
+// uninstall's own progress record, are kept.
 //
 // The setup commit counts as on the host only when the journal or the folder shows it went up:
 // step 7 finished, or recorded protection after the push, or the folder's copy of the
