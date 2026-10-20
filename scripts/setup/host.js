@@ -104,6 +104,7 @@ import { profileRemote, ensureProfileClone, readProfileViews, PROFILE_BRANCH } f
 import { toolsStatus, originUrl } from './tools.js';
 import {
   appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin, shadowedOwnApp,
+  PROFILE_TARGET,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
 import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
@@ -142,15 +143,28 @@ export const KEY_DAYS = 365;
 // own waits for a later update (rulings R58, R83). The step waits, with this line, rather than show
 // a Go ahead apply could only refuse.
 export const ownAppElsewhere = (app, where) => `Your own GitHub App, ${app.slug}, belongs to ${app.owner}, and an app of your own reaches only its own account's repositories, so it can't reach ${where}: choose the Wheelhouse app or Quick for it`;
-// Said when their own app, as accepted in their profile, is shadowed by a newer change to it that
-// waits for the director's Confirm (ruling R84): the step waits, rather than offer to make another.
-export const ownAppWaiting = ({ accepted, waiting }) => {
-  const named = (app) => `${app.slug} on ${app.owner}`;
-  const change = waiting === null ? 'no app of your own' : named(waiting);
-  return waiting !== null && waiting.clientId === accepted.clientId && waiting.slug === accepted.slug && sameLogin(waiting.owner, accepted.owner)
-    ? `Your own GitHub App, ${named(accepted)}, waits for your Confirm again in your profile, so step 3 waits: click Confirm on its card, then ask again`
-    : `Your profile holds your own GitHub App, ${named(accepted)}, but a newer change to it waits for your Confirm (${change}), so step 3 waits rather than make another app: decide that change on its card, then ask again`;
-};
+// Their own app, accepted in their profile, hidden by a newer change to it that waits for the
+// director's Confirm (rulings R84, R115). When that change is setup's own proposal of the same app,
+// the step waits for its Confirm with `ownAppWaiting`; any other change gets a card whose one change
+// proposes the accepted app again (`ownAppAgainCard`), never a new app; its apply ends with
+// `ownAppProposedAgain`, so step 3 is asked again once the director has confirmed.
+const appNamed = (app) => `${app.slug} on ${app.owner}`;
+const sameApp = (a, b) => a !== null && b !== null && a.clientId === b.clientId && a.slug === b.slug && sameLogin(a.owner, b.owner);
+export const ownAppWaiting = ({ accepted }) => `Your own GitHub App, ${appNamed(accepted)}, waits for your Confirm again in your profile, so step 3 waits: click Confirm on its card, then ask again`;
+export const ownAppProposedAgain = (app) => `Your own GitHub App, ${appNamed(app)}, is proposed again in your profile: click Confirm on its card, and step 3 goes on from there`;
+const ownAppAgainCard = ({ accepted, waiting }) => ({
+  kind: 'setup',
+  level: 3,
+  what: `Setup step 3, ${SETUP_TITLES[3]}: your own GitHub App ${appNamed(accepted)} proposed again in your profile, since a newer change to it waits for your Confirm (${waiting === null ? 'no app of your own' : appNamed(waiting)}) and hides it. Nothing is made and nothing signed in.`,
+  why: 'Confirm that other change only if you made it; Confirm on the new proposal brings your app back.',
+  options: [
+    { label: SETUP_LABEL, says: 'Setup proposes your app again; you confirm it on its card, then step 3 goes on.' },
+    { label: 'Not now', says: 'Your app stays hidden, and step 3 waits.' },
+  ],
+  recommend: SETUP_LABEL,
+  because: 'your app comes back only once it is proposed again and confirmed',
+  meanwhile: 'Step 3 waits.',
+});
 export const OWN_APP_WAIT_MS = 10 * 60 * 1000;
 // Said when this computer's one `github-app` keys entry holds an installation of another app than
 // the one a project would use (ruling R58): signing in to the other would overwrite the keys that
@@ -1233,7 +1247,7 @@ export async function switchOnAsDirector({ host, repo, run = realRun, api }) {
 
 // ---- Step 3 ----
 
-function cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys }) {
+function cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts = false }) {
   const name = NAME[host];
   const parts = [];
   if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${SIGN_UP[host]})`);
@@ -1253,10 +1267,16 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
     parts.push('your own GitHub App, made, or found in your profile: then a code and ticks on its Install page (not All repositories)');
   } else if (app.own && typeof app.clientId !== 'string') {
     parts.push(`your own GitHub App${app.name ? ` ${app.name} on ${app.account}` : ''}, filled in from Wheelhouse's: tick Enable Device Flow, click Create, then a code and ticks on its Install page (not All repositories); kept in your profile`);
-  } else if (appKeys === 'installed') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked`);
-  else if (appKeys === 'other-account') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: install it on ${owner} and tick this project on its Install page, not All repositories`);
-  else if (appKeys === 'signed-in') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick the project and profile on its Install page, not All repositories`);
-  else parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}: a code on GitHub, then tick the project and profile on its Install page, not All repositories`);
+  } else if (appKeys === 'installed') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked, or on its Install page if the app is not on ${owner ?? 'its account'} yet`);
+  else if (appKeys === 'other-account') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: install it on ${owner} and tick this project on its Install page, not All repositories, or on its settings page if it is there already`);
+  else {
+    // The project on an organisation and the profile on the director's own account: GitHub installs
+    // an app on each account, so the Install page comes once for each.
+    const ticks = twoAccounts
+      ? `tick the project on its Install page for ${owner}, then the profile on it again for ${user ?? 'your own account'}, not All repositories`
+      : 'tick the project and profile on its Install page, not All repositories';
+    parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}${appKeys === 'signed-in' ? ', as signed in already: ' : ': a code on GitHub, then '}${ticks}`);
+  }
   parts.push('the project\'s record and state branch');
   if (changes.some((c) => c.action === 'enrolment')) parts.push(ENROLMENT_PART);
   // A joining computer's project already has its protection, from the first computer's step 7.
@@ -1276,16 +1296,16 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   };
 }
 
-function directorFor({ signedIn, way, host, app, appKeys, joining = false }) {
+function directorFor({ signedIn, way, host, app, appKeys, joining = false, twoAccounts = false }) {
   const parts = ['One click'];
   if (!signedIn) parts.push('your sign-in in the browser');
   if (way !== WAYS.quick && host === 'github' && app !== null) {
     if (app.own && typeof app.clientId !== 'string' && joining) parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page (and, if your app is not in your profile, Enable Device Flow ticked and Create clicked first)');
     else if (app.own && typeof app.clientId !== 'string') parts.push('Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub, Authorise, and two ticks on the Install page');
-    else if (appKeys === 'installed') parts.push('a tick on the app\'s settings page, if the project is not ticked');
-    else if (appKeys === 'other-account') parts.push('a tick on the app\'s Install page for the project\'s account');
-    else if (appKeys === 'signed-in') parts.push('two ticks on the app\'s Install page');
-    else parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page');
+    else if (appKeys === 'installed') parts.push('a tick on the app\'s settings page, if the project is not ticked (or on its Install page, if the app is not on the project\'s account yet)');
+    else if (appKeys === 'other-account') parts.push('a tick on the app\'s Install page for the project\'s account (or on its settings page, if the app is there already)');
+    else if (appKeys === 'signed-in') parts.push(twoAccounts ? 'a tick on the app\'s Install page for the project\'s account, then one on it for your own account' : 'two ticks on the app\'s Install page');
+    else parts.push(twoAccounts ? 'a code typed on GitHub, Authorise, then a tick on the Install page for the project\'s account and one on it for your own account' : 'a code typed on GitHub, Authorise, and two ticks on the Install page');
   }
   return parts.join(', then ');
 }
@@ -1360,9 +1380,18 @@ export function hostStep({
           // that holds the project; else one made (or found) on that account at apply. A new
           // product's account is the director's, known once they are signed in.
           const own = ownApp({ views });
-          // Their accepted app hidden by a change waiting is never made again: the step waits.
+          // Their accepted app hidden by a change waiting is never made again (rulings R84, R115):
+          // setup's own proposal of it waits for its Confirm; any other change gets a card that
+          // proposes the accepted app again, and nothing else.
           const shadowed = own === null ? ownAppShadowed({ views }) : null;
-          if (shadowed !== null) return { wait: OWN_APP_WAIT_MS, why: ownAppWaiting(shadowed) };
+          if (shadowed !== null && sameApp(shadowed.waiting, shadowed.accepted)) return { wait: OWN_APP_WAIT_MS, why: ownAppWaiting(shadowed) };
+          if (shadowed !== null) {
+            return {
+              changes: [{ kind: 'host', target: PROFILE_TARGET, action: 'own-app-again', app: shadowed.accepted, waiting: shadowed.waiting }],
+              card: ownAppAgainCard(shadowed),
+              director: 'One click, then Confirm on your app\'s card',
+            };
+          }
           if (own && owner && !sameLogin(own.owner, owner)) return { wait: OWN_APP_WAIT_MS, why: ownAppElsewhere(own, where) };
           app = own ? { clientId: own.clientId, slug: own.slug, own: true, owner: own.owner }
             : { own: true, account: owner ?? null, name: owner ? appName(owner) : null };
@@ -1392,6 +1421,11 @@ export function hostStep({
       }
       // How far this computer is with the app: a later project needs no new code (design section 15).
       const appKeys = typeof app?.clientId === 'string' ? appKeysState(app, owner) : null;
+      // The Wheelhouse app for a project on an organisation, with the profile on the director's own
+      // account joining it: an Install page for each account.
+      const profileNow = profileRemote();
+      const profileJoins = profileNow === null || (profileNow.connection?.mode === 'narrow' && profileNow.host === host);
+      const twoAccounts = app !== null && !app.own && typeof owner === 'string' && typeof user === 'string' && !sameLogin(owner, user) && profileJoins;
       const changes = [];
       if (!signedIn) changes.push({ kind: 'host', target: host, action: 'sign-in' });
       if (product.isNew) {
@@ -1422,8 +1456,8 @@ export function hostStep({
       changes.push(enrolmentChange({ host }));
       return {
         changes,
-        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys }),
-        director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true }),
+        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts }),
+        director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, twoAccounts }),
       };
     },
 
@@ -1439,6 +1473,17 @@ export function hostStep({
       };
       halt();
       const opener = open ?? ((url) => openPage(url, { platform, run }));
+      // Their own app proposed again, and nothing else (ruling R115): only while the profile still
+      // holds that app as accepted, hidden by a change waiting. The step then stops, saying so, so
+      // step 3 is asked again once the director has confirmed.
+      const again = changes.find((c) => c.action === 'own-app-again') ?? null;
+      if (again !== null) {
+        if (changes.length !== 1) throw new Error('Step 3\'s list proposes your own app again beside other changes, so nothing was done: ask for step 3\'s card again');
+        const shadow = shadowedOwnApp(await profileFor().views());
+        if (shadow === null || !sameApp(shadow.accepted, again.app)) throw new Error('Your profile has changed since the card, so nothing was proposed: ask for step 3\'s card again');
+        await recordOwnApp(shadow.accepted, { record, profile: profileFor() });
+        throw new Error(ownAppProposedAgain(shadow.accepted));
+      }
       const connection = changes.find((c) => c.action === 'connection');
       if (!connection) throw new Error('Step 3\'s list names no connection');
       const host = connection.target;

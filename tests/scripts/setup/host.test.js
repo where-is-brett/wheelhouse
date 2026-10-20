@@ -1156,30 +1156,82 @@ test('a second computer uses the app the profile records, and refuses its code s
   });
 });
 
-test('their accepted app hidden by a newer change waiting is never made again: step 3 waits with a line naming the change (ruling R84)', async () => {
+test('their accepted app hidden by a stray change is proposed again on a card of its own, and once confirmed step 3 goes on with it; a writer never replaces it (ruling R115)', async () => {
   await withHome(async () => {
     const w = standIn({ apps: { [OWN.slug]: { ...OWN, permissions: MANIFEST_PERMISSIONS } } });
     await w.add(`${USER}/shop`);
     const folder = productFolder('shop');
     await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    // The profile as the helper's routes and this computer's views give it: their app confirmed,
+    // then a writer's proposal of its own app waiting.
+    const KEY = 'own-github-app';
     const stray = { clientId: 'Iv23li.stray0001', slug: 'helpful-app', owner: 'mallory' };
-    const waiting = (value) => ({
-      settings: { 'own-github-app': { key: 'own-github-app', value: OWN } },
-      unconfirmed: [{ kind: 'setting', id: 'ev-9', key: 'own-github-app', data: { key: 'own-github-app', value } }],
-    });
-    for (const [value, words] of [
-      [stray, /holds your own GitHub App, wheelhouse-a-director on a-director, but a newer change to it waits for your Confirm \(helpful-app on mallory\), so step 3 waits rather than make another app/],
-      [null, /a newer change to it waits for your Confirm \(no app of your own\)/],
-      [OWN, /Your own GitHub App, wheelhouse-a-director on a-director, waits for your Confirm again in your profile/],
-    ]) {
-      const views = waiting(value);
-      const step = stepFor(w, { profileRoutes: memoryProfile(views.settings), views: () => views });
-      const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
-      assert.equal(planned.changes, undefined, 'no Go ahead, so no app is made');
-      assert.equal(planned.wait, OWN_APP_WAIT_MS);
-      assert.match(planned.why, words);
-    }
-    // With nothing accepted, a change waiting is a first record not confirmed yet: made or found by its name, as before.
+    const state = { settings: { [KEY]: { key: KEY, id: 'ev-0', value: OWN } }, unconfirmed: [] };
+    let n = 0;
+    const propose = (value) => { n += 1; state.unconfirmed.push({ kind: 'setting', id: `ev-${n}`, key: KEY, data: { key: KEY, value } }); return `ev-${n}`; };
+    const writes = [];
+    const profile = { write: async ({ kind, data }) => { writes.push(data.value); return { ok: true, id: propose(data.value), pushed: true }; }, views: async () => structuredClone(state) };
+    // The director's Confirm of a proposal: it is accepted, and the views list nothing older as waiting.
+    const confirm = (id) => {
+      const at = state.unconfirmed.findIndex((u) => u.id === id);
+      state.settings[KEY] = { key: KEY, id, value: state.unconfirmed[at].data.value };
+      state.unconfirmed = state.unconfirmed.slice(at + 1);
+    };
+    propose(stray);
+    const gh = github({ app: OWN, reach: [`${USER}/shop`, `${USER}/${PROFILE_REPO}`] });
+    const step = stepFor(w, { fetch: gh.fetch, profileRoutes: profile, views: () => structuredClone(state) });
+    const pick = choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own });
+
+    // A card whose one change proposes their accepted app again: no app made, no sign-in.
+    const planned = await answerAll(step, ctxFor(folder), pick);
+    assert.deepEqual(planned.changes, [{ kind: 'host', target: 'profile own-github-app', action: 'own-app-again', app: OWN, waiting: stray }]);
+    assert.match(planned.card.what, /your own GitHub App wheelhouse-a-director on a-director proposed again in your profile, since a newer change to it waits for your Confirm \(helpful-app on mallory\)/);
+    assert.match(planned.card.why, /Confirm that other change only if you made it/);
+    assert.equal(planned.director, 'One click, then Confirm on your app\'s card');
+    composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
+    // Its apply proposes their app again, recorded first, and stops saying to confirm it, so step 3 is asked again.
+    const run = startRun({ folder, now: () => NOW });
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes), /Your own GitHub App, wheelhouse-a-director on a-director, is proposed again in your profile: click Confirm on its card/);
+    assert.deepEqual(writes, [OWN]);
+    const kept = findRun(folder).changes.filter((c) => c.target === 'profile own-github-app');
+    assert.deepEqual(kept.map((c) => [c.before, c.after]), [[OWN, OWN]]);
+    assert.equal(gh.calls.length, 0, 'nothing asked of GitHub: no code, no installation');
+    assert.equal(readKey('github-app'), null);
+    assert.deepEqual(w.calls.filter((c) => c.args?.[0] === 'auth' && c.args[1] === 'login'), [], 'no sign-in');
+
+    // Before the Confirm, step 3 waits on it.
+    const waiting = await answerAll(step, ctxFor(folder), pick);
+    assert.equal(waiting.changes, undefined);
+    assert.match(waiting.why, /waits for your Confirm again in your profile/);
+    // A writer proposes its own app again: the card still proposes only their accepted app.
+    propose(stray);
+    const twice = await answerAll(step, ctxFor(folder), pick);
+    assert.deepEqual(twice.changes.map((c) => c.app), [OWN]);
+    // The list as planned, applied after the profile changed (their app no longer accepted): refused, nothing written.
+    const saved = state.settings[KEY];
+    state.settings[KEY] = { key: KEY, id: 'ev-x', value: stray };
+    await assert.rejects(applyIn(step, folder, run.id, twice.changes), /Your profile has changed since the card/);
+    assert.deepEqual(writes, [OWN]);
+    state.settings[KEY] = saved;
+    await assert.rejects(applyIn(step, folder, run.id, twice.changes), /is proposed again/);
+    assert.deepEqual(writes, [OWN, OWN]);
+    assert.ok(state.settings[KEY].value === OWN, 'the writer\'s app is never accepted by setup');
+
+    // The director confirms the newest proposal, setup's: step 3 goes on with their original app.
+    confirm(state.unconfirmed.at(-1).id);
+    const going = await answerAll(step, ctxFor(folder), pick);
+    assert.deepEqual(going.changes.find((c) => c.action === 'connection').app, { ...OWN, own: true });
+    assert.ok(!going.changes.some((c) => c.action === 'own-app' || c.action === 'own-app-again'), 'no app made');
+    await applyIn(step, folder, run.id, going.changes, { answers: going.answers });
+    assert.equal(readKey('github-app').clientId, OWN.clientId);
+    assert.deepEqual(writes, [OWN, OWN], 'nothing more written to the profile');
+  });
+  // With nothing accepted, a change waiting is a first record not confirmed yet: made or found by its name, as before.
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    await w.add(`${USER}/shop`);
     const first = { settings: {}, unconfirmed: [{ kind: 'setting', id: 'ev-1', key: 'own-github-app', data: { key: 'own-github-app', value: OWN } }] };
     const planned = await answerAll(stepFor(w, { profileRoutes: memoryProfile(), views: () => first }), ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
     assert.ok(planned.changes.some((c) => c.action === 'own-app'));
@@ -1358,6 +1410,9 @@ test('a later project on GitHub opens the app\'s page and reads the tick back', 
     assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'installed');
     assert.match(planned.card.what, /the Wheelhouse app, as signed in already: tick this project on its settings page if it is not ticked/);
     assert.match(planned.director, /a tick on the app's settings page/);
+    // Said so it is true either way: a legacy or gone installation sends apply to the Install page.
+    assert.match(planned.card.what, /or on its Install page if the app is not on a-director yet/);
+    composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     const { lines } = await applyStep(first.step, next, planned.changes, { answers: planned.answers });
     assert.equal(first.codes(), codes, 'no new code sign-in');
     assert.deepEqual(opened, ['https://github.com/settings/installations/77'], 'the installation\'s settings page, never the Install page');
@@ -1421,7 +1476,7 @@ test('a later project on an account the app is not installed on gets the Install
     };
     const planned = await answerAll(first.step, ctxFor(next), first.pick);
     assert.equal(planned.changes.find((c) => c.action === 'connection').appKeys, 'other-account');
-    assert.match(planned.card.what, /the Wheelhouse app, as signed in already: install it on acme and tick this project on its Install page, not All repositories/);
+    assert.match(planned.card.what, /the Wheelhouse app, as signed in already: install it on acme and tick this project on its Install page, not All repositories, or on its settings page if it is there already/);
     assert.match(planned.director, /a tick on the app's Install page for the project's account/);
     composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     const { lines } = await applyStep(first.step, next, planned.changes, { answers: planned.answers });
@@ -1433,6 +1488,37 @@ test('a later project on an account the app is not installed on gets the Install
     assert.equal(readProject(slugFor('acme/app')).connection.installationId, 88);
     assert.deepEqual(readKey('github-app').installations, { [USER]: 77, acme: 88 });
     assert.equal(readProject(slugFor(`${USER}/shop`)).connection.installationId, 77);
+  });
+});
+
+test('a first project on an organisation names an Install page for each account, the organisation\'s and the director\'s own for the profile, and opens each', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add('acme/app');
+    const folder = productFolder('A product whose folder has a very long name indeed, Zoë');
+    await withOrigin(folder, 'https://github.com/acme/app.git');
+    const others = [];
+    // The app's installation on this fake's own account never comes: each account's is added as the director installs it.
+    const gh = github({ installedAfter: Infinity, account: 'nobody', others });
+    const opened = [];
+    const open = async (url) => {
+      opened.push(url);
+      if (url !== installUrlFor) return;
+      if (others.length === 0) others.push({ id: 88, account: 'acme', reach: ['acme/app'] });
+      else others.push({ id: 99, account: USER, reach: [`${USER}/${PROFILE_REPO}`] });
+    };
+    const installUrlFor = 'https://github.com/apps/wheelhouse-test/installations/new';
+    const step = stepFor(w, { appFile: appFile(tempFolder('wh-app-')), fetch: gh.fetch, open });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.wheelhouse }));
+    assert.match(planned.card.what, /a code on GitHub, then tick the project on its Install page for acme, then the profile on it again for a-director, not All repositories/);
+    assert.match(planned.director, /a tick on the Install page for the project's account and one on it for your own account/);
+    composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
+    const { lines } = await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.deepEqual(opened.filter((u) => u === installUrlFor).length, 2);
+    assert.ok(lines.some((l) => /install it on acme: .*tick acme\/app on GitHub/.test(l)));
+    assert.ok(lines.some((l) => /install it on a-director: .*tick a-director\/wheelhouse-profile on GitHub/.test(l)));
+    assert.equal(readProject(slugFor('acme/app')).connection.installationId, 88);
+    assert.deepEqual(readKey('github-app').installations, { acme: 88, [USER]: 99 });
   });
 });
 
