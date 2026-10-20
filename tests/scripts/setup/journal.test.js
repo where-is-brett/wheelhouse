@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  addChanges, applyJsonKey, closeRun, findRun, journalFile, markPutBack, markStep, readJournal, reverseChange, startRun, stepTimes, wouldReverse, heldNow,
+  addChanges, applyJsonKey, closeRun, findRun, journalFile, markPutBack, markOnHost, markStep, readJournal, reverseChange, startRun, stepTimes, wouldReverse, heldNow,
   reverseText,
 } from '../../../scripts/setup/journal.js';
 import {
@@ -474,6 +474,23 @@ test('the journal\'s source names the byte order mark by its escape, not as a li
 });
 
 // ---- Uninstall's marks (ruling R89) ----
+
+test('a push of setup\'s commit is marked as on the host once, never put back by it; nothing else is, and no step records it so (ruling R122)', () => {
+  withHome(() => {
+    const run = startRun({ folder: tempFolder('wh-journal-'), now: at('2026-10-19T03:00:00.000Z') });
+    const push = { id: 'p1', step: 7, kind: 'host', target: 'o/r main', before: { branch: 'main', sha: 'a'.repeat(40) }, after: { action: 'push', branch: 'main', sha: 'b'.repeat(40) } };
+    const commit = { ...push, id: 'k1', after: { action: 'commit', branch: 'main' } };
+    addChanges(run.id, [commit, push]);
+    assert.equal(markOnHost('p1', { now: at('2026-10-20T01:00:00.000Z') }), true);
+    assert.equal(markOnHost('p1', { now: at('2026-10-20T02:00:00.000Z') }), false, 'the first mark stays');
+    const p1 = readJournal().runs[0].changes.find((c) => c.id === 'p1');
+    assert.deepEqual(p1.onHost, { at: '2026-10-20T01:00:00.000Z' });
+    assert.equal(p1.putBack, undefined);
+    assert.throws(() => markOnHost('k1'), /not a push/);
+    assert.throws(() => markOnHost('nope'), /nope/);
+    assert.throws(() => addChanges(run.id, [{ ...push, id: 'p2', onHost: { at: 'x' } }]), /found on the host/);
+  });
+});
 
 test('each change uninstall puts back is marked once, with when, whether it was put back and why', () => {
   withHome(() => {

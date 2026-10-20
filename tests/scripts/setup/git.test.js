@@ -212,6 +212,9 @@ test('only the settings on the allowed list pass, sections and keys in any case 
     'http.https://github.com.curloptresolve', 'http.cookiefile', 'http.savecookies', 'http.postbuffer', 'core.worktree', 'push.gpgsign',
     'commit.gpgsign', 'tag.gpgsign', 'log.showsignature', 'user.signingkey', 'extensions.partialclone', 'remote.origin.promisor',
     'remote.origin.partialclonefilter', 'remote.origin.pushurl', 'remote.pushdefault', 'branch.main.pushremote', 'branch.main.mergeoptions',
+    // A remote named by an address (ruling R113): git reads the address setup names as that remote.
+    'remote.https://github.com/o/r.git.url', 'remote.https://github.com/o/r.git.fetch', 'remote./tmp/host/r.git.url',
+    'remote.C:\\host\\r.git.url', 'remote.a:b.url', 'remote.a/b.url',
     // Rulings R110 and R111's refusal list.
     'hook.x.event', 'filter.lfs.clean', 'filter.x.smudge', 'filter.x.process', 'diff.external', 'diff.x.command', 'diff.x.textconv', 'merge.x.driver',
     'core.sshcommand', 'core.fsmonitor', 'core.editor', 'core.pager', 'core.askpass', 'core.gitproxy', 'credential.helper', 'credential.https://h.helper',
@@ -227,6 +230,27 @@ test('only the settings on the allowed list pass, sections and keys in any case 
   ];
   for (const key of allowed) assert.equal(allowedSetting(key), true, key);
   for (const key of refused) assert.equal(allowedSetting(key), false, key);
+});
+
+test('a remote named by setup\'s own address sends plain git\'s ls-remote and push elsewhere; setup\'s git refuses it by name (ruling R113)', async () => {
+  const planted = await repository();
+  const named = await repository();
+  for (const address of ['https://github.com/where-is-brett/nothing.git', named.bare]) {
+    const t = await workTree();
+    await t.plain(['config', `remote.${address}.url`, planted.bare]);
+    const seen = await t.plain(['ls-remote', address, 'refs/heads/main']);
+    assert.match(seen.stdout, new RegExp(planted.commit), `${address}: plain git reads the planted remote's address`);
+    const counted = counting();
+    const git = setupGit({ run: counted, env: reaching(setupGitEnv({ host: 'github' }), address), cwd: t.work, workTree: t.work });
+    await assert.rejects(git(['push', '-q', address, 'HEAD:refs/heads/setup']), { message: unlistedSettingsLine([`remote.${address}.url`]) }, address);
+    assert.equal(counted.calls, 1, `${address}: only the look ran`);
+    assert.equal((await planted.plain(['rev-parse', '-q', '--verify', 'refs/heads/setup'], planted.bare)).code === 0, false, 'nothing reached the planted repository');
+  }
+  // A remote with a plain name is still allowed.
+  const t = await workTree();
+  await t.plain(['remote', 'add', 'origin', named.bare]);
+  const git = setupGit({ env: reaching(setupGitEnv({ host: 'github' }), named.bare), cwd: t.work, workTree: t.work });
+  assert.equal((await git(['push', '-q', named.bare, 'HEAD:refs/heads/setup'])).code, 0);
 });
 
 test('an ext:: origin allowed by an included config runs for plain git, and in setup\'s git is refused by name and can\'t run (ruling R111)', async () => {

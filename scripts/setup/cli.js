@@ -4,7 +4,9 @@
 //   plan <step>          the step's list of changes and its card, as AskUserQuestion's question,
 //                        with the list's hash: { step, title, hash, director, changes, card };
 //                        or a question the step asks first, its card to be asked exactly as given:
-//                        { step, title, ask: { step, id, card } }; or { step, title, wait, why },
+//                        { step, title, ask: { step, id, card } }, with `unanswered`, a line saying
+//                        why, when it is asked again because what was typed on it was a question or
+//                        handed the choice back (ruling R125); or { step, title, wait, why },
 //                        nothing to ask for `wait` milliseconds, with `waitsFor`, the step it waits
 //                        for, when it is waiting for another step to finish; or
 //                        { step, title, done: true }, the step settled on the director's answers,
@@ -80,7 +82,7 @@ function stepOf(text) {
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
   const named = { step, title: SETUP_TITLES[step] };
-  if (got.ask !== undefined) return { ...named, ask: got.ask };
+  if (got.ask !== undefined) return { ...named, ask: got.ask, ...(typeof got.unanswered === 'string' ? { unanswered: got.unanswered } : {}) };
   if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why, ...(Number.isInteger(got.waitsFor) ? { waitsFor: got.waitsFor } : {}) };
   // A settled step's line for the director, said at once (rulings R101, R120), on one line as status's are.
   if (got.done === true) return { ...named, done: true, ...(typeof got.said === 'string' && got.said.trim() !== '' ? { said: got.said.replace(BREAKS, ' ').trim() } : {}) };

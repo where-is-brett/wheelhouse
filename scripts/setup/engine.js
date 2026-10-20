@@ -4,7 +4,10 @@
 // will change, named by the hash of that list (design section 15, the plan's call 2).
 //
 //   /setup/plan   { folder, step }        -> { ok, changes, hash, card, director }, or
-//                                            { ok, ask: { step, id, card } } (a question to ask), or
+//                                            { ok, ask: { step, id, card } } (a question to ask),
+//                                            with `unanswered`, a line saying why, when it is
+//                                            asked again because what was typed on it was no
+//                                            answer (ruling R125), or
 //                                            { ok, wait, why } (nothing to ask yet), with
 //                                            `waitsFor`, the step it waits for, when it is that, or
 //                                            { ok, done: true } (the step settled on its answers),
@@ -41,7 +44,10 @@
 // in an address, which the card would show hidden; the
 // prompt record keeps the director's answer on that exact card, signed, and every step's plan reads
 // every answer of its run in ctx.answers, so the list a Go ahead's hash names already holds the
-// choices, and a later answer that changes it makes that Go ahead CHANGED.
+// choices, and a later answer that changes it makes that Go ahead CHANGED. On a card that takes a
+// typed answer, a question or the choice handed back ("you decide", "not sure" and the like) is no
+// answer (ruling R125, clicks.js notAnAnswer): the step sees it unanswered and asks the card again,
+// and the plan says why (`unanswered`), once, for the playbook to tell the director.
 // `{ wait: ms, why }`: nothing to ask yet. `{ settled: { record } }`: every answer is in and the
 // step changes nothing outside setup's own records, so the record is kept in the journal as an
 // `answer` change and the step is done, with no Go ahead. A line the plan said as it settled
@@ -85,7 +91,9 @@ import { pluginOnIn } from '../lib/plugin-on.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished } from './steps.js';
-import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
+import {
+  noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords, typedNotAnswered,
+} from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
 import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
@@ -98,6 +106,8 @@ export const NEEDS_CLICK = `this step needs the director's click on its card, fr
 export const CHANGED = 'the list has changed since the card: ask for the plan again and show the new card';
 export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
+// Said with a card asked again because what was typed on it was no answer (ruling R125).
+export const NOT_AN_ANSWER = 'What was typed on this card reads as a question, or hands the choice back, so it was not taken as the answer: the choice is the director\'s, and the card is asked again.';
 const APPLY_FIELDS = ['folder', 'step', 'hash'];
 const HEALTH_FIELDS = ['folder', 'lines'];
 // How long the playbook waits before asking again for a step whose Go ahead waits on another (R54).
@@ -468,8 +478,10 @@ export function setupRoutes({
     if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now: () => new Date(startedAt) });
     if (got.ask) {
+      // What was typed on this card since it was last asked was no answer: said, before it is asked again.
+      const unanswered = typedNotAnswered(run.id, step.n, got.ask.id);
       noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, found: got.ask.found, now });
-      return { ok: true, ask: { step: step.n, id: got.ask.id, card } };
+      return { ok: true, ask: { step: step.n, id: got.ask.id, card }, ...(unanswered ? { unanswered: NOT_AN_ANSWER } : {}) };
     }
     if (got.settled) {
       // R19 widened (R32): a done mark the director's signed answers earned, with no Go ahead. The

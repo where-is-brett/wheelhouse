@@ -6,7 +6,7 @@ What Wheelhouse keeps, where, and for how long, and what uninstall removes and w
 
 ## Conversations
 
-What you and the agents say in Claude sessions goes to Anthropic to be processed, as with any use of Claude. Wheelhouse sends nothing anywhere else.
+What you and the agents say in Claude sessions goes to Anthropic to be processed, as with any use of Claude. Wheelhouse sends your conversations nowhere else. What it does send, and where, is below: the project's records and your profile go to GitHub or GitLab, and a link goes to ntfy or Telegram only if you switch them on.
 
 ## Transcripts
 
@@ -42,14 +42,17 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 - Locked, if you chose it, is taken off. It asks for your computer password.
 - Its settings, its configuration, its part of `CLAUDE.md` and the pinned kits come out of the project's files, by a pull request you merge (or straight from the folder, if setup's own commit never reached the host).
 - The project's records on this computer are removed.
-- The changes setup made to this computer (the 30 days for transcripts, the usage counts, Claude Code's update channel and phone notifications) are put back, but only with the last project on this computer that uses Wheelhouse, since the others still need them. With that last project, the keys it made are deleted or withdrawn (for the GitHub app you get its page, to remove it there), this computer's key leaves your profile, the usage receiver and the host helper stop, and Wheelhouse's own folders in `~/.wheelhouse` are removed: the tools it fetched, the copy of your profile, and its records of your clicks and answers.
+- The changes setup made to this computer (the 30 days for transcripts, the usage counts, Claude Code's update channel and phone notifications) are put back, but only with the last project on this computer that uses Wheelhouse, since the others still need them. While another project here still uses the GitHub app, the app stays, and you get its installation page to untick this project's repository there.
+- With that last project, the keys it made are deleted or withdrawn (for the GitHub app you get its page, to remove it there), this computer's key leaves your profile, the usage receiver and the host helper stop, and Wheelhouse's own folders and files in `~/.wheelhouse` are removed: the tools it fetched, the copy of your profile, its records of your clicks and answers, the computers you trusted and its note of which computers your profile lists, and last of all this computer's own signing key.
 - A setting you changed yourself after setup is left as you set it, and the card names it.
+
+**A project your other computers use too** (one this computer joined, or where this computer trusts another computer's key): uninstall takes Wheelhouse off this computer only. The project's files stay as committed, nothing on GitHub or GitLab is offered for deletion, the GitHub app stays installed with nothing to untick, and only this computer's key leaves your profile. Your other computers keep Wheelhouse's checks for the project.
 
 **What it keeps:**
 
-- Your product's repository, the project's `wheelhouse-state` branch and your profile repository stay, unless you choose **Delete it** on each one's own card. **Keep it** is recommended, since none of them can be brought back. Deleting the branch is done with your own sign-in; for a repository, its settings page on GitHub or GitLab opens, and you click Delete there yourself.
+- Your product's repository, the project's `wheelhouse-state` branch and your profile repository stay, unless you choose **Delete it** on each one's own card. A repository gets a card only if setup made it: one you already had is kept, with no card. **Keep it** is recommended, since none of them can be brought back. Deleting the branch is done with your own sign-in; for a repository, its settings page on GitHub or GitLab opens, and you click Delete there yourself.
 - Branch protection on the host stays on.
-- Setup's journal stays in `~/.wheelhouse`, so what setup did stays on record. So do the usage counts already gathered, which hold counts only; delete that folder yourself if you want them gone.
+- Setup's journal stays in `~/.wheelhouse`, so what setup did stays on record, and so does uninstall's own record of how it went. So do the usage counts already gathered, which hold counts only; delete that folder yourself if you want them gone.
 - Your git history stays, setup's commit included.
 - git, and anything else setup installed with its official installer, stays on your computer.
 - Transcripts already removed by the 30 days can't come back.

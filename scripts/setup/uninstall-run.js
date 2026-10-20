@@ -26,6 +26,15 @@
 // settled and kept changes are marked, and last of all each of the folder's open runs is closed
 // (closeRun, by uninstall). The answers are read before anything is removed (the trusted-keys list
 // that verifies them is among what the last uninstall removes).
+//
+// Resuming (ruling R122). A push the plan read as never made is looked for on the host first; found
+// there, the push is marked as on the host (markOnHost) before uninstall stops, so the next plan
+// plans the pull request. A commit never pushed is marked kept as soon as setup's files are put back
+// here, so a resume never looks for it again; and once everything before the last phase is done, a
+// resume carries on without the project's record (which the last phase removes). The signing key
+// and the trusted-keys list are the plan's last removals (ruling R123): once the first is removed,
+// nothing stops uninstall before its runs are closed, so a resume never needs a click this computer
+// can no longer sign.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,17 +56,18 @@ import { stopForeman, stopWatcher } from '../foreman/start.js';
 import { stopReceiver } from '../telemetry/main.js';
 import { leaveLocked } from '../protection/locked.js';
 import { lockedProjects } from '../protection/managed.js';
-import { readJournal, markPutBack, closeRun, reverseChange, reverseText } from './journal.js';
+import { readJournal, markPutBack, markOnHost, closeRun, reverseChange, reverseText } from './journal.js';
 import { launchVarState, unsetLaunchVar } from './telemetry.js';
 import { putBackOwnApp } from './own-app.js';
 import { directorGitEnv, directorGitlabApi, openPage } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 import { withdrawEnrolment } from './computers.js';
+import { enrolledFile, signingKeyFile } from '../state/signing.js';
 import { answersFor, askedRecord } from './clicks.js';
 import {
   uninstallPlan, readProgress, writeProgress, describe, hostTarget, samePath, within, keyOf, realOr,
-  ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL,
+  ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL, NEVER_PUSHED, PHASES,
 } from './uninstall.js';
 
 export const TICK_MS = 5 * 1000;
@@ -236,7 +246,23 @@ export async function applyUninstall({
 
   // A push 15a's plan read as not made may have reached the host if setup stopped before it fetched:
   // looked for on the host first, and the list is stale if it is there.
-  const unpushed = plan.keep.flatMap((k) => k.ids ?? []).map((id) => byId.get(id)).filter((c) => c?.kind === 'host' && c.after?.action === 'push').at(-1);
+  const neverPushed = plan.keep.filter((k) => k.why === NEVER_PUSHED);
+  const unpushed = neverPushed.flatMap((k) => k.ids ?? []).map((id) => byId.get(id)).filter((c) => c?.kind === 'host' && c.after?.action === 'push').at(-1);
+  // Everything before the last phase done already: an earlier apply got that far, and may have
+  // removed the project's record since (ruling R122).
+  const reachedLast = plan.changes.every((e) => e.put === 'stop' || e.phase === 'last');
+  // The commit never pushed, marked kept once setup's files are put back here (ruling R122).
+  let commitKept = false;
+  const keepCommit = () => {
+    if (commitKept) return;
+    commitKept = true;
+    for (const k of neverPushed) mark(k.ids, false, k.why);
+  };
+  const afterFiles = (entry) => PHASES.indexOf(entry.phase) > PHASES.indexOf('files');
+  // The signing key and the trusted-keys list: from the first of them on, nothing stops uninstall
+  // (ruling R123).
+  const keyFile = (e) => e.put === 'remove' && (samePath(e.target, signingKeyFile()) || samePath(e.target, enrolledFile()));
+  const firstKeyFile = plan.changes.findIndex(keyFile);
 
   // The level 4 cards, on Delete it alone.
   const asked = async () => {
@@ -266,7 +292,7 @@ export async function applyUninstall({
   let askedYet = false;
   let removed = 0;
   try {
-    if (unpushed !== undefined) {
+    if (unpushed !== undefined && !(record === null && reachedLast)) {
       // Read by ls-remote (ruling R118): no such branch on the host means the push never went up,
       // so uninstall goes on here; only a host that can't be reached stops it.
       if (record === null) halt('the project\'s record is gone, so whether setup\'s commit reached the host can\'t be checked');
@@ -285,10 +311,17 @@ export async function applyUninstall({
         if (fetched.code !== 0) halt(`${branch} on ${hostName(record.host)} could not be read with your sign-in, so uninstall did not go on; try again once it can be`);
         return (await g.git(['cat-file', '-e', `${sha}^{commit}`])).code === 0;
       });
-      if (there) halt(`setup's commit is on ${branch} on ${hostName(record.host)} after all, so ${UNINSTALL_CHANGED}`);
+      if (there) {
+        // Recorded first, so the next plan reads the push as made and plans the pull request.
+        markOnHost(unpushed.id, { now });
+        halt(`setup's commit is on ${branch} on ${hostName(record.host)} after all, so ${UNINSTALL_CHANGED}`);
+      }
     }
-    for (const entry of plan.changes) {
-      if (entry.put !== 'stop' && stopped()) halt('STOP came on, so uninstall stopped here; once STOP is lifted, ask for uninstall\'s plan again');
+    for (const [i, entry] of plan.changes.entries()) {
+      // Past the project's files, setup's files are put back here: the commit never pushed is kept.
+      if (afterFiles(entry)) keepCommit();
+      const closing = firstKeyFile !== -1 && i > firstKeyFile;
+      if (entry.put !== 'stop' && !closing && stopped()) halt('STOP came on, so uninstall stopped here; once STOP is lifted, ask for uninstall\'s plan again');
       if (entry.phase === 'last' && !askedYet) {
         askedYet = true;
         await asked();
@@ -420,10 +453,14 @@ export async function applyUninstall({
           break;
         }
         case 'delete-key': {
-          const urls = installationPages(appKeys());
+          // On a shared project the installation is the other computers' too: it is left, and no
+          // page is given (ruling R124).
+          const urls = entry.shared ? [] : installationPages(appKeys());
           deleteKey('github-app');
           mark(entry.ids, true);
-          say('The GitHub app\'s keys are deleted from this computer. The app is still installed on GitHub: on its installation page, click Uninstall.');
+          say(entry.shared
+            ? 'The GitHub app\'s keys are deleted from this computer. The app stays installed on GitHub, as your other computers use it.'
+            : 'The GitHub app\'s keys are deleted from this computer. The app is still installed on GitHub: on its installation page, click Uninstall.');
           for (const url of urls) await page('the app\'s installation page', url);
           break;
         }
@@ -464,6 +501,7 @@ export async function applyUninstall({
       }
     }
     if (!askedYet) await asked();
+    keepCommit();
     for (const d of plan.done) mark(d.ids, true, d.why);
     for (const k of plan.keep) mark(k.ids, false, k.why);
     for (const r of openRuns) closeRun(r.id, { at: now, by: 'uninstall' });

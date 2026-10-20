@@ -20,6 +20,9 @@ import {
   NOT_SET_UP, partWay, JOURNAL_UNREADABLE, REMOVED, FOREMAN_HELD_UNREADABLE, FOREMAN_HELD_NEWER, TRUST_ASK,
 } from '../../scripts/hooks/session-start.js';
 import { decide as stopGuard } from '../../scripts/hooks/stop-guard.js';
+import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
+import { UNINSTALL_NEEDS_CLICK } from '../../scripts/setup/uninstall.js';
+import { HEALTH_STEP } from '../../scripts/lib/setup-run.js';
 import { setStop } from '../../scripts/lib/stop.js';
 import { as, shortHome } from '../helpers/homes.js';
 
@@ -127,7 +130,7 @@ test('the playbook waits for the labels the cards carry', () => {
 // trials wait for the line status gives once its own checks have finished.
 test('the playbook closes the gaps its pressure runs found', () => {
   assert.match(playbook, /\*\*The director stops\*\*[^\n]*stop at once[^\n]*don't ask the card again/);
-  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*whatever they type is their answer[^\n]*run `plan <step>` again/);
+  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*taken as their answer[^\n]*run `plan <step>` again/);
   assert.match(playbook, /a Go-ahead card:\*\* ask `card` before anything else; never run `plan` again over it/);
   const engine = read('scripts/setup/engine.js');
   assert.ok(engine.includes('its own checks finished at'), 'status words it so');
@@ -148,4 +151,30 @@ test('the playbook\'s reading forms run under STOP', async () => {
       assert.equal(await stopGuard(input, { projectOf: () => ({ project: 'o__p' }), pluginRoot: '/plugin', platform: 'linux' }), undefined, form);
     }
   });
+});
+
+// Ruling R125: a typed question or the choice handed back comes back as `unanswered`; the playbook
+// says the choice is the director's and gives the card's recommendation before asking it again.
+test('the playbook acts on a typed answer the helper did not take, as ruling R125 says', () => {
+  assert.match(NOT_AN_ANSWER, /not taken as the answer/);
+  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*comes back with `unanswered`[^\n]*the choice is theirs, give the card's own recommendation and reason, then ask the same card again/);
+  assert.doesNotMatch(playbook, /whatever they type is their answer, even a question/);
+  assert.match(playbook, /\| "They typed a question on the owner\/name card[^\n]*`unanswered`[^\n]*recommendation/);
+});
+
+// Task 16's must-fix Minors 3 to 6: step 10's trials are the never list's one exception; step 10's
+// own wait without waitsFor is the session's part; only a refusal twice stops; uninstall's password
+// window and its needs-click refusal are named.
+test('the playbook names step 10\'s trials and wait, stops on a refusal twice only, and names uninstall\'s password window and click', () => {
+  assert.match(playbook, /\*\*You never:\*\*[^\n]*except step 10's trials \(below\)/);
+  const health = read('scripts/setup/health.js');
+  assert.ok(health.includes(`step ${HEALTH_STEP}'s own checks are done and its trial pull request`), 'step 10\'s plan words its wait so, with no waitsFor');
+  assert.match(playbook, /\*\*`wait` without `waitsFor`:\*\*[^\n]*On step 10 it is your part: follow Step 10 below/);
+  assert.match(playbook, /\*\*Never retry in a loop\.\*\* The same refusal twice: stop[^\n]*`uninstall status` while uninstall runs, are not refusals/);
+  assert.doesNotMatch(playbook, /The same answer twice/);
+  const uninstall = playbook.split('\n## Uninstall\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(uninstall, /password window/);
+  assert.match(read('commands/uninstall.md'), /password window/);
+  assert.ok(UNINSTALL_NEEDS_CLICK.startsWith('uninstall needs the director\'s Remove it'));
+  assert.match(uninstall, /If it says uninstall needs the director's Remove it, start again at 1 and ask the card again; never apply without its click/);
 });

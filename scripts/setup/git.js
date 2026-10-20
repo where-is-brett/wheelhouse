@@ -46,9 +46,12 @@ const WITH_LOCAL = 'https:file';
 
 // The allowed list (ruling R112): the settings a repository's own config may hold for setup's git
 // to run there. Sections and keys match in any case, as git matches them; a subsection (a remote's
-// or a branch's name) may be any name, kept as written. Each runs no program and changes neither
-// where git connects, nor where it writes, nor what it trusts, or is one that setup's own git calls
-// write (init, remote add, clone, branch --set-upstream-to, the profile clone's branch settings).
+// or a branch's name) may be any name, kept as written, except that a remote's name holds no `/`,
+// `\` or `:` (ruling R113): git reads an address setup names (https://… or a path) as the name of
+// a remote of that name, so such a remote's url would send setup's push or fetch elsewhere. Each
+// runs no program and changes neither where git connects, nor where it writes, nor what it trusts,
+// or is one that setup's own git calls write (init, remote add, clone, branch --set-upstream-to,
+// the profile clone's branch settings).
 // A section's key, with no subsection:
 const PLAIN_KEYS = new Set([
   // What git init writes (on macOS, Linux and Windows), and how files are written out.
@@ -84,6 +87,7 @@ export function allowedSetting(name) {
   const key = name.slice(last + 1).toLowerCase();
   if (WHOLE_SECTIONS.has(section)) return true;
   if (first === last) return PLAIN_KEYS.has(`${section}.${key}`);
+  if (section === 'remote' && /[/\\:]/.test(name.slice(first + 1, last))) return false;
   return last > first + 1 && (NAMED_KEYS.get(section)?.has(key) ?? false);
 }
 

@@ -151,29 +151,57 @@ export function freshClicks({ runId, step, hash, now = () => new Date() }) {
   }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
+// A typed answer that is no answer (ruling R125): a question (it ends with "?"), or, alone, words
+// that hand the choice back. Case and a closing full stop or exclamation mark don't count.
+export const HANDED_BACK = Object.freeze(['you decide', 'you choose', 'not sure', 'i don\'t know', 'skip', 'whatever']);
+export function notAnAnswer(text) {
+  if (typeof text !== 'string') return false;
+  const said = text.trim();
+  if (said.endsWith('?')) return true;
+  const plain = said.replace(/[.!\s]+$/u, '').replace(/\s+/gu, ' ').replaceAll('\u2019', '\'').toLowerCase();
+  return HANDED_BACK.includes(plain);
+}
+
+// This run's setup-answers kept here, made on this computer and signed by its enrolled key, oldest
+// first.
+function keptAnswers(runId) {
+  if (!RUN_ID.test(String(runId))) return [];
+  const enrolled = readEnrolled();
+  const me = computerId();
+  return keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
+    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
 // Every answer the director has given to this run's questions, as each step's plan reads it in
 // ctx.answers: { '<step>.<question id>': { label, text, at } }. An answer counts when it is a
 // setup-answer naming this run, made on this computer and signed by its enrolled key, and the
 // question it answers is the one its step last asked under that id, in the same words, with the
 // label one of that card's own options (never a put-off) or, on a card that takes one, a typed
-// text. Answers are never used up and never go stale: the newest for each question counts.
+// text that is an answer (notAnAnswer: never a question, nor the choice handed back, ruling R125;
+// the record stays as it was kept, and is passed over here). Answers are never used up and never
+// go stale: the newest for each question counts.
 export function answersFor(runId) {
-  if (!RUN_ID.test(String(runId))) return {};
-  const enrolled = readEnrolled();
-  const me = computerId();
   const answers = {};
-  const kept = keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
-    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled));
-  for (const e of kept.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) {
+  for (const e of keptAnswers(runId)) {
     const { step, questionId, question, label, text } = e.data;
     const asked = askedRecord(runId, step, questionId);
     if (asked === null || asked.card.question !== question) continue;
     const fits = typeof label === 'string'
       ? text === null && !PUT_OFF.includes(label) && asked.card.options.some((o) => o.label === label)
-      : label === null && typeof text === 'string' && text !== '' && asked.typed === true;
+      : label === null && typeof text === 'string' && text !== '' && asked.typed === true && !notAnAnswer(text);
     if (fits) answers[`${step}.${questionId}`] = { label, text, at: e.at };
   }
   return answers;
+}
+
+// Whether the newest typed answer to this question since its card was last asked, in the same
+// words, is no answer (notAnAnswer): the step asks the card again, saying why (ruling R125).
+export function typedNotAnswered(runId, step, id) {
+  const asked = askedRecord(runId, step, id);
+  if (asked === null || asked.typed !== true) return false;
+  const since = keptAnswers(runId).filter((e) => e.data.step === step && e.data.questionId === id && e.data.question === asked.card.question
+    && Date.parse(e.at) >= Date.parse(asked.at)).at(-1);
+  return since !== undefined && since.data.label === null && notAnAnswer(since.data.text);
 }
 
 // Records uninstall's card as shown for a folder (ruling R90): the project its line names, the full

@@ -13,11 +13,11 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { findRun, markStep, reverseChange } from '../../../scripts/setup/journal.js';
-import { answersFor, noteAsked } from '../../../scripts/setup/clicks.js';
+import { answersFor, noteAsked, notAnAnswer } from '../../../scripts/setup/clicks.js';
 import { planHash } from '../../../scripts/setup/steps.js';
 import { runStep } from '../../../scripts/setup/run-step.js';
 import { main as cli } from '../../../scripts/setup/cli.js';
-import { AFTER_WAIT_MS } from '../../../scripts/setup/engine.js';
+import { AFTER_WAIT_MS, NOT_AN_ANSWER } from '../../../scripts/setup/engine.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
@@ -341,4 +341,55 @@ test('a setup answer is an action naming the run, the step, the question and its
     assert.throws(() => make({ label: 'Explain more' }), /not an answer/);
     assert.throws(() => make({ hash: 'a'.repeat(64) }), /field/);
   });
+});
+
+// Ruling R125: a typed question, or the choice handed back, is no answer.
+test('only a question or the choice handed back, alone, is no answer; any other typed text is one (ruling R125)', () => {
+  for (const text of ['what do you mean?', 'Which one is cheaper ? ', 'you decide', 'You Choose.', 'not sure', 'I don\'t know', 'I don\u2019t know!', 'SKIP', ' whatever ', 'you  decide']) {
+    assert.equal(notAnAnswer(text), true, text);
+  }
+  for (const text of ['A menu for the café, with prices.', 'Skip the prices for now', 'whatever sells best on Fridays', 'I don\'t know the name yet, call it Café', 'Not sure about colours, but a menu', null, 7]) {
+    assert.equal(notAnAnswer(text), false, String(text));
+  }
+});
+
+test('a typed question or "you decide" on a setup card is not taken as the answer: the card is asked again, saying why once, and a real answer then counts (ruling R125)', async () => {
+  let clock = T0;
+  await withSetup(async ({ client, home, folder }) => {
+    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true }] }, settle: [4] });
+    const asked = await client.setup.plan({ folder, step: 4 });
+    assert.equal(asked.unanswered, undefined);
+    const run = findRun(folder);
+    const texts = ['what do you mean?', 'you decide', 'Not sure.'];
+    for (const [i, text] of texts.entries()) {
+      clock = new Date(T0.getTime() + (i + 1) * MINUTE);
+      // Typed after the card was last asked.
+      await choose(folder, asked.ask.card, text, { at: new Date(clock.getTime() - 1000) });
+      assert.equal(kept(home).length, i + 1, 'the record stays as the prompt record kept it');
+      assert.deepEqual(answersFor(run.id), {}, text);
+      const again = await client.setup.plan({ folder, step: 4 });
+      assert.equal(again.ok, true, again.refused);
+      assert.equal(again.ask?.id, 'name', text);
+      assert.deepEqual(again.ask.card, asked.ask.card, 'the same card, asked again');
+      assert.equal(again.unanswered, NOT_AN_ANSWER, text);
+    }
+    // Said once: asked again with nothing new typed, the line is not repeated.
+    clock = new Date(T0.getTime() + 10 * MINUTE);
+    const quiet = await client.setup.plan({ folder, step: 4 });
+    assert.equal(quiet.ask?.id, 'name');
+    assert.equal(quiet.unanswered, undefined);
+    // Through the command, the line comes with the card.
+    clock = new Date(T0.getTime() + 11 * MINUTE);
+    await choose(folder, asked.ask.card, 'whatever', { at: new Date(clock.getTime() - 1000) });
+    let out = '';
+    const code = await cli(['plan', '4'], { client, cwd: folder, out: (t) => { out += t; }, err: () => {} });
+    assert.equal(code, 0);
+    assert.equal(JSON.parse(out).unanswered, NOT_AN_ANSWER);
+    // A typed answer that is one counts, and the step settles on it.
+    clock = new Date(T0.getTime() + 12 * MINUTE);
+    await choose(folder, asked.ask.card, 'A menu for the café, with prices.', { at: new Date(clock.getTime() - 1000) });
+    assert.equal(answersFor(run.id)['4.name'].text, 'A menu for the café, with prices.');
+    const settled = await client.setup.plan({ folder, step: 4 });
+    assert.equal(settled.done, true, JSON.stringify(settled));
+  }, { now: () => clock });
 });

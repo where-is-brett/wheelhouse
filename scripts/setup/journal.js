@@ -17,6 +17,8 @@
 //     putBack?: { at, put: boolean, why?: string },  uninstall's mark, made once the change is put
 //                            back or left (ruling R89), so an uninstall cut short and resumed never
 //                            reverses a change twice
+//     onHost?: { at },       a push of setup's commit: uninstall found it on the host though the
+//                            folder never showed it (ruling R122), so it counts as made
 //   }
 //
 //   Journal = { v: 1, runs: Array<{
@@ -237,6 +239,7 @@ function checkChange(change, { needStep = true } = {}) {
 function checkNew(change) {
   checkChange(change);
   if (Object.hasOwn(change, 'putBack')) throw new Error(`Change ${change.id} is recorded as put back already; only uninstall marks a change put back`);
+  if (Object.hasOwn(change, 'onHost')) throw new Error(`Change ${change.id} is recorded as found on the host already; only uninstall marks a push so`);
 }
 
 // Appends changes to a run. A change whose id is already there is refused, so a retry cannot double one.
@@ -280,6 +283,22 @@ export function markPutBack(ids, { put, why, now = () => new Date() } = {}) {
       marked.push(id);
     }
     return marked;
+  });
+}
+
+// Marks a push of setup's commit, by its change's id, as on the host (ruling R122): uninstall's
+// look found the commit there though the journal and the folder never showed the push went up, so
+// the next plan reads it as made and plans the pull request. A push marked already keeps its first
+// mark. True when it was marked now.
+export function markOnHost(id, { now = () => new Date() } = {}) {
+  const at = stamp(now);
+  return update((journal) => {
+    const change = journal.runs.flatMap((r) => (Array.isArray(r.changes) ? r.changes : [])).find((c) => c.id === id);
+    if (!change) throw new Error(`There is no change ${id} in the setup journal`);
+    if (change.kind !== 'host' || change.after?.action !== 'push') throw new Error(`Change ${id} is not a push of setup's commit`);
+    if (change.onHost !== undefined) return false;
+    change.onHost = { at };
+    return true;
   });
 }
 

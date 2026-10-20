@@ -23,23 +23,34 @@
 // project's folder, which is the project's); the profile's clone and profile.json;
 // the profile repository; the app's keys and the profile's own GitLab key; the own app recorded in
 // the profile; this computer's enrolment; and, recorded nowhere, the signing key and the
-// trusted-keys list beside it. Wheelhouse's own folders and files (the tools it fetched, the
-// profile's clone and profile.json, setup's clicks, answers and the like, the Windows installer's
-// temporary folder, and the project's own folder under projects/) are removed whole, never named as
-// changed since setup. journal.json is kept.
+// trusted-keys list beside it, removed last of all (ruling R123), after every change that can stop
+// uninstall, so an uninstall cut short can still be clicked again. Wheelhouse's own folders and
+// files (the tools it fetched, the profile's clone and profile.json, setup's clicks, answers and the
+// like, the trust clicks and the record of the profile's enrolments last fetched, the Windows
+// installer's temporary folder, and the project's own folder under projects/) are removed whole,
+// never named as changed since setup. journal.json, and uninstall's own progress record, are kept.
 //
 // The setup commit counts as on the host only when the journal or the folder shows it went up:
 // step 7 finished, or recorded protection after the push, or the folder's copy of the
-// branch on the host holds it. Step 7 records the push before making it, so a push that failed
-// leaves the files and pins to be put back here, and the commit named as kept in the folder.
+// branch on the host holds it, or uninstall's own look found it there (the push's onHost mark,
+// ruling R122). Step 7 records the push before making it, so a push that failed leaves the files
+// and pins to be put back here, and the commit named as kept in the folder.
+//
+// A shared project (ruling R124): this computer joined a project another set up, or it trusts
+// another computer's key. Then the project and its committed files, the state branch, the profile
+// and the app's installation are other computers' too: the files stay as committed (no pull
+// request), no Delete card is offered for what is on the host, the app's installation is left as it
+// is (no untick, no Uninstall), and only this computer's own enrolment is withdrawn.
 //
 // What each kind gives (R87): see the entries below. The order is binding (R89): Stop, Locked, the
 // project's files (a pull request the director merges), this computer, keys, kept, last; newest
-// first within a phase; the helper stops last of all, after its answer.
+// first within a phase; then the signing key and the trusted-keys list; the helper stops last of
+// all, after its answer.
 //
 //   Plan = {
 //     project: string | null,  the registered project the folder is, or null
 //     last: boolean,           no other project on this computer (ruling R114)
+//     shared: boolean,         other computers use the project too (ruling R124)
 //     changes: Entry[],        in the order they are applied
 //     keep: Array<{ what, why, brief?, ids? }>,   left as they are; each changed since setup is
 //                              named on the card, by `brief` where it is given
@@ -69,10 +80,11 @@
 //       'unset-env' { target, where }        only while it still holds what setup set
 //       'put-back-own-app' { change }        own-app.js's putBackOwnApp
 //       'remove-enrolment' { target }        this computer's key off the profile, with the sign-in
-//       'delete-key' { key }                 the keys deleted; for github-app, the installation's
-//                                            page given, to uninstall the app there
-//       'untick-repository' { key, repo }    while another project stays: the installation's
-//                                            settings page given, to untick this repository
+//       'delete-key' { key, shared? }        the keys deleted; for github-app, the installation's
+//                                            page given, to uninstall the app there, unless shared
+//       'untick-repository' { key, repo }    while another project stays, on a project not shared:
+//                                            the installation's settings page given, to untick
+//                                            this repository
 //       'revoke-key' { key, pasted, line }   a GitLab key revoked through the API, then deleted
 //       'remove' { target }                  a file, or a folder whole, of Wheelhouse's own
 //       'remove-plugin' { line }             the line the director follows in Claude Desktop
@@ -83,14 +95,15 @@ import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
-import { wheelhouseHome, keysDir, profileDir, projectsDir } from '../lib/paths.js';
+import { wheelhouseHome, keysDir, profileDir, projectsDir, computerId } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, writeWhole } from '../lib/setup-clicks.js';
 import { HOST_TOOLS, toolFolder } from '../lib/host-tools.js';
+import { trustDir, seenFile } from '../lib/trust-clicks.js';
 import { STATE_BRANCH } from '../state/clone.js';
-import { enrolledFile, signingKeyFile } from '../state/signing.js';
+import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
 import { CLICK_FRESH_MS, RETENTION_DAYS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { cleanDeep } from '../lib/clean.js';
@@ -120,6 +133,10 @@ const TRANSCRIPTS = `Transcripts removed by the ${RETENTION_DAYS}-day retention 
 const ASK_ORDER = ['product', 'state', 'profile'];
 export const HOSTS = { github: 'GitHub', gitlab: 'GitLab' };
 const KEEP_LABEL = 'Keep it';
+// Why a commit setup made in the folder, never pushed, is kept: apply looks for it on the host first.
+export const NEVER_PUSHED = 'it stays in this folder\'s history';
+// Why what other computers use stays as it is, on a shared project (ruling R124).
+const OTHERS_USE = 'your other computers use it, so it stays';
 export const DELETE_LABEL = 'Delete it';
 
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
@@ -214,11 +231,13 @@ function deleteCard({ what, why, deletes, keeps, because }) {
 // else stays, and the retention line (R64).
 function cardWhat({ name, changes, keep, asks, pullRequest }) {
   const count = (test) => changes.filter(test).length;
+  // The signing key and the trusted-keys list, removed last of all, are keys on the card.
+  const keyFile = (c) => c.put === 'remove' && (samePath(c.target, signingKeyFile()) || samePath(c.target, enrolledFile()));
   const files = count((c) => c.phase === 'files' && ['in-pull-request', 'reverse'].includes(c.put));
   const trial = count((c) => c.phase === 'files' && ['close-pull-request', 'delete-branch'].includes(c.put));
   const computer = count((c) => c.phase === 'computer');
-  const keys = count((c) => c.phase === 'keys');
-  const removed = count((c) => c.phase === 'last' && c.put === 'remove');
+  const keys = count((c) => c.phase === 'keys' || keyFile(c));
+  const removed = count((c) => c.phase === 'last' && c.put === 'remove' && !keyFile(c));
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const groups = [
     'stop its jobs',
@@ -341,6 +360,11 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   }
   const all = [...groups.values()];
   const joining = journal.runs.some((r) => mine(r) && joinedRepo(r) !== null);
+  // Shared (ruling R124): a joining computer's, or this computer trusts another computer's key.
+  // This computer's id is read only once there is a list to compare it with: reading it with none
+  // kept yet would make one, and the plan changes nothing.
+  const trusted = readEnrolled();
+  const shared = joining || (trusted.length > 0 && trusted.some((e) => typeof e?.computer === 'string' && e.computer !== computerId()));
 
   const items = []; // { phase, seq, entry }
   const keep = [];
@@ -360,9 +384,11 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
 
   // The setup commit and its push: on the host only when the journal or the folder shows it went up
   // (step 7 recorded the push before making it). Then a pull request takes the project's files and
-  // pins out; otherwise they are put back here, and a commit made in the folder is kept there.
+  // pins out, unless the project is shared, when they stay as committed; otherwise they are put back
+  // here, and a commit made in the folder is kept there.
   const commitGroup = all.find((g) => g[0].c.kind === 'host' && ['commit', 'push'].includes(newest(g).after?.action));
   let pullRequest = false;
+  let committed = joining;
   if (commitGroup !== undefined) {
     const { c, run: pushRun } = commitGroup.at(-1);
     const branch = c.after.branch;
@@ -371,10 +397,15 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
       // Protection is recorded only once the push went up; another change of step 7's after it may be
       // a later attempt's, stopped before its own push.
       const afterPush = runChanges.slice(runChanges.findIndex((x) => x.id === c.id) + 1).some((x) => x.step === 7 && x.kind === 'host' && x.after?.action === 'protect');
-      pullRequest = typeof pushRun.steps?.[7]?.doneAt === 'string' || afterPush || refOf(real, `refs/remotes/origin/${branch}`) === c.after.sha;
-      if (!pullRequest) kept(`setup's commit on ${branch}, never pushed`, 'it stays in this folder\'s history', idsOf(commitGroup));
+      const pushed = typeof pushRun.steps?.[7]?.doneAt === 'string' || afterPush || c.onHost !== undefined
+        || refOf(real, `refs/remotes/origin/${branch}`) === c.after.sha;
+      if (pushed && shared) {
+        committed = true;
+        kept(`setup's commit on ${branch}`, `it stays in the project's history: ${OTHERS_USE}`, idsOf(commitGroup));
+      } else if (pushed) pullRequest = true;
+      else kept(`setup's commit on ${branch}, never pushed`, NEVER_PUSHED, idsOf(commitGroup));
     } else if (refOf(real, `refs/heads/${branch}`) === commitGroup[0].c.before?.sha) settled(idsOf(commitGroup), 'the commit was never made');
-    else kept(`setup's commit on ${branch}, never pushed`, 'it stays in this folder\'s history', idsOf(commitGroup));
+    else kept(`setup's commit on ${branch}, never pushed`, NEVER_PUSHED, idsOf(commitGroup));
   }
   const sharedFile = (target) => SETUP_FILES.some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
   const projectSettings = path.join(real, '.claude', 'settings.json');
@@ -402,8 +433,8 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           remove(projectFolder(slug), 'last', list, at);
           break;
         }
-        const shared = sharedFile(c.target);
-        if (shared && joining) {
+        const inProject = sharedFile(c.target);
+        if (inProject && committed) {
           kept(describe(c, userHome), 'the project\'s own file, as committed: it stays', list);
           break;
         }
@@ -412,8 +443,8 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           kept(describe(c, userHome), walked.why, list, brief(c));
           break;
         }
-        const phase = shared ? 'files' : 'computer';
-        const put = shared && pullRequest ? 'in-pull-request' : 'reverse';
+        const phase = inProject ? 'files' : 'computer';
+        const put = inProject && pullRequest ? 'in-pull-request' : 'reverse';
         for (const e of walked.listed) add(phase, e.seq, { put, change: e.c, ids: [e.c.id] });
         settled(walked.already.map((e) => e.c.id), 'already put back');
         if (walked.changed.length > 0) kept(describe(c, userHome), 'changed since setup', walked.changed.map((e) => e.c.id), brief(c));
@@ -450,7 +481,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           const current = views === null ? undefined : acceptedOwnApp(views);
           if (current === undefined || same(current, one.after) || same(current, one.before)) add('computer', at, { put: 'put-back-own-app', change: one, ids: list });
           else kept('your own GitHub App in your profile', 'changed since setup', list, 'own-github-app');
-        } else if (c.target === 'key github-app') add('keys', at, { put: 'delete-key', key: 'github-app', before: one.before, ids: list });
+        } else if (c.target === 'key github-app') add('keys', at, { put: 'delete-key', key: 'github-app', before: one.before, ids: list, ...(shared ? { shared: true } : {}) });
         else if (/^key gitlab-project-\d+$/.test(c.target)) {
           const pasted = c.after?.kind === 'pasted-token';
           add('keys', at, {
@@ -458,6 +489,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
             line: pasted ? 'The GitLab token you pasted is revoked, which stops it everywhere it is used' : 'The project\'s GitLab key is revoked, then deleted',
           });
         } else if (h !== null && h.file?.startsWith('enrolments/')) add('computer', at, { put: 'remove-enrolment', target: c.target, ids: list });
+        else if (h !== null && h.file === null && one.after?.made === true && shared) kept(`${h.repo} on ${HOSTS[h.host]}`, OTHERS_USE, list);
         else if (h !== null && h.file === null && one.after?.made === true) {
           const profile = repoName(h.repo) === PROFILE_REPO;
           asks.push({
@@ -492,7 +524,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
       case 'process': {
         const plugin = typeof c.after?.plugin === 'string' ? c.after.plugin : null;
         if (plugin === null) kept(describe(c, userHome), 'it stays installed', list);
-        else if (joining) kept(describe(c, userHome), 'it stays installed for this folder', list);
+        else if (committed) kept(describe(c, userHome), 'it stays installed for this folder', list);
         else if (pullRequest) add('files', at, { put: 'in-pull-request', change: c, ids: list });
         else {
           // No pull request: the pin is switched off here, by its key in the project's settings,
@@ -547,20 +579,26 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
 
   // The app on GitHub: on the last project its keys go and its installation page is given; while
   // another project stays, this repository is unticked on the installation's page instead (R88).
+  // The installation is the account's, not this computer's: on a shared project it is left as it
+  // is, for the other computers (ruling R124).
   const connection = own?.record.connection;
   const usedApp = connection?.mode === 'narrow' && (connection?.host ?? own?.record.host) === 'github';
-  if (last && !items.some((i) => i.entry.put === 'delete-key') && exists(path.join(keysDir(), 'github-app.json'))) add('keys', -1, { put: 'delete-key', key: 'github-app', before: null });
-  if (!last && usedApp) add('keys', -1, { put: 'untick-repository', key: 'github-app', repo: own.record.repo });
+  if (last && !items.some((i) => i.entry.put === 'delete-key') && exists(path.join(keysDir(), 'github-app.json'))) add('keys', -1, { put: 'delete-key', key: 'github-app', before: null, ...(shared ? { shared: true } : {}) });
+  if (!last && usedApp && !shared) add('keys', -1, { put: 'untick-repository', key: 'github-app', repo: own.record.repo });
+  if (!last && usedApp && shared) kept(`the GitHub app's access to ${own.record.repo}`, OTHERS_USE);
 
   // The project's own folder under projects/, and on the last project Wheelhouse's own folders and
-  // files, recorded or not, and the signing key with the trusted-keys list beside it.
+  // files, recorded or not; the signing key with the trusted-keys list beside it go last of all
+  // (ruling R123), below.
   if (slug !== null) remove(projectFolder(slug), 'last');
+  const closing = last ? [signingKeyFile(), enrolledFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })) : [];
   if (last) {
-    for (const file of [signingKeyFile(), enrolledFile()]) if (exists(file)) add('keys', -1, { put: 'remove', target: file });
     for (const p of [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile()]) if (exists(p)) remove(p, 'last');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card
     // and clicking it write them, and the list must be the same before and after.
-    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir()]) remove(p, 'last');
+    // The trust clicks and the record of the profile's enrolments last fetched (the session start's)
+    // too, Wheelhouse's own (ruling R86).
+    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), trustDir(), seenFile()]) remove(p, 'last');
   } else {
     kept('Wheelhouse\'s helper, telemetry, tools, profile and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }
@@ -569,8 +607,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   for (const [key, r] of removals) add(r.phase, key === projectKey ? Number.MAX_SAFE_INTEGER : r.seq, { put: 'remove', target: r.target, ...(r.ids.length > 0 ? { ids: r.ids } : {}) });
 
   // The state branch, while the project is registered, and on the last project the profile, each
-  // asked about on its own card; neither is deleted otherwise (ruling R92).
-  if (own !== null) {
+  // asked about on its own card; neither is deleted otherwise (ruling R92). On a shared project the
+  // other computers use the state branch: it is not offered (ruling R124).
+  if (own !== null && shared) kept(`the ${STATE_BRANCH} branch of ${own.record.repo} on ${HOSTS[own.record.host]}`, OTHERS_USE);
+  if (own !== null && !shared) {
     const host = own.record.host;
     asks.push({
       id: askId(`${host}:${own.record.repo}:${STATE_BRANCH}`), about: 'state', phase: 'kept', put: 'delete-branch', target: `${host}:${own.record.repo}:${STATE_BRANCH}`, ids: [],
@@ -597,6 +637,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     ...stops,
     ...ordered,
     { phase: 'last', put: 'remove-plugin', line: PLUGIN_LINE },
+    ...closing,
     ...(last ? [{ phase: 'last', put: 'stop', what: 'helper', when: 'after the answer' }] : []),
   ];
   // The folder's real path is in the hash too, so a click stands for one folder: two folders with
@@ -608,7 +649,9 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     level: 4,
     target: { project: name, hash },
     what: cardWhat({ name, changes, keep, asks, pullRequest }),
-    why: 'You asked for it, and it takes away the checks that guard this project.',
+    why: shared
+      ? `You asked for it. It takes Wheelhouse off this computer for this project; the project stays on ${HOSTS[own?.record.host] ?? 'the host'} for your other computers.`
+      : 'You asked for it, and it takes away the checks that guard this project.',
     options: [
       { label: 'Remove it', says: 'Setup\'s changes are put back, as listed.' },
       { label: 'Not now', says: 'Nothing changes.' },
@@ -617,11 +660,14 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     because: 'you asked, and what changed since setup is kept',
     // Uninstall's apply is refused under STOP, as setup's is (ruling R91).
     meanwhile: 'Nothing changes until you click; if STOP is on, lift it first.',
-    checks: pullRequest
-      ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
-      : 'The checks no longer guard this project; protection stays as it is.',
+    // Said only when the checks really go: never on a shared project (ruling R124).
+    checks: shared
+      ? 'Your other computers keep the checks for this project; they stop on this computer only, and protection stays as it is.'
+      : pullRequest
+        ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
+        : 'The checks no longer guard this project; protection stays as it is.',
   };
-  return { project: slug, last, changes, keep, asks, done, card, hash };
+  return { project: slug, last, shared, changes, keep, asks, done, card, hash };
 }
 
 // ---- The helper's routes (Task 15b, rulings R87 to R92, R116 to R118) ----
@@ -722,7 +768,7 @@ function entryLine(e, userHome) {
     case 'unset-env': return `take ${e.target} out of your account's settings`;
     case 'put-back-own-app': return 'put back your own GitHub App in your profile';
     case 'remove-enrolment': return 'take this computer\'s key out of your profile';
-    case 'delete-key': return 'delete the GitHub app\'s keys, and give its installation page';
+    case 'delete-key': return e.shared ? 'delete the GitHub app\'s keys from this computer; the app stays installed for your other computers' : 'delete the GitHub app\'s keys, and give its installation page';
     case 'untick-repository': return `give the app's installation page, to untick ${e.repo}`;
     case 'revoke-key': return e.line;
     case 'remove': return `remove ${shown(e.target, userHome)}`;
