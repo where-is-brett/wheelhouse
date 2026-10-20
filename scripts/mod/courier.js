@@ -3,7 +3,8 @@
 // presence and quiet hours (design section 13). The bridge's front-desk tick finds the items in
 // the pane's model and hands back the wake as the tick's `submit`. What has been sent is kept in
 // projects/<project>/mod/courier.json, under a start lock, so two front desks of one project wake
-// once for an item, with the sessions that have ticked, so a session's first tick is known. The
+// once for an item, with the sessions that have ticked, so a session's first tick is known. A wake
+// the mod couldn't hand on is undone by courierUnsent, so the next tick wakes for it again. The
 // wake carries counts and card numbers, never an event's words.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +19,14 @@ export const SENT_KEPT = 500;
 export const LOCK_WAIT_MS = 500;
 // How many sessions courier.json remembers, the latest to tick last.
 export const SESSIONS_KEPT = 20;
+// How long after a wake's mark its session may undo it. The mod waits for the bridge at most its
+// limit and node's start (ASK_MS, 6.5 seconds) twice between the mark and the undo: for the rest
+// of the tick that marked the wake, and for the undo's own run. Between them it hands the wake on,
+// which settles at once in an idle session, the only kind the courier wakes (check 40), and its
+// failure after Esc came at once too (check 41). A hand-on that waited behind a turn begun
+// meanwhile and failed only once it ended is past this: that turn had the director in front of
+// the session.
+export const UNSENT_MS = 15 * 1000;
 const BUSY = 'The courier is busy in another session';
 // A courier.json larger than this reads as nothing sent.
 const FILE_BYTES = 1024 * 1024;
@@ -191,8 +200,9 @@ const NOTHING = Object.freeze({ submit: null, sent: [] });
 // runs or the last wake was under COURIER_GAP_MS ago (STOP and an incident wake inside the gap);
 // then nothing is marked sent and they wait for the next tick, however long until it comes.
 // `sent` names the items marked sent by this call: each once the wake that carries it is handed
-// back. Another session holding courier.json past LOCK_WAIT_MS is a quiet wait for the next tick.
-// Throws when courier.json can't be kept, so nothing is lost.
+// back. A wake's marks name its session and the lastWakeAt before it, so courierUnsent can put
+// them back. Another session holding courier.json past LOCK_WAIT_MS is a quiet wait for the next
+// tick. Throws when courier.json can't be kept, so nothing is lost.
 export async function courierWake({ project, session, items, presence, quiet, idle, now = () => new Date(), timeZone } = {}) {
   const t = instantOf(now);
   if (!Number.isFinite(t) || !isSession(session)) return NOTHING;
@@ -213,7 +223,7 @@ export async function courierWake({ project, session, items, presence, quiet, id
     const sentIds = new Set(kept.sent.map((s) => s.id));
     const current = new Set(found.map((i) => i.id));
     const fresh = found.filter((i) => !sentIds.has(i.id) && sentIds.add(i.id));
-    const mark = (marked, lastWakeAt) => writeKept(project, { sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp }))], lastWakeAt, sessions }, current);
+    const mark = (marked, lastWakeAt, woke = {}) => writeKept(project, { sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp, ...woke }))], lastWakeAt, sessions }, current);
 
     if (opening) {
       const marked = othersTicking ? [] : fresh;
@@ -230,8 +240,47 @@ export async function courierWake({ project, session, items, presence, quiet, id
       mark([], kept.lastWakeAt);
       return NOTHING;
     }
-    mark(waking, stamp);
+    mark(waking, stamp, { by: session, before: kept.lastWakeAt });
     return { submit: `${LEADS.courier} ${whatOf(waking)}. ${ASK}`, sent: waking.map((i) => i.id) };
+  } finally {
+    release();
+  }
+}
+
+// courierUnsent({ project, session, ids, now }) -> { unsent }: the mod couldn't hand on the wake
+// that marked `ids`, so each id a wake of `session`'s marked no more than UNSENT_MS ago is taken
+// out of what was sent, and lastWakeAt goes back to what it was before that wake, unless a wake
+// since has set it. A mark another session's wake has made since, an opening's marks and a late
+// or foreign undo stay as they are. `unsent` names the ids taken out. Another session holding
+// courier.json past LOCK_WAIT_MS leaves the marks as they are. Throws when courier.json can't be
+// kept.
+export async function courierUnsent({ project, session, ids, now = () => new Date() } = {}) {
+  const t = instantOf(now);
+  const named = new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : []);
+  if (!Number.isFinite(t) || !isSession(session) || named.size === 0) return { unsent: [] };
+  let release;
+  try {
+    release = await takeStartLock(`${courierFile(project)}.lock`, { message: BUSY, waitMs: LOCK_WAIT_MS });
+  } catch (error) {
+    if (error?.message === BUSY) return { unsent: [] };
+    throw error;
+  }
+  try {
+    const kept = readKept(project);
+    // The latest mark of each id is the one in force, as writeKept keeps it.
+    const latest = new Map(kept.sent.map((entry) => [entry.id, entry]));
+    const undoing = [...latest.values()].filter((entry) => {
+      const since = t - Date.parse(entry.at);
+      return named.has(entry.id) && entry.by === session && since >= 0 && since <= UNSENT_MS;
+    });
+    if (undoing.length === 0) return { unsent: [] };
+    const out = new Set(undoing.map((entry) => entry.id));
+    const own = undoing.find((entry) => entry.at === kept.lastWakeAt);
+    const before = own === undefined ? kept.lastWakeAt : (typeof own.before === 'string' ? own.before : null);
+    // Every other id stays, however many: the undo cuts nothing.
+    const sent = kept.sent.filter((entry) => !out.has(entry.id));
+    writeKept(project, { sent, lastWakeAt: before, sessions: kept.sessions }, new Set(sent.map((entry) => entry.id)));
+    return { unsent: [...out] };
   } finally {
     release();
   }

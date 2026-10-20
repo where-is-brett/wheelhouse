@@ -9,8 +9,10 @@
 // One tick runs at a time: a tick a press or traffic asks for while one runs follows it, once.
 // Each prompt an answer's `submit` holds (the courier's wake in the front desk's session, the
 // watcher's lines in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it
-// handed, so the next answer doesn't hold it again, and one that can't be handed on is not tried
-// again.
+// handed, so the next answer doesn't hold it again. A courier's wake that can't be handed on is
+// sent back as { cmd: 'unsent', session, cwd, ids } with the ids the answer's `woken` named, so
+// the bridge undoes its marks and the next idle tick wakes again; a watcher's line that can't be
+// handed on is not tried again.
 //
 // The pane has two views: the board, with each card's buttons (hooks/mod/cards.tsx), and the
 // settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both.
@@ -161,7 +163,12 @@ async function runTick($: EngineInterface) {
     every = answer.every
     const prompts = answer.submit ?? []
     const notHanded = answer.role === FOREMAN ? NOT_HANDED_FOREMAN : NOT_HANDED
-    if (prompts.length > 0) handing = handing.then(() => submitAll($, prompts, notHanded)).catch(() => undefined)
+    const woken = answer.role === FOREMAN ? [] : answer.woken ?? []
+    if (prompts.length > 0) {
+      handing = handing.then(async () => {
+        if (!(await submitAll($, prompts, notHanded)) && woken.length > 0) await ask($, { cmd: 'unsent', session, cwd, ids: woken })
+      }).catch(() => undefined)
+    }
     await $.state.set(TICK, { at: now, failed: false })
     await show($, answer, session, now)
   } catch {

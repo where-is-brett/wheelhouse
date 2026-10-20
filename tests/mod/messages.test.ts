@@ -633,6 +633,54 @@ test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by rol
   }
 })
 
+test('a courier\'s wake that can\'t be handed on asks the bridge to undo its marks, naming the session and the ids', async ($, on) => {
+  const WAKE = 'Wheelhouse courier: STOP is on. Send Claude\'s notification in one line, then ask any new cards now, once.'
+  const IDS = ['stop:2026-10-20T09:12:55.000Z', 'card:c-4']
+  const LINES = ['Wheelhouse watcher: CI failed on pull request #4'] as const
+  let reply: object = frontDesk()
+  const { seen, clear, start, clock, control } = world(on, () => reply)
+  const unsent = () => seen.runs.filter((r: any) => r.request?.cmd === 'unsent')
+  for (const surface of SURFACES) {
+    // Refused or dropped: the toast, then one unsent from this session for the ids the tick named.
+    for (const refused of [control.refuse, control.drop]) {
+      reply = { ...frontDesk([WAKE]), woken: IDS }
+      refused.add(WAKE)
+      await start($, surface)
+      expect(seen.toasts).toEqual([NOT_HANDED])
+      expect(unsent().map((r: any) => r.request)).toEqual([{ cmd: 'unsent', session: seen.ticks[0].session, cwd: ROOT, ids: IDS }])
+      expect(seen.ticks[0].session.startsWith(SESSION)).toBe(true)
+      expect(unsent()[0].argv[1]).toMatch(/\/scripts\/mod\/bridge\.js$/)
+      refused.clear()
+      // The next tick's wake is handed on: no unsent.
+      clear()
+      await clock.advance(TICK_MS)
+      expect(seen.prompts.map((p: any) => p.text)).toEqual([WAKE])
+      expect(unsent()).toHaveLength(0)
+    }
+    // A wake handed on asks no undo; nor does a failed one whose tick named no ids, nor a
+    // foreman's watcher line.
+    reply = { ...frontDesk([WAKE]), woken: IDS }
+    await start($, surface)
+    expect(seen.prompts.map((p: any) => p.text)).toEqual([WAKE])
+    expect(unsent()).toHaveLength(0)
+    reply = frontDesk([WAKE])
+    control.drop.add(WAKE)
+    clear()
+    await clock.advance(TICK_MS)
+    expect(seen.toasts).toEqual([NOT_HANDED])
+    expect(unsent()).toHaveLength(0)
+    control.drop.clear()
+    reply = { ...foreman(LINES), woken: IDS }
+    control.drop.add(LINES[0])
+    clear()
+    await clock.advance(TICK_MS)
+    await clock.advance(FOREMAN_TICK_MS)
+    expect(seen.toasts).toContain(NOT_HANDED_FOREMAN)
+    expect(unsent()).toHaveLength(0)
+    control.drop.clear()
+  }
+})
+
 test('a message whose first line has the lead is traffic, whatever names the foreman after it', async ($, on) => {
   // Ruling 34 spares only a first line that starts with the foreman's lead.
   const LATER = [
