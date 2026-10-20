@@ -26,9 +26,11 @@
 //                        asked exactly as given, before uninstall's own card
 //   uninstall apply <hash>  asks the helper to put back what setup changed, with the full hash
 //                        `uninstall plan` gave; it goes ahead only after the director's Remove it on
-//                        the card naming it: { lines, pages, helperStops? }, each page a link for
-//                        the director (the pull request to merge, an installation page)
-//   uninstall status     the whole list, as plain lines
+//                        the card naming it, in its own process: { started: true }
+//   uninstall status     as plain lines: how a started uninstall stands (running; done, or stopped
+//                        with why, then what it said and each page as `Open <what>: <url>`, a link
+//                        for the director: the pull request to merge, an installation page);
+//                        otherwise the whole list
 // The playbook (wheelhouse:setup) runs in the sandbox and only talks: every change is the
 // helper's, so every form is a request to its /setup/* routes, naming this folder, and nothing here
 // reads or writes a file. A request carries only the folder, the step and the hash; the helper
@@ -49,31 +51,22 @@ import { helperClient } from '../host/helper-client.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
-// An error whose message is said to the session as it is; with `lines`, on the lines it has.
-export class CliError extends Error {
-  constructor(message, { lines = false } = {}) {
-    super(message);
-    this.lines = lines;
-  }
-}
+// An error whose message is said to the session as it is.
+export class CliError extends Error {}
 
 export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
 const STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 const HASH = /^[0-9a-f]{64}$/;
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
 
-// Asks one route and gives its answer, whatever it is.
-async function askOnce(route, body) {
+// Asks one route and gives its answer when it is ok; otherwise the helper's own words.
+async function ask(route, body) {
+  let got;
   try {
-    return await route(body);
+    got = await route(body);
   } catch (error) {
     throw new CliError(`The host helper didn't answer: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
-}
-
-// Asks one route and gives its answer when it is ok; otherwise the helper's own words.
-async function ask(route, body) {
-  const got = await askOnce(route, body);
   if (got?.ok !== true) throw new CliError(got?.refused ?? got?.why ?? 'The host helper refused the request');
   return got;
 }
@@ -121,12 +114,7 @@ export async function main(argv, {
       json(answer);
     } else if (form === 'uninstall' && rest[0] === 'apply' && rest.length === 2) {
       if (!HASH.test(rest[1])) throw new CliError('Give the full hash of the list on uninstall\'s card, as uninstall plan gave it');
-      const got = await askOnce((client ?? helperClient()).setup.uninstall.apply, { folder, hash: rest[1] });
-      if (got?.ok !== true) {
-        const done = Array.isArray(got?.lines) ? got.lines.map((l) => `\n${String(l).replace(BREAKS, ' ')}`).join('') : '';
-        throw new CliError(`${got?.refused ?? got?.why ?? 'The host helper refused the request'}${done === '' ? '' : `\nDone before it stopped:${done}`}`, { lines: true });
-      }
-      const { ok, ...answer } = got; // eslint-disable-line no-unused-vars
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.uninstall.apply, { folder, hash: rest[1] }); // eslint-disable-line no-unused-vars
       json(answer);
     } else if (form === 'uninstall' && rest[0] === 'status' && rest.length === 1) {
       const got = await ask((client ?? helperClient()).setup.uninstall.status, { folder });
@@ -143,7 +131,7 @@ export async function main(argv, {
     return 0;
   } catch (error) {
     const message = error instanceof CliError ? error.message : `That did not work: ${error instanceof Error ? error.message : 'unknown error'}`;
-    err(`${error instanceof CliError && error.lines ? message : message.replace(BREAKS, ' ')}\n`);
+    err(`${message.replace(BREAKS, ' ')}\n`);
     return 1;
   }
 }

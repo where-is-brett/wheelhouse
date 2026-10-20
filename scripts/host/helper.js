@@ -783,10 +783,10 @@ export async function startHelper({
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
   setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
-  // Parts of uninstall's apply a test replaces (scripts/setup/uninstall.js, applyUninstall's `ops`),
-  // and what the helper does once uninstall's answer saying it stops has been sent: given its own
-  // close, by default it closes; the real helper (helper-main.js) then exits.
-  uninstallOps = {}, onStop = (close) => close(),
+  // What the helper does once the last uninstall on this computer has finished (scripts/setup/
+  // uninstall.js): given its own close, by default it closes; the real helper (helper-main.js) then
+  // exits.
+  onStop = (close) => close(),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -2497,9 +2497,11 @@ export async function startHelper({
   // recorded until STOP is lifted.
   const measures = baselineRoutes({ now, stopped, stopRefusal: STOP_REFUSAL });
   // Uninstall's routes (scripts/setup/uninstall.js): plan and status answer under STOP; apply is
-  // refused, and goes ahead only after the director's signed Remove it on the card naming the list
-  // the helper works out again. When the list stops the helper, it stops once that answer is sent.
-  const uninstall = uninstallRoutes({ now, stopped, userHome, run, fetch, ops: uninstallOps });
+  // refused, and starts the apply's own process only after the director's signed Remove it on the
+  // card naming the list the helper works out again (ruling R116). When the list stops the helper,
+  // it stops once the apply has finished: after the status answer that says so, or, when no one
+  // asks, a while after.
+  const uninstall = uninstallRoutes({ now, stopped, userHome, run, spawn, stopHelper: () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); } });
   const routes = {
     ...setup,
     ...measures,
@@ -2730,8 +2732,8 @@ export async function startHelper({
         const answer = cleanDeep(await route(body), []);
         if (typeof answer?.refused === 'string') answer.refused = clean(answer.refused, []) || 'the request failed';
         if (Array.isArray(answer?.lines)) answer.lines = answer.lines.map((line) => `${/^\s*/.exec(String(line))[0]}${clean(line, [])}`);
-        // The last uninstall on this computer stops the helper, once its answer has gone.
-        if (url.pathname === '/setup/uninstall/apply' && answer?.helperStops === true) {
+        // The last uninstall on this computer stops the helper, once the answer giving its end has gone.
+        if (url.pathname === '/setup/uninstall/status' && answer?.helperStops === true) {
           res.once('finish', () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); });
         }
         return send(res, 200, answer);

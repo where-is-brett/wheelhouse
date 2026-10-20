@@ -169,24 +169,34 @@ test('start refuses in one line when the project or its configuration can\'t be 
   }
 }));
 
-test('stopWatcher stops the watcher its fresh lock names, and nothing when none runs', () => {
-  withHome(() => {
+test('stopWatcher stops the watcher its fresh lock names, while it is still that process, and nothing when none runs', async () => {
+  await withHome(async () => {
     const killed = [];
     const kill = (pid, signal) => { killed.push([pid, signal]); };
-    assert.deepEqual(stopWatcher(P, { kill }), { stopped: false, why: 'not running' });
+    const alive = (pid) => pid === 4242;
+    const before = (ms) => async () => new Date(fs.statSync(lockFile(P)).mtimeMs - ms).toISOString();
+    assert.deepEqual(await stopWatcher(P, { kill }), { stopped: false, why: 'not running' });
     fs.mkdirSync(path.dirname(lockFile(P)), { recursive: true });
     fs.writeFileSync(lockFile(P), '4242\n');
-    assert.deepEqual(stopWatcher(P, { kill, alive: (pid) => pid === 4242 }), { stopped: true });
+    assert.deepEqual(await stopWatcher(P, { kill, alive, startTime: before(60 * 1000) }), { stopped: true });
     assert.deepEqual(killed, [[4242, 'SIGTERM']]);
+    // A process that started after the lock was last touched has the pid of a watcher gone; a
+    // start time not to be had stops nothing either.
+    for (const startTime of [before(-60 * 1000), async () => null]) {
+      const got = await stopWatcher(P, { kill, alive, startTime });
+      assert.equal(got.stopped, false);
+      assert.match(got.why, /could not be told apart/);
+    }
     // A lock too old, or a pid gone, names no running watcher.
     const old = new Date(Date.now() - 11 * 60 * 1000);
     fs.utimesSync(lockFile(P), old, old);
-    assert.deepEqual(stopWatcher(P, { kill, alive: () => true }), { stopped: false, why: 'not running' });
+    assert.deepEqual(await stopWatcher(P, { kill, alive: () => true, startTime: before(0) }), { stopped: false, why: 'not running' });
     // A watcher gone by the time it is stopped is stopped.
     fs.utimesSync(lockFile(P), new Date(), new Date());
     const gone = () => { throw Object.assign(new Error('no such process'), { code: 'ESRCH' }); };
-    assert.deepEqual(stopWatcher(P, { kill: gone, alive: () => true }), { stopped: true });
-    assert.throws(() => stopWatcher('../x', { kill }));
+    assert.deepEqual(await stopWatcher(P, { kill: gone, alive: () => true, startTime: before(1000) }), { stopped: true });
+    assert.equal(killed.length, 1);
+    await assert.rejects(stopWatcher('../x', { kill }));
   });
 });
 

@@ -10,16 +10,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  uninstallPlan, applyUninstall, uninstallRoutes, planLines, PHASES, WHAT_CHARS, PLUGIN_LINE, ASK_STEP, UNINSTALL_BRANCH, UNINSTALL_TITLE,
-  UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP,
+  uninstallPlan, uninstallRoutes, planLines, readProgress, writeProgress, PHASES, WHAT_CHARS, PLUGIN_LINE, ASK_STEP,
+  UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP, UNINSTALL_RUNNING, UNINSTALL_RUN,
 } from '../../../scripts/setup/uninstall.js';
+import { applyUninstall, runUninstall, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
 import {
   startRun, addChanges, applyJsonKey, markPutBack, markStep, newId, readJournal, reverseChange, journalFile, closeRun,
 } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { wheelhouseHome, profileDir, stateDir, keysDir } from '../../../scripts/lib/paths.js';
 import { toolFolder } from '../../../scripts/lib/host-tools.js';
-import { clicksDir } from '../../../scripts/lib/setup-clicks.js';
+import { clicksDir, usedDir } from '../../../scripts/lib/setup-clicks.js';
 import { enrolledFile, signingKeyFile } from '../../../scripts/state/signing.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -1116,8 +1117,8 @@ test('Locked is left with the password before anything else is removed, and a ca
 });
 
 // The director's answer on a level 4 card, as the prompt record keeps it.
-function answerAsk(runId, ask, label) {
-  keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId, step: ASK_STEP, questionId: ask.id, question: ask.card.question, label, text: null }, now: NOW }));
+function answerAsk(runId, ask, label, at = new Date(READY().getTime() + 1000)) {
+  keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId, step: ASK_STEP, questionId: ask.id, question: ask.card.question, label, text: null }, now: () => at }));
 }
 
 test('the state branch and profile are kept unless their own card says delete', async () => {
@@ -1268,16 +1269,31 @@ function removeIt(project, hash, at = new Date(READY().getTime() - 60 * 1000)) {
   return event;
 }
 
-test('apply refuses a list changed since the click, a click for another project, a stale click, and under STOP; the card\'s own click applies it', async () => {
+// A spawn that runs uninstall's own process here, with the fakes, as the helper would start it.
+function inProcess(f, children) {
+  return (file, args, options) => {
+    assert.equal(file, process.execPath);
+    assert.equal(args[0], UNINSTALL_RUN);
+    assert.equal(options.detached, true);
+    const handlers = {};
+    children.push(runUninstall(args.slice(1), { now: READY, platform: 'darwin', run: f.run, ops: f.ops, exit: () => {} })
+      .then((code) => { handlers.exit?.(code); return code; }));
+    return { on: (event, handler) => { handlers[event] = handler; }, unref() {} };
+  };
+}
+
+test('apply refuses a list changed since the click, a click for another project, a stale click, and under STOP; the card\'s own click starts it, and status gives how it ended', async () => {
   const host = await standIn();
   try {
     await withHome(async () => {
       const { world, r } = await applyWorld({ through: 2, host });
       const f = fakes(world);
+      const children = [];
       let stop = false;
-      const routes = uninstallRoutes({ now: READY, stopped: () => stop, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+      const routes = uninstallRoutes({ now: READY, stopped: () => stop, userHome: world.userHome, platform: 'darwin', run: f.run, spawn: inProcess(f, children) });
       const plan = routes['/setup/uninstall/plan'];
       const apply = routes['/setup/uninstall/apply'];
+      const status = routes['/setup/uninstall/status'];
       const shown = await plan({ folder: world.folder });
       const name = path.basename(world.folder);
       assert.equal(shown.card.question.split('\n').at(-1), uninstallLine(name, shown.hash));
@@ -1296,20 +1312,87 @@ test('apply refuses a list changed since the click, a click for another project,
       stop = true;
       assert.deepEqual(await apply({ folder: world.folder, hash: shown.hash }), UNINSTALL_STOP);
       stop = false;
+      assert.equal(fs.existsSync(path.join(usedDir(), click.id)), false, 'the click is not used under STOP');
       // The list changed since the card: a change recorded since.
       const extra = r.key(2, path.join(world.folder, '.claude', 'settings.local.json'), ['spinnerTips'], false);
       await assert.rejects(apply({ folder: world.folder, hash: shown.hash }), { message: UNINSTALL_CHANGED });
-      // Shown again, with its new list, and clicked: it applies.
+      // The list worked out now, with a click on its hash, but the card shown for the folder named
+      // the old list: refused, and the click left unused.
+      const now = await uninstallPlan({ folder: world.folder, userHome: world.userHome, platform: 'darwin', run: f.run });
+      const unshown = removeIt(name, now.hash);
+      await assert.rejects(apply({ folder: world.folder, hash: now.hash }), { message: UNINSTALL_CHANGED });
+      assert.equal(fs.existsSync(path.join(usedDir(), unshown.id)), false);
+      assert.deepEqual(children, []);
+      // Shown again, with its new list, and clicked: it starts in its own process.
       const again = await plan({ folder: world.folder });
-      assert.notEqual(again.hash, shown.hash);
-      removeIt(name, again.hash);
-      const done = await apply({ folder: world.folder, hash: again.hash });
-      assert.equal(done.ok, true, done.refused);
+      assert.equal(again.hash, now.hash);
+      const started = await apply({ folder: world.folder, hash: again.hash });
+      assert.deepEqual(started, { ok: true, started: true });
+      assert.deepEqual(await Promise.all(children), [0]);
       assert.equal(markOf(extra.id).put, true);
       assert.equal(readJournal().runs[0].closedBy, 'uninstall');
-      assert.ok(click);
-      // The same click can't apply anything again.
+      // Status gives how it ended, what it said, and its pages.
+      const ended = await status({ folder: world.folder });
+      assert.equal(ended.lines[0], 'Uninstall is done.');
+      assert.equal(ended.uninstall.state, 'done');
+      assert.ok(ended.lines.includes(`${PLUGIN_LINE}.`));
+      assert.deepEqual(ended.uninstall.lines, readProgress(world.folder).lines);
+      // The same click can't start anything again.
       await assert.rejects(apply({ folder: world.folder, hash: again.hash }));
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('uninstall\'s own process acts only for its click and hash, stops at its deadline, and a stopped one\'s status gives why, what it did, its pages and what is left', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      const f = fakes(world);
+      const got = await uninstallPlan({ folder: world.folder, userHome: world.userHome, platform: 'darwin', run: f.run });
+      const clickedAt = new Date(READY().getTime() - 60 * 1000).toISOString();
+      const deadline = new Date(Date.parse(clickedAt) + 20 * 60 * 1000).toISOString();
+      const record = { folder: world.folder, project: SLUG, hash: got.hash, clickedAt, deadline, startedAt: READY().toISOString(), state: 'running', lines: [], pages: [] };
+      const argv = (hash = got.hash, at = clickedAt) => [world.folder, hash, at, deadline, world.userHome];
+      const deps = { now: READY, platform: 'darwin', run: f.run, ops: f.ops, exit: () => {} };
+      // No record, another click or another hash: nothing is done.
+      assert.equal(await runUninstall(argv(), deps), 1);
+      writeProgress(world.folder, record);
+      // While it runs, status says so and a second apply is refused; past its deadline it reads as
+      // not finished, and a fresh card may start another.
+      const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run });
+      assert.match((await routes['/setup/uninstall/status']({ folder: world.folder })).lines[0], /^Uninstall is running, started at /);
+      await assert.rejects(routes['/setup/uninstall/apply']({ folder: world.folder, hash: got.hash }), { message: UNINSTALL_RUNNING });
+      const later = uninstallRoutes({ now: () => new Date(Date.parse(deadline) + 1000), userHome: world.userHome, platform: 'darwin', run: f.run });
+      const stuck = await later['/setup/uninstall/status']({ folder: world.folder });
+      assert.match(stuck.lines[0], /^Uninstall did not finish: it started at .*, more than 20 minutes ago/);
+      assert.equal(stuck.uninstall.state, 'stuck');
+      await assert.rejects(later['/setup/uninstall/apply']({ folder: world.folder, hash: got.hash }), { message: UNINSTALL_CHANGED });
+      assert.equal(await runUninstall(argv('ab'.repeat(32)), deps), 1);
+      assert.equal(await runUninstall(argv(got.hash, READY().toISOString()), deps), 1);
+      assert.equal(readProgress(world.folder).state, 'running');
+      assert.deepEqual(f.seen.stops, []);
+      // Started past its deadline: it records itself stopped, and changes nothing.
+      assert.equal(await runUninstall(argv(), { ...deps, now: () => new Date(Date.parse(deadline) + 1000) }), 1);
+      assert.match(readProgress(world.folder).refused, /more than 20 minutes after the click, so nothing was changed/);
+      assert.deepEqual(f.seen.stops, []);
+      // Stopped part-way (the enrolment can't be reached): status gives why, what it did before, the
+      // pull request's page, and what is left.
+      writeProgress(world.folder, record);
+      f.ops.withdrawEnrolment = async () => { throw new Error('the profile could not be reached'); };
+      assert.equal(await runUninstall(argv(), deps), 1);
+      const { lines, uninstall } = await routes['/setup/uninstall/status']({ folder: world.folder });
+      assert.equal(uninstall.state, 'stopped');
+      assert.match(lines[0], /^Uninstall stopped: something went wrong: the profile could not be reached/);
+      assert.equal(lines[1], 'Done before it stopped:');
+      assert.ok(lines.includes(`Open the pull request: ${ROOM_URL}`));
+      assert.ok(lines.includes('What is left:'));
+      assert.ok(lines.some((l) => /take this computer's key out of your profile/.test(l)));
+      // Once a card is shown again, status gives the list.
+      await routes['/setup/uninstall/plan']({ folder: world.folder });
+      assert.match((await routes['/setup/uninstall/status']({ folder: world.folder })).lines[0], /^Uninstall of /);
     });
   } finally {
     host.cleanup();
@@ -1360,7 +1443,7 @@ test('the list\'s hash covers the folder: two folders of one name with nothing r
   });
 });
 
-test('the helper stops once the last uninstall\'s answer has been sent', async () => {
+test('through the helper, uninstall runs in its own process, and the helper stops once the status answer giving its end has gone', async () => {
   const home = shortHome();
   const user = fs.realpathSync.native(tempFolder('wh-user zoë '));
   const folder = path.join(user, 'Projects', 'Shop');
@@ -1368,11 +1451,11 @@ test('the helper stops once the last uninstall\'s answer has been sent', async (
   await as(home, async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    const stops = [];
     let stopped = false;
+    // The list of a folder nothing was set up in, on the last project: the receiver's stop (no
+    // receiver runs in this home), setup's own records removed, the plugin's line, the helper.
     const helper = await startHelper({
-      address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: READY, userHome: user,
-      uninstallOps: { stopReceiver: async () => { stops.push('receiver'); return { stopped: true }; } },
+      address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), userHome: user,
       onStop: (close) => { stopped = true; return close(); },
     });
     try {
@@ -1380,18 +1463,52 @@ test('the helper stops once the last uninstall\'s answer has been sent', async (
       const shown = await client.setup.uninstall.plan({ folder });
       assert.equal(shown.ok, true, shown.refused);
       assert.equal(shown.last, true);
-      removeIt('Shop', shown.hash);
-      // The whole answer comes back: the helper closes only once it has been sent.
-      const done = await client.setup.uninstall.apply({ folder, hash: shown.hash });
-      assert.equal(done.ok, true, done.refused);
-      assert.equal(done.helperStops, true);
-      assert.deepEqual(stops, ['receiver']);
+      removeIt('Shop', shown.hash, new Date(Date.now() - 60 * 1000));
+      assert.deepEqual(await client.setup.uninstall.apply({ folder, hash: shown.hash }), { ok: true, started: true });
+      let got = null;
+      for (let i = 0; i < 300; i++) {
+        got = await client.setup.uninstall.status({ folder });
+        if (got.uninstall?.state !== 'running') break;
+        await new Promise((resolve) => { setTimeout(resolve, 100); });
+      }
+      assert.equal(got.ok, true, got.refused);
+      assert.equal(got.uninstall.state, 'done', got.lines.join('\n'));
+      assert.equal(got.helperStops, true);
+      assert.ok(got.lines.includes('The usage receiver: not running.'));
+      assert.ok(got.lines.includes(`${PLUGIN_LINE}.`));
       for (let i = 0; i < 50 && !stopped; i++) await new Promise((resolve) => { setTimeout(resolve, 20); });
       assert.equal(stopped, true);
       assert.equal((await client.health()).ok, false, 'the helper no longer answers');
+      // The answer is kept: the record says the helper was stopped for it.
+      assert.equal(typeof readProgress(folder).helperStoppedAt, 'string');
     } finally {
       await helper.close();
     }
+  });
+});
+
+test('a finished last uninstall nobody asks about stops the helper a while after its process ended', async () => {
+  await withHome(async () => {
+    const user = fs.realpathSync.native(tempFolder('wh-user '));
+    const folder = path.join(user, 'Projects', 'Shop');
+    fs.mkdirSync(folder, { recursive: true });
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    let stops = 0;
+    const children = [];
+    const f = { run: launchEnv({}), ops: { stopReceiver: async () => ({ stopped: false, why: 'not running' }) } };
+    const routes = uninstallRoutes({ now: READY, userHome: user, platform: 'darwin', run: f.run, spawn: inProcess(f, children), stopHelper: () => { stops += 1; }, lingerMs: 10 });
+    const shown = await routes['/setup/uninstall/plan']({ folder });
+    removeIt('Shop', shown.hash);
+    await routes['/setup/uninstall/apply']({ folder, hash: shown.hash });
+    assert.deepEqual(await Promise.all(children), [0]);
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    assert.equal(stops, 1);
+    // Status afterwards still gives its end, and asks no second stop.
+    const got = await routes['/setup/uninstall/status']({ folder });
+    assert.equal(got.uninstall.state, 'done');
+    assert.equal(got.helperStops, undefined);
+    assert.equal(stops, 1);
   });
 });
 
@@ -1460,4 +1577,82 @@ test('a GitLab key is revoked through the API, then deleted; one GitLab won\'t r
     assert.equal(next.done.ok, true, next.done.refused);
     assert.equal(readKey('gitlab-project-5'), null);
   });
+});
+
+test('a Delete it given before its card was last asked counts for nothing: the card is asked again, and the state branch stays (ruling R117)', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world, run } = await applyWorld({ host });
+      const f = fakes(world);
+      const first = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run });
+      const shown = await first['/setup/uninstall/plan']({ folder: world.folder });
+      const state = shown.asks.find((a) => a.about === 'state');
+      answerAsk(run.id, state, 'Delete it');
+      // The director didn't go ahead; later the plan is asked for again, and its cards with it.
+      const later = new Date(READY().getTime() + 60 * 60 * 1000);
+      const second = uninstallRoutes({ now: () => later, userHome: world.userHome, platform: 'darwin', run: f.run });
+      const again = await second['/setup/uninstall/plan']({ folder: world.folder });
+      assert.equal(again.asks.find((a) => a.about === 'state').card.question, state.card.question, 'the same card, asked again');
+      const { done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      assert.ok(await filesOn(host.product.url, STATE_BRANCH), 'the old Delete it deleted nothing');
+      assert.ok(done.lines.some((l) => l.startsWith(`Kept: ${REPO}:${STATE_BRANCH}`)));
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('a first push to a repository with no branch yet never landed: the host re-check finds no branch and uninstall goes on here (ruling R118)', async () => {
+  const empty = await makeBareRemote({ repo: REPO });
+  try {
+    await withHome(async () => {
+      const world = makeWorld();
+      writeProject(SLUG, { folder: world.folder, remoteUrl: empty.url, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
+      const run = startRun({ folder: world.folder, now: NOW });
+      const r = recorder(run.id);
+      writeText(path.join(world.folder, '.claude', 'settings.json'), '{}\n');
+      r.key(7, path.join(world.folder, '.claude', 'settings.json'), ['extraKnownMarketplaces'], { wheelhouse: { ref: 'v1' } });
+      r.add(7, { kind: 'host', target: `${REPO} main`, before: { branch: 'main', sha: 'a'.repeat(40) }, after: { action: 'push', branch: 'main', sha: 'b'.repeat(40) } });
+      markStep(run.id, 7, 'failed', { now: NOW, reason: 'the setup commit could not be pushed' });
+      const f = fakes(world);
+      const { done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      assert.deepEqual(readJson(path.join(world.folder, '.claude', 'settings.json')), {});
+      // A host that can't be reached stops it, with a line saying so.
+      await withHome(async () => {
+        const w = makeWorld();
+        writeProject(SLUG, { folder: w.folder, remoteUrl: path.join(empty.root, 'gone', `${REPO}.git`), host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
+        const run2 = startRun({ folder: w.folder, now: NOW });
+        recorder(run2.id).add(7, { kind: 'host', target: `${REPO} main`, before: { branch: 'main', sha: 'a'.repeat(40) }, after: { action: 'push', branch: 'main', sha: 'b'.repeat(40) } });
+        const stopped = await applyPlan(w, fakes(w));
+        assert.equal(stopped.done.ok, false);
+        assert.match(stopped.done.refused, /GitHub could not be reached with your sign-in to see whether setup's commit is on main, so uninstall did not go on/);
+      });
+    });
+  } finally {
+    empty.cleanup();
+  }
+});
+
+test('a trial branch whose commit setup never recorded is left, not deleted at whatever it holds', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const world = makeWorld();
+      const { computer, publicKey } = makeSigningKey();
+      enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+      writeProject(SLUG, { folder: world.folder, remoteUrl: host.product.url, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
+      const run = startRun({ folder: world.folder, now: NOW });
+      const trial = recorder(run.id).add(10, { kind: 'host', target: `${REPO} branch wheelhouse-health-check`, before: null, after: { branch: 'wheelhouse-health-check' } });
+      const f = fakes(world);
+      const { done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      assert.ok(await filesOn(host.product.url, 'wheelhouse-health-check'));
+      assert.equal(markOf(trial.id).why, 'its commit was never recorded, so it stays');
+    });
+  } finally {
+    host.cleanup();
+  }
 });

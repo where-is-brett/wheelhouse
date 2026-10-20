@@ -62,7 +62,8 @@ function readSmall(file) {
   }
 }
 
-// The pid of the project's running watcher: a live pid in a fresh lock or health record; else null.
+// The project's running watcher: the live pid in a fresh lock or health record, with when that
+// record was last written (`since`, in ms); else null.
 function watcherPid(project, { alive = pidAlive, now = () => new Date() } = {}) {
   const t = now().getTime();
   const fresh = (ms) => Number.isFinite(ms) && t - ms < WATCHER_FRESH_MS;
@@ -70,13 +71,13 @@ function watcherPid(project, { alive = pidAlive, now = () => new Date() } = {}) 
   const lock = readSmall(lockFile(project));
   if (lock !== null && fresh(lock.mtimeMs)) {
     const pid = Number.parseInt(lock.text, 10);
-    if (livePid(pid)) return pid;
+    if (livePid(pid)) return { pid, since: lock.mtimeMs };
   }
   const health = readSmall(healthFile(project));
   if (health !== null) {
     try {
       const h = JSON.parse(health.text);
-      if (livePid(h?.pid) && fresh(Date.parse(h?.at))) return h.pid;
+      if (livePid(h?.pid) && fresh(Date.parse(h?.at))) return { pid: h.pid, since: Date.parse(h.at) };
     } catch { /* not a health record */ }
   }
   return null;
@@ -98,14 +99,24 @@ function askToStop(pid, kill) {
   }
 }
 
+// How far a process's start time, as the system gives it (to the second), may fall after the record
+// its process wrote and still be that process.
+const SECOND_MS = 1000;
+
 // Stops the project's watcher, as uninstall does first (ruling R89), so nothing is woken while
 // setup's changes are put back: { stopped, why? }, `why: 'not running'` when none runs. The pid is
-// the one its fresh lock or health record names, as watcherRunning reads them; the watcher also
-// stops by itself once its lock is gone, which uninstall's removal of the project's folder does.
-export function stopWatcher(project, { alive, now, kill = process.kill } = {}) {
+// the one its fresh lock or health record names, as watcherRunning reads them, and only while it is
+// still that process: it started before the record was last written (a pid reused since the watcher
+// ended started later). A start time the system won't give stops nothing (it fails closed), and
+// says so. The watcher also stops by itself once its lock is gone, which uninstall's removal of the
+// project's folder does.
+export async function stopWatcher(project, { alive, now, kill = process.kill, startTime = processStartTime } = {}) {
   stateDir(project); // a project name that is not a folder name throws here
-  const pid = watcherPid(project, { alive, now });
-  return pid === null ? { stopped: false, why: 'not running' } : askToStop(pid, kill);
+  const found = watcherPid(project, { alive, now });
+  if (found === null) return { stopped: false, why: 'not running' };
+  const started = Date.parse((await startTime(found.pid)) ?? '');
+  if (!Number.isFinite(started) || started > found.since + SECOND_MS) return { stopped: false, why: 'its process could not be told apart from another, so it was left running' };
+  return askToStop(found.pid, kill);
 }
 
 // Stops the foreman's session the watcher started (Shape 1), as uninstall does (ruling R89):

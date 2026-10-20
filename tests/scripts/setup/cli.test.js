@@ -190,17 +190,17 @@ test('the uninstall forms ask the helper\'s uninstall routes for this folder, ap
   const card = { question: 'Uninstall.\nRemove Wheelhouse from shop as listed, abababababab', header: 'Uninstall', options: [{ label: 'Remove it' }], multiSelect: false };
   const c = fakeClient({
     'uninstall plan': { ok: true, hash: H, card, asks: [], last: true },
-    'uninstall apply': { ok: true, lines: ['Locked: Locked is off.'], pages: [{ what: 'the pull request', url: 'https://github.com/o/shop/pull/3' }], helperStops: true },
-    'uninstall status': { ok: true, lines: ['Uninstall of shop (/x/Projects/shop), its list abababababab:', '1. stop the foreman'] },
+    'uninstall apply': { ok: true, started: true },
+    'uninstall status': { ok: true, lines: ['Uninstall is done.', 'Locked: Locked is off.', 'Open the pull request: https://github.com/o/shop/pull/3'], uninstall: { state: 'done' } },
   });
   const plan = await run(['uninstall', 'plan'], { client: c });
   assert.equal(plan.code, 0, plan.err);
   assert.deepEqual(JSON.parse(plan.out), { hash: H, card, asks: [], last: true });
   const apply = await run(['uninstall', 'apply', H], { client: c });
   assert.equal(apply.code, 0, apply.err);
-  assert.deepEqual(JSON.parse(apply.out), { lines: ['Locked: Locked is off.'], pages: [{ what: 'the pull request', url: 'https://github.com/o/shop/pull/3' }], helperStops: true });
+  assert.deepEqual(JSON.parse(apply.out), { started: true });
   const status = await run(['uninstall', 'status'], { client: c });
-  assert.equal(status.out, 'Uninstall of shop (/x/Projects/shop), its list abababababab:\n1. stop the foreman\n');
+  assert.equal(status.out, 'Uninstall is done.\nLocked: Locked is off.\nOpen the pull request: https://github.com/o/shop/pull/3\n');
   assert.deepEqual(c.calls, [
     ['uninstall plan', { folder: '/x/Projects/shop' }],
     ['uninstall apply', { folder: '/x/Projects/shop', hash: H }],
@@ -212,13 +212,4 @@ test('the uninstall forms ask the helper\'s uninstall routes for this folder, ap
     assert.equal(got.code, 1, argv.join(' '));
   }
   assert.equal(c.calls.length, 3);
-});
-
-test('an uninstall that stopped part-way says why, then what it did before it stopped, each on its own line', async () => {
-  const c = fakeClient({
-    'uninstall apply': { ok: false, refused: 'Uninstall stopped: Locked was not left.', lines: ['The foreman is stopped.', 'The watcher: not running.'] },
-  });
-  const got = await run(['uninstall', 'apply', H], { client: c });
-  assert.equal(got.code, 1);
-  assert.equal(got.err, 'Uninstall stopped: Locked was not left.\nDone before it stopped:\nThe foreman is stopped.\nThe watcher: not running.\n');
 });
