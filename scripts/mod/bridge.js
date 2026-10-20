@@ -13,11 +13,12 @@
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
 //   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
-//                                                   courier's wake, with the ids it marked sent, or a
-//                                                   Shape 2 foreman's wakes from one watcher loop, or
-//                                                   nothing while setup runs
-//   { cmd: 'unsent', session, cwd, ids }            the mod couldn't hand on the courier's wake: its
-//                                                   marks are undone, so the next tick wakes again
+//                                                   courier's wake, with the ids it marked sent and its
+//                                                   stamp, or a Shape 2 foreman's wakes from one
+//                                                   watcher loop, or nothing while setup runs
+//   { cmd: 'unsent', session, cwd, ids, at }        the mod couldn't hand on the courier's wake stamped
+//                                                   `at`: its marks are undone, so the next tick wakes
+//                                                   again
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
@@ -327,15 +328,16 @@ async function foremanTick(found, d) {
   return { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: strings(watched?.submit) ? watched.submit : [] };
 }
 
-// The courier's wake for this tick, as { submit, woken }, or null (courier.js), from this tick's
-// pane model; presence and the quiet hours are the settings in force. `woken` names the ids the
-// wake marked sent, which the mod sends back as `unsent` when it can't hand the wake on. A courier
+// The courier's wake for this tick, as { submit, woken, wokeAt }, or null (courier.js), from this
+// tick's pane model; presence and the quiet hours are the settings in force. `woken` names the ids
+// the wake marked sent and `wokeAt` its stamp, which the mod sends back as `unsent` when it can't
+// hand the wake on. A courier
 // that fails wakes for nothing this tick and says so in the pane; what it found waits for the next
 // tick.
 async function courier(found, pane, req, d) {
   try {
     const effective = d.readEffective({ project: found.project, now: d.now });
-    const { submit, sent } = await d.courierWake({
+    const { submit, sent, at } = await d.courierWake({
       project: found.project,
       session: req.session,
       items: needsYou({ after: pane }),
@@ -346,7 +348,8 @@ async function courier(found, pane, req, d) {
       timeZone: d.timeZone,
     });
     // One shape for every submit: a list of prompts.
-    return typeof submit === 'string' ? { submit: [submit], woken: strings(sent) ? sent : [] } : null;
+    if (typeof submit !== 'string') return null;
+    return { submit: [submit], woken: strings(sent) ? sent : [], ...(typeof at === 'string' ? { wokeAt: at } : {}) };
   } catch {
     pane.missing = [...pane.missing, SAYS.noCourier];
     return null;
@@ -399,17 +402,18 @@ async function tick(req, d) {
   if (wake !== null) {
     answer.submit = wake.submit;
     answer.woken = wake.woken;
+    if (wake.wokeAt !== undefined) answer.wokeAt = wake.wokeAt;
   }
   return answer;
 }
 
-// The mod couldn't hand on the courier's wake that marked `ids`: the courier takes those marks
-// out, for this session's own wake only and only soon after it (courier.js courierUnsent), so the
-// next idle tick wakes again. The session's own folder names the project.
+// The mod couldn't hand on the courier's wake stamped `at` that marked `ids`: the courier takes
+// out those marks that are still that session's wake's (courier.js courierUnsent), so the next idle
+// tick wakes again. The session's own folder names the project.
 async function unsent(req, d) {
   const found = siteOf(req.cwd, d);
   if (found === null) return no(SAYS.notProject);
-  await d.courierUnsent({ project: found.project, session: req.session, ids: req.ids, now: d.now });
+  await d.courierUnsent({ project: found.project, session: req.session, ids: req.ids, at: req.at });
   return { ok: true };
 }
 
@@ -453,8 +457,8 @@ async function requestFrom(stdin) {
 const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 // The answer's one line: { ok } and `says` when there is one, then only the fields the mod reads
-// (role, every, pane, glance, status, submit, woken, rows, text), each when it is present and of
-// its type; `submit` and `woken` are always lists of strings. Nothing else a command put in its
+// (role, every, pane, glance, status, submit, woken, wokeAt, rows, text), each when it is present
+// and of its type; `submit` and `woken` are always lists of strings. Nothing else a command put in its
 // answer reaches the mod.
 export function lineOf(answer) {
   const out = { ok: answer?.ok === true };
@@ -466,6 +470,7 @@ export function lineOf(answer) {
   if (typeof answer?.status === 'string') out.status = answer.status;
   if (strings(answer?.submit)) out.submit = answer.submit;
   if (strings(answer?.woken)) out.woken = answer.woken;
+  if (typeof answer?.wokeAt === 'string') out.wokeAt = answer.wokeAt;
   if (Array.isArray(answer?.rows) && answer.rows.every(isRecord)) out.rows = answer.rows;
   if (typeof answer?.text === 'string') out.text = answer.text;
   return JSON.stringify(out);

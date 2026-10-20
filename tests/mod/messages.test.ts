@@ -636,18 +636,20 @@ test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by rol
 test('a courier\'s wake that can\'t be handed on asks the bridge to undo its marks, naming the session and the ids', async ($, on) => {
   const WAKE = 'Wheelhouse courier: STOP is on. Send Claude\'s notification in one line, then ask any new cards now, once.'
   const IDS = ['stop:2026-10-20T09:12:55.000Z', 'card:c-4']
+  const AT = '2026-10-20T09:12:56.000Z'
   const LINES = ['Wheelhouse watcher: CI failed on pull request #4'] as const
   let reply: object = frontDesk()
   const { seen, clear, start, clock, control } = world(on, () => reply)
   const unsent = () => seen.runs.filter((r: any) => r.request?.cmd === 'unsent')
   for (const surface of SURFACES) {
-    // Refused or dropped: the toast, then one unsent from this session for the ids the tick named.
+    // Refused or dropped: the toast, then one unsent from this session for the ids and the stamp
+    // the tick named.
     for (const refused of [control.refuse, control.drop]) {
-      reply = { ...frontDesk([WAKE]), woken: IDS }
+      reply = { ...frontDesk([WAKE]), woken: IDS, wokeAt: AT }
       refused.add(WAKE)
       await start($, surface)
       expect(seen.toasts).toEqual([NOT_HANDED])
-      expect(unsent().map((r: any) => r.request)).toEqual([{ cmd: 'unsent', session: seen.ticks[0].session, cwd: ROOT, ids: IDS }])
+      expect(unsent().map((r: any) => r.request)).toEqual([{ cmd: 'unsent', session: seen.ticks[0].session, cwd: ROOT, ids: IDS, at: AT }])
       expect(seen.ticks[0].session.startsWith(SESSION)).toBe(true)
       expect(unsent()[0].argv[1]).toMatch(/\/scripts\/mod\/bridge\.js$/)
       refused.clear()
@@ -657,9 +659,9 @@ test('a courier\'s wake that can\'t be handed on asks the bridge to undo its mar
       expect(seen.prompts.map((p: any) => p.text)).toEqual([WAKE])
       expect(unsent()).toHaveLength(0)
     }
-    // A wake handed on asks no undo; nor does a failed one whose tick named no ids, nor a
-    // foreman's watcher line.
-    reply = { ...frontDesk([WAKE]), woken: IDS }
+    // A wake handed on asks no undo; nor does a failed one whose tick named no ids or no stamp, nor
+    // a foreman's watcher line.
+    reply = { ...frontDesk([WAKE]), woken: IDS, wokeAt: AT }
     await start($, surface)
     expect(seen.prompts.map((p: any) => p.text)).toEqual([WAKE])
     expect(unsent()).toHaveLength(0)
@@ -669,14 +671,56 @@ test('a courier\'s wake that can\'t be handed on asks the bridge to undo its mar
     await clock.advance(TICK_MS)
     expect(seen.toasts).toEqual([NOT_HANDED])
     expect(unsent()).toHaveLength(0)
+    reply = { ...frontDesk([WAKE]), woken: IDS }
+    clear()
+    await clock.advance(TICK_MS)
+    expect(unsent()).toHaveLength(0)
     control.drop.clear()
-    reply = { ...foreman(LINES), woken: IDS }
+    reply = { ...foreman(LINES), woken: IDS, wokeAt: AT }
     control.drop.add(LINES[0])
     clear()
     await clock.advance(TICK_MS)
     await clock.advance(FOREMAN_TICK_MS)
     expect(seen.toasts).toContain(NOT_HANDED_FOREMAN)
     expect(unsent()).toHaveLength(0)
+    control.drop.clear()
+  }
+})
+
+test('a run of courier wakes that can\'t be handed on toasts once; a wake handed on or a turn starting lets the next failure toast', async ($, on) => {
+  const WAKE = 'Wheelhouse courier: STOP is on. Send Claude\'s notification in one line, then ask any new cards now, once.'
+  const failing = { ...frontDesk([WAKE]), woken: ['stop:s'], wokeAt: '2026-10-20T09:12:56.000Z' }
+  const { seen, clear, start, clock, control } = world(on, () => failing)
+  const unsent = () => seen.runs.filter((r: any) => r.request?.cmd === 'unsent')
+  for (const surface of SURFACES) {
+    control.drop.add(WAKE)
+    // Three failed ticks: one toast, and an undo on each.
+    await start($, surface)
+    await clock.advance(TICK_MS)
+    await clock.advance(TICK_MS)
+    expect(seen.ticks).toHaveLength(3)
+    expect(seen.toasts).toEqual([NOT_HANDED])
+    expect(unsent()).toHaveLength(3)
+    // A wake handed on, then a failure: a second toast.
+    control.drop.clear()
+    clear()
+    await clock.advance(TICK_MS)
+    expect(seen.prompts.map((p: any) => p.text)).toEqual([WAKE])
+    expect(seen.toasts).toEqual([])
+    control.drop.add(WAKE)
+    await clock.advance(TICK_MS)
+    await clock.advance(TICK_MS)
+    expect(seen.toasts).toEqual([NOT_HANDED])
+    // A turn starting lets the next failure toast too; a subagent's turn doesn't.
+    clear()
+    await $.turn.start({ turnId: 't2', text: '', agentId: 'agent-1' })
+    await clock.advance(TICK_MS)
+    expect(seen.toasts).toEqual([])
+    await $.turn.start({ turnId: 't1', text: 'hello' })
+    await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 1, isAborted: false, reason: 'answer' })
+    await clock.advance(TICK_MS)
+    expect(seen.toasts).toEqual([NOT_HANDED])
+    expect(unsent()).toHaveLength(2)
     control.drop.clear()
   }
 })

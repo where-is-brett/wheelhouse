@@ -22,8 +22,9 @@ export type Answer = {
   glance?: string,
   status?: string,
   submit?: string[],
-  // The ids the courier's wake in `submit` marked sent, which `unsent` hands back.
+  // The ids the courier's wake in `submit` marked sent, and its stamp, which `unsent` hands back.
   woken?: string[],
+  wokeAt?: string,
   rows?: Record<string, unknown>[],
   text?: string,
 }
@@ -36,7 +37,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 function answerOf(line: unknown): Answer | null {
   if (!isRecord(line) || typeof line.ok !== 'boolean') return null
   const answer: Answer = { ok: line.ok }
-  for (const key of ['says', 'role', 'glance', 'status', 'text'] as const) {
+  for (const key of ['says', 'role', 'glance', 'status', 'text', 'wokeAt'] as const) {
     if (typeof line[key] === 'string') answer[key] = line[key]
   }
   if (typeof line.every === 'number' && Number.isFinite(line.every) && line.every >= 0) answer.every = line.every

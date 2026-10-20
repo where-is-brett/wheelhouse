@@ -58,8 +58,8 @@ export async function releaseAll($: EngineInterface) {
 
 // Hands the session each prompt, in order, once. Each prompt stands alone: one the engine drops,
 // or a call that rejects, isn't handed, and the ones after it still are. However many aren't, the
-// toast `notHanded` says so once. True when every prompt was handed over.
-export async function submitAll($: EngineInterface, prompts: readonly string[], notHanded: string = NOT_HANDED): Promise<boolean> {
+// toast `notHanded` says so once, unless `quiet`. True when every prompt was handed over.
+export async function submitAll($: EngineInterface, prompts: readonly string[], notHanded: string = NOT_HANDED, quiet = false): Promise<boolean> {
   let handed = true
   for (const text of prompts) {
     try {
@@ -68,7 +68,7 @@ export async function submitAll($: EngineInterface, prompts: readonly string[], 
       handed = false
     }
   }
-  if (!handed) $.ui.toast(notHanded)
+  if (!handed && !quiet) $.ui.toast(notHanded)
   return handed
 }
 

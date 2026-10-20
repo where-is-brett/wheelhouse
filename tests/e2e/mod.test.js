@@ -433,10 +433,10 @@ test('a STOP wake the mod couldn\'t hand on is undone, and the next tick wakes f
   assert.deepEqual(woke.submit, [`${LEADS.courier} STOP is on. Send Claude's notification in one line, then ask any new cards now, once.`]);
   assert.deepEqual(woke.woken, [`stop:${stopState().at}`]);
   const { lastWakeAt } = JSON.parse(fs.readFileSync(courierFile(PROJECT), 'utf8'));
-  assert.notEqual(lastWakeAt, null);
+  assert.equal(lastWakeAt, woke.wokeAt);
 
   // The session took no prompt, so the mod says so.
-  assert.deepEqual(await bridge(c, { cmd: 'unsent', session: 'sess-front', cwd: c.folder, ids: woke.woken }), { ok: true });
+  assert.deepEqual(await bridge(c, { cmd: 'unsent', session: 'sess-front', cwd: c.folder, ids: woke.woken, at: woke.wokeAt }), { ok: true });
   const undone = JSON.parse(fs.readFileSync(courierFile(PROJECT), 'utf8'));
   assert.deepEqual(undone.sent.map((s) => s.id), []);
   assert.equal(undone.lastWakeAt, null, 'lastWakeAt is what it was before the wake');

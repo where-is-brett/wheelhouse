@@ -10,9 +10,10 @@
 // Each prompt an answer's `submit` holds (the courier's wake in the front desk's session, the
 // watcher's lines in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it
 // handed, so the next answer doesn't hold it again. A courier's wake that can't be handed on is
-// sent back as { cmd: 'unsent', session, cwd, ids } with the ids the answer's `woken` named, so
-// the bridge undoes its marks and the next idle tick wakes again; a watcher's line that can't be
-// handed on is not tried again.
+// sent back as { cmd: 'unsent', session, cwd, ids, at } with the ids and the stamp the answer's
+// `woken` and `wokeAt` named, so the bridge undoes its marks and the next idle tick wakes again.
+// Its toast shows once for a run of such wakes in a session: again only after one is handed on or
+// a turn starts. A watcher's line that can't be handed on is not tried again.
 //
 // The pane has two views: the board, with each card's buttons (hooks/mod/cards.tsx), and the
 // settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both.
@@ -50,6 +51,7 @@ const PICTURED = { plugin: 'wheelhouse', key: 'pictured' } as const
 const OPENED = { plugin: 'wheelhouse', key: 'opened' } as const
 const VIEW = { plugin: 'wheelhouse', key: 'view' } as const
 const SETTINGS = { plugin: 'wheelhouse', key: 'settings' } as const
+const UNHANDED = { plugin: 'wheelhouse', key: 'unhanded' } as const
 
 // The module's own: the timer, whether a tick runs and whether a press or traffic asked for one
 // meanwhile. A reload starts them over, with the session.start that follows it. Whether the pane
@@ -162,12 +164,8 @@ async function runTick($: EngineInterface) {
     }
     every = answer.every
     const prompts = answer.submit ?? []
-    const notHanded = answer.role === FOREMAN ? NOT_HANDED_FOREMAN : NOT_HANDED
-    const woken = answer.role === FOREMAN ? [] : answer.woken ?? []
     if (prompts.length > 0) {
-      handing = handing.then(async () => {
-        if (!(await submitAll($, prompts, notHanded)) && woken.length > 0) await ask($, { cmd: 'unsent', session, cwd, ids: woken })
-      }).catch(() => undefined)
+      handing = handing.then(() => (answer.role === FOREMAN ? submitAll($, prompts, NOT_HANDED_FOREMAN) : handWake($, answer, session, cwd))).catch(() => undefined)
     }
     await $.state.set(TICK, { at: now, failed: false })
     await show($, answer, session, now)
@@ -176,6 +174,19 @@ async function runTick($: EngineInterface) {
   } finally {
     schedule($, every)
   }
+}
+
+// The courier's wake, handed on. One that can't be is sent back with the ids and the stamp the
+// answer named, so the bridge undoes its marks; its toast shows only for the first of a run.
+async function handWake($: EngineInterface, answer: Answer, session: string, cwd: string) {
+  const unhanded = (await $.state.get(UNHANDED)).value === session
+  if (await submitAll($, answer.submit ?? [], NOT_HANDED, unhanded)) {
+    await $.state.set(UNHANDED, null)
+    return
+  }
+  await $.state.set(UNHANDED, session)
+  const ids = answer.woken ?? []
+  if (ids.length > 0 && answer.wokeAt !== undefined) await ask($, { cmd: 'unsent', session, cwd, ids, at: answer.wokeAt })
 }
 
 // Whether the last answered tick said this is the front desk's session; false before any has.
@@ -239,7 +250,10 @@ export async function startPane($: EngineInterface, e: SessionStartInput) {
 
 // Whether the session is busy: only the main loop's turns count, not a subagent's.
 export async function turnStarted($: EngineInterface, e: TurnStartInput) {
-  if (e.agentId === undefined) await $.state.set(BUSY, true)
+  if (e.agentId === undefined) {
+    await $.state.set(BUSY, true)
+    await $.state.set(UNHANDED, null)
+  }
 }
 
 export async function turnEnded($: EngineInterface, e: TurnCompleteInput) {
