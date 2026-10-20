@@ -4,7 +4,8 @@
 // scratch user home (with a space and an accent) and a scratch Claude Code folder through
 // CLAUDE_CONFIG_DIR, so nothing reads or writes the real ~/.claude. `plan(step)` is the helper's
 // /setup/plan on the real steps; `answer(card, label)` is the director's click on that card, as the
-// prompt record sees it, with a stand-in helper that takes every record and keeps what was sent.
+// prompt record sees it (a minute before T0, unless `at` says when), with a stand-in helper that
+// takes every record and keeps what was sent.
 import fs from 'node:fs';
 import path from 'node:path';
 import { setupRoutes } from '../../scripts/setup/engine.js';
@@ -68,13 +69,13 @@ export async function withProject(fn, { files = {}, connected = true } = {}) {
         },
         profile: { record: async (body) => { sent.push({ route: 'profile-record', body }); return { ok: true }; } },
       };
-      const answer = async (card, label, { cwd = folder } = {}) => {
+      const answer = async (card, label, { cwd = folder, at = new Date(T0.getTime() - 60 * 1000) } = {}) => {
         const from = sent.length;
         await decide({
           cwd, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
           tool_input: { questions: [card], answers: { [card.question]: label } },
           tool_response: { answers: { [card.question]: label } },
-        }, { client, now: () => new Date(T0.getTime() - 60 * 1000) });
+        }, { client, now: () => at });
         return sent.slice(from);
       };
       return fn({ home, user, config, folder, plan, answer, sent, connect });

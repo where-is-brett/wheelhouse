@@ -163,6 +163,35 @@ test('a typed description holding a key records nothing, and the question is ask
   });
 });
 
+// Ruling R137: the prompt record judges a typed answer as the engine does before it records
+// anything, so a refused one never becomes the glossary entry and never takes the card from the
+// answer that follows.
+test('a typed answer the engine refuses records nothing and claims nothing, so the next answer, typed or clicked, is kept (ruling R137)', async () => {
+  const at = (s) => new Date(T0.getTime() + s * 1000);
+  // Typed: the choice handed back, a first question, then that question again, which counts.
+  await withProject(async ({ folder, plan, answer }) => {
+    answerStep3(folder, { realUsers: REAL_USERS.no });
+    const asked = await plan(4);
+    assert.deepEqual(await answer(asked.ask.card, 'you decide', { at: at(1) }), [], 'a hand-back records nothing');
+    assert.deepEqual(await answer(asked.ask.card, 'Tide tables for sailors?', { at: at(2) }), [], 'a first question records nothing');
+    assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'], undefined);
+    const again = await answer(asked.ask.card, 'Tide tables for sailors?', { at: at(3) });
+    assert.deepEqual(again.map((s) => [s.route, s.body.data?.plain ?? s.body.target?.data.value]), [['write', 'Tide tables for sailors?'], ['record', 'before-launch']]);
+    assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'].text, 'Tide tables for sailors?');
+    assert.equal((await plan(4)).ask.id, 'live-data', 'the first question answered');
+  });
+  // Clicked, after a hand-back typed twice: the click is kept, and records what it says.
+  await withProject(async ({ folder, plan, answer }) => {
+    answerStep3(folder, { realUsers: REAL_USERS.no });
+    const asked = await plan(4);
+    assert.deepEqual(await answer(asked.ask.card, 'Not sure.', { at: at(1) }), []);
+    assert.deepEqual(await answer(asked.ask.card, 'you decide?', { at: at(2) }), [], 'a hand-back is refused every time');
+    const later = await answer(asked.ask.card, PRODUCT.later, { at: at(3) });
+    assert.deepEqual(later.map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
+    assert.equal(answersFor(findRun(folder).id)['4.product-before-launch'].label, PRODUCT.later);
+  });
+});
+
 test('a real-users answer given again asks the first question again, so the phase it records follows it', async () => {
   await withProject(async ({ folder, plan, answer }) => {
     answerStep3(folder, { realUsers: REAL_USERS.yes });

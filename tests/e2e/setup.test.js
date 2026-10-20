@@ -375,13 +375,9 @@ test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SK
   }
 });
 
-// Found end to end (Task 17): on step 4's first card, which records the product's glossary entry
-// and phase from the answer, the prompt record keeps a refused typed answer's records and claims
-// the card (scripts/hooks/prompt-record.js keepSetupClicks, scripts/lib/setup-clicks.js
-// claimAnswer), so the refused words ("you decide", or a first "?") become the product's glossary
-// entry, and no later answer on that card, typed or clicked, is kept: the card is asked for ever.
-const R132_BUG = 'engine bug: a refused typed answer on step 4\'s first card records its glossary entry and claims the card, so the refused words become the description and no later answer is kept (prompt-record.js keepSetupClicks, setup-clicks.js claimAnswer)';
-test('step 4\'s first card refuses a hand-back and a first question, records neither, and takes the question typed again (rulings R125, R132)', { skip: SKIP || R132_BUG }, async () => {
+// On step 4's first card, which records the product's glossary entry and phase from the answer, a
+// refused typed answer records nothing and claims nothing (ruling R137; found end to end by Task 17).
+test('step 4\'s first card refuses a hand-back and a first question, records neither, and takes the question typed again (rulings R125, R132)', { skip: SKIP }, async () => {
   const { a } = fresh();
   try {
     await a.start();

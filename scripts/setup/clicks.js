@@ -42,14 +42,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
-import { readEnrolled, verify } from '../state/signing.js';
+import { readEnrolled } from '../state/signing.js';
 import { eventPath } from '../state/events.js';
 import { helperClient } from '../host/helper-client.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import {
   HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, writeWhole, shownCard, readShown,
-  readAsked, uninstallShownFile, readUninstallShown,
+  readAsked, uninstallShownFile, readUninstallShown, keptIn, ownSigned, keptAnswers, typedVerdict,
 } from '../lib/setup-clicks.js';
 import { isLineName } from '../state/card-lines.js';
 
@@ -111,27 +111,7 @@ export function askedIn(runId, step) {
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
-// Every event kept in one of setup's folders on this computer; a file that isn't one is passed over.
-function keptIn(dir) {
-  let names;
-  try {
-    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
-  } catch {
-    return [];
-  }
-  return names.flatMap((name) => {
-    try {
-      const event = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
-      return event && typeof event === 'object' ? [event] : [];
-    } catch {
-      return [];
-    }
-  });
-}
 const keptClicks = () => keptIn(clicksDir());
-
-// Made on this computer and signed by its enrolled key.
-const ownSigned = (e, me, enrolled) => e.computer === me && e.sig?.computer === me && EVENT_ID.test(String(e.id)) && verify(e, enrolled);
 
 const used = (event) => fs.existsSync(path.join(usedDir(), String(event.id)));
 
@@ -151,28 +131,9 @@ export function freshClicks({ runId, step, hash, now = () => new Date() }) {
   }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
-// A typed answer that is no answer at first sight (ruling R125): a question (it ends with "?"), or,
-// alone, words that hand the choice back. Case and closing punctuation don't count, so "you
-// decide?" hands the choice back: it is never a question to be taken when typed again (R132).
-export const HANDED_BACK = Object.freeze(['you decide', 'you choose', 'not sure', 'i don\'t know', 'skip', 'whatever']);
-export function handedBack(text) {
-  if (typeof text !== 'string') return false;
-  const plain = text.trim().replace(/[.!?\s]+$/u, '').replace(/\s+/gu, ' ').replaceAll('\u2019', '\'').toLowerCase();
-  return HANDED_BACK.includes(plain);
-}
-export function notAnAnswer(text) {
-  return typeof text === 'string' && (text.trim().endsWith('?') || handedBack(text));
-}
-
-// This run's setup-answers kept here, made on this computer and signed by its enrolled key, oldest
-// first.
-function keptAnswers(runId) {
-  if (!RUN_ID.test(String(runId))) return [];
-  const enrolled = readEnrolled();
-  const me = computerId();
-  return keptIn(answersDir()).filter((e) => e.kind === 'action' && e.data?.action === 'setup-answer' && e.data.runId === runId
-    && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-}
+// A typed answer that is no answer at first sight, and the rule for when it counts (rulings R125,
+// R132, R137), live in scripts/lib/setup-clicks.js, which the prompt record reads too.
+export { HANDED_BACK, handedBack, notAnAnswer } from '../lib/setup-clicks.js';
 
 // This run's setup-answers to the questions its steps last asked, in the same words, oldest first,
 // each with whether it counts and, for a typed text that does not, why: 'handedBack' (the choice
@@ -180,7 +141,7 @@ function keptAnswers(runId) {
 // any typed answer to it after one such refusal counts, ruling R132). Read from the signed records
 // alone, so it holds across sessions.
 function verdicts(runId) {
-  const questioned = new Set();
+  const typedSoFar = new Map();
   const list = [];
   for (const e of keptAnswers(runId)) {
     const { step, questionId, question, label, text } = e.data;
@@ -190,12 +151,8 @@ function verdicts(runId) {
     if (typeof label === 'string') {
       list.push({ e, key, counts: text === null && !PUT_OFF.includes(label) && asked.card.options.some((o) => o.label === label) });
     } else if (label === null && typeof text === 'string' && text !== '' && asked.typed === true) {
-      let why = null;
-      if (handedBack(text)) why = 'handedBack';
-      else if (notAnAnswer(text) && !questioned.has(key)) {
-        why = 'question';
-        questioned.add(key);
-      }
+      const why = typedVerdict(text, typedSoFar.get(key) ?? []);
+      typedSoFar.set(key, [...(typedSoFar.get(key) ?? []), text]);
       list.push({ e, key, counts: why === null, ...(why === null ? {} : { why }) });
     }
   }
