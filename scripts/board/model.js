@@ -183,7 +183,7 @@ function questionWords(data) {
 // names that question alone by its answer line; and no report for the work came at or after it.
 // A Not now click is never a signed answer, so this is for the board's words only: a forged
 // card-answer makes the feature read as waiting, nothing more.
-function heldByNotNow(work, questions, events, reports) {
+export function heldByNotNow(work, questions, events, reports) {
   const asked = Object.entries(questions)
     .filter(([, entry]) => isRecord(entry) && isBuildQuestion(entry.question?.data) && entry.question.data.work === work && timeOf(entry.question.at))
     .sort(([, a], [, b]) => oldestFirst(a.question, b.question));
@@ -404,7 +404,10 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       return [...prs].sort((a, b) => a - b).map((pr) => {
         const review = headReview(reviews, approvals, pr);
         const named = reports.filter((r) => r.data.pr === pr && typeof r.data.work === 'string').sort(oldestFirst).at(-1);
-        return { pr, work: named ? oneLine(named.data.work) : null, review: reviewState(review), findings: review ? findingsOf(review) : null };
+        // Blocked while its work's latest report says so and names it: the report's summary is why.
+        const latest = named ? reports.filter((r) => r.data.work === named.data.work).sort(oldestFirst).at(-1) : null;
+        const blocked = latest?.data.outcome === 'blocked' && latest.data.pr === pr ? oneLine(latest.data.summary) : null;
+        return { pr, work: named ? oneLine(named.data.work) : null, review: reviewState(review), findings: review ? findingsOf(review) : null, blocked };
       });
     }, []),
     quality: part(missing, 'quality this week', () => {

@@ -19,14 +19,17 @@
 // reads the latest run record and runs TRIALS_AGAIN more trials of each
 // scenario it marked, only in the variant that marked it. After either, the
 // report (scripts/eval/summary.js) is printed and kept beside the run record,
-// as <time>.md.
+// as <time>.md. The build loop's scenarios (20 to 35) are in tests/eval/build-loop/,
+// the front desk's (1 to 19) in tests/eval/front-desk/ and the mod's (36 and 37) in
+// tests/eval/mod/, a file's number read without its leading zero (01-…).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { parseArgs, runScenario, scenarioName, today } from './harness.js';
 import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export { EVAL_ROOT };
 
@@ -293,10 +296,16 @@ export async function main(argv, {
       if (!suites.includes(args.suite)) throw new Error(`No suite ${args.suite}: the suites are ${suites.join(', ')}`);
       ids = numbersIn(root, args.suite);
     }
-    const trials = Array.from({ length: args.trials }, (_, i) => i + 1);
+    // A record saved that day is never written over: the trials follow the last one there, with
+    // the same numbers for every leg, so a trial is judged across its legs.
     for (const id of ids) {
-      for (const entry of await loadEntries(id, { root })) {
-        for (const variant of args.variants) jobs.push({ ...entry, variant, trials, round: 'first' });
+      const entries = await loadEntries(id, { root });
+      const trialsOf = Object.fromEntries(args.variants.map((variant) => {
+        const after = Math.max(...entries.map((entry) => lastTrial(home, date, scenarioName(entry.scenario), variant, [])));
+        return [variant, Array.from({ length: args.trials }, (_, i) => after + 1 + i)];
+      }));
+      for (const entry of entries) {
+        for (const variant of args.variants) jobs.push({ ...entry, variant, trials: trialsOf[variant], round: 'first' });
       }
     }
   }
@@ -359,7 +368,7 @@ export async function main(argv, {
         title: scenario.title,
         safety: scenario.safety === true,
         variant,
-        trial,
+        trial: outcome.trial ?? trial,
         round: job.round,
         pass: outcome.pass === true,
         handled: outcome.handled !== false,
@@ -386,7 +395,7 @@ export async function main(argv, {
   return failed ? 1 : 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (startedAsScript(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => { process.exitCode = code; },
     (error) => { console.error(error.message); process.exitCode = 2; },

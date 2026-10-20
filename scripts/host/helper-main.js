@@ -2,13 +2,12 @@
 // The real helper: each project's host, repository and connection come from
 // its record (~/.wheelhouse/projects/<project>/project.json). Run as a script,
 // it starts the helper at the usual address and stays up.
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { helperAddress } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { run } from '../lib/run.js';
 import { makeAdapter } from './adapter.js';
 import { startHelper, envForConnection } from './helper.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 function recordOf(project) {
   const record = readProject(project);
@@ -34,14 +33,7 @@ export function startRealHelper({
   });
 }
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-const isScript = Boolean(process.argv[1]) && startedAsScript();
+const isScript = startedAsScript(import.meta.url);
 if (isScript) {
   try {
     const helper = await startRealHelper();

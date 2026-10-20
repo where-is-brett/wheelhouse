@@ -28,7 +28,7 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { foremanTools } from './tools.js';
 import { isModelName } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
@@ -40,6 +40,7 @@ import { healthFile, lockFile, projectConfig } from '../watcher/main.js';
 import {
   ROLE_VARIABLE, pidAlive, processStartTime, runningFile, sessionEnv, sessionModeOf, watcherFolder, writeJsonFile,
 } from '../watcher/waker.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -223,6 +224,6 @@ export async function main(argv, {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await main(process.argv.slice(2));
 }

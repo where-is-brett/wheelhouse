@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fingerprintFile } from './fingerprint.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const REGISTER_PATH = 'lineage/register.json';
 export const OVERRIDE_PATH = 'templates/brief/override.md';
@@ -100,17 +101,9 @@ export function checkOverrideText({ register, overrideText }) {
 
 // --- Command line ---
 
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
 const USAGE = 'usage: node scripts/lineage/register.js check <upstream>=<folder> [<upstream>=<folder> ...]\n';
 
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   const [command, ...pairs] = process.argv.slice(2);
   const roots = {};
   for (const pair of pairs) {

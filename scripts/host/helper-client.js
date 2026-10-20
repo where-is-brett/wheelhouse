@@ -75,7 +75,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
       record: post('/state/record'), // { project, event, target? }: a signed event made by this computer's hook; a confirmation may carry the plain ruling or setting it confirms
       sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
-      views: post('/state/views'), //   { project, cards?, review? } -> { ok, views, cards?, review? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; `cwd` may stand for `project`
+      views: post('/state/views'), //   { project, cards?, review?, answers? } -> { ok, views, cards?, review?, answers? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; with answers: true, the card-answer events; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
     },

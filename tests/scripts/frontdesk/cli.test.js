@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { main, readInput, RECORD_KINDS, MEANWHILE, CHECKS_UNSAID } from '../../../scripts/frontdesk/cli.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -20,14 +21,16 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { approvalLine, answerLine, confirmLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, answerLine, ciPushLine, confirmLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
-import { decide as cardCheck } from '../../../scripts/hooks/card-check.js';
+import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { answerInput } from '../../../scripts/cards/compose.js';
 import { plainWords, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
+import { CLICK_MS } from '../../../scripts/lib/core-numbers.js';
+import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -51,15 +54,16 @@ async function inHome(fn) {
 // The helper as the front desk sees it: every call is kept; writes make the event as /state/write
 // does (a signed kind is refused) and the views are built from what is held. Under `stop` (true, or
 // a function read on each request) every write is refused and the views say STOP is on, as the
-// helper does under STOP.
-function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {}) {
+// helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
+// made at `writeAt(n)`, the nth write's time.
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
   let tick = 100;
   const views = () => buildViews(held, readEnrolled(), { now: () => NOW });
   const writeAs = (kind, data, id) => {
-    const made = makeEvent({ kind, data, now: () => T((tick += 1)) });
+    const made = makeEvent({ kind, data, now: () => writeAt((tick += 1)) });
     const event = id === undefined ? made : { ...made, id };
     held.push(event);
     return { ok: true, id: event.id, pushed: true };
@@ -74,6 +78,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {
           views: built,
           ...(stopped() ? { stop: true } : {}),
           ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
+          ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
           ...(body.review === true ? { review: delegationReview(held, { now: NOW, enrolled: readEnrolled(), views: built }) } : {}),
         };
       },
@@ -96,6 +101,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {
     },
     prState: async (body) => {
       calls.push(['prState', body]);
+      if (pr !== undefined) return pr(body.number);
       return { ok: true, result: { headSha: head, state: 'open', mergeable: 'clean' } };
     },
   };
@@ -103,11 +109,11 @@ function fakeHelper({ events = [], stop = false, head = FULL, profile = {} } = {
 }
 
 // Runs one command; resolves with { code, out, err, json }.
-async function run(helper, argv, input) {
+async function run(helper, argv, input, { cwd = CWD } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd: CWD, client: helper.client, input, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -271,6 +277,233 @@ test('cards says which questions it could not make a card of, and asks the rest'
   });
 });
 
+// --- The build loop's cards: the click the merge gate waits for, and a lineage hold ---
+
+// The update merge a CI push card is for: not the pull request's head until it is pushed.
+const MERGE = '1234567890abcdef1234567890abcdef12345678';
+const BRANCH = 'wh/export-csv';
+const LATER = '0123456789abcdef0123456789abcdef01234567';
+const MINUTE = 60 * 1000;
+const ago = (ms) => () => new Date(NOW.getTime() - ms);
+const EXPORT = makeEvent({ kind: 'work', data: { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [] }, now: () => T(1) });
+const gateAsks = (data, when = () => T(5)) => makeEvent({ kind: 'gate-asks', data: { work: 'export-csv', pr: 7, ...data }, now: when });
+const APPROVE_ASK = { ask: 'approval', sha: FULL };
+const PUSH_ASK = { ask: 'ci-push', sha: MERGE, branch: BRANCH };
+const openAt = (headSha, state = 'open') => () => ({ ok: true, result: { headSha, state, mergeable: 'clean' } });
+const cardWrites = (helper) => helper.writes().filter((w) => w.kind === 'card').map((w) => w.data);
+
+test('a gate-asks for an approval becomes one approval card for that pull request and commit, made once', async () => {
+  await inHome(async () => {
+    // Within the click window, so the second visit has no reason to ask it again.
+    const helper = fakeHelper({ events: [EXPORT, gateAsks(APPROVE_ASK, ago(2 * MINUTE))] });
+    const first = await run(helper, ['cards']);
+    assert.equal(first.code, 0, first.err);
+    assert.equal(first.json.problems, undefined);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'approval');
+    assert.equal(card.line, approvalLine(7, FULL));
+    assert.equal(setLineOf(card.question), approvalLine(7, FULL));
+    // The work is named by its title, in plain words; the card is handed out at once and marked asked.
+    assert.match(card.question, /^What this is: \S.* #7 for Export a report as a spreadsheet /m);
+    assert.deepEqual(first.json.questions.map((q) => q.question), [card.question]);
+    assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
+    assert.deepEqual(cardProblems(card.question), []);
+    // The host was asked whether the pull request is still at that commit.
+    assert.deepEqual(helper.calls.filter(([name]) => name === 'prState'), [['prState', { cwd: CWD, number: 7 }]]);
+    // The next visit makes no second card, and has nothing to ask.
+    const second = await run(helper, ['cards']);
+    assert.deepEqual(second.json, { questions: [], left: 0 });
+    assert.equal(cardWrites(helper).length, 1);
+    // A card already waiting with that line is not made again: it is asked as it waits.
+    const waiting = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 4);
+    const already = fakeHelper({ events: [EXPORT, waiting, gateAsks(APPROVE_ASK, ago(2 * MINUTE))] });
+    const asked = await run(already, ['cards']);
+    assert.equal(cardWrites(already).length, 0);
+    assert.deepEqual(asked.json.questions.map((q) => q.question), [waiting.data.question]);
+  });
+});
+
+test('a gate-asks for a CI push becomes a CI push card for its branch and the update\'s commit', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ events: [EXPORT, gateAsks(PUSH_ASK)] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'ci-push');
+    assert.equal(card.line, ciPushLine(BRANCH, MERGE));
+    assert.equal(setLineOf(card.question), ciPushLine(BRANCH, MERGE));
+    assert.ok(card.question.split('\n')[0].includes(` ${BRANCH}`), card.question);
+    assert.deepEqual(card.options.slice(0, 1), ['Push it']);
+    assert.deepEqual(cardProblems(card.question), []);
+  });
+});
+
+test('no gate card when the click is on record, the pull request has moved on, or the work is finished', async () => {
+  await inHome(async () => {
+    const question = 'as shown';
+    const approved = makeEvent({ kind: 'approval', data: { pr: 7, commit: FULL, words: 'Approve', question }, now: () => T(9) });
+    const pushedJustNow = makeEvent({ kind: 'action', data: { action: 'ci-push', branch: BRANCH, sha: MERGE, question, label: 'Push it' }, now: ago(2 * MINUTE) });
+    const merged = makeEvent({ kind: 'report', data: { work: 'export-csv', outcome: 'merged', summary: 'Done.', rulings: [] }, now: () => T(9) });
+    const cases = [
+      ['an approval of that commit', [gateAsks(APPROVE_ASK), approved], {}],
+      ['a CI push click within the window', [gateAsks(PUSH_ASK), pushedJustNow], {}],
+      ['an approval asked of a head that has moved on', [gateAsks(APPROVE_ASK)], { head: LATER }],
+      ['a CI push whose update is the head now: it was pushed', [gateAsks(PUSH_ASK)], { head: MERGE }],
+      ['a pull request merged on the host', [gateAsks(APPROVE_ASK)], { pr: openAt(FULL, 'merged') }],
+      ['a pull request closed on the host', [gateAsks(PUSH_ASK)], { pr: openAt(FULL, 'closed') }],
+      ['a later gate-asks for the same pull request', [gateAsks(APPROVE_ASK), gateAsks(PUSH_ASK, () => T(6))], { head: MERGE }],
+      ['work whose report says merged', [gateAsks(APPROVE_ASK), merged], {}],
+    ];
+    for (const [name, events, options] of cases) {
+      const helper = fakeHelper({ events: [EXPORT, ...events], ...options });
+      const out = await run(helper, ['cards']);
+      assert.equal(out.code, 0, `${name}: ${out.err}`);
+      assert.deepEqual(cardWrites(helper), [], name);
+      assert.deepEqual(out.json.questions, [], name);
+    }
+    // When the host can't say, the card is made: asking is the safe side.
+    for (const answer of [() => ({ ok: false, refused: 'the host helper could not be reached' }), () => { throw new Error('gone'); }, openAt('not a commit')]) {
+      const helper = fakeHelper({ events: [EXPORT, gateAsks(APPROVE_ASK)], pr: answer });
+      const out = await run(helper, ['cards']);
+      assert.equal(out.code, 0, out.err);
+      assert.deepEqual(cardWrites(helper).map((c) => c.line), [approvalLine(7, FULL)]);
+    }
+  });
+});
+
+test('R121: a CI push card whose click lapsed before the push comes back once; other gate cards keep to the usual rules', async () => {
+  await inHome(async () => {
+    // An approval card asked long ago, with the gate still waiting: not asked again (ruling F77).
+    const waiting = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 4);
+    const handedOut = makeEvent({ kind: 'asked', data: { cards: [waiting.id] }, now: () => T(8) });
+    const stale = fakeHelper({ events: [EXPORT, waiting, handedOut, gateAsks(APPROVE_ASK, ago(CLICK_MS + MINUTE))] });
+    assert.deepEqual((await run(stale, ['cards'])).json, { questions: [], left: 0 });
+    assert.deepEqual(stale.writes(), []);
+    // Not now on a gate card keeps it off the next visit's cards; it stays on the board.
+    const putOff = fakeHelper({ events: [EXPORT, gateAsks(APPROVE_ASK, ago(CLICK_MS + MINUTE))] });
+    assert.equal((await run(putOff, ['cards'])).json.questions.length, 1);
+    const made = putOff.held.find((e) => e.kind === 'card').id;
+    await putOff.client.state.write({ cwd: CWD, kind: 'card-answer', data: { card: made, label: 'Not now' } });
+    assert.deepEqual((await run(putOff, ['cards'])).json, { questions: [], left: 0 });
+    assert.deepEqual(putOff.views().waiting.map((c) => c.id), [made]);
+
+    // A CI push clicked once, whose click lapsed while the pull request is still at the head the
+    // update was made from: the push didn't happen, so the card comes back as it was made.
+    const push = cardEvent({
+      kind: 'ci-push', level: 3, what: `The branch ${BRANCH} needs the latest changes.`, why: 'It changes a checks file.',
+      options: [says('Push it')], recommend: 'Push it', because: 'the merge waits for it', meanwhile: 'The merge waits.', target: { branch: BRANCH, sha: MERGE },
+    }, 4);
+    const clicked = makeEvent({ kind: 'action', data: { action: 'ci-push', branch: BRANCH, sha: MERGE, question: push.data.question, label: 'Push it' }, now: ago(CLICK_MS + MINUTE) });
+    const events = [EXPORT, push, gateAsks({ ...PUSH_ASK, from: FULL }, ago(CLICK_MS + 2 * MINUTE)), clicked];
+    // Its records are written as the visit happens, after the click.
+    const lapsed = fakeHelper({ events, head: FULL, writeAt: (n) => new Date(NOW.getTime() + n) });
+    assert.equal(lapsed.views().waiting.length, 0, 'the click decided the card');
+    const back = await run(lapsed, ['cards']);
+    assert.equal(back.code, 0, back.err);
+    assert.deepEqual(back.json.questions.map((q) => q.question), [push.data.question]);
+    assert.equal(cardWrites(lapsed).length, 0, 'not composed twice');
+    assert.deepEqual(lapsed.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [push.id] } }]);
+    // Once for that click: the next visit doesn't ask it again.
+    assert.deepEqual((await run(lapsed, ['cards'])).json, { questions: [], left: 0 });
+    // Once the head has moved past the head the update was made from (pushed, then built on), no card.
+    for (const head of [MERGE, LATER]) {
+      const moved = fakeHelper({ events, head });
+      assert.deepEqual((await run(moved, ['cards'])).json, { questions: [], left: 0 }, head);
+    }
+    // A gate-asks that doesn't name the head the update was made from is never asked again.
+    const unnamed = fakeHelper({ events: [EXPORT, push, gateAsks(PUSH_ASK, ago(CLICK_MS + 2 * MINUTE)), clicked], head: FULL });
+    assert.deepEqual((await run(unnamed, ['cards'])).json, { questions: [], left: 0 });
+  });
+});
+
+test('a gate card for a commit the gate no longer asks about leaves the board; again numbers the cards as the board does', async () => {
+  await inHome(async () => {
+    const one = cardEvent(PRODUCT(1), 1);
+    const outdated = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 3);
+    const two = cardEvent(PRODUCT(2), 6);
+    const events = [EXPORT, one, gateAsks(APPROVE_ASK, () => T(2)), outdated, gateAsks({ ask: 'approval', sha: LATER }, () => T(4)), two];
+    const helper = fakeHelper({ events, head: LATER });
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [one.id, two.id]);
+    // The board and `views waiting` number the two cards still waiting, and `again` follows them.
+    const model = boardModel({ views: helper.views(), events, now: NOW });
+    assert.deepEqual(model.director.waiting.map((w) => w.since), [one.at, two.at]);
+    const listedOut = await run(helper, ['views', 'waiting']);
+    assert.equal(listedOut.code, 0, listedOut.err);
+    assert.equal(listedOut.out.trim().split('\n').length, 2, listedOut.out);
+    assert.match(listedOut.out, /^2\. /m);
+    const asked = await run(helper, ['again', '2']);
+    assert.equal(asked.code, 0, asked.err);
+    assert.deepEqual(asked.json.questions.map((q) => q.question), [two.data.question]);
+    // The visit makes the card for the commit the gate asks about now, and never hands out the outdated one.
+    const visit = await run(helper, ['cards']);
+    assert.equal(visit.code, 0, visit.err);
+    const [made, ...more] = cardWrites(helper);
+    assert.deepEqual([made.line, more.length], [approvalLine(7, LATER), 0]);
+    assert.deepEqual(visit.json.questions.map((q) => q.question), [made.question, one.data.question]);
+    // Put off with Not now while still current: it stays on the board and off the next visit's cards.
+    const madeId = helper.held.find((e) => e.kind === 'card' && e.data.line === made.line).id;
+    await helper.client.state.write({ cwd: CWD, kind: 'card-answer', data: { card: madeId, label: 'Not now' } });
+    assert.deepEqual((await run(helper, ['cards'])).json, { questions: [], left: 0 });
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [one.id, two.id, madeId]);
+  });
+});
+
+test('a lineage hold becomes one question card naming the kits and the first paths, made once', async () => {
+  await inHome(async () => {
+    const paths = ['skills/a/SKILL.md', 'skills/b/SKILL.md', 'skills/c/SKILL.md', 'skills/d/SKILL.md', 'skills/e/SKILL.md', 'skills/f/SKILL.md', 'skills/g/SKILL.md'];
+    const hold = makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: paths.map((p) => ({ upstream: 'superpowers', path: p })) }, now: () => T(3) });
+    const helper = fakeHelper({ events: [hold] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'question');
+    assert.equal(card.line, null);
+    assert.equal(card.event, hold.id);
+    const [what, why] = card.question.split('\n');
+    assert.match(what, /superpowers/);
+    assert.ok(what.includes('skills/e/SKILL.md, and 2 more'), what);
+    assert.ok(!what.includes('skills/f/SKILL.md'), what);
+    assert.match(what, /held/);
+    assert.match(why, /next session/);
+    assert.ok(card.question.length <= CARD.chars);
+    assert.deepEqual(cardProblems(card.question), []);
+    assert.deepEqual(out.json.questions.map((q) => q.question), [card.question]);
+    // Made once: the next visit makes no second card for that hold.
+    await run(helper, ['cards']);
+    assert.equal(cardWrites(helper).length, 1);
+    // The manifest that couldn't be read is said so.
+    const unread = fakeHelper({ events: [makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [{ upstream: null, path: 'lineage/manifest.json' }] }, now: () => T(3) })] });
+    await run(unread, ['cards']);
+    const [manifest] = cardWrites(unread);
+    // Paths too long for the card are left out: each kit is named with how many of its files differ.
+    const long = (n) => `skills/${String(n).repeat(180)}/SKILL.md`;
+    const wide = fakeHelper({ events: [makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [1, 2, 3, 4, 5, 6].map((n) => ({ upstream: 'superpowers', path: long(n) })) }, now: () => T(3) })] });
+    const shown = await run(wide, ['cards']);
+    assert.equal(shown.json.problems, undefined);
+    const [short] = cardWrites(wide);
+    assert.ok(short.question.split('\n')[0].includes('superpowers (6 files)'), short.question);
+    assert.ok(!short.question.includes(long(1)));
+    assert.match(manifest.question.split('\n')[0], /can't be read/);
+    assert.deepEqual(cardProblems(manifest.question), []);
+  });
+});
+
+test('under STOP neither a gate card nor a hold card is made', async () => {
+  await inHome(async () => {
+    const hold = makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] }, now: () => T(3) });
+    const helper = fakeHelper({ stop: true, events: [EXPORT, hold, gateAsks(APPROVE_ASK), gateAsks({ ...PUSH_ASK, pr: 8 })] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(out.json.questions.map((q) => q.header), ['Lift STOP']);
+    assert.deepEqual(helper.writes(), []);
+    assert.equal(helper.calls.filter(([name]) => name === 'prState').length, 0);
+  });
+});
+
 test('card fills a pull request\'s head and records the card once', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
@@ -307,6 +540,10 @@ test('card refuses an answer card, input that is not JSON and a card the compose
     const answer = await run(helper, ['card'], JSON.stringify({ ...PRODUCT(1), kind: 'answer', target: { questionId: 'q-export-csv-1' } }));
     assert.equal(answer.code, 1);
     assert.match(answer.err, /cards/);
+    // Nor a card tied to a record of the build's, which `cards` makes once (a lineage hold's).
+    const tied = await run(helper, ['card'], JSON.stringify({ ...PRODUCT(1), event: 'e-hold' }));
+    assert.equal(tied.code, 1);
+    assert.match(tied.err, /cards/);
     const notJson = await run(helper, ['card'], 'not json');
     assert.equal(notJson.code, 1);
     assert.match(notJson.err, /JSON/);
@@ -366,6 +603,76 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
     }
     assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'amendment', 'incident', 'note']);
     for (const kind of ['idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal']) assert.ok(RECORD_KINDS.includes(kind), kind);
+  });
+});
+
+test('record works out the hash of the document a work or an amendment names, and prints it', async () => {
+  await inHome(async () => {
+    const dir = tempFolder('wh-frontdesk-docs-');
+    const write = (relative, text) => {
+      fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
+      fs.writeFileSync(path.join(dir, relative), text);
+    };
+    write('docs/bugs/total.md', 'The total counts cancelled orders.\r\n');
+    const helper = fakeHelper();
+    const at = { cwd: dir };
+    const hashOf = (text) => createHash('sha256').update(text.replace(/\r\n?/g, '\n')).digest('hex');
+    const work = { id: 'staff-total', title: 'The total counts cancelled orders', lane: 'bug', visible: false, dependsOn: [] };
+
+    // A work event's document by its path alone: the hash is the file's, line endings evened.
+    const bug = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/total.md' } }), at);
+    assert.equal(bug.code, 0, bug.err);
+    const hash = hashOf('The total counts cancelled orders.\n');
+    assert.deepEqual(helper.held.at(-1).data.doc, { path: 'docs/bugs/total.md', hash });
+    assert.equal(bug.json.hash, hash, 'the hash is printed, for the approval card to name');
+
+    // A hash given must be the file's as it stands; a document that can't be read is refused.
+    const wrong = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/total.md', hash: DOC } }), at);
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.err, /docs\/bugs\/total\.md is not the document's as it stands/);
+    const missing = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/none.md' } }), at);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /docs\/bugs\/none\.md can't be read/);
+    // A hash given for a document that can't be read is never taken unchecked.
+    const unchecked = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/none.md', hash: DOC } }), at);
+    assert.equal(unchecked.code, 1);
+    assert.match(unchecked.err, /docs\/bugs\/none\.md can't be read/);
+    // A document over 1 MB says so.
+    write('docs/bugs/huge.md', 'x'.repeat(1024 * 1024 + 1));
+    for (const doc of [{ path: 'docs/bugs/huge.md' }, { path: 'docs/bugs/huge.md', hash: DOC }]) {
+      const huge = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc }), at);
+      assert.equal(huge.code, 1);
+      assert.match(huge.err, /docs\/bugs\/huge\.md is over 1 MB/);
+    }
+
+    // An amendment: the changed document is the one file the work names, written in place.
+    write('docs/bugs/total.md', 'The total leaves cancelled orders out, and says so.\n');
+    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out' }), at);
+    assert.equal(amended.code, 0, amended.err);
+    const changed = hashOf('The total leaves cancelled orders out, and says so.\n');
+    assert.deepEqual(helper.held.at(-1).data, { work: 'staff-total', change: 'Say that cancelled orders are left out', hash: changed });
+    assert.equal(amended.json.hash, changed);
+    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', hash }), at);
+    assert.equal(stale.code, 1);
+    assert.match(stale.err, /is not the document's as it stands/);
+    // An amendment of work that isn't open is refused, with a hash or without.
+    for (const data of [{ work: 'no-such-work', change: 'x' }, { work: 'no-such-work', change: 'x', hash: DOC }]) {
+      const unknown = await run(helper, ['record', 'amendment'], JSON.stringify(data), at);
+      assert.equal(unknown.code, 1);
+      assert.match(unknown.err, /The work no-such-work isn't open, so there is nothing to amend/);
+    }
+    // Work whose feature closed, with no report ending it, isn't open either, as the queue reads it.
+    await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'shut' }), at);
+    helper.held.push(makeEvent({ kind: 'feature', data: { work: 'shut', step: 'closed' }, now: () => new Date('2026-10-18T01:00:00.000Z') }));
+    const shut = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'shut', change: 'x', hash: DOC }), at);
+    assert.equal(shut.code, 1);
+    assert.match(shut.err, /The work shut isn't open/);
+    // Open work that names no document needs the changed document's hash.
+    await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'no-doc' }), at);
+    const nameless = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'no-doc', change: 'x' }), at);
+    assert.equal(nameless.code, 1);
+    assert.match(nameless.err, /no-doc names no document/);
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1, 'nothing refused was written');
   });
 });
 
@@ -676,6 +983,76 @@ test('views and explain answer in short lines, and similar finds work that share
   });
 });
 
+test('views work lists the running and waiting work in plain words, titles as written, and leaves ended work out', async () => {
+  await inHome(async () => {
+    const work = (id, title, lane, n, extra = {}) => makeEvent({ kind: 'work', data: { id, title, lane, visible: false, dependsOn: [], ...extra }, now: () => T(n) });
+    const feature = (id, step, n, extra = {}) => makeEvent({ kind: 'feature', data: { work: id, step, ...extra }, now: () => T(n) });
+    const report = (id, outcome, n, pr) => makeEvent({ kind: 'report', data: { work: id, outcome, summary: 'Over.', rulings: [], ...(pr ? { pr } : {}) }, now: () => T(n) });
+    const helper = fakeHelper({
+      events: [
+        // Building, with the pull request the gate waits on.
+        work('export-csv', 'Export a report as a spreadsheet', 'feature', 1),
+        feature('export-csv', 'building', 2, { slice: { n: 2, m: 3 } }),
+        gateAsks(APPROVE_ASK, () => T(3)),
+        // Quick work started: it builds at once. Its title carries worker labels.
+        work('ci-badge', 'Show the CI status on the PR page', 'quick', 4),
+        feature('ci-badge', 'started', 5),
+        // Planned and waiting for the go-ahead; paused for the five-hour window.
+        work('menu-photos', 'Photos on the menu', 'small', 5),
+        feature('menu-photos', 'planned', 6),
+        work('loyalty', 'A loyalty stamp card', 'small', 5),
+        feature('loyalty', 'paused', 6, { pausedFor: 'five-hour' }),
+        // Queued, needing no approval; and waiting for the director's approval.
+        work('typo-fix', 'Correct the spelling on the menu', 'bug', 6),
+        work('dark-theme', 'A dark theme for the shop', 'small', 7),
+        // Merged: ended by its report.
+        work('opening-hours', 'Opening hours on the home page', 'quick', 8),
+        report('opening-hours', 'merged', 9, 14),
+        // Ended blocked: its feature closed with the report.
+        work('gift-cards', 'Gift cards at the till', 'small', 10),
+        feature('gift-cards', 'building', 11),
+        report('gift-cards', 'blocked', 12, 15),
+        feature('gift-cards', 'closed', 13),
+        // Closed, then queued again: open once more, its old report and gate click kept out of it.
+        work('newsletter', 'A monthly newsletter sign-up', 'small', 14),
+        gateAsks({ ...APPROVE_ASK, work: 'newsletter', pr: 16 }, () => T(15)),
+        feature('newsletter', 'closed', 15),
+        report('newsletter', 'closed', 15, 16),
+        work('newsletter', 'A monthly newsletter sign-up', 'small', 16),
+        // Building as its feature step says, but held by the director's Not now to its build commands.
+        work('gallery', 'A photo gallery', 'feature', 17),
+        feature('gallery', 'building', 18),
+        makeEvent({ kind: 'question', data: { id: 'q-gallery-1', work: 'gallery', what: 'Let the builder run its tests', why: 'w', options: BUILD_QUESTION_OPTIONS, recommendation: BUILD_QUESTION_LABELS.once, level: 3, commands: ['npm test'] }, now: () => T(19) }),
+        makeEvent({ kind: 'card-answer', data: { question: 'May the builder run npm test?\n\nAnswer question q-gallery-1', label: BUILD_QUESTION_LABELS.notNow }, now: () => T(20) }),
+      ],
+    });
+    const out = await run(helper, ['views', 'work']);
+    assert.equal(out.code, 0, out.err);
+    const lines = out.out.trimEnd().split('\n');
+    const line = (id) => lines.find((l) => l.startsWith(`${id}: `)) ?? '';
+    // Each as the board's build tab gives a feature: its title and lane, then whether a feature runs
+    // for it, its step or state and its pull request.
+    assert.equal(line('export-csv'), 'export-csv: Export a report as a spreadsheet (a feature): running, building, piece 2 of 3, proposed change #7');
+    // A work title is kept as written, worker labels and all, as the board keeps it (design section 21).
+    assert.equal(line('ci-badge'), 'ci-badge: Show the CI status on the PR page (quick work): running, building');
+    assert.equal(line('menu-photos'), 'menu-photos: Photos on the menu (small work): not running, planned, waiting for the go-ahead to build');
+    assert.equal(line('loyalty'), 'loyalty: A loyalty stamp card (small work): not running, paused until the five-hour usage window has room');
+    assert.equal(line('typo-fix'), 'typo-fix: Correct the spelling on the menu (a bug fix): not running, queued, not started yet');
+    assert.equal(line('dark-theme'), 'dark-theme: A dark theme for the shop (small work): not running, waiting for the director\'s approval');
+    assert.equal(line('newsletter'), 'newsletter: A monthly newsletter sign-up (small work): not running, waiting for the director\'s approval');
+    assert.equal(line('gallery'), 'gallery: A photo gallery (a feature): not running, waiting for the director to allow its build commands');
+    for (const ended of ['opening-hours', 'gift-cards']) assert.equal(line(ended), '', ended);
+    // Running work first, each oldest first, then by id.
+    assert.deepEqual(lines.filter((l) => /^[a-z-]+: /.test(l)).map((l) => l.split(':')[0]), ['export-csv', 'ci-badge', 'loyalty', 'menu-photos', 'typo-fix', 'dark-theme', 'newsletter', 'gallery']);
+    // A term only in a title kept as written gets no Terms line, as on the board.
+    assert.doesNotMatch(out.out, /Terms:/);
+    assert.deepEqual(helper.writes(), []);
+
+    const none = await run(fakeHelper({ events: [work('opening-hours', 'Opening hours', 'quick', 1), report('opening-hours', 'merged', 2)] }), ['views', 'work']);
+    assert.equal(none.out, 'No work is open: nothing is running or waiting.\n');
+  });
+});
+
 test('under STOP the reading commands run and record is refused', async () => {
   await inHome(async () => {
     const helper = fakeHelper({ stop: true, events: [cardEvent(PRODUCT(1), 1), questionEvent()] });
@@ -690,7 +1067,7 @@ test('under STOP the reading commands run and record is refused', async () => {
     const again = await run(helper, ['again', '1']);
     assert.equal(again.code, 0);
     assert.equal(again.json.problems, undefined);
-    for (const name of ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels']) assert.equal((await run(helper, ['views', name])).code, 0, name);
+    for (const name of ['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work']) assert.equal((await run(helper, ['views', name])).code, 0, name);
     // The review writes, so it waits until STOP is lifted.
     const review = await run(helper, ['review']);
     assert.equal(review.code, 1);

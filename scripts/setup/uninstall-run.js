@@ -38,8 +38,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { readProject, registeredProjects } from '../lib/projects.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -560,16 +560,7 @@ export async function runUninstall([folder, hash, clickedAt, deadlineText, userH
   }
 }
 
-// Started as a script: by real paths, as run-step.js is, since a plugin folder may be reached through a link.
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (process.argv[1] && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   let code = 1;
   try {
     code = await runUninstall(process.argv.slice(2));

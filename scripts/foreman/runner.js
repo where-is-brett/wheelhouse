@@ -6,9 +6,8 @@
 // The foreman's command line is `node <root>/scripts/foreman/act.js …` (or wake.js), which
 // forwards to the helper; this file is never given to a session, and run by a sandboxed one it
 // can't reach the Wheelhouse home anyway.
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { helperClient } from '../host/helper-client.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const SCRIPTS = { act: './act.js', wake: './wake.js' };
 
@@ -21,6 +20,6 @@ export async function runForeman([address, script, ...argv]) {
   return main(argv, { client: helperClient({ address }) });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await runForeman(process.argv.slice(2));
 }

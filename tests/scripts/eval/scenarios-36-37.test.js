@@ -5,11 +5,16 @@
 // streams and events; and that the runner across suites finds both in the mod's suite.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
-import { EVAL_ROOT, findScenario, loadScenarios, main } from '../../../scripts/eval/run.js';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { EVAL_ROOT, findScenario, loadScenarios, main, suitesIn } from '../../../scripts/eval/run.js';
+import { repositoryReadable } from '../../../scripts/eval/feature-project.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
-import { mainCalls, playbookFor, seedCards, boardNumbers, textBlocks, THE_LINES } from '../../eval/mod/front-desk-playbook.js';
+import { makeScratchProject } from '../../../probes/lib/scratch.js';
+import { PUSHED, SHOWN, mainCalls, playbookFor, seedCards, boardNumbers, setUpPlaybook, textBlocks, THE_LINES } from '../../eval/mod/front-desk-playbook.js';
 import scenario36, { APPROVAL_CARD, CARDS as CARDS_36, PROMPT as PROMPT_36, judge as judge36 } from '../../eval/mod/36-pane-explain.js';
 import scenario37, { CARDS as CARDS_37, NEW_CARDS, judge as judge37, wakePrompt } from '../../eval/mod/37-courier-wake.js';
 
@@ -139,4 +144,38 @@ test('npm run eval finds 36 and 37 in the mod\'s suite, numbered as their files,
   const code = await main(['36', '37', '--variant', 'with'], { home: tempFolder('eval-36-37-'), run, print: () => {}, commit: null, version: null });
   assert.equal(code, 0);
   assert.deepEqual(ran, [[36, 'with', 1], [37, 'with', 1]]);
+});
+
+test('37 alone is offered PushNotification, and its project\'s local settings turn the call away, so the call is in the events and nothing reaches a phone; every other scenario keeps it denied (F99)', async () => {
+  assert.deepEqual(scenario37.offered, ['PushNotification']);
+  const offering = [];
+  for (const suite of suitesIn(EVAL_ROOT)) {
+    for (const name of fs.readdirSync(path.join(EVAL_ROOT, suite)).filter((n) => /^\d+-.+\.js$/.test(n))) {
+      const scenario = (await import(pathToFileURL(path.join(EVAL_ROOT, suite, name)).href)).default;
+      if (scenario?.offered !== undefined) offering.push(`${suite}/${name}`);
+    }
+  }
+  assert.deepEqual(offering, ['mod/37-courier-wake.js']);
+
+  const hooksOf = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8')).hooks.PreToolUse;
+  for (const [push, matchers] of [[true, ['AskUserQuestion', 'PushNotification']], [false, ['AskUserQuestion']]]) {
+    const project = await makeScratchProject({ name: `mod-push-${push}` });
+    const context = await setUpPlaybook(project.dir, 'with', { push });
+    try {
+      const hooks = hooksOf(project.dir);
+      assert.deepEqual(hooks.map((h) => h.matcher), matchers);
+      // The plugin's command runs the repository's own cli.js, so the sandbox reads it there.
+      assert.deepEqual(context.readable, repositoryReadable());
+      for (const [hook, said] of hooks.map((h, i) => [h, [SHOWN, PUSHED][i]])) {
+        // Each fails closed: a hook that can't run refuses the call (F107).
+        assert.equal(hook.hooks[0].onFailure, 'block', hook.matcher);
+        const script = /^node "(.+)"$/.exec(hook.hooks[0].command)[1];
+        const out = spawnSync(process.execPath, [script], { input: JSON.stringify({ tool_name: hook.matcher }), encoding: 'utf8' });
+        assert.deepEqual(JSON.parse(out.stdout).hookSpecificOutput, { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: said });
+      }
+    } finally {
+      await context.close();
+      await project.cleanup();
+    }
+  }
 });

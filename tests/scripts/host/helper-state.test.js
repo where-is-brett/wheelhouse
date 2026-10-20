@@ -546,6 +546,13 @@ test('the front desk names its folder, and the helper places the project from it
       assert.deepEqual(views.views.waiting.map((w) => w.id), [wrote.id]);
       assert.deepEqual(views.cards.map((e) => [e.id, e.kind, e.data.question]), [[wrote.id, 'card', 'Pick a colour?']]);
       assert.equal((await c.client.state.views({ project: PROJECT })).cards, undefined, 'only when asked for');
+      // With `answers`, the card-answer events, for the work view to tell a feature Not now holds.
+      const answer = await c.client.state.write({ cwd: inside, kind: 'card-answer', data: { question: 'Pick a colour?', label: 'Not now' } });
+      assert.equal(answer.ok, true, answer.refused);
+      const answered = await c.client.state.views({ cwd: inside, answers: true });
+      assert.deepEqual(answered.answers.map((e) => [e.id, e.kind, e.data.label]), [[answer.id, 'card-answer', 'Not now']]);
+      assert.equal(answered.cards, undefined);
+      assert.equal((await c.client.state.views({ project: PROJECT })).answers, undefined, 'only when asked for');
       assert.equal((await c.client.state.views({ project: PROJECT })).stop, undefined, 'STOP is off');
       assert.deepEqual(await c.client.prState({ cwd: inside, number: 7 }), { ok: true, result: { state: 'closed' } });
       // A folder outside every project, or one that isn't a full path, is refused, and nothing is written.

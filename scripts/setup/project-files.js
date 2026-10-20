@@ -9,11 +9,12 @@
 //      on and the other copies off; .claude/wheelhouse.json, the configuration, with every plan's
 //      defaults and `liveData` from step 4's answer (starterConfig); this computer's
 //      .claude/settings.local.json merged with localSettings (the helper's socket, the status line
-//      and the allow rules for the front desk's and setup's commands, ruling R43), which holds this
-//      computer's paths and is never committed, and kept out of git by a line in the folder's own
-//      .git/info/exclude unless the product already ignores it; `.wheelhouse/` kept out of git by
-//      another line there (ruling R108) unless the list holds it already; and CLAUDE.md's "Compact
-//      instructions" section (design section 10), added once;
+//      and the allow rules for the front desk's and setup's commands, ruling R43, with the front
+//      desk's input file, ruling F85), which holds this computer's paths and is never committed,
+//      and kept out of git by a line in the folder's own .git/info/exclude unless the product
+//      already ignores it; `.wheelhouse/` kept out of git by another line there (ruling R108)
+//      unless the list holds it already; and CLAUDE.md's "Compact instructions" section (design
+//      section 10), added once;
 //   2. the pins, Superpowers and Matt Pocock's skills, each installed by the documented command,
 //      `claude plugin install <plugin>@wheelhouse --scope project`, run in the project's folder
 //      (check 37: the project's settings alone don't install them, and the command needs no

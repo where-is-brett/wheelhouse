@@ -21,7 +21,7 @@ import nodeFs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { startedAsScript } from '../lib/started-as-script.js';
 import { fetchedPath } from '../lib/host-tools.js';
 
 const GH_PATHS = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh', 'C:\\Program Files\\GitHub CLI\\gh.exe'];
@@ -207,15 +207,7 @@ function argOf(argv, flag) {
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
-function startedAsScript() {
-  try {
-    return nodeFs.realpathSync(process.argv[1]) === nodeFs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (Boolean(process.argv[1]) && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   try {
     const { helperClient } = await import('../host/helper-client.js');
     const argv = process.argv.slice(2);

@@ -16,13 +16,13 @@
 // It informs: it prints nothing, and a failure anywhere is passed over. Every
 // write refuses a symlink. It never runs git; the root is found with fs.
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { runAndExit, worktreeRoot } from './kit.js';
 import { featureSlug } from './session-start.js';
 import { featurePaths, readStatus, writeStatus } from '../feature/files.js';
 import {
   buildStatus, captureRulings, findLedger, loadFeature, planIn, readBrief, readCapped, safeFeatureFolder, writeWhole, SMALL_BYTES,
 } from '../feature/status.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const THROTTLE_MS = 5000;
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -116,7 +116,7 @@ export async function decide(input, { now = () => new Date(), answered, slice } 
   return undefined;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   // One script on three events: decide reads the event from the input.
   await runAndExit(decide, { failClosed: false, event: null });
 }

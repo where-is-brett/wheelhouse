@@ -38,7 +38,6 @@
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
-import { pathToFileURL } from 'node:url';
 import { answer, runAndExit, projectOf } from './kit.js';
 import { featureSlug, localViews } from './session-start.js';
 import { loadBoardInputs } from '../board/inputs.js';
@@ -51,9 +50,11 @@ import { effectiveSettings, settingsText } from '../settings/effective.js';
 import { KNOWN, SETTINGS } from '../settings/catalogue.js';
 import { sourcesText } from '../sources/check.js';
 import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js';
+import { isBriefingLine } from '../lib/release-line.js';
 import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { existingCard } from '../cards/visit.js';
+import { gateAsksDue, holdsDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { answerLine, confirmLine } from '../state/card-lines.js';
 import { listEvents } from '../state/events.js';
@@ -66,6 +67,7 @@ import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const WAIT_MS = 2000;
 // How long learning may take on a visit's first prompt; with WAIT_MS it stays well inside the hook's 10 s.
@@ -171,13 +173,19 @@ function titlesOf(model) {
   return [...out];
 }
 
+// The lines a release's merge gave for users (ruling F73), which stay as written.
+function releaseLinesOf(model) {
+  const changed = Array.isArray(model?.director?.changed) ? model.director.changed : [];
+  return changed.map((c) => c?.what).filter(isBriefingLine);
+}
+
 // The words every text it adds goes through: the starter glossary with the project's over it, the
 // explanations setting, the concepts the director knows, and what stays as written: the settings'
-// names and the titles of the work. What can't be read gives the defaults.
+// names, the titles of the work and a release's line. What can't be read gives the defaults.
 function wordsOf(project, settings, model) {
   const view = attempt(() => localViews(project, ['glossary'])?.glossary);
   return {
-    protect: [...LABELS, ...attempt(() => titlesOf(model), [])],
+    protect: [...LABELS, ...attempt(() => titlesOf(model), []), ...attempt(() => releaseLinesOf(model), [])],
     glossary: attempt(() => glossaryOf(isRecord(view) ? view : {}), attempt(() => glossaryOf({}), {})),
     explanations: settings?.explanations?.value,
     known: attempt(() => knownConcepts(settings), []),
@@ -201,17 +209,28 @@ function inPlainWords(make, room, words) {
 
 // How many cards `cli.js cards` would hand out now, from the views on disk: the waiting cards no
 // visit has handed out, and the open questions from the build that no waiting card asks yet and
-// that the composer can make a card of, which it makes cards of first. At most one call's worth.
-// Under STOP, the one Lift STOP card.
-function cardsToAsk(project) {
+// that the composer can make a card of, which it makes cards of first; then the cards the build
+// loop's records call for (scripts/cards/build-loop.js): each click the merge gate waits for whose
+// card is to be made or asked again, and each lineage hold with no card. Whether a pull request
+// has moved on is the host's to say, which `cli.js cards` asks and this doesn't, so until the
+// gate's next record this may count a gate card that `cards` then doesn't give. At most one call's worth. Under STOP,
+// the one Lift STOP card.
+function cardsToAsk(project, at) {
   if (stopState().on) return 1;
-  const views = localViews(project, ['waiting', 'questions']) ?? {};
+  return cardsDue(localViews(project, ['waiting', 'questions', 'gateAsks', 'lineageHolds', 'reports']) ?? {}, at);
+}
+
+// The count cardsToAsk gives, from the views given (with STOP off).
+export function cardsDue(views, at) {
   const waiting = Array.isArray(views.waiting) ? views.waiting.filter(isRecord) : [];
-  const fresh = waiting.filter((card) => card.asked === null || card.asked === undefined).length;
+  const fresh = new Set(waiting.filter((card) => card.asked === null || card.asked === undefined).map((card) => card.id));
   const questions = Object.entries(isRecord(views.questions) ? views.questions : {})
     .filter(([id, entry]) => isRecord(entry) && !entry.answer && existingCard({ waiting }, answerLine(id)) === null
       && questionProblem(entry.question?.data) === null).length;
-  return Math.min(CARD.questions, fresh + questions);
+  const gate = gateAsksDue(views, at);
+  for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
+  const made = gate.filter((due) => due.make).length + holdsDue(views).length;
+  return Math.min(CARD.questions, fresh.size + questions + made);
 }
 
 // What `start` gives within `ms`, or null when it throws or is late.
@@ -227,21 +246,44 @@ async function within(start, ms) {
   }
 }
 
-// The briefing in plain words within `room` characters, the unusual items it showed and whether it
-// showed the weekly lines (neither when it was cut for length, which may have lost them).
+const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
+
+// The briefing in plain words within `room` characters and the words its length setting gives, the
+// unusual items it showed and whether it showed the weekly lines (neither when it was cut for
+// characters, which may have lost them). The words are counted as the director is shown them: in
+// plain words, which are longer than the labels they replace, with the "Terms:" line. So when the
+// briefing cut to the limit runs over it in plain words, it is cut to fewer, in the briefing's own
+// order of what goes first: the most words that keep to the limit in plain words, found by halving.
+// What is marked as shown is what that cut kept.
 // `settings` are the settings in force, `weeklySince` the last briefing that showed the weekly
 // lines and `review` the delegation review's { due, days } (reviewOf). Throws when it can't be built.
 export function briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room }) {
   const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review });
   const length = settings?.briefing?.value;
-  const words = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
-  const parts = briefingParts(briefing, { words });
-  const body = parts.text.split('\n').map(unlinked).join('\n');
+  const limit = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
+  const words = wordsOf(project, settings, model);
+  const cutTo = (budget) => {
+    const parts = briefingParts(briefing, { words: budget });
+    const fitted = inPlainWords(() => parts.text.split('\n').map(unlinked).join('\n'), room, words);
+    return { parts, fitted, fits: wordsIn(fitted.text) <= limit };
+  };
+  let given = cutTo(limit);
+  if (!given.fits) {
+    // Cut to one word, the briefing is one word with no term in it, so a cut that fits is found.
+    let [low, high] = [2, limit - 1];
+    given = cutTo(1);
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const tried = cutTo(middle);
+      if (tried.fits) [given, low] = [tried, middle + 1];
+      else high = middle - 1;
+    }
+  }
+  const { parts, fitted } = given;
   // The weekly lines open what to watch, then unusual use.
   const weekly = Number.isInteger(briefing?.weekly) && briefing.weekly > 0 ? briefing.weekly : 0;
   const raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, Math.max(0, parts.shownWatch - weekly)) : [];
   const weeklyShown = weekly > 0 && parts.shownWatch >= weekly;
-  const fitted = inPlainWords(() => body, room, wordsOf(project, settings, model));
   return { text: fitted.text, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut };
 }
 
@@ -358,7 +400,7 @@ export async function decide(input, deps = {}) {
     if (!command && due && !attempt(() => stopState().on, true)) {
       await within(() => learn({ project, cwd: input.cwd, client, at, boardAsks: visits.boardAsks }), learnWaitMs);
     }
-    const count = attempt(() => cardsToAsk(project), 0);
+    const count = attempt(() => cardsToAsk(project, at), 0);
     const cards = count > 0 ? cardsLine(count) : null;
     const reserve = cards === null ? 0 : cards.length + 2;
     const built = want
@@ -379,6 +421,6 @@ export async function decide(input, deps = {}) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'UserPromptSubmit' });
 }

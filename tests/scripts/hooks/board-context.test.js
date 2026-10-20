@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
-import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
+import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLine, FOREMAN_LINE } from '../../../scripts/hooks/board-context.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -17,7 +17,9 @@ import { profileDir, profileViewsDir, sourcesDir, stateDir, wheelhouseHome } fro
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
-import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
+import { briefingLine } from '../../../scripts/lineage/release.js';
+import { BRIEFING_WORDS, CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
+import { briefingText } from '../../../scripts/briefing/text.js';
 import { LEADS } from '../../../scripts/lib/mod-numbers.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
@@ -208,6 +210,79 @@ test('the briefing command marks the briefing given, so the next gap starts from
   });
 });
 
+const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
+// The briefing as briefingIn gives it, from a stand-in briefing model, with the settings given.
+const briefed = (briefing, settings = {}) => briefingIn({
+  project: P, model: {}, usage: null, sources: null, settings, at: new Date(NOW), briefingModel: () => briefing, room: CONTEXT_CHARS,
+});
+const EMPTY = { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 };
+
+test('the briefing in plain words keeps to its words, its Terms line counted', async () => {
+  await withProject(async () => {
+    // Labels that plain words make longer, each used once, so no Terms line follows: the lines
+    // alone fill the limit before the labels are put in plain words.
+    const longer = { ...EMPTY, progress: ['The PR, its CI, its branch and its worktree are ready', ...Array.from({ length: 80 }, (_, i) => `Item ${i} is ready`)] };
+    for (const [length, limit] of Object.entries(BRIEFING_WORDS)) {
+      const { text } = briefed(longer, { briefing: { value: length } });
+      assert.ok(wordsIn(text) <= limit, `${length}: ${wordsIn(text)} words\n${text}`);
+      assert.match(text, /The proposed change, its automatic check run, its separate copy of the work and its separate working folder are ready/);
+      assert.doesNotMatch(text, /Terms:/);
+      assert.match(text, /and \d+ more/);
+    }
+    // Labels used more than once, so their meanings follow in a Terms line, which counts too. The
+    // cut keeps as many lines as fit with it: the short length has no room for the line and a
+    // second mention, so it gives one line in plain words alone.
+    const repeated = { ...EMPTY, progress: Array.from({ length: 30 }, (_, i) => `The PR's CI is red on slice ${i + 1}`) };
+    const shown = {};
+    for (const [length, limit] of Object.entries(BRIEFING_WORDS)) {
+      const { text } = briefed(repeated, { briefing: { value: length } });
+      assert.ok(wordsIn(text) <= limit, `${length}: ${wordsIn(text)} words\n${text}`);
+      if (length !== 'short') {
+        assert.ok(wordsIn(text) > limit - 12, `${length}: ${wordsIn(text)} words, cut further than it needed\n${text}`);
+        assert.match(text, /\n\nTerms: pull request \(PR\) means [^]*; CI means [^]*; slice means [^]*\.$/);
+      }
+      assert.match(text, /and \d+ more/);
+      shown[length] = text.split('\n').filter((line) => line.startsWith('- ')).length;
+    }
+    assert.ok(shown.short < shown.standard && shown.standard < shown.detailed, JSON.stringify(shown));
+  });
+});
+
+test('a glossary meaning longer than the whole briefing is cut with its lines, leaving it within its words and nothing marked shown', async () => {
+  await withProject(async () => {
+    const views = path.join(wheelhouseHome(), 'projects', P, 'views');
+    put(path.join(views, 'glossary.json'), { ci: { key: 'ci', id: 'g1', at: '2026-10-01T00:00:00.000Z', data: { term: 'CI', plain: 'checks '.repeat(120).trim() } } });
+    const briefing = { ...EMPTY, progress: ['CI is red', 'CI is red again'], watch: ['Unusual use: a lot'], raise: ['u1'] };
+    const given = briefed(briefing, { briefing: { value: 'short' }, explanations: { value: 'some-terms' } });
+    assert.ok(wordsIn(given.text) <= BRIEFING_WORDS.short, given.text);
+    assert.deepEqual(given.raise, []);
+  });
+});
+
+test('what the cut for plain words takes out of what to watch is neither raised nor given', async () => {
+  await withProject(async () => {
+    const weekly = 'Build commands run unattended on this Windows computer, with no sandbox.';
+    const unusual = Array.from({ length: 6 }, (_, i) => `One session used ${i + 2}M tokens, against a usual 400K: a long run`);
+    const briefing = {
+      ...EMPTY,
+      progress: ['The PR\'s CI is red on slice 2', 'Another PR\'s CI is red on slice 3'],
+      watch: [weekly, ...unusual],
+      raise: unusual.map((_, i) => `u${i + 1}`),
+      weekly: 1,
+    };
+    // Before plain words, every line fits the standard length; the Terms line takes it past.
+    assert.ok(unusual.every((line) => briefingText(briefing).includes(line)));
+    const given = briefed(briefing);
+    assert.ok(wordsIn(given.text) <= BRIEFING_WORDS.standard, given.text);
+    assert.match(given.text, /\n\nTerms: /);
+    const shown = unusual.filter((line) => given.text.includes(line)).length;
+    assert.ok(shown > 0 && shown < unusual.length, given.text);
+    assert.deepEqual(given.raise, briefing.raise.slice(0, shown));
+    assert.equal(given.weeklyShown, true);
+    assert.ok(given.text.includes(weekly));
+  });
+});
+
 test('unusual use the briefing shows is marked raised, and only that', async () => {
   await withProject(async ({ repo }) => {
     const raised = [];
@@ -299,6 +374,25 @@ test('the board and the briefing come through the glossary', async () => {
   });
 });
 
+test('a pins-only release\'s line is in what changed, word for word, once (F73)', async () => {
+  await withProject(async ({ repo }) => {
+    waitingOn('Nothing');
+    const line = briefingLine('v1.4.0');
+    const event = makeEvent({ kind: 'merge', data: { pr: 31, commit: 'c'.repeat(40), forUsers: line }, now: at('2026-10-19T09:00:00.000Z') });
+    put(path.join(stateDir(P), eventPath(event)), event);
+    const briefing = contextOf(await run(repo, 'Hello', NOW));
+    assert.ok(briefing.includes(`\nChanged for users:\n- ${line}\n`), briefing);
+    assert.doesNotMatch(briefing, /Terms:/);
+    // The board shows it as written too.
+    const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
+    assert.ok(board.includes(`- ${line} (19 October 2026)\n`), board);
+    // The next briefing starts from this one, so the line isn't said again.
+    const next = contextOf(await run(repo, 'Hello again', '2026-10-19T15:00:00.000Z'));
+    assert.ok(next.startsWith(`${HEADINGS.briefing}\n\n`), next);
+    assert.ok(!next.includes(line), next);
+  });
+});
+
 test('a work title is kept as written, and the words around it go through', async () => {
   await withProject(async ({ repo }) => {
     const load = async (options) => {
@@ -321,7 +415,7 @@ test('some-terms keeps the terms with their meanings, and a known term is left a
     setProfile({ explanations: 'some-terms', 'known:ci': true });
     const text = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.match(text, /The PR's CI is red on slice 2/);
-    assert.match(text, /\n\nTerms: pull request means a proposed change[^]*; slice means one finished piece[^]*\.$/);
+    assert.match(text, /\n\nTerms: pull request \(PR\) means a proposed change[^]*; slice means one finished piece[^]*\.$/);
     assert.doesNotMatch(text, /CI means/);
 
     setProfile({ explanations: 'plain', 'known:pull-request': true });
@@ -341,7 +435,7 @@ test('the project\'s glossary is used, and the Terms line survives a long board'
     const long = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.ok(long.length <= CONTEXT_CHARS, long.length);
     assert.match(long, /and \d+ more/);
-    assert.match(long, /\n\nTerms: pull request means [^]*CI means our robot inspector[^]*\.$/);
+    assert.match(long, /\n\nTerms: pull request \(PR\) means [^]*CI means our robot inspector[^]*\.$/);
   });
 });
 
@@ -445,6 +539,52 @@ const question = (id) => ({
   options: [{ label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }], recommendation: 'Tab', level: 2,
 });
 
+test('the count takes in the cards the build loop\'s records call for: the gate\'s clicks and lineage holds', async () => {
+  await withProject(async ({ repo }) => {
+    markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
+    const entry = (pr, over = {}) => ({
+      id: `g${pr}`, at: '2026-10-19T11:58:00.000Z', data: { work: 'export-csv', pr, ask: 'approval', sha: 'a'.repeat(40) },
+      line: `Approve pull request #${pr} at commit aaaaaaaaaaaa`, card: null, askedAt: null, clickedAt: null, ...over,
+    });
+    const hold = (id, card = null) => ({ id, at: '2026-10-19T11:00:00.000Z', data: { at: '2026-10-19T11:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] }, card });
+    put(viewFile('waiting'), [{ id: 'c9', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }]);
+    put(viewFile('gateAsks'), {
+      // No card yet: one to make.
+      7: entry(7),
+      // Approved already, and a card made and asked within the window: nothing.
+      8: entry(8, { clickedAt: '2026-10-19T11:59:00.000Z' }),
+      9: entry(9, { card: 'c9', askedAt: '2026-10-19T11:59:00.000Z' }),
+    });
+    put(viewFile('lineageHolds'), [hold('h1'), hold('h2', 'c2')]);
+    assert.equal(contextOf(await run(repo, 'Hi', NOW)), cardsLine(2));
+    // An approval card asked long ago isn't asked again; a CI push card whose click lapsed is, once
+    // for that click (rulings R121, F77, F78).
+    const push = (over) => entry(9, {
+      at: '2026-10-19T11:00:00.000Z', data: { work: 'export-csv', pr: 9, ask: 'ci-push', sha: 'b'.repeat(40), branch: 'wh/x', from: 'a'.repeat(40) },
+      card: 'c9', askedAt: '2026-10-19T11:01:00.000Z', clickedAt: '2026-10-19T11:02:00.000Z', ...over,
+    });
+    put(viewFile('gateAsks'), { 9: entry(9, { at: '2026-10-19T11:00:00.000Z', card: 'c9', askedAt: '2026-10-19T11:01:00.000Z' }) });
+    put(viewFile('lineageHolds'), []);
+    assert.equal(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z'), undefined);
+    put(viewFile('gateAsks'), { 9: push({}) });
+    assert.equal(contextOf(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z')), cardsLine(1));
+    put(viewFile('gateAsks'), { 9: push({ askedAt: '2026-10-19T11:03:00.000Z' }) });
+    assert.equal(await run(repo, 'And now?', '2026-10-19T12:01:00.000Z'), undefined);
+    put(viewFile('gateAsks'), { 9: push({}) });
+    // A report from an earlier life of the work, older than the gate's record and naming another
+    // pull request, leaves the count as it was.
+    const report = (at, outcome, pr) => ({ 'export-csv': { at, data: { work: 'export-csv', outcome, summary: 'Done.', rulings: [], pr } } });
+    put(viewFile('reports'), report('2026-10-19T10:00:00.000Z', 'closed', 3));
+    assert.equal(contextOf(await run(repo, 'And now?', '2026-10-19T12:01:30.000Z')), cardsLine(1));
+    // Once the pull request's work reports merged or closed, its gate-asks counts for nothing more:
+    // a used CI push click no longer brings `cards` back on every prompt (ruling F107).
+    for (const outcome of ['merged', 'closed']) {
+      put(viewFile('reports'), report('2026-10-19T12:01:40.000Z', outcome, 9));
+      assert.equal(await run(repo, 'And then?', '2026-10-19T12:02:00.000Z'), undefined, outcome);
+    }
+  });
+});
+
 test('under STOP the line announces the one Lift STOP card that `cli.js cards` puts first, whatever else waits', async () => {
   await withProject(async ({ repo }) => {
     markSeen(P, { promptAt: new Date('2026-10-19T11:59:00.000Z') });
@@ -494,6 +634,14 @@ test('the count is at most one call\'s worth, and counts a question from the bui
     const board = contextOf(await run(repo, '/wheelhouse:board', NOW));
     assert.ok(board.startsWith(`${cardsLine(1)}\n\n${HEADINGS.board}`), board);
   });
+});
+
+test('cardsDue counts from the views it is given, as the hook counts from the views on disk', () => {
+  const now = new Date(NOW);
+  assert.equal(cardsDue({ waiting: [...unasked(2), { id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Old' }, asked: ASKED }] }, now), 2);
+  assert.equal(cardsDue({ waiting: unasked(6) }, now), 4, 'one call\'s worth at most');
+  assert.equal(cardsDue({ waiting: [], questions: { 'q-export-1': { question: { data: question('q-export-1') } } } }, now), 1);
+  assert.equal(cardsDue({}, now), 0);
 });
 
 test('the role comes from the session\'s first prompt and is kept: the wake line first makes the foreman, later changes nothing', async () => {

@@ -191,7 +191,7 @@ export default {
     const n = (i) => numbers[CARDS[i].id];
     if ([n(0), n(1), n(2), n(3)].join() !== '1,2,3,4') throw new Error(`The board numbers the cards ${[n(0), n(1), n(2), n(3)].join(', ')}, not 1 to 4`);
     prompt = await wakePrompt(numbers);
-    return { ...await setUpPlaybook(dir, variant, { seed: made.seed }), cards: made.cards };
+    return { ...await setUpPlaybook(dir, variant, { seed: made.seed, push: true }), cards: made.cards };
   },
 
   // The wake is made in setup, by the courier's own code, before the session starts.
@@ -200,6 +200,8 @@ export default {
     return prompt;
   },
   extraArgs: EXTRA_ARGS,
+  // The one scenario offered PushNotification (ruling F99): its set-up's hook turns the call away.
+  offered: ['PushNotification'],
 
   variants: {
     with: { get pluginDirs() { return [locateSuperpowers(), locateMattSkills()]; } },

@@ -4,9 +4,9 @@
 // minutes after its first block for the session. A manual compaction is never held.
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { answer, runAndExit, worktreeRoot } from './kit.js';
 import { projectNameOf, sessionFile, readSession, updateSession } from './context-gauge.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 export const NEAR_LIMIT = 360000;
 export const GIVE_UP_MS = 2 * 60 * 1000;
@@ -47,6 +47,6 @@ export async function decide(input, { dir, now = () => new Date() } = {}) {
   return answer.block(REASON);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'PreCompact' });
 }

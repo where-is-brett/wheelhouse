@@ -12,7 +12,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
-import { phonePushLine } from '../../../scripts/board/health.js';
+import { NO_CHROME_LINE, phonePushLine } from '../../../scripts/board/health.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
@@ -177,6 +177,30 @@ test('offline, the inputs ask the helper nothing and leave out what only it know
     assert.equal(fs.existsSync(path.join(stateDir(P), '..', 'host-facts-tried.json')), false);
     assert.deepEqual(found.model.director.waiting.map((w) => w.what), ['Approve the sign-in page']);
     assert.equal(found.model.director.budget.share, 34);
+  });
+});
+
+test('the Chrome line reads the pages the main folder\'s configuration lists, and the browser found (F74)', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const EDGE = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+    const said = async (found, options = {}) => texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW, findBrowser: () => found, ...options })).includes(NO_CHROME_LINE);
+    // No configuration, or one listing no pages: nothing, whatever the browser.
+    assert.equal(await said(null), false);
+    put(path.join(repo, '.claude', 'wheelhouse.json'), { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] });
+    assert.equal(await said(EDGE), false);
+    // Pages listed: the line with Edge alone or no browser, none with Chrome.
+    put(path.join(repo, '.claude', 'wheelhouse.json'), { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], pages: ['/'] });
+    assert.equal(await said(EDGE), true);
+    assert.equal(await said(null), true);
+    assert.equal(await said(CHROME), false);
+    // The glance shows no line of this level, so offline nothing is looked for.
+    assert.equal(await said(null, { offline: true }), false);
+    // A configuration that can't be read says nothing.
+    put(path.join(repo, '.claude', 'wheelhouse.json'), '{ "v": 1, "pages": [');
+    assert.equal(await said(null), false);
   });
 });
 

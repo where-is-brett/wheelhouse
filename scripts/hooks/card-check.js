@@ -13,13 +13,13 @@
 // would have its answer dropped. In a project's folder, or one being set up, any other card holding
 // the figures waiting for the click is refused too, saying to leave them out; elsewhere no record of
 // an answer is written, so that is let be. A card merely headed Baseline is not refused.
-import { pathToFileURL } from 'node:url';
 import { runAndExit, answer, projectOf, beingSetUp } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { PART_LABELS, whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, UNINSTALL_LINE,
 } from '../state/card-lines.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 
 const SHA12 = '([0-9a-f]{12})';
 const FIVE = PART_LABELS.slice(0, 5);
@@ -128,6 +128,6 @@ export async function decide(input, { projectOf: find = projectOf, dir, now = ()
   return answer.deny(`The director has not seen this card, which is not in the form their cards take. ${faults.join(' ')} ${REFUSAL_END}`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (startedAsScript(import.meta.url)) {
   await runAndExit(decide, { failClosed: false, event: 'PreToolUse' });
 }

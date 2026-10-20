@@ -47,11 +47,10 @@
 // four through, and `uninstall plan` and `uninstall status`; `apply` and `uninstall apply` are
 // refused under STOP.
 // Errors are one line on standard error.
-import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { helperClient } from '../host/helper-client.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
+import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 // An error whose message is said to the session as it is.
@@ -140,16 +139,6 @@ export async function main(argv, {
   }
 }
 
-// Started as a script: by real paths, as run-step.js and helper-main.js are, since a plugin folder
-// may be reached through a link, and the command's path is then the link's.
-function startedAsScript() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (process.argv[1] && startedAsScript()) {
+if (startedAsScript(import.meta.url)) {
   process.exitCode = await main(process.argv.slice(2));
 }

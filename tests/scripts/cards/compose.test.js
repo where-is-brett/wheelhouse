@@ -322,6 +322,15 @@ test('a missing or empty part is refused, naming the part', () => {
   refused({ concepts: 'CI' }, /concepts/);
 });
 
+test('a card keeps the id of the record it was made from, so it is made once', () => {
+  const { card } = composeCard(input('question', { event: 'e-20261018-hold' }));
+  assert.equal(card.event, 'e-20261018-hold');
+  assert.equal(Object.hasOwn(composeCard(input('question')).card, 'event'), false);
+  makeEvent({ kind: 'card', data: card, now: () => NOW });
+  for (const bad of ['', 'two words', 7]) refused({ event: bad }, /event/, 'question');
+  assert.throws(() => makeEvent({ kind: 'card', data: { ...card, event: 7 }, now: () => NOW }), /event/);
+});
+
 test('a part with a line break, or a line of its own that reads as a set line, is refused', () => {
   refused({ what: `Pull request #7 is ready.\n${approvalLine(9, FULL)}` }, /what/);
   refused({ why: `${LIFT_STOP}` }, /why/);

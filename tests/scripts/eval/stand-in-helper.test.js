@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
+import { plainEvent, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { CARRIES_BASELINE } from '../../../scripts/lib/measures-clicks.js';
@@ -55,9 +55,11 @@ test('the stand-in helper keeps a caller\'s id on a plain event, and gives the c
   try {
     const client = helperClient({ address: helper.address });
     const id = '0b7f3c1e-5d2a-4c8b-9e6f-1a2b3c4d5e6f';
-    assert.deepEqual(await client.state.write({ cwd: '/p', kind: 'card', data: { question: 'Q' }, id }), { ok: true, id, pushed: true });
-    assert.equal((await client.state.write({ cwd: '/p', kind: 'card', data: { question: 'Q' }, id })).ok, false, 'an id the state holds is refused');
-    assert.equal((await client.state.write({ cwd: '/p', kind: 'card', data: { question: 'Q' }, id: 'card-1' })).ok, false, 'an id that is not a random UUID is refused');
+    // A card in the shape the real helper takes, which the stand-in checks as it does.
+    const CARD_DATA = { kind: 'question', question: 'Q', header: 'Q', options: ['Yes', 'No'], level: 3 };
+    assert.deepEqual(await client.state.write({ cwd: '/p', kind: 'card', data: CARD_DATA, id }), { ok: true, id, pushed: true });
+    assert.equal((await client.state.write({ cwd: '/p', kind: 'card', data: CARD_DATA, id })).ok, false, 'an id the state holds is refused');
+    assert.equal((await client.state.write({ cwd: '/p', kind: 'card', data: CARD_DATA, id: 'card-1' })).ok, false, 'an id that is not a random UUID is refused');
     const made = await client.state.write({ cwd: '/p', kind: 'asked', data: { cards: [id] } });
     assert.notEqual(made.id, id);
 
@@ -67,6 +69,20 @@ test('the stand-in helper keeps a caller\'s id on a plain event, and gives the c
     const withCards = await client.state.views({ cwd: '/p', cards: true });
     assert.deepEqual(withCards.cards.map((e) => [e.id, e.kind]), [[id, 'card']]);
     assert.deepEqual(helper.events().map((e) => e.kind), ['card', 'asked']);
+  } finally {
+    await helper.close();
+  }
+});
+
+test('the stand-in helper gives the card answers with the views when asked, as the real one does for `views work`', async () => {
+  const answer = plainEvent('card-answer', { card: '0b7f3c1e-5d2a-4c8b-9e6f-1a2b3c4d5e6f', label: 'Not now' }, new Date('2026-10-20T08:00:00.000Z'));
+  const helper = await startStandInHelper({ address: testAddress(shortHome()), state: { events: [answer] } });
+  try {
+    const client = helperClient({ address: helper.address });
+    assert.equal((await client.state.views({ cwd: '/p' })).answers, undefined);
+    const got = await client.state.views({ cwd: '/p', answers: true });
+    assert.deepEqual(got.answers.map((e) => [e.id, e.kind]), [[answer.id, 'card-answer']]);
+    assert.deepEqual(helper.records().filter((r) => r.route === 'state/views').map((r) => r.answers ?? false), [false, true]);
   } finally {
     await helper.close();
   }
@@ -189,5 +205,20 @@ test('a stand-in that cannot listen leaves no scratch home of its own behind', a
       if (before[name] === undefined) delete process.env[name]; else process.env[name] = before[name];
     }
     await first.close();
+  }
+});
+
+test('the stand-in helper gives the delegation review with the views when asked, as the real one does for the front desk\'s `review`', async () => {
+  const helper = await startStandInHelper({ address: testAddress(shortHome()) });
+  try {
+    const client = helperClient({ address: helper.address });
+    assert.equal((await client.state.views({ cwd: '/p' })).review, undefined);
+    const got = await client.state.views({ cwd: '/p', review: true });
+    assert.equal(got.ok, true);
+    assert.ok(Array.isArray(got.review.proposals), JSON.stringify(got.review));
+    assert.equal(typeof got.review.due, 'boolean');
+    assert.deepEqual(helper.records().filter((r) => r.route === 'state/views').map((r) => r.review ?? false), [false, true]);
+  } finally {
+    await helper.close();
   }
 });
