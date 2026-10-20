@@ -171,6 +171,10 @@ test('Bash allows git commit and node scripts', async () => {
         'echo "a; b" > out.txt', 'git log --oneline', 'sh -c "echo hi"']) {
         assert.equal(await run(base, home, call(main, 'Bash', { command: cmd })), undefined, cmd);
       }
+      // A plugin read with the one redirect the STOP guard takes (stop-guard.js, scriptArguments).
+      const desk = `node "${PLUGIN}/scripts/frontdesk/cli.js" cards`;
+      assert.equal(await run(base, home, call(main, 'Bash', { command: `${desk} 2>/dev/null` })), undefined);
+      assert.equal(await run(base, home, call(main, 'Bash', { command: `${desk} 2>NUL` }), 'win32'), undefined);
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
