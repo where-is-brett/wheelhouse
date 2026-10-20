@@ -1,8 +1,8 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
 // only reading, reporting, Claude Code's notification, the runbook, the foreman's reading and
-// closing of a wake, and the front desk's and setup's reading commands through. On SessionEnd it clears the
-// session's bypass marker and says nothing. It acts in a registered project and in a folder
+// closing of a wake, and the front desk's and setup's reading commands (uninstall's among them)
+// through. On SessionEnd it clears the session's bypass marker and says nothing. It acts in a registered project and in a folder
 // being set up (kit.js's beingSetUp), as in a project.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -95,13 +95,16 @@ function isFrontDeskRead(command, pluginRoots, platform) {
 // a step lists: `plan` writes only setup's own records, including a step settled on answers the
 // director already gave (ruling R52). `health`, followed by up to MOST_TRIAL_LINES lines each as
 // the safety trials print them (scripts/lib/trial-lines.js), reads step 10's board (ruling R41); under
-// STOP the helper neither starts anything nor removes anything for it. `apply` changes what its
-// card lists, so it stays refused, as does every other form.
+// STOP the helper neither starts anything nor removes anything for it. `uninstall plan` and
+// `uninstall status` read what uninstall would put back and where it stands (ruling R90). `apply`
+// and `uninstall apply` change what their cards list, so they stay refused (ruling R91: uninstall
+// has no exception of its own, and its card says to lift STOP first), as does every other form.
 const SETUP_STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 function isSetupRead(command, pluginRoots, platform) {
   const args = scriptArguments(command, pluginRoots, platform, 'scripts/setup/cli.js');
   if (args === null) return false;
   if (args[0] === 'health') return args.length - 1 <= MOST_TRIAL_LINES && args.slice(1).every((l) => parseTrialLine(l) !== null);
+  if (args[0] === 'uninstall') return args.length === 2 && ['plan', 'status'].includes(args[1]);
   return (args.length === 1 && ['status', 'resume'].includes(args[0])) || (args.length === 2 && args[0] === 'plan' && SETUP_STEP.test(args[1]));
 }
 

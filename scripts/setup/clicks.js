@@ -21,6 +21,14 @@
 //                  project's state, so it records it once
 //   answers/       each answer as the prompt record signed it: an `action` event `setup-answer`
 //                  { runId, step, questionId, question, label, text }
+// Uninstall's card and click (ruling R90) are kept in the same folders, so the last uninstall, which
+// removes them whole, takes them too:
+//   shown/uninstall-<16 hex>.json   the card uninstall last showed for a folder (the hex from its
+//                  real path): { project, folder, hash, card, at }, written by the helper when it
+//                  works out uninstall's list and composes its card
+//   clicks/        the director's Remove it as the prompt record signed it: an `action` event
+//                  `uninstall` { project, hash, question, label }, its question the set line alone;
+//                  a used one is marked in clicks-used/ as a setup click is
 // The prompt record reads `shown/` to turn the twelve characters on a card into the full hash
 // the click names, with the run the card was shown for, and counts a click only on the card
 // exactly as the helper composed it (its text, header and each option's label and description),
@@ -41,10 +49,11 @@ import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import {
   HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, writeWhole, shownCard, readShown,
-  readAsked,
+  readAsked, uninstallShownFile, readUninstallShown,
 } from '../lib/setup-clicks.js';
+import { isLineName } from '../state/card-lines.js';
 
-export { clicksDir, keepClick, shownHash, keepAnswer, askedFor } from '../lib/setup-clicks.js';
+export { clicksDir, keepClick, shownHash, keepAnswer, askedFor, keepUninstallClick, shownUninstall } from '../lib/setup-clicks.js';
 
 // A click dated a little after the helper's clock still counts: two clocks on one computer.
 const SKEW_MS = 60 * 1000;
@@ -165,6 +174,40 @@ export function answersFor(runId) {
     if (fits) answers[`${step}.${questionId}`] = { label, text, at: e.at };
   }
   return answers;
+}
+
+// Records uninstall's card as shown for a folder (ruling R90): the project its line names, the full
+// hash of the list and the card. Showing it again replaces the record, so only a click on the card
+// as last shown counts.
+export function noteUninstallShown({ project, folder, hash, card, now = () => new Date() }) {
+  const shown = shownCard(card);
+  if (!isLineName(project) || !HASH.test(String(hash)) || typeof folder !== 'string' || !path.isAbsolute(folder) || shown === null) {
+    throw new Error('Uninstall\'s shown card needs its project, its folder as a full path, the full hash of its list and the card');
+  }
+  const record = { project, folder, hash, card: shown, at: now().toISOString() };
+  writeWhole(uninstallShownFile(folder), `${JSON.stringify(record)}\n`);
+}
+
+// The card uninstall last showed for a folder, or null.
+export function uninstallShownFor(folder) {
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) return null;
+  return readUninstallShown(uninstallShownFile(folder));
+}
+
+// The director's clicks that let uninstall's list go ahead, newest first: an uninstall action naming
+// this project and this full hash, made on this computer, signed by its enrolled key, from the last
+// CLICK_FRESH_MS, and not yet used (useClick, releaseClick). The route (Task 15b) also matches the
+// hash against uninstallShownFor(folder) and the list it works out again.
+export function freshUninstallClicks({ project, hash, now = () => new Date() }) {
+  if (!isLineName(project) || !HASH.test(String(hash))) return [];
+  const enrolled = readEnrolled();
+  const me = computerId();
+  const at = now().getTime();
+  return keptClicks().filter((e) => {
+    const age = at - Date.parse(e.at);
+    return e.kind === 'action' && e.data?.action === 'uninstall' && e.data.project === project && e.data.hash === hash
+      && age <= CLICK_FRESH_MS && age >= -SKEW_MS && !used(e) && ownSigned(e, me, enrolled);
+  }).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
 // How long the helper may take to record one click in the project's state.

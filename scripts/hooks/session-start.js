@@ -22,7 +22,9 @@
 // In a folder being set up (no project record yet, or one setup registered and is still finishing:
 // kit.js's beingSetUp) it makes this computer's signing key when there is none, and enrols it when
 // this computer's list is empty (the plan's call: the first key is trusted on first use), starts
-// the helper, and says where setup stands. In a project setup is still finishing (step 3 has
+// the helper, and says where setup stands. In a folder Wheelhouse was removed from (uninstall closed
+// its run, ruling R89, and no new run has started) it says so, with what is left for the director:
+// removing the plugin. In a project setup is still finishing (step 3 has
 // registered it and step 7 made its first commit), the project's reload says where setup stands in
 // place of the front desk's line, so the session carries on with setup.
 //
@@ -37,7 +39,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp } from './kit.js';
+import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
@@ -58,6 +60,7 @@ import {
 } from '../windows/low.js';
 import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
+import { MARKETPLACE } from '../lineage/manifest.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
 import { composeCard } from '../cards/compose.js';
@@ -82,6 +85,12 @@ export const FRONT_DESK_LINE = 'This is the front desk. Follow wheelhouse:front-
 export const NOT_SET_UP = 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.';
 export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. Follow wheelhouse:setup.`;
 export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
+// The plugin as setup's step 1 switches it on for the project (its enabledPlugins key), and the line
+// that says how it is removed, which is the director's to do in Claude Desktop.
+export const PLUGIN_KEY = `wheelhouse@${MARKETPLACE}`;
+export const REMOVE_PLUGIN = `remove the Wheelhouse plugin (${PLUGIN_KEY}) from this project in Claude Desktop`;
+// In a folder Wheelhouse was removed from (ruling R89): not "isn't set up yet".
+export const REMOVED = `Wheelhouse was removed from this folder. What is left is the director's: ${REMOVE_PLUGIN}. To set it up here again, follow wheelhouse:setup.`;
 // In a project's front desk, when setup's journal can't be read, whether setup has finished isn't
 // known, so the foreman is held back (ruling R72): a journal a newer Wheelhouse wrote, or anything else.
 export const FOREMAN_HELD_NEWER = 'The foreman is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.';
@@ -461,7 +470,8 @@ export async function decide(input, deps = {}) {
   const found = find(input.cwd, { dir });
   if (!found) {
     const setup = beingSetUp(input.cwd);
-    return setup === null ? undefined : setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now });
+    if (setup !== null) return setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now });
+    return removedFrom(input.cwd) === null ? undefined : answer.context('SessionStart', REMOVED);
   }
   const { project, locked } = found;
   markManaged(project, input.session_id, { self, dir: dir ?? managedDir(), now });

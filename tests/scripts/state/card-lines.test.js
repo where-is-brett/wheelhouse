@@ -5,6 +5,7 @@ import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE,
+  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -61,7 +62,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   const all = [
     ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
     LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
-    trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL),
+    trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), uninstallLine('o__Cafe-Menu', FULL),
   ];
   for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
 });
@@ -82,6 +83,30 @@ test('a trust card\'s line names the computer, the day its key was added and the
     'Trust your computer 0a1b2c3d9, added 19 October 2026, key abcdef123456',
     'Trust your computer 0a1b2c3d, added 19 October 2026, key abcdef123456 now',
   ]) assert.equal(setLineOf(near), null, near);
+});
+
+test('uninstall\'s line names the project and the list\'s hash as setup\'s line does (ruling R90)', () => {
+  const line = uninstallLine('o__Cafe-Menu', FULL);
+  assert.equal(line, 'Remove Wheelhouse from o__Cafe-Menu as listed, abcdef123456');
+  assert.equal(line.slice(-12), setupLine(1, FULL).slice(-12), 'twelve characters of the hash, formed as setupLine forms them');
+  assert.equal(UNINSTALL_LABEL, 'Remove it');
+  assert.equal(setLineOf(`What this is.\n${line}`), line);
+  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1);
+  assert.deepEqual(UNINSTALL_LINE.exec(line).slice(1), ['o__Cafe-Menu', 'abcdef123456']);
+  // A folder's own name, with spaces and accents, or even holding the line's own words, reads back whole.
+  for (const name of ['wh cafe menu Zoë', 'cafe as listed, abcdef123456 menu']) {
+    assert.deepEqual(UNINSTALL_LINE.exec(uninstallLine(name, FULL)).slice(1), [name, 'abcdef123456'], name);
+  }
+  for (const near of [
+    'Remove Wheelhouse from o__Cafe-Menu as listed, abcdef12345',
+    'Remove Wheelhouse from o__Cafe-Menu as listed, ABCDEF123456',
+    'Remove Wheelhouse from o__Cafe-Menu as listed, abcdef123456 now',
+    'Remove Wheelhouse from  as listed, abcdef123456',
+    'Remove Wheelhouse from o__Cafe-Menu, abcdef123456',
+    'Please Remove Wheelhouse from o__Cafe-Menu as listed, abcdef123456',
+  ]) assert.equal(setLineOf(near), null, near);
+  assert.equal(isLineName('o__Cafe-Menu'), true);
+  for (const bad of ['', ' cafe', 'cafe ', 'ca\nfe', 'ca\u2028fe', 'ca\u200bfe', 'x'.repeat(201), 7, null]) assert.equal(isLineName(bad), false, JSON.stringify(bad));
 });
 
 test('a near miss of a build loop line is not a set line', () => {

@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -60,6 +60,11 @@ const INPUTS = {
     ...common, recommend: 'Trust it', kind: 'trust', what: 'Your computer 0a1b2c3d put its key in your profile.',
     options: [says('Trust it')], target: { computer: '0a1b2c3d', at: '2026-10-19T22:30:00.000Z', fingerprint: 'abcdef012345' },
   },
+  uninstall: {
+    ...common, recommend: 'Remove it', kind: 'uninstall', level: 4, checks: 'The checks no longer guard this project.',
+    what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.',
+    options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
+  },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
 };
 const LINES = {
@@ -77,6 +82,7 @@ const LINES = {
   'confirm-all': confirmAllLine(DOC, 2),
   baseline: baselineLine(DOC),
   trust: trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345'),
+  uninstall: uninstallLine('cafe menu', DOC),
   question: null,
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
@@ -104,11 +110,14 @@ test("each kind's card carries the five parts in order, its set line and its rep
       assert.equal(card.line, null);
       assert.equal(card.code, null);
     } else if (NO_REPLY_CODE.includes(kind)) {
-      assert.deepEqual(rows.slice(5), [LINES[kind]], 'a setup card is approved by its click alone, so it has no reply code');
+      // A level 4 card's checks line comes before its set line.
+      const after = INPUTS[kind].level === 4 ? 6 : 5;
+      if (after === 6) assert.equal(rows[5], `What this does to the checks: ${INPUTS[kind].checks}`);
+      assert.deepEqual(rows.slice(after), [LINES[kind]], 'a setup card is approved by its click alone, so it has no reply code');
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall']);
     } else {
       assert.deepEqual(rows.slice(5), [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -119,7 +128,7 @@ test("each kind's card carries the five parts in order, its set line and its rep
     assert.equal(card.question, question.question);
     assert.equal(card.header, question.header);
     assert.equal(card.kind, kind);
-    assert.equal(card.level, 3);
+    assert.equal(card.level, INPUTS[kind].level);
     assert.deepEqual(card.options, question.options.map((o) => o.label));
     assert.deepEqual(card.descriptions, question.options.map((o) => o.description));
     // The card keeps the option it recommended, so the delegation review can tell a choice made as recommended.
@@ -499,4 +508,27 @@ test('setup\'s card of the rules found offers Confirm all and Let me correct som
   // One rule reads as one.
   const one = composeCard(input('confirm-all', { what: 'Setup step 5 found 1 rule: "Never push to main".', target: { count: 1, hash: DOC } }));
   assert.equal(setLineOf(one.question.question), confirmAllLine(DOC, 1));
+});
+
+test('uninstall\'s card (ruling R90): level 4, no reply code, Remove it, Not now and Explain more, and a first part naming the project', () => {
+  const { question, card } = composeCard(input('uninstall'));
+  assert.equal(question.header, 'Uninstall');
+  assert.equal(DECIDING.uninstall, 'Remove it');
+  assert.deepEqual(card.options, ['Remove it', 'Not now', 'Explain more']);
+  assert.equal(card.code, null);
+  assert.equal(card.line, 'Remove Wheelhouse from cafe menu as listed, fedcba987654');
+  assert.ok(!question.question.includes('Reply code:'));
+  // Level 4 only: removing Wheelhouse removes the checks.
+  refused({ level: 3, checks: undefined }, /level.*4/, 'uninstall');
+  // No Show me: the whole list is `cli.js uninstall status`.
+  refused({ options: [says('Remove it'), says('Show me')] }, /can't describe Show me/, 'uninstall');
+  // The first part names the project its line names, and no other commit.
+  refused({ what: 'Remove Wheelhouse from another folder.' }, /must name the project cafe menu/, 'uninstall');
+  refused({ what: 'Remove Wheelhouse from cafe menu, as at abcdef123456.' }, /names commit abcdef123456/, 'uninstall');
+  // A project's own name that looks like a commit is the project, not a commit.
+  assert.doesNotThrow(() => composeCard(input('uninstall', { what: 'Remove Wheelhouse from cafe1234abc: stop its jobs.', target: { project: 'cafe1234abc', hash: DOC } })));
+  // A name on two lines, or with a space at an end, gives no line.
+  refused({ target: { project: 'cafe\nmenu', hash: DOC } }, /target/, 'uninstall');
+  refused({ target: { project: ' cafe', hash: DOC } }, /target/, 'uninstall');
+  refused({ target: { project: 'cafe menu', hash: 'xyz' } }, /target/, 'uninstall');
 });

@@ -14,7 +14,7 @@ import {
   stepsFor, stepDone, firstUnfinished, joinedRepo, onRunList, SETUP_STEPS, JOINING_STEPS,
 } from '../../../scripts/lib/setup-run.js';
 import { setupRoutes, notOnList } from '../../../scripts/setup/engine.js';
-import { startRun, markStep, addChanges, newId, readJournal } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId, readJournal, closeRun } from '../../../scripts/setup/journal.js';
 import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -198,4 +198,23 @@ test('the settling that finishes a joining run copies its records into the proje
     assert.deepEqual(await routes['/setup/plan']({ folder, step: 9 }), { ok: true, done: true });
     assert.deepEqual(copied, [], 'step 10 is still to come');
   }, { done: [1, 2, 3, 4, 5, 6, 7, 8], world, joining: false });
+});
+
+test('a run uninstall closed is never carried on: status says setup hasn\'t started, and a plan starts a new run (ruling R89)', async () => {
+  await withJoining(async ({ folder, run, routes }) => {
+    closeRun(run.id, { at: () => NOW, by: 'uninstall' });
+    const status = await routes['/setup/status']({ folder });
+    assert.deepEqual(status.lines, ['Setup has not started in this folder.']);
+    assert.equal(status.next, 1);
+    assert.equal(beingSetUp(folder), null, 'the folder isn\'t being set up');
+    // Set up again: a plan starts a run of its own, and that run is the folder's.
+    const card = await routes['/setup/plan']({ folder, step: 1 });
+    assert.equal(card.ok, true, card.refused);
+    const runs = readJournal().runs;
+    assert.equal(runs.length, 2);
+    assert.equal(runs[0].closedBy, 'uninstall');
+    assert.equal(runs[1].closedAt, undefined);
+    assert.equal(beingSetUp(folder)?.run?.id, runs[1].id);
+    assert.match((await routes['/setup/status']({ folder })).lines.join('\n'), /card shown at/);
+  }, { done: [1, 2, 3], joining: false });
 });

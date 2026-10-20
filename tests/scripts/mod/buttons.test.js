@@ -1,11 +1,11 @@
 // tests/scripts/mod/buttons.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardButtons, isSetupCard, isTrustCard, CANT_ANSWER, SETUP_ANSWER, TRUST_ANSWER } from '../../../scripts/mod/buttons.js';
+import { cardButtons, isSetupCard, isTrustCard, isUninstallCard, CANT_ANSWER, SETUP_ANSWER, TRUST_ANSWER, UNINSTALL_ANSWER } from '../../../scripts/mod/buttons.js';
 import { composeCard, DECIDING } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { approvalLine, replyCode, replyCodeLine, setLineOf, trustLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, replyCode, replyCodeLine, setLineOf, trustLine, uninstallLine } from '../../../scripts/state/card-lines.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { withHome } from '../../helpers/homes.js';
@@ -49,6 +49,10 @@ const INPUTS = {
     ...common, kind: 'trust', recommend: 'Trust it', what: 'Your computer 0a1b2c3d put its key in your profile.',
     options: [says('Trust it')], target: { computer: '0a1b2c3d', at: '2026-10-19T22:30:00.000Z', fingerprint: 'abcdef012345' },
   },
+  uninstall: {
+    ...common, kind: 'uninstall', recommend: 'Remove it', level: 4, checks: 'The checks no longer guard this project.',
+    what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.', options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
+  },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
 };
 // The event data the state keeps for a composed card.
@@ -58,13 +62,14 @@ const SET_LINE_KINDS = Object.keys(DECIDING);
 // director's click on the very card setup showed, which only the prompt record counts. Its note
 // sends the director to the chat where setup asked it. Nor does the baseline card, for that
 // reason; its note is the plain one. Nor does a trust card (ruling R80): another computer is trusted
-// only by the click on the card itself, in the chat where it was asked.
+// only by the click on the card itself, in the chat where it was asked. Nor does uninstall's card
+// (ruling R90), for the same reason.
 const SETUP_KINDS = ['setup', 'confirm-all'];
-const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'uninstall'];
 const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
 const noButtonsFor = (kind) => {
   if (SETUP_KINDS.includes(kind)) return NO_BUTTONS;
-  return { buttons: [], note: kind === 'trust' ? TRUST_ANSWER : CANT_ANSWER };
+  return { buttons: [], note: { trust: TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
 };
 
 test('each kind of card gets its own buttons, and only the options it offers', () => {
@@ -152,8 +157,9 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
     const lines = data.question.split('\n');
     const broken = [
       lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
-      // A setup card, and a trust card, have no reply code line to take away (rulings R36, R80).
-      ...([...SETUP_KINDS, 'trust'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      // A setup card, a trust card and uninstall's have no reply code line to take away (rulings R36,
+      // R80, R90).
+      ...([...SETUP_KINDS, 'trust', 'uninstall'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       data.question.replace(/^While you decide:.*$/m, 'While you decide:'),
@@ -181,6 +187,21 @@ test('a trust card gets no button on the pane, by its kind or by its set line al
   assert.equal(setLineOf(data.question), line);
   assert.equal(isTrustCard({ question: `Trust it?\n${line}`, options: ['Trust it'] }), true);
   assert.equal(isTrustCard(dataOf('approval')), false);
+});
+
+test('uninstall\'s card gets no button on the pane, by its kind or by its set line alone (ruling R90)', () => {
+  const data = dataOf('uninstall');
+  assert.equal(isUninstallCard(data), true);
+  assert.equal(isSetupCard(data), false);
+  assert.equal(isTrustCard(data), false);
+  assert.deepEqual(cardButtons(data), { buttons: [], note: UNINSTALL_ANSWER });
+  for (const kind of ['approval', 'question', undefined]) {
+    assert.deepEqual(cardButtons({ ...data, kind }), { buttons: [], note: UNINSTALL_ANSWER }, String(kind));
+  }
+  const line = uninstallLine('cafe menu', DOC);
+  assert.equal(setLineOf(data.question), line);
+  assert.equal(isUninstallCard({ question: `Remove it?\n${line}`, options: ['Remove it'] }), true);
+  assert.equal(isUninstallCard(dataOf('approval')), false);
 });
 
 test('a card whose kind and set line disagree, or that has no set line though its kind needs one, signs nothing', () => {

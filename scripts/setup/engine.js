@@ -87,7 +87,7 @@ import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as jou
 import { planHash, firstUnfinished } from './steps.js';
 import { noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
-import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, HEALTH_STEP } from '../lib/setup-run.js';
+import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -140,11 +140,12 @@ function atOrAboveHome(folder, userHome) {
 // setup, never this one's (ruling R27), so it is passed over, as is a run at the user's home or
 // above it, which no route starts. (A run in a folder inside a registered project is carried on
 // here, though kit.js's beingSetUp counts only a run in the project's own folder; the playbook runs
-// in the project's own folder, so no such run is started.)
+// in the project's own folder, so no such run is started.) A run uninstall has closed (ruling R89) is
+// over and never carried on: setting the folder up again starts a new run.
 function runFor(real, userHome) {
   const project = projectForFolder(real);
   const own = project === null ? null : realOrNull(project.record.folder);
-  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && (keyOf(r.folder) === keyOf(real) || within(r.folder, real))
+  const holding = readJournal().runs.filter((r) => typeof r?.folder === 'string' && !runClosed(r) && (keyOf(r.folder) === keyOf(real) || within(r.folder, real))
     && !(own !== null && within(r.folder, own)) && !atOrAboveHome(r.folder, userHome));
   if (holding.length === 0) return null;
   const nearest = Math.max(...holding.map((r) => keyOf(r.folder).length));

@@ -30,6 +30,11 @@
 // computer, day and key fingerprint as the card's set line, and this computer doesn't already trust
 // that id with another key (scripts/lib/trust-clicks.js). Nothing of that card, not even its plain
 // answer, goes to a project, and it has no reply code.
+// Uninstall's card asks to remove Wheelhouse from a project (ruling R90): in any folder, a Remove it on
+// it becomes a signed uninstall action kept in setup/clicks/, as a setup click is, naming the project
+// and the full hash of the list, only on the very card the helper composed and recorded as shown for
+// a folder holding this session's folder, word for word. It has no reply code. Its plain answer goes
+// to a project as any card's does.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -48,9 +53,9 @@ import {
 } from '../state/card-lines.js';
 import {
   setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LABEL, TRUST_LINE,
+  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine,
 } from '../state/card-lines.js';
-import { keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer } from '../lib/setup-clicks.js';
+import { keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
@@ -386,6 +391,33 @@ function keepTrustClicks(out, now) {
   }
 }
 
+// The signed record a Remove it on uninstall's card earns (ruling R90): the card carries one set line,
+// uninstall's, and is the very card the helper composed for the list its twelve characters name, for
+// the project the line names and a folder holding this session's folder, word for word (its text,
+// header and options). The record names that project and the list's full hash, and its question is
+// the set line alone; the helper matches it against the list it works out again.
+function uninstallClickOf(cwd, { question, label, card }) {
+  if (label !== UNINSTALL_LABEL) return null;
+  const line = setLineOf(question);
+  const m = line === null ? null : UNINSTALL_LINE.exec(line);
+  if (!m) return null;
+  const shown = shownUninstall({ cwd, project: m[1], h12: m[2], card });
+  if (shown === null) return null;
+  return { kind: 'action', data: { action: 'uninstall', project: shown.project, hash: shown.hash, question: uninstallLine(shown.project, shown.hash), label } };
+}
+
+// Signs each Remove it on uninstall's card and keeps it in setup/clicks/, in whatever folder. One
+// failing does not stop the rest.
+function keepUninstallClicks(cwd, out, now) {
+  for (const click of out) {
+    if (!click.signable) continue;
+    try {
+      const made = uninstallClickOf(cwd, click);
+      if (made) keepUninstallClick(makeEvent({ ...made, now }));
+    } catch { /* not kept: the helper then refuses to remove anything for want of a click */ }
+  }
+}
+
 // What was answered, and which answers came from a click on a button the card offered
 // (`signable`) or were typed on a single-choice card (`typed`, AskUserQuestion's Other).
 function clicks(input) {
@@ -456,9 +488,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    // A setup card, setup's card of the rules found and a trust card have no reply code (rulings R36,
-    // R80): only the click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line)) continue;
+    // A setup card, setup's card of the rules found, a trust card and uninstall's card have no reply
+    // code (rulings R36, R80, R90): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -488,6 +520,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // The baseline card's answers and a trust card's stay on this computer: none is sent to the
   // project, and none is kept as a setup answer, which a later step copies into the project's state.
   const out = answered.filter((click) => !carrying.has(click.question) && !carriesTrust(click.question));
+  keepUninstallClicks(input.cwd, out, () => at);
   const found = find(input.cwd, { dir });
   if (!found) {
     if (beingSetUp(input.cwd) !== null) keepSetupClicks(input.cwd, out, () => at);

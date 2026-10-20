@@ -598,7 +598,8 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     ],
     recommend: 'Remove it',
     because: 'you asked, and what changed since setup is kept',
-    meanwhile: 'Nothing changes until you click.',
+    // Uninstall's apply is refused under STOP, as setup's is (ruling R91).
+    meanwhile: 'Nothing changes until you click; if STOP is on, lift it first.',
     checks: pullRequest
       ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
       : 'The checks no longer guard this project; protection stays as it is.',

@@ -4,11 +4,12 @@
 // set line come from the same target, so a card can't read as one decision and sign another.
 // The front desk asks only what this returns (`cli.js card`), never a card it wrote itself. The
 // baseline card is composed by the helper and comes to the front desk from `scripts/measures/cli.js`;
-// a trust card is composed by the session start, which hands it to the front desk as it is.
+// a trust card is composed by the session start, which hands it to the front desk as it is, and
+// uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES, RUNBOOK_TITLES, SETUP_TITLES,
-  SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, ID, LANES, QUESTION_ID,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
@@ -37,6 +38,7 @@ export const HEADERS = Object.freeze({
   'confirm-all': 'Rules found',
   baseline: BASELINE_HEADER,
   trust: 'Trust',
+  uninstall: 'Uninstall',
   question: 'Question',
 });
 
@@ -56,17 +58,24 @@ export const DECIDING = Object.freeze({
   'confirm-all': CONFIRM_ALL_LABEL,
   baseline: BASELINE_LABEL,
   trust: TRUST_LABEL,
+  uninstall: UNINSTALL_LABEL,
 });
 
 // The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
 // director's click on the card itself, never on a reply, so a code would make a shown record that
 // is never spent. Setup's card of the rules found (confirm-all, ruling R35) is one too, and so is a
-// trust card (ruling R80): another computer is trusted only by the click on the card itself.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust']);
+// trust card (ruling R80): another computer is trusted only by the click on the card itself; and so
+// is uninstall's card (ruling R90), which goes ahead only on the click on the card itself.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall']);
 
 // The put-off buttons a kind's card offers, where it isn't all of them: the baseline card reads
-// figures back, and there is nothing more to explain or show; a trust card has nothing to show.
-const PUT_OFF_OF = Object.freeze({ baseline: Object.freeze(['Not now']), trust: Object.freeze(['Not now', 'Explain more']) });
+// figures back, and there is nothing more to explain or show; a trust card has nothing to show, nor
+// has uninstall's card, whose whole list `cli.js uninstall status` gives.
+const PUT_OFF_OF = Object.freeze({
+  baseline: Object.freeze(['Not now']),
+  trust: Object.freeze(['Not now', 'Explain more']),
+  uninstall: Object.freeze(['Not now', 'Explain more']),
+});
 
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'that feature waits; the others carry on';
@@ -186,6 +195,10 @@ function lineFor(kind, target) {
     }
     return trustLine(t.computer, t.at, t.fingerprint);
   }
+  if (kind === 'uninstall') {
+    if (!isLineName(t.project) || !HEX.test(t.hash)) bad('needs the project, on one line, and the hash of the list uninstall puts back');
+    return uninstallLine(t.project, t.hash);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -193,8 +206,9 @@ function lineFor(kind, target) {
 
 // The first part must name what the set line names, for every kind that names something: the
 // pull request (and the incident), the work, the incident, the runbook step's title, the branch,
-// the ruling's words, setup's step, the computer a trust card trusts. It names no other pull request or
-// commit than the set line's.
+// the ruling's words, setup's step, the computer a trust card trusts, the project uninstall removes
+// Wheelhouse from. It names no other pull request or commit than the set line's (the project's own
+// name aside, which may look like one).
 // An answer card, a lift-STOP card, a baseline card and a product question name nothing more:
 // a baseline card's first part is the figures themselves, which may hold any words or numbers.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
@@ -222,10 +236,12 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
+  if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
   if (typeof commit !== 'string') return null;
-  for (const token of what.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
+  const scanned = kind === 'uninstall' ? what.split(String(target.project)).join(' ') : what;
+  for (const token of scanned.match(/\b[0-9a-f]{7,64}\b/g) ?? []) {
     const looksLikeOne = /[0-9]/.test(token) && (/[a-f]/.test(token) || token.length >= 12);
     const same = commit.startsWith(token) || (abbreviated && token.startsWith(commit));
     if (looksLikeOne && !same) return `names commit ${token}, not the commit its set line names`;
@@ -284,6 +300,8 @@ export function composeCard(input) {
   if (!CARD_KINDS.includes(kind)) throw new Error('A card needs its kind to be one the front desk knows');
   const { level } = input;
   if (![1, 2, 3, 4].includes(level)) fail(kind, 'level', 'must be 1, 2, 3 or 4');
+  // Removing Wheelhouse removes the gate, so uninstall's card is level 4 (ruling R90).
+  if (kind === 'uninstall' && level !== 4) fail(kind, 'level', 'must be 4: it removes the checks that guard the project');
   const what = words(kind, 'what', input.what);
   const why = words(kind, 'why', input.why);
   const because = words(kind, 'because', input.because);

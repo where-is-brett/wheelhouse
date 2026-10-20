@@ -19,6 +19,9 @@ import { toolFolder } from '../../../scripts/lib/host-tools.js';
 import { clicksDir } from '../../../scripts/lib/setup-clicks.js';
 import { enrolledFile, signingKeyFile } from '../../../scripts/state/signing.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { cardProblems } from '../../../scripts/hooks/card-check.js';
+import { CARD } from '../../../scripts/lib/front-desk.js';
+import { uninstallLine } from '../../../scripts/state/card-lines.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -521,6 +524,45 @@ test('the card names the groups, what is kept, that removed transcripts can\'t c
     assert.ok(many.keep.length > 30);
     assert.match(many.card.what, /and \d+ more: cli\.js uninstall status/);
     assert.ok(many.card.what.length + many.card.target.project.length <= WHAT_CHARS, `${many.card.what.length}`);
+    // Each card composes as uninstall's own kind (Task 15c), within the composer's limit, and passes
+    // the card check; its set line names the project and the list's hash.
+    for (const one of [got, many]) {
+      const { question, card: data } = composeCard(one.card);
+      assert.ok(question.question.length <= CARD.chars, `${question.question.length}`);
+      assert.deepEqual(cardProblems(question.question), []);
+      assert.equal(data.line, uninstallLine(SLUG, one.hash));
+      assert.equal(data.code, null);
+      assert.match(question.question, /if STOP is on, lift it first/, 'the card says to lift STOP first (ruling R91)');
+    }
+  });
+});
+
+test('uninstall\'s card composes within the limit for the longest names and the longest lists', async () => {
+  await withHome(async () => {
+    // A folder no project is registered for is named on the card by its own name; a long one, with
+    // spaces and accents, and every group, with many items changed since setup.
+    const world = makeWorld();
+    const folder = path.join(world.folder, `Zoë's café menu, the new one for the summer of 2026 ${'x'.repeat(10)}`);
+    fs.mkdirSync(folder);
+    const run = startRun({ folder, now: NOW });
+    const r = recorder(run.id);
+    r.key(2, path.join(folder, '.claude', 'settings.local.json'), ['permissions', 'allow'], ['Bash(node setup)']);
+    const settings = readJson(world.settings);
+    const theirs = {};
+    for (let i = 0; i < 40; i++) {
+      r.key(6, world.settings, [`aRatherLongSettingNameForTheCard${i}`], i);
+      theirs[`aRatherLongSettingNameForTheCard${i}`] = 'theirs';
+    }
+    writeText(world.settings, `${JSON.stringify({ ...settings, ...theirs }, null, 2)}\n`);
+    for (let i = 0; i < 5; i++) r.key(6, world.settings, [`ours${i}`], i);
+    for (const slug of [null, `o__${'a'.repeat(37)}`]) {
+      if (slug !== null) writeProject(slug, { folder, remoteUrl: `https://github.com/o/${'a'.repeat(37)}.git`, host: 'github', repo: `o/${'a'.repeat(37)}`, connection: { host: 'github', mode: 'narrow' } });
+      const got = await uninstallPlan({ folder, userHome: world.userHome, platform: 'darwin', run: launchEnv({}) });
+      const { question } = composeCard(got.card);
+      assert.ok(question.question.length <= CARD.chars, `${slug}: ${question.question.length}`);
+      assert.deepEqual(cardProblems(question.question), []);
+      assert.match(got.card.what, /and \d+ more: cli\.js uninstall status/);
+    }
   });
 });
 

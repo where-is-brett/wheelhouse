@@ -10,7 +10,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  TRUST_ASK, MAX_TRUST_CARDS, moreTrust,
+  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY,
 } from '../../../scripts/hooks/session-start.js';
 import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -20,7 +20,7 @@ import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HE
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { beingSetUp } from '../../../scripts/hooks/kit.js';
+import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -29,7 +29,7 @@ import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { startRun, markStep, addChanges, newId, closeRun } from '../../../scripts/setup/journal.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
@@ -1110,15 +1110,85 @@ test('the guards act in a folder being set up', async () => {
       assert.ok(denied(await stop(bash(folder, 'npm install'))), folder);
       // `health` with the trial lines the session printed is a reading form too (ruling R41).
       const trialLine = '"read .env.local: refused / refused"';
-      for (const reading of ['status', 'plan 3', 'plan 10', 'resume', 'health', `health ${trialLine}`, `health ${trialLine} "merge with forged approval: refused / MERGED (unexpected)"`]) {
+      for (const reading of ['status', 'plan 3', 'plan 10', 'resume', 'health', `health ${trialLine}`, `health ${trialLine} "merge with forged approval: refused / MERGED (unexpected)"`,
+        'uninstall plan', 'uninstall status']) {
         assert.equal(await stop(bash(folder, `${cli} ${reading}`)), undefined, reading);
       }
       for (const writing of [`apply 3 ${'a'.repeat(64)}`, 'plan 11', 'plan', 'status now', 'resume 3', 'status; rm -rf x', 'health "not a line"', 'health status',
+        `uninstall apply ${'a'.repeat(64)}`, 'uninstall', 'uninstall plan 3',
         `health ${Array.from({ length: 13 }, () => trialLine).join(' ')}`]) assert.ok(denied(await stop(bash(folder, `${cli} ${writing}`))), writing);
       assert.equal(await stop(call(folder, 'Read')), undefined);
     }
     assert.equal(await stop({ ...call(stranger, 'Write'), tool_input: { file_path: path.join(stranger, 'a.txt') } }), undefined);
     liftStop();
+  });
+});
+
+test('a folder whose setup run uninstall closed reads as removed, not as being set up, and the guards leave it (ruling R89)', async () => {
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    const T = Date.parse('2026-10-20T03:00:00.000Z');
+    // The plugin is still switched on in the folder's own settings until the director removes it.
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-removed zoë ')));
+    const run = startRun({ folder, now: () => new Date(T) });
+    for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    closeRun(run.id, { at: () => new Date(T + 3600000), by: 'uninstall' });
+    fs.mkdirSync(path.join(folder, 'web'));
+    for (const cwd of [folder, path.join(folder, 'web')]) {
+      assert.equal(beingSetUp(cwd), null, cwd);
+      assert.equal(removedFrom(cwd)?.run?.id, run.id, cwd);
+      const f = fake();
+      const out = await setupStart(f, cwd);
+      assert.equal(text(out), REMOVED, cwd);
+      assert.notEqual(text(out), NOT_SET_UP);
+      assert.equal(f.calls.spawn.length, 0, 'no helper is started for a folder Wheelhouse was removed from');
+    }
+    assert.equal(PLUGIN_KEY, 'wheelhouse@wheelhouse', 'the key setup\'s step 1 switches on');
+    assert.ok(REMOVED.includes(REMOVE_PLUGIN) && REMOVE_PLUGIN.includes(PLUGIN_KEY), REMOVED);
+    assert.match(REMOVED, /^Wheelhouse was removed from this folder\./);
+    // The guards no longer act there: Wheelhouse is gone from it.
+    const bash = (command) => ({ ...call(folder, 'Bash'), tool_input: { command } });
+    assert.equal(await toolGuard(bash('gh pr merge 3'), { dir: managed, home: os.homedir(), platform: 'darwin', pluginRoot: PLUGIN_ROOT }), undefined);
+    setStop({ by: 'prompt' });
+    try {
+      assert.equal(await stopGuard(bash('npm install'), { dir: managed, pluginRoot: PLUGIN_ROOT, platform: 'darwin' }), undefined);
+    } finally {
+      liftStop();
+    }
+    // A folder nothing was ever set up in, with the plugin on, still reads as not set up yet.
+    const fresh = pluginOn(fs.realpathSync.native(tempFolder('wh-fresh-again ')));
+    assert.equal(removedFrom(fresh), null);
+    assert.equal(text(await setupStart(fake(), fresh)), NOT_SET_UP);
+  });
+});
+
+test('a folder set up again after uninstall reads as being set up by the newer run (ruling R89)', async () => {
+  await withHome(async () => {
+    const T = Date.parse('2026-10-20T03:00:00.000Z');
+    const folder = pluginOn(fs.realpathSync.native(tempFolder('wh-again zoë ')));
+    const old = startRun({ folder, now: () => new Date(T) });
+    for (const n of [1, 2, 3, 4]) markStep(old.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    closeRun(old.id, { at: () => new Date(T + 3600000), by: 'uninstall' });
+    const again = startRun({ folder, now: () => new Date(T + 7200000) });
+    markStep(again.id, 1, 'doneAt', { now: () => new Date(T + 7260000) });
+    assert.equal(beingSetUp(folder)?.run?.id, again.id);
+    assert.equal(removedFrom(folder), null);
+    assert.equal(text(await setupStart(fake(), folder)), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    // Uninstalled again, it reads as removed again.
+    closeRun(again.id, { at: () => new Date(T + 9000000), by: 'uninstall' });
+    assert.equal(beingSetUp(folder), null);
+    assert.equal(removedFrom(folder)?.run?.id, again.id);
+  });
+  // A registered folder whose latest run is closed is a project like any other, never being set up.
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-registered-closed '));
+    writeProject('o__closed', { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const run = startRun({ folder });
+    markStep(run.id, 1, 'doneAt', {});
+    assert.equal(beingSetUp(folder)?.run?.id, run.id, 'unfinished, so being set up');
+    closeRun(run.id, { by: 'uninstall' });
+    assert.equal(beingSetUp(folder), null);
+    assert.equal(removedFrom(folder), null, 'a registered folder is a project, not one Wheelhouse was removed from');
   });
 });
 
