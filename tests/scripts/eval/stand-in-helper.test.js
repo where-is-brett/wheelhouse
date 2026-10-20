@@ -50,6 +50,18 @@ test('the stand-in helper answers a feature session\'s commands and records each
   }
 });
 
+test('the stand-in helper gives an open pull request\'s preview for Show me, and none for one it doesn\'t know, as the real one does', async () => {
+  const helper = await startStandInHelper({ address: testAddress(shortHome()), state: { pullRequests: { 12: 'a'.repeat(40) } } });
+  try {
+    const client = helperClient({ address: helper.address });
+    assert.deepEqual(await client.preview({ cwd: '/p', number: 12 }), { ok: true, url: 'https://preview.host.invalid/pull/12' });
+    assert.deepEqual(await client.preview({ cwd: '/p', number: 2 }), { ok: true, url: null });
+    assert.deepEqual(helper.records().map((r) => [r.route, r.number, r.url]), [['pr/preview', 12, 'https://preview.host.invalid/pull/12'], ['pr/preview', 2, null]]);
+  } finally {
+    await helper.close();
+  }
+});
+
 test('the stand-in helper keeps a caller\'s id on a plain event, and gives the card events with the views when asked', async () => {
   const helper = await startStandInHelper({ address: testAddress(shortHome()) });
   try {

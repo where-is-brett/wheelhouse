@@ -24,8 +24,9 @@
 // The notification. Every evaluation session is denied PushNotification (ruling F90), but 37 tests
 // that very call, so it is offered it (its `offered`, ruling F99), and its set-up (`push`) adds a
 // PreToolUse hook in the same local settings that turns the call away with one line (PUSHED): the
-// call is in the events and nothing reaches the director's phone. runSession offers the tool only
-// when that hook is the harness's own, which fails closed (ruling F107).
+// call is in the events and nothing reaches the director's phone. 37's not-sent legs have it answer
+// with the app's own "Not sent" words instead (NOT_SENT), as when the director has just been active.
+// runSession offers the tool only when that hook is the harness's own, which fails closed (ruling F107).
 //
 // The sandbox (rulings F94, F102): the plugin's command imports the repository's own cli.js, which
 // the sandbox denies, so the context names what that command needs of the repository as
@@ -116,10 +117,12 @@ function write(root, relative, content) {
 }
 
 // Sets `dir` up for the front desk under its playbook, with `seed` in the stand-in helper's
-// state and `files` committed on main; with `push`, the phone's hook too, for a scenario offered
-// PushNotification. Resolves with the context runScenario takes.
-export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push = false } = {}) {
-  const context = await setUpFrontDesk(dir, 'without', { files, seed });
+// state, `pullRequests` open on the stand-in host ({ number: head }) and `files` committed on
+// main; with `push`, the phone's hook too, for a scenario offered
+// PushNotification: `true` answers PUSHED, and a string answers that (NOT_SENT, say). Resolves
+// with the context runScenario takes.
+export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push = false, pullRequests = {} } = {}) {
+  const context = await setUpFrontDesk(dir, 'without', { files, seed, pullRequests });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-mod-'));
   try {
     assertUnderTmp(root);
@@ -132,11 +135,12 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push 
     const cli = pathToFileURL(path.join(REPO_ROOT, 'scripts', 'frontdesk', 'cli.js')).href;
     write(plugin, 'scripts/frontdesk/cli.js', `// scripts/frontdesk/cli.js\nimport { main } from '${cli}';\nmain(process.argv.slice(2)).then((code) => { process.exitCode = code; });\n`);
     // The hooks turn every call away and fail closed (turnAwayScript, turnAwayEntry): the screen's
-    // saying the cards were shown, since no one is there to click; the phone's saying it was sent.
+    // saying the cards were shown, since no one is there to click; the phone's saying it was sent,
+    // or that it wasn't.
     const hook = path.join(root, 'ask-shown.mjs');
     fs.writeFileSync(hook, turnAwayScript(SHOWN), 'utf8');
     const phone = path.join(root, 'push-sent.mjs');
-    if (push) fs.writeFileSync(phone, turnAwayScript(PUSHED), 'utf8');
+    if (push) fs.writeFileSync(phone, turnAwayScript(push === true ? PUSHED : push), 'utf8');
 
     // The local settings setUpFrontDesk wrote, with reading the plugin's files, the screen's hook
     // and, with `push`, the phone's.

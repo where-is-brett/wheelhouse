@@ -65,13 +65,14 @@ export const CARDS = [
   },
 ];
 
-// The state the session finds: the cards, the press's answer (Explain more, which decides
-// nothing), and the director's choice on card 1 in the pane a moment later, which closed it.
-export function stateAfterThePress({ seed, cards }) {
+// The state the session finds: the cards, the press's answer (Explain more, or the `label`
+// pressed, which decides nothing), and the director's choice on card 1 in the pane a moment
+// later, which closed it.
+export function stateAfterThePress({ seed, cards }, label = 'Explain more') {
   const question = (id) => cards.find((c) => c.id === id).data.question;
   return [
     ...seed,
-    seedEvent('card-answer', { question: question(APPROVAL_CARD), label: 'Explain more' }, '2026-10-20T09:30:00.000Z'),
+    seedEvent('card-answer', { question: question(APPROVAL_CARD), label }, '2026-10-20T09:30:00.000Z'),
     seedEvent('card-answer', { question: question(EMAIL_CARD), label: 'Show the date' }, '2026-10-20T09:30:20.000Z'),
   ];
 }
@@ -80,7 +81,7 @@ export function stateAfterThePress({ seed, cards }) {
 export const pressPrompt = (label, n, id) => `${LEADS.pane} the director pressed ${label} on card ${n} (${id}).`;
 export const PROMPT = pressPrompt('Explain more', 2, APPROVAL_CARD);
 
-const README = `# Shop
+export const README = `# Shop
 
 An online shop: the catalogue, the basket, checkout and the orders page.
 `;
