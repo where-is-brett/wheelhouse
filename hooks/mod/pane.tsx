@@ -104,6 +104,26 @@ function schedule($: EngineInterface, every: number | undefined) {
   }
 }
 
+// Opens the pane, or retitles it, once the session has a surface to draw on. The first
+// ui.open of a session can run before the app has attached one; the call is then left for a
+// later tick, and a no-surface refusal, should one come regardless, is quiet. Any other refusal
+// passes on. Returns whether the pane was opened.
+async function openOnSurface($: EngineInterface, title: string): Promise<boolean> {
+  if ((await $.session.surfaces()).length === 0) return false
+  try {
+    await $.ui.open({ id: PANE_ID, title })
+    return true
+  } catch (error) {
+    if (isNoSurface(error)) return false
+    throw error
+  }
+}
+
+function isNoSurface(error: unknown) {
+  const { code, message } = error as { code?: unknown, message?: unknown }
+  return code === 'no-surface' || (typeof message === 'string' && message.includes('no-surface'))
+}
+
 async function paneIsOpen($: EngineInterface) {
   return (await $.ui.panes()).some((pane) => pane.id === PANE_ID)
 }
@@ -114,7 +134,7 @@ async function showOld($: EngineInterface, session: string) {
   const [role, opened] = await Promise.all([$.state.get(ROLE), $.state.get(OPENED)])
   if (role.value !== FRONT_DESK || opened.value !== session) return
   $.ui.status(undefined)
-  if (await paneIsOpen($)) await $.ui.open({ id: PANE_ID, title: PLAIN_TITLE })
+  if (await paneIsOpen($)) await openOnSurface($, PLAIN_TITLE)
 }
 
 // What an answered tick shows. The session's first front-desk answer opens the pane; later ones,
@@ -135,10 +155,10 @@ async function show($: EngineInterface, answer: Answer, session: string, now: nu
   if (answer.role === FRONT_DESK && answer.pane !== undefined) {
     const title = answer.glance ?? PLAIN_TITLE
     if ((await $.state.get(OPENED)).value !== session) {
-      await $.state.set(OPENED, session)
-      await $.ui.open({ id: PANE_ID, title })
+      // Kept only once the pane is open: with no surface yet, the next tick opens it.
+      if (await openOnSurface($, title)) await $.state.set(OPENED, session)
     } else if (await paneIsOpen($)) {
-      await $.ui.open({ id: PANE_ID, title })
+      await openOnSurface($, title)
     }
     $.ui.status(answer.status)
   } else if (answer.role !== undefined && answer.role !== FRONT_DESK && before === FRONT_DESK) {
@@ -282,7 +302,8 @@ export async function openPane($: EngineInterface): Promise<{ text: string }> {
     if (why !== null) return { text: why }
     const glance = typeof kept?.model.glance === 'string' ? kept.model.glance : PLAIN_TITLE
     const stale = staleLine(kept, last.value, now)
-    await $.ui.open({ id: PANE_ID, title: stale === null ? glance : PLAIN_TITLE })
+    // With no surface yet the pane can't open, and the director who asked is told so.
+    if (!(await openOnSurface($, stale === null ? glance : PLAIN_TITLE))) throw new Error('no surface is attached')
     return { text: stale ?? glance }
   } catch {
     $.ui.toast(NOT_OPENED)
