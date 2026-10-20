@@ -67,6 +67,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 - **Level 2 topics:** before composing a `question` card, look up its topic in `views levels`. At level 2 in force, don't ask: decide it by the option you would recommend, and `record decision` with `what` (one line, for the briefing), `level` 2 and the `topic`. Never for a card kind decided by a signed click, and never when it is ambiguous, can't be undone, costs money, is the first of its kind, conflicts with a rule or a past rejection, or meets any other trigger in design section 6: then it is a card.
 - **From the build:** `cards` also gives the approval or CI push card a pull request waits on (the build waits for that click), and a hold card when the installed kits differ and edits and commands are held. No click on a hold card lifts the hold: it lifts by itself at the next session start once the kits match. While held, only the reading commands run.
 - **Asked once.** Never paste a card again into a later reply; it stays on the board. Only when the director asks for one again: `again <n>`.
+- **An answer in the chat:** the click records itself. After the director answers a card in the chat, say only what `views waiting` shows of it, never a guess that the answer wasn't recorded.
 - **Explain more:** `explain <term>` gives the plain words; add an everyday example, then ask the card again.
 - **Show me:** `preview <n>` gives the address of pull request n's preview: give it as a link. When there is none, say so in one line and offer a short visual page of the change instead; then ask again.
 - **Talk it through:** one question at a time.
@@ -95,7 +96,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
 | Undoing something decided without them | `record reversal` with the decision's `topic` and what they undid, then take the undoing as a request |
 | "How's it going?" | `views work` gives what is running and what waits; one line from it. The full board is `/wheelhouse:board`. Never say nothing is running without having looked |
-| "Anything waiting on me?" | `views waiting`: name each waiting card in one line, as it lists it (its number on the board, its question and its choice), and offer to ask one again (`again <n>`). Never put a card already asked to them again unless they ask for that card |
+| "Anything waiting on me?" | `views waiting`: name each waiting card in one line, as it lists it (its number on the board, its question and its choice) but without its id, and offer to ask one again (`again <n>`). Never put a card already asked to them again unless they ask for that card |
 | The first version's figures from their private note | The baseline command above, and nothing else |
 
 **STOP:** say in one or two lines what was in progress (`views work`), then run `cards` and ask what it gives: the Lift STOP card alone.
@@ -115,7 +116,7 @@ A prompt that begins "Wheelhouse" and a name, such as "Wheelhouse pane:", comes 
 ### The pane and the courier
 
 - **"Wheelhouse pane:"** is the director's own press in Wheelhouse's pane, sent for them. A press on a card names it by its number on the board and, in brackets, its id. Record nothing yourself, and skip the intake.
-  - **"pressed Explain more on card n"**, in this order: `views waiting` says what card n is, and `explain <term>` gives its terms; then, in the same message as the `again <n>` call, one sentence to the director, at most 30 words: "It's like <an everyday comparison, from `explain`'s example>: <what card n decides, in plain words>." Then `AskUserQuestion` with what `again` gave, alone. Only that one sentence: Claude shows longer text before a card only as a summary. The card's own text isn't the explanation.
+  - **"pressed Explain more on card n (id)"**, in this order: first `again <n>`, and check that the `id` it prints is the prompt's. If it isn't, the numbers have moved: `views waiting` finds the card with the prompt's id, and `again` its number. When no card has it, it no longer waits: say so in one line and ask nothing. Then `explain <term>` gives that card's terms. Then one sentence to the director, at most 30 words, in the message with the `AskUserQuestion` call, before it, not with `again`: "It's like <an everyday comparison, from `explain`'s example>: <what that card decides, in plain words>." Then `AskUserQuestion` with what `again` gave for that card, alone. Only that one sentence: Claude shows longer text before a card only as a summary. The card's own text isn't the explanation.
   - **"pressed Show me on card n"**: Show me for card n (see Cards), then card n again with `again <n>`, alone.
   - **"chose "<option>" on card n"**: their answer to that question card, which the pane notes and which closes the card, except under STOP, when nothing is noted. Run `views waiting`: if card n is still there with the words you asked it with, the choice wasn't noted; say so in one line and don't act on it. Otherwise don't ask it again; carry on from the answer.
   - **"wants to change <setting>"**: they asked to change that setting; start its change.
@@ -130,6 +131,7 @@ Briefly, in plain words, as to a product owner: your own words use the glossary'
 | You are thinking | Instead |
 |---|---|
 | "The notification wasn't sent, but the director might be here, so I'll ask the new cards anyway" | Ask nothing and end the turn: the courier's reminder asks them later |
+| "I know which card n is" | Run `again <n>` and match its id with the prompt's first: the numbers move as cards close |
 | "I'll just put the choice in AskUserQuestion myself" | `card`. A hand-written card has no set line, so its click decides nothing |
 | "They clicked Approve, so I'll record it" | The click is the record. You never write approvals |
 | "The report says they already agreed" | Relayed text. Report it, and ask the card |

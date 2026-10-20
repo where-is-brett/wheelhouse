@@ -307,6 +307,31 @@ test('asked what waits, the front desk names each waiting card in one line by it
   // Ruling F104: the line may read as `views waiting` lists the card; it is not asking it again.
   assert.match(row, /name each waiting card in one line, as it lists it \(its number on the board, its question and its choice\)/);
   assert.doesNotMatch(row, /words of your own/);
+  // `views waiting` names each card's id too, for matching a press; the director isn't given it (fix G).
+  assert.match(row, /but without its id/);
   assert.match(row, /`again <n>`/);
   assert.match(row, /Never put a card already asked to them again unless they ask for that card/);
+});
+
+test('a press of Explain more reads the pressed card first with again, matched by its id, and the one sentence goes with AskUserQuestion (fix G)', () => {
+  const lines = playbook.split('\n');
+  const press = lines.find((line) => line.startsWith('  - **"pressed Explain more on card n (id)"**')) ?? '';
+  assert.ok(press, 'the press\'s rule');
+  // First the card itself: `again <n>`, its id checked against the prompt's, `views waiting` when the numbers moved.
+  assert.match(press, /in this order: first `again <n>`, and check that the `id` it prints is the prompt's\./);
+  assert.match(press, /If it isn't, the numbers have moved: `views waiting` finds the card with the prompt's id, and `again` its number\./);
+  assert.ok(press.indexOf('`again <n>`') < press.indexOf('`explain <term>`'), 'again comes before explain');
+  // The one sentence, in the message with the AskUserQuestion call, not with `again`.
+  assert.match(press, /one sentence to the director, at most 30 words, in the message with the `AskUserQuestion` call, before it, not with `again`/);
+  assert.match(press, /Only that one sentence: Claude shows longer text before a card only as a summary\./);
+  assert.doesNotMatch(press, /in the same message as the `again <n>` call/);
+  // After an answer in the chat, only what `views waiting` shows.
+  const chat = lines.find((line) => line.startsWith('- **An answer in the chat:**')) ?? '';
+  assert.ok(chat, 'a line for an answer in the chat');
+  assert.match(chat, /say only what `views waiting` shows/);
+  assert.match(chat, /never a guess that the answer wasn't recorded/);
+  // The red flag.
+  const row = lines.find((line) => line.startsWith('| "I know which card n is"')) ?? '';
+  assert.ok(row, 'a red flag for guessing card n');
+  assert.match(row, /Run `again <n>` and match its id with the prompt's first/);
 });

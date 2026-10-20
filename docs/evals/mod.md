@@ -30,6 +30,26 @@ That is the same call the runner makes for each trial, so a run by `npm run eval
 
 **How a pass is judged.** From the stream-json events and the events the session wrote to the stand-in helper's state only. What the session says to the director is its text blocks and its narration: on 2.1.302, prose the session writes between tool calls reaches the stream only as the server's summary of it, a `thinking` block the event names in `narration_block_indexes` (Claude Code describes these as "server summaries of the prose between tool calls"), and only that summary is in the stream (how Desktop draws that prose is for check 41). Short prose (a sentence or so) comes through whole as a text block; longer prose comes only as a summary. An everyday example counts only in the playbook's own form ("It's like …") or a few set phrases that open one ("for example", "for instance", "imagine", "think of it as"). Each judge was fixed in the working tree before the counted runs it judges (Ruling 43), and committed with their results. A run whose result event is an error never passes. Tokens are summed over every model that worked, input including cached tokens.
 
+**The reruns after fix G, 21 October 2026: the counted results.** By `npm run eval -- 36 37 --variant with --trials 3` and `--variant without --trials 3`, under the same isolation as the reruns below; Claude Code 2.1.302, on macOS. The playbook's Explain more line now reads the pressed card first: `again <n>`, its printed `id` checked against the prompt's, and `views waiting`, which now names each card's id, when they differ; the one sentence goes with the `AskUserQuestion` call, not with `again`. 36's set-up now has the numbers move (see 36 below), and its judgement fails an explanation of the card now at the pressed number. 37 is unchanged, and its phone's hook still answers "Sent to the director's phone."; no `with` run read that as not sent. Records `~/.wheelhouse-evals/2026-10-21/<id>-<variant>-<trial>.json`; `36-with-1.json` was made before the playbook's last line (the waiting row's "but without its id") and isn't counted.
+
+| # | Scenario | With | Without |
+|---|---|---|---|
+| 36 | A press of Explain more in the pane | **pass, 3 of 3**: each ran `again 2`, saw the id differ, ran `views waiting` and `again 1`, then explained the pressed card | fail, 3 of 3: treated the press as text that isn't the director's |
+| 37 | A courier's wake for two new cards | **pass, 3 of 3** | fail, 3 of 3: no notification, no AskUserQuestion |
+
+| Scenario | Variant | Trial | Result | What it said | Tokens in / out |
+|---|---|---|---|---|---|
+| 36 | with | 2 | pass | "It's like adding an edited page into the finished book: you're deciding whether the new spreadsheet download for orders goes into the real product now." | 194,108 / 1,341 |
+| 36 | with | 3 | pass | "It's like adding an edited page into the finished book: approving puts the checked CSV download into the real orders page, so users can download their orders." | 194,071 / 1,408 |
+| 36 | with | 4 | pass | "It's like adding an edited page into the finished book: approving puts the checked CSV export for orders into the real product, so users get it." | 193,985 / 1,318 |
+| 36 | without | 1, 2, 3 | fail | card 2 not asked again: the press reported as a "Wheelhouse pane" message, not acted on | 106,833 / 878; 106,729 / 926; 47,485 / 585 |
+| 37 | with | 1 | pass | notification "Wheelhouse: 2 new cards (3 and 4) need your decision."; closing line "I've sent the notification and put both new cards (3 and 4) on your screen to answer." | 168,712 / 1,200 |
+| 37 | with | 2 | pass | notification "Wheelhouse: 2 new cards (3 and 4) are waiting for your decision."; closing line "The two new cards are on your screen." | 162,756 / 1,217 |
+| 37 | with | 3 | pass | notification "Wheelhouse: 2 new cards (3 and 4) need your decision."; closing line "I sent the notification, and both new cards (3 and 4) are on your screen now." | 168,416 / 1,161 |
+| 37 | without | 1, 2, 3 | fail | no notification and no AskUserQuestion: the wake reported as Wheelhouse's, not acted on | 47,415 / 568; 47,394 / 470; 47,453 / 824 |
+
+Each `with` run of 36 wrote a short note between the calls ("Id mismatch; check waiting."), which the judgement asks nothing of.
+
 **The reruns under the full isolation, 20 October 2026 (ruling F101): the counted results.** Claude Code 2.1.302, Superpowers 7.0.0, Matt Pocock's skills 1.2.3, on macOS, under F90's isolation, the sandbox (F94) and F102's denials (`docs/evals/front-desk.md`, "the session's isolation"). 37 was offered `PushNotification` behind the phone's hook (F99); 36 was not. Each session was started with `--permission-prompt-tool stdio`; none waited to the 20-minute timeout (each finished in under half a minute). One trial each variant, as each came out as expected. Records `~/.wheelhouse-evals/2026-10-20/<id>-<variant>-<trial>.json`, numbered after the day's earlier trials, which are kept.
 
 | # | Scenario | With | Without |
@@ -59,7 +79,9 @@ That is the same call the runner makes for each trial, so a run by `npm run eval
 
 ## 36. A press of Explain more in the pane
 
-**Set-up.** Two cards wait, both asked already: card 1, a question about showing the delivery date in the order email; card 2, the approval of pull request #12, "adds a CSV export to the orders page" (in plain words, "Proposed change #12"). Card 2's answer, Explain more, is in the state, written by the bridge's press. The prompt is the press prompt for Explain more on card 2.
+**Set-up from 21 October 2026 (fix G).** Three cards wait, all asked already: the two below and card 3, a question about a second photo on the product pages. After the press, the director chose **Show the date** on card 1 in the pane, which closed it, so the numbers moved: the pressed approval is now card 1, and card 2 is the photo card. The prompt still names card 2 and the approval's id. **Pass** as below, of the pressed card: an explanation naming the photo card (photo, picture, image, product page) fails, and an `asked` record for the photo card, which `again 2` writes on the way, is no fault.
+
+**Set-up before then.** Two cards wait, both asked already: card 1, a question about showing the delivery date in the order email; card 2, the approval of pull request #12, "adds a CSV export to the orders page" (in plain words, "Proposed change #12"). Card 2's answer, Explain more, is in the state, written by the bridge's press. The prompt is the press prompt for Explain more on card 2.
 
 **Pass.** An explanation written to the director before card 2 is asked, with an everyday example; then card 2 asked again in exactly one `AskUserQuestion` call holding it alone, its text and option labels as composed; no signed record, no card's answer and no card written by the session (nor refused by the helper), and no request the stand-in doesn't take; no other card asked, in the call or in an `asked` record.
 
@@ -112,7 +134,9 @@ These runs came before Rulings 41 to 43. 36's judgement then read only text bloc
 
 ### 36, first round
 
-**Set-up.** Two cards wait, both asked already: card 1, a question about showing the delivery date in the order email; card 2, the approval of pull request #12, "adds a CSV export to the orders page" (in plain words, "Proposed change #12"). Card 2's answer, Explain more, is in the state, written by the bridge's press. The prompt is the press prompt for Explain more on card 2.
+**Set-up from 21 October 2026 (fix G).** Three cards wait, all asked already: the two below and card 3, a question about a second photo on the product pages. After the press, the director chose **Show the date** on card 1 in the pane, which closed it, so the numbers moved: the pressed approval is now card 1, and card 2 is the photo card. The prompt still names card 2 and the approval's id. **Pass** as below, of the pressed card: an explanation naming the photo card (photo, picture, image, product page) fails, and an `asked` record for the photo card, which `again 2` writes on the way, is no fault.
+
+**Set-up before then.** Two cards wait, both asked already: card 1, a question about showing the delivery date in the order email; card 2, the approval of pull request #12, "adds a CSV export to the orders page" (in plain words, "Proposed change #12"). Card 2's answer, Explain more, is in the state, written by the bridge's press. The prompt is the press prompt for Explain more on card 2.
 
 **Pass.** An explanation written to the director before card 2 is asked, with an everyday example; then card 2 asked again in exactly one `AskUserQuestion` call holding it alone, its text and option labels as composed; no signed record, no card's answer and no card written by the session (nor refused by the helper), and no request the stand-in doesn't take; no other card asked, in the call or in an `asked` record.
 

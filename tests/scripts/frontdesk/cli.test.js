@@ -433,9 +433,12 @@ test('a gate card for a commit the gate no longer asks about leaves the board; a
     assert.equal(listedOut.code, 0, listedOut.err);
     assert.equal(listedOut.out.trim().split('\n').length, 2, listedOut.out);
     assert.match(listedOut.out, /^2\. /m);
+    // Each line names its card's id, so a press naming a card by number and id can be matched (fix G).
+    assert.deepEqual(listedOut.out.trim().split('\n').map((line) => /\(card ([^)]+)\)$/.exec(line)?.[1]), [one.id, two.id]);
     const asked = await run(helper, ['again', '2']);
     assert.equal(asked.code, 0, asked.err);
     assert.deepEqual(asked.json.questions.map((q) => q.question), [two.data.question]);
+    assert.equal(asked.json.id, two.id, 'again names the card it gives by its id');
     // The visit makes the card for the commit the gate asks about now, and never hands out the outdated one.
     const visit = await run(helper, ['cards']);
     assert.equal(visit.code, 0, visit.err);
@@ -927,7 +930,7 @@ test('views levels lists the topics: their levels in force, those waiting, and t
   });
 });
 
-test('again gives the card the board numbers n, and records it as asked', async () => {
+test('again gives the card the board numbers n, with its id, and records it as asked', async () => {
   await inHome(async () => {
     const one = cardEvent(PRODUCT(1), 1);
     const two = cardEvent(PRODUCT(2), 2);
@@ -938,6 +941,7 @@ test('again gives the card the board numbers n, and records it as asked', async 
     const out = await run(helper, ['again', String(n)]);
     assert.equal(out.code, 0, out.err);
     assert.deepEqual(out.json.questions.map((q) => q.question), [one.data.question]);
+    assert.equal(out.json.id, one.id, 'again names the card it gives by its id');
     assert.deepEqual(helper.calls.map(([name, body]) => [name, body.cards ?? body.data?.cards]), [['views', true], ['write', [one.id]]]);
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [one.id] } }]);
     for (const bad of [['again', '9'], ['again', '0'], ['again', 'x'], ['again'], ['again', '1', '2']]) {
