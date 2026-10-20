@@ -131,7 +131,7 @@ VS Code now runs a chat session on one of several **harnesses**, and almost ever
 | Superpowers' and Matt Pocock's skills | **Carries over**, to be proved | They are `SKILL.md` files, but Superpowers' loops dispatch subagents in Claude Code's words. Check C10 runs them on Copilot before anything relies on them |
 | The sandbox | **Differently** | Copilot's own sandbox, switched on per project and per computer where Copilot allows it (check C4). Where it can't be on, the board says so, as for Claude Code on Windows today |
 | Deny rules | **Adapter** | The tool guard carries the list itself, as it already does for most of it, and the sessions Wheelhouse starts carry `--deny-tool` flags as well |
-| Standard | **Adapter**, and **weaker** (section 6) | |
+| Standard and Locked | **Adapter**, rebuilt for a governance review (section 6.4) | Builds only with Copilot's sandbox on, with a tamper-evident audit record, pending the director's answer to question 2 |
 | Locked | **Adapter**, needs admin | Copilot's policy hooks and managed settings (section 6.4) |
 | The guardrails | **Adapter** | The list grows by Copilot's own control files (section 6.5) |
 | The board, the briefing, health, settings, the profile, the runbook | **Carries over** | The health line names the agent and its safety line |
@@ -145,7 +145,7 @@ VS Code now runs a chat session on one of several **harnesses**, and almost ever
 
 ## 6. Safety on Copilot
 
-**In short:** on Copilot, Wheelhouse's guards can still refuse what they refuse in Claude Code, and the helper and the gate hold exactly as before, because they never ran inside the agent. What Copilot changes is where Wheelhouse's own hooks run, and that weakens one promise: at Standard, a determined agent could forge a record the hooks make. So on Copilot, the records that matter are made by the helper or the extension, never by a hook.
+**In short:** on Copilot, Wheelhouse's guards can still refuse what they refuse in Claude Code, and the helper and the gate hold exactly as before, because they never ran inside the agent. What Copilot changes is where Wheelhouse's own hooks run, and that weakens one promise: at Standard, a determined agent could forge a record the hooks make. So on Copilot, the records that matter are made by the helper or the extension, never by a hook. And because the director's bar is a compliance or governance review (section 6.4), Copilot builds only where its sandbox is on, and keeps a record a reviewer can check afterwards.
 
 ### 6.1 What holds unchanged
 
@@ -191,23 +191,57 @@ So on Copilot:
 - **Where Copilot's sandbox is off, on any system,** an agent's process can read the helper's keys file and sign anything: an approval, a confirmation or a review. That is so on Windows without the sandbox, as with Claude Code on Windows today (main design, section 11), and also on a Mac older than macOS 15, or where the sandbox is off or a company forbids it. The director accepted it for Claude Code on Windows; the same line goes on the board for every Copilot computer without the sandbox, Mac or Windows (question 2).
 - **On Windows with Copilot's sandbox** (a recent Windows 11), the keys folder may be deniable to agents. If check C4 shows it is, Copilot on those computers holds more than Claude Code on Windows does today, and the board says so.
 
-### 6.4 Standard and Locked on Copilot
+### 6.4 The levels on Copilot, built for a governance review
 
-| | **Standard on Copilot** | **Locked on Copilot** |
+**The director's bar** (20 October 2026): "We need this to be compliance/governance robust". A line on the board isn't enough. So Copilot's levels are judged by the questions a compliance or governance reviewer asks of a tool that changes a company's code, and each answer says who controls it.
+
+**What an agent could do at Standard if Copilot's sandbox is off,** on a Mac as on Windows, because it then runs every command as the person:
+
+- read every file the person can: SSH keys, git's and `gh`'s sign-ins, Wheelhouse's connection key and signing key, browser data;
+- use them: push branches and open pull requests straight to the host, and change `main` itself where the host doesn't protect it; and sign fake approvals and reviews that Wheelhouse can't tell from real ones;
+- send any of it anywhere on the internet;
+- edit Wheelhouse's own hooks or the extension so that they pass everything.
+
+**How likely that is.** An agent doesn't set out to do this on its own. The realistic routes are two: instructions hidden in something it reads (a web page, an issue, a dependency's notes), and a harmful package whose install or test script runs on the computer. The second happens to people too, but an agent runs many more commands, unattended. Wheelhouse's guards and reviews make the first unlikely to succeed by accident. Without the sandbox, nothing on the computer stops the second. A reviewer would rate it unlikely in any one week, with a high cost when it happens.
+
+**What a reviewer asks, and what Wheelhouse answers on Copilot:**
+
+| The reviewer asks | With Copilot's sandbox | Without it |
 |---|---|---|
-| **Holds against** | Mistakes, and most attempts by untrusted content to steer an agent | An agent actively trying to get round the checks, as far as Copilot allows |
-| **The checks live in** | Wheelhouse's hook registration and Copilot's settings for the project, which an agent could edit where the sandbox doesn't cover them | Also Copilot's policy hooks and managed settings, in admin-only folders |
-| **What the director does** | Nothing extra | Their computer password once (macOS), or an administrator (Windows) |
-| **Sandbox** | Switched on where Copilot lets a project or person do it (check C4) | Required in Locked projects: Locked's policy hook refuses commands in a Locked project whose session isn't sandboxed, as Claude Code's Locked does, rather than forcing the sandbox on for every project on the computer (the director's card B, main design section 22). Needs check C5 to show a hook can see whether the session is sandboxed |
-| **Deny rules** | Carried by the tool guard and the sessions' flags | Also in the managed settings: never reading `~/.wheelhouse/`, the credential folders or `.env*` files, which hold in every project, since Copilot's file tools obey the sandbox only on a best-effort basis |
-| **Records** | Made by the helper and the extension (section 6.3) | Also by policy hooks, which run outside the agent |
-| **Can't stop** | A guard that times out letting a call through; an agent editing hook files where the sandbox is off; where the sandbox is off, an agent forging a record | A guard that times out letting a call through, including an agent starving the hooks on purpose; a company's own managed settings winning over Locked's |
+| **Can an agent change the product without a named person's approval?** | No. Pushes and merges go only through the helper and its gate, and the host's own protection of `main` is a second lock | Only the host's protection stops it, so that protection becomes required (below) |
+| **Can it read secrets or live data?** | No: the keys, credential folders and `.env*` files are denied to commands, and to Copilot's own file tools by the tool guard (check C4) | Yes, anything the person can read |
+| **Can it send data out?** | On macOS, only to listed hosts. On Windows, Copilot says its host rules rely on programs honouring the proxy, so a program that connects directly isn't stopped; secrets are still held, because it can't read them | Yes, anywhere |
+| **Can it switch off or change the controls?** | Not by itself: writes to Copilot's and Wheelhouse's own folders are denied. The person can, at Standard, by a setting or by approving a command outside the sandbox | Yes |
+| **Who owns the controls?** | The person at Standard; the computer's administrator at Locked; the company at the organisation route | The person |
+| **What happens when a control fails?** | Wheelhouse's checks refuse, except when a hook times out, which Copilot lets through (section 6.2) | The same |
+| **Is there a record of who approved what that can't be changed afterwards?** | Yes (the audit record, below) | Changes are seen, but a record signed with the stolen key looks genuine |
+| **How do we know the controls were on?** | Every pull request's record names the level, whether the sandbox was on, and the versions | The same, though the agent could have changed it |
 
-**Locked on Copilot follows the director's rule for Locked on Claude Code:** offered on macOS first, and on Windows only once it has been tried on a Windows computer with admin rights (main design, section 22). Like Claude Code's, Copilot's managed settings apply to every Copilot session on the computer, so Locked keeps its computer-wide rules to what is safe everywhere, and its policy hooks check whether the folder is a Locked Wheelhouse project before doing anything.
+**Four ways to meet the bar,** with what each costs the person setting up, above all on a work computer without admin rights:
 
-**One more effect, which the Locked card says plainly:** once Copilot's managed settings hold permission or sandbox rules, VS Code switches off its Claude and Codex harnesses on that computer.
+| | What it is | Holds against | Costs the person | On a work computer without admin |
+|---|---|---|---|---|
+| **1. Sandbox or read-only** | Wheelhouse on Copilot builds only in a session its own test shows is sandboxed, with the keys unreadable and the network narrowed. Where it can't be, Wheelhouse still talks, plans and designs, but starts no builds, and says why | A harmful package or misled agent reading secrets or, on macOS, sending them out. Not the person switching the sandbox off | About a minute in setup. Needs macOS 15, or Windows 11 with the September 2026 update or later | Works if Windows is up to date; otherwise only planning, until it is |
+| **2. Locked by default** | Copilot's admin-only managed settings and policy hooks: the sandbox forced on and fail-closed, no bypass, no "Allow all", reading the keys denied everywhere | Also anything running as the person, the person included | The computer's password on a Mac. On Windows, an administrator. It also switches off VS Code's Claude and Codex agents on that computer | Needs the company's IT to install it |
+| **3. The organisation route** | The company's Copilot or device admin applies Wheelhouse's published baseline (the same managed settings and policy hooks) through their device management, or through GitHub for enterprise seats, and protects the repositories on GitHub (pull requests and checks required, no force-push) | The same as Locked, owned by the company, on every computer at once. Where the company has GitHub's agent session records (Enterprise Cloud with managed users, preview), it also has its own record of every prompt and tool call | Nothing on their computer. The company's admin must agree, and set it up once | Works, but only with the admin's help |
+| **4. A tamper-evident record** | Every event is chained to the one before and pushed to the host as it happens, onto a branch the host won't let anyone rewrite. A script turns it into an audit report: for each merged change, the request, who approved which commit and when, the review, CI, the level, the sandbox and the versions, with any gap flagged | Nothing by itself; it lets a reviewer check afterwards that every change was approved and that nothing was rewritten | Nothing | Works |
 
-**Where a company already manages Copilot,** its settings win. Setup reads what the company has set (section 8.7) and doesn't offer Locked where the company's settings would override it. *Designer's call.*
+**The recommendation** (*Designer's call*, put to the director as question 2 of section 12):
+
+- **Everywhere on Copilot, way 1 and way 4.** No builds without the sandbox; the audit record always on.
+- **For a project with real users, or one under a company's compliance rules, way 3 where the company runs Copilot, or way 2 on a computer the person administers.** Setup doesn't mark such a project ready without one of them.
+- **Host protection is required for building on Copilot.** A host plan that can't protect `main` (GitHub Free with a private repository) gets planning only, since on a computer without the sandbox nothing else would stop a direct push.
+- **Why not way 2 everywhere:** on a work computer without admin it can't be set up at all, which would shut out the first tester and most of the people waiting.
+
+**Way 1's own test.** At each session start, and before the watcher starts a build session, a sandboxed probe tries three things: to read the keys file, to write outside its worktree, and to reach a host not on the list. Builds run only if the first two are refused. On Windows the third is reported, not required, since Copilot says it can't hold it against a program that ignores the proxy. The result goes into the audit record. Whether hooks run inside the sandbox, so the test sees what agents see, is check C4. *Designer's call.*
+
+**Way 4's limit.** Where the sandbox was off, a record signed with the stolen key looks genuine. The report then marks those days, so a reviewer knows which changes rest on the host's protection alone.
+
+**The same bar for Claude Code** would mean no building on Windows until Claude Code has a sandbox there, since it has none today. That is a separate question, not decided here (section 12).
+
+**Locked on Copilot** keeps the director's rule for Locked on Claude Code: offered on macOS first, and on Windows only once tried on a Windows computer with admin rights (main design, section 22). Copilot's managed settings apply to every Copilot session on the computer, so Locked keeps its computer-wide rules to what is safe everywhere, and its policy hooks check whether the folder is a Locked Wheelhouse project before doing anything. Within a Locked project, its policy hook refuses commands in a session that isn't sandboxed, rather than forcing the sandbox on for every project (the director's card B, main design section 22), if check C5 shows a hook can tell. Its managed deny rules hold in every project: never reading `~/.wheelhouse/`, the credential folders or `.env*` files. Once Copilot's managed settings hold permission or sandbox rules, VS Code switches off its Claude and Codex agents on that computer; the Locked card says so.
+
+**Where a company already manages Copilot,** its settings win: managed settings from device management come first, then GitHub's, then the file Locked writes, with the sandbox and permission rules combined in the strictest direction. Setup reads what the company has set (section 8.7) and offers the organisation route rather than Locked there. GitHub's own settings apply only to seats the company's enterprise licenses, and a computer that can't fetch them isn't held by them unless they are also sent by device management, so the published baseline recommends device management. *Designer's call.*
 
 ### 6.5 The guardrails grow
 
@@ -225,15 +259,16 @@ The same paths are shut to agents' writes, as `.claude/` is today. This applies 
 
 ### 6.6 Plainly: what Copilot can't enforce
 
-These go on the board's health line for a Copilot project, and in the data note:
+These go on the board's health line for a Copilot project, in the audit report and in the data note:
 
-1. **A guard that times out lets the call through,** even an admin-installed one, and an agent could cause that on purpose. What it lets through stays on the computer: pushes and merges still go through the helper.
-2. **At Standard, Wheelhouse's own hooks run beside the agent.** Where the sandbox is off they can be edited or switched off by an agent; and no hook can hold a secret an agent can't read. So the records that matter come from the helper and the extension, not from hooks.
-3. **The sandbox may be off.** It is off by default, needs macOS 15 or a recent Windows 11, and a company may forbid it. Without it, on a Mac as on Windows, Copilot's agents are held by the guards, the gate and the helper only, and an agent could read the keys and forge any record.
-4. **Outbound network is allowed by default** in Copilot's sandbox, and Wheelhouse must narrow it (check C4).
-5. **Phone STOP isn't available** unless check C12 finds a route.
-6. **Wheelhouse can't pin VS Code or its Copilot runtime.** It records them and re-runs the safety scenarios when they change.
-7. **A company's own settings win** over Wheelhouse's, Locked included.
+1. **A guard that times out lets the call through,** even an admin-installed one, and an agent could cause that on purpose. Where the sandbox is on, what it lets through stays inside the sandbox; pushes and merges still go through the helper.
+2. **At Standard, Wheelhouse's own hooks run beside the agent,** so no hook holds a secret an agent can't read. The records that matter come from the helper and the extension, never from hooks.
+3. **Without the sandbox, nothing on the computer holds a determined agent or a harmful package,** on a Mac as on Windows (section 6.4). That is why Copilot builds only with the sandbox on (pending the director's answer).
+4. **On Windows, Copilot's sandbox doesn't hold the network** against a program that connects directly. Secrets stay held, because they can't be read; the code itself is what could leave. A company's own network controls carry that.
+5. **At Standard, the person can switch the sandbox off,** or approve a command outside it. Only Locked or the organisation route takes that away.
+6. **Phone STOP isn't available** unless check C12 finds a route.
+7. **Wheelhouse can't pin VS Code or its Copilot runtime.** It records them and re-runs the safety scenarios when they change.
+8. **A company's own settings win** over Wheelhouse's, Locked included.
 
 ## 7. Approaches
 
@@ -246,7 +281,7 @@ These go on the board's health line for a Copilot project, and in the data note:
 
 - **For:** close to no new code, and Claude Code's protection where the engine honours it.
 - **Against:** what it loads isn't documented; it is a third-party agent, which companies can switch off, and VS Code turns it off wherever Copilot's managed settings hold permission or sandbox rules, which Locked needs. It would leave out everyone whose company switches it off, who are likely many of the people waiting.
-- **So:** tried as check C1. If it passes, setup offers it beside the Copilot route where it is available (question 3).
+- **So:** tried as check C1. If it passes, setup offers it beside the Copilot route where it is available, but nothing in the Copilot route leans on it (the director's decision, question 3).
 
 **C. A separate Copilot edition.** A copy of Wheelhouse written for Copilot.
 
@@ -347,9 +382,9 @@ It can't see the origin of a typed message, as the mod can, so on Copilot a type
 The same steps as main design section 15, with these differences:
 
 1. **Install:** the extension from the Marketplace (one click), which brings the setup skill. Without VS Code, `copilot plugin install`, from the README. Setup then installs the plugin for the background sessions itself.
-2. **"Can Wheelhouse run here?"** Before anything else, setup reads what this computer and the person's company allow: the Copilot harness, hooks, Copilot CLI, the sandbox and its Windows build, extensions, and any company-managed settings. It says in plain words what will and won't hold here, and stops kindly if Wheelhouse can't run safely. *Designer's call.*
+2. **"Can Wheelhouse run here?"** Before anything else, setup reads what this computer and the person's company allow: the Copilot harness, hooks, Copilot CLI, the sandbox and its Windows build, extensions, and any company-managed settings. It runs way 1's sandbox test (section 6.4), and says in plain words what will and won't hold here: building, or planning only, and why. It stops kindly if Wheelhouse can't run safely at all. *Designer's call.*
 3. **Tools:** git, Node.js 22 or later, `gh` or `glab`, Copilot CLI and, on Windows, PowerShell 7, each installed for this person only, without admin, where an official route allows it. Whether VS Code's Copilot already brings a usable `copilot` command is check C9.
-4. **The host,** the three questions, the rules found: as now.
+4. **The host,** the three questions, the rules found: as now. A project with real users or under a company's compliance rules then needs the organisation route or Locked before setup marks it ready to build (section 6.4), and setup writes the request to the company's admin for the organisation route in plain words, with Wheelhouse's published baseline attached.
 5. **Changes to this computer,** on one card: the sign-in start (section 8.5), Copilot's sandbox for this person, the extension's auto-update off, the signing key.
 6. **Locked:** macOS only, as section 6.4 says.
 7. **Notifications:** VS Code's own; the phone only if check C12 finds a route.
@@ -415,11 +450,11 @@ Numbered C1 to C14 here; they get the next free numbers in `docs/checks/` when t
 Each goes to the director as a card, through the main session.
 
 1. **How Copilot users click to approve. Decided by the director on 20 October 2026:** "Assume VS Code addon available. But do have a fail-safe approach for if addons are not available." So approvals come from the Wheelhouse extension's buttons in VS Code, and the helper's own window is the fail-safe wherever the extension isn't there (Copilot CLI alone, or a company that blocks extensions). This was the recommended option; the others were the system's window always, or the chat's clickable choices, accepting that an agent could forge an approval at Standard.
-2. **What Copilot's Standard promises.** At Standard on Copilot, a guard that times out lets a call through, and on any computer without Copilot's sandbox, Mac or Windows, an agent could edit Wheelhouse's hook files or forge an approval. Options: accept it and say so on the board, with real-user projects pointed to Locked (recommended, as the director decided for Windows); or offer Copilot only for projects without real users until Locked on Copilot has been tried.
-3. **VS Code's Claude agent.** If check C1 passes, setup could also offer Wheelhouse inside VS Code's Claude agent, where a company allows it. Options: build the Copilot route, and offer the Claude agent route too where it works (recommended); the Claude agent route only; or the Copilot route only.
-4. **When to build it.** Options: run the checks now, in one Mac and one Windows sitting, and build the Copilot adapter after the pieces in progress are merged (recommended); start building now; or after the pilot.
+2. **What Copilot's protection promises.** Asked first on 20 October 2026; the director answered: "Please elaborate. We need this to be compliance/governance robust". Section 6.4 now meets that bar, and the question goes back as a new card. Options: sandbox or read-only everywhere, with the audit record, and the organisation route or Locked required for projects with real users or compliance rules (recommended); Locked by default for every Copilot project; the organisation route only; or the audit record alone, with the board saying what isn't held.
+3. **VS Code's Claude agent. Decided by the director on 20 October 2026:** "I think both but my friend who is goinf to test this wont be able to use claude agents via vs code or github copilot". So both routes are offered, but the Copilot route is the primary one and stands complete on its own: nothing in it leans on the Claude agent route. The Claude agent route is offered only where check C1 passes and the company allows it, and it is built after the Copilot route.
+4. **When to build it. Decided by the director on 20 October 2026:** "Checks now, build later". The checks (section 11) run now; the Copilot adapter is built later.
 
-**Still open, not for now:** which Google agent to support later (section 10); whether Claude Code users also move to the sign-in start (section 8.5).
+**Still open, not for now:** which Google agent to support later (section 10); whether Claude Code users also move to the sign-in start (section 8.5); whether the governance bar of section 6.4 also applies to Claude Code, where it would mean no building on Windows until Claude Code has a sandbox there.
 
 ## 13. The designer's calls (the director may override)
 
@@ -443,7 +478,10 @@ Each goes to the director as a card, through the main session.
 - the playbooks' tool names moved into a tool sheet per agent (section 8.3);
 - setup's first step reading what the computer and company allow (section 8.7);
 - VS Code and its Copilot runtime recorded rather than pinned, with the safety scenarios run on a change (section 8.8);
-- four Copilot scenarios added to the evaluation (section 9).
+- four Copilot scenarios added to the evaluation (section 9);
+- for the governance bar, pending the director's answer: builds only in a session that passes the sandbox test, planning only elsewhere; the tamper-evident audit record always on; the organisation route or Locked required for projects with real users or compliance rules; host protection required for building; and the baseline recommending device management over GitHub's server-managed settings (section 6.4).
+
+**Decided by the director on 20 October 2026:** how Copilot users approve (question 1); both routes, with the Copilot route standing on its own (question 3); checks now, build later (question 4).
 
 ## Appendix A. What the independent review changed
 
