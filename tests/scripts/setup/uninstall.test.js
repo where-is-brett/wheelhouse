@@ -103,7 +103,7 @@ function recorder(runId) {
 // The whole of setup on a fresh computer, as the journal would hold it, steps 1 to 10.
 // `lockedDir` is where Locked's computer-wide settings are (a scratch folder when the plan is
 // applied), and `trialSha` the commit step 10's trial branch was pushed at.
-function fullSetup(world, { through = 10, lockedDir = '/Library/Application Support/ClaudeCode', trialSha = 'c'.repeat(40) } = {}) {
+function fullSetup(world, { through = 10, lockedDir = '/Library/Application Support/ClaudeCode', trialSha = 'c'.repeat(40), slug = SLUG } = {}) {
   const { folder, settings, register } = world;
   const run = startRun({ folder, now: NOW });
   const r = recorder(run.id);
@@ -128,10 +128,10 @@ function fullSetup(world, { through = 10, lockedDir = '/Library/Application Supp
   writeText(path.join(profileDir(), 'events', 'e1.json'), '{}');
   r.add(3, { kind: 'host', target: 'key github-app', before: null, after: { key: 'github-app', clientId: 'Iv1.x', app: 'wheelhouse' } });
   writeText(path.join(keysDir(), 'github-app.json'), '{}');
-  r.add(3, { kind: 'file', target: path.join(stateDir(SLUG), '..', 'project.json'), before: null, after: 'x' });
-  register();
-  r.folder(3, stateDir(SLUG), { clone: `https://github.com/${REPO}.git`, branch: 'wheelhouse-state' });
-  writeText(path.join(stateDir(SLUG), 'events.json'), '[]');
+  r.add(3, { kind: 'file', target: path.join(stateDir(slug), '..', 'project.json'), before: null, after: 'x' });
+  register(slug);
+  r.folder(3, stateDir(slug), { clone: `https://github.com/${REPO}.git`, branch: 'wheelhouse-state' });
+  writeText(path.join(stateDir(slug), 'events.json'), '[]');
   r.add(3, { kind: 'host', target: 'github:o/wheelhouse-profile:enrolments/abcd1234.json', before: null, after: '{"computer":"abcd1234"}\n' });
   done(3);
   if (through < 4) return { run, r };
@@ -161,7 +161,7 @@ function fullSetup(world, { through = 10, lockedDir = '/Library/Application Supp
   done(7);
   if (through < 8) return { run, r };
   // Step 8: Locked.
-  r.add(8, { kind: 'locked', target: path.join(lockedDir, 'managed-settings.json'), before: { exists: false, ours: false, projects: [] }, after: { project: SLUG, folder } });
+  r.add(8, { kind: 'locked', target: path.join(lockedDir, 'managed-settings.json'), before: { exists: false, ours: false, projects: [] }, after: { project: slug, folder } });
   done(8);
   r.add(9, { kind: 'answer', target: 'step 9', before: null, after: { pushArrived: true } });
   done(9);
@@ -555,14 +555,13 @@ test('the card names the groups, what is kept, that removed transcripts can\'t c
     writeText(world.settings, `${JSON.stringify({ ...settings, ...theirs }, null, 2)}\n`);
     const many = await plan(world);
     assert.ok(many.keep.length > 30);
-    assert.match(many.card.what, /and \d+ more: cli\.js uninstall status/);
-    // With nothing more to leave out, only the .wheelhouse/ note (ruling R131) may take it past.
-    assert.ok(many.card.what.length + many.card.target.project.length <= WHAT_CHARS + FOLDER_NOTE.length + 1, `${many.card.what.length}`);
+    assert.match(many.card.what, /(and \d+ more|\d+ left as you changed them): cli\.js uninstall status/);
+    assert.ok(many.card.what.length + many.card.target.project.length <= WHAT_CHARS, `${many.card.what.length}`);
     // Shared with another computer whose key this one trusts (ruling R124), its parts the longest.
     enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
     const shared = await plan(world);
     assert.equal(shared.shared, true);
-    assert.ok(shared.card.what.includes(FOLDER_NOTE));
+    assert.match(shared.card.what, /\.wheelhouse\/ stays, out of git/);
     // Each card composes as uninstall's own kind (Task 15c), within the composer's limit, and passes
     // the card check; its set line names the project and the list's hash.
     for (const one of [got, many, shared]) {
@@ -607,8 +606,8 @@ test('uninstall\'s card composes within the limit for the longest names and the 
         const { question } = composeCard(got.card);
         assert.ok(question.question.length <= CARD.chars, `${slug}: ${question.question.length}`);
         assert.deepEqual(cardProblems(question.question), []);
-        assert.match(got.card.what, /and \d+ more: cli\.js uninstall status/);
-        assert.ok(got.card.what.includes(FOLDER_NOTE));
+        assert.match(got.card.what, /cli\.js uninstall status/);
+        assert.match(got.card.what, /\.wheelhouse\/ stays, out of git/);
       }
     }
   });
@@ -2031,5 +2030,79 @@ test('the .wheelhouse/ exclude line stays while the project\'s .wheelhouse/ fold
     const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
     assert.equal(done.ok, true, done.refused);
     assert.equal(readText(exclude), before, 'the line goes as before');
+  });
+});
+
+// Rulings R131, R134: uninstall's card always composes within the composer's limit, whatever the
+// world: a full setup (Locked, the pull request, the trial, the keys) with the .wheelhouse/ folder,
+// a 40-character project, one setting or thirty changed since setup, alone and shared. What the
+// card has no room for is in `uninstall status`, and the hash covers the whole list.
+test('uninstall\'s card composes within the limit for a full setup with a long name, alone and shared, and leaves out only what status lists (rulings R131, R134)', async () => {
+  const slug = `o__${'b'.repeat(37)}`;
+  for (const changedCount of [1, 30]) {
+    await withHome(async () => {
+      const world = makeWorld();
+      const { r } = fullSetup(world, { slug });
+      const exclude = path.join(world.folder, '.git', 'info', 'exclude');
+      r.file(7, exclude, `${readText(exclude)}${WHEELHOUSE_LINE}\n`, { line: WHEELHOUSE_LINE });
+      writeText(path.join(world.folder, '.wheelhouse', 'front-desk.json'), '{}\n');
+      const settings = readJson(world.settings);
+      const theirs = {};
+      for (let i = 0; i < changedCount; i++) {
+        r.key(6, world.settings, [`someLongSettingName${i}`], i);
+        theirs[`someLongSettingName${i}`] = 'theirs';
+      }
+      writeText(world.settings, `${JSON.stringify({ ...settings, ...theirs }, null, 2)}\n`);
+      for (const trusting of [false, true]) {
+        if (trusting) enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
+        const got = await plan(world);
+        const at = `${changedCount} changed, ${trusting ? 'shared' : 'alone'}`;
+        assert.equal(got.project, slug, at);
+        assert.equal(got.shared, trusting, at);
+        assert.ok(got.changes.some((c) => c.put === 'leave-locked'), at);
+        assert.equal(got.changes.some((c) => c.put === 'pull-request'), !trusting, at);
+        assert.ok(got.changes.some((c) => c.put === 'delete-branch'), at);
+        const { question, card } = composeCard(got.card);
+        assert.ok(question.question.length <= CARD.chars, `${at}: ${question.question.length}`);
+        assert.deepEqual(cardProblems(question.question), [], at);
+        assert.equal(card.line, uninstallLine(slug, got.hash), at);
+        assert.match(got.card.what, /\.wheelhouse\/ stays, out of git/, at);
+        // A card that leaves out any of them says where they are read.
+        const all = Array.from({ length: changedCount }, (_, i) => `someLongSettingName${i}`).every((k) => got.card.what.includes(k));
+        if (!all) assert.match(got.card.what, /cli\.js uninstall status/, at);
+        // Nothing is dropped from what the click covers: every change setup recorded is in the
+        // list the hash names, and status lists each one left as the director changed it.
+        assert.deepEqual(accounted(got), recordedIds(), at);
+        const lines = planLines(got, world.folder, world.userHome);
+        for (let i = 0; i < changedCount; i++) assert.ok(lines.some((l) => l.includes(`someLongSettingName${i}`) && /changed since setup/.test(l)), `${at}: ${i}`);
+      }
+    });
+  }
+});
+
+// Review 1 Minor 3: where the .wheelhouse/ line came first (an earlier step 7 added it before the
+// settings line), the settings line is still put back, and the .wheelhouse/ line stays where it is.
+test('the .wheelhouse/ line kept where it is when it came before setup\'s settings line (ruling R131)', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    world.lockedDir = tempFolder('wh-locked ');
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    const exclude = path.join(world.folder, '.git', 'info', 'exclude');
+    const before = '# git ls-files --others --exclude-from=.git/info/exclude\n';
+    writeText(exclude, before);
+    const ownLine = r.file(7, exclude, `${before}${WHEELHOUSE_LINE}\n`, { line: WHEELHOUSE_LINE });
+    const settingsLine = r.file(7, exclude, `${before}${WHEELHOUSE_LINE}\n${EXCLUDE_LINE}\n`, { line: EXCLUDE_LINE });
+    fs.mkdirSync(path.join(world.folder, '.wheelhouse'));
+    const got = await plan(world);
+    assert.deepEqual(got.changes.filter((c) => c.put === 'reverse' && c.change.target === exclude).map((c) => c.ids), [[settingsLine.id]]);
+    assert.equal(got.keep.some((k) => k.why === 'changed since setup'), false);
+    const f = fakes(world);
+    const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+    assert.equal(done.ok, true, done.refused);
+    assert.equal(readText(exclude), `${before}${WHEELHOUSE_LINE}\n`);
+    assert.equal(markOf(settingsLine.id).put, true);
+    assert.equal(markOf(ownLine.id).put, false);
   });
 });

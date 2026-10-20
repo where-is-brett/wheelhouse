@@ -157,9 +157,10 @@ test('the playbook\'s reading forms run under STOP', async () => {
 // line for the director saying why; the playbook tells them that line as it is, says the choice is
 // theirs and gives the card's recommendation before asking it again.
 test('the playbook acts on a typed answer the helper did not take, as rulings R125 and R132 say', () => {
-  assert.match(NOT_AN_ANSWER.question, /^What you typed ends with a question mark[^\n]*type it again on the card and it is taken\.$/);
+  // Ruling R135: after a question, whatever the director types next on that card is taken, and the line says so.
+  assert.match(NOT_AN_ANSWER.question, /^What you typed ends with a question mark[^\n]*Whatever you type on this card next is taken as your answer, so ask any question in the chat\.$/);
   assert.match(NOT_AN_ANSWER.handedBack, /^What you typed hands the choice back[^\n]*not taken as your answer/);
-  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken \(a question typed again is taken\)\. Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again/);
+  assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken \(after a question, whatever they type next on that card is taken\)\. Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again/);
   assert.doesNotMatch(playbook, /whatever they type is their answer, even a question/);
   assert.match(playbook, /\| "They typed a question on the owner\/name card[^\n]*with `unanswered`, tell them its line[^\n]*recommendation/);
 });

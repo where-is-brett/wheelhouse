@@ -150,8 +150,11 @@ const OTHERS_USE = 'your other computers use it, so it stays';
 // (ruling R131): uninstall never touches the files in that folder.
 export const FOLDER_STAYS = 'it holds the front desk\'s and the foreman\'s files, which stay with the project';
 export const LINE_STAYS = 'the project\'s .wheelhouse/ folder stays, with the front desk\'s and the foreman\'s files, so this line keeps it out of git';
-// The two, as the card names them.
+// The two, as the card names them, and in short when the card has no room for more.
 export const FOLDER_NOTE = '.wheelhouse/ stays, out of git: the front desk\'s and foreman\'s files.';
+export const FOLDER_NOTE_SHORT = '.wheelhouse/ stays, out of git.';
+// Where the whole list is read.
+const STATUS_FORM = 'cli.js uninstall status';
 export const DELETE_LABEL = 'Delete it';
 
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
@@ -241,10 +244,13 @@ function deleteCard({ what, why, deletes, keeps, because }) {
   };
 }
 
-// The card's first part: the groups with their counts, then each item left because it changed
-// since setup while there is room, then how many more and where to read them (ruling R90), what
-// else stays, and the retention line (R64).
-function cardWhat({ name, changes, keep, asks, pullRequest }) {
+// The card's first part, as texts from the fullest to the shortest: the groups with their counts,
+// then each item left because it changed since setup while there is room (WHAT_CHARS), then how
+// many more and where to read them (ruling R90), what else stays, and the retention line (R64).
+// The plan takes the first that fits (fitWhat): the shorter ones say less of what stays, never less
+// of what is removed, and each points to `cli.js uninstall status`, which lists it all; the hash
+// covers the whole list whichever is shown.
+function cardWhats({ name, changes, keep, asks, pullRequest }) {
   const count = (test) => changes.filter(test).length;
   // The trusted-keys list and the signing key, removed last of all, are keys on the card.
   const keyFile = (c) => c.put === 'remove' && (samePath(c.target, signingKeyFile()) || samePath(c.target, enrolledFile()));
@@ -266,20 +272,46 @@ function cardWhat({ name, changes, keep, asks, pullRequest }) {
   const head = `Remove Wheelhouse from ${name}: ${groups.join(', ')}.`;
   const changed = keep.filter((k) => k.why === 'changed since setup').map((k) => k.brief ?? k.what);
   // The project's .wheelhouse/ folder and its exclude line are named (ruling R131), not counted.
-  // Short, as it is said on every card of a project the foreman ran in: with many things left as
-  // the director changed them, the first part can pass WHAT_CHARS by this note alone (the card
-  // stays within the composer's limit, which the composition tests hold it to).
-  const named = keep.filter((k) => k.why === FOLDER_STAYS || k.why === LINE_STAYS).length;
-  const others = keep.length - changed.length - named;
-  const tail = `${named > 0 ? ` ${FOLDER_NOTE}` : ''}${others > 0 ? ` ${plural(others, 'other thing')} stay as they are.` : ''}${asks.length > 0 ? ' Repositories and records stay unless their own cards say otherwise.' : ''} ${TRANSCRIPTS}`;
+  const named = keep.some((k) => k.why === FOLDER_STAYS || k.why === LINE_STAYS);
+  const others = keep.length - changed.length - keep.filter((k) => k.why === FOLDER_STAYS || k.why === LINE_STAYS).length;
+  const note = named ? ` ${FOLDER_NOTE}` : '';
+  const shortNote = named ? ` ${FOLDER_NOTE_SHORT}` : '';
+  const othersLine = others > 0 ? ` ${plural(others, 'other thing')} ${others === 1 ? 'stays as it is' : 'stay as they are'}.` : '';
+  const asksLine = asks.length > 0 ? ' Repositories and records stay unless their own cards say otherwise.' : '';
+  const transcripts = ` ${TRANSCRIPTS}`;
   const left = (list) => {
     const more = changed.length - list.length;
     if (changed.length === 0) return '';
-    return ` Left as you changed them: ${[...list, ...(more > 0 ? [`and ${more} more: cli.js uninstall status`] : [])].join('; ')}.`;
+    return ` Left as you changed them: ${[...list, ...(more > 0 ? [`and ${more} more: ${STATUS_FORM}`] : [])].join('; ')}.`;
   };
+  const counted = changed.length > 0 ? ` ${changed.length} left as you changed them: ${STATUS_FORM}.` : '';
   let fitting = changed;
-  while (fitting.length > 0 && (head + left(fitting) + tail).length + name.length > WHAT_CHARS) fitting = fitting.slice(0, -1);
-  return `${head}${left(fitting)}${tail}`;
+  while (fitting.length > 0 && (head + left(fitting) + note + othersLine + asksLine + transcripts).length + name.length > WHAT_CHARS) fitting = fitting.slice(0, -1);
+  return [
+    `${head}${left(fitting)}${note}${othersLine}${asksLine}${transcripts}`,
+    `${head}${counted}${note}${othersLine}${asksLine}${transcripts}`,
+    `${head}${counted}${shortNote}${othersLine}${asksLine}${transcripts}`,
+    `${head}${counted}${shortNote} What else stays: ${STATUS_FORM}.${transcripts}`,
+    `${head}${shortNote} What stays, and why: ${STATUS_FORM}.${transcripts}`,
+    `Remove Wheelhouse from ${name}: the whole list is in ${STATUS_FORM}.${shortNote}${transcripts}`,
+  ];
+}
+
+// The first of the card's texts that fits: within WHAT_CHARS with the name, and composed within the
+// composer's limit (CARD.chars), so uninstall's card can always be shown (rulings R131, R134). The
+// budget never costs the groups or the count of what changed since setup (the first COUNTED texts
+// keep both); past it, the first that composes at all.
+const COUNTED = 4;
+function fitWhat(whats, base, name) {
+  const composes = (what) => {
+    try {
+      composeCard(cleanDeep({ ...base, what }, []));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return whats.slice(0, COUNTED).find((w) => w.length + name.length <= WHAT_CHARS && composes(w)) ?? whats.find(composes) ?? whats.at(-1);
 }
 
 const same = (a, b) => canonicalJson(a ?? null) === canonicalJson(b ?? null);
@@ -342,11 +374,12 @@ function walkChain(group) {
   return { listed, already, changed };
 }
 
-// The text a file holds with step 7's .wheelhouse/ line kept: the line taken out where it is, and
-// added at the end as step 7 adds it.
+// The text a file holds with step 7's .wheelhouse/ line kept: as it is when it holds the line
+// already (an earlier run's step 7 added it before this link), otherwise with the line added at the
+// end, as step 7 adds it.
 function withOwnLine(text) {
-  const rest = (text ?? '').split('\n').filter((l) => l !== WHEELHOUSE_LINE).join('\n');
-  return `${rest}${rest !== '' && !rest.endsWith('\n') ? '\n' : ''}${WHEELHOUSE_LINE}\n`;
+  if (typeof text === 'string' && text.split(/\r?\n/).includes(WHEELHOUSE_LINE)) return text;
+  return `${text ?? ''}${text && !text.endsWith('\n') ? '\n' : ''}${WHEELHOUSE_LINE}\n`;
 }
 
 // Step 7's .wheelhouse/ exclude line kept (ruling R131), when a file group holds it as setup wrote
@@ -698,11 +731,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   // the same name and nothing recorded would otherwise give the same list.
   const hash = listHash({ folder: real, changes, keep, asks: asks.map((a) => ({ id: a.id, put: a.put, target: a.target, ids: a.ids })), done });
   const name = slug ?? path.basename(real);
-  const card = {
+  const base = {
     kind: 'uninstall',
     level: 4,
     target: { project: name, hash },
-    what: cardWhat({ name, changes, keep, asks, pullRequest }),
     why: shared
       ? `You asked for it. It takes Wheelhouse off this computer for this project; the project stays on ${HOSTS[own?.record.host] ?? 'the host'} for your other computers.`
       : 'You asked for it, and it takes away the checks that guard this project.',
@@ -721,6 +753,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
         : 'The checks no longer guard this project; protection stays as it is.',
   };
+  const card = { ...base, what: fitWhat(cardWhats({ name, changes, keep, asks, pullRequest }), base, name) };
   return { project: slug, last, shared, changes, keep, asks, done, card, hash };
 }
 

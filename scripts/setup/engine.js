@@ -109,9 +109,9 @@ export const CHANGED = 'the list has changed since the card: ask for the plan ag
 export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
 // Said to the director with a card asked again because what they typed on it was not taken, by why
-// (rulings R125, R132).
+// (rulings R125, R132); after a question, that whatever they type there next is taken (R135).
 export const NOT_AN_ANSWER = Object.freeze({
-  question: 'What you typed ends with a question mark, so it was taken as a question, not as your answer. If it is your answer, type it again on the card and it is taken.',
+  question: 'What you typed ends with a question mark, so it was taken as a question, not as your answer. Whatever you type on this card next is taken as your answer, so ask any question in the chat.',
   handedBack: 'What you typed hands the choice back, so it was not taken as your answer: this choice is yours to make.',
 });
 const APPLY_FIELDS = ['folder', 'step', 'hash'];
