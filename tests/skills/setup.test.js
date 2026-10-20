@@ -21,7 +21,7 @@ import {
 } from '../../scripts/hooks/session-start.js';
 import { decide as stopGuard } from '../../scripts/hooks/stop-guard.js';
 import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
-import { UNINSTALL_NEEDS_CLICK } from '../../scripts/setup/uninstall.js';
+import { UNINSTALL_NEEDS_CLICK, UNINSTALL_NEW_SESSION } from '../../scripts/setup/uninstall.js';
 import { HEALTH_STEP } from '../../scripts/lib/setup-run.js';
 import { setStop } from '../../scripts/lib/stop.js';
 import { as, shortHome } from '../helpers/homes.js';
@@ -135,6 +135,20 @@ test('the playbook closes the gaps its pressure runs found', () => {
   const engine = read('scripts/setup/engine.js');
   assert.ok(engine.includes('its own checks finished at'), 'status words it so');
   assert.match(playbook, /`status` says step 10's "own checks finished"/);
+});
+
+// Task R N1: uninstall's shortest cards point to `uninstall status` for the list, so the playbook
+// runs it and shows its lines before asking the card. Ruling R142: once a stopped uninstall's status
+// says first to start a new session, the card is not asked again in this one.
+test('the playbook shows uninstall\'s list when its card points to status, and stops asking the card when status says to start a new session', () => {
+  const uninstall = playbook.split('\n## Uninstall\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(uninstall, /When uninstall's card points to `uninstall status`, run it first and show its lines plainly, then ask the card\./);
+  assert.match(read('scripts/setup/uninstall.js'), /\$\{head\}[^\n]*What else stays: \$\{STATUS_FORM\}/, 'the card points so');
+  assert.ok(UNINSTALL_NEW_SESSION.startsWith('Start a new session on this folder, then ask for uninstall\'s plan again'));
+  assert.match(uninstall, /If status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
+  const command = read('commands/uninstall.md');
+  assert.match(command, /If the card points to `uninstall status`, first run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/setup\/cli\.js" uninstall status` and show its lines as they are\./);
+  assert.match(command, /If status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
 });
 
 test('the README gives the Node.js line and the install line as they are', () => {

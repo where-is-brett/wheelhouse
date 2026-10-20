@@ -12,7 +12,7 @@ import path from 'node:path';
 import {
   uninstallPlan, uninstallRoutes, planLines, readProgress, writeProgress, PHASES, WHAT_CHARS, PLUGIN_LINE, ASK_STEP,
   UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP, UNINSTALL_RUNNING, UNINSTALL_RUN,
-  NEVER_PUSHED, FOLDER_NOTE,
+  NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION,
 } from '../../../scripts/setup/uninstall.js';
 import { applyUninstall, runUninstall, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
 import {
@@ -254,12 +254,14 @@ test('setup then uninstall lists every change setup made, by phase, newest first
     assert.equal(keys[0].put, 'delete-key');
     assert.equal(keys[0].key, 'github-app');
     assert.equal(keys.some((c) => c.put === 'remove'), false);
-    // Then this computer's id, and the folders they and the project's records were in, each once
-    // it is empty (ruling R138).
+    // The trusted-keys list, then this computer's id and the folders the project's records and the
+    // fetched tools were in, each once it is empty, then the signing key, and last the keys folder
+    // it was in (rulings R128, R138, R142).
     const closing = got.changes.slice(got.changes.findIndex((c) => c.put === 'remove-plugin'), -1);
     assert.deepEqual(closing.map((c) => c.target ?? c.put), [
-      'remove-plugin', enrolledFile(), signingKeyFile(), ...(fs.existsSync(path.join(wheelhouseHome(), 'computer.json')) ? [path.join(wheelhouseHome(), 'computer.json')] : []),
-      keysDir(), path.join(wheelhouseHome(), 'projects'), ...(fs.existsSync(path.dirname(toolFolder('gh'))) ? [path.dirname(toolFolder('gh'))] : []),
+      'remove-plugin', enrolledFile(), ...(fs.existsSync(path.join(wheelhouseHome(), 'computer.json')) ? [path.join(wheelhouseHome(), 'computer.json')] : []),
+      path.join(wheelhouseHome(), 'projects'), ...(fs.existsSync(path.dirname(toolFolder('gh'))) ? [path.dirname(toolFolder('gh'))] : []),
+      signingKeyFile(), keysDir(),
     ]);
     assert.ok(closing.filter((c) => [keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))].includes(c.target)).every((c) => c.put === 'remove-empty'));
     // Last: the project's own folder, Wheelhouse's own folders and files, the plugin's line.
@@ -1810,7 +1812,7 @@ test('the trusted-keys list and the signing key go last of all: an uninstall cut
       const click = removeIt(again.card.target.project, again.hash);
       assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id]);
       assert.deepEqual(again.changes.slice(-7).map((c) => c.target ?? c.what), [
-        enrolledFile(), signingKeyFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), 'helper',
+        enrolledFile(), path.join(wheelhouseHome(), 'computer.json'), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), signingKeyFile(), keysDir(), 'helper',
       ]);
       const { done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
@@ -1832,7 +1834,7 @@ test('the last uninstall takes this computer\'s id and Wheelhouse\'s emptied fol
       const f = fakes(world);
       const { got, done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
-      assert.deepEqual(got.changes.filter((c) => c.put === 'remove-empty').map((c) => c.target), [keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]);
+      assert.deepEqual(got.changes.filter((c) => c.put === 'remove-empty').map((c) => c.target), [path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), keysDir()]);
       assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'computer.json')), false);
       assert.deepEqual(fs.readdirSync(keysDir()), ['theirs.txt']);
       assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'projects')), false);
@@ -1878,12 +1880,12 @@ test('the trusted-keys list goes before the signing key: a failed removal of the
       // Both are still here, so this computer can still sign, and the run is still open.
       for (const p of [enrolledFile(), signingKeyFile()]) assert.ok(fs.existsSync(p), p);
       const tail = first.got.changes.slice(first.got.changes.findIndex((c) => c.target === enrolledFile()));
-      assert.deepEqual(tail.slice(0, 2).map((c) => c.target), [enrolledFile(), signingKeyFile()]);
+      assert.deepEqual(tail.slice(0, 2).map((c) => c.target), [enrolledFile(), path.join(wheelhouseHome(), 'computer.json')]);
       assert.equal(tail.at(-1).what, 'helper');
       assert.equal(readJournal().runs.find((x) => x.id === run.id).closedAt, undefined);
       const again = await plan(world, { run: f.run });
       assert.deepEqual(again.changes.slice(-7).map((c) => c.target ?? c.what), [
-        enrolledFile(), signingKeyFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), 'helper',
+        enrolledFile(), path.join(wheelhouseHome(), 'computer.json'), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), signingKeyFile(), keysDir(), 'helper',
       ]);
       const click = removeIt(again.card.target.project, again.hash);
       assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id]);
@@ -1897,62 +1899,129 @@ test('the trusted-keys list goes before the signing key: a failed removal of the
   }
 });
 
-// Ruling R140 (b): an uninstall cut short anywhere in its last phase, after the signing key has
-// gone (at this computer's id, at each emptied folder, or at the run's close), finishes on resume.
-// The next session start in the folder, still being set up while its run is open, makes a key (and
-// an id, when that went too) and enrols it, and the director's click on the new card is signed by it.
-const CUT_POINTS = {
+// Ruling R142 (from R140 (b)): the last phase removes the trusted-keys list, this computer's id and
+// the emptied folders before the signing key, and from the list's removal on a click made in this
+// session can't count. So a removal that fails from there on is left, named in what uninstall says
+// (and so in its status), and uninstall still closes its run: nothing then needs a Remove it this
+// computer can no longer sign. The keys folder goes after the key it held. The key's own removal
+// failing is R128's second case (Task R review M4).
+const LEFT_AT = {
   'this computer\'s id': { rm: () => path.join(wheelhouseHome(), 'computer.json') },
-  'the keys folder': { rmdir: () => keysDir() },
   'the projects folder': { rmdir: () => path.join(wheelhouseHome(), 'projects') },
   'the tools folder': { rmdir: () => path.dirname(toolFolder('gh')) },
-  'the run\'s close': { close: true },
+  'the signing key': { rm: () => signingKeyFile() },
+  'the keys folder': { rmdir: () => keysDir() },
 };
-for (const [where, cut] of Object.entries(CUT_POINTS)) {
-  test(`an uninstall cut short in its last phase at ${where} finishes on resume, with the key the next session start makes (ruling R140)`, async (t) => {
+for (const [where, cut] of Object.entries(LEFT_AT)) {
+  test(`a removal that fails in the last phase at ${where}, after the trusted-keys list went, is left and named, and uninstall finishes (rulings R142, R128)`, async (t) => {
     const host = await standIn();
     try {
       await withHome(async () => {
         const { world, run } = await applyWorld({ host });
         const f = fakes(world);
-        const busy = (target) => Object.assign(new Error(`EBUSY: resource busy or locked, '${target}'`), { code: 'EBUSY' });
-        const { rmSync, rmdirSync, renameSync } = fs;
-        const mocks = [];
-        if (cut.rm) mocks.push(t.mock.method(fs, 'rmSync', (target, ...rest) => { if (target === cut.rm()) throw busy(target); return rmSync(target, ...rest); }));
-        if (cut.rmdir) mocks.push(t.mock.method(fs, 'rmdirSync', (target, ...rest) => { if (target === cut.rmdir()) throw busy(target); return rmdirSync(target, ...rest); }));
-        if (cut.close) {
-          mocks.push(t.mock.method(fs, 'renameSync', (from, to, ...rest) => {
-            if (to === journalFile() && fs.readFileSync(from, 'utf8').includes('"closedBy"')) throw busy(to);
-            return renameSync(from, to, ...rest);
-          }));
-        }
-        const first = await applyPlan(world, f);
-        for (const m of mocks) m.mock.restore();
-        assert.equal(first.done.ok, false, where);
-        assert.match(first.done.refused, /EBUSY/);
-        assert.equal(fs.existsSync(signingKeyFile()), false, 'cut short after the signing key went');
-        assert.equal(readJournal().runs.find((x) => x.id === run.id).closedAt, undefined, 'the run still open');
-
-        // The next session start in the folder: it is still being set up, so a key is made and enrolled.
-        await sessionStart({ cwd: world.folder, session_id: 's1', hook_event_name: 'SessionStart' }, {
-          client: { health: async () => ({ ok: true }) }, spawn: () => { throw new Error('nothing is started'); }, dir: tempFolder('wh-managed-'),
-        });
-        assert.ok(fs.existsSync(signingKeyFile()), 'a new key');
-        const again = await plan(world, { run: f.run });
-        const click = removeIt(again.card.target.project, again.hash);
-        assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id], 'signed with the new key, and counted');
-        const { done } = await applyPlan(world, f);
+        const target = (cut.rm ?? cut.rmdir)();
+        const busy = (p) => Object.assign(new Error(`EBUSY: resource busy or locked, '${p}'`), { code: 'EBUSY' });
+        const { rmSync, rmdirSync } = fs;
+        const mock = cut.rm
+          ? t.mock.method(fs, 'rmSync', (p, ...rest) => { if (p === target) throw busy(p); return rmSync(p, ...rest); })
+          : t.mock.method(fs, 'rmdirSync', (p, ...rest) => { if (p === target) throw busy(p); return rmdirSync(p, ...rest); });
+        const { got, done } = await applyPlan(world, f);
+        mock.mock.restore();
         assert.equal(done.ok, true, done.refused);
-        assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall');
-        for (const p of [signingKeyFile(), enrolledFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]) {
-          assert.equal(fs.existsSync(p), false, p);
-        }
+        assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall', 'the run is closed');
+        // What could not be removed is left, and named once, with why and what to do.
+        assert.ok(fs.existsSync(target), 'left');
+        const left = done.lines.filter((l) => l.startsWith('Left: '));
+        assert.equal(left.length, 1, left.join('\n'));
+        assert.ok(left[0].includes(path.basename(target)), left[0]);
+        assert.match(left[0], /EBUSY/);
+        assert.match(left[0], /remove it yourself, or it goes with the next uninstall\.$/);
+        // Everything else of the last phase is gone: the keys folder stays only while it holds the key.
+        const rest = [enrolledFile(), signingKeyFile(), path.join(wheelhouseHome(), 'computer.json'), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), keysDir()]
+          .filter((p) => p !== target && !(target === signingKeyFile() && p === keysDir()));
+        for (const p of rest) assert.equal(fs.existsSync(p), false, p);
+        // Its status, once done, names it too.
+        const clickedAt = new Date(READY().getTime() - 60 * 1000).toISOString();
+        writeProgress(world.folder, {
+          folder: world.folder, project: got.card.target.project, hash: got.hash, clickedAt, deadline: new Date(Date.parse(clickedAt) + 20 * 60 * 1000).toISOString(),
+          startedAt: READY().toISOString(), state: 'done', lines: done.lines, pages: done.pages,
+        });
+        const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run });
+        const status = await routes['/setup/uninstall/status']({ folder: world.folder });
+        assert.equal(status.lines[0], 'Uninstall is done.');
+        assert.ok(status.lines.includes(left[0]));
       });
     } finally {
       host.cleanup();
     }
   });
 }
+
+// Ruling R142: after the signing key has gone, only the run's own close can stop uninstall. Its
+// status then says, first, to start a new session and then ask again (as it does for an uninstall
+// cut short there, once its time is up), since no Remove it clicked in this session can count. The
+// next session start in the folder, still being set up while its run is open, makes a key (and an
+// id) and enrols it; the director's click on the new card is signed by it, and uninstall finishes.
+test('an uninstall whose run\'s close fails after the signing key went says in its status to start a new session, and finishes on resume with the key that session makes (rulings R142, R140)', async (t) => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world, run } = await applyWorld({ host });
+      const f = fakes(world);
+      const { renameSync } = fs;
+      const mock = t.mock.method(fs, 'renameSync', (from, to, ...rest) => {
+        if (to === journalFile() && fs.readFileSync(from, 'utf8').includes('"closedBy"')) throw Object.assign(new Error(`EBUSY: resource busy or locked, '${to}'`), { code: 'EBUSY' });
+        return renameSync(from, to, ...rest);
+      });
+      const first = await applyPlan(world, f);
+      mock.mock.restore();
+      assert.equal(first.done.ok, false);
+      assert.match(first.done.refused, /EBUSY/);
+      assert.equal(fs.existsSync(signingKeyFile()), false, 'cut short after the signing key went');
+      assert.equal(readJournal().runs.find((x) => x.id === run.id).closedAt, undefined, 'the run still open');
+
+      // Its status says to start a new session first, and so does one cut short there and past its time.
+      const clickedAt = new Date(READY().getTime() - 60 * 1000).toISOString();
+      const deadline = new Date(Date.parse(clickedAt) + 20 * 60 * 1000).toISOString();
+      const record = {
+        folder: world.folder, project: first.got.card.target.project, hash: first.got.hash, clickedAt, deadline,
+        startedAt: READY().toISOString(), state: 'stopped', refused: first.done.refused, lines: first.done.lines, pages: first.done.pages,
+      };
+      writeProgress(world.folder, record);
+      const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run });
+      const stopped = await routes['/setup/uninstall/status']({ folder: world.folder });
+      assert.equal(stopped.lines[0], UNINSTALL_NEW_SESSION);
+      assert.match(stopped.lines[1], /^Uninstall stopped: something went wrong: EBUSY/);
+      assert.doesNotMatch(stopped.lines[1], /ask for uninstall's plan again/, 'not before a new session');
+      const { refused, ...running } = record; // eslint-disable-line no-unused-vars
+      writeProgress(world.folder, { ...running, state: 'running' });
+      const later = uninstallRoutes({ now: () => new Date(Date.parse(deadline) + 1000), userHome: world.userHome, platform: 'darwin', run: f.run });
+      const stuck = await later['/setup/uninstall/status']({ folder: world.folder });
+      assert.equal(stuck.lines[0], UNINSTALL_NEW_SESSION);
+      assert.match(stuck.lines[1], /^Uninstall did not finish/);
+      writeProgress(world.folder, record);
+
+      // The next session start in the folder: it is still being set up, so a key is made and enrolled.
+      await sessionStart({ cwd: world.folder, session_id: 's1', hook_event_name: 'SessionStart' }, {
+        client: { health: async () => ({ ok: true }) }, spawn: () => { throw new Error('nothing is started'); }, dir: tempFolder('wh-managed-'),
+      });
+      assert.ok(fs.existsSync(signingKeyFile()), 'a new key');
+      // Now a click here counts, so status no longer says to start a new session.
+      assert.match((await routes['/setup/uninstall/status']({ folder: world.folder })).lines[0], /^Uninstall stopped: /);
+      const again = await plan(world, { run: f.run });
+      const click = removeIt(again.card.target.project, again.hash);
+      assert.deepEqual(freshUninstallClicks({ project: again.card.target.project, hash: again.hash, now: READY }).map((e) => e.id), [click.id], 'signed with the new key, and counted');
+      const { done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall');
+      for (const p of [signingKeyFile(), enrolledFile(), path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]) {
+        assert.equal(fs.existsSync(p), false, p);
+      }
+    });
+  } finally {
+    host.cleanup();
+  }
+});
 
 // A computer that joined the project another computer set up (step 3's join answer): registered,
 // with the app's keys, this computer's enrolment published in the profile, its own key trusted.
@@ -2172,6 +2241,41 @@ test('uninstall\'s card composes within the limit for a full setup with a long n
       }
     });
   }
+});
+
+// Task R N3: the two shortest of uninstall's card texts, reached by the longest names. GitHub's
+// longest slug is 141 characters (a 39-character owner, "__", a 100-character repository). With the
+// .wheelhouse/ folder and a setting changed since setup, a 100-character slug takes "What stays, and
+// why" alone and the whole list's pointer shared, and a 141-character slug takes the whole list's
+// pointer both ways. Each composes within the composer's limit and points to `uninstall status`.
+test('uninstall\'s two shortest card texts are reached by the longest names, and compose within the limit (Task R N3)', async () => {
+  const STAYS = /^Remove Wheelhouse from [^\n]*: stop its jobs, [^\n]* What stays, and why: cli\.js uninstall status\./;
+  const WHOLE = /^Remove Wheelhouse from [^\n]*: the whole list is in cli\.js uninstall status\./;
+  const reached = [];
+  for (const [owner, repo] of [['o', 'c'.repeat(97)], ['o'.repeat(39), 'c'.repeat(100)]]) {
+    const slug = `${owner}__${repo}`;
+    await withHome(async () => {
+      const world = makeWorld();
+      const { r } = fullSetup(world, { slug });
+      const exclude = path.join(world.folder, '.git', 'info', 'exclude');
+      r.file(7, exclude, `${readText(exclude)}${WHEELHOUSE_LINE}\n`, { line: WHEELHOUSE_LINE });
+      writeText(path.join(world.folder, '.wheelhouse', 'front-desk.json'), '{}\n');
+      r.key(6, world.settings, ['someLongSettingName'], 1);
+      writeText(world.settings, `${JSON.stringify({ ...readJson(world.settings), someLongSettingName: 'theirs' }, null, 2)}\n`);
+      for (const trusting of [false, true]) {
+        if (trusting) enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
+        const got = await plan(world);
+        const at = `${slug.length}, ${trusting ? 'shared' : 'alone'}`;
+        assert.equal(got.project, slug, at);
+        const { question, card } = composeCard(got.card);
+        assert.ok(question.question.length <= CARD.chars, `${at}: ${question.question.length}`);
+        assert.deepEqual(cardProblems(question.question), [], at);
+        assert.equal(card.line, uninstallLine(slug, got.hash), at);
+        reached.push([at, STAYS.test(got.card.what) ? 'stays' : WHOLE.test(got.card.what) ? 'whole' : got.card.what]);
+      }
+    });
+  }
+  assert.deepEqual(reached, [['100, alone', 'stays'], ['100, shared', 'whole'], ['141, alone', 'whole'], ['141, shared', 'whole']]);
 });
 
 // Review 1 Minor 3: where the .wheelhouse/ line came first (an earlier step 7 added it before the

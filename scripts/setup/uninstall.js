@@ -22,12 +22,13 @@
 // an earlier project's uninstall left them: steps 2, 6 and 9 (but for what they wrote inside the
 // project's folder, which is the project's); the profile's clone and profile.json;
 // the profile repository; the app's keys and the profile's own GitLab key; the own app recorded in
-// the profile; this computer's enrolment; and, recorded nowhere, the trusted-keys list and then the
+// the profile; this computer's enrolment; and, recorded nowhere, the trusted-keys list and the
 // signing key beside it, removed last of all (ruling R123), after every change that can stop
 // uninstall, so an uninstall cut short can still be clicked again. The list goes first (ruling
-// R128): one that could not be removed leaves the key it trusts, and a key left after the list has
-// gone is trusted again by the next session start, so either way the next click can be signed and
-// checked. Wheelhouse's own folders and files (the tools it fetched, the profile's clone and
+// R128): one that could not be removed leaves the key it trusts. Everything else of the last phase
+// (this computer's id, the emptied folders) goes after the list and before the key, and from the
+// list's removal on nothing stops uninstall but the run's own close: what can't be removed there is
+// left and named (ruling R142). Wheelhouse's own folders and files (the tools it fetched, the profile's clone and
 // profile.json, setup's clicks, answers and the like, the trust clicks and the record of the
 // profile's enrolments last fetched, the Windows installer's temporary folder, and the project's own
 // folder under projects/) are removed whole, never named as changed since setup. journal.json, and
@@ -53,8 +54,8 @@
 //
 // What each kind gives (R87): see the entries below. The order is binding (R89): Stop, Locked, the
 // project's files (a pull request the director merges), this computer, keys, kept, last; newest
-// first within a phase; then the trusted-keys list and the signing key; the helper stops last of
-// all, after its answer.
+// first within a phase; then the trusted-keys list, this computer's id, the emptied folders, the
+// signing key and the keys folder (R142); the helper stops last of all, after its answer.
 //
 //   Plan = {
 //     project: string | null,  the registered project the folder is, or null
@@ -178,7 +179,8 @@ export function realOr(p) {
 const exists = (p) => fs.existsSync(p);
 const profileFile = () => path.join(wheelhouseHome(), 'profile.json');
 const projectFolder = (slug) => path.join(projectsDir(), slug);
-// This computer's id (scripts/lib/paths.js, computerId), removed last on the last uninstall (R138).
+// This computer's id (scripts/lib/paths.js, computerId), removed in the last phase of the last
+// uninstall (R138), before the signing key (R142).
 export const computerFile = () => path.join(wheelhouseHome(), 'computer.json');
 const repoName = (repo) => (typeof repo === 'string' ? repo.split('/').at(-1) : null);
 // A host target `<host>:<owner/name>` or `<host>:<owner/name>:<file>`.
@@ -203,7 +205,7 @@ function computerWide(c, run) {
 }
 
 // A path for the card, with the home folder as ~.
-function shown(p, userHome) {
+export function shown(p, userHome) {
   return within(userHome, p) ? path.join('~', path.relative(userHome, p)) : p;
 }
 
@@ -250,9 +252,10 @@ function deleteCard({ what, why, deletes, keeps, because }) {
 // The card's first part, as texts from the fullest to the shortest: the groups with their counts,
 // then each item left because it changed since setup while there is room (WHAT_CHARS), then how
 // many more and where to read them (ruling R90), what else stays, and the retention line (R64).
-// The plan takes the first that fits (fitWhat): the shorter ones say less of what stays, never less
-// of what is removed, and each points to `cli.js uninstall status`, which lists it all; the hash
-// covers the whole list whichever is shown.
+// The plan takes the first that fits (fitWhat): the shorter ones say less of what stays, and the
+// shortest names no group of what is removed either, only that the whole list is in `cli.js
+// uninstall status`. Each shorter one points there, and the playbook runs it and shows its lines
+// before asking such a card; the hash covers the whole list whichever is shown.
 function cardWhats({ name, changes, keep, asks, pullRequest }) {
   const count = (test) => changes.filter(test).length;
   // The trusted-keys list and the signing key, removed last of all, are keys on the card.
@@ -678,15 +681,20 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   if (!last && usedApp && shared) kept(`the GitHub app's access to ${own.record.repo}`, OTHERS_USE);
 
   // The project's own folder under projects/, and on the last project Wheelhouse's own folders and
-  // files, recorded or not; the trusted-keys list, then the signing key beside it, go last of all
-  // (rulings R123, R128), below.
+  // files, recorded or not; the trusted-keys list and the signing key go last of all (rulings R123,
+  // R128), below.
   if (slug !== null) remove(projectFolder(slug), 'last');
-  // Then this computer's id, and the folders those and the project's records and the fetched tools
-  // were in, each only once nothing is left in it (ruling R138): nothing setup made stays behind.
-  const emptied = [keysDir(), projectsDir(), toolsDir()];
+  // Last of all: the trusted-keys list, this computer's id, the folders the project's records and
+  // the fetched tools were in (each only once nothing is left in it, ruling R138), then the signing
+  // key, and the keys folder it was in. Everything else goes before the key (ruling R142); from the
+  // list's removal on, a click made in this session can't count, so nothing there stops uninstall
+  // but the run's own close (uninstall-run.js).
+  const asRemove = (put) => (target) => ({ phase: 'last', put, target });
   const closing = last ? [
-    ...[enrolledFile(), signingKeyFile(), computerFile()].filter(exists).map((target) => ({ phase: 'last', put: 'remove', target })),
-    ...emptied.filter(exists).map((target) => ({ phase: 'last', put: 'remove-empty', target })),
+    ...[enrolledFile(), computerFile()].filter(exists).map(asRemove('remove')),
+    ...[projectsDir(), toolsDir()].filter(exists).map(asRemove('remove-empty')),
+    ...[signingKeyFile()].filter(exists).map(asRemove('remove')),
+    ...[keysDir()].filter(exists).map(asRemove('remove-empty')),
   ] : [];
   if (last) {
     for (const p of [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile()]) if (exists(p)) remove(p, 'last');
@@ -810,6 +818,9 @@ export const UNINSTALL_CHANGED = 'the list has changed since the card: ask for u
 export const UNINSTALL_OWN_LIST = 'the helper works out uninstall\'s list itself: a request names only the folder and the hash on the card';
 export const UNINSTALL_STOP = { ok: false, refused: 'STOP is on, so nothing is removed: lift STOP first, then ask for uninstall\'s plan again' };
 export const UNINSTALL_RUNNING = 'uninstall is already running for this folder: ask for its status';
+// Status's first line for an uninstall that stopped, or did not finish, once a click made in this
+// session can no longer count: past the trusted-keys list's removal (ruling R142).
+export const UNINSTALL_NEW_SESSION = 'Start a new session on this folder, then ask for uninstall\'s plan again: this computer\'s key for your clicks is gone, so a Remove it clicked in this session can\'t count.';
 // The setup step uninstall's level 4 cards are asked under (see above).
 export const ASK_STEP = HEALTH_STEP;
 // The apply's own process.
@@ -835,6 +846,21 @@ export function readProgress(folder) {
 // Writes a folder's uninstall progress record whole.
 export function writeProgress(folder, record) {
   writeWhole(progressFile(folder), `${JSON.stringify(record, null, 2)}\n`);
+}
+
+// Whether a Remove it clicked in this session can count: this computer's id, its signing key, and
+// that key on the trusted-keys list under that id are all here. Read as they are, so no id is made
+// (signing with none here would make a new one, not the enrolled one).
+function clickCountsHere() {
+  let id;
+  let publicKey;
+  try {
+    id = JSON.parse(fs.readFileSync(computerFile(), 'utf8'))?.id;
+    publicKey = crypto.createPublicKey(crypto.createPrivateKey(fs.readFileSync(signingKeyFile()))).export({ type: 'spki', format: 'der' }).toString('base64');
+  } catch {
+    return false;
+  }
+  return typeof id === 'string' && readEnrolled().some((e) => e?.computer === id && e?.publicKey === publicKey);
 }
 
 // Whether a record says its apply is still running: recorded so, and within its time.
@@ -1000,6 +1026,9 @@ export function uninstallRoutes({
     if (record !== null && (runningNow(record, now) || since)) {
       const lines = progressLines(record, now);
       if (record.state === 'stopped' || (record.state === 'running' && !runningNow(record, now))) {
+        // Stopped past the trusted-keys list's removal: no Remove it clicked in this session can
+        // count, so it says first to start a new session, never to ask the card again (ruling R142).
+        if (!clickCountsHere()) lines.unshift(UNINSTALL_NEW_SESSION);
         lines.push('What is left:', ...planLines(await planFor(folder), folder, userHome));
       }
       const { state, refused, pages = [] } = record;
