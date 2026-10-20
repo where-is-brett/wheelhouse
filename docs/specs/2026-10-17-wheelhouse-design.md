@@ -1233,14 +1233,14 @@ The added costs are:
    - the agent's own bridge run as a press signed nothing;
    - `session.receive` fires on the Mac.
 
-   Changes needed:
-   - Claude's notification was skipped as "this terminal is active", 48 seconds after the director's last press, so the courier likely needs to wake again for the notification while the card waits (a push after a real absence settles it);
-   - a wake is marked sent before the mod hands it on, and two were lost after the director pressed Esc;
-   - under STOP the guard refuses loading the notification tool and the front desk's read commands;
-   - the connector guard refuses the app's own `mcp__ccd_*` tools;
-   - another session's `Wheelhouse:` line arrives wrapped (origins `sdk` and `peer`), so the traffic rule reads the line inside the wrapper;
-   - the front desk reads a pressed card before explaining it, and checks `views waiting` after an answer in the chat instead of guessing it went unrecorded;
-   - the mod's first opening of the pane stays quiet before Desktop attaches a surface.
+   Changes made (21 October 2026):
+   - the courier gives each card it woke for, and each question from the build, one reminder about ten minutes on while it waits unasked, and a card wake whose notification isn't sent asks nothing (a push after a real absence is still to settle);
+   - a wake the mod couldn't hand on is undone by its stamp, so the next idle tick wakes again;
+   - under STOP the tool search and the front desk's read commands, with one trailing `2>/dev/null`, pass the guard;
+   - the app's six drawing tools pass the connector guard in a session the Desktop app started;
+   - the traffic rule reads the line inside the app's wrapper;
+   - Explain more, Show me and a pane choice find the pressed card by its id in `views waiting`, and after an answer in the chat the front desk says only what `views waiting` shows;
+   - the pane opens once a surface is attached.
 
    Not confirmed: whether Desktop draws a separate status line.
 
