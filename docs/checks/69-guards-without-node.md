@@ -1,0 +1,62 @@
+<!-- docs/checks/69-guards-without-node.md -->
+
+# Check 69: Lean's guards without Node.js, on the Mac
+
+**Answer:** Yes, with two results the documentation did not predict. On the Mac, a guard written as a `/bin/sh` script that asks a local answer with `curl` runs under Copilot with no Node.js on the PATH, lets a call through on an allow answer, and refuses it on a deny answer and when no answer comes. A Copilot web hook (`type: http`) on `preToolUse` was also called at `http://127.0.0.1`, and its deny was obeyed, though the documentation says `preToolUse` web hooks must use https. And with the server down, the web hook refused the call rather than letting it through, though the documentation says web hooks fail open. The Windows half (PowerShell 5.1) is the director's sitting and is not covered here.
+
+## Question
+
+Whether a `preToolUse` command hook in `/bin/sh`, with `curl` asking a stand-in local answer server, runs under Copilot on a machine with no Node.js, refuses on a deny answer, and refuses when it gets no answer; and whether a Copilot web hook can call `http://127.0.0.1` or needs https.
+
+## Tested on
+
+21 October 2026, on macOS, with Copilot CLI 1.0.101 (the pinned copy under `~/.wheelhouse-probes/`), signed in through a scratch Copilot home. Five real model runs by `probes/69-guards-without-node/run.js`, one per case, all exit 0. One model was in use throughout. The raw results are kept with the build's working papers, not in the repository. Every conclusion below rests on one run of its case.
+
+## Method
+
+`node probes/69-guards-without-node/run.js`, run outside the sandbox.
+
+- **No Node.js.** The session is started with a PATH that is one scratch folder of symlinks to only `sh`, `bash`, `curl`, `git`, `cat`, `date`, `sed`, `tr` and `env`, and to Copilot. The npm `copilot` launcher is a `#!/usr/bin/env node` script and cannot start without Node.js, so the symlink points at the native program inside the platform package (`node_modules/@github/copilot-darwin-arm64/copilot`), which is started directly. Before any model run the probe checked that `command -v node` and `command -v npm` found nothing through that PATH, and `git --version` and `curl` worked. Each guard run also logged `command -v node` from inside the hook.
+- **The guard.** `probes/69-guards-without-node/guard.sh` is registered in the scratch home's hooks folder as a camelCase `preToolUse` command hook (`bash` field, `/bin/sh`). It posts the hook's input with `curl -f` (3 second limit) to an answer server that the Node probe runs on `127.0.0.1`. An allow answer: no output, exit 0. A deny answer, no answer, an error status, or an answer it does not understand: `{"permissionDecision":"deny","permissionDecisionReason":...}` and exit 0. It logs only `COPILOT_*` environment values.
+- **The five runs**, each asking the session to view `README.md` (its secret word shows whether the view went through) and to stop if refused, with `--allow-all-tools`, `--trust-folder` and `--no-ask-user`: `guard-allow`, `guard-deny`, `guard-down` (nothing listening), `web-up` (`type: http` hooks for `preToolUse` and `postToolUse` at `http://127.0.0.1:<port>`, with `COPILOT_HOOK_ALLOW_LOCALHOST=1`, the `preToolUse` answer being deny) and `web-down` (the same web hooks, nothing listening). Whether a call went through is read from the session's own `tool.execution_complete` events (`success`, error code `denied`) and the secret word.
+
+**Undo.** The probe made only temporary folders (a Copilot home, a scratch project, a tool folder) and removed them when it ended. The results file in `<temporary folder>/wheelhouse-probe-results/` can be deleted. Nothing needs undoing by hand.
+
+## Evidence
+
+| Run | Hook | Answer | Did the view run? | What Copilot said | Server saw |
+| --- | --- | --- | --- | --- | --- |
+| `guard-allow` | `guard.sh` | allow | Yes, secret word returned | `view` succeeded | one `POST /answer` carrying the hook input (`sessionId`, `timestamp`, `cwd`, `toolName`, `toolArgs`) |
+| `guard-deny` | `guard.sh` | deny | No | `Denied by preToolUse hook: The answer server said deny.` (code `denied`) | one `POST /answer` |
+| `guard-down` | `guard.sh` | no server | No | `Denied by preToolUse hook: No answer from the answer server (curl exit 7), so the guard refuses.` | nothing |
+| `web-up` | `type: http` | deny | No | `Denied by preToolUse hook: <the server's reason>` | one `POST /web-pre` (JSON, with the hook input) |
+| `web-down` | `type: http` | no server | No | `Denied by preToolUse hook from "<hooks file>" (hook errored)` | nothing |
+
+- **Node.js was absent from the hook.** In all three guard runs the hook logged an empty result for `command -v node`, and its PATH was only the tool folder. Copilot itself (the native program) ran with that PATH and needed no Node.js.
+- **The guard ran and failed closed.** `curl` reached the server in the allow and deny runs (exit 0) and failed in the down run (exit 7, connection refused); the guard turned the failure into a deny, and Copilot refused the call. Copilot's debug log shows it read the hook's stdout.
+- **The web hook was called over plain http.** The documentation says a `preToolUse` web hook must use https and that `http://127.*` is allowed only with `COPILOT_HOOK_ALLOW_LOCALHOST=1`, and not for `preToolUse` even then. In this run, with that variable set, Copilot called the `http://127.0.0.1` address on `preToolUse`, sent the hook input as JSON, and obeyed the deny. No warning or error was logged. The probe set the variable in this run and did not run the case without it, so whether the variable is needed is not known.
+- **The web hook failed closed, not open.** With the server down, Copilot's log has `Error in preToolUse hook ... (fail-closed): Error: HTTP hook fetch failed: POST http://127.0.0.1:<port>/web-pre (code=ECONNREFUSED)`, and the call was refused. The documentation and the research notes say web hooks fail open on network errors. The cause here was a refused connection. A web hook that times out was not tried (the command-hook time-out in check 58 let the call through).
+- **The `postToolUse` web hook was never reached.** Both web runs had the view refused, so the `postToolUse` hook did not fire. Nothing was learned about it.
+- **Time.** Each hook added well under a second; the runs took about 10 seconds each, mostly the model.
+
+### What was not tested
+
+- Windows, PowerShell 5.1, and `powershell` hook entries (the director's sitting).
+- The web hook without `COPILOT_HOOK_ALLOW_LOCALHOST=1`, with a non-local `http://` address, with https, and with a time-out.
+- The `postToolUse` web hook.
+- An answer server that is slow (curl's 3 second limit) rather than down or answering.
+- A real answer server at Lean: the stand-in is on this machine and plain http. A guard that asks a remote address needs `curl` to trust the certificate, which was not tried.
+- How Lean installs Copilot, and so whether it gets the native program or only the npm launcher.
+- Other models, and other Copilot versions: the web-hook results contradict the documentation and may change.
+
+## What it means for the design
+
+- **Can the guards run without Node.js? Yes on the Mac, as shell scripts.** A `/bin/sh` guard using `curl` works as a `preToolUse` command hook, with Copilot started from its native program. This is the route for Lean's guards on the Mac. Wheelhouse's guards that are Node.js scripts cannot run on a machine without Node.js, so the Lean route needs a shell version of each guard that Lean relies on, or a thin shell hook that asks a local answer, as in this probe.
+- **Fail closed must be written into the guard.** The shell guard refused when there was no answer only because `guard.sh` is written to deny on any failure. Any Lean guard in shell must do the same: deny on a curl failure, an error status and an unreadable answer.
+- **Do not build on Copilot's web hooks yet.** They work against `127.0.0.1` here and refuse when the server is down, which would be the safe behaviour, but both results contradict the documentation, rest on one run, and were found with an environment variable set that the documentation ties to a different rule. A guard that depends on them could change behaviour in a later Copilot version. If a web hook is used at all, it should be an addition to a shell guard, never the only guard, and a version change should rerun this check.
+- **The plan's parts.** Part 4 Task 3 (Lean's route for guards) can use the shell guard on the Mac. Where a plan step assumed web hooks needed https or failed open, it should say instead that this was seen to differ on 1.0.101 on the Mac. If the Windows sitting finds no PowerShell 5.1 guard route, Lean on Windows has no Wheelhouse guards, as the design already says; the brief's "if the answer differs" case (no route at all) does not apply on the Mac.
+- **Tool names still matter.** The guard here allowed or refused everything; a real guard must decide on what is being done, not on a tool name alone (check 58).
+
+## Needs the director
+
+The Windows half: a guard in PowerShell 5.1 (no Node.js), a `powershell` hook entry, and the same two cases (answer deny, no answer), at the Windows sitting.
