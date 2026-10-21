@@ -62,7 +62,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 63 | Superpowers and Matt Pocock's skills on Copilot | Yes, with two gaps | [63-kits.md](63-kits.md) |
 | 64 | Usage figures | Deferred | [64-usage.md](64-usage.md) |
 | 65 | The phone | Not run yet | None yet |
-| 66 | A clean reviewer session | Not run yet | None yet |
+| 66 | A clean reviewer session | Yes, on a clean copy or an untrusted clean home; no in a trusted folder | [66-clean-review.md](66-clean-review.md) |
 | 67 | The pane's place | Not run yet | None yet |
 | 68 | An approval on the host | Not run yet | None yet |
 | 69 | Lean's guards without Node.js | Yes, on the Mac, with two surprises | [69-guards-without-node.md](69-guards-without-node.md) |
