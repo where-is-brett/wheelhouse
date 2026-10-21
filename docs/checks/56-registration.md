@@ -2,7 +2,7 @@
 
 # Check 56: where Copilot loads hooks from, and what loads twice
 
-**Answer:** Partly. Register Wheelhouse's hooks once, in the person's hook folder (`$COPILOT_HOME/hooks/*.json`): it loaded once, in the main folder, a git worktree and a folder with no `.git`, trusted or not. The project files (`.github/hooks/*.json`, `.claude/settings.json`) load only in a folder Copilot trusts. Nothing loaded twice. Whether a project file can switch the person's hooks off is not settled: the test file was rejected as malformed, so it proved nothing.
+**Answer:** Yes. Register Wheelhouse's hooks once, in the person's hook folder (`$COPILOT_HOME/hooks/*.json`): it ran once per event in the main folder, a git worktree and a folder with no `.git`, trusted or not, and nothing loaded twice. A project hook file holding `disableAllHooks: true` switched off nothing, including the person's hooks. Project files (`.github/hooks/*.json`, `.claude/settings.json`) load only in a folder Copilot trusts.
 
 ## Question
 
@@ -10,7 +10,7 @@ Where should Wheelhouse register its Copilot hooks so that they run once, in eve
 
 ## Tested on
 
-21 October 2026, on macOS, with Copilot CLI 1.0.101 (the pinned copy under `~/.wheelhouse-probes/`), signed in through a scratch Copilot home. Twelve real model runs by `probes/56-registration/run.js`, all exit 0. The raw results (every run's arguments, output, hook log lines and counts) are kept with the build's working papers, not in the repository.
+21 October 2026, on macOS, with Copilot CLI 1.0.101 (the pinned copy under `~/.wheelhouse-probes/`), signed in through a scratch Copilot home. Twenty-four real model runs by `probes/56-registration/run.js` (the same twelve cases twice), all exit 0. The raw results (every run's arguments, output, hook log lines and counts) are kept with the build's working papers, not in the repository.
 
 ## Method
 
@@ -46,11 +46,13 @@ Counts per run were the same in all three folders. Each cell is the number of ti
 - **Project files need trust.** In an untrusted folder `-p` ran neither `.github/hooks/*.json` nor `.claude/settings.json`, with no error. With `--trust-folder`, Copilot's log says "Loading repo hooks in prompt mode (folder is trusted or opt-in set)" and both ran. The worktree and the plain copy carried their own copies of those files (committed files travel with a worktree, and the copy was a plain copy), so this does not show Copilot looking up to a parent folder.
 - **Nothing loaded twice.** Every tag fired at most once per event. The tags are separate files, so the same hook registered in two places would run once for each place.
 - **Input shapes differ by file.** The hooks from `.claude/settings.json` received Claude Code's shape (`hook_event_name`, `session_id`, `tool_name: "Read"`, `tool_input`, `initial_prompt`). Every other place received Copilot's camelCase shape (`sessionId`, `toolName: "view"`, `toolArgs`, `initialPrompt`, `source`). The same read is named `Read` in one and `view` in the other.
-- **The off file.** `{ "version": 1, "disableAllHooks": true }` in `.github/hooks/off.json` changed no count in any run, trusted or not. But Copilot's log shows why: "Invalid hook configuration in .github/hooks/off.json: hooks: hooks must be an object". The file was rejected whole, so this run says nothing about what a valid off file does. The probe now writes the file with an empty `hooks` object and needs a re-run (`node probes/56-registration/run.js --trust yes`, six model runs).
+- **The off file.** The first run's file, `{ "version": 1, "disableAllHooks": true }`, was rejected whole by Copilot ("Invalid hook configuration in .github/hooks/off.json: hooks: hooks must be an object"), so that run proved nothing. The probe then wrote `{ "version": 1, "disableAllHooks": true, "hooks": {} }` and ran all twelve cases again. Copilot's debug log carries no "Invalid hook configuration" line in any of the twelve, so the file was accepted (the log has no line that says so outright). With it in `.github/hooks/off.json`, every count was the same as without it: the person's hooks, the plugin's hooks and, in a trusted folder, the project's own hooks all still ran, in all three folders.
+- **Two `preToolUse` calls in one run is two tool calls, not double loading.** In `plain-untrusted-off` and `plain-trusted-off` every tag that fired showed `preToolUse` twice, and `sessionStart` once. The log shows one session, and two different tool calls in it: a `glob` for `README.md`, then a `view` of the file (different arguments, about two seconds apart). Each tag fired once for each call. The model chose to search first in those two runs.
+- **Not covered:** `disableAllHooks` set in a settings file rather than a hook file (see below).
 
 ### What was not tested
 
-- A valid project off file. The bare `{ "disableAllHooks": true }` form is not tried either.
+- The bare `{ "disableAllHooks": true }` form (it has no `hooks` object, which Copilot rejects).
 - `disableAllHooks` in `.github/copilot/settings.json` or `settings.local.json`, or in the person's own `settings.json`.
 - The plugin's `hooks/hooks.json` with Claude Code's PascalCase format, and a plugin that has only `.claude-plugin/plugin.json` (no root manifest). Here `plugin-legacy` held Copilot-format hooks and sat beside a root manifest, so it is unknown whether it would load alone or in Claude's format.
 - Installing the plugin from a marketplace, and plugin hooks with the plugin enabled or disabled.
@@ -62,8 +64,8 @@ Counts per run were the same in all three folders. Each cell is the number of ti
 - **Part 5 Task 2 (the registration).** Write the registration to the person's hook file, `$COPILOT_HOME/hooks/wheelhouse.json`, as the plan says: it was the one place that ran once, in every folder, without trust. Do not also register in `.github/hooks/` or `.claude/settings.json`: those would run a second time in a trusted folder, and not at all in an untrusted one. The hook's entry script must accept both input shapes (`toolName`/`toolArgs` and `tool_name`/`tool_input`, and the tool names `view` and `Read`), because a project's own `.claude/settings.json` hooks reach Copilot in Claude Code's shape.
 - **Part 8 Task 1 (the plugin).** The root `plugin.json` is read first and its `com.github.copilot/` hooks do run, so the plan's rule stands: the root manifest carries no hooks and `com.github.copilot/` holds none. The `hooks/hooks.json` beside `.claude-plugin/` did not run in this layout, so `.claude-plugin/` needs no empty hooks list; that was seen only with Copilot-format hooks in it (see below). Because direct installs are deprecated, setup's `copilot plugin install` of a local path needs a marketplace route before Copilot drops it.
 - **Background sessions in a worktree.** The brief's "if the answer differs" case does not apply for the person's folder: it reached the worktree and the plain folder, so no registration is written into each feature worktree's `.github/hooks/`. A project's own hooks do not run in a folder Copilot has not trusted, so the project's hooks (not Wheelhouse's) are what a background session may silently lack; whether Wheelhouse's sessions pass `--trust-folder` is the watcher's choice and is not needed for the guards.
-- **A project file switching hooks off.** Unsettled. Until the re-run says otherwise, treat it as possible: the brief's other case applies, the watcher's control-file check (Part 7 Task 4) is the only hold for background sessions, and the front desk says so for the chat. Record it as a plan's ruling only after the re-run.
+- **A project file switching hooks off.** It can't, in the form tested: a project `.github/hooks` file with `disableAllHooks: true` left the person's hooks running. So the person's hook file needs no second hold against that file, and the brief's "if `disableAllHooks` switches off the person's hooks" case does not apply. The watcher's control-file check (Part 7 Task 4) is still wanted for the other reasons it exists, but is not the only hold for this. The limit: `disableAllHooks` in `.github/copilot/settings.json` or `settings.local.json` is a different route and was not tried; until it is, the guardrail list should keep a project's `.github/copilot/` folder shut to agents as it does `.github/hooks/`.
 
 ## Needs the director
 
-Nothing now. The Windows part is the director's sitting (plan session S2). Before the note is final, the agent re-runs the six trusted runs with a valid off file (`node probes/56-registration/run.js --trust yes`, six model requests), which needs no one at the keyboard.
+Nothing now. The Windows part is the director's sitting (plan session S2).
