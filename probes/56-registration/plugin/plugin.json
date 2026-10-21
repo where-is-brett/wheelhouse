@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "wheelhouse-probe-56-root",
+  "version": "0.0.1",
+  "description": "Check 56: the plugin manifest at the plugin's root. Its hooks sit in com.github.copilot/."
+}
