@@ -3,8 +3,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import { Readable } from 'node:stream';
-import { hookMain, answer } from '../../../scripts/hooks/kit.js';
+import { hookMain, answer, TRANSLATORS } from '../../../scripts/hooks/kit.js';
 import { READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS } from '../../../scripts/hooks/stop-guard.js';
+import { AGENTS, adapterFor } from '../../../scripts/agents/index.js';
 import claudeCode from '../../../adapters/claude-code/index.js';
 import tools from '../../../adapters/claude-code/tools.js';
 import { answer as adapterAnswer } from '../../../adapters/claude-code/answers.js';
@@ -61,4 +62,28 @@ test('READ_TOOLS, HALT_TOOLS and NOTIFY_TOOLS keep their values', () => {
   assert.equal(claudeCode.tools, tools);
   assert.equal(tools.ask, 'AskUserQuestion');
   assert.deepEqual([...tools.shell], ['Bash', 'PowerShell']);
+});
+
+// The real route a Copilot-shaped input takes today: no hook_event_name, so the kit has no translation for it.
+const COPILOT_SHAPED = { toolName: 'bash', sessionId: 's' };
+
+test('an input shaped like another agent\'s, which the kit has no translation for, makes a guard refuse', async () => {
+  let called = false;
+  const h = harness(COPILOT_SHAPED);
+  await hookMain(() => { called = true; }, { failClosed: true, event: 'PreToolUse' }, h.io);
+  assert.equal(called, false);
+  assert.deepEqual(h.out, [`${JSON.stringify(answer.deny('Wheelhouse\'s check could not run'))}\n`]);
+});
+
+test('an input shaped like another agent\'s, which the kit has no translation for, makes an informing hook write nothing', async () => {
+  let called = false;
+  const h = harness(COPILOT_SHAPED);
+  await hookMain(() => { called = true; }, { failClosed: false, event: 'SessionStart' }, h.io);
+  assert.equal(called, false);
+  assert.deepEqual(h.out, []);
+});
+
+test('every agent has a kit translation, and Claude Code\'s is the adapter\'s own', () => {
+  for (const name of AGENTS) assert.ok(Object.hasOwn(TRANSLATORS, name), `the kit has no translation for ${name}`);
+  assert.equal(TRANSLATORS['claude-code'].translate, adapterFor('claude-code').translate);
 });

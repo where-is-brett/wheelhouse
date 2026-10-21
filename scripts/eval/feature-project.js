@@ -30,8 +30,9 @@ export const FEATURE = '.wheelhouse/feature';
 
 // What a run's commands may read of the repository (ruling F102), which the session's sandbox
 // otherwise denies: the scripts its commands run and what they load (every folder of scripts/
-// but the evaluation's own, scripts/eval, and its files; the adapters' folder, which the hook kit reads), the package file that makes them
-// modules, the templates (the brief's, the glossary's starter) and the lineage files they read.
+// but the evaluation's own, scripts/eval, and its files; and the adapters' folder, which the hook
+// kit reads), the package file that makes them modules, the templates (the brief's, the glossary's
+// starter) and the lineage files they read.
 // Never the tests, the judges among them, the evaluation docs with their expected results, or the
 // ledger.
 export function repositoryReadable(root = REPO_ROOT) {

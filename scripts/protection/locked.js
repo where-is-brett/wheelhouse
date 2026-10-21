@@ -19,6 +19,9 @@ import { helperAddress, projectsDir, wheelhouseHome } from '../lib/paths.js';
 import { readConfig } from '../gate/guardrails.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// The plugin's folders Locked puts in the managed copy (under <dir>/wheelhouse/), beside Node.js (bin).
+// A hook script in the copy loads only what these folders hold, so every folder a hook imports from is here.
+export const LOCKED_FOLDERS = Object.freeze(['scripts', 'lineage', 'adapters']);
 const unique = (list) => [...new Set(list)];
 
 export const MAC_ONLY = 'Locked is offered on macOS only for now';
@@ -115,32 +118,27 @@ function failureLine({ code, stderr }) {
 
 // The command the administrator prompt runs, as one chain. The new scripts, the
 // lineage folder (the manifest the session start checks the installed skills against,
-// and the register) and Node.js go in beside the live ones and are checked there; only then are they
+// and the register), the adapters' folder (the hook kit and guards import from it) and Node.js go in beside the live ones and are checked there; only then are they
 // swapped in (mv), so a failed copy never leaves them missing. A failure removes
 // what was copied and exits. The settings file goes in last, and everything is
 // root's and not writable by anyone else.
 function adminShell({ dir, stage, nodeSource }) {
   const own = path.join(dir, 'wheelhouse');
-  const [scriptsNew, lineageNew, binNew, scriptsOld, lineageOld, binOld] = ['scripts.new', 'lineage.new', 'bin.new', 'scripts.old', 'lineage.old', 'bin.old'].map((n) => q(path.join(own, n)));
-  const [scripts, lineage, bin] = ['scripts', 'lineage', 'bin'].map((n) => q(path.join(own, n)));
+  const names = [...LOCKED_FOLDERS, 'bin'];
+  const [fresh, aside, live] = ['.new', '.old', ''].map((suffix) => names.map((n) => q(path.join(own, `${n}${suffix}`))));
+  const [binNew, binOld, bin] = [fresh.at(-1), aside.at(-1), live.at(-1)];
   const settingsNew = q(`${filePath(dir)}.new`);
   const chain = [
     `mkdir -p ${q(own)}`,
-    `rm -rf ${scriptsNew} ${lineageNew} ${binNew} ${scriptsOld} ${lineageOld} ${binOld} ${settingsNew}`,
-    `cp -R ${q(path.join(stage, 'wheelhouse', 'scripts'))} ${scriptsNew}`,
-    `cp -R ${q(path.join(stage, 'wheelhouse', 'lineage'))} ${lineageNew}`,
+    `rm -rf ${[...fresh, ...aside].join(' ')} ${settingsNew}`,
+    ...LOCKED_FOLDERS.map((n, i) => `cp -R ${q(path.join(stage, 'wheelhouse', n))} ${fresh[i]}`),
     `mkdir ${binNew}`,
     `cp ${q(nodeSource)} ${q(path.join(own, 'bin.new', 'node'))}`,
     `chmod 755 ${q(path.join(own, 'bin.new', 'node'))}`,
     `${q(path.join(own, 'bin.new', 'node'))} --version`,
     `cp ${q(path.join(stage, 'wheelhouse', 'locked-projects.json'))} ${q(path.join(stage, 'wheelhouse', 'installed.json'))} ${q(own)}/`,
-    `{ [ ! -e ${scripts} ] || mv ${scripts} ${scriptsOld}; }`,
-    `mv ${scriptsNew} ${scripts}`,
-    `{ [ ! -e ${lineage} ] || mv ${lineage} ${lineageOld}; }`,
-    `mv ${lineageNew} ${lineage}`,
-    `{ [ ! -e ${bin} ] || mv ${bin} ${binOld}; }`,
-    `mv ${binNew} ${bin}`,
-    `rm -rf ${scriptsOld} ${lineageOld} ${binOld}`,
+    ...names.flatMap((n, i) => [`{ [ ! -e ${live[i]} ] || mv ${live[i]} ${aside[i]}; }`, `mv ${fresh[i]} ${live[i]}`]),
+    `rm -rf ${aside.join(' ')}`,
     `cp ${q(path.join(stage, 'managed-settings.json'))} ${settingsNew}`,
     `mv ${settingsNew} ${q(filePath(dir))}`,
     `chown -R root:wheel ${q(own)} ${q(filePath(dir))}`,
@@ -148,8 +146,8 @@ function adminShell({ dir, stage, nodeSource }) {
   ].join(' && ');
   // Anything moved aside is put back first: the live folders must never be missing, or
   // the old settings file would name scripts that are not there.
-  const restore = [[scriptsOld, scripts], [lineageOld, lineage], [binOld, bin]].map(([old, live]) => `[ -d ${old} ] && [ ! -d ${live} ] && mv ${old} ${live};`).join(' ');
-  return `${chain} || { ${restore} rm -rf ${scriptsNew} ${lineageNew} ${binNew} ${settingsNew}; exit 1; }`;
+  const restore = names.map((n, i) => `[ -d ${aside[i]} ] && [ ! -d ${live[i]} ] && mv ${aside[i]} ${live[i]};`).join(' ');
+  return `${chain} || { ${restore} rm -rf ${fresh.join(' ')} ${settingsNew}; exit 1; }`;
 }
 
 // Stages everything for `list`, asks once, and removes the staging folder.
@@ -161,8 +159,7 @@ async function put({ list, dir, run, now, nodeSource, address, line }) {
   try {
     const own = path.join(stage, 'wheelhouse');
     fs.mkdirSync(own, { recursive: true });
-    fs.cpSync(path.join(PLUGIN_ROOT, 'scripts'), path.join(own, 'scripts'), { recursive: true });
-    fs.cpSync(path.join(PLUGIN_ROOT, 'lineage'), path.join(own, 'lineage'), { recursive: true });
+    for (const folder of LOCKED_FOLDERS) fs.cpSync(path.join(PLUGIN_ROOT, folder), path.join(own, folder), { recursive: true });
     fs.writeFileSync(path.join(own, 'locked-projects.json'), `${JSON.stringify(list, null, 2)}\n`);
     const { version } = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
     fs.writeFileSync(path.join(own, 'installed.json'), `${JSON.stringify({ version, at: now().toISOString(), pluginRoot: fs.realpathSync(PLUGIN_ROOT) }, null, 2)}\n`);

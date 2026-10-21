@@ -317,7 +317,7 @@ export function isInside(folder, file) {
 // The translation of each agent's hook input and answers. The adapters' registry (scripts/agents/index.js)
 // reaches the setup and evaluation code, which a hook must not load, so the kit holds each agent's
 // translation on its own. An agent with no entry here has no translation, and its input is refused.
-const TRANSLATORS = Object.freeze({ 'claude-code': Object.freeze({ translate: translateClaudeCode }) });
+export const TRANSLATORS = Object.freeze({ 'claude-code': Object.freeze({ translate: translateClaudeCode }) });
 function translators(agent) {
   if (!Object.hasOwn(TRANSLATORS, agent)) throw new Error(`The hook kit has no translation for the agent ${JSON.stringify(agent)}`);
   return TRANSLATORS[agent];
