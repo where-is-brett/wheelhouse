@@ -1,0 +1,317 @@
+{
+  "step": 6,
+  "title": "Merge by Maintainers only",
+  "trials": [
+    {
+      "what": "detectHost(https://localhost:8929/wh71-probe/trial.git, { gitlabHosts: [] })",
+      "result": "throws: The repository is at localhost, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings"
+    },
+    {
+      "what": "detectHost(https://localhost:8929/wh71-probe/trial.git, { gitlabHosts: [\"localhost\"] })",
+      "result": "gitlab"
+    },
+    {
+      "what": "detectHost(https://localhost:8929/wh71-probe/trial.git, { gitlabHosts: [\"localhost:8929\"] })",
+      "result": "throws: The repository is at localhost, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings"
+    },
+    {
+      "what": "the bot's merge through the adapter",
+      "result": "{\"merged\":false,\"reason\":\"this sign-in is not allowed to merge it\"}"
+    },
+    {
+      "what": "the bot's merge through the API",
+      "result": "HTTP 401, {\"message\":\"401 Unauthorized\"}"
+    },
+    {
+      "what": "a Developer's (wh-second) merge through the API",
+      "result": "HTTP 401, {\"message\":\"401 Unauthorized\"}"
+    },
+    {
+      "what": "the maintainer's merge through the adapter",
+      "result": "{\"merged\":true}"
+    },
+    {
+      "what": "the default branch's pipeline after the merge (push, success) echoes",
+      "result": "PROBE_SECRET is set"
+    },
+    {
+      "what": "that log holds the variable's value",
+      "result": "no"
+    },
+    {
+      "what": "the maintainer looks at the second merge request (prState, ciState)",
+      "result": "{\"headIsTheOneLookedAt\":true,\"mergeable\":\"yes\",\"ci\":\"success\",\"pipeline\":\"success\"}"
+    },
+    {
+      "what": "the bot pushes another commit to the same branch",
+      "result": "the head moved: true"
+    },
+    {
+      "what": "the new head's pipeline",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"mergeable\",\"headPipeline\":{\"status\":\"success\",\"source\":\"merge_request_event\"}}"
+    },
+    {
+      "what": "glab's own refusal of the merge with the commit looked at",
+      "result": "exit 1: ERROR All attempts fail: #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not match HEAD of source branch: <SHA>}."
+    },
+    {
+      "what": "the maintainer's merge through the adapter, with the commit looked at (the new head's pipeline has passed)",
+      "result": "{\"merged\":false,\"reason\":\"GitLab did not merge the merge request\"}"
+    },
+    {
+      "what": "the maintainer's merge through the API with no commit named",
+      "result": "HTTP 200, state merged, merged commit is the new head: true"
+    },
+    {
+      "what": "the second merge request afterwards",
+      "result": "{\"state\":\"merged\",\"headIsTheNewCommit\":true}"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "bot: PUT /projects/<ID>/merge_requests/<ID>/merge",
+      "request": {
+        "as": "bot",
+        "method": "PUT",
+        "path": "/projects/<ID>/merge_requests/<ID>/merge",
+        "body": {
+          "sha": "<SHA>"
+        }
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "message": "401 Unauthorized"
+        }
+      }
+    },
+    {
+      "label": "second: PUT /projects/<ID>/merge_requests/<ID>/merge",
+      "request": {
+        "as": "second",
+        "method": "PUT",
+        "path": "/projects/<ID>/merge_requests/<ID>/merge",
+        "body": {
+          "sha": "<SHA>"
+        }
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "message": "401 Unauthorized"
+        }
+      }
+    },
+    {
+      "label": "maintainer: PUT /projects/<ID>/merge_requests/<ID>/merge",
+      "request": {
+        "as": "maintainer",
+        "method": "PUT",
+        "path": "/projects/<ID>/merge_requests/<ID>/merge",
+        "body": {}
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "iid": "<ID>",
+          "project_id": "<ID>",
+          "title": "The second change",
+          "description": "Changed after it was looked at.",
+          "state": "merged",
+          "created_at": "<TIMESTAMP>",
+          "updated_at": "<TIMESTAMP>",
+          "merged_at": "<TIMESTAMP>",
+          "closed_by": null,
+          "closed_at": null,
+          "target_branch": "main",
+          "source_branch": "work-2",
+          "user_notes_count": 0,
+          "upvotes": 0,
+          "downvotes": 0,
+          "assignee": null,
+          "source_project_id": "<ID>",
+          "target_project_id": "<ID>",
+          "draft": false,
+          "imported": false,
+          "imported_from": "none",
+          "work_in_progress": false,
+          "milestone": null,
+          "merge_when_pipeline_succeeds": false,
+          "merge_status": "can_be_merged",
+          "detailed_merge_status": "not_open",
+          "merge_after": null,
+          "sha": "<SHA>",
+          "merge_commit_sha": "<SHA>",
+          "squash_commit_sha": null,
+          "discussion_locked": null,
+          "should_remove_source_branch": null,
+          "force_remove_source_branch": true,
+          "prepared_at": "<TIMESTAMP>",
+          "reference": "!7",
+          "web_url": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>",
+          "squash": false,
+          "squash_on_merge": false,
+          "has_conflicts": false,
+          "blocking_discussions_resolved": true,
+          "approvals_before_merge": null,
+          "subscribed": false,
+          "changes_count": "1",
+          "latest_build_started_at": "<TIMESTAMP>",
+          "latest_build_finished_at": "<TIMESTAMP>",
+          "first_deployed_to_production_at": null,
+          "merge_error": null,
+          "otherFields": [
+            "merged_by",
+            "merge_user",
+            "author",
+            "assignees",
+            "reviewers",
+            "labels",
+            "references",
+            "time_stats",
+            "task_completion_status",
+            "pipeline",
+            "head_pipeline",
+            "diff_refs",
+            "user"
+          ]
+        }
+      }
+    }
+  ],
+  "commands": [
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr merge 6 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  You do not have permission to merge this merge request."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr merge 6 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 0,
+      "output": "✓ Merged!\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr view 6 -R wh71-probe/trial --output json",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/work-2",
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B work-2 origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m The first version",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/work-2",
+      "exitCode": 0,
+      "output": "remote: \nremote: To create a merge request for work-2, visit:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/new?merge_request%5Bsource_branch%5D=work-2        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr create -R wh71-probe/trial --source-branch=work-2 --target-branch=main --title=The second change --description-file - --yes",
+      "exitCode": 0,
+      "output": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>\n\n\nCreating merge request for work-2 into main in wh71-probe/trial"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr view 7 -R wh71-probe/trial --output json",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial/pipelines?sha=<TOKEN>&per_page=1&order_by=id&sort=desc",
+      "exitCode": 0,
+      "output": "[{\"id\":<ID>,\"iid\":<ID>,\"project_id\":<ID>,\"sha\":\"<TOKEN>\",\"ref\":\"refs/merge-requests/7/head\",\"status\":\"success\",\"source\":\"merge_request_event\",\"created_at\":\"<TIMESTAMP>\",\"updated_at\":\"<TIMESTAMP>\",\"web_url\":\"https://localhost:8929/wh71-probe/trial/-/pipelines/<ID>\",\"name\":null}]"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/work-2",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B work-2 origin/work-2",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A different version after the look",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/work-2",
+      "exitCode": 0,
+      "output": "remote: \nremote: View merge request for work-2:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "glab mr merge with the commit looked at",
+      "command": "glab mr merge <n> -R wh71-probe/trial --sha <the earlier head> --auto-merge=false --yes",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  All attempts fail:                                                                                                  \n  #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not\n  match HEAD of source branch: <SHA>}."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr merge 7 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  All attempts fail:                                                                                                  \n  #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not\n  match HEAD of source branch: <SHA>}."
+    }
+  ]
+}

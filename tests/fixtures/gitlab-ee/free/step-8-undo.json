@@ -1,0 +1,157 @@
+{
+  "step": 8,
+  "title": "Undo",
+  "trials": [
+    {
+      "what": "revoke the project key",
+      "result": "HTTP 204"
+    },
+    {
+      "what": "the revoked key used again",
+      "result": "HTTP 401"
+    },
+    {
+      "what": "delete the OAuth application",
+      "result": "HTTP 204"
+    },
+    {
+      "what": "delete the project (a first call schedules it; a second, with its full path, removes it)",
+      "result": "HTTP 202, then HTTP 400"
+    },
+    {
+      "what": "delete the group (and with it anything left)",
+      "result": "HTTP 202"
+    },
+    {
+      "what": "groups left whose path starts with wh71-probe",
+      "result": "0"
+    },
+    {
+      "what": "the project afterwards",
+      "result": "HTTP 404"
+    },
+    {
+      "what": "OAuth applications named like the probe's",
+      "result": "0"
+    },
+    {
+      "what": "wh-maintainer and its token afterwards",
+      "result": "HTTP 200"
+    },
+    {
+      "what": "wh-second and its token afterwards",
+      "result": "HTTP 200"
+    },
+    {
+      "what": "the scratch folder (glab sign-ins, clones, the project key file, the variable's value)",
+      "result": "removed"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "maintainer: DELETE /projects/<ID>/access_tokens/14",
+      "request": {
+        "as": "maintainer",
+        "method": "DELETE",
+        "path": "/projects/<ID>/access_tokens/14"
+      },
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "label": "root: DELETE /applications/11",
+      "request": {
+        "as": "root",
+        "method": "DELETE",
+        "path": "/applications/11"
+      },
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "label": "root: DELETE /projects/<ID>",
+      "request": {
+        "as": "root",
+        "method": "DELETE",
+        "path": "/projects/<ID>"
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "message": "202 Accepted"
+        }
+      }
+    },
+    {
+      "label": "root: DELETE /projects/<ID>",
+      "request": {
+        "as": "root",
+        "method": "DELETE",
+        "path": "/projects/<ID>?permanently_remove=true&full_path=wh71-probe%2Ftrial"
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "message": "`full_path` is incorrect. You must enter the complete path for the project."
+        }
+      }
+    },
+    {
+      "label": "root: DELETE /groups/<ID>",
+      "request": {
+        "as": "root",
+        "method": "DELETE",
+        "path": "/groups/<ID>"
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "message": "202 Accepted"
+        }
+      }
+    },
+    {
+      "label": "root: GET /groups",
+      "request": {
+        "as": "root",
+        "method": "GET",
+        "path": "/groups?search=wh71-probe&all_available=true"
+      },
+      "response": {
+        "status": 200,
+        "body": []
+      }
+    },
+    {
+      "label": "root: GET /projects/<ID>",
+      "request": {
+        "as": "root",
+        "method": "GET",
+        "path": "/projects/<ID>"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "message": "404 Project Not Found"
+        }
+      }
+    },
+    {
+      "label": "root: GET /applications",
+      "request": {
+        "as": "root",
+        "method": "GET",
+        "path": "/applications"
+      },
+      "response": {
+        "status": 200,
+        "body": []
+      }
+    }
+  ],
+  "commands": []
+}

@@ -1,0 +1,228 @@
+{
+  "step": 5,
+  "title": "Protected variables",
+  "trials": [
+    {
+      "what": "the maintainer makes a protected, masked variable PROBE_SECRET",
+      "result": "HTTP 201, protected=true, masked=true"
+    },
+    {
+      "what": "the maintainer makes an unprotected variable PROBE_PLAIN",
+      "result": "HTTP 201, protected=false"
+    },
+    {
+      "what": "GET /projects/:id/variables as the maintainer (names and flags; the values are not kept)",
+      "result": "[{\"key\":\"PROBE_SECRET\",\"protected\":true,\"masked\":true,\"environment_scope\":\"*\"},{\"key\":\"PROBE_PLAIN\",\"protected\":false,\"masked\":false,\"environment_scope\":\"*\"}]"
+    },
+    {
+      "what": "GET /projects/:id/audit_events as the maintainer",
+      "result": "HTTP 403, {\"message\":\"403 Forbidden\"}"
+    },
+    {
+      "what": "GET /groups/:id/audit_events as the maintainer",
+      "result": "HTTP 403, {\"message\":\"403 Forbidden\"}"
+    },
+    {
+      "what": "the bot (a Developer) reads the variable through the API",
+      "result": "HTTP 403"
+    },
+    {
+      "what": "the merge request's pipeline",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"mergeable\",\"headPipeline\":{\"status\":\"success\",\"source\":\"merge_request_event\"}}"
+    },
+    {
+      "what": "the merge request's pipeline job (success) echoes",
+      "result": "PROBE_SECRET is not set"
+    },
+    {
+      "what": "the job log holds the variable's value",
+      "result": "no"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "maintainer: POST /projects/<ID>/variables",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/variables",
+        "body": {
+          "key": "PROBE_SECRET",
+          "value": "<VALUE>",
+          "protected": true,
+          "masked": true,
+          "raw": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "variable_type": "env_var",
+          "key": "PROBE_SECRET",
+          "value": "<VALUE>",
+          "hidden": false,
+          "protected": true,
+          "masked": true,
+          "raw": true,
+          "environment_scope": "*",
+          "description": null
+        }
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/variables",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/variables",
+        "body": {
+          "key": "PROBE_PLAIN",
+          "value": "<VALUE>",
+          "protected": false,
+          "masked": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "variable_type": "env_var",
+          "key": "PROBE_PLAIN",
+          "value": "<VALUE>",
+          "hidden": false,
+          "protected": false,
+          "masked": false,
+          "raw": false,
+          "environment_scope": "*",
+          "description": null
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/variables",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/variables"
+      },
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "variable_type": "env_var",
+            "key": "PROBE_SECRET",
+            "value": "<VALUE>",
+            "hidden": false,
+            "protected": true,
+            "masked": true,
+            "raw": true,
+            "environment_scope": "*",
+            "description": null
+          },
+          {
+            "variable_type": "env_var",
+            "key": "PROBE_PLAIN",
+            "value": "<VALUE>",
+            "hidden": false,
+            "protected": false,
+            "masked": false,
+            "raw": false,
+            "environment_scope": "*",
+            "description": null
+          }
+        ]
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/audit_events",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/audit_events"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "message": "403 Forbidden"
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /groups/<ID>/audit_events",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/groups/<ID>/audit_events"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "message": "403 Forbidden"
+        }
+      }
+    },
+    {
+      "label": "bot: GET /projects/<ID>/variables/PROBE_SECRET",
+      "request": {
+        "as": "bot",
+        "method": "GET",
+        "path": "/projects/<ID>/variables/PROBE_SECRET"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "message": "403 Forbidden"
+        }
+      }
+    }
+  ],
+  "commands": [
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/work-1",
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B work-1 origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A change that runs the pipeline",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/work-1",
+      "exitCode": 0,
+      "output": "remote: \nremote: To create a merge request for work-1, visit:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/new?merge_request%5Bsource_branch%5D=work-1        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr create -R wh71-probe/trial --source-branch=work-1 --target-branch=main --title=A change that runs the pipeline --description-file - --yes",
+      "exitCode": 0,
+      "output": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>\n\n\nCreating merge request for work-1 into main in wh71-probe/trial"
+    }
+  ]
+}

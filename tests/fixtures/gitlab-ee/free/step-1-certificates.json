@@ -1,0 +1,158 @@
+{
+  "step": 1,
+  "title": "Certificates",
+  "trials": [
+    {
+      "what": "the instance",
+      "result": "{\"version\":\"19.4.2-ee\",\"enterprise\":true,\"licence\":\"none (HTTP 200, null): it runs as Free\"}"
+    },
+    {
+      "what": "Node.js version",
+      "result": "v22.22.1"
+    },
+    {
+      "what": "Node.js with no authority",
+      "result": "{\"plainFetch\":{\"error\":\"fetch failed\",\"cause\":\"UNABLE_TO_VERIFY_LEAF_SIGNATURE\",\"causeMessage\":\"unable to verify the first certificate\"},\"wheelhouse\":{\"error\":\"Could not reach GitLab\"}}"
+    },
+    {
+      "what": "Node.js with NODE_EXTRA_CA_CERTS",
+      "result": "{\"plainFetch\":{\"status\":200,\"user\":\"wh-maintainer\"},\"wheelhouse\":{\"status\":200,\"user\":\"wh-maintainer\"}}"
+    },
+    {
+      "what": "Node.js with --use-system-ca and the authority in no store",
+      "result": "{\"plainFetch\":{\"error\":\"fetch failed\",\"cause\":\"UNABLE_TO_VERIFY_LEAF_SIGNATURE\",\"causeMessage\":\"unable to verify the first certificate\"},\"wheelhouse\":{\"error\":\"Could not reach GitLab\"}}"
+    },
+    {
+      "what": "Node.js with --use-system-ca and the authority in the system store",
+      "result": "not run on this Mac (it needs the authority on the keychain search list; a company computer already has its own authority there)"
+    },
+    {
+      "what": "glab version",
+      "result": "glab 1.123.0 (5686d7484)"
+    },
+    {
+      "what": "glab with no ca_cert",
+      "result": "exit 1: ERROR Get \"https://localhost:8929/api/v4/user\": tls: failed to verify certificate: x509: “localhost” certificate is not trusted."
+    },
+    {
+      "what": "glab with ca_cert set for the host",
+      "result": "HTTP 200, signed in as wh-maintainer"
+    },
+    {
+      "what": "glab api user --hostname localhost:8929 (with ca_cert set)",
+      "result": "exit 1: ERROR Error parsing --hostname: invalid hostname."
+    },
+    {
+      "what": "git with no http.<url>.sslCAInfo",
+      "result": "exit 128: fatal: unable to access 'https://localhost:8929/wh71-probe/trial.git/': SSL certificate problem: unable to get local issuer certificate"
+    },
+    {
+      "what": "git with http.<url>.sslCAInfo set for the host",
+      "result": "exit 0, 2 branches listed"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "root: GET /version",
+      "request": {
+        "as": "root",
+        "method": "GET",
+        "path": "/version"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "version": "19.4.2-ee",
+          "revision": "9c053f678a4",
+          "kas": {
+            "enabled": false,
+            "externalUrl": null,
+            "externalK8sProxyUrl": null,
+            "version": null
+          },
+          "enterprise": true
+        }
+      }
+    },
+    {
+      "label": "root: GET /license",
+      "request": {
+        "as": "root",
+        "method": "GET",
+        "path": "/license"
+      },
+      "response": {
+        "status": 200,
+        "body": null
+      }
+    }
+  ],
+  "commands": [
+    {
+      "label": "Node.js version",
+      "command": "node --version",
+      "exitCode": 0,
+      "output": "v22.22.1"
+    },
+    {
+      "label": "Node.js with no authority",
+      "command": "node certificate-check.mjs",
+      "exitCode": 0,
+      "output": "{\"plainFetch\":{\"error\":\"fetch failed\",\"cause\":\"UNABLE_TO_VERIFY_LEAF_SIGNATURE\",\"causeMessage\":\"unable to verify the first certificate\"},\"wheelhouse\":{\"error\":\"Could not reach GitLab\"}}"
+    },
+    {
+      "label": "Node.js with NODE_EXTRA_CA_CERTS",
+      "command": "node certificate-check.mjs",
+      "exitCode": 0,
+      "output": "{\"plainFetch\":{\"status\":200,\"user\":\"wh-maintainer\"},\"wheelhouse\":{\"status\":200,\"user\":\"wh-maintainer\"}}"
+    },
+    {
+      "label": "Node.js with --use-system-ca and the authority in no store",
+      "command": "node --use-system-ca certificate-check.mjs",
+      "exitCode": 0,
+      "output": "{\"plainFetch\":{\"error\":\"fetch failed\",\"cause\":\"UNABLE_TO_VERIFY_LEAF_SIGNATURE\",\"causeMessage\":\"unable to verify the first certificate\"},\"wheelhouse\":{\"error\":\"Could not reach GitLab\"}}"
+    },
+    {
+      "label": "glab version",
+      "command": "glab --version",
+      "exitCode": 0,
+      "output": "glab 1.123.0 (5686d7484)"
+    },
+    {
+      "label": "glab with no ca_cert",
+      "command": "glab api user",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  Get \"https://localhost:8929/api/v4/user\": tls: failed to verify certificate: x509: “localhost” certificate is not   \n  trusted."
+    },
+    {
+      "label": "glab config set ca_cert",
+      "command": "glab config set ca_cert <PROBE>/state/tls/ca.pem --host localhost:8929",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "glab with ca_cert set for the host",
+      "command": "glab api user",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "glab api user --hostname",
+      "command": "glab api user --hostname localhost:8929",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  Error parsing --hostname: invalid hostname."
+    },
+    {
+      "label": "git with no http.<url>.sslCAInfo",
+      "command": "git ls-remote --heads https://localhost:8929/wh71-probe/trial.git",
+      "exitCode": 128,
+      "output": "fatal: unable to access 'https://localhost:8929/wh71-probe/trial.git/': SSL certificate problem: unable to get local issuer certificate"
+    },
+    {
+      "label": "git with http.<url>.sslCAInfo set for the host",
+      "command": "git ls-remote --heads https://localhost:8929/wh71-probe/trial.git",
+      "exitCode": 0,
+      "output": "<TOKEN>\trefs/heads/main\n<TOKEN>\trefs/heads/wheelhouse-state"
+    }
+  ]
+}

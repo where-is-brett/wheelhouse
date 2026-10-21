@@ -1,0 +1,1984 @@
+{
+  "step": 4,
+  "title": "Protection and pipelines",
+  "trials": [
+    {
+      "what": "protectGitlabBranch then readGitlabProtection for main (push No one, merge Maintainers, pipelines must succeed)",
+      "result": "{\"protected\":true,\"pushAccess\":[\"No one\"],\"mergeAccess\":[\"Maintainers\"],\"allowForcePush\":false,\"pipelinesMustSucceed\":true}"
+    },
+    {
+      "what": "protectGitlabBranch then readGitlabProtection for wheelhouse-state (push No one, merge Maintainers, pipelines must succeed)",
+      "result": "{\"protected\":true,\"pushAccess\":[\"No one\"],\"mergeAccess\":[\"Maintainers\"],\"allowForcePush\":false,\"pipelinesMustSucceed\":true}"
+    },
+    {
+      "what": "the project's merge settings",
+      "result": "{\"only_allow_merge_if_pipeline_succeeds\":true,\"allow_merge_on_skipped_pipeline\":null,\"only_allow_merge_if_all_discussions_are_resolved\":false,\"merge_method\":\"merge\"}"
+    },
+    {
+      "what": "GET /projects/:id/approvals as the maintainer",
+      "result": "HTTP 200, {\"approvers\":[],\"approver_groups\":[],\"approvals_before_merge\":0,\"reset_approvals_on_push\":false,\"selective_code_owner_removals\":false,\"disable_overriding_approvers_per_merge_request\":false,\"merge_requests_author_approval\":false,\"merge_requests_disable_committers_approval\":false,\"require_password_to_"
+    },
+    {
+      "what": "GET /projects/:id/approval_rules as the maintainer",
+      "result": "HTTP 403, {\"message\":\"403 Forbidden\"}"
+    },
+    {
+      "what": "POST /projects/:id/approval_rules (one approval required) as the maintainer",
+      "result": "HTTP 403, {\"message\":\"403 Forbidden\"}"
+    },
+    {
+      "what": "POST /projects/:id/approvals (reset approvals on push) as the maintainer",
+      "result": "HTTP 201, {\"approvers\":[],\"approver_groups\":[],\"approvals_before_merge\":0,\"reset_approvals_on_push\":false,\"selective_code_owner_removals\":false,\"disable_overriding_approvers_per_merge_request\":false,\"merge_requests_author_approval\":false,\"merge_requests_disable_committers_approval\":false,\"require_password_to_"
+    },
+    {
+      "what": "GET /projects/:id/external_status_checks as the maintainer",
+      "result": "HTTP 401, {\"message\":\"401 Unauthorized\"}"
+    },
+    {
+      "what": "POST /projects/:id/external_status_checks as the maintainer",
+      "result": "HTTP 401, {\"message\":\"401 Unauthorized\"}"
+    },
+    {
+      "what": "the protection as GitLab keeps it for main",
+      "result": "{\"push\":[\"No one\"],\"merge\":[\"Maintainers\"],\"allowForcePush\":false}"
+    },
+    {
+      "what": "the bot pushes straight to main",
+      "result": "exit 1:  GitLab: You are not allowed to push code to protected branches on this project. To https://localhost:8929/wh71-probe/trial.git ! [remote rejected] HEAD -> main (pre-receive hook declined) error: failed to push some refs to 'https://localhost:8929/wh71-probe/trial.git'"
+    },
+    {
+      "what": "the maintainer pushes straight to main",
+      "result": "exit 1:  GitLab: You are not allowed to push code to protected branches on this project. To https://localhost:8929/wh71-probe/trial.git ! [remote rejected] HEAD -> main (pre-receive hook declined) error: failed to push some refs to 'https://localhost:8929/wh71-probe/trial.git'"
+    },
+    {
+      "what": "the bot pushes to the state branch",
+      "result": "exit 1:  GitLab: You are not allowed to push code to protected branches on this project. To https://localhost:8929/wh71-probe/trial.git ! [remote rejected] HEAD -> wheelhouse-state (pre-receive hook declined) error: failed to push some refs to 'https://localhost:8929/wh71-probe/trial.git'"
+    },
+    {
+      "what": "the bot opens a merge request through the adapter (glab mr create)",
+      "result": "{\"number\":\"<ID>\"}"
+    },
+    {
+      "what": "the merge request with no pipeline, as GitLab reports it",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"ci_must_pass\",\"headPipeline\":null}"
+    },
+    {
+      "what": "the adapter reads it (prState)",
+      "result": "{\"mergeable\":\"no\",\"state\":\"open\"}"
+    },
+    {
+      "what": "the adapter reads its CI (ciState)",
+      "result": "none"
+    },
+    {
+      "what": "the maintainer's merge through the adapter, before any status",
+      "result": "{\"merged\":false,\"reason\":\"the host's required checks have not passed\"}"
+    },
+    {
+      "what": "the maintainer's merge through the API, before any status",
+      "result": "HTTP 405, {\"message\":\"405 Method Not Allowed\"}"
+    },
+    {
+      "what": "the bot posts a commit status \"probe-job\" = success with the project key",
+      "result": "HTTP 201"
+    },
+    {
+      "what": "the same merge request after the status",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"mergeable\",\"headPipeline\":{\"status\":\"success\",\"source\":\"external\"}}"
+    },
+    {
+      "what": "the adapter reads its CI after the status (ciState)",
+      "result": "success"
+    },
+    {
+      "what": "the maintainer's merge through the adapter, after the status",
+      "result": "{\"merged\":true}"
+    },
+    {
+      "what": "the merge request whose job fails, as GitLab reports it",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"ci_must_pass\",\"headPipeline\":{\"status\":\"failed\",\"source\":\"merge_request_event\"}}"
+    },
+    {
+      "what": "the maintainer's merge of it through the adapter",
+      "result": "{\"merged\":false,\"reason\":\"the host's required checks have not passed\"}"
+    },
+    {
+      "what": "the bot posts \"probe-job\" = success against the failed pipeline's commit",
+      "result": "HTTP 201"
+    },
+    {
+      "what": "the same merge request afterwards",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"ci_must_pass\",\"headPipeline\":{\"status\":\"failed\",\"source\":\"merge_request_event\"}}"
+    },
+    {
+      "what": "its pipeline afterwards",
+      "result": "{\"status\":\"failed\",\"source\":\"merge_request_event\"}"
+    },
+    {
+      "what": "the bot posts \"probe-job\" = success naming the failed pipeline (pipeline_id) and the branch",
+      "result": "HTTP 404, {\"message\":\"404 Pipeline for pipeline_id, sha and ref Not Found\"}"
+    },
+    {
+      "what": "the bot posts \"probe-job\" = success naming the failed pipeline (pipeline_id) and no branch",
+      "result": "HTTP 400, {\"message\":{\"name\":[\"has already been taken\"]}}"
+    },
+    {
+      "what": "the same merge request after that",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"ci_must_pass\",\"headPipeline\":{\"status\":\"failed\",\"source\":\"merge_request_event\"}}"
+    },
+    {
+      "what": "its pipeline after that",
+      "result": "{\"status\":\"failed\",\"source\":\"merge_request_event\"}"
+    },
+    {
+      "what": "the maintainer's merge of it through the adapter, after the status",
+      "result": "{\"merged\":false,\"reason\":\"the host's required checks have not passed\"}"
+    },
+    {
+      "what": "a merge request whose commit message says [ci skip], as GitLab reports it",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"ci_must_pass\",\"headPipeline\":{\"status\":\"skipped\",\"source\":\"merge_request_event\"}}"
+    },
+    {
+      "what": "the bot posts \"probe-job\" = success against it",
+      "result": "HTTP 201"
+    },
+    {
+      "what": "the same merge request afterwards",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"ci_must_pass\",\"headPipeline\":{\"status\":\"skipped\",\"source\":\"merge_request_event\"}}"
+    },
+    {
+      "what": "a merge request whose branch rewrites the pipeline file so that no pipeline runs, as GitLab reports it",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"ci_must_pass\",\"headPipeline\":null}"
+    },
+    {
+      "what": "the bot posts \"probe-job\" = success against it",
+      "result": "HTTP 201"
+    },
+    {
+      "what": "the same merge request afterwards",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"mergeable\",\"headPipeline\":{\"status\":\"success\",\"source\":\"external\"}}"
+    },
+    {
+      "what": "a merge request whose branch rewrites the pipeline file so the job of the same name passes, as GitLab reports it",
+      "result": "{\"state\":\"opened\",\"detailedMergeStatus\":\"mergeable\",\"headPipeline\":{\"status\":\"success\",\"source\":\"merge_request_event\"}}"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "maintainer: GET /projects/<ID>/protected_branches/main",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/protected_branches/main"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "name": "main",
+          "push_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "deploy_key_id": null,
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "merge_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "allow_force_push": false,
+          "unprotect_access_levels": [],
+          "code_owner_approval_required": false,
+          "inherited": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: DELETE /projects/<ID>/protected_branches/main",
+      "request": {
+        "as": "maintainer",
+        "method": "DELETE",
+        "path": "/projects/<ID>/protected_branches/main"
+      },
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/protected_branches",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/protected_branches",
+        "body": {
+          "name": "main",
+          "push_access_level": 0,
+          "merge_access_level": 40,
+          "allow_force_push": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "name": "main",
+          "push_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 0,
+              "access_level_description": "No one",
+              "deploy_key_id": null,
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "merge_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "allow_force_push": false,
+          "unprotect_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "code_owner_approval_required": false,
+          "inherited": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: PUT /projects/<ID>",
+      "request": {
+        "as": "maintainer",
+        "method": "PUT",
+        "path": "/projects/<ID>",
+        "body": {
+          "only_allow_merge_if_pipeline_succeeds": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "description": null,
+          "name": "trial",
+          "name_with_namespace": "Wheelhouse probe 71 / trial",
+          "path": "trial",
+          "path_with_namespace": "wh71-probe/trial",
+          "created_at": "<TIMESTAMP>",
+          "default_branch": "main",
+          "ssh_url_to_repo": "git@localhost:wh71-probe/trial.git",
+          "http_url_to_repo": "https://localhost:8929/wh71-probe/trial.git",
+          "web_url": "https://localhost:8929/wh71-probe/trial",
+          "readme_url": "https://localhost:8929/wh71-probe/trial/-/blob/main/README.md",
+          "forks_count": 0,
+          "avatar_url": null,
+          "star_count": 0,
+          "last_activity_at": "<TIMESTAMP>",
+          "visibility": "private",
+          "marked_for_deletion_at": null,
+          "marked_for_deletion_on": null,
+          "packages_enabled": true,
+          "empty_repo": false,
+          "archived": false,
+          "resolve_outdated_diff_discussions": false,
+          "repository_object_format": "sha1",
+          "issues_enabled": true,
+          "merge_requests_enabled": true,
+          "wiki_enabled": true,
+          "jobs_enabled": true,
+          "snippets_enabled": true,
+          "container_registry_enabled": true,
+          "service_desk_enabled": false,
+          "service_desk_address": null,
+          "can_create_merge_request_in": true,
+          "issues_access_level": "enabled",
+          "repository_access_level": "enabled",
+          "merge_requests_access_level": "enabled",
+          "forking_access_level": "enabled",
+          "wiki_access_level": "enabled",
+          "builds_access_level": "enabled",
+          "snippets_access_level": "enabled",
+          "pages_access_level": "private",
+          "analytics_access_level": "enabled",
+          "container_registry_access_level": "enabled",
+          "security_and_compliance_access_level": "private",
+          "releases_access_level": "enabled",
+          "environments_access_level": "enabled",
+          "feature_flags_access_level": "enabled",
+          "infrastructure_access_level": "enabled",
+          "monitor_access_level": "enabled",
+          "model_experiments_access_level": "private",
+          "model_registry_access_level": "private",
+          "package_registry_access_level": "enabled",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "shared_runners_enabled": true,
+          "lfs_enabled": true,
+          "creator_id": "<ID>",
+          "import_url": null,
+          "import_type": null,
+          "import_status": "none",
+          "import_error": null,
+          "open_issues_count": 0,
+          "description_html": "",
+          "updated_at": "<TIMESTAMP>",
+          "ci_default_git_depth": 20,
+          "ci_delete_pipelines_in_seconds": null,
+          "ci_forward_deployment_enabled": true,
+          "ci_forward_deployment_rollback_allowed": true,
+          "ci_job_token_scope_enabled": false,
+          "ci_separated_caches": true,
+          "ci_allow_fork_pipelines_to_run_in_parent_project": true,
+          "build_git_strategy": "fetch",
+          "keep_latest_artifact": true,
+          "restrict_user_defined_variables": false,
+          "ci_pipeline_variables_minimum_override_role": "developer",
+          "runner_token_expiration_interval": null,
+          "group_runners_enabled": true,
+          "resource_group_default_process_mode": "unordered",
+          "auto_cancel_pending_pipelines": "enabled",
+          "build_timeout": 3600,
+          "auto_devops_enabled": true,
+          "auto_devops_deploy_strategy": "continuous",
+          "ci_push_repository_for_job_token_allowed": false,
+          "protect_merge_request_pipelines": true,
+          "ci_display_pipeline_variables": false,
+          "ci_skip_branch_pipelines_for_mrs": false,
+          "runners_token": "<TOKEN>",
+          "ci_config_path": null,
+          "public_jobs": true,
+          "only_allow_merge_if_pipeline_succeeds": true,
+          "allow_merge_on_skipped_pipeline": null,
+          "request_access_enabled": true,
+          "only_allow_merge_if_all_discussions_are_resolved": false,
+          "remove_source_branch_after_merge": true,
+          "printing_merge_request_link_enabled": true,
+          "merge_method": "merge",
+          "squash_option": "default_off",
+          "automatic_rebase_enabled": false,
+          "enforce_auth_checks_on_uploads": true,
+          "suggestion_commit_message": null,
+          "merge_commit_template": null,
+          "squash_commit_template": null,
+          "mr_default_title_template": null,
+          "issue_branch_template": null,
+          "warn_about_potentially_unwanted_characters": true,
+          "autoclose_referenced_issues": true,
+          "max_artifacts_size": null,
+          "requirements_enabled": false,
+          "requirements_access_level": "enabled",
+          "security_and_compliance_enabled": true,
+          "cicd_catalog_enabled": false,
+          "otherFields": [
+            "tag_list",
+            "topics",
+            "namespace",
+            "_links",
+            "container_expiration_policy",
+            "ci_id_token_sub_claim_components",
+            "shared_with_groups",
+            "compliance_frameworks"
+          ]
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/protected_branches/main",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/protected_branches/main"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "name": "main",
+          "push_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 0,
+              "access_level_description": "No one",
+              "deploy_key_id": null,
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "merge_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "allow_force_push": false,
+          "unprotect_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "code_owner_approval_required": false,
+          "inherited": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "description": null,
+          "name": "trial",
+          "name_with_namespace": "Wheelhouse probe 71 / trial",
+          "path": "trial",
+          "path_with_namespace": "wh71-probe/trial",
+          "created_at": "<TIMESTAMP>",
+          "default_branch": "main",
+          "ssh_url_to_repo": "git@localhost:wh71-probe/trial.git",
+          "http_url_to_repo": "https://localhost:8929/wh71-probe/trial.git",
+          "web_url": "https://localhost:8929/wh71-probe/trial",
+          "readme_url": "https://localhost:8929/wh71-probe/trial/-/blob/main/README.md",
+          "forks_count": 0,
+          "avatar_url": null,
+          "star_count": 0,
+          "last_activity_at": "<TIMESTAMP>",
+          "visibility": "private",
+          "marked_for_deletion_at": null,
+          "marked_for_deletion_on": null,
+          "packages_enabled": true,
+          "empty_repo": false,
+          "archived": false,
+          "resolve_outdated_diff_discussions": false,
+          "repository_object_format": "sha1",
+          "issues_enabled": true,
+          "merge_requests_enabled": true,
+          "wiki_enabled": true,
+          "jobs_enabled": true,
+          "snippets_enabled": true,
+          "container_registry_enabled": true,
+          "service_desk_enabled": false,
+          "service_desk_address": null,
+          "can_create_merge_request_in": true,
+          "issues_access_level": "enabled",
+          "repository_access_level": "enabled",
+          "merge_requests_access_level": "enabled",
+          "forking_access_level": "enabled",
+          "wiki_access_level": "enabled",
+          "builds_access_level": "enabled",
+          "snippets_access_level": "enabled",
+          "pages_access_level": "private",
+          "analytics_access_level": "enabled",
+          "container_registry_access_level": "enabled",
+          "security_and_compliance_access_level": "private",
+          "releases_access_level": "enabled",
+          "environments_access_level": "enabled",
+          "feature_flags_access_level": "enabled",
+          "infrastructure_access_level": "enabled",
+          "monitor_access_level": "enabled",
+          "model_experiments_access_level": "private",
+          "model_registry_access_level": "private",
+          "package_registry_access_level": "enabled",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "shared_runners_enabled": true,
+          "lfs_enabled": true,
+          "creator_id": "<ID>",
+          "import_url": null,
+          "import_type": null,
+          "import_status": "none",
+          "import_error": null,
+          "open_issues_count": 0,
+          "description_html": "",
+          "updated_at": "<TIMESTAMP>",
+          "ci_default_git_depth": 20,
+          "ci_delete_pipelines_in_seconds": null,
+          "ci_forward_deployment_enabled": true,
+          "ci_forward_deployment_rollback_allowed": true,
+          "ci_job_token_scope_enabled": false,
+          "ci_separated_caches": true,
+          "ci_allow_fork_pipelines_to_run_in_parent_project": true,
+          "build_git_strategy": "fetch",
+          "keep_latest_artifact": true,
+          "restrict_user_defined_variables": false,
+          "ci_pipeline_variables_minimum_override_role": "developer",
+          "runner_token_expiration_interval": null,
+          "group_runners_enabled": true,
+          "resource_group_default_process_mode": "unordered",
+          "auto_cancel_pending_pipelines": "enabled",
+          "build_timeout": 3600,
+          "auto_devops_enabled": true,
+          "auto_devops_deploy_strategy": "continuous",
+          "ci_push_repository_for_job_token_allowed": false,
+          "protect_merge_request_pipelines": true,
+          "ci_display_pipeline_variables": false,
+          "ci_skip_branch_pipelines_for_mrs": false,
+          "runners_token": "<TOKEN>",
+          "ci_config_path": null,
+          "public_jobs": true,
+          "only_allow_merge_if_pipeline_succeeds": true,
+          "allow_merge_on_skipped_pipeline": null,
+          "request_access_enabled": true,
+          "only_allow_merge_if_all_discussions_are_resolved": false,
+          "remove_source_branch_after_merge": true,
+          "printing_merge_request_link_enabled": true,
+          "merge_method": "merge",
+          "squash_option": "default_off",
+          "automatic_rebase_enabled": false,
+          "enforce_auth_checks_on_uploads": true,
+          "suggestion_commit_message": null,
+          "merge_commit_template": null,
+          "squash_commit_template": null,
+          "mr_default_title_template": null,
+          "issue_branch_template": null,
+          "warn_about_potentially_unwanted_characters": true,
+          "autoclose_referenced_issues": true,
+          "max_artifacts_size": null,
+          "requirements_enabled": false,
+          "requirements_access_level": "enabled",
+          "security_and_compliance_enabled": true,
+          "cicd_catalog_enabled": false,
+          "otherFields": [
+            "tag_list",
+            "topics",
+            "namespace",
+            "_links",
+            "container_expiration_policy",
+            "ci_id_token_sub_claim_components",
+            "shared_with_groups",
+            "compliance_frameworks",
+            "permissions"
+          ]
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/protected_branches/wheelhouse-state",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/protected_branches/wheelhouse-state"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "message": "404 Not found"
+        }
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/protected_branches",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/protected_branches",
+        "body": {
+          "name": "wheelhouse-state",
+          "push_access_level": 0,
+          "merge_access_level": 40,
+          "allow_force_push": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "name": "wheelhouse-state",
+          "push_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 0,
+              "access_level_description": "No one",
+              "deploy_key_id": null,
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "merge_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "allow_force_push": false,
+          "unprotect_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "code_owner_approval_required": false,
+          "inherited": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: PUT /projects/<ID>",
+      "request": {
+        "as": "maintainer",
+        "method": "PUT",
+        "path": "/projects/<ID>",
+        "body": {
+          "only_allow_merge_if_pipeline_succeeds": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "description": null,
+          "name": "trial",
+          "name_with_namespace": "Wheelhouse probe 71 / trial",
+          "path": "trial",
+          "path_with_namespace": "wh71-probe/trial",
+          "created_at": "<TIMESTAMP>",
+          "default_branch": "main",
+          "ssh_url_to_repo": "git@localhost:wh71-probe/trial.git",
+          "http_url_to_repo": "https://localhost:8929/wh71-probe/trial.git",
+          "web_url": "https://localhost:8929/wh71-probe/trial",
+          "readme_url": "https://localhost:8929/wh71-probe/trial/-/blob/main/README.md",
+          "forks_count": 0,
+          "avatar_url": null,
+          "star_count": 0,
+          "last_activity_at": "<TIMESTAMP>",
+          "visibility": "private",
+          "marked_for_deletion_at": null,
+          "marked_for_deletion_on": null,
+          "packages_enabled": true,
+          "empty_repo": false,
+          "archived": false,
+          "resolve_outdated_diff_discussions": false,
+          "repository_object_format": "sha1",
+          "issues_enabled": true,
+          "merge_requests_enabled": true,
+          "wiki_enabled": true,
+          "jobs_enabled": true,
+          "snippets_enabled": true,
+          "container_registry_enabled": true,
+          "service_desk_enabled": false,
+          "service_desk_address": null,
+          "can_create_merge_request_in": true,
+          "issues_access_level": "enabled",
+          "repository_access_level": "enabled",
+          "merge_requests_access_level": "enabled",
+          "forking_access_level": "enabled",
+          "wiki_access_level": "enabled",
+          "builds_access_level": "enabled",
+          "snippets_access_level": "enabled",
+          "pages_access_level": "private",
+          "analytics_access_level": "enabled",
+          "container_registry_access_level": "enabled",
+          "security_and_compliance_access_level": "private",
+          "releases_access_level": "enabled",
+          "environments_access_level": "enabled",
+          "feature_flags_access_level": "enabled",
+          "infrastructure_access_level": "enabled",
+          "monitor_access_level": "enabled",
+          "model_experiments_access_level": "private",
+          "model_registry_access_level": "private",
+          "package_registry_access_level": "enabled",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "shared_runners_enabled": true,
+          "lfs_enabled": true,
+          "creator_id": "<ID>",
+          "import_url": null,
+          "import_type": null,
+          "import_status": "none",
+          "import_error": null,
+          "open_issues_count": 0,
+          "description_html": "",
+          "updated_at": "<TIMESTAMP>",
+          "ci_default_git_depth": 20,
+          "ci_delete_pipelines_in_seconds": null,
+          "ci_forward_deployment_enabled": true,
+          "ci_forward_deployment_rollback_allowed": true,
+          "ci_job_token_scope_enabled": false,
+          "ci_separated_caches": true,
+          "ci_allow_fork_pipelines_to_run_in_parent_project": true,
+          "build_git_strategy": "fetch",
+          "keep_latest_artifact": true,
+          "restrict_user_defined_variables": false,
+          "ci_pipeline_variables_minimum_override_role": "developer",
+          "runner_token_expiration_interval": null,
+          "group_runners_enabled": true,
+          "resource_group_default_process_mode": "unordered",
+          "auto_cancel_pending_pipelines": "enabled",
+          "build_timeout": 3600,
+          "auto_devops_enabled": true,
+          "auto_devops_deploy_strategy": "continuous",
+          "ci_push_repository_for_job_token_allowed": false,
+          "protect_merge_request_pipelines": true,
+          "ci_display_pipeline_variables": false,
+          "ci_skip_branch_pipelines_for_mrs": false,
+          "runners_token": "<TOKEN>",
+          "ci_config_path": null,
+          "public_jobs": true,
+          "only_allow_merge_if_pipeline_succeeds": true,
+          "allow_merge_on_skipped_pipeline": null,
+          "request_access_enabled": true,
+          "only_allow_merge_if_all_discussions_are_resolved": false,
+          "remove_source_branch_after_merge": true,
+          "printing_merge_request_link_enabled": true,
+          "merge_method": "merge",
+          "squash_option": "default_off",
+          "automatic_rebase_enabled": false,
+          "enforce_auth_checks_on_uploads": true,
+          "suggestion_commit_message": null,
+          "merge_commit_template": null,
+          "squash_commit_template": null,
+          "mr_default_title_template": null,
+          "issue_branch_template": null,
+          "warn_about_potentially_unwanted_characters": true,
+          "autoclose_referenced_issues": true,
+          "max_artifacts_size": null,
+          "requirements_enabled": false,
+          "requirements_access_level": "enabled",
+          "security_and_compliance_enabled": true,
+          "cicd_catalog_enabled": false,
+          "otherFields": [
+            "tag_list",
+            "topics",
+            "namespace",
+            "_links",
+            "container_expiration_policy",
+            "ci_id_token_sub_claim_components",
+            "shared_with_groups",
+            "compliance_frameworks"
+          ]
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/protected_branches/wheelhouse-state",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/protected_branches/wheelhouse-state"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "name": "wheelhouse-state",
+          "push_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 0,
+              "access_level_description": "No one",
+              "deploy_key_id": null,
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "merge_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "allow_force_push": false,
+          "unprotect_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "code_owner_approval_required": false,
+          "inherited": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "description": null,
+          "name": "trial",
+          "name_with_namespace": "Wheelhouse probe 71 / trial",
+          "path": "trial",
+          "path_with_namespace": "wh71-probe/trial",
+          "created_at": "<TIMESTAMP>",
+          "default_branch": "main",
+          "ssh_url_to_repo": "git@localhost:wh71-probe/trial.git",
+          "http_url_to_repo": "https://localhost:8929/wh71-probe/trial.git",
+          "web_url": "https://localhost:8929/wh71-probe/trial",
+          "readme_url": "https://localhost:8929/wh71-probe/trial/-/blob/main/README.md",
+          "forks_count": 0,
+          "avatar_url": null,
+          "star_count": 0,
+          "last_activity_at": "<TIMESTAMP>",
+          "visibility": "private",
+          "marked_for_deletion_at": null,
+          "marked_for_deletion_on": null,
+          "packages_enabled": true,
+          "empty_repo": false,
+          "archived": false,
+          "resolve_outdated_diff_discussions": false,
+          "repository_object_format": "sha1",
+          "issues_enabled": true,
+          "merge_requests_enabled": true,
+          "wiki_enabled": true,
+          "jobs_enabled": true,
+          "snippets_enabled": true,
+          "container_registry_enabled": true,
+          "service_desk_enabled": false,
+          "service_desk_address": null,
+          "can_create_merge_request_in": true,
+          "issues_access_level": "enabled",
+          "repository_access_level": "enabled",
+          "merge_requests_access_level": "enabled",
+          "forking_access_level": "enabled",
+          "wiki_access_level": "enabled",
+          "builds_access_level": "enabled",
+          "snippets_access_level": "enabled",
+          "pages_access_level": "private",
+          "analytics_access_level": "enabled",
+          "container_registry_access_level": "enabled",
+          "security_and_compliance_access_level": "private",
+          "releases_access_level": "enabled",
+          "environments_access_level": "enabled",
+          "feature_flags_access_level": "enabled",
+          "infrastructure_access_level": "enabled",
+          "monitor_access_level": "enabled",
+          "model_experiments_access_level": "private",
+          "model_registry_access_level": "private",
+          "package_registry_access_level": "enabled",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "shared_runners_enabled": true,
+          "lfs_enabled": true,
+          "creator_id": "<ID>",
+          "import_url": null,
+          "import_type": null,
+          "import_status": "none",
+          "import_error": null,
+          "open_issues_count": 0,
+          "description_html": "",
+          "updated_at": "<TIMESTAMP>",
+          "ci_default_git_depth": 20,
+          "ci_delete_pipelines_in_seconds": null,
+          "ci_forward_deployment_enabled": true,
+          "ci_forward_deployment_rollback_allowed": true,
+          "ci_job_token_scope_enabled": false,
+          "ci_separated_caches": true,
+          "ci_allow_fork_pipelines_to_run_in_parent_project": true,
+          "build_git_strategy": "fetch",
+          "keep_latest_artifact": true,
+          "restrict_user_defined_variables": false,
+          "ci_pipeline_variables_minimum_override_role": "developer",
+          "runner_token_expiration_interval": null,
+          "group_runners_enabled": true,
+          "resource_group_default_process_mode": "unordered",
+          "auto_cancel_pending_pipelines": "enabled",
+          "build_timeout": 3600,
+          "auto_devops_enabled": true,
+          "auto_devops_deploy_strategy": "continuous",
+          "ci_push_repository_for_job_token_allowed": false,
+          "protect_merge_request_pipelines": true,
+          "ci_display_pipeline_variables": false,
+          "ci_skip_branch_pipelines_for_mrs": false,
+          "runners_token": "<TOKEN>",
+          "ci_config_path": null,
+          "public_jobs": true,
+          "only_allow_merge_if_pipeline_succeeds": true,
+          "allow_merge_on_skipped_pipeline": null,
+          "request_access_enabled": true,
+          "only_allow_merge_if_all_discussions_are_resolved": false,
+          "remove_source_branch_after_merge": true,
+          "printing_merge_request_link_enabled": true,
+          "merge_method": "merge",
+          "squash_option": "default_off",
+          "automatic_rebase_enabled": false,
+          "enforce_auth_checks_on_uploads": true,
+          "suggestion_commit_message": null,
+          "merge_commit_template": null,
+          "squash_commit_template": null,
+          "mr_default_title_template": null,
+          "issue_branch_template": null,
+          "warn_about_potentially_unwanted_characters": true,
+          "autoclose_referenced_issues": true,
+          "max_artifacts_size": null,
+          "requirements_enabled": false,
+          "requirements_access_level": "enabled",
+          "security_and_compliance_enabled": true,
+          "cicd_catalog_enabled": false,
+          "otherFields": [
+            "tag_list",
+            "topics",
+            "namespace",
+            "_links",
+            "container_expiration_policy",
+            "ci_id_token_sub_claim_components",
+            "shared_with_groups",
+            "compliance_frameworks",
+            "permissions"
+          ]
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "description": null,
+          "name": "trial",
+          "name_with_namespace": "Wheelhouse probe 71 / trial",
+          "path": "trial",
+          "path_with_namespace": "wh71-probe/trial",
+          "created_at": "<TIMESTAMP>",
+          "default_branch": "main",
+          "ssh_url_to_repo": "git@localhost:wh71-probe/trial.git",
+          "http_url_to_repo": "https://localhost:8929/wh71-probe/trial.git",
+          "web_url": "https://localhost:8929/wh71-probe/trial",
+          "readme_url": "https://localhost:8929/wh71-probe/trial/-/blob/main/README.md",
+          "forks_count": 0,
+          "avatar_url": null,
+          "star_count": 0,
+          "last_activity_at": "<TIMESTAMP>",
+          "visibility": "private",
+          "marked_for_deletion_at": null,
+          "marked_for_deletion_on": null,
+          "packages_enabled": true,
+          "empty_repo": false,
+          "archived": false,
+          "resolve_outdated_diff_discussions": false,
+          "repository_object_format": "sha1",
+          "issues_enabled": true,
+          "merge_requests_enabled": true,
+          "wiki_enabled": true,
+          "jobs_enabled": true,
+          "snippets_enabled": true,
+          "container_registry_enabled": true,
+          "service_desk_enabled": false,
+          "service_desk_address": null,
+          "can_create_merge_request_in": true,
+          "issues_access_level": "enabled",
+          "repository_access_level": "enabled",
+          "merge_requests_access_level": "enabled",
+          "forking_access_level": "enabled",
+          "wiki_access_level": "enabled",
+          "builds_access_level": "enabled",
+          "snippets_access_level": "enabled",
+          "pages_access_level": "private",
+          "analytics_access_level": "enabled",
+          "container_registry_access_level": "enabled",
+          "security_and_compliance_access_level": "private",
+          "releases_access_level": "enabled",
+          "environments_access_level": "enabled",
+          "feature_flags_access_level": "enabled",
+          "infrastructure_access_level": "enabled",
+          "monitor_access_level": "enabled",
+          "model_experiments_access_level": "private",
+          "model_registry_access_level": "private",
+          "package_registry_access_level": "enabled",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "shared_runners_enabled": true,
+          "lfs_enabled": true,
+          "creator_id": "<ID>",
+          "import_url": null,
+          "import_type": null,
+          "import_status": "none",
+          "import_error": null,
+          "open_issues_count": 0,
+          "description_html": "",
+          "updated_at": "<TIMESTAMP>",
+          "ci_default_git_depth": 20,
+          "ci_delete_pipelines_in_seconds": null,
+          "ci_forward_deployment_enabled": true,
+          "ci_forward_deployment_rollback_allowed": true,
+          "ci_job_token_scope_enabled": false,
+          "ci_separated_caches": true,
+          "ci_allow_fork_pipelines_to_run_in_parent_project": true,
+          "build_git_strategy": "fetch",
+          "keep_latest_artifact": true,
+          "restrict_user_defined_variables": false,
+          "ci_pipeline_variables_minimum_override_role": "developer",
+          "runner_token_expiration_interval": null,
+          "group_runners_enabled": true,
+          "resource_group_default_process_mode": "unordered",
+          "auto_cancel_pending_pipelines": "enabled",
+          "build_timeout": 3600,
+          "auto_devops_enabled": true,
+          "auto_devops_deploy_strategy": "continuous",
+          "ci_push_repository_for_job_token_allowed": false,
+          "protect_merge_request_pipelines": true,
+          "ci_display_pipeline_variables": false,
+          "ci_skip_branch_pipelines_for_mrs": false,
+          "runners_token": "<TOKEN>",
+          "ci_config_path": null,
+          "public_jobs": true,
+          "only_allow_merge_if_pipeline_succeeds": true,
+          "allow_merge_on_skipped_pipeline": null,
+          "request_access_enabled": true,
+          "only_allow_merge_if_all_discussions_are_resolved": false,
+          "remove_source_branch_after_merge": true,
+          "printing_merge_request_link_enabled": true,
+          "merge_method": "merge",
+          "squash_option": "default_off",
+          "automatic_rebase_enabled": false,
+          "enforce_auth_checks_on_uploads": true,
+          "suggestion_commit_message": null,
+          "merge_commit_template": null,
+          "squash_commit_template": null,
+          "mr_default_title_template": null,
+          "issue_branch_template": null,
+          "warn_about_potentially_unwanted_characters": true,
+          "autoclose_referenced_issues": true,
+          "max_artifacts_size": null,
+          "requirements_enabled": false,
+          "requirements_access_level": "enabled",
+          "security_and_compliance_enabled": true,
+          "cicd_catalog_enabled": false,
+          "otherFields": [
+            "tag_list",
+            "topics",
+            "namespace",
+            "_links",
+            "container_expiration_policy",
+            "ci_id_token_sub_claim_components",
+            "shared_with_groups",
+            "compliance_frameworks",
+            "permissions"
+          ]
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/approvals",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/approvals"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "approvers": [],
+          "approver_groups": [],
+          "approvals_before_merge": 0,
+          "reset_approvals_on_push": false,
+          "selective_code_owner_removals": false,
+          "disable_overriding_approvers_per_merge_request": false,
+          "merge_requests_author_approval": false,
+          "merge_requests_disable_committers_approval": false,
+          "require_password_to_approve": false,
+          "require_reauthentication_to_approve": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/approval_rules",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/approval_rules"
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "message": "403 Forbidden"
+        }
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/approval_rules",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/approval_rules",
+        "body": {
+          "name": "One approval",
+          "approvals_required": 1,
+          "user_ids": [
+            "<ID>"
+          ]
+        }
+      },
+      "response": {
+        "status": 403,
+        "body": {
+          "message": "403 Forbidden"
+        }
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/approvals",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/approvals",
+        "body": {
+          "reset_approvals_on_push": true,
+          "selective_code_owner_removals": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "approvers": [],
+          "approver_groups": [],
+          "approvals_before_merge": 0,
+          "reset_approvals_on_push": false,
+          "selective_code_owner_removals": false,
+          "disable_overriding_approvers_per_merge_request": false,
+          "merge_requests_author_approval": false,
+          "merge_requests_disable_committers_approval": false,
+          "require_password_to_approve": false,
+          "require_reauthentication_to_approve": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/external_status_checks",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/external_status_checks"
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "message": "401 Unauthorized"
+        }
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/external_status_checks",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/external_status_checks",
+        "body": {
+          "name": "Require the pipeline job",
+          "external_url": "https://example.test/check"
+        }
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "message": "401 Unauthorized"
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/protected_branches/main",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/protected_branches/main"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "name": "main",
+          "push_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 0,
+              "access_level_description": "No one",
+              "deploy_key_id": null,
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "merge_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "allow_force_push": false,
+          "unprotect_access_levels": [
+            {
+              "id": "<ID>",
+              "access_level": 40,
+              "access_level_description": "Maintainers",
+              "user_id": null,
+              "group_id": null
+            }
+          ],
+          "code_owner_approval_required": false,
+          "inherited": false
+        }
+      }
+    },
+    {
+      "label": "maintainer: PUT /projects/<ID>/merge_requests/<ID>/merge",
+      "request": {
+        "as": "maintainer",
+        "method": "PUT",
+        "path": "/projects/<ID>/merge_requests/<ID>/merge",
+        "body": {
+          "sha": "<SHA>"
+        }
+      },
+      "response": {
+        "status": 405,
+        "body": {
+          "message": "405 Method Not Allowed"
+        }
+      }
+    },
+    {
+      "label": "bot: POST /projects/<ID>/statuses/<SHA>",
+      "request": {
+        "as": "bot",
+        "method": "POST",
+        "path": "/projects/<ID>/statuses/<SHA>",
+        "body": {
+          "state": "success",
+          "name": "probe-job",
+          "ref": "noci-status",
+          "description": "Posted with the project key"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "sha": "<SHA>",
+          "ref": "noci-status",
+          "status": "success",
+          "name": "probe-job",
+          "target_url": null,
+          "description": "Posted with the project key",
+          "created_at": "<TIMESTAMP>",
+          "started_at": null,
+          "finished_at": "<TIMESTAMP>",
+          "allow_failure": false,
+          "coverage": null,
+          "pipeline_id": "<ID>",
+          "author": {
+            "id": "<ID>",
+            "username": "project_<ID>_bot_<SUFFIX>",
+            "public_email": null,
+            "name": "****",
+            "state": "active",
+            "locked": false,
+            "avatar_url": "<URL>",
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
+          }
+        }
+      }
+    },
+    {
+      "label": "bot: POST /projects/<ID>/statuses/<SHA>",
+      "request": {
+        "as": "bot",
+        "method": "POST",
+        "path": "/projects/<ID>/statuses/<SHA>",
+        "body": {
+          "state": "success",
+          "name": "probe-job",
+          "ref": "failing-ci"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "sha": "<SHA>",
+          "ref": "failing-ci",
+          "status": "success",
+          "name": "probe-job",
+          "target_url": null,
+          "description": null,
+          "created_at": "<TIMESTAMP>",
+          "started_at": null,
+          "finished_at": "<TIMESTAMP>",
+          "allow_failure": false,
+          "coverage": null,
+          "pipeline_id": "<ID>",
+          "author": {
+            "id": "<ID>",
+            "username": "project_<ID>_bot_<SUFFIX>",
+            "public_email": null,
+            "name": "****",
+            "state": "active",
+            "locked": false,
+            "avatar_url": "<URL>",
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
+          }
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/pipelines/<ID>",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/pipelines/<ID>"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "iid": "<ID>",
+          "project_id": "<ID>",
+          "sha": "<SHA>",
+          "ref": "refs/merge-requests/2/head",
+          "status": "failed",
+          "source": "merge_request_event",
+          "created_at": "<TIMESTAMP>",
+          "updated_at": "<TIMESTAMP>",
+          "web_url": "https://localhost:8929/wh71-probe/trial/-/pipelines/<ID>",
+          "before_sha": "<SHA>",
+          "tag": false,
+          "yaml_errors": null,
+          "user": {
+            "id": "<ID>",
+            "username": "project_<ID>_bot_<SUFFIX>",
+            "public_email": null,
+            "name": "****",
+            "state": "active",
+            "locked": false,
+            "avatar_url": "<URL>",
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
+          },
+          "started_at": "<TIMESTAMP>",
+          "finished_at": "<TIMESTAMP>",
+          "committed_at": null,
+          "duration": 0,
+          "queued_duration": 3,
+          "coverage": null,
+          "detailed_status": {
+            "icon": "status_failed",
+            "text": "Failed",
+            "label": "failed",
+            "group": "failed",
+            "tooltip": "failed",
+            "has_details": false,
+            "details_path": "/wh71-probe/trial/-/pipelines/<ID>",
+            "illustration": null,
+            "favicon": "/assets/ci_favicons/favicon_status_failed-<TOKEN>.png"
+          },
+          "archived": false,
+          "name": null
+        }
+      }
+    },
+    {
+      "label": "bot: POST /projects/<ID>/statuses/<SHA>",
+      "request": {
+        "as": "bot",
+        "method": "POST",
+        "path": "/projects/<ID>/statuses/<SHA>",
+        "body": {
+          "state": "success",
+          "name": "probe-job",
+          "pipeline_id": "<ID>",
+          "ref": "failing-ci"
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "message": "404 Pipeline for pipeline_id, sha and ref Not Found"
+        }
+      }
+    },
+    {
+      "label": "bot: POST /projects/<ID>/statuses/<SHA>",
+      "request": {
+        "as": "bot",
+        "method": "POST",
+        "path": "/projects/<ID>/statuses/<SHA>",
+        "body": {
+          "state": "success",
+          "name": "probe-job",
+          "pipeline_id": "<ID>"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "message": {
+            "name": [
+              "has already been taken"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/pipelines/<ID>",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/pipelines/<ID>"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "iid": "<ID>",
+          "project_id": "<ID>",
+          "sha": "<SHA>",
+          "ref": "refs/merge-requests/2/head",
+          "status": "failed",
+          "source": "merge_request_event",
+          "created_at": "<TIMESTAMP>",
+          "updated_at": "<TIMESTAMP>",
+          "web_url": "https://localhost:8929/wh71-probe/trial/-/pipelines/<ID>",
+          "before_sha": "<SHA>",
+          "tag": false,
+          "yaml_errors": null,
+          "user": {
+            "id": "<ID>",
+            "username": "project_<ID>_bot_<SUFFIX>",
+            "public_email": null,
+            "name": "****",
+            "state": "active",
+            "locked": false,
+            "avatar_url": "<URL>",
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
+          },
+          "started_at": "<TIMESTAMP>",
+          "finished_at": "<TIMESTAMP>",
+          "committed_at": null,
+          "duration": 0,
+          "queued_duration": 3,
+          "coverage": null,
+          "detailed_status": {
+            "icon": "status_failed",
+            "text": "Failed",
+            "label": "failed",
+            "group": "failed",
+            "tooltip": "failed",
+            "has_details": false,
+            "details_path": "/wh71-probe/trial/-/pipelines/<ID>",
+            "illustration": null,
+            "favicon": "/assets/ci_favicons/favicon_status_failed-<TOKEN>.png"
+          },
+          "archived": false,
+          "name": null
+        }
+      }
+    },
+    {
+      "label": "bot: POST /projects/<ID>/statuses/<SHA>",
+      "request": {
+        "as": "bot",
+        "method": "POST",
+        "path": "/projects/<ID>/statuses/<SHA>",
+        "body": {
+          "state": "success",
+          "name": "probe-job",
+          "ref": "skip-ci"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "sha": "<SHA>",
+          "ref": "skip-ci",
+          "status": "success",
+          "name": "probe-job",
+          "target_url": null,
+          "description": null,
+          "created_at": "<TIMESTAMP>",
+          "started_at": null,
+          "finished_at": "<TIMESTAMP>",
+          "allow_failure": false,
+          "coverage": null,
+          "pipeline_id": "<ID>",
+          "author": {
+            "id": "<ID>",
+            "username": "project_<ID>_bot_<SUFFIX>",
+            "public_email": null,
+            "name": "****",
+            "state": "active",
+            "locked": false,
+            "avatar_url": "<URL>",
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
+          }
+        }
+      }
+    },
+    {
+      "label": "bot: POST /projects/<ID>/statuses/<SHA>",
+      "request": {
+        "as": "bot",
+        "method": "POST",
+        "path": "/projects/<ID>/statuses/<SHA>",
+        "body": {
+          "state": "success",
+          "name": "probe-job",
+          "ref": "edits-ci-never"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "sha": "<SHA>",
+          "ref": "edits-ci-never",
+          "status": "success",
+          "name": "probe-job",
+          "target_url": null,
+          "description": null,
+          "created_at": "<TIMESTAMP>",
+          "started_at": null,
+          "finished_at": "<TIMESTAMP>",
+          "allow_failure": false,
+          "coverage": null,
+          "pipeline_id": "<ID>",
+          "author": {
+            "id": "<ID>",
+            "username": "project_<ID>_bot_<SUFFIX>",
+            "public_email": null,
+            "name": "****",
+            "state": "active",
+            "locked": false,
+            "avatar_url": "<URL>",
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
+          }
+        }
+      }
+    }
+  ],
+  "commands": [
+    {
+      "label": "git clone",
+      "command": "git clone --quiet https://localhost:8929/wh71-probe/trial.git <PROBE>/state/scratch/bot-clone",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git add",
+      "command": "git add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A direct commit",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git push",
+      "command": "git push origin HEAD:refs/heads/main",
+      "exitCode": 1,
+      "output": "remote: GitLab: You are not allowed to push code to protected branches on this project.\nTo https://localhost:8929/wh71-probe/trial.git\n ! [remote rejected] HEAD -> main (pre-receive hook declined)\nerror: failed to push some refs to 'https://localhost:8929/wh71-probe/trial.git'"
+    },
+    {
+      "label": "git push",
+      "command": "git push origin HEAD:refs/heads/main",
+      "exitCode": 1,
+      "output": "remote: GitLab: You are not allowed to push code to protected branches on this project.\nTo https://localhost:8929/wh71-probe/trial.git\n ! [remote rejected] HEAD -> main (pre-receive hook declined)\nerror: failed to push some refs to 'https://localhost:8929/wh71-probe/trial.git'"
+    },
+    {
+      "label": "git push",
+      "command": "git push origin HEAD:refs/heads/wheelhouse-state",
+      "exitCode": 1,
+      "output": "remote: GitLab: You are not allowed to push code to protected branches on this project.\nTo https://localhost:8929/wh71-probe/trial.git\n ! [remote rejected] HEAD -> wheelhouse-state (pre-receive hook declined)\nerror: failed to push some refs to 'https://localhost:8929/wh71-probe/trial.git'"
+    },
+    {
+      "label": "git reset",
+      "command": "git reset --quiet --hard origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/noci-status",
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B noci-status origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A change that runs no pipeline",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/noci-status",
+      "exitCode": 0,
+      "output": "remote: \nremote: To create a merge request for noci-status, visit:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/new?merge_request%5Bsource_branch%5D=noci-status        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr create -R wh71-probe/trial --source-branch=noci-status --target-branch=main --title=No pipeline here --description-file - --yes",
+      "exitCode": 0,
+      "output": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>\n\n\nCreating merge request for noci-status into main in wh71-probe/trial"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr view 1 -R wh71-probe/trial --output json",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial/pipelines?sha=<TOKEN>&per_page=1&order_by=id&sort=desc",
+      "exitCode": 0,
+      "output": "[]"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial/repository/commits/<TOKEN>/merge_requests",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial/merge_requests/<ID>",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial/merge_requests/<ID>/pipelines?per_page=5",
+      "exitCode": 0,
+      "output": "[]"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr merge 1 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  This merge request requires a passing pipeline before merging."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial/pipelines?sha=<TOKEN>&per_page=1&order_by=id&sort=desc",
+      "exitCode": 0,
+      "output": "[{\"id\":<ID>,\"iid\":<ID>,\"project_id\":<ID>,\"sha\":\"<TOKEN>\",\"ref\":\"noci-status\",\"status\":\"success\",\"source\":\"external\",\"created_at\":\"<TIMESTAMP>\",\"updated_at\":\"<TIMESTAMP>\",\"web_url\":\"https://localhost:8929/wh71-probe/trial/-/pipelines/<ID>\",\"name\":null}]"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr merge 1 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 0,
+      "output": "✓ Merged!\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr view 1 -R wh71-probe/trial --output json",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/failing-ci",
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B failing-ci origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A pipeline that fails",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/failing-ci",
+      "exitCode": 0,
+      "output": "remote: \nremote: To create a merge request for failing-ci, visit:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/new?merge_request%5Bsource_branch%5D=failing-ci        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr create -R wh71-probe/trial --source-branch=failing-ci --target-branch=main --title=A pipeline that fails --description-file - --yes",
+      "exitCode": 0,
+      "output": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>\n\n\nCreating merge request for failing-ci into main in wh71-probe/trial"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr merge 2 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  This merge request requires a passing pipeline before merging."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr merge 2 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  This merge request requires a passing pipeline before merging."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr close 2 -R wh71-probe/trial",
+      "exitCode": 0,
+      "output": "- Closing merge request...\n✓ Closed merge request !2.\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/skip-ci",
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B skip-ci origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A change that skips CI [ci skip]",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/skip-ci",
+      "exitCode": 0,
+      "output": "remote: \nremote: To create a merge request for skip-ci, visit:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/new?merge_request%5Bsource_branch%5D=skip-ci        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr create -R wh71-probe/trial --source-branch=skip-ci --target-branch=main --title=A change that skips CI --description-file - --yes",
+      "exitCode": 0,
+      "output": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>\n\n\nCreating merge request for skip-ci into main in wh71-probe/trial"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr close 3 -R wh71-probe/trial",
+      "exitCode": 0,
+      "output": "- Closing merge request...\n✓ Closed merge request !3.\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/edits-ci-never",
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B edits-ci-never origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A pipeline file that never runs",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/edits-ci-never",
+      "exitCode": 0,
+      "output": "remote: \nremote: To create a merge request for edits-ci-never, visit:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/new?merge_request%5Bsource_branch%5D=edits-ci-never        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr create -R wh71-probe/trial --source-branch=edits-ci-never --target-branch=main --title=A pipeline file that never runs --description-file - --yes",
+      "exitCode": 0,
+      "output": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>\n\n\nCreating merge request for edits-ci-never into main in wh71-probe/trial"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr close 4 -R wh71-probe/trial",
+      "exitCode": 0,
+      "output": "- Closing merge request...\n✓ Closed merge request !4.\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> fetch --quiet origin",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse --verify --quiet refs/remotes/origin/edits-ci",
+      "exitCode": 1,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> checkout --quiet -B edits-ci origin/main",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> add -A",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> commit --quiet -m A pipeline file with a job that passes",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> push --quiet origin HEAD:refs/heads/edits-ci",
+      "exitCode": 0,
+      "output": "remote: \nremote: To create a merge request for edits-ci, visit:        \nremote:   https://localhost:8929/wh71-probe/trial/-/merge_requests/new?merge_request%5Bsource_branch%5D=edits-ci        \nremote:"
+    },
+    {
+      "label": "git -c",
+      "command": "git -c user.name=Wheelhouse probe bot -c user.email=<EMAIL> rev-parse HEAD",
+      "exitCode": 0,
+      "output": "<TOKEN>"
+    },
+    {
+      "label": "the adapter as bot runs glab",
+      "command": "glab mr create -R wh71-probe/trial --source-branch=edits-ci --target-branch=main --title=A pipeline file the bot wrote --description-file - --yes",
+      "exitCode": 0,
+      "output": "https://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>\n\n\nCreating merge request for edits-ci into main in wh71-probe/trial"
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr close 5 -R wh71-probe/trial",
+      "exitCode": 0,
+      "output": "- Closing merge request...\n✓ Closed merge request !5.\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
+    }
+  ]
+}

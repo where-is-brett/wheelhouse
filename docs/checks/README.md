@@ -64,8 +64,8 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 65 | The phone | Not run yet | None yet |
 | 66 | A clean reviewer session | Yes, on a clean copy of the change only; an untrusted checkout and a trusted folder leak | [66-clean-review.md](66-clean-review.md) |
 | 67 | The pane's place | Not run yet | None yet |
-| 68 | An approval on the host | Not run yet | None yet |
+| 68 | An approval on the host | GitLab routes Deferred, held for the director (H3); GitHub half held for its sitting (S4) | None yet |
 | 69 | Lean's guards without Node.js | Yes, on the Mac, with two surprises | [69-guards-without-node.md](69-guards-without-node.md) |
 | 70 | Lean in VS Code with nothing added | Not run yet | None yet |
-| 71 | GitLab on the company's own servers | Not run yet | None yet |
+| 71 | GitLab on the company's own servers | Partly, at Free: a commit status posted with the project key can stand in for a pipeline that never ran; Premium's half Deferred, held for the director (H3) | [71-gitlab-self-managed.md](71-gitlab-self-managed.md) |
 | 72 | The add-on at Lean | Not run yet | None yet |
