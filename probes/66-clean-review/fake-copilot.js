@@ -62,6 +62,16 @@ if (trusted) {
   for (const server of Object.values(mcp?.mcpServers ?? {})) spawnSync(server.command, server.args, { input: '', encoding: 'utf8', timeout: 10_000 });
 }
 
+const hasFile = (...parts) => fs.existsSync(path.join(...parts));
+const projectAgent = hasFile(cwd, '.claude', 'agents', 'claude-reviewer.md');
+const homeAgent = hasFile(home, 'agents', 'home-reviewer.agent.md');
+const agentCount = 1 + (projectAgent ? 1 : 0) + (homeAgent ? 1 : 0);
+const disabled = ['bash', 'edit', 'skill', 'task', ...(hasFile(cwd, '.github', 'lsp.json') ? ['lsp'] : []), ...(trusted && hasFile(cwd, '.mcp.json') ? ['planted-mcp-dotmcp-planted_mcp_dotmcp'] : [])];
+if (trusted) {
+  emit('session.skills_loaded', { skills: [{ name: 'skill-github', source: 'project' }, { name: 'stand-in-skill', source: 'builtin' }] });
+  emit('session.custom_agents_updated', { agents: [{ name: 'reviewer', source: 'user' }, ...(projectAgent ? [{ name: 'claude-reviewer', source: 'project' }] : [])], warnings: [], errors: [] });
+}
+emit('session.info', { infoType: 'configuration', message: `Disabled tools: ${disabled.join(', ')}` });
 emit('session.mcp_servers_loaded', { servers: [{ name: 'github-mcp-server', status: has('--disable-builtin-mcps') ? 'disabled' : 'connected', source: 'builtin' }] });
 emit('session.tools_updated', { model: 'standin-model-1' });
 emit('user.message', { content: prompt });
@@ -84,6 +94,11 @@ emit('assistant.message', { messageId: 'm2', phase: 'final_answer', content: ans
 emit('assistant.turn_end', { turnId: '0' });
 if (logDir) {
   fs.mkdirSync(logDir, { recursive: true });
-  fs.writeFileSync(path.join(logDir, 'process-stand-in.log'), `loading instructions: ${leaked.join(', ') || 'none'}\nagent selected: reviewer\n`);
+  fs.writeFileSync(path.join(logDir, 'process-stand-in.log'), [
+    `loading instructions: ${leaked.join(', ') || 'none'}`,
+    `[DEBUG] Plugin activation [agents]: fingerprint=x, plugins=0, loaded=${agentCount}`,
+    ...(trusted ? ['[WARNING] Loading repo hooks in prompt mode (folder is trusted or opt-in set)', '[WARNING] Loading workspace MCP sources in prompt mode (folder is trusted or opt-in set)'] : []),
+    '',
+  ].join('\n'));
 }
 console.log(JSON.stringify({ type: 'result', sessionId: 'sid-1', exitCode: 0, usage: { premiumRequests: 0, totalApiDurationMs: 1, sessionDurationMs: 2, codeChanges: { linesAdded: 0 } } }));

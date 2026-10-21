@@ -1,0 +1,134 @@
+{
+ "route": "control",
+ "events": [
+  {
+   "type": "session.mcp_server_status_changed",
+   "data": {
+    "serverName": "github-mcp-server",
+    "status": "pending"
+   }
+  },
+  {
+   "type": "session.mcp_server_status_changed",
+   "data": {
+    "serverName": "github-mcp-server",
+    "status": "connected",
+    "configSource": "builtin"
+   }
+  },
+  {
+   "type": "session.skills_loaded",
+   "data": {
+    "skills": [
+     {
+      "name": "skill-agents",
+      "source": "project"
+     },
+     {
+      "name": "skill-claude",
+      "source": "project"
+     },
+     {
+      "name": "skill-github",
+      "source": "project"
+     },
+     {
+      "name": "home-skill",
+      "source": "personal-copilot"
+     },
+     {
+      "name": "env-skill",
+      "source": "custom"
+     },
+     {
+      "name": "customize-cloud-agent",
+      "source": "builtin"
+     },
+     {
+      "name": "github-pr-media",
+      "source": "builtin"
+     }
+    ]
+   }
+  },
+  {
+   "type": "session.custom_agents_updated",
+   "data": {
+    "agents": [
+     {
+      "name": "home-reviewer",
+      "source": "user",
+      "tools": [
+       "*"
+      ]
+     },
+     {
+      "name": "reviewer",
+      "source": "user",
+      "tools": [
+       "read",
+       "search"
+      ]
+     },
+     {
+      "name": "claude-reviewer",
+      "source": "project",
+      "tools": [
+       "*"
+      ]
+     }
+    ],
+    "warnings": [],
+    "errors": []
+   }
+  },
+  {
+   "type": "session.mcp_servers_loaded",
+   "data": {
+    "servers": [
+     {
+      "name": "github-mcp-server",
+      "status": "connected",
+      "source": "builtin"
+     },
+     {
+      "name": "planted-home-mcp",
+      "status": "connected"
+     },
+     {
+      "name": "planted-mcp-dotmcp",
+      "status": "connected",
+      "source": "workspace"
+     }
+    ]
+   }
+  },
+  {
+   "type": "assistant.message",
+   "data": {
+    "content": "VERDICT: CHANGES\nFINDINGS: src/range.ts:4 \u2014 `<=` includes index `count`, so `sumFirst(..., 2)` sums three values instead of the first two.\nTOOLS-OFFERED: view, rg, glob, skill, sql, multi_tool_use.parallel\nINSTRUCTIONS-SEEN: home-instructions, copilot-instructions, agents-md, claude-md, gemini-md, home-path-instructions, path-instructions, home-hooks, home-settings-hooks, github-hooks, claude-settings-hooks, copilot-settings-hooks, skill-agents, skill-claude, skill-github, home-skill, env-skill, env-dir, ts-instructions, agents-md-nested",
+    "phase": "final_answer"
+   }
+  },
+  {
+   "type": "result",
+   "sessionId": "f40483b0-629a-47b4-b22d-e255dfe4b867",
+   "exitCode": 0,
+   "usage": {
+    "premiumRequests": 1,
+    "totalApiDurationMs": 21913,
+    "sessionDurationMs": 30800,
+    "codeChanges": {
+     "linesAdded": 0,
+     "linesRemoved": 0,
+     "filesModified": []
+    }
+   }
+  }
+ ],
+ "debugLines": [
+  "[DEBUG] Plugin activation [agents]: fingerprint=b4753f88e263, plugins=0, loaded=3",
+  "[WARNING] Loading repo hooks in prompt mode (folder is trusted or opt-in set)",
+  "[WARNING] Loading workspace MCP sources in prompt mode (folder is trusted or opt-in set)"
+ ]
+}

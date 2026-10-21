@@ -7,8 +7,8 @@ import path from 'node:path';
 import { tempFolder } from '../../helpers/homes.js';
 import {
   CHANGED_RANGE, BASE_RANGE, CHECK, COPILOT_EVENTS, CLAUDE_EVENTS, REVIEWER_FILE, ROUTES, SOURCES, TAGS,
-  checkoutFiles, finalAnswer, homeFiles, main, mcpEvents, obeyedIn, parseOptions, plantedReads, promptFor, readAnswer,
-  reviewerWithField, scrubber, summarise, tagsIn, toolCalls, writeAttempts,
+  checkoutFiles, cleanCheck, debugLogFacts, finalAnswer, homeFiles, main, mcpEvents, obeyedIn, parseOptions, plantedReads, promptFor, readAnswer,
+  reachedIn, reviewerWithField, scrubber, sessionFacts, summarise, tagsIn, toolCalls, writeAttempts,
 } from '../../../probes/66-clean-review/run.js';
 import { answerFor } from '../../../probes/66-clean-review/hook.js';
 import { frames, mcpReply } from '../../../probes/66-clean-review/standin.js';
@@ -143,6 +143,54 @@ test('tool calls, write attempts, planted-file reads and MCP servers come from C
   assert.deepEqual(servers['github-mcp-server'].statuses, ['loaded:disabled']);
 });
 
+const fixture = (route) => JSON.parse(fs.readFileSync(new URL(`../../fixtures/copilot/review/${route}.json`, import.meta.url), 'utf8'));
+function checkOf(route, { dropLines = false } = {}) {
+  const fx = fixture(route);
+  const dir = tempFolder('wh-debug-');
+  fs.writeFileSync(path.join(dir, 'process.log'), dropLines ? '' : fx.debugLines.join('\n') + '\n');
+  const facts = sessionFacts(fx.events);
+  const debug = debugLogFacts(dir);
+  const servers = mcpEvents(fx.events);
+  return { fx, facts, debug, servers, check: cleanCheck({ facts, debug, servers }) };
+}
+
+test('real events: the clean copy passes the clean check; the untrusted checkout does not, because of its agent and language-server config', () => {
+  const b = checkOf('b-clean-copy');
+  assert.equal(b.debug.agentsLoaded, 1);
+  assert.equal(b.facts.lspToolPresent, false);
+  assert.deepEqual(b.check, { clean: true, reasons: [] });
+  const a = checkOf('a-clean-home');
+  assert.equal(a.check.clean, false);
+  assert.equal(a.debug.agentsLoaded, 2);
+  assert.equal(a.facts.lspToolPresent, true);
+  assert.equal(a.facts.agents.length, 0, 'an untrusted session reports no agent list');
+  assert.ok(a.check.reasons.some((r) => /2 agents loaded, expected 1/.test(r)));
+  assert.ok(a.check.reasons.some((r) => /lsp tool/.test(r)));
+  assert.equal(a.debug.repoHooksWarning, false);
+});
+
+test('real events: a trusted checkout fails the check for its hooks, its server, its agent, its skills and its language-server config', () => {
+  const t = checkOf('a-trusted');
+  assert.equal(t.check.clean, false);
+  const text = t.check.reasons.join(' | ');
+  for (const part of [/repo hooks/, /workspace MCP/, /claude-reviewer \(project\)/, /skill-github \(project\)/, /planted-mcp-dotmcp/, /MCP servers started: planted-mcp-dotmcp/, /lsp tool/]) assert.match(text, part);
+  const reached = reachedIn({ answerText: '', seen: [], logLines: [], servers: t.servers, debug: t.debug, facts: t.facts, lspSources: ['lsp-github'] });
+  assert.deepEqual(reached['claude-agent'], ['agent-event']);
+  assert.deepEqual(reached['skill-github'], ['skill-event']);
+  assert.deepEqual(reached['lsp-github'], ['lsp-tool']);
+  assert.ok('mcp-dotmcp' in reached);
+  assert.equal(checkOf('control').check.clean, false);
+});
+
+test('the clean check fails closed when the log or the info line no longer says what it should', () => {
+  const quiet = checkOf('b-clean-copy', { dropLines: true });
+  assert.equal(quiet.check.clean, false);
+  assert.ok(quiet.check.reasons.some((r) => /no agent count/.test(r)));
+  const noInfo = cleanCheck({ facts: sessionFacts([]), debug: { agentsLoaded: 1, repoHooksWarning: false, workspaceMcpWarning: false } });
+  assert.equal(noInfo.clean, false);
+  assert.ok(noInfo.reasons.some((r) => /Disabled tools/.test(r)));
+});
+
 test('the prompt carries the diff and asks for the verdict, the tools offered and what was seen', () => {
   const prompt = promptFor('diff --git a/x b/x\n-a\n+b\n');
   assert.match(prompt, /diff --git a\/x b\/x/);
@@ -186,7 +234,9 @@ t('--dry-run makes a run for each route, finds the tags each route lets in, keep
   assert.equal(by.control.writes.attempts.length, 1);
 
   // The clean routes let in only what the stand-in is made to let in.
-  assert.deepEqual(by['a-clean-home'].reachedTags, ['env-dir']);
+  assert.deepEqual(by['a-clean-home'].reachedTags, ['lsp-github', 'env-dir']);
+  assert.equal(by['a-clean-home'].cleanCheck.clean, false);
+  assert.equal(by['b-clean-copy'].cleanCheck.clean, true);
   assert.equal(by['a-clean-home'].answer.verdict, 'APPROVE');
   assert.deepEqual(by['b-clean-copy'].reachedTags, ['env-dir']);
   assert.ok(by['a-trusted'].reachedTags.includes('github-hooks'));
@@ -218,7 +268,7 @@ t('--dry-run makes a run for each route, finds the tags each route lets in, keep
   assert.ok(!raw.includes(ownTmp));
   assert.match(printed[0], /control +exit 0/);
   assert.equal(printed.at(-1), `Raw results: ${file}`);
-  assert.match(summarise(results), /a-clean-home: LEAKED env-dir/);
+  assert.match(summarise(results), /a-clean-home: LEAKED lsp-github, env-dir/);
 
   assert.deepEqual(fs.readdirSync(ownTmp), []);
 });
