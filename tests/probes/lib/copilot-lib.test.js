@@ -55,26 +55,32 @@ t('installCopilot refuses a version that is not exact, and says so when npm fail
   await withPath(bin, () => assert.rejects(() => installCopilot({ version: '1.2.3', prefix: tempFolder('wh-x-') }), /could not install Copilot CLI 1\.2\.3: registry says no/));
 });
 
-t('runCopilot passes COPILOT_HOME and never the caller\'s GITHUB_TOKEN', async () => {
+t('runCopilot passes COPILOT_HOME, drops inherited host tokens and keeps a token the caller passes on purpose', async () => {
   const bin = tempFolder('wh-copilot-');
-  const copilot = script(bin, 'copilot', 'printf "home=%s\\ntoken=%s\\ngh=%s\\nmine=%s\\n" "$COPILOT_HOME" "$GITHUB_TOKEN" "$GH_TOKEN" "$MINE"');
+  const copilot = script(bin, 'copilot', 'printf "home=%s\\ntoken=%s\\ngh=%s\\ncopilot=%s\\nmine=%s\\n" "$COPILOT_HOME" "$GITHUB_TOKEN" "$GH_TOKEN" "$COPILOT_GITHUB_TOKEN" "$MINE"');
   const home = scratchCopilotHome();
-  const before = { ...process.env };
-  process.env.GITHUB_TOKEN = 'caller-secret';
-  process.env.GH_TOKEN = 'caller-secret-2';
+  const names = ['GITHUB_TOKEN', 'GH_TOKEN', 'COPILOT_GITHUB_TOKEN'];
+  const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) process.env[name] = `inherited-${name}`;
   try {
-    const result = await runCopilot({ args: [], home: home.dir, bin: copilot, env: { MINE: 'yes', COPILOT_GITHUB_TOKEN: 'passed-secret' } });
-    assert.equal(result.code, 0);
-    assert.equal(result.stdout, `home=${home.dir}\ntoken=\ngh=\nmine=yes\n`);
-    assert.ok(!result.stdout.includes('secret'));
+    // Nothing passed: none of the inherited tokens reaches the child.
+    const bare = await runCopilot({ args: [], home: home.dir, bin: copilot, env: { MINE: 'yes' } });
+    assert.equal(bare.code, 0);
+    assert.equal(bare.stdout, `home=${home.dir}\ntoken=\ngh=\ncopilot=\nmine=yes\n`);
+    // A token passed in `env` is the caller's choice and does reach the child; the inherited ones still do not.
+    const given = await runCopilot({ args: [], home: home.dir, bin: copilot, env: { COPILOT_GITHUB_TOKEN: 'passed-on-purpose' } });
+    assert.equal(given.stdout, `home=${home.dir}\ntoken=\ngh=\ncopilot=passed-on-purpose\nmine=\n`);
+    assert.ok(!(given.stdout + bare.stdout).includes('inherited-'));
+    // The environment builder alone.
     assert.ok(!copilotEnv({ home: home.dir, baseEnv: { GITHUB_TOKEN: 'x', PATH: '/bin' } }).GITHUB_TOKEN);
     assert.equal(copilotEnv({ home: home.dir, baseEnv: { PATH: '/bin' } }).PATH, '/bin');
+    assert.equal(copilotEnv({ home: home.dir, baseEnv: { GH_TOKEN: 'x' }, env: { GH_TOKEN: 'y' } }).GH_TOKEN, 'y');
     await assert.rejects(() => runCopilot({ args: [], bin: copilot }), /home of its own/);
   } finally {
-    process.env.GITHUB_TOKEN = before.GITHUB_TOKEN;
-    process.env.GH_TOKEN = before.GH_TOKEN;
-    if (before.GITHUB_TOKEN === undefined) delete process.env.GITHUB_TOKEN;
-    if (before.GH_TOKEN === undefined) delete process.env.GH_TOKEN;
+    for (const name of names) {
+      if (before[name] === undefined) delete process.env[name];
+      else process.env[name] = before[name];
+    }
     home.remove();
   }
   assert.ok(!fs.existsSync(home.dir));
@@ -102,7 +108,7 @@ t('runCopilot parses JSON lines into events and leaves plain text as stdout', as
 
 t('runCopilot stops the child at timeoutMs and says so', async () => {
   const bin = tempFolder('wh-copilot-');
-  const slow = script(bin, 'slow', 'sleep 30');
+  const slow = script(bin, 'slow', 'exec sleep 30');
   const home = scratchCopilotHome();
   try {
     const started = Date.now();
@@ -165,5 +171,5 @@ test('the numbers are the design\'s, exactly', () => {
   assert.equal(numbers.LEAN_RECORD_DIR, '.wheelhouse/record');
   assert.equal(numbers.BOARD_FILE, 'wheelhouse/board.md');
   assert.equal(numbers.HOOK_FILE, 'wheelhouse.json');
-  assert.equal(typeof COPILOT_VERSION, 'string');
+  assert.equal(COPILOT_VERSION, '1.0.101');
 });

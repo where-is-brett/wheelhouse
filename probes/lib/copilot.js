@@ -12,7 +12,7 @@ import { assertUnderTmp } from './scratch.js';
 export { COPILOT_VERSION };
 
 const VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
-// Variables that carry a host's token. A probe's Copilot gets its sign-in from its own home, never these.
+// Variables that carry a host's token. A probe's Copilot never inherits these; it gets its sign-in from its own home.
 const TOKEN_VARIABLE = /^(GH|GITHUB|COPILOT_GITHUB|GITLAB|GLAB)_[A-Z0-9_]*TOKEN$/i;
 
 // Where a version is installed: ~/.wheelhouse-probes/copilot/<version>/.
@@ -52,14 +52,20 @@ export function scratchCopilotHome() {
   };
 }
 
-// The environment a probe's Copilot gets: the caller's, without any host token, with COPILOT_HOME set.
+// The environment a probe's Copilot gets: the inherited environment without any host token, then the
+// variables the caller passes explicitly in `env` (a probe may hand it a token on purpose), with
+// COPILOT_HOME set.
 export function copilotEnv({ env = {}, home, baseEnv = process.env } = {}) {
   if (!home) throw new Error('A probe runs Copilot from a home of its own: pass `home`');
-  const kept = {};
-  for (const [name, value] of Object.entries({ ...baseEnv, ...env })) {
-    if (!TOKEN_VARIABLE.test(name) && value !== undefined && value !== null) kept[name] = value;
+  const merged = {};
+  for (const [name, value] of Object.entries(baseEnv)) {
+    if (!TOKEN_VARIABLE.test(name) && value !== undefined && value !== null) merged[name] = value;
   }
-  return { ...kept, COPILOT_HOME: home };
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || value === null) delete merged[name];
+    else merged[name] = value;
+  }
+  return { ...merged, COPILOT_HOME: home };
 }
 
 // The lines of `text` as JSON objects when every non-empty line is one; otherwise [].

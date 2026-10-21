@@ -23,5 +23,5 @@ export const LEAN_RECORD_DIR = '.wheelhouse/record';
 export const BOARD_FILE = 'wheelhouse/board.md';
 // The hook file's name, in the person's Copilot hook folder.
 export const HOOK_FILE = 'wheelhouse.json';
-// The version of Copilot CLI the probes install, set when the first real install is made.
-export const COPILOT_VERSION = '0.0.0-unset';
+// The version of Copilot CLI the probes install.
+export const COPILOT_VERSION = '1.0.101';
