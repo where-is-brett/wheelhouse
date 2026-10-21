@@ -54,7 +54,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 55 | What an add-on's contributions reach | Not run yet | None yet |
 | 56 | Registration: what Copilot loads, and twice | Yes | [56-registration.md](56-registration.md) |
 | 57 | Copilot's sandbox | Not run yet | None yet |
-| 58 | The guards' input | Not run yet | None yet |
+| 58 | The guards' input | Partly | [58-hook-input.md](58-hook-input.md) |
 | 59 | Clickable questions: whose answer | Not run yet | None yet |
 | 60 | The other hooks | Not run yet | None yet |
 | 61 | Sessions from a script | Not run yet | None yet |

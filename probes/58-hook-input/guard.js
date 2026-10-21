@@ -13,6 +13,8 @@ import { appendJsonl } from '../lib/log.js';
 
 const [file, tag, event, mode = 'log', seconds = '0'] = process.argv.slice(2);
 
+// Names of the variables that might say how Copilot is run. Values are kept only for Copilot's own (COPILOT_*)
+// variables, never for the caller's: a caller's environment can hold anything.
 const ENV_NAME = /^(COPILOT|CLAUDE|GITHUB|GH_|CODESPACES|SANDBOX|TERM_PROGRAM|CI$)|SANDBOX/i;
 const SECRET_NAME = /token|key|secret|auth|pass/i;
 
@@ -30,7 +32,7 @@ function answerFor(mode, input) {
 function environment() {
   const found = {};
   for (const [name, value] of Object.entries(process.env)) {
-    if (ENV_NAME.test(name)) found[name] = SECRET_NAME.test(name) ? '[set]' : value;
+    if (ENV_NAME.test(name)) found[name] = /^COPILOT_/.test(name) && !SECRET_NAME.test(name) ? value : '[set]';
   }
   return found;
 }

@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "Edit",
+  "tool_input": "*** Begin Patch\n*** Add File: <PROJECT>/out.txt\n+went-through\n*** End Patch\n",
+  "tool_result": {
+    "result_type": "success",
+    "text_result_for_llm": "Added 1 file(s): <PROJECT>/out.txt"
+  }
+}

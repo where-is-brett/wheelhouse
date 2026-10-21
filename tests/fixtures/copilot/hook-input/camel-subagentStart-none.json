@@ -1,0 +1,12 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "transcriptPath": "<COPILOT_HOME>/session-state/<ID>/events.jsonl",
+  "agentName": "probe-agent",
+  "agentDisplayName": "probe-agent",
+  "agentDescription": "Replies with the single word ok",
+  "agentId": "<ID>",
+  "agentType": "probe-agent",
+  "parentAgentId": "<ID>"
+}

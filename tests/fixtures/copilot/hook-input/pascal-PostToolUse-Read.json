@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "Read",
+  "tool_input": {
+    "path": "<PROJECT>/README.md"
+  },
+  "tool_result": {
+    "result_type": "success",
+    "text_result_for_llm": "Wheelhouse probe 58. The secret word is secret-<ID>.\n"
+  }
+}

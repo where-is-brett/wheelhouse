@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "probe58-echo",
+  "tool_input": {
+    "text": "probe58"
+  }
+}

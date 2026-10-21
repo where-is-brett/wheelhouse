@@ -1,0 +1,13 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "view",
+  "toolArgs": {
+    "path": "<PROJECT>/README.md"
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "Wheelhouse probe 58. The secret word is secret-<ID>.\n"
+  }
+}

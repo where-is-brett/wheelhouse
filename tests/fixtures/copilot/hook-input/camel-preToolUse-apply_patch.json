@@ -1,0 +1,7 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "apply_patch",
+  "toolArgs": "*** Begin Patch\n*** Add File: <PROJECT>/out.txt\n+went-through\n*** End Patch\n"
+}

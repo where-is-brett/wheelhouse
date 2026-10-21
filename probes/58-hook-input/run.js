@@ -236,6 +236,22 @@ export function toolEvents(events) {
   return events.filter((event) => /tool/i.test(String(event?.type)) && !NOT_TOOL_RUN.test(String(event.type)));
 }
 
+// What happened to each tool call, from Copilot's own events: { tool, success, error } in order of completion.
+// A denied call has success false and an error (code "denied" for a hook's refusal). This, not the text of the
+// reply, says whether a call went through: a session refused one tool may reach the same file with another.
+export function toolOutcomes(events) {
+  const names = new Map();
+  const outcomes = [];
+  for (const event of events) {
+    if (event?.type === 'tool.execution_start' && event.data?.toolCallId) names.set(event.data.toolCallId, event.data.toolName);
+    if (event?.type === 'tool.execution_complete') {
+      const data = event.data ?? {};
+      outcomes.push({ tool: names.get(data.toolCallId) ?? data.toolName ?? null, success: data.success === true, error: data.error?.message ?? null, code: data.error?.code ?? null });
+    }
+  }
+  return outcomes;
+}
+
 // ---------------------------------------------------------------- summary
 
 export function summarise(results) {
@@ -248,7 +264,8 @@ export function summarise(results) {
     out.push(`           tools seen (camel): ${camel.join(', ') || 'none'}   [preToolUse per registration: ${all || 'none'}]`);
     if (run.checks) {
       const c = run.checks;
-      out.push(`           view went through (secret seen): ${c.secretSeen}   out.txt created: ${c.outTxt !== null}   edit-me.txt: ${JSON.stringify(c.editMe)}`);
+      out.push(`           secret word in the output (any tool): ${c.secretSeen}   out.txt created: ${c.outTxt !== null}   edit-me.txt: ${JSON.stringify(c.editMe)}`);
+      out.push(`           outcomes: ${(run.toolOutcomes ?? []).map((o) => `${o.tool}:${o.success ? 'ok' : o.code ?? 'failed'}`).join(' ') || 'none'}`);
     }
     if (run.mode === 'sleep') out.push(`           hook woke after sleeping: ${run.hookEntries.some((e) => e.phase === 'woke')}`);
   }
@@ -353,7 +370,7 @@ export async function main(argv = process.argv.slice(2), { out = console.log, se
         id, mode, args, cwd, code: result.code, timedOut: result.timedOut, durationMs: Date.now() - t0,
         stdout: result.stdout, stderr: result.stderr,
         result: result.events.find((event) => event.type === 'result') ?? null,
-        toolEvents: toolEvents(result.events),
+        toolEvents: toolEvents(result.events), toolOutcomes: toolOutcomes(result.events),
         hookCounts: countHooks(hookEntries), toolsByTag: toolsByTag(hookEntries), hookEntries,
         checks: { secretSeen: result.stdout.includes(secret), outTxt: readOr('out.txt'), editMe: readOr('edit-me.txt'), readmeIntact: readOr('README.md') === files['README.md'] },
         copilotLogLines: hookLogLines(logDir),

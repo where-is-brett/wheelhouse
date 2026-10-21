@@ -1,0 +1,12 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "rg",
+  "toolArgs": {
+    "pattern": "secret",
+    "paths": "<PROJECT>",
+    "output_mode": "content",
+    "head_limit": 50
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "view",
+  "toolArgs": {
+    "path": "<PROJECT>/README.md"
+  }
+}

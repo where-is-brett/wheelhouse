@@ -1,0 +1,10 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "glob",
+  "toolArgs": {
+    "pattern": "*.md",
+    "paths": "<PROJECT>"
+  }
+}

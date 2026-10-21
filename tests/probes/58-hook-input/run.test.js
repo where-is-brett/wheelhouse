@@ -9,7 +9,7 @@ import { tempFolder } from '../../helpers/homes.js';
 import { respond } from '../../../probes/58-hook-input/mcp.js';
 import {
   CAMEL_EVENTS, CHECK, PASCAL_EVENTS, allToolsPrompt, askUserPrompt, categoryOf, copilotArgs, countHooks, hookCommand, hookFiles, inputKeys,
-  main, mcpConfig, modeFields, parseOptions, projectFiles, samples, seenKeys, stepsFor, summarise, toolEvents, toolsByTag,
+  main, mcpConfig, modeFields, toolOutcomes, parseOptions, projectFiles, samples, seenKeys, stepsFor, summarise, toolEvents, toolsByTag,
 } from '../../../probes/58-hook-input/run.js';
 
 const unix = process.platform !== 'win32';
@@ -143,6 +143,29 @@ test('the analysis counts, lists tools, keys, mode fields and samples from the h
   assert.deepEqual(toolEvents([{ type: 'session.mcp_server_status_changed' }, { type: 'session.tools_updated' }, { type: 'tool.execution_complete' }, { type: 'result' }]).map((e) => e.type), ['tool.execution_complete']);
 });
 
+test('toolOutcomes pairs starts with completions and reads the refusal', () => {
+  const events = [
+    { type: 'tool.execution_start', data: { toolCallId: 'a', toolName: 'view' } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'a', success: false, error: { message: 'Denied by preToolUse hook: x', code: 'denied' } } },
+    { type: 'tool.execution_start', data: { toolCallId: 'b', toolName: 'bash' } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'b', success: true } },
+    { type: 'tool.execution_complete', data: { toolName: 'create', success: true } },
+  ];
+  assert.deepEqual(toolOutcomes(events), [
+    { tool: 'view', success: false, error: 'Denied by preToolUse hook: x', code: 'denied' },
+    { tool: 'bash', success: true, error: null, code: null },
+    { tool: 'create', success: true, error: null, code: null },
+  ]);
+});
+
+t('the guard keeps no value of the caller\'s environment, only Copilot\'s own', () => {
+  const log = path.join(tempFolder('wh-guard-env-'), 'g.jsonl');
+  spawnSync(process.execPath, [dir('guard.js'), log, 't', 'e'], { input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: '/secret/place', COPILOT_CLI_BINARY_VERSION: '9.9.9' } });
+  const { env } = lines(log)[0];
+  assert.equal(env.CLAUDE_PROJECT_DIR, '[set]');
+  assert.equal(env.COPILOT_CLI_BINARY_VERSION, '9.9.9');
+});
+
 test('parseOptions takes the options and refuses what it does not know', () => {
   const options = parseOptions(['--dry-run', '--bin', '/b', '--timeout-ms', '5', '--timeout-sec', '2', '--results-dir', '/r']);
   assert.deepEqual({ ...options }, { dryRun: true, bin: '/b', timeoutMs: 5, timeoutSec: 2, sleepSec: 7, resultsDir: '/r' });
@@ -164,6 +187,7 @@ function checkStandInNumbers(results) {
   assert.equal(byId['all-tools'].hookCounts.camel.sessionStart, 1);
   assert.equal(byId['all-tools'].hookCounts.camel.postToolUse, 9);
   assert.equal(byId['all-tools'].checks.secretSeen, true);
+  assert.deepEqual(byId['deny-view'].toolOutcomes.map((o) => `${o.tool}:${o.success}`), ['view:false', 'create:true']);
   assert.equal(byId['all-tools'].checks.outTxt, 'went-through');
   const sample = results.samples['camel/preToolUse/view'];
   assert.equal(sample.input.toolName, 'view');
