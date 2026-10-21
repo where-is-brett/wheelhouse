@@ -119,7 +119,7 @@ test('makeTestPeople makes two users and a token each, kept in files of mode 600
   assert.notEqual(people.maintainer.username, people.second.username);
 });
 
-test('makeTestCa makes a certificate for localhost signed by its own authority, which Node.js rejects without it', async () => {
+t('makeTestCa makes a certificate for localhost signed by its own authority, which Node.js rejects without it', async () => {
   const dir = tempFolder('wh-ca-');
   const { caPem, certPem, keyPem } = makeTestCa(dir);
   const server = https.createServer({ cert: fs.readFileSync(certPem), key: fs.readFileSync(keyPem) }, (req, res) => res.end('ok'));
@@ -225,7 +225,7 @@ t('startGitlab undoes a container that did not start', async () => {
   } finally { docker.restore(); }
 });
 
-test('waitForReadiness stops at once when the container cannot be inspected, and gives up at its limit', async () => {
+t('waitForReadiness stops at once when the container cannot be inspected, and gives up at its limit', async () => {
   const docker = dockerStandIn();
   try {
     const dir = tempFolder('wh-ca-');

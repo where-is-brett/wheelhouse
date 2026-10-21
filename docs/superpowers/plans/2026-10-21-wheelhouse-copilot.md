@@ -350,7 +350,7 @@ git commit -m "Record check 58: what Copilot gives a guard, and how its answer l
 - Modify: `.gitignore` (`probes/**/state/`)
 
 **Interfaces:**
-- Produces: `GITLAB_EE_TAG` (pinned when this task runs); `makeTestCa(dir) -> { caPem, certPem, keyPem }` with `openssl`, a certificate for `localhost` signed by a throwaway authority of its own, so that every tool rejects it until told about that authority, as with a company's own; `startGitlab({ dir, port = 8929 }) -> { baseUrl, rootToken }`, which runs the image with `external_url 'https://localhost:<port>'` and the certificate, waits until `/-/readiness` answers, and makes the root's token with `gitlab-rails runner` through `docker exec`, kept in `<dir>/state/root-token` (mode 600) and never printed; `startRunner({ baseUrl, token })` (a `gitlab/gitlab-runner` container with the shell executor); `makeTestPeople(api) -> { maintainer, second }` (two users with generated passwords kept like the token); `stopGitlab({ dir, remove = true })`.
+- Produces: `GITLAB_EE_TAG` (pinned when this task runs); `makeTestCa(dir) -> { caPem, certPem, keyPem }` with `openssl`, a certificate for `localhost` signed by a throwaway authority of its own, so that every tool rejects it until told about that authority, as with a company's own; `startGitlab({ dir, port = 8929 }) -> { baseUrl, rootToken, rootTokenFile, caFile }` (`rootToken` is the path of the token file, not the token), which runs the image with `external_url 'https://localhost:<port>'` and the certificate, waits until `/-/readiness` answers, and makes the root's token with `gitlab-rails runner` through `docker exec`, kept in `<dir>/state/root-token` (mode 600) and never printed; `startRunner({ dir, baseUrl, token })` (`token` is that file path; a `gitlab/gitlab-runner` container with the shell executor); `apiFor({ baseUrl, caFile, tokenFile })` (the `api` the calls below take), `makeTestPeople(api, { dir }) -> { maintainer, second }` (two users with generated passwords kept like the token); `stopGitlab({ dir, remove = true })`.
 
 - [ ] **Step 1: Write the failing tests** with a stand-in `docker` on the PATH.
 
@@ -392,13 +392,14 @@ test('makeTestCa makes a certificate for localhost signed by its own authority, 
 
 Needs held item H3. Without a licence by the time Task 2 is done, mark both halves Deferred, record in the ledger, and go to Task 4.
 
-**Status: Deferred, held for the director (H3).** No licence came, so this task did not run. Check 71's Premium half and check 68's GitLab routes stay Deferred; Part 9 Task 5 builds the Premium route from GitLab's documentation behind a switch that stays off until the check passes. The steps below stay as written for the day the licence comes.
+**Status: Deferred, held for the director (H3).** No licence came, so this task did not run. Check 71's Premium half and check 68's GitLab routes stay Deferred; Part 9 Task 5 builds the Premium route from GitLab's documentation behind a switch that stays off until the check passes. The instance Task 1 left was torn down on 21 October 2026 (containers, volumes and state removed), so the steps below stay as written for the day the licence comes, after Step 0 starts it again.
 
 **Files:** Modify `probes/71-gitlab-self-managed/run.js`, `docs/checks/71-gitlab-self-managed.md`; create `probes/68-host-approval/run.js`, `docs/checks/68-host-approval.md`, `tests/fixtures/gitlab-ee/premium/`; modify `docs/checks/README.md`.
 
 **Interfaces:**
 - Produces, for Part 9 Task 5: recorded responses for the approval settings and approvals; the note's answers.
 
+- [ ] **Step 0: Start the instance again** (Task 1's was torn down): `startGitlab({ dir: 'probes/71-gitlab-self-managed' })`, then `startRunner({ dir, baseUrl, token: rootToken })` and `makeTestPeople(apiFor({ baseUrl, caFile, tokenFile: rootToken }), { dir })`, as Task 1 built them. The start takes several minutes.
 - [ ] **Step 1: Load the licence** (`POST /license` as root, from the file the director saved in `~/Downloads`; the file is read, never committed).
 - [ ] **Step 2: Approval settings** on the project: one required approval from the maintainer as an eligible approver; author's approval prevented; committers' approval prevented; approvals reset on push; overriding rules in a merge request prevented. Read them back.
 - [ ] **Step 3: The routes:** the bot opens a merge request; the bot's own approval refused; the second person's approval doesn't count; the maintainer approves; a commit added by the bot removes the approval; the bot can't change the rules or protection, or make a key. Record each response.
@@ -1273,7 +1274,7 @@ Agents do every step they can (the director's standing rule). Each item below re
 **H3. A GitLab Premium trial licence.** The card's options: **Self-managed trial** (recommended: closest to the tester's company), **gitlab.com trial instead**, **Skip Premium for now** (Premium's routes stay built but switched off).
 1. Click **Self-managed trial**. The agent opens GitLab's trial page.
 2. Fill in GitLab's form yourself (an agent doesn't enter your details) and submit it.
-3. Save the licence file GitLab emails into Downloads; click **Done**. The agent loads it into the test instance, which is deleted afterwards.
+3. Save the licence file GitLab emails into Downloads; click **Done**. The agent starts a fresh test instance (the first was deleted), loads the licence into it, and deletes it afterwards.
 
 **S1. Clicks in the chat, and Lean, on the Mac.**
 1. Click **Start**. The agent opens VS Code on a scratch project with the Lean kit copied in.

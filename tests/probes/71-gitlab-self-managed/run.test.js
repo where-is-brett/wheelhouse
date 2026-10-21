@@ -117,7 +117,10 @@ test('whereToken counts a token in a config folder, by key and mode', () => {
   const dir = tempFolder('wh71-where-');
   fs.writeFileSync(path.join(dir, 'config.yml'), `hosts:\n    h:\n        token: ${PAT}\n`, { mode: 0o600 });
   fs.writeFileSync(path.join(dir, 'aliases.yml'), 'a: b\n');
-  assert.deepEqual(whereToken(dir, PAT), [{ file: 'config.yml', count: 1, key: 'token', mode: '600' }]);
+  // Windows reports every file as 666, so the mode is asserted on POSIX only.
+  const found = whereToken(dir, PAT);
+  assert.deepEqual(found.map(({ mode, ...rest }) => rest), [{ file: 'config.yml', count: 1, key: 'token' }]);
+  if (process.platform !== 'win32') assert.equal(found[0].mode, '600');
   assert.deepEqual(whereToken(dir, 'not-there-at-all'), []);
 });
 
