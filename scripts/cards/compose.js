@@ -68,6 +68,9 @@ export const DECIDING = Object.freeze({
 // is uninstall's card (ruling R90), which goes ahead only on the click on the card itself.
 export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall']);
 
+// The put-off buttons a decision card offers: PUT_OFF's first three, since Why? and Suggest a change…
+// are not options a composed card names.
+const DECISION_PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me']);
 // The put-off buttons a kind's card offers, where it isn't all of them: the baseline card reads
 // figures back, and there is nothing more to explain or show; a trust card has nothing to show, nor
 // has uninstall's card, whose whole list `cli.js uninstall status` gives.
@@ -277,7 +280,7 @@ function offered(kind, given, { build = false, target } = {}) {
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
-  const putOff = PUT_OFF_OF[kind] ?? PUT_OFF;
+  const putOff = PUT_OFF_OF[kind] ?? DECISION_PUT_OFF;
   // The card of the rules found offers its second answer in place of Show me (ruling R35).
   const allowed = kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL, 'Not now', 'Explain more']
     : [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];

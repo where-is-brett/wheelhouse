@@ -62,8 +62,8 @@ const ACTION_OWN = {
   uninstall: ['project', 'hash'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
-// Labels that ask for more, or put the card off: a click on one is never an answer.
-const NOT_AN_ANSWER = ['Explain more', 'Not now'];
+// Labels that ask for more, put the card off or hand the front desk the director's own words: a click on one is never an answer.
+const NOT_AN_ANSWER = ['Explain more', 'Not now', 'Why?', 'Suggest a change…'];
 
 const isSlug = (x) => typeof x === 'string' && SLUG.test(x);
 const isText = (x) => typeof x === 'string' && x !== '';

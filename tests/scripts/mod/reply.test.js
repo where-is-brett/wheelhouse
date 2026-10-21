@@ -422,14 +422,14 @@ test('a reply on an approve-work card earns the work approval with its full hash
   });
 });
 
-test('a reply on an answer card counts for the question\'s own options, never Explain more, Show me or one it lacks', async () => {
+test('a reply on an answer card counts for the question\'s own options, never Explain more, Show me, Why?, Suggest a change… or one it lacks', async () => {
   await withHome(async () => {
     buildState();
     const line = answerLine('q-export-csv-1');
     const question = cardOf(line);
-    await show(question, { options: ASK_OPTIONS });
+    await show(question, { options: ['Comma', 'Semicolon', 'Show me', 'Explain more', 'Why?', 'Suggest a change…'] });
     // Semicolon is on the card but not in the question's options.
-    for (const label of ['Explain more', 'Show me', 'Semicolon']) {
+    for (const label of ['Explain more', 'Show me', 'Why?', 'Suggest a change…', 'Semicolon']) {
       const c = fake();
       const out = await replyRecord({ project: P, text: `${replyCode(line)} ${label}`, client: c, now: () => LATER });
       assert.equal(out.made, false, label);

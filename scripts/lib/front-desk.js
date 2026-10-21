@@ -30,7 +30,8 @@ export const CARD_KINDS = Object.freeze([
   'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall', 'question',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
-export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me']);
+// Why? and Suggest a change… only steer the front desk; the director's own words never sign anything.
+export const PUT_OFF = Object.freeze(['Not now', 'Explain more', 'Show me', 'Why?', 'Suggest a change…']);
 // The option a confirm card for a proposal offers in place of Show me (ruling F48): it decides the
 // card, signs nothing, and holds the proposal back for a while.
 export const KEEP_AS_IS = 'Keep as is';

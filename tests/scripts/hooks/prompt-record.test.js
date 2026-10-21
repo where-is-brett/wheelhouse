@@ -697,7 +697,7 @@ test('every label the prompt record can sign for is in SIGNED_LABELS, or one ans
   assert.ok(CLICK_ONLY.every((l) => handled.includes(l) && !SIGNED_LABELS.includes(l)));
   assert.ok(['Change it', 'End it', 'Merge the fix'].every((l) => SIGNED_LABELS.includes(l)));
   // Deciding labels only: never one that asks for more or puts a card off.
-  assert.ok(['Explain more', 'Not now', 'Show me'].every((l) => !SIGNED_LABELS.includes(l)));
+  assert.ok(['Explain more', 'Not now', 'Show me', 'Why?', 'Suggest a change…'].every((l) => !SIGNED_LABELS.includes(l)));
 });
 
 test('a card with one of the build loop\'s lines and its code becomes a signed shown record', async () => {

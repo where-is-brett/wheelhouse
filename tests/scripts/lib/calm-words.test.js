@@ -1,0 +1,76 @@
+// tests/scripts/lib/calm-words.test.js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as words from '../../../scripts/lib/calm-words.js';
+import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
+
+test('verdict opens with words up to nine and figures after', () => {
+  const said = (waiting, broken = 0) => words.verdict({ waiting, broken });
+  assert.equal(said(0), 'Nothing needs you. Nothing is broken.');
+  assert.equal(said(1), 'One thing needs you. Nothing is broken.');
+  assert.equal(said(2), 'Two things need you. Nothing is broken.');
+  assert.equal(said(9), 'Nine things need you. Nothing is broken.');
+  assert.equal(said(10), '10 things need you. Nothing is broken.');
+  assert.equal(said(12), '12 things need you. Nothing is broken.');
+  assert.equal(said(0, 1), 'Nothing needs you. One thing is broken.');
+  assert.equal(said(2, 1), 'Two things need you. One thing is broken.');
+  assert.equal(said(12, 2), '12 things need you. 2 things are broken.');
+  assert.equal(said(1, 11), 'One thing needs you. 11 things are broken.');
+  assert.equal(words.NOTHING_NEEDS_YOU, 'Nothing needs you.');
+});
+
+test('every set word is one line of British English with no exclamation mark', () => {
+  const lines = [];
+  for (const [name, value] of Object.entries(words)) {
+    if (typeof value === 'string') lines.push([name, value]);
+  }
+  lines.push(
+    ['suggestedAt', words.suggestedAt('14:10')], ['typeYourChange', words.typeYourChange(1)],
+    ['staleLine', words.staleLine('14:05', '14:02')], ['sinceLine', words.sinceLine('09:10')],
+    ['verdict', words.verdict({ waiting: 3, broken: 2 })],
+  );
+  assert.equal(lines.length, 23, 'every word is held');
+  for (const [name, line] of lines) {
+    assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
+    assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
+    assert.ok(!line.includes('!'), `${name} has no exclamation mark`);
+    assert.ok(!/\b(color|center|organize|recognize|behavior)\b/i.test(line), `${name} is British English`);
+  }
+});
+
+test('the set words are the ones the design names', () => {
+  assert.equal(words.SUGGEST, 'Suggest a change…');
+  assert.ok(words.SUGGEST.endsWith('…'), 'a real ellipsis, not three full stops');
+  assert.equal(words.WHY, 'Why?');
+  assert.equal(words.HIDE_WHY, 'Hide why');
+  assert.equal(words.SHOW_ME, 'Show me');
+  assert.equal(words.NOT_NOW, 'Not now');
+  assert.equal(words.TO_KNOW_MORE, 'To know more, just ask.');
+  assert.equal(words.SUGGEST_SAYS, 'Tell me what you\'d change; I\'ll come back with a new proposal.');
+  assert.equal(words.WHAT_WOULD_YOU_CHANGE, 'What would you change?');
+  assert.equal(words.SENT_TO_FRONT_DESK, 'Sent to the front desk. A new proposal will follow.');
+  assert.equal(words.RECORDING, 'Recording…');
+  assert.equal(words.NOT_HANDED, 'That didn\'t reach the front desk. Type it in the chat instead.');
+  assert.equal(words.SETTING_UP, 'Setup is still running. This pane opens when it finishes.');
+  assert.equal(words.NOT_HERE, 'This pane lives in the front desk\'s chat. Type /wheelhouse there.');
+  assert.equal(words.SETTINGS_UNDER_STOP, 'Settings can\'t change while STOP is on. Lift STOP first.');
+  assert.equal(words.CHANGED_WHILE_READING, 'That card changed while you were reading. Here is the new one.');
+  assert.equal(words.STOP_HALTS, 'Halts every builder at once.');
+  assert.equal(words.ONLY_YOU_LIFT, 'Only you can lift it.');
+});
+
+test('staleLine and suggestedAt say the times as given', () => {
+  assert.equal(words.staleLine('14:05', '14:02'), 'Couldn\'t read the latest at 14:05. Showing 14:02\'s.');
+  assert.equal(words.staleLine('09:01', '08:59'), 'Couldn\'t read the latest at 09:01. Showing 08:59\'s.');
+  assert.equal(words.suggestedAt('14:10'), 'You suggested a change at 14:10. A new proposal is on its way, and nothing goes live meanwhile.');
+  assert.equal(words.sinceLine('09:10'), 'Since you were last here at 09:10.');
+  assert.equal(words.typeYourChange(1), 'Type your change in the chat, and I\'ll know it\'s about card 1.');
+  assert.equal(words.typeYourChange(3), 'Type your change in the chat, and I\'ll know it\'s about card 3.');
+});
+
+test('PUT_OFF holds Why? and Suggest a change… and keeps Explain more', () => {
+  assert.deepEqual([...PUT_OFF], ['Not now', 'Explain more', 'Show me', 'Why?', 'Suggest a change…']);
+  for (const label of [words.WHY, words.SUGGEST, words.SHOW_ME, words.NOT_NOW, 'Explain more']) {
+    assert.ok(PUT_OFF.includes(label), `${label} never answers a card`);
+  }
+});
