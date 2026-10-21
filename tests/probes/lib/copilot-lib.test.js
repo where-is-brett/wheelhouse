@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 import { tempFolder } from '../../helpers/homes.js';
 import {
-  COPILOT_VERSION, copilotBin, copilotEnv, defaultPrefix, installCopilot, jsonEvents, runCopilot, scratchCopilotHome, signedIn,
+  COPILOT_VERSION, LOGIN_HOME, copilotBin, copilotEnv, defaultPrefix, installCopilot, jsonEvents, loginHome, runCopilot, scratchCopilotHome, signedIn,
 } from '../../../probes/lib/copilot.js';
 import * as numbers from '../../../scripts/lib/copilot-numbers.js';
 
@@ -140,6 +140,47 @@ t('scratchCopilotHome is an empty folder under the temporary folder, and remove 
   assert.deepEqual(fs.readdirSync(home.dir), []);
   home.remove();
   assert.ok(!fs.existsSync(home.dir));
+});
+
+t('the login home is ~/.wheelhouse-probes/login-home', () => {
+  assert.equal(loginHome('/h'), path.join('/h', '.wheelhouse-probes', 'login-home'));
+  assert.equal(LOGIN_HOME, path.join(os.homedir(), '.wheelhouse-probes', 'login-home'));
+});
+
+t('scratchCopilotHome with signedInFrom copies config.json only, with mode 0600', () => {
+  const source = tempFolder('wh-login-');
+  const config = '// a comment\n// another\n{"loggedInUsers":[{"login":"someone"}],"lastLoggedInUser":{"login":"someone"}}\n';
+  fs.writeFileSync(path.join(source, 'config.json'), config);
+  fs.writeFileSync(path.join(source, 'other.json'), '{}');
+  fs.mkdirSync(path.join(source, 'session-state'));
+  const home = scratchCopilotHome({ signedInFrom: source });
+  try {
+    assert.deepEqual(fs.readdirSync(home.dir), ['config.json']);
+    assert.equal(fs.readFileSync(path.join(home.dir, 'config.json'), 'utf8'), config);
+    assert.equal(fs.statSync(path.join(home.dir, 'config.json')).mode & 0o777, 0o600);
+    assert.deepEqual(fs.readdirSync(source).sort(), ['config.json', 'other.json', 'session-state']);
+  } finally {
+    home.remove();
+  }
+  assert.ok(!fs.existsSync(home.dir));
+});
+
+t('scratchCopilotHome with a missing sign-in says the sign-in has not been done and leaves no folder', () => {
+  const before = fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('wheelhouse-probe-copilot-home-')).sort();
+  const empty = tempFolder('wh-login-');
+  assert.throws(() => scratchCopilotHome({ signedInFrom: path.join(empty, 'nope') }), /sign-in has not been done/);
+  assert.throws(() => scratchCopilotHome({ signedInFrom: empty }), /sign-in has not been done/);
+  const left = fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('wheelhouse-probe-copilot-home-')).sort();
+  assert.deepEqual(left, before);
+});
+
+t('scratchCopilotHome with no signedInFrom stays an empty folder even when a login home exists', () => {
+  const home = scratchCopilotHome({});
+  try {
+    assert.deepEqual(fs.readdirSync(home.dir), []);
+  } finally {
+    home.remove();
+  }
 });
 
 t('the copilot stand-in is first on the PATH in every test home', async () => {

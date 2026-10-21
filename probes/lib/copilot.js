@@ -2,6 +2,11 @@
 // Copilot CLI for the probes: installed into a folder of its own under ~/.wheelhouse-probes (never
 // globally), run from a scratch home so it never reads or writes the person's real ~/.copilot, and
 // started without the caller's host tokens. Nothing here runs at load time.
+//
+// Sign-in: Copilot CLI keeps the sign-in token in the operating system's keychain. A home only holds a
+// non-secret config.json (the signed-in users), which is how a home finds the keychain entry. The sign-in
+// is made once, with COPILOT_HOME set to the login home; a scratch home starts signed in only when that
+// config.json is copied into it (scratchCopilotHome's `signedInFrom`).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +26,13 @@ export function defaultPrefix(version = COPILOT_VERSION, home = os.homedir()) {
   return path.join(home, '.wheelhouse-probes', 'copilot', version);
 }
 
+// The home the one-time sign-in is made with: ~/.wheelhouse-probes/login-home.
+export function loginHome(home = os.homedir()) {
+  return path.join(home, '.wheelhouse-probes', 'login-home');
+}
+
+export const LOGIN_HOME = loginHome();
+
 // The program npm puts in the prefix.
 export function copilotBin(prefix, { platform = process.platform } = {}) {
   return path.join(prefix, 'node_modules', '.bin', platform === 'win32' ? 'copilot.cmd' : 'copilot');
@@ -39,10 +51,27 @@ export async function installCopilot({ version = COPILOT_VERSION, prefix, platfo
   return { bin };
 }
 
-// An empty folder for COPILOT_HOME, under the system's temporary folder.
-export function scratchCopilotHome() {
+// A folder for COPILOT_HOME, under the system's temporary folder. It starts empty. Given `signedInFrom`
+// (the login home), it starts with that folder's config.json, and only that file, so the keychain
+// sign-in is found; a missing folder or file means the sign-in has not been done.
+export function scratchCopilotHome({ signedInFrom } = {}) {
+  let config;
+  if (signedInFrom !== undefined) {
+    config = path.join(signedInFrom, 'config.json');
+    if (!fs.existsSync(config)) {
+      throw new Error(`The Copilot sign-in has not been done: there is no config.json in ${signedInFrom}`);
+    }
+  }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-probe-copilot-home-'));
   assertUnderTmp(dir);
+  if (config) {
+    try {
+      fs.writeFileSync(path.join(dir, 'config.json'), fs.readFileSync(config), { mode: 0o600 });
+    } catch (error) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
+  }
   return {
     dir,
     remove() {
