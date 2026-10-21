@@ -1,0 +1,12 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "bash",
+  "toolArgs": {
+    "command": "echo probe58-shell",
+    "description": "Run probe shell command",
+    "mode": "sync",
+    "initial_wait": 30
+  }
+}

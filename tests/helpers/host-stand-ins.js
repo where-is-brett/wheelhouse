@@ -1,5 +1,5 @@
 // tests/helpers/host-stand-ins.js
-// The programs no test may reach for real (ruling R139), each found first on the PATH as a
+// The programs no test may reach for real (ruling R139; `copilot` is among them), each found first on the PATH as a
 // stand-in that notes its arguments in a log and refuses. Code the test can't hand a stand-in of its
 // own runs these by name: the helper's own routes (the board's host facts read protection with `gh
 // api`, the trial pull request is closed with `gh pr close`), a child process the test starts (the
@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { tempFolder } from './homes.js';
 
-export const HOST_TOOLS = Object.freeze(['gh', 'glab', 'claude', 'launchctl', 'osascript', 'open', 'xdg-open', 'security', 'brew', 'sudo', 'installer', 'softwareupdate']);
+export const HOST_TOOLS = Object.freeze(['gh', 'glab', 'copilot', 'claude', 'launchctl', 'osascript', 'open', 'xdg-open', 'security', 'brew', 'sudo', 'installer', 'softwareupdate']);
 
 const quote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
 

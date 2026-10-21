@@ -1,0 +1,16 @@
+{
+  "sessionId": "<ID>",
+  "timestamp": 0,
+  "cwd": "<PROJECT>",
+  "toolName": "bash",
+  "toolArgs": {
+    "command": "echo probe58-shell",
+    "description": "Run probe shell command",
+    "mode": "sync",
+    "initial_wait": 30
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "probe58-shell\n<shellId: 0 completed with exit code 0>"
+  }
+}

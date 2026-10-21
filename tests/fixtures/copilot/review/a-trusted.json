@@ -1,0 +1,208 @@
+{
+ "route": "a-trusted",
+ "args": [
+  "-p",
+  "--output-format",
+  "json",
+  "--no-auto-update",
+  "--no-ask-user",
+  "--agent",
+  "reviewer",
+  "--log-dir",
+  "<log dir>",
+  "--log-level",
+  "debug",
+  "--no-custom-instructions",
+  "--disable-builtin-mcps",
+  "--available-tools",
+  "view",
+  "glob",
+  "rg",
+  "--allow-tool=view",
+  "--allow-tool=glob",
+  "--allow-tool=rg",
+  "--trust-folder"
+ ],
+ "events": [
+  {
+   "type": "session.skills_loaded",
+   "data": {
+    "skills": [
+     {
+      "name": "skill-agents",
+      "source": "project"
+     },
+     {
+      "name": "skill-claude",
+      "source": "project"
+     },
+     {
+      "name": "skill-github",
+      "source": "project"
+     },
+     {
+      "name": "env-skill",
+      "source": "custom"
+     },
+     {
+      "name": "customize-cloud-agent",
+      "source": "builtin"
+     },
+     {
+      "name": "github-pr-media",
+      "source": "builtin"
+     }
+    ]
+   }
+  },
+  {
+   "type": "session.custom_agents_updated",
+   "data": {
+    "agents": [
+     {
+      "name": "reviewer",
+      "source": "user",
+      "tools": [
+       "read",
+       "search"
+      ]
+     },
+     {
+      "name": "claude-reviewer",
+      "source": "project",
+      "tools": [
+       "*"
+      ]
+     }
+    ],
+    "warnings": [],
+    "errors": []
+   }
+  },
+  {
+   "type": "session.info",
+   "data": {
+    "infoType": "configuration",
+    "message": "Disabled tools: bash, create, dynamic_workflows_manage, edit, fetch_copilot_cli_documentation, list_agents, list_bash, lsp, planted-mcp-dotmcp-planted_mcp_dotmcp, read_agent, read_bash, run_dynamic_workflow, semantic_code_search, session_store_sql, skill, sql, stop_bash, store_memory, task, vote_memory, web_fetch, write_agent"
+   }
+  },
+  {
+   "type": "session.mcp_servers_loaded",
+   "data": {
+    "servers": [
+     {
+      "name": "WorkIQ",
+      "status": "disabled"
+     },
+     {
+      "name": "browser-use",
+      "status": "disabled"
+     },
+     {
+      "name": "github-copilot-browser",
+      "status": "disabled"
+     },
+     {
+      "name": "github-mcp-server",
+      "status": "disabled",
+      "source": "builtin"
+     },
+     {
+      "name": "githubiq",
+      "status": "disabled"
+     },
+     {
+      "name": "planted-mcp-dotmcp",
+      "status": "connected",
+      "source": "workspace"
+     }
+    ]
+   }
+  },
+  {
+   "type": "assistant.message",
+   "data": {
+    "content": "VERDICT: CHANGES\nFINDINGS: src/range.ts:5 \u2014 The `<=` comparison sums `count + 1` values when enough elements exist, violating the function's \u201cfirst `count` numbers\u201d contract; it should remain `< count`.\nTOOLS-OFFERED: view, rg, glob, multi_tool_use.parallel\nINSTRUCTIONS-SEEN: github-hooks, claude-settings-hooks, copilot-settings-hooks",
+    "phase": "final_answer"
+   }
+  },
+  {
+   "type": "result",
+   "sessionId": "<ID>",
+   "exitCode": 0,
+   "usage": {
+    "premiumRequests": 1,
+    "totalApiDurationMs": 7867,
+    "sessionDurationMs": 12511,
+    "codeChanges": {
+     "linesAdded": 0,
+     "linesRemoved": 0,
+     "filesModified": []
+    }
+   }
+  }
+ ],
+ "debugLines": [
+  "[DEBUG] Plugin activation [agents]: fingerprint=4c956228f3a2, plugins=0, loaded=2",
+  "[WARNING] Loading repo hooks in prompt mode (folder is trusted or opt-in set)",
+  "[WARNING] Loading workspace MCP sources in prompt mode (folder is trusted or opt-in set)"
+ ],
+ "listings": {
+  "instructions": {
+   "code": 0,
+   "json": [
+    {
+     "id": "repo-copilot",
+     "location": "repository"
+    },
+    {
+     "id": "model-agents-md",
+     "location": "repository"
+    },
+    {
+     "id": "model-claude-md",
+     "location": "repository"
+    },
+    {
+     "id": "model-gemini-md",
+     "location": "repository"
+    },
+    {
+     "id": "vscode-instructions/.github/instructions/review.instructions.md",
+     "location": "working-directory"
+    },
+    {
+     "id": "vscode-instructions/.github/instructions/ts.instructions.md",
+     "location": "working-directory"
+    },
+    {
+     "id": "nested-agents",
+     "location": "working-directory"
+    }
+   ]
+  },
+  "lsp": {
+   "code": 0,
+   "json": [
+    {
+     "id": "planted-lsp-github",
+     "fileExtensions": [
+      ".ts"
+     ]
+    }
+   ]
+  },
+  "mcp": {
+   "code": 0,
+   "json": {
+    "mcpServers": {
+     "github-mcp-server": {}
+    }
+   }
+  },
+  "skills": {
+   "code": 0,
+   "text": "Project skills:\n  skill-github\n  skill-agents\n  skill-claude\n\nCustom skills:\n  env-skill\n\nBuiltin skills:\n  customize-cloud-agent\n  github-pr-media\n"
+  }
+ }
+}

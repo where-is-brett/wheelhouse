@@ -1,0 +1,5 @@
+{
+  "name": "wheelhouse-probe-56-claude",
+  "version": "0.0.2",
+  "description": "Check 56: the plugin manifest in .claude-plugin/. Its hooks sit in hooks/hooks.json."
+}

@@ -1,0 +1,15 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "Glob",
+  "tool_input": {
+    "pattern": "*.md",
+    "paths": "<PROJECT>"
+  },
+  "tool_result": {
+    "result_type": "success",
+    "text_result_for_llm": "<PROJECT>/.github/agents/probe-agent.agent.md\n<PROJECT>/README.md"
+  }
+}

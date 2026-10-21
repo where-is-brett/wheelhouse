@@ -1,0 +1,47 @@
+[
+  {
+    "type": "user.message",
+    "data": {
+      "content": "Without using any tool, what was the secret word in the file you viewed? Say only the word.",
+      "messageId": "<ID>",
+      "delivery": "idle",
+      "interactionId": "<ID>",
+      "turnId": "0",
+      "parentAgentTaskId": "<ID>"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "assistant.message",
+    "data": {
+      "messageId": "<ID>",
+      "originatingMessageId": "<ID>",
+      "content": "<SECRET>",
+      "toolRequests": [],
+      "interactionId": "<ID>",
+      "turnId": "0",
+      "phase": "final_answer"
+    },
+    "id": "<ID>",
+    "timestamp": "<TIME>",
+    "parentId": "<ID>"
+  },
+  {
+    "type": "result",
+    "timestamp": "<TIME>",
+    "sessionId": "<ID>",
+    "exitCode": 0,
+    "usage": {
+      "premiumRequests": 2,
+      "totalApiDurationMs": 6368,
+      "sessionDurationMs": 13823,
+      "codeChanges": {
+        "linesAdded": 0,
+        "linesRemoved": 0,
+        "filesModified": []
+      }
+    }
+  }
+]

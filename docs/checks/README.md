@@ -2,7 +2,7 @@
 
 # Design checks
 
-The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
+The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), and checks 54 to 72, which are the Copilot design's C1 to C19 (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, "Check numbers"), one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
 
 | # | Check | Answer | Note |
 |---|---|---|---|
@@ -50,3 +50,22 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |
+| 54 | VS Code's Claude harness | Not run yet | None yet |
+| 55 | What an add-on's contributions reach | Not run yet | None yet |
+| 56 | Registration: what Copilot loads, and twice | Yes | [56-registration.md](56-registration.md) |
+| 57 | Copilot's sandbox | Not run yet | None yet |
+| 58 | The guards' input | Partly | [58-hook-input.md](58-hook-input.md) |
+| 59 | Clickable questions: whose answer | Not run yet | None yet |
+| 60 | The other hooks | Partly | [60-other-hooks.md](60-other-hooks.md) |
+| 61 | Sessions from a script | Yes, with two gaps | [61-sessions.md](61-sessions.md) |
+| 62 | Setup's tools on Windows, and the timed run | Not run yet | None yet |
+| 63 | Superpowers and Matt Pocock's skills on Copilot | Yes, with two gaps | [63-kits.md](63-kits.md) |
+| 64 | Usage figures | Deferred | [64-usage.md](64-usage.md) |
+| 65 | The phone | Not run yet | None yet |
+| 66 | A clean reviewer session | Yes, on a clean copy of the change only; an untrusted checkout and a trusted folder leak | [66-clean-review.md](66-clean-review.md) |
+| 67 | The pane's place | Not run yet | None yet |
+| 68 | An approval on the host | Not run yet | None yet |
+| 69 | Lean's guards without Node.js | Yes, on the Mac, with two surprises | [69-guards-without-node.md](69-guards-without-node.md) |
+| 70 | Lean in VS Code with nothing added | Not run yet | None yet |
+| 71 | GitLab on the company's own servers | Not run yet | None yet |
+| 72 | The add-on at Lean | Not run yet | None yet |

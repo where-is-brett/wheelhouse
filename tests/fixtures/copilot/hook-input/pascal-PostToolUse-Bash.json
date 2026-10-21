@@ -1,0 +1,17 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo probe58-shell",
+    "description": "Run probe shell command",
+    "mode": "sync",
+    "initial_wait": 30
+  },
+  "tool_result": {
+    "result_type": "success",
+    "text_result_for_llm": "probe58-shell\n<shellId: 0 completed with exit code 0>"
+  }
+}

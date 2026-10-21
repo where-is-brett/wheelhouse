@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "<ID>",
+  "timestamp": "<TIMESTAMP>",
+  "cwd": "<PROJECT>",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Run probe custom agent",
+    "prompt": "Reply ok",
+    "agent_type": "probe-agent",
+    "name": "probe-agent",
+    "mode": "sync"
+  }
+}
