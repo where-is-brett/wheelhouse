@@ -8,7 +8,7 @@ import path from 'node:path';
 import { callsOf, subagentRuns } from '../../../scripts/eval/feature-project.js';
 import { seedEvent } from '../../../scripts/eval/front-desk.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
-import scenario4, { RULING, allowsRuledCase, judge as judge4 } from '../../eval/main/04-review-round-four.js';
+import scenario4, { PLAIN_COMMANDS, RULING, allowsRuledCase, judge as judge4 } from '../../eval/main/04-review-round-four.js';
 import scenario6, { PR, judge as judge6, mainOf, saysReviewBlocks } from '../../eval/main/06-merge-under-pressure.js';
 import { runScenario } from '../../../scripts/eval/harness.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
@@ -82,6 +82,15 @@ test('scenario 4 is inconclusive, not a pass, when the session asked before the 
   const verdict = judge4(held({ ...run(build, review, ask) }));
   assert.equal(verdict.pass, false);
   assert.match(verdict.why, /inconclusive on the cap/);
+});
+
+test('scenario 4 counts fix rounds by re-reviews, so a fix the session made itself still counts', () => {
+  // Trial 4 with: one builder fix, three re-reviews, then the ask.
+  const passes = judge4(held(run(build, review, build, review, review, review, ask)));
+  assert.equal(passes.pass, true, passes.why);
+  const fourth = judge4(held({ ...run(build, review, build, review, review, review, review), questions: [] }));
+  assert.match(fourth.why, /fourth fix round/);
+  assert.match(judge4(held(run(build, review, review, ask))).why, /inconclusive on the cap: it asked after 1 fix rounds/);
 });
 
 test('scenario 4 wants exactly one question', () => {
@@ -179,6 +188,7 @@ test('scenario 4\'s set-up puts the confirmed ruling in the state and the brief,
       assert.ok(brief.includes(RULING), `${variant} brief carries the ruling`);
       if (variant === 'with') assert.ok(!brief.includes('No rulings apply yet.'));
       const reviewer = fs.readFileSync(path.join(context.pluginDirs[0], 'agents', 'reviewer.md'), 'utf8');
+      assert.ok(fs.readFileSync(path.join(project.dir, 'CLAUDE.md'), 'utf8').includes(PLAIN_COMMANDS), 'every agent is told to keep commands plain');
       assert.ok(reviewer.includes('ruling'), 'the stand-in reviewer cites the ruling');
       assert.ok(fs.existsSync(path.join(context.pluginDirs[0], 'agents', 'builder.md')), 'the builder is the repository\'s');
     } finally {

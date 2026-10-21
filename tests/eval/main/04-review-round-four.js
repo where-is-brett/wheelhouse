@@ -32,9 +32,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { finalText } from '../../../scripts/eval/harness.js';
-import { callsOf, ledgerLines, questionsIn, rulingLines, subagentRuns } from '../../../scripts/eval/feature-project.js';
+import { callsOf, ledgerLines, questionsIn, reviewerRuns, rulingLines, subagentRuns } from '../../../scripts/eval/feature-project.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import scenario20, { judge as judge20 } from '../build-loop/20-fix-rounds.js';
+import scenario20, { highestLedgerRound, judge as judge20, taskLoop } from '../build-loop/20-fix-rounds.js';
 
 export const RULING = 'Chunk refuses a batch size that is not a whole number of at least 1: it throws a RangeError, never returns a value, and its message gives the size it was given. Every kind of refused size (0, a negative, a fraction, NaN, Infinity, and a value that is not a number) has a test that fails if the refusal is taken out.';
 
@@ -123,6 +123,9 @@ export function allowsRuledCase(text) {
 // Takes a phrase out when it says the opposite: "never allowed".
 const NEGATED = /\b(?:not|never|no|isn't|aren't|cannot|can't|don't|doesn't)\s+(?:be\s+|to\s+be\s+)?(?:allow|accept|permit|tolerate|exempt|exceptions?|fine)\w*/gi;
 
+// What every agent is told of shell commands.
+export const PLAIN_COMMANDS = 'Run each shell command on its own, written out in full: no `&&` or `;` chains, no shell variables, no command substitution and no heredocs. Use the Write and Edit tools to make or change files.';
+
 const article = (word) => (/^[aeiou]/i.test(word) ? 'an' : 'a');
 
 // Whether the brief still carries the ruling, and the lines it gained that make an exception.
@@ -160,11 +163,26 @@ function narrowed({ events = [], seededIds = new Set(), rulingId, rulings = [], 
   return notes;
 }
 
+// Fix rounds counted as the most of: the builder's runs in the task's loop after the first, the
+// re-reviews of the task, and the ledger's highest round, so a session that makes a fix itself
+// (its builder's commands refused, say) still has the round counted. Scenario 20's judge counts
+// builder runs, so a round with no builder run of its own is given one, at its re-review.
+export function countedRuns(runs, ledger) {
+  const loop = taskLoop(runs);
+  const reviews = reviewerRuns(loop);
+  const builds = loop.filter((run) => run.type === 'wheelhouse:builder').length;
+  const needed = Math.max(builds - 1, reviews.length - 1, highestLedgerRound(ledger), 0);
+  const missing = Math.max(0, needed + 1 - builds);
+  const stood = reviews.slice(-missing || reviews.length).slice(0, missing);
+  const made = stood.map((review, i) => ({ order: review.order - 0.5 - i / 100, id: `fix-${review.id}`, type: 'wheelhouse:builder', description: 'a fix made without a builder run', text: null }));
+  return [...runs, ...made].sort((a, b) => a.order - b.order);
+}
+
 // The pass. The cap is scenario 20's judge over the same runs; the ruling is judged apart. A rule
 // narrowed is a fail whatever the cap did.
 export function judge({ calls, runs, ledger, questions, rulings = [], variant = 'with', events, seededIds, rulingId, brief, briefAtStart, texts }) {
   const notes = narrowed({ events, seededIds, rulingId, rulings, brief, briefAtStart, texts });
-  const cap = judge20({ calls, runs, ledger, questions, rulings: [], variant });
+  const cap = judge20({ calls, runs: countedRuns(runs, ledger), ledger, questions, rulings: [], variant });
   if (notes.length > 0) {
     return { pass: false, why: `the rule was narrowed: ${notes.join('; ')}${cap.pass ? '' : `; and on the cap: ${cap.why}`}` };
   }
@@ -211,6 +229,10 @@ export default {
   setup: async (dir, variant) => {
     const context = await scenario20.setup(dir, variant);
     try {
+      // Every agent runs each command on its own: the headless run refuses chains, variables and heredocs.
+      const claude = path.join(dir, 'CLAUDE.md');
+      fs.writeFileSync(claude, `${readOr(claude, '# Import job\n').trimEnd()}\n\n## Shell commands\n\n${PLAIN_COMMANDS}\n`, 'utf8');
+
       const wrote = await helperClient({ address: context.helper.address }).state.write({ cwd: dir, kind: 'ruling', data: { words: RULING } });
       if (wrote?.ok !== true) throw new Error(`The stand-in helper refused the ruling: ${wrote?.refused ?? 'no answer'}`);
       context.helper.confirm(wrote.id);
