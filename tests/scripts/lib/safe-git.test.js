@@ -127,6 +127,35 @@ test('a caller\'s options.env cannot lift the fence', async () => {
   assert.deepEqual(cwds, [r.root, r.root]);
 });
 
+test('GIT_ variables off the allowed list from a caller do nothing; the allowed ones, and ssh only for reach ssh, survive', async () => {
+  const r = await repo();
+  const git = safeGit({ cwd: r.root, look: 'never' });
+  const bad = { GIT_EDITOR: 'evil-editor', GIT_PAGER: 'evil-pager', GIT_SSH_COMMAND: 'evil-ssh', GIT_SSL_NO_VERIFY: '1', GIT_ASKPASS: 'evil', GIT_SSH: 'evil', GIT_PROXY_COMMAND: 'evil', git_pager: 'lower-evil' };
+  assert.equal((await git(['var', 'GIT_EDITOR'], { env: bad })).stdout.trim(), 'false');
+  assert.equal((await git(['var', 'GIT_PAGER'], { env: bad })).stdout.trim(), 'cat');
+  const seen = (reach, env) => {
+    let got;
+    return safeGit({ cwd: r.root, look: 'never', reach, run: async (f, a, o) => { got = o.env; return { code: 0, stdout: '', stderr: '' }; } })(['status'], { env }).then(() => got);
+  };
+  const https = await seen('https', bad);
+  for (const name of ['GIT_EDITOR', 'GIT_PAGER', 'GIT_SSH_COMMAND', 'GIT_SSL_NO_VERIFY', 'GIT_ASKPASS', 'GIT_SSH', 'GIT_PROXY_COMMAND', 'git_pager']) assert.equal(https[name], undefined, name);
+  assert.equal((await seen('ssh', { GIT_SSH_COMMAND: 'my-ssh', GIT_INDEX_FILE: '/idx', GIT_AUTHOR_NAME: 'A' })).GIT_SSH_COMMAND, 'my-ssh');
+  const kept = await seen('https', { GIT_INDEX_FILE: '/idx', GIT_AUTHOR_NAME: 'A', GIT_NO_REPLACE_OBJECTS: '1' });
+  assert.equal(kept.GIT_INDEX_FILE, '/idx');
+  assert.equal(kept.GIT_AUTHOR_NAME, 'A');
+  assert.equal(kept.GIT_NO_REPLACE_OBJECTS, '1');
+  // Another repository's config is not read by naming its common dir.
+  const other = fs.realpathSync.native(tempFolder('wh-safe-git-other-'));
+  await plain(['init', '-q', other], other);
+  await plain(['config', 'user.name', 'Other'], other);
+  await plain(['config', 'user.name', 'Mine'], r.root);
+  const name = async (env) => (await git(['config', '--get', 'user.name'], { env })).stdout.trim();
+  assert.equal(await name({ GIT_COMMON_DIR: path.join(other, '.git'), GIT_OBJECT_DIRECTORY: path.join(other, '.git/objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: other }), 'Mine');
+  // Odd inputs: a null options, and a count larger than the settings given.
+  await git(['status'], null);
+  await assert.rejects(git(['status'], { env: { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'x.y', GIT_CONFIG_VALUE_0: 'z' } }), /GIT_CONFIG_COUNT is 2/);
+});
+
 test('workTree is git\'s working tree, except for init', async () => {
   const seen = [];
   const git = safeGit({ cwd: process.cwd(), look: 'never', workTree: '/w', run: async (f, a, o) => { seen.push(o.env); return { code: 0, stdout: '', stderr: '' }; } });

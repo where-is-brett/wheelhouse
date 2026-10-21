@@ -16,8 +16,15 @@ import {
 export { NULL_FILE };
 
 const GIT_WAIT_MS = 5 * 60 * 1000;
-// Variables that would outrank the fence's settings or point git elsewhere.
-const DROPPED = new Set(['GIT_CONFIG_PARAMETERS', 'GIT_DIR', 'GIT_EXEC_PATH', 'GIT_CONFIG', 'GIT_WORK_TREE']);
+// The GIT_ variables a caller may pass (an allowed list, so it fails closed like the config list: a
+// variable git adds in a later version, or one that outranks the fence's settings or points git at
+// another repository, is dropped until it is looked at and listed). GIT_CONFIG_KEY_<n> and
+// GIT_CONFIG_VALUE_<n> are handled with the pairs; GIT_SSH_COMMAND only when reach is 'ssh'.
+const ALLOWED_VARS = new Set([
+  'GIT_CONFIG_COUNT', 'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_TERMINAL_PROMPT', 'GIT_OPTIONAL_LOCKS',
+  'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+  'GIT_COMMITTER_DATE', 'GIT_ATTR_NOSYSTEM', 'GIT_NO_LAZY_FETCH',
+]);
 const TRANSPORT = { https: 'https', local: 'https:file', ssh: 'https:ssh' };
 
 // How a remote's address is reached: 'local' for a path on this computer (absolute, relative, a
@@ -36,18 +43,26 @@ export function reachFor(url, { platform = process.platform } = {}) {
 export function safeGitEnv(env = {}, { reach = 'https' } = {}) {
   const transport = TRANSPORT[reach];
   if (transport === undefined) throw new Error(`safeGitEnv: unknown reach ${String(reach)}`);
-  // Variables that outrank or redirect the fence are dropped, whatever the caller gave.
-  const kept = Object.fromEntries(Object.entries(env).filter(([name]) => !DROPPED.has(name.toUpperCase())));
+  // Any GIT_ variable off the allowed list is dropped, whatever the caller gave.
+  const kept = {};
+  for (const [name, value] of Object.entries(env ?? {})) {
+    const upper = name.toUpperCase();
+    if (!upper.startsWith('GIT_')) kept[name] = value;
+    else if (ALLOWED_VARS.has(upper) || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(upper) || (upper === 'GIT_SSH_COMMAND' && reach === 'ssh')) kept[upper] = value;
+  }
   // Every setting of the fence goes last, and a caller's setting of the same key is dropped, so the
   // fence's value is the one git ends with.
   const fenceKeys = new Set(FENCE.map(([key]) => key.toLowerCase()));
   const count = Number.parseInt(kept.GIT_CONFIG_COUNT ?? '0', 10);
   const own = [];
   for (let i = 0; Number.isInteger(count) && i < count; i += 1) {
+    if (!(`GIT_CONFIG_KEY_${i}` in kept) || !(`GIT_CONFIG_VALUE_${i}` in kept)) {
+      throw new Error(`safeGitEnv: GIT_CONFIG_COUNT is ${count}, but setting ${i} is not given`);
+    }
     const key = kept[`GIT_CONFIG_KEY_${i}`];
     if (!fenceKeys.has(String(key).toLowerCase())) own.push([key, kept[`GIT_CONFIG_VALUE_${i}`]]);
   }
-  for (const name of Object.keys(kept)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/i.test(name)) delete kept[name];
+  for (const name of Object.keys(kept)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(name)) delete kept[name];
   own.forEach(([key, value], i) => {
     kept[`GIT_CONFIG_KEY_${i}`] = key;
     kept[`GIT_CONFIG_VALUE_${i}`] = value;
@@ -68,14 +83,15 @@ export function safeGit({
   let looked = null;
   const lookNow = () => refuseUnlistedSettings({ run, gitPath, cwd });
   return async (args, options = {}) => {
+    options ??= {};
     if (look === 'each') await lookNow();
     else if (look === 'once') {
       looked ??= lookNow();
       await looked;
     }
     // The factory's folder and base environment stand: a call cannot give its own.
-    if ('cwd' in options || 'baseEnv' in options) throw new Error('safeGit: cwd and baseEnv are given once, to safeGit, not to a call');
-    const { env: extra, ...rest } = options;
+    if (options && ('cwd' in options || 'baseEnv' in options)) throw new Error('safeGit: cwd and baseEnv are given once, to safeGit, not to a call');
+    const { env: extra, ...rest } = options ?? {};
     const fenced = safeGitEnv({ ...env, ...extra }, { reach });
     const callEnv = workTree === null || subcommandOf(args) === 'init' ? fenced : { ...fenced, GIT_WORK_TREE: workTree };
     return run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: callEnv });
