@@ -56,7 +56,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 57 | Copilot's sandbox | Not run yet | None yet |
 | 58 | The guards' input | Partly | [58-hook-input.md](58-hook-input.md) |
 | 59 | Clickable questions: whose answer | Not run yet | None yet |
-| 60 | The other hooks | Not run yet | None yet |
+| 60 | The other hooks | Partly | [60-other-hooks.md](60-other-hooks.md) |
 | 61 | Sessions from a script | Not run yet | None yet |
 | 62 | Setup's tools on Windows, and the timed run | Not run yet | None yet |
 | 63 | Superpowers and Matt Pocock's skills on Copilot | Not run yet | None yet |
