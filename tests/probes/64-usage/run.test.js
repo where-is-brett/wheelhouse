@@ -17,15 +17,15 @@ test('options: defaults, and bad options are refused', () => {
 });
 
 test('shapes record paths and types, never values, and name model keys <MODEL>', () => {
-  const shape = shapeToJson(shapeOf({ a: 1, b: [{ c: 'x' }, { c: null }], modelMetrics: { 'gpt-x': { n: 2 } } }, { modelKeyed: ['modelMetrics'] }));
+  const shape = shapeToJson(shapeOf({ a: 1, b: [{ c: 'x' }, { c: null }], modelMetrics: { 'model-x': { n: 2 } } }, { modelKeyed: ['modelMetrics'] }));
   assert.deepEqual(shape['a'], ['number']);
   assert.deepEqual(shape['b[].c'], ['null', 'string']);
   assert.deepEqual(shape['modelMetrics.<MODEL>.n'], ['number']);
-  assert.ok(!JSON.stringify(shape).includes('gpt-x'));
+  assert.ok(!JSON.stringify(shape).includes('model-x'));
 });
 
 test('scrubbing replaces every name', () => {
-  assert.equal(scrubText('a gpt-x b gpt-x', ['gpt-x']), 'a <MODEL> b <MODEL>');
+  assert.equal(scrubText('a model-x b model-x', ['model-x']), 'a <MODEL> b <MODEL>');
   assert.equal(scrubText('hi bob', ['bob'], '<LOGIN>'), 'hi <LOGIN>');
 });
 
@@ -38,18 +38,18 @@ test('http output splits into status, headers and body', () => {
 
 test('usage shapes pick the result usage, checkpoints and usage-like fields, and drop model names', () => {
   const events = [
-    { type: 'model.call_final_result', data: { model: 'gpt-x', usage: { inputTokens: 5 }, other: 'z' } },
+    { type: 'model.call_final_result', data: { model: 'model-x', usage: { inputTokens: 5 }, other: 'z' } },
     { type: 'session.usage_checkpoint', data: { totalNanoAiu: 3 } },
     { type: 'result', sessionId: 's', usage: { premiumRequests: 1 } },
   ];
-  assert.deepEqual(modelNames(events, { modelMetrics: { 'gpt-xx': {} } }), ['gpt-xx', 'gpt-x']);
-  const s = usageShapes(events, { totalNanoAiu: 1, modelMetrics: { 'gpt-xx': { requests: { count: 1 } } } });
+  assert.deepEqual(modelNames(events, { modelMetrics: { 'model-xx': {} } }), ['model-xx', 'model-x']);
+  const s = usageShapes(events, { totalNanoAiu: 1, modelMetrics: { 'model-xx': { requests: { count: 1 } } } });
   assert.deepEqual(s.resultEventFields['usage.premiumRequests'], ['number']);
   assert.equal(s.usageCheckpointCount, 1);
   assert.deepEqual(s.usageFileFields['modelMetrics.<MODEL>.requests.count'], ['number']);
   assert.ok('data.usage.inputTokens' in s.usageLikeFieldsByEventType['model.call_final_result']);
   assert.ok(!('data.other' in s.usageLikeFieldsByEventType['model.call_final_result']));
-  assert.ok(!JSON.stringify(s).includes('gpt-x'));
+  assert.ok(!JSON.stringify(s).includes('model-x'));
 });
 
 t('--dry-run makes both runs, the help read and the REST call, records shapes only, and undoes everything', async () => {
