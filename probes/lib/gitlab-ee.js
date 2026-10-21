@@ -42,8 +42,12 @@ export function writeSecret(file, content) {
 
 const readSecret = (file) => fs.readFileSync(file, 'utf8').trim();
 
+// Every call is bounded: two minutes, or more where the caller says (`run` may pull an image).
+const SHORT = 2 * MINUTE;
+const LONG = 30 * MINUTE;
+
 async function docker(args, options = {}) {
-  return run('docker', args, options);
+  return run('docker', args, { timeoutMs: SHORT, ...options });
 }
 
 // The failure text names the step only: Docker's own output could quote a secret.
@@ -101,7 +105,8 @@ export async function waitForReadiness({ baseUrl, caFile, container, limitMs = 2
     } catch { /* not listening yet */ }
     if (Date.now() - started > limitMs) throw new Error('GitLab was not ready in time');
     const state = await docker(['inspect', '--format', '{{.State.Running}}', container]);
-    if (state.code === 0 && state.stdout.trim() === 'false') throw new Error('The GitLab container stopped before it was ready');
+    // A container that can't be inspected is gone, which is as good as stopped.
+    if (state.code !== 0 || state.stdout.trim() === 'false') throw new Error('The GitLab container stopped before it was ready');
     await sleep(intervalMs);
   }
 }
@@ -127,7 +132,7 @@ export async function startGitlab({ dir, port = DEFAULT_PORT, wait } = {}) {
   const began = Date.now();
   const [config, data, logs] = name.volumes;
 
-  await mustDocker('start GitLab', [
+  const started = await docker([
     'run', '--detach', '--name', name.gitlab, '--hostname', 'localhost', '--shm-size', '256m',
     '--label', LABEL,
     '--publish', `127.0.0.1:${port}:${port}`,
@@ -136,20 +141,36 @@ export async function startGitlab({ dir, port = DEFAULT_PORT, wait } = {}) {
     '--volume', `${keyPem}:/etc/gitlab/ssl/localhost.key:ro`,
     '--env', `GITLAB_OMNIBUS_CONFIG=${omnibusConfig(port)}`,
     GITLAB_EE_IMAGE,
-  ]);
+  ], { timeoutMs: LONG });
+  if (started.code !== 0) {
+    // A name already in use means an instance of an earlier call: it is not this call's to undo.
+    if (!/already in use/i.test(started.stderr)) await undo(dir, port);
+    throw new Error(`Docker could not start GitLab (exit ${started.code})`);
+  }
 
-  const waiting = wait ?? (() => waitForReadiness({ baseUrl, caFile: caPem, container: name.gitlab }));
-  await waiting();
-  const readyAfterMs = Date.now() - began;
+  try {
+    const waiting = wait ?? (() => waitForReadiness({ baseUrl, caFile: caPem, container: name.gitlab }));
+    await waiting();
+    const readyAfterMs = Date.now() - began;
 
-  // The script goes in on standard input; the token comes back on standard output and goes
-  // straight to the file.
-  const made = await docker(['exec', '-i', name.gitlab, 'gitlab-rails', 'runner', '-'], { input: ROOT_TOKEN_SCRIPT });
-  const match = /^WHEELHOUSE_TOKEN=(\S+)$/m.exec(made.stdout);
-  if (made.code !== 0 || match === null) throw new Error(`GitLab did not make the root's token (exit ${made.code})`);
-  const rootTokenFile = path.join(state, 'root-token');
-  writeSecret(rootTokenFile, `${match[1]}\n`);
-  return { baseUrl, rootToken: rootTokenFile, rootTokenFile, caFile: caPem, readyAfterMs };
+    // The script goes in on standard input; the token comes back on standard output and goes
+    // straight to the file.
+    const made = await docker(['exec', '-i', name.gitlab, 'gitlab-rails', 'runner', '-'], { input: ROOT_TOKEN_SCRIPT, timeoutMs: 10 * MINUTE });
+    const match = /^WHEELHOUSE_TOKEN=(\S+)$/m.exec(made.stdout);
+    if (made.code !== 0 || match === null) throw new Error(`GitLab did not make the root's token (exit ${made.code})`);
+    const rootTokenFile = path.join(state, 'root-token');
+    writeSecret(rootTokenFile, `${match[1]}\n`);
+    return { baseUrl, rootToken: rootTokenFile, rootTokenFile, caFile: caPem, readyAfterMs };
+  } catch (error) {
+    await undo(dir, port);
+    throw error;
+  }
+}
+
+// Undoes a failed call, as far as it can: errors from the undoing are not reported over the
+// failure that led to it.
+async function undo(dir, port) {
+  try { await stopGitlab({ dir, port }); } catch { /* the first failure is the one to report */ }
 }
 
 // An API client for `baseUrl` that trusts the throwaway authority, with the token read from a file.
@@ -169,21 +190,30 @@ export async function startRunner({ dir, baseUrl, token, tokenFile = token, port
   const made = await api.post('/user/runners', { runner_type: 'instance_type', description: 'wheelhouse-probe-runner', run_untagged: true });
   if (made.status !== 201 || typeof made.body?.token !== 'string') throw new Error(`GitLab did not make a runner (HTTP ${made.status})`);
   const runnerTokenFile = path.join(state, 'runner-token');
-  writeSecret(runnerTokenFile, `${made.body.token}\n`);
-  const env = { CI_SERVER_TOKEN: made.body.token };
-  const [, , , configVolume] = name.volumes;
-  const common = [
-    '--network', `container:${name.gitlab}`,
-    '--volume', `${configVolume}:/etc/gitlab-runner`,
-    '--volume', `${caFile}:/certs/ca.pem:ro`,
-  ];
-  // The token is in the child's environment only (`--env NAME` names it, with no value).
-  await mustDocker('register the runner', [
-    'run', '--rm', '--label', LABEL, ...common, '--env', 'CI_SERVER_TOKEN', RUNNER_IMAGE,
-    'register', '--non-interactive', '--url', baseUrl, '--executor', 'shell', '--tls-ca-file', '/certs/ca.pem',
-  ], { env });
-  await mustDocker('start the runner', ['run', '--detach', '--name', name.runner, '--label', LABEL, ...common, RUNNER_IMAGE]);
-  return { runnerId: made.body.id, runnerTokenFile };
+  try {
+    writeSecret(runnerTokenFile, `${made.body.token}\n`);
+    const env = { CI_SERVER_TOKEN: made.body.token };
+    const [, , , configVolume] = name.volumes;
+    const common = [
+      '--network', `container:${name.gitlab}`,
+      '--volume', `${configVolume}:/etc/gitlab-runner`,
+      '--volume', `${caFile}:/certs/ca.pem:ro`,
+    ];
+    // The token is in the child's environment only (`--env NAME` names it, with no value).
+    await mustDocker('register the runner', [
+      'run', '--rm', '--label', LABEL, ...common, '--env', 'CI_SERVER_TOKEN', RUNNER_IMAGE,
+      'register', '--non-interactive', '--url', baseUrl, '--executor', 'shell', '--tls-ca-file', '/certs/ca.pem',
+    ], { env, timeoutMs: LONG });
+    await mustDocker('start the runner', ['run', '--detach', '--name', name.runner, '--label', LABEL, ...common, RUNNER_IMAGE], { timeoutMs: LONG });
+    return { runnerId: made.body.id, runnerTokenFile };
+  } catch (error) {
+    // Undo what this call made; the instance itself is left as it was.
+    await docker(['rm', '--force', name.runner]);
+    await docker(['volume', 'rm', '--force', name.volumes[3]]);
+    try { await api.delete(`/runners/${made.body.id}`); } catch { /* best effort */ }
+    fs.rmSync(runnerTokenFile, { force: true });
+    throw error;
+  }
 }
 
 const PERSON_SCOPES = ['api', 'read_repository', 'write_repository'];
@@ -218,12 +248,20 @@ export async function makeTestPeople(api, { dir, now = () => new Date() } = {}) 
 export async function stopGitlab({ dir, port = DEFAULT_PORT, remove = true } = {}) {
   const name = names(port);
   if (!remove) {
-    await docker(['stop', name.runner]);
-    await docker(['stop', name.gitlab]);
+    await mustDocker('stop the runner', ['stop', name.runner]);
+    await mustDocker('stop GitLab', ['stop', name.gitlab]);
     return;
   }
-  await docker(['rm', '--force', name.runner]);
-  await docker(['rm', '--force', name.gitlab]);
-  for (const volume of name.volumes) await docker(['volume', 'rm', '--force', volume]);
+  // Only "no such container/volume" counts as already gone. Anything left is named in the error,
+  // and the state folder (the only record of the tokens) stays until nothing is left.
+  const left = [];
+  const attempt = async (what, args) => {
+    const done = await docker(args);
+    if (done.code !== 0 && !/no such/i.test(done.stderr)) left.push(what);
+  };
+  await attempt(`container ${name.runner}`, ['rm', '--force', name.runner]);
+  await attempt(`container ${name.gitlab}`, ['rm', '--force', name.gitlab]);
+  for (const volume of name.volumes) await attempt(`volume ${volume}`, ['volume', 'rm', '--force', volume]);
+  if (left.length > 0) throw new Error(`Docker could not remove: ${left.join(', ')}. The state folder was kept.`);
   fs.rmSync(stateDir(dir), { recursive: true, force: true });
 }
