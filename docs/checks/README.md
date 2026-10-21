@@ -52,7 +52,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |
 | 54 | VS Code's Claude harness | Not run yet | None yet |
 | 55 | What an add-on's contributions reach | Not run yet | None yet |
-| 56 | Registration: what Copilot loads, and twice | Not run yet | None yet |
+| 56 | Registration: what Copilot loads, and twice | Partly | [56-registration.md](56-registration.md) |
 | 57 | Copilot's sandbox | Not run yet | None yet |
 | 58 | The guards' input | Not run yet | None yet |
 | 59 | Clickable questions: whose answer | Not run yet | None yet |

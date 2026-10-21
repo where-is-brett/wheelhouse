@@ -63,7 +63,7 @@ test('the project and home hook files register the logger on both events, in the
   assert.equal(claude.hooks.PreToolUse[0].matcher, '*');
   assert.equal(claude.hooks.PreToolUse[0].hooks[0].command, 'node "/l.js" "/log.jsonl" claude-settings preToolUse');
   assert.equal(claude.hooks.SessionStart[0].matcher, undefined);
-  assert.deepEqual(OFF_FILE, { version: 1, disableAllHooks: true });
+  assert.deepEqual(OFF_FILE, { version: 1, disableAllHooks: true, hooks: {} });
 });
 
 test('plan runs each folder as it is and then with the off file, for each trust setting, and the arguments follow the brief', () => {

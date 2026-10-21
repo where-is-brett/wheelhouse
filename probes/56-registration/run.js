@@ -37,8 +37,9 @@ export const EVENTS = ['sessionStart', 'preToolUse'];
 export const TAGS = ['plugin-agent', 'plugin-legacy', 'claude-settings', 'github-hooks', 'home-hooks'];
 export const FOLDERS = ['main', 'worktree', 'plain'];
 export const PROMPT = 'Read README.md and say done';
-// A hook file in the project that only switches hooks off.
-export const OFF_FILE = Object.freeze({ version: 1, disableAllHooks: true });
+// A hook file in the project that only switches hooks off. Copilot 1.0.101 rejects it without a `hooks`
+// object ("hooks must be an object"), so it carries an empty one.
+export const OFF_FILE = Object.freeze({ version: 1, disableAllHooks: true, hooks: {} });
 export const OFF_PATH = path.join('.github', 'hooks', 'off.json');
 
 const LOGGER = fileURLToPath(new URL('../lib/copilot-hook-logger.js', import.meta.url));
