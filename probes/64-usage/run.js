@@ -18,7 +18,7 @@
 //        node probes/64-usage/run.js --dry-run    the same plumbing against stand-ins for copilot and gh
 // Options: --bin <path>, --gh <path>, --timeout-ms <n> (one run, default 240000), --results-dir <dir>
 //
-// Model runs: 2. Everything it makes is under the temporary folder and is removed when it ends, also on Ctrl-C.
+// Model runs: 2 (a session that fails before any event is tried once more, so up to 4). Everything it makes is under the temporary folder and is removed when it ends, also on Ctrl-C.
 // It never reads or writes the real ~/.copilot or ~/.wheelhouse. The gh call is read only.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,6 +35,17 @@ export const REST_PATHS = [
   'settings/billing/ai_credit/usage',
   'settings/billing/premium_request/usage',
 ];
+// A run that fails before any event (for example the model list could not be fetched) is tried once more.
+export const RETRIES = 1;
+export const needsRetry = (r) => r.code !== 0 && r.events.length === 0;
+// The last lines of the debug logs Copilot wrote in `dir`, each passed through `mark` (the scrubber).
+export function logTail(dir, mark = (x) => x, max = 80) {
+  let lines = [];
+  try {
+    for (const name of fs.readdirSync(dir).sort()) lines = lines.concat(fs.readFileSync(path.join(dir, name), 'utf8').split('\n'));
+  } catch { return []; }
+  return lines.filter(Boolean).slice(-max).map((line) => mark(line.slice(0, 400)));
+}
 const USAGE_LIKE = /usage|token|cost|credit|request|premium|aiu|cache|duration|quota|metric|billing/i;
 
 // ------------------------------------------------------------------ options
@@ -185,7 +196,8 @@ export function summarise(results) {
   out.push(`Check ${results.check}${results.dryRun ? ' (dry run, against stand-ins)' : ''}: ${results.runs.length} model run(s), Copilot ${results.copilotVersion || 'version unknown'}`);
   for (const r of results.runs) {
     const s = r.shapes;
-    out.push(`${r.id.padEnd(8)} exit ${String(r.code).padEnd(4)}${r.timedOut ? ' TIMED OUT' : ''} ${(r.durationMs / 1000).toFixed(1)}s  result.usage fields: ${s?.resultEventFields ? Object.keys(s.resultEventFields).filter((p) => p.startsWith('usage')).join(', ') : 'none'}`);
+    out.push(`${r.id.padEnd(8)} exit ${String(r.code).padEnd(4)}${r.attempts > 1 ? ` (${r.attempts} attempts)` : ''}${r.timedOut ? ' TIMED OUT' : ''} ${(r.durationMs / 1000).toFixed(1)}s  result.usage fields: ${s?.resultEventFields ? Object.keys(s.resultEventFields).filter((p) => p.startsWith('usage')).join(', ') : 'none'}`);
+    if (r.code !== 0) out.push(`${' '.repeat(8)} stderr: ${(r.stderr.split('\n').find((l) => l.trim()) ?? '(none)').slice(0, 120)}`);
     out.push(`${' '.repeat(8)} usage checkpoints: ${s?.usageCheckpointCount ?? 0}; usage file: ${s?.usageFileFields ? `${Object.keys(s.usageFileFields).length} field paths` : r.usageFile.present ? 'not JSON' : 'not written'}`);
   }
   out.push(`help billing: exit ${results.help?.code ?? '?'}, ${results.help?.lines ?? 0} lines`);
@@ -233,32 +245,44 @@ export async function main(argv = process.argv.slice(2), { out = console.log, ch
     const version = await runCopilot({ args: ['--version'], cwd: work, home: home.dir, bin, timeoutMs: 60_000 });
     results.copilotVersion = version.stdout.trim().split('\n')[0] ?? '';
 
+    // The signed-in login is looked up first, only so it can be scrubbed from anything kept.
+    const who = await loginOf({ gh, cwd: work, timeoutMs: 60_000 });
+    const hidden = who.ok ? [who.login] : [];
     const cases = [
       { id: 'plain', prompt: 'Reply with the single word ok. Do not use any tool.' },
       { id: 'tool', prompt: 'Use the view tool to view `README.md`, then reply with the single word done.' },
     ];
     for (const c of cases) {
-      const usagePath = path.join(work, `usage-${c.id}.json`);
-      const args = ['-p', c.prompt, '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps', '--usage-output-file', usagePath];
-      const t0 = Date.now();
-      const r = await runCopilot({ args, cwd: project.dir, home: home.dir, bin, timeoutMs: options.timeoutMs });
-      let usageFile = null;
-      const present = fs.existsSync(usagePath);
-      if (present) { try { usageFile = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch { /* recorded as not JSON */ } }
-      const names = modelNames(r.events, usageFile);
-      results.runs.push({
-        id: c.id, args: args.map((a) => (a === usagePath ? '<usage file>' : a)), code: r.code, timedOut: r.timedOut, durationMs: Date.now() - t0,
-        eventCount: r.events.length, stdoutWasJsonLines: r.events.length > 0,
-        stderr: scrubText(r.stderr.trim().slice(0, 600), names),
-        usageFile: { present, parsed: usageFile !== null },
-        shapes: usageShapes(r.events, usageFile),
-      });
+      const attempts = [];
+      for (let attempt = 1; attempt <= 1 + RETRIES; attempt += 1) {
+        const usagePath = path.join(work, `usage-${c.id}-${attempt}.json`);
+        const logDir = path.join(work, `copilot-log-${c.id}-${attempt}`);
+        const args = ['-p', c.prompt, '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps', '--usage-output-file', usagePath, '--log-dir', logDir, '--log-level', 'debug'];
+        const t0 = Date.now();
+        const r = await runCopilot({ args, cwd: project.dir, home: home.dir, bin, timeoutMs: options.timeoutMs });
+        let usageFile = null;
+        const present = fs.existsSync(usagePath);
+        if (present) { try { usageFile = JSON.parse(fs.readFileSync(usagePath, 'utf8')); } catch { /* recorded as not JSON */ } }
+        const names = [...modelNames(r.events, usageFile), ...hidden];
+        const mark = (text) => scrubText(scrubText(text, modelNames(r.events, usageFile)), hidden, '<LOGIN>');
+        attempts.push({
+          id: c.id, attempt, args: args.map((a) => (a === usagePath ? '<usage file>' : a === logDir ? '<log dir>' : a)), code: r.code, timedOut: r.timedOut, durationMs: Date.now() - t0,
+          eventCount: r.events.length, stdoutWasJsonLines: r.events.length > 0,
+          stdoutHead: mark(r.stdout.slice(0, 1500)),
+          stderr: mark(r.stderr.trim().slice(0, 4000)),
+          debugLog: logTail(logDir, mark),
+          usageFile: { present, parsed: usageFile !== null },
+          shapes: usageShapes(r.events, usageFile),
+        });
+        if (!needsRetry(r)) break;
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+      results.runs.push({ ...attempts.at(-1), attempts: attempts.length, earlierAttempts: attempts.slice(0, -1) });
     }
 
     const help = await runCopilot({ args: ['help', 'billing'], cwd: work, home: home.dir, bin, timeoutMs: 60_000 });
     results.help = { code: help.code, lines: help.stdout.split('\n').length, text: help.stdout.slice(0, 20_000), stderr: help.stderr.trim().slice(0, 300) };
 
-    const who = await loginOf({ gh, cwd: work, timeoutMs: 60_000 });
     if (!who.ok) {
       results.restSkipped = `gh could not give the signed-in login (exit ${who.code}): ${who.stderr}`;
     } else {

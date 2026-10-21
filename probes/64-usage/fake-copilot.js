@@ -8,6 +8,12 @@ const emit = (type, data, extra = {}) => console.log(JSON.stringify({ type, data
 
 if (args[0] === '--version') { console.log('GitHub Copilot CLI 0.0.0-stand-in.'); process.exit(0); }
 if (args[0] === 'help' && args[1] === 'billing') { console.log('Billing (stand-in)\nFigures come from the service.'); process.exit(0); }
+if (args.includes('--log-dir')) {
+  const dir = args[args.indexOf('--log-dir') + 1];
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(`${dir}/process.log`, 'debug line (stand-in) standin-model-1\n');
+}
+if (process.env.WHEELHOUSE_FAKE_FAIL === '1') { console.error('Error: Failed to load models (stand-in)'); process.exit(1); }
 const prompt = args[args.indexOf('-p') + 1] ?? '';
 const usageFile = args.includes('--usage-output-file') ? args[args.indexOf('--usage-output-file') + 1] : null;
 emit('session.tools_updated', { tools: [{ name: 'view' }] });

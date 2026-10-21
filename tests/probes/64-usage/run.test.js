@@ -97,3 +97,17 @@ t('a refusal records the message and scope headers; a 404 falls through to the s
   assert.equal(out.rest.length, 0);
   assert.match(out.restSkipped, /could not give/);
 });
+
+t('a session that fails before any event is tried again, and its stderr and debug log are kept', async () => {
+  process.env.WHEELHOUSE_FAKE_FAIL = '1';
+  let results;
+  try { results = (await main(['--dry-run', '--results-dir', tempFolder('wh-results-')], { out: () => {} })).results; } finally { delete process.env.WHEELHOUSE_FAKE_FAIL; }
+  for (const r of results.runs) {
+    assert.equal(r.code, 1);
+    assert.equal(r.attempts, 2);
+    assert.equal(r.earlierAttempts.length, 1);
+    assert.match(r.stderr, /Failed to load models/);
+    assert.deepEqual(r.debugLog, ['debug line (stand-in) standin-model-1']);
+  }
+  assert.match(summarise(results), /2 attempts/);
+});
