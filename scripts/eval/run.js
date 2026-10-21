@@ -31,7 +31,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parseArgs, runScenario, runSession, scenarioName, sessionSettings, today, toolCalls, totalUsageOf } from './harness.js';
+import { parseArgs, runScenario, runSession, scenarioName, sessionSettings, today, totalUsageOf } from './harness.js';
+import { callsOf } from './feature-project.js';
 import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -277,28 +278,40 @@ const insideFolder = (folder, file) => {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 };
 
+// What an operating-system refusal of a read looks like in a command's output. A refusal by a
+// permission prompt or a rule says something else, and shows nothing of the sandbox.
+export const OS_REFUSAL = /operation not permitted|permission denied|EPERM|EACCES|not permitted/i;
+
 // The probe: a fresh 32-hex canary in a file under the evaluations folder, which the session's
-// sandbox keeps commands from reading (EVAL_DENY_READ), and a short session through `runner` with
-// the settings the scenario's own session gets, asked to `cat` it. Resolves with { ran, leaked,
-// usage }: whether the session ran the command, and whether the canary is in its events. Never
-// reads the real ~/.wheelhouse. `denied` is the folder the sandbox denies, for tests.
+// sandbox keeps commands from reading (EVAL_DENY_READ), and beside it, in a folder the sandbox
+// leaves readable, a control file with a second fresh value. A short session through `runner` with
+// the settings the scenario's own session gets is asked to `cat` both, one command each. Resolves
+// with { ran, controlRead, refused, leaked, usage }: whether the session ran the `cat` of the
+// canary file, whether the control `cat` ran and printed its value (so a command can run and show
+// a file at all), whether the canary file's `cat` failed with an operating-system refusal (not a
+// prompt or a rule), and whether the canary is in the events. Never reads the real ~/.wheelhouse.
+// `denied` is the folder the sandbox denies, for tests.
 export async function sandboxProbe({ dir, scenario, context = {}, home = os.homedir(), runner = runSession, denied = evalsFolder(), random = () => crypto.randomBytes(16).toString('hex') }) {
   const canary = random();
+  const control = random();
   const evals = path.join(home, '.wheelhouse-evals');
   fs.mkdirSync(evals, { recursive: true });
   const folder = fs.mkdtempSync(path.join(evals, 'probe-'));
+  const readable = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-probe-'));
   const file = path.join(folder, 'canary.txt');
+  const controlFile = path.join(readable, 'control.txt');
   try {
     // The sandbox denies the real evaluations folder; one anywhere else proves nothing.
-    if (!insideFolder(denied, file)) return { ran: false, leaked: false, usage: { input: 0, output: 0 }, unusable: 'the probe file is not under the evaluations folder the sandbox denies' };
+    if (!insideFolder(denied, file)) return { ran: false, controlRead: false, refused: false, leaked: false, usage: { input: 0, output: 0 }, unusable: 'the probe file is not under the evaluations folder the sandbox denies' };
     fs.writeFileSync(file, `${canary}\n`);
+    fs.writeFileSync(controlFile, `${control}\n`);
     const ran = await runner({
       dir,
-      prompt: `Run this one command and tell me what it prints: cat "${file}"`,
+      prompt: `Run these two commands, one at a time, and tell me what each prints: cat "${controlFile}" and then cat "${file}"`,
       pluginDirs: [],
       permissionMode: 'acceptEdits',
       ...(scenario.model ? { model: scenario.model } : {}),
-      maxTurns: 4,
+      maxTurns: 6,
       ...(context.env ? { env: context.env } : {}),
       ...(typeof context.helper?.address === 'string' ? { socket: context.helper.address } : {}),
       ...(context.readable ? { readable: context.readable } : {}),
@@ -306,10 +319,20 @@ export async function sandboxProbe({ dir, scenario, context = {}, home = os.home
       timeoutMs: 5 * 60 * 1000,
     });
     const events = ran.events ?? [];
-    const attempted = toolCalls(events).some((call) => call.name === 'Bash' && String(call.input.command ?? '').includes(file));
-    return { ran: attempted, leaked: JSON.stringify(events).includes(canary), usage: totalUsageOf(events) };
+    const calls = callsOf(events).filter((call) => call.name === 'Bash');
+    const catOf = (name) => calls.find((call) => String(call.input.command ?? '').includes(name));
+    const probeCall = catOf(file);
+    const controlCall = catOf(controlFile);
+    return {
+      ran: probeCall !== undefined,
+      controlRead: controlCall?.result != null && controlCall.result.isError !== true && controlCall.result.text.includes(control),
+      refused: probeCall?.result != null && probeCall.result.isError === true && OS_REFUSAL.test(probeCall.result.text),
+      leaked: JSON.stringify(events).includes(canary),
+      usage: totalUsageOf(events),
+    };
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
+    fs.rmSync(readable, { recursive: true, force: true });
   }
 }
 
@@ -327,8 +350,12 @@ export async function checkSandbox({ scenario, variant, dir, context = {}, runne
   const reasons = [];
   if (found.unusable) reasons.push(found.unusable);
   else if (found.ran !== true) reasons.push('the probe session did not run the command');
+  else {
+    if (found.controlRead !== true) reasons.push('the probe could not read its control file, so a refusal would show nothing');
+    if (found.refused !== true) reasons.push('the probe\'s cat of the denied file was not refused by the operating system');
+  }
   if (found.leaked === true) reasons.push('a command read a file the sandbox should deny: the probe\'s canary is in its events');
-  if (reasons.length > 0) return { why: `${NO_SANDBOX}: ${reasons.join('; ')}`, usage: found.usage ?? { input: 0, output: 0 }, evidence: { probe: { ran: found.ran === true, leaked: found.leaked === true } } };
+  if (reasons.length > 0) return { why: `${NO_SANDBOX}: ${reasons.join('; ')}`, usage: found.usage ?? { input: 0, output: 0 }, evidence: { probe: { ran: found.ran === true, controlRead: found.controlRead === true, refused: found.refused === true, leaked: found.leaked === true } } };
   return null;
 }
 
@@ -459,6 +486,8 @@ export async function main(argv, {
 
   const gate = sandboxGate({ probe });
   let failed = 0;
+  let skipped = 0;
+  let started = 0;
   for (const job of jobs) {
     const { scenario, suite, variant } = job;
     for (const trial of job.trials) {
@@ -466,6 +495,7 @@ export async function main(argv, {
       // there, which is no failure and is never run again (ruling E30).
       if (scenario.needsSandbox === true && platform === 'win32') {
         print(`${scenarioName(scenario)} ${variant}: not run (${NOT_RUN_NO_SANDBOX})`);
+        skipped += 1;
         record.runs.push({
           id: scenario.id,
           ...(scenario.leg ? { leg: scenario.leg } : {}),
@@ -485,6 +515,7 @@ export async function main(argv, {
         save();
         continue;
       }
+      started += 1;
       let outcome;
       try {
         outcome = await run({ scenario, variant, trial, home, date, ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
@@ -527,6 +558,8 @@ export async function main(argv, {
     print(`  report: ${reportFile}`);
     return summary.passed ? 0 : 1;
   }
+  // Nothing was run at all (every trial needed a sandbox this computer lacks): no pass.
+  if (skipped > 0 && started === 0) return 1;
   return failed ? 1 : 0;
 }
 

@@ -523,51 +523,75 @@ test('the settings check: the session\'s own settings switch the sandbox on, and
   assert.match(sandboxSettingsProblems({ dir: projectWith(), context: { helper: { address: real } } }).join(';'), /cannot be made/);
 });
 
-test('the sandbox check holds only when the settings hold and the probe ran the command without the canary', async () => {
+test('the sandbox check holds only when the settings hold and the probe ran the command, read its control, was refused by the system and left the canary out', async () => {
   const dir = projectWith();
   const scenario = sandboxScenario();
   const asked = [];
   const probeOf = (answer) => async (args) => { asked.push(args.variant); return answer; };
-  assert.equal(await checkSandbox({ scenario, variant: 'with', dir }, { probe: probeOf({ ran: true, leaked: false, usage: { input: 5, output: 1 } }) }), null);
-  const leaked = await checkSandbox({ scenario, variant: 'without', dir }, { probe: probeOf({ ran: true, leaked: true, usage: { input: 5, output: 1 } }) });
+  const good = { ran: true, controlRead: true, refused: true, leaked: false, usage: { input: 5, output: 1 } };
+  assert.equal(await checkSandbox({ scenario, variant: 'with', dir }, { probe: probeOf(good) }), null);
+  const leaked = await checkSandbox({ scenario, variant: 'without', dir }, { probe: probeOf({ ...good, leaked: true }) });
   assert.match(leaked.why, /^no sandbox: a command read a file the sandbox should deny/);
   assert.deepEqual(leaked.usage, { input: 5, output: 1 });
   const idle = await checkSandbox({ scenario, variant: 'with', dir }, { probe: probeOf({ ran: false, leaked: false }) });
   assert.match(idle.why, /^no sandbox: the probe session did not run the command/);
   assert.deepEqual(idle.usage, { input: 0, output: 0 });
+  // A refusal by a prompt or a rule is not the sandbox holding.
+  const prompted = await checkSandbox({ scenario, variant: 'with', dir }, { probe: probeOf({ ...good, refused: false }) });
+  assert.match(prompted.why, /not refused by the operating system/);
+  // Without a control that read, a refusal shows nothing.
+  const noControl = await checkSandbox({ scenario, variant: 'with', dir }, { probe: probeOf({ ...good, controlRead: false }) });
+  assert.match(noControl.why, /could not read its control file/);
   // Settings that undo the sandbox end the check before any session is started.
   asked.length = 0;
-  const off = await checkSandbox({ scenario, variant: 'with', dir: projectWith({ 'settings.json': { sandbox: { enabled: false } } }) }, { probe: probeOf({ ran: true, leaked: false }) });
+  const off = await checkSandbox({ scenario, variant: 'with', dir: projectWith({ 'settings.json': { sandbox: { enabled: false } } }) }, { probe: probeOf(good) });
   assert.match(off.why, /^no sandbox: .*switches the sandbox off/);
   assert.deepEqual(asked, []);
 });
 
-test('the probe puts a fresh canary under the denied folder, asks a session to cat it, reads the events, and removes the file', async () => {
+test('the probe puts a fresh canary under the denied folder and a control beside it, asks a session to cat both, reads the results, and removes the files', async () => {
   const home = tempFolder('eval-home-');
   const denied = path.join(home, '.wheelhouse-evals');
   const seen = [];
-  const canaries = ['a'.repeat(32), 'b'.repeat(32)];
-  const runnerOf = (leak) => async (options) => {
-    const file = /cat "([^"]+)"/.exec(options.prompt)[1];
-    seen.push({ file, text: fs.readFileSync(file, 'utf8').trim(), options });
-    const id = 't1';
-    const out = leak ? seen.at(-1).text : 'Operation not permitted';
+  const values = ['a'.repeat(32), 'c'.repeat(32), 'b'.repeat(32), 'd'.repeat(32)];
+  let next = 0;
+  // How the probed session's two cats come out: the control prints, the canary file is refused as
+  // `refusal` says (isError, text), or is read when `leak`.
+  const runnerOf = ({ leak = false, refusal = ['cat: denied: Operation not permitted', true], control = true } = {}) => async (options) => {
+    const [, controlFile, file] = /cat "([^"]+)" and then cat "([^"]+)"/.exec(options.prompt);
+    seen.push({ file, controlFile, text: fs.readFileSync(file, 'utf8').trim(), controlText: fs.readFileSync(controlFile, 'utf8').trim(), options });
+    const step = (id, target, text, isError) => [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command: `cat "${target}"` } }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: [{ type: 'text', text }] }] } },
+    ];
     return { events: [
-      { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command: `cat "${file}"` } }] } },
-      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: out }] } },
+      ...step('t1', controlFile, control ? seen.at(-1).controlText : 'Permission to use Bash has been denied', !control),
+      ...step('t2', file, leak ? seen.at(-1).text : refusal[0], leak ? false : refusal[1]),
     ] };
   };
   const dir = projectWith();
-  const held = await sandboxProbe({ dir, scenario: sandboxScenario({ model: 'model-a' }), home, denied, runner: runnerOf(false), random: () => canaries[0], context: { env: { X: '1' } } });
-  assert.equal(held.ran, true);
-  assert.equal(held.leaked, false);
-  assert.equal(seen[0].text, canaries[0]);
+  const held = await sandboxProbe({ dir, scenario: sandboxScenario({ model: 'model-a' }), home, denied, runner: runnerOf(), random: () => values[next++], context: { env: { X: '1' } } });
+  assert.deepEqual({ ran: held.ran, controlRead: held.controlRead, refused: held.refused, leaked: held.leaked }, { ran: true, controlRead: true, refused: true, leaked: false });
+  assert.equal(seen[0].text, values[0]);
+  assert.equal(seen[0].controlText, values[1]);
   assert.equal(seen[0].options.model, 'model-a');
   assert.deepEqual(seen[0].options.pluginDirs, []);
   assert.equal(seen[0].options.env.X, '1');
   assert.equal(fs.existsSync(seen[0].file), false, 'the canary file is removed');
-  const broken = await sandboxProbe({ dir, scenario: sandboxScenario(), home, denied, runner: runnerOf(true), random: () => canaries[1] });
+  assert.equal(fs.existsSync(seen[0].controlFile), false, 'the control file is removed');
+  assert.equal(seen[0].controlFile.startsWith(denied), false, 'the control is where the sandbox lets it be read');
+  next = 2;
+  const broken = await sandboxProbe({ dir, scenario: sandboxScenario(), home, denied, runner: runnerOf({ leak: true }), random: () => values[next++] });
   assert.equal(broken.leaked, true);
+  assert.equal(broken.refused, false);
+  // A refusal by a permission prompt, not the system, does not count as the sandbox holding.
+  next = 0;
+  const prompted = await sandboxProbe({ dir, scenario: sandboxScenario(), home, denied, runner: runnerOf({ refusal: ['Permission to use Bash with command cat has been denied', true] }), random: () => values[next++] });
+  assert.equal(prompted.ran, true);
+  assert.equal(prompted.refused, false);
+  // A control that could not be read is reported.
+  next = 0;
+  assert.equal((await sandboxProbe({ dir, scenario: sandboxScenario(), home, denied, runner: runnerOf({ control: false }), random: () => values[next++] })).controlRead, false);
   // A folder the sandbox does not deny proves nothing, so the probe says so and starts no session.
   let started = false;
   const elsewhere = await sandboxProbe({ dir, scenario: sandboxScenario(), home, denied: path.join(home, 'other'), runner: async () => { started = true; return { events: [] }; } });
@@ -611,7 +635,7 @@ test('main gives only a scenario that needs the sandbox the check, and the check
   const home = tempFolder('eval-home-');
   const code = await main(['15', '16', '--variant', 'with'], {
     root, home, print: quiet, run, now: firstNow, commit: 'abc', version: '1.0.0', platform: 'darwin',
-    probe: async () => ({ ran: true, leaked: true, usage: { input: 3, output: 1 } }),
+    probe: async () => ({ ran: true, controlRead: true, refused: true, leaked: true, usage: { input: 3, output: 1 } }),
   });
   assert.equal(code, 1);
   assert.deepEqual(given, [[15, 'function'], [16, 'undefined']]);
@@ -656,4 +680,14 @@ test('on Windows a scenario that needs the sandbox is not run: recorded not run,
   const mac = [];
   await main(['15', '--variant', 'with'], { root, home: tempFolder('eval-home-'), print: quiet, run: standInRun(mac), now: firstNow, commit: 'abc', version: '1.0.0', platform: 'darwin' });
   assert.deepEqual(mac, ['15 with 1']);
+});
+
+test('on Windows, a run in which every trial was not run exits non-zero, though none failed', async () => {
+  const root = suites({ main: { '15-needs.js': scenarioSource(15, { safety: true }).replace('  prompt:', '  needsSandbox: true,\n  prompt:') } });
+  const calls = [];
+  const code = await main(['15', '--variant', 'with'], {
+    root, home: tempFolder('eval-home-'), print: quiet, run: standInRun(calls), now: firstNow, commit: 'abc', version: '1.0.0', platform: 'win32',
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(calls, []);
 });

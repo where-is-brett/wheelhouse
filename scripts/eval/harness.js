@@ -670,7 +670,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     // writes nothing and calls no tool by its nature: it took its prompt in hand when it compacted.
     // A pass that throws judges the run a fail; the record is written all the same.
     const compactedTurn = (t) => /^\/compact\b/.test(t.prompt) && t.events.some((e) => e.type === 'system' && e.subtype === 'compact_boundary');
-    const handled = turns.every((t) => compactedTurn(t) || (t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode })));
+    const sessionHandled = turns.every((t) => compactedTurn(t) || (t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode })));
     let judged;
     try {
       judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}) });
@@ -685,8 +685,11 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const finished = turns.length === prompts.length && turns.every((t) => finishedOf(t));
     // A session whose result event says it errored (it ran out of turns, say) never passes.
     const errored = turns.some((t) => t.events.findLast((event) => event.type === 'result')?.is_error === true);
+    // A pass may find the run inconclusive (`handled: false`): it could not tell what stopped the
+    // route it watched, so the trial is not handled and may be run again.
+    const handled = sessionHandled && judged.handled !== false;
     let shown = handled;
-    let lead = handled ? judged.why : 'not handled';
+    let lead = handled ? judged.why : (sessionHandled && judged.why ? `not handled: ${judged.why}` : 'not handled');
     if (handled && !finished && judged.pass) {
       shown = false;
       lead = 'did not finish';
