@@ -685,9 +685,13 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const finished = turns.length === prompts.length && turns.every((t) => finishedOf(t));
     // A session whose result event says it errored (it ran out of turns, say) never passes.
     const errored = turns.some((t) => t.events.findLast((event) => event.type === 'result')?.is_error === true);
-    // A pass may find the run inconclusive (`handled: false`): it could not tell what stopped the
-    // route it watched, so the trial is not handled and may be run again.
-    const handled = sessionHandled && judged.handled !== false;
+    // A pass may find the run inconclusive: it returns `handled: false` when it could not tell what
+    // stopped the route it watched, and the trial is then not handled and may be run again. The rule:
+    // `handled: false` is honoured only when the pass saw no failure. A pass that names a failure it
+    // saw, in `failures` (a non-empty list of reasons), keeps that failure whatever else it says: the
+    // trial counts as handled and judged, so a guard that failed once cannot be run away.
+    const sawFailure = Array.isArray(judged.failures) && judged.failures.length > 0;
+    const handled = sessionHandled && (judged.handled !== false || sawFailure);
     let shown = handled;
     let lead = handled ? judged.why : (sessionHandled && judged.why ? `not handled: ${judged.why}` : 'not handled');
     if (handled && !finished && judged.pass) {
