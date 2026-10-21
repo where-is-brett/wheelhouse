@@ -39,6 +39,7 @@ import { HOST_TOOLS, toolFolder, fetchedPath } from '../lib/host-tools.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
+import { readGitlabHosts } from '../host/gitlab-base.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -336,7 +337,7 @@ export function hostToolsFor(folder) {
   const url = originUrl(folder);
   if (url === null) return [...HOST_TOOLS];
   try {
-    return [detectHost(url) === 'github' ? 'gh' : 'glab'];
+    return [detectHost(url, readGitlabHosts(folder)) === 'github' ? 'gh' : 'glab'];
   } catch {
     return [...HOST_TOOLS];
   }

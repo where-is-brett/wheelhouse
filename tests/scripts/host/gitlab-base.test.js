@@ -7,13 +7,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_GITLAB, gitlabBase, commitEmail } from '../../../scripts/host/gitlab-base.js';
+import { DEFAULT_GITLAB, gitlabBase, commitEmail, readGitlabHosts } from '../../../scripts/host/gitlab-base.js';
 import { tokenUrl } from '../../../scripts/host/token-url.js';
 import { gitlabKeyPage, cutAccess, revokeGitlabKey } from '../../../scripts/host/cut-access.js';
-import { gitlabApi, makeProjectKey } from '../../../scripts/host/gitlab-key.js';
+import { gitlabApi, makeProjectKey, isKeysSwitchedOff } from '../../../scripts/host/gitlab-key.js';
 import { detectHost } from '../../../scripts/host/adapter.js';
 import { signIn, signInStatus, signUpUrl, SIGN_UP, httpsRemote } from '../../../scripts/setup/host.js';
 import { commitAuthor } from '../../../scripts/setup/project-files.js';
+import { hostToolsFor } from '../../../scripts/setup/tools.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 const SCRIPTS = fileURLToPath(new URL('../../../scripts/', import.meta.url));
 const COMPANY = 'https://git.example.org';
@@ -172,4 +174,45 @@ test('a refused project key is explained as the group\'s setting', async () => {
   // Any other 400 keeps the general line.
   await assert.rejects(asked(400, { message: '400 Bad request - something else' }), /refused the request for a project key \(HTTP 400\)/);
   await assert.rejects(asked(400, null), /refused the request for a project key \(HTTP 400\)/);
+});
+
+test('the api reports the GitLab address, not the API\'s, so the token page built from it is right', () => {
+  const noFetch = async () => { throw new Error('no network'); };
+  for (const base of [COMPANY, DEFAULT_GITLAB, 'https://localhost:8929', `${COMPANY}/gitlab`]) {
+    const api = gitlabApi({ baseUrl: `${base}/`, token: 't', fetch: noFetch });
+    assert.equal(api.baseUrl, base);
+    const page = new URL(tokenUrl({ host: 'gitlab', owner: 'o', repos: ['r'], name: 'n', days: 1, base: api.baseUrl }));
+    assert.equal(page.origin + page.pathname, `${base}/-/user_settings/personal_access_tokens`);
+  }
+  const plain = gitlabApi({ token: 't', fetch: noFetch });
+  assert.equal(plain.baseUrl, DEFAULT_GITLAB);
+  assert.equal(new URL(tokenUrl({ host: 'gitlab', owner: 'o', repos: ['r'], name: 'n', days: 1, base: plain.baseUrl })).pathname, '/-/user_settings/personal_access_tokens');
+});
+
+test('the switched-off refusal carries a code, and no other refusal does', async () => {
+  const refused = (status, body) => makeProjectKey({ api: { post: async () => ({ status, body }) }, projectId: 5, name: 'w', days: 30 });
+  const off = await refused(400, { message: '400 Bad request - User does not have permission to create project access token' }).catch((e) => e);
+  assert.equal(isKeysSwitchedOff(off), true);
+  for (const [status, body] of [[400, { message: 'other' }], [403, {}], [401, {}], [404, {}]]) {
+    assert.equal(isKeysSwitchedOff(await refused(status, body).catch((e) => e)), false, String(status));
+  }
+});
+
+test('the project\'s gitlabHosts is read from its committed configuration, and setup\'s host tool follows it', () => {
+  const folder = tempFolder('wh-hosts-');
+  assert.deepEqual(readGitlabHosts(folder), {});
+  fs.mkdirSync(path.join(folder, '.claude'));
+  const write = (text) => fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), text);
+  write('not json');
+  assert.deepEqual(readGitlabHosts(folder), {});
+  write(JSON.stringify({ gitlabHosts: 'git.example.org' }));
+  assert.deepEqual(readGitlabHosts(folder), {});
+  write(JSON.stringify({ gitlabHosts: ['localhost:8929'], other: 1 }));
+  assert.deepEqual(readGitlabHosts(folder), { gitlabHosts: ['localhost:8929'] });
+  // hostToolsFor: the company remote is GitLab's `glab` only when the setting names it.
+  fs.mkdirSync(path.join(folder, '.git'));
+  fs.writeFileSync(path.join(folder, '.git', 'config'), '[remote "origin"]\n\turl = https://localhost:8929/team/product.git\n');
+  assert.deepEqual(hostToolsFor(folder), ['glab']);
+  write('{}');
+  assert.deepEqual(hostToolsFor(folder), ['gh', 'glab']);
 });

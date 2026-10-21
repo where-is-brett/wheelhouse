@@ -133,7 +133,7 @@ function standIn(state = {}) {
       }
       if (p.endsWith('/access_tokens')) {
         if (w.keyAnswer === 'unreachable') throw new Error('Could not reach GitLab');
-        if (w.keyAnswer !== undefined) return { status: w.keyAnswer, body: { message: 'no' } };
+        if (w.keyAnswer !== undefined) return { status: w.keyAnswer, body: w.keyBody ?? { message: 'no' } };
         if (w.refuseKeys) return { status: 403, body: { message: 'forbidden' } };
         w.api.keys.push(body);
         return { status: 201, body: { id: 900 + w.api.keys.length, token: `glpat-project-key-${w.api.keys.length}`, expires_at: body.expires_at } };
@@ -1012,6 +1012,62 @@ test('a folder whose git has an unborn branch of another name ends up on main', 
     await applyStep(step, folder, planned.changes, { answers: planned.answers });
     assert.equal(await g(folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
     assert.equal(await g(folder, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+  });
+});
+
+test('a group that has switched project keys off also falls back to the system\'s box; any other 400 stops', async () => {
+  const switchedOff = { message: '400 Bad request - User does not have permission to create project access token' };
+  await withHome(async () => {
+    const w = standIn({ keyAnswer: 400, keyBody: switchedOff });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+    const opened = [];
+    const boxes = [];
+    const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async (box) => { boxes.push(box); return `${PASTED}\n`; } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(boxes.length, 1);
+    assert.ok(opened[0].startsWith('https://gitlab.com/-/user_settings/personal_access_tokens'), opened[0]);
+    assert.deepEqual(readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`), { kind: 'pasted-token', token: PASTED, expiresAt: null });
+  });
+  await withHome(async () => {
+    const w = standIn({ keyAnswer: 400, keyBody: { message: '400 Bad request - something else' } });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+    const opened = [];
+    const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async () => { throw new Error('no box should open'); } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /HTTP 400/);
+    assert.deepEqual(opened, []);
+  });
+});
+
+test('a company remote named in gitlabHosts, with its port, gives that address through setup\'s path', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['localhost:8929'] }));
+    await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
+    const found = productOf(folder, { config: { gitlabHosts: ['localhost:8929'] } });
+    assert.deepEqual(found, { isNew: false, host: 'gitlab', repo: `${USER}/shop`, name: 'shop', base: 'https://localhost:8929' });
+    const planned = await answerAll(stepFor(w), ctxFor(folder), choose({ way: WAYS.quick }));
+    const connection = planned.changes.find((c) => c.action === 'connection');
+    assert.equal(connection.target, 'gitlab');
+    assert.equal(connection.base, 'https://localhost:8929');
+    assert.ok(planned.card.what.includes('https://localhost:8929/users/sign_up'), planned.card.what);
+    const glab = w.calls.filter((c) => c.tool === 'glab');
+    assert.ok(glab.length > 0);
+    for (const c of glab) assert.equal(c.env?.GITLAB_HOST, 'localhost:8929');
+    assert.deepEqual(glab[0].args, ['auth', 'status', '--hostname', 'localhost:8929']);
+  });
+  // Without the setting, the same remote is not a GitLab address setup knows.
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
+    await assert.rejects(answerAll(stepFor(w), ctxFor(folder), choose()), /localhost:8929.*not GitHub or GitLab/);
   });
 });
 

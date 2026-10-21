@@ -4,6 +4,9 @@
 // base its caller passes). A company's own GitLab is named by the project setting `gitlabHosts`, each
 // entry a host name, with its port when it has one (`gitlab.example.org`, `localhost:8929`).
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 export const DEFAULT_GITLAB = 'https://gitlab.com';
 
 const DEFAULT_HOST = new URL(DEFAULT_GITLAB).hostname;
@@ -42,6 +45,18 @@ export const hostWords = (parts) => (parts.port === '' ? parts.hostname : `${par
 
 // Whether the remote is the public service's.
 export const isDefaultHost = (parts) => parts.hostname === DEFAULT_HOST;
+
+// The project's `gitlabHosts` setting, read from its committed configuration (.claude/wheelhouse.json
+// in the folder) without judging the rest of the file: { gitlabHosts: [string] }, or {} when the file
+// is missing, unreadable or names none. A folder with no configuration yet is the public service's.
+export function readGitlabHosts(folder) {
+  try {
+    const hosts = JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'))?.gitlabHosts;
+    return Array.isArray(hosts) && hosts.every((h) => typeof h === 'string') ? { gitlabHosts: hosts } : {};
+  } catch {
+    return {};
+  }
+}
 
 // The GitLab address for a project: the origin of its remote when `gitlabHosts` (in `config`) names
 // the remote's host, else the public service's. The origin is kept as a whole, so a port stays.

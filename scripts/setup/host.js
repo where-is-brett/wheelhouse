@@ -90,9 +90,9 @@ import { QUICK_LINE } from '../lib/host-lines.js';
 import { detectHost } from '../host/adapter.js';
 import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app.js';
 import { installationCovers } from '../host/connection.js';
-import { gitlabApi, makeProjectKey, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
+import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
-import { DEFAULT_GITLAB, gitlabBase } from '../host/gitlab-base.js';
+import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts } from '../host/gitlab-base.js';
 import { readKey, writeKey } from '../host/keys.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
@@ -1196,7 +1196,7 @@ async function connectGithubApp({ app, repos, fetch, say, open, sleep, now, reco
 
 // Narrow on GitLab: a project key at Developer level for each project, made with the director's own
 // sign-in. Where GitLab refuses one (it answers 401 or 403: the sign-in or the plan may not make
-// project keys), its token page is opened and the token typed into the system's own box, straight to
+// project keys; or the company's group has switched project keys off, makeProjectKey's code), its token page is opened and the token typed into the system's own box, straight to
 // the keys file for every project still without a key: never the chat, an argument or a log. Any
 // other failure (GitLab not reached, the project not found, a server error) stops the step plainly.
 // A project already holding a key is left as it is.
@@ -1215,7 +1215,7 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
     try {
       key = await makeProjectKey({ api: watched, projectId: p.id, name: KEY_NAME, days: KEY_DAYS, now });
     } catch (error) {
-      if (answered !== 401 && answered !== 403) throw error;
+      if (answered !== 401 && answered !== 403 && !isKeysSwitchedOff(error)) throw error;
       refused = true;
       break;
     }
@@ -1352,7 +1352,7 @@ export function hostStep({
       // holding only step 1's install.
       const join = joinChoice(ctx);
       if (join?.ask) return { ask: join.ask };
-      const product = join === null ? productOf(ctx.folder)
+      const product = join === null ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
         : { isNew: false, joining: true, host: null, repo: join.join.includes('/') ? join.join : join.known, name: join.join.split('/').at(-1) };
       // Real users and Locked are the first computer's questions; a joining computer reads the
       // phase from the project's state, and its step 8 asks Locked.
