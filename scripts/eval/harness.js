@@ -77,6 +77,13 @@ export const OFFERABLE_TOOLS = Object.freeze(['PushNotification']);
 // What the hook that turns an offered tool's call away answers it with, by tool.
 export const TURNED_AWAY = Object.freeze({ PushNotification: 'Sent to the director\'s phone.' });
 
+// The phone's other known answer: the words the notification tool answers with when it isn't sent
+// because the director has just been active (check 41), for the scenarios that run that branch.
+export const NOT_SENT = 'Not sent \u2014 this terminal is active, so your output here already reaches the user; a separate notification would be redundant.';
+
+// Every answer a known hook may give, by tool.
+const KNOWN_ANSWERS = Object.freeze({ PushNotification: Object.freeze([TURNED_AWAY.PushNotification, NOT_SENT]) });
+
 // The script of a PreToolUse hook that turns every call it is given away with `reason`. It fails
 // closed (ruling F107): once its input ends it answers deny, and any failure of its own (its input
 // can't be read, a throw) exits with code 2, which refuses the call too.
@@ -155,12 +162,14 @@ function vettedExtraArgs(extraArgs) {
 }
 
 // Whether `hook` is the known hook that turns `tool` away, failing closed: it blocks on failure, and
-// its command runs, with nothing else, a script that is turnAwayScript's for that tool word for word.
+// its command runs, with nothing else, a script that is turnAwayScript's for one of that tool's
+// known answers (KNOWN_ANSWERS) word for word.
 function knownHook(hook, tool) {
   if (hook?.type !== 'command' || hook.onFailure !== 'block' || typeof hook.command !== 'string') return false;
   const file = /^node "([^"]+)"$/.exec(hook.command)?.[1];
   try {
-    return file !== undefined && fs.readFileSync(file, 'utf8') === turnAwayScript(TURNED_AWAY[tool]);
+    const text = file === undefined ? null : fs.readFileSync(file, 'utf8');
+    return text !== null && (KNOWN_ANSWERS[tool] ?? []).some((said) => text === turnAwayScript(said));
   } catch {
     return false;
   }

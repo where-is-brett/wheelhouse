@@ -16,6 +16,8 @@ export const WATCH_EVERY_MS = 60000;
 export const WATCH_BRIDGE_MS = 45000;
 // The least time between two courier wakes.
 export const COURIER_GAP_MS = 10 * 60 * 1000;
+// How long after a card's wake the courier wakes once more while the card waits unasked.
+export const REMIND_MS = 5 * 60 * 1000;
 // How many characters of a card's SHA-256 name the card in a press.
 export const CARD_HASH_CHARS = 12;
 // The most lines the pane shows of what is being built.

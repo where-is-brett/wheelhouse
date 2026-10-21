@@ -1,8 +1,10 @@
 // scripts/hooks/lineage-hold.js
 // While a Wheelhouse project's lineage hold file is there (the session start wrote it because
-// the installed upstream skills differ from Wheelhouse's manifest), lets only reading, halting
-// work already running, the runbook, the lineage check and the front desk's reading commands
-// through, each command with nothing chained, piped or redirected. The check (`node
+// the installed upstream skills differ from Wheelhouse's manifest), lets only reading (READ_TOOLS,
+// loading a tool's schema with ToolSearch among it), halting work already running, the runbook,
+// the lineage check and the front desk's reading commands through, each command with nothing
+// chained, piped or redirected but one trailing ` 2>/dev/null` (stop-guard.js, QUIET). Claude
+// Code's notification is not among them, so it stays held. The check (`node
 // <pluginRoot>/scripts/lineage/check.js [projectDir]`) only reads and says what still differs; the
 // hold lifts at the next session start whose check matches (ruling R145). As under STOP
 // (stop-guard.js), the halting tools and the runbook stay open: each runbook step but STOP itself

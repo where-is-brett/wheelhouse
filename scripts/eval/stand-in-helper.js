@@ -202,6 +202,13 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
         ? { ok: false, refused: `there is no pull request #${body.number}` }
         : { ok: true, result: { headSha: sha, state: 'open', mergeable: 'clean' } };
     },
+    // cli.js preview, for Show me: { cwd, number } -> the preview's address of a pull request
+    // the stand-in knows as open, or null, as the real helper answers one with none.
+    'POST /pr/preview': (body) => {
+      const url = opened.has(body.number) ? `https://preview.host.invalid/pull/${body.number}` : null;
+      record({ route: 'pr/preview', number: body.number ?? null, url });
+      return { ok: true, url };
+    },
     // cli.js answer: { cwd, questionId }.
     'POST /state/answer': (body) => {
       const answer = Object.hasOwn(answers, body.questionId) ? answers[body.questionId] : null;

@@ -84,6 +84,9 @@ declare module 'claude-code' {
       pressing: WheelhousePressing | null;
       // Whether a press of STOP is being recorded.
       stopping: boolean;
+      // The session whose courier wake last couldn't be handed on, or null: its toast has shown, and
+      // shows again only after a wake is handed on or a turn starts.
+      unhanded: string | null;
       // Which view the pane shows: the board or the settings.
       view: 'board' | 'settings';
       // The settings view's rows as the bridge last answered them, its line under them, and

@@ -3,13 +3,15 @@
 // presence and quiet hours (design section 13). The bridge's front-desk tick finds the items in
 // the pane's model and hands back the wake as the tick's `submit`. What has been sent is kept in
 // projects/<project>/mod/courier.json, under a start lock, so two front desks of one project wake
-// once for an item, with the sessions that have ticked, so a session's first tick is known. The
-// wake carries counts and card numbers, never an event's words.
+// once for an item, with the sessions that have ticked, so a session's first tick is known. A wake
+// the mod couldn't hand on is undone by courierUnsent, so the next tick wakes for it again. A card
+// a wake named that still waits unasked REMIND_MS later wakes once more, as its reminder (ruling
+// 68). The wake carries counts and card numbers, never an event's words.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 import { takeStartLock } from '../lib/start-lock.js';
-import { COURIER_GAP_MS, LEADS, STALE_TICKS, TICK_MS } from '../lib/mod-numbers.js';
+import { COURIER_GAP_MS, LEADS, REMIND_MS, STALE_TICKS, TICK_MS } from '../lib/mod-numbers.js';
 import { hashOf } from './status.js';
 
 // How many sent ids courier.json keeps, beside every one still among the current items.
@@ -24,6 +26,9 @@ const FILE_BYTES = 1024 * 1024;
 // The notification first: in Desktop the cards wait for the director's answer, so a notification
 // sent after them would reach the phone only once the director had answered.
 const ASK = 'Send Claude\'s notification in one line, then ask any new cards now, once.';
+// A reminder's ask: the cards it names weren't asked at their wake (its notification wasn't sent),
+// so they are asked now, whatever the notification answers this time.
+const REMIND_ASK = (cards) => `Send Claude's notification in one line, then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
 
@@ -33,7 +38,7 @@ const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
 // What each presence lets wake the front desk. Inside the quiet hours, as do not disturb.
 export const PRESENCE_LETS = Object.freeze({
   here: () => true,
-  away: (item) => ['stop', 'incident', 'health'].includes(item.kind) || (item.kind === 'card' && item.blocking === true),
+  away: (item) => ['stop', 'incident', 'health'].includes(item.kind) || (['card', 'remind'].includes(item.kind) && item.blocking === true),
   dnd: (item) => AT_ONCE.includes(item.kind),
 });
 
@@ -162,12 +167,16 @@ function writeKept(project, { sent, lastWakeAt, sessions }, current) {
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const andList = (words) => (words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`);
 
+const numbersOf = (items, kind) => [...new Set(items.filter((i) => i.kind === kind).map((i) => i.n))].sort((a, b) => a - b);
+
 // The wake's words: counts, card numbers and fixed words only.
 function whatOf(items) {
   const count = (kind) => items.filter((i) => i.kind === kind).length;
-  const numbers = [...new Set(items.filter((i) => i.kind === 'card').map((i) => i.n))].sort((a, b) => a - b);
+  const numbers = numbersOf(items, 'card');
+  const still = numbersOf(items, 'remind');
   const parts = [];
   if (numbers.length > 0) parts.push(`${plural(numbers.length, 'new card', 'new cards')} (${andList(numbers.map(String))})`);
+  if (still.length > 0) parts.push(`${still.length === 1 ? 'card' : 'cards'} ${andList(still.map(String))} ${still.length === 1 ? 'is' : 'are'} still waiting`);
   if (count('stop') > 0) parts.push('STOP is on');
   if (count('incident') > 0) parts.push(`${plural(count('incident'), 'incident', 'incidents')} open`);
   if (count('health') > 0) parts.push(`${plural(count('health'), 'health line', 'health lines')} at its stop level`);
@@ -177,7 +186,7 @@ function whatOf(items) {
 
 const NOTHING = Object.freeze({ submit: null, sent: [] });
 
-// courierWake({ project, session, items, presence, quiet, idle, now, timeZone }) -> { submit, sent }.
+// courierWake({ project, session, items, presence, quiet, idle, now, timeZone }) -> { submit, sent, at? }.
 // `session` is the ticking session's id; `items` are needsYou's; `presence` the effective
 // presence ({ value, until }); `quiet` the notifications' quiet hours ({ from, to }); `idle` false
 // while a turn runs; `timeZone` the computer's own.
@@ -190,9 +199,18 @@ const NOTHING = Object.freeze({ submit: null, sent: [] });
 // Otherwise the items not yet sent that the presence lets through make one wake, unless a turn
 // runs or the last wake was under COURIER_GAP_MS ago (STOP and an incident wake inside the gap);
 // then nothing is marked sent and they wait for the next tick, however long until it comes.
+// A card item a wake marked (not an opening), still among the items (so not yet asked, nor set
+// aside), is due its reminder (`remind:<card id>`) REMIND_MS after that wake, once; it is let
+// through, held and marked as a new item is, and its wake asks for the cards whatever the
+// notification answers. While STOP is among the items no reminder is due, since under STOP the
+// front desk asks only Lift STOP; it is due again once STOP is lifted. A build question no card
+// asks yet (`card:q:<question id>`) has its reminder too, since its wake may have asked nothing
+// (ruling 72): the reminder's `cards` makes its card when it can. STOP and an incident have none.
 // `sent` names the items marked sent by this call: each once the wake that carries it is handed
-// back. Another session holding courier.json past LOCK_WAIT_MS is a quiet wait for the next tick.
-// Throws when courier.json can't be kept, so nothing is lost.
+// back. A wake's marks name its session, its stamp (`at`, handed back with the wake) and the
+// lastWakeAt before it, so courierUnsent can put them back. Another session holding courier.json
+// past LOCK_WAIT_MS is a quiet wait for the next tick. Throws when courier.json can't be kept, so
+// nothing is lost.
 export async function courierWake({ project, session, items, presence, quiet, idle, now = () => new Date(), timeZone } = {}) {
   const t = instantOf(now);
   if (!Number.isFinite(t) || !isSession(session)) return NOTHING;
@@ -210,10 +228,18 @@ export async function courierWake({ project, session, items, presence, quiet, id
     const opening = !kept.sessions.some((s) => s.id === session);
     const othersTicking = kept.sessions.some((s) => s.id !== session && t - Date.parse(s.at) <= STALE_TICKS * TICK_MS);
     const sessions = [...kept.sessions.filter((s) => s.id !== session), { id: session, at: stamp }].slice(-SESSIONS_KEPT);
-    const sentIds = new Set(kept.sent.map((s) => s.id));
-    const current = new Set(found.map((i) => i.id));
+    // The latest mark of each id is the one in force, as writeKept keeps it.
+    const marks = new Map(kept.sent.map((entry) => [entry.id, entry]));
+    const sentIds = new Set(marks.keys());
+    const reminders = found.filter((i) => i.kind === 'card').map((i) => ({ item: i, id: `remind:${i.id.slice('card:'.length)}` }));
+    const stopped = found.some((i) => i.kind === 'stop');
+    const current = new Set([...found.map((i) => i.id), ...reminders.map((r) => r.id)]);
     const fresh = found.filter((i) => !sentIds.has(i.id) && sentIds.add(i.id));
-    const mark = (marked, lastWakeAt) => writeKept(project, { sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp }))], lastWakeAt, sessions }, current);
+    const due = reminders.filter(({ item, id }) => {
+      const woke = marks.get(item.id);
+      return !stopped && !sentIds.has(id) && isSession(woke?.by) && t - Date.parse(woke.at) >= REMIND_MS;
+    }).map(({ item, id }) => ({ id, kind: 'remind', n: item.n, blocking: item.blocking }));
+    const mark = (marked, lastWakeAt, woke = {}) => writeKept(project, { sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp, ...woke }))], lastWakeAt, sessions }, current);
 
     if (opening) {
       const marked = othersTicking ? [] : fresh;
@@ -221,7 +247,7 @@ export async function courierWake({ project, session, items, presence, quiet, id
       return { submit: null, sent: marked.map((i) => i.id) };
     }
     const lets = PRESENCE_LETS[presenceAt(presence, quiet, t, timeZone)];
-    const waking = fresh.filter((i) => lets(i));
+    const waking = [...fresh, ...due].filter((i) => lets(i));
     const last = kept.lastWakeAt === null ? Number.NaN : Date.parse(kept.lastWakeAt);
     const sinceLast = t - last;
     const inGap = Number.isFinite(sinceLast) && sinceLast >= 0 && sinceLast < COURIER_GAP_MS;
@@ -230,8 +256,44 @@ export async function courierWake({ project, session, items, presence, quiet, id
       mark([], kept.lastWakeAt);
       return NOTHING;
     }
-    mark(waking, stamp);
-    return { submit: `${LEADS.courier} ${whatOf(waking)}. ${ASK}`, sent: waking.map((i) => i.id) };
+    mark(waking, stamp, { by: session, before: kept.lastWakeAt });
+    const reminding = waking.some((i) => i.kind === 'remind');
+    const ask = reminding ? REMIND_ASK([...numbersOf(waking, 'card'), ...numbersOf(waking, 'remind')].length) : ASK;
+    return { submit: `${LEADS.courier} ${whatOf(waking)}. ${ask}`, sent: waking.map((i) => i.id), at: stamp };
+  } finally {
+    release();
+  }
+}
+
+// courierUnsent({ project, session, ids, at }) -> { unsent }: the mod couldn't hand on the wake
+// of `session`'s stamped `at` that marked `ids`, so each of those ids whose mark in force is still
+// that wake's (its session and its stamp) is taken out of what was sent, however long ago, and
+// lastWakeAt goes back to what it was before that wake, unless a wake since has moved it. A mark
+// another wake has made since, an opening's marks, and an undo naming another session or stamp
+// stay as they are. `unsent` names the ids taken out. Another session holding courier.json past
+// LOCK_WAIT_MS leaves the marks as they are. Throws when courier.json can't be kept.
+export async function courierUnsent({ project, session, ids, at } = {}) {
+  const named = new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : []);
+  if (!isSession(session) || typeof at !== 'string' || at === '' || named.size === 0) return { unsent: [] };
+  let release;
+  try {
+    release = await takeStartLock(`${courierFile(project)}.lock`, { message: BUSY, waitMs: LOCK_WAIT_MS });
+  } catch (error) {
+    if (error?.message === BUSY) return { unsent: [] };
+    throw error;
+  }
+  try {
+    const kept = readKept(project);
+    // The latest mark of each id is the one in force, as writeKept keeps it.
+    const latest = new Map(kept.sent.map((entry) => [entry.id, entry]));
+    const undoing = [...latest.values()].filter((entry) => named.has(entry.id) && entry.by === session && entry.at === at);
+    if (undoing.length === 0) return { unsent: [] };
+    const out = new Set(undoing.map((entry) => entry.id));
+    const before = typeof undoing[0].before === 'string' ? undoing[0].before : null;
+    // Every other id stays, however many: the undo cuts nothing.
+    const sent = kept.sent.filter((entry) => !out.has(entry.id));
+    writeKept(project, { sent, lastWakeAt: kept.lastWakeAt === at ? before : kept.lastWakeAt, sessions: kept.sessions }, new Set(sent.map((entry) => entry.id)));
+    return { unsent: [...out] };
   } finally {
     release();
   }

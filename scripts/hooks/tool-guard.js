@@ -4,7 +4,8 @@
 // beingSetUp), as in a project: refuses
 // secrets (.env files, the credential folders, Wheelhouse's own home), writes to
 // the places that hold the guardrails, the host tools (gh, glab, git push) and
-// connectors the project has not listed. It backs up the deny rules and the
+// connectors the project has not listed (the Claude Desktop app's own drawing tools
+// pass unlisted in a session it started). It backs up the deny rules and the
 // sandbox; it does not replace them. Any other tool passes untouched.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -257,15 +258,98 @@ function serverOf(input) {
   return cut < 0 ? null : rest.slice(0, cut);
 }
 
-function connectorRefusal(server, mainFolder) {
+// The Claude Desktop app's own tools that only draw in the app (its task list, its wrap-up box
+// and its panes) pass without the project listing them, and only in a session the app started.
+// Each is named whole, so every other mcp__ccd_* tool, and one the app adds later, stays with
+// the connector list.
+//
+// Why the names can be trusted. Claude Code itself reserves neither ccd_turn nor ccd_view, and
+// writes each character of a server's name outside letters, digits, `_` and `-` as `_`. So in a
+// session it starts on its own, a tool of one of these names can come from a user or local
+// server (~/.claude.json), a --mcp-config server, a project's .mcp.json, or a tool a mod
+// registers ($.tool.register), whose server is the bare plugin name, so a plugin named ccd_turn
+// takes mcp__ccd_turn__wrap_up. What keeps those off the pass is the entrypoint: the six pass
+// only when CLAUDE_CODE_ENTRYPOINT, which the app sets and hooks inherit, is the app's own. The
+// app starts its sessions with a deniedMcpServers setting that names ccd_turn and ccd_view, so
+// no configured server of either exact name loads there (its own come in through the SDK, which
+// that setting does not hold). That setting matches the name exactly, so `ccd.turn` would slip
+// past it; and so a project whose connector list or .mcp.json names either server, in any
+// spelling, is refused both servers' tools, these included. A user or local server spelled so in
+// ~/.claude.json isn't checked here, so it would load there and pass: that file is the director's
+// own to write, not a project's.
+const APP_TOOLS = new Set([
+  'mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up',
+  'mcp__ccd_view__show_pane', 'mcp__ccd_view__close_pane', 'mcp__ccd_view__get_layout', 'mcp__ccd_view__set_transcript_view',
+]);
+const APP_SERVERS = ['ccd_turn', 'ccd_view'];
+// The values of CLAUDE_CODE_ENTRYPOINT in a session the Desktop app started.
+const APP_ENTRYPOINTS = new Set(['claude-desktop', 'claude-desktop-3p']);
+
+// A server's name as Claude Code writes it in its tools' names.
+const asInToolNames = (name) => name.replace(/[^a-zA-Z0-9_-]/g, '_');
+const namesAppServer = (names) => names.some((name) => APP_SERVERS.includes(asInToolNames(name)));
+
+// Whether a .mcp.json names one of the app's servers. One that is there but can't be read counts
+// as naming one.
+function mcpJsonNamesAppServer(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    return !['ENOENT', 'ENOTDIR'].includes(error?.code);
+  }
+  try {
+    const servers = JSON.parse(text)?.mcpServers;
+    if (servers === undefined) return false;
+    if (servers === null || typeof servers !== 'object' || Array.isArray(servers)) return true;
+    return namesAppServer(Object.keys(servers));
+  } catch {
+    return true;
+  }
+}
+
+// Whether the project's configuration names one of the app's servers: its connector list, the
+// main folder's .mcp.json, or a .mcp.json in the session's folder, the folder the session started
+// in (CLAUDE_PROJECT_DIR, whose .mcp.json the session loaded, though its cwd may have moved),
+// or any folder above either, as given and by its real path.
+function configurationNamesAppServer(allowed, mainFolder, cwd, projectDir) {
+  if (namesAppServer(allowed)) return true;
+  const files = new Set([path.join(mainFolder, '.mcp.json')]);
+  const starts = [];
+  for (const folder of [cwd, projectDir]) {
+    if (typeof folder !== 'string' || folder === '') continue;
+    starts.push(path.resolve(folder));
+    try {
+      starts.push(fs.realpathSync.native(folder));
+    } catch {
+      // The folder as given is still looked at.
+    }
+  }
+  for (const start of starts) {
+    for (let folder = start; ; folder = path.dirname(folder)) {
+      files.add(path.join(folder, '.mcp.json'));
+      if (path.dirname(folder) === folder) break;
+    }
+  }
+  return [...files].some(mcpJsonNamesAppServer);
+}
+
+function connectorRefusal(input, server, mainFolder, entrypoint, projectDir) {
   const allowed = mainFolder ? allowedServers(mainFolder) : null;
+  const appTool = APP_TOOLS.has(input.tool_name);
+  if (allowed !== null && (appTool || APP_SERVERS.includes(server))) {
+    if (configurationNamesAppServer(allowed, mainFolder, input.cwd, projectDir)) {
+      return answer.deny(`This project's configuration names ccd_turn or ccd_view, which the Claude app keeps for its own tools: ${HELPER}`);
+    }
+    if (appTool && APP_ENTRYPOINTS.has(entrypoint)) return null;
+  }
   if (server === null || server === '' || allowed === null || !allowed.includes(server)) {
     return answer.deny(`This project has not listed that connector: ${HELPER}`);
   }
   return null;
 }
 
-export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT } = {}) {
+export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR } = {}) {
   const tool = input.tool_name;
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
@@ -284,7 +368,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
         main = undefined;
       }
     }
-    return connectorRefusal(serverOf(input), main) ?? undefined;
+    return connectorRefusal(input, serverOf(input), main, entrypoint, projectDir) ?? undefined;
   }
   if (SHELL_TOOLS.includes(tool)) {
     const command = input.tool_input?.command;

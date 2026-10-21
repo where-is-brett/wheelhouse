@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { needsYou, courierWake, courierFile, PRESENCE_LETS, SENT_KEPT, SESSIONS_KEPT, LOCK_WAIT_MS } from '../../../scripts/mod/courier.js';
+import { needsYou, courierWake, courierUnsent, courierFile, PRESENCE_LETS, SENT_KEPT, SESSIONS_KEPT, LOCK_WAIT_MS } from '../../../scripts/mod/courier.js';
 import { hashOf } from '../../../scripts/mod/status.js';
-import { COURIER_GAP_MS, LEADS, STALE_TICKS, TICK_MS } from '../../../scripts/lib/mod-numbers.js';
+import { COURIER_GAP_MS, LEADS, REMIND_MS, STALE_TICKS, TICK_MS } from '../../../scripts/lib/mod-numbers.js';
 import { withHome } from '../../helpers/homes.js';
 
 const P = 'owner__name';
@@ -35,6 +35,9 @@ const opened = (fn) => withHome(async () => {
   return fn();
 });
 const sentIds = () => JSON.parse(fs.readFileSync(courierFile(P), 'utf8')).sent.map((s) => s.id);
+const lastWakeAt = () => JSON.parse(fs.readFileSync(courierFile(P), 'utf8')).lastWakeAt;
+// The mod's undo of the wake `woke` it couldn't hand on, from session s-1 unless it says otherwise.
+const unsent = (woke, over = {}) => courierUnsent({ project: P, session: 's-1', ids: woke.sent, at: woke.at, ...over });
 
 test('a new card, STOP, an incident, a health stop and a finished feature are each needs-you once', () => opened(async () => {
   const after = model({
@@ -69,8 +72,11 @@ test('a new card, STOP, an incident, a health stop and a finished feature are ea
   const first = await wake(items);
   assert.equal(first.submit, `${LEADS.courier} 3 new cards (1, 2 and 3); STOP is on; 1 incident open; 1 health line at its stop level; 1 feature finished. ${ASK}`);
   assert.deepEqual(first.sent, items.map((i) => i.id));
-  // The same items, later, wake nothing: each was sent once.
-  assert.deepEqual(await wake(items, { now: () => at(T0 + COURIER_GAP_MS * 2) }), { submit: null, sent: [] });
+  // The same items, later, with STOP lifted, wake only for the reminder of the cards still not
+  // asked, the build question's too (ruling 72); then nothing: each was sent once.
+  const lifted = items.filter((i) => i.kind !== 'stop');
+  assert.deepEqual((await wake(lifted, { now: () => at(T0 + COURIER_GAP_MS * 2) })).sent, ['remind:c-plain', 'remind:c-block', 'remind:q:q-1']);
+  assert.deepEqual(await wake(lifted, { now: () => at(T0 + COURIER_GAP_MS * 4) }), { submit: null, sent: [] });
 }));
 
 test('a card the front desk has asked is not needs-you; an unasked card and a build question are', () => {
@@ -82,16 +88,18 @@ test('away lets through STOP, an incident, health and a blocking card, and holds
   const away = { value: 'away', until: '2026-10-19T07:00:00.000Z' };
   const items = [cardItem('c-plain', 1), cardItem('c-block', 2, true), { id: 'finished:w', kind: 'finished' }];
   assert.deepEqual(await wake(items, { presence: away }), {
-    submit: `${LEADS.courier} 1 new card (2). ${ASK}`, sent: ['card:c-block'],
+    submit: `${LEADS.courier} 1 new card (2). ${ASK}`, sent: ['card:c-block'], at: at(T0).toISOString(),
   });
+  // The wake's turn asked the blocking card.
+  const rest = items.filter((i) => i.id !== 'card:c-block');
   const urgent = [{ id: 'stop:s', kind: 'stop' }, { id: 'incident:i', kind: 'incident' }, { id: 'health:h', kind: 'health' }];
   for (const [i, item] of urgent.entries()) {
-    const got = await wake([...items, item], { presence: away, now: () => at(T0 + (i + 1) * COURIER_GAP_MS) });
+    const got = await wake([...rest, item], { presence: away, now: () => at(T0 + (i + 1) * COURIER_GAP_MS) });
     assert.deepEqual(got.sent, [item.id], item.kind);
   }
   // Still away: the plain card and the finished feature wait. Once here, they wake.
-  assert.deepEqual(await wake(items, { presence: away, now: () => at(T0 + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
-  const back = await wake(items, { now: () => at(T0 + 4 * COURIER_GAP_MS) });
+  assert.deepEqual(await wake(rest, { presence: away, now: () => at(T0 + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  const back = await wake(rest, { now: () => at(T0 + 4 * COURIER_GAP_MS) });
   assert.equal(back.submit, `${LEADS.courier} 1 new card (1); 1 feature finished. ${ASK}`);
   assert.deepEqual(back.sent, ['card:c-plain', 'finished:w']);
   assert.equal(typeof PRESENCE_LETS.away, 'function');
@@ -157,15 +165,23 @@ test('ten cards in a minute make one wake; another comes no sooner than ten minu
   assert.equal(one.submit, `${LEADS.courier} 10 new cards (1, 2, 3, 4, 5, 6, 7, 8, 9 and 10). ${ASK}`);
   assert.equal(one.sent.length, 10);
 
-  // Arriving one a tick over a minute, after that wake, they wait out the ten minutes.
-  const more = [...ten];
+  // That wake's turn asked four (a visit asks at most four); six still wait unasked. Arriving one
+  // a tick over a minute after it, four more wait out the ten minutes, the six's reminder too.
+  const more = ten.slice(4);
   for (let i = 11; i <= 14; i += 1) {
     more.push(cardItem(`c-${i}`, i));
     assert.deepEqual(await wake(more, { now: () => at(T0 + (i - 10) * TICK_MS) }), { submit: null, sent: [] });
   }
   assert.deepEqual(await wake(more, { now: () => at(T0 + COURIER_GAP_MS - 1) }), { submit: null, sent: [] });
   const later = await wake(more, { now: () => at(T0 + COURIER_GAP_MS) });
-  assert.equal(later.submit, `${LEADS.courier} 4 new cards (11, 12, 13 and 14). ${ASK}`);
+  assert.equal(later.submit, `${LEADS.courier} 4 new cards (11, 12, 13 and 14); cards 5, 6, 7, 8, 9 and 10 are still waiting. ${REMIND('them')}`);
+  assert.deepEqual(later.sent.filter((id) => id.startsWith('remind:')), ['remind:c-5', 'remind:c-6', 'remind:c-7', 'remind:c-8', 'remind:c-9', 'remind:c-10']);
+  // That wake's turn asked four again (5 to 8): 9 and 10 have had their one reminder, and the two
+  // new ones still unasked (11 and 12) get theirs, once.
+  const rest = [...ten.slice(8), ...more.slice(6, 8)];
+  const last = await wake(rest, { now: () => at(T0 + 2 * COURIER_GAP_MS) });
+  assert.equal(last.submit, `${LEADS.courier} cards 11 and 12 are still waiting. ${REMIND('them')}`);
+  assert.deepEqual(await wake(rest, { now: () => at(T0 + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
   assert.equal(COURIER_GAP_MS, 10 * MIN);
 }));
 
@@ -185,8 +201,8 @@ test('two sessions of one project wake once for an item', () => opened(async () 
   const both = await Promise.all([wake(items), wake(items), wake(items)]);
   assert.equal(both.filter((w) => w.submit !== null).length, 1);
   assert.deepEqual(both.flatMap((w) => w.sent), ['card:c-1', 'stop:s']);
-  // A later tick in either session finds them sent.
-  assert.deepEqual(await wake(items, { now: () => at(T0 + 2 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  // A later tick in either session finds them sent (the wake's turn asked the card).
+  assert.deepEqual(await wake(items.slice(1), { now: () => at(T0 + 2 * COURIER_GAP_MS) }), { submit: null, sent: [] });
   assert.deepEqual(sentIds(), ['card:c-1', 'stop:s']);
 }));
 
@@ -204,8 +220,9 @@ test('the first tick of a session wakes for nothing and marks what it found', ()
 
 test('a gap between ticks is no opening: a STOP that came meanwhile wakes for it', () => opened(async () => {
   await wake([cardItem('c-1', 1)], { now: () => at(T0) });
-  // The session's ticks stopped for ten minutes (the computer slept); STOP was set meanwhile.
-  const back = await wake([cardItem('c-1', 1), { id: 'stop:s', kind: 'stop' }], { now: () => at(T0 + 10 * MIN) });
+  // The session's ticks stopped for ten minutes (the computer slept); STOP was set meanwhile. The
+  // wake's turn had asked the card.
+  const back = await wake([{ id: 'stop:s', kind: 'stop' }], { now: () => at(T0 + 10 * MIN) });
   assert.equal(back.submit, `${LEADS.courier} STOP is on. ${ASK}`);
 }));
 
@@ -282,4 +299,284 @@ test('courier.json keeps the last sent ids, and every one still among the curren
   fs.writeFileSync(courierFile(P), 'not json');
   assert.deepEqual(await wake([cardItem('c-2', 2)], { now: () => at(T0 + 3 * COURIER_GAP_MS) }), { submit: null, sent: ['card:c-2'] });
   assert.notEqual((await wake([cardItem('c-3', 3)], { now: () => at(T0 + 3 * COURIER_GAP_MS + TICK_MS) })).submit, null);
+}));
+
+test('a wake the mod couldn\'t hand on, undone by its session, wakes again on the next idle tick', () => opened(async () => {
+  // An earlier wake, ten minutes and more ago, set the gap.
+  const before = T0 - COURIER_GAP_MS - MIN;
+  assert.notEqual((await wake([cardItem('c-1', 1)], { now: () => at(before) })).submit, null);
+  // That wake's turn asked card 1.
+  const items = [cardItem('c-2', 2), { id: 'stop:s', kind: 'stop' }];
+  const woke = await wake(items);
+  assert.deepEqual(woke.sent, ['card:c-2', 'stop:s']);
+  assert.equal(woke.at, at(T0).toISOString());
+  assert.equal(lastWakeAt(), woke.at);
+
+  // The hand-on failed: the mod asks for the undo, naming the wake's stamp.
+  assert.deepEqual(await unsent(woke), { unsent: ['card:c-2', 'stop:s'] });
+  assert.deepEqual(sentIds(), ['card:c-1']);
+  // lastWakeAt is what it was before the wake, so the gap doesn't hold the card back.
+  assert.equal(lastWakeAt(), at(before).toISOString());
+  const again = await wake(items, { now: () => at(T0 + TICK_MS) });
+  assert.equal(again.submit, woke.submit);
+  assert.deepEqual(again.sent, ['card:c-2', 'stop:s']);
+  // Handed on this time: nothing wakes after it.
+  assert.deepEqual(await wake(items, { now: () => at(T0 + 2 * TICK_MS) }), { submit: null, sent: [] });
+}));
+
+test('an undo that comes minutes after the wake still undoes it', () => opened(async () => {
+  const items = [{ id: 'stop:s', kind: 'stop' }];
+  const woke = await wake(items);
+  // The session sat interrupted; the hand-on failed only when a later turn began.
+  assert.deepEqual(await unsent(woke), { unsent: ['stop:s'] });
+  assert.equal(lastWakeAt(), null, 'a first wake undone leaves no gap behind it');
+  assert.deepEqual((await wake(items, { now: () => at(T0 + 5 * MIN) })).sent, ['stop:s']);
+}));
+
+test('an undo naming another session or another stamp, or no id the wake marked, changes nothing', () => opened(async () => {
+  const items = [cardItem('c-1', 1), { id: 'stop:s', kind: 'stop' }];
+  const woke = await wake(items);
+  assert.deepEqual(await unsent(woke, { session: 's-2' }), { unsent: [] });
+  assert.deepEqual(await unsent(woke, { at: at(T0 + 1).toISOString() }), { unsent: [] });
+  assert.deepEqual(await unsent(woke, { at: undefined }), { unsent: [] });
+  assert.deepEqual(await unsent(woke, { session: undefined }), { unsent: [] });
+  assert.deepEqual(await unsent(woke, { ids: ['card:c-9', 7, null] }), { unsent: [] });
+  assert.deepEqual(await unsent(woke, { ids: 'stop:s' }), { unsent: [] });
+  assert.deepEqual(sentIds(), ['card:c-1', 'stop:s']);
+  assert.equal(lastWakeAt(), woke.at);
+
+  // An opening's marks were no wake: none can be undone.
+  await withHome(async () => {
+    const opening = await wake(items);
+    assert.deepEqual(opening, { submit: null, sent: ['card:c-1', 'stop:s'] });
+    assert.deepEqual(await unsent({ sent: opening.sent, at: at(T0).toISOString() }), { unsent: [] });
+    assert.deepEqual(sentIds(), ['card:c-1', 'stop:s']);
+  });
+
+  // Only the ids named are taken out.
+  assert.deepEqual(await unsent(woke, { ids: ['stop:s'] }), { unsent: ['stop:s'] });
+  assert.deepEqual(sentIds(), ['card:c-1']);
+}));
+
+test('an undo after another wake has marked the id again changes nothing, and leaves lastWakeAt to the later wake', () => opened(async () => {
+  await wake([], { session: 's-2', now: () => at(T0 - DAY) });
+  const items = [{ id: 'stop:s', kind: 'stop' }];
+  const woke = await wake(items);
+  assert.deepEqual(await unsent(woke), { unsent: ['stop:s'] });
+  // s-2 wakes for STOP on its next tick, and is handed it.
+  const other = await wake(items, { session: 's-2', now: () => at(T0 + 2000) });
+  assert.deepEqual(other.sent, ['stop:s']);
+  // s-1's undo, sent again, finds s-2's mark: it stays, and so does s-2's lastWakeAt.
+  assert.deepEqual(await unsent(woke), { unsent: [] });
+  assert.deepEqual(sentIds(), ['stop:s']);
+  assert.equal(lastWakeAt(), other.at);
+
+  // s-1's own wake re-marking the id since is another stamp: the first wake's undo finds it.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    const first = await wake(items);
+    assert.deepEqual(await unsent(first), { unsent: ['stop:s'] });
+    const second = await wake(items, { now: () => at(T0 + TICK_MS) });
+    assert.deepEqual(second.sent, ['stop:s']);
+    assert.deepEqual(await unsent(first), { unsent: [] });
+    assert.deepEqual(sentIds(), ['stop:s']);
+  });
+
+  // An earlier wake's undo after a later wake moved lastWakeAt takes its own ids and leaves the
+  // later wake's time.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    const first = await wake([{ id: 'incident:i', kind: 'incident' }]);
+    const second = await wake([{ id: 'incident:i', kind: 'incident' }, { id: 'stop:t', kind: 'stop' }], { now: () => at(T0 + 2000) });
+    assert.deepEqual(second.sent, ['stop:t']);
+    assert.deepEqual(await unsent(first), { unsent: ['incident:i'] });
+    assert.equal(lastWakeAt(), second.at);
+  });
+}));
+
+test('an undo keeps every other sent id, past SENT_KEPT too', () => opened(async () => {
+  const old = Array.from({ length: SENT_KEPT + 20 }, (_, i) => ({ id: `finished:w-${i}`, kind: 'finished' }));
+  assert.equal((await wake(old, { now: () => at(T0 - DAY + 1000) })).sent.length, SENT_KEPT + 20);
+  // They are all still current when s-1 wakes for a new card and can't hand it on.
+  const woke = await wake([...old, cardItem('c-1', 1)]);
+  assert.deepEqual(woke.sent, ['card:c-1']);
+  assert.equal(sentIds().length, SENT_KEPT + 20 + 1);
+  assert.deepEqual(await unsent(woke), { unsent: ['card:c-1'] });
+  assert.equal(sentIds().length, SENT_KEPT + 20);
+}));
+
+test('another session holding courier.json leaves the undo undone', () => opened(async () => {
+  const woke = await wake([cardItem('c-1', 1)]);
+  fs.writeFileSync(`${courierFile(P)}.lock`, `${process.pid}\n`);
+  assert.deepEqual(await unsent(woke), { unsent: [] });
+  fs.rmSync(`${courierFile(P)}.lock`);
+  assert.deepEqual(sentIds(), ['card:c-1']);
+}));
+
+// The reminder (ruling 68): a card a wake named that is still waiting, not yet asked, REMIND_MS on.
+const REMIND = (it) => `Send Claude's notification in one line, then ask ${it} now, once.`;
+// Puts courier.json's lastWakeAt back to `iso`, as check 41's add-card script did to open the gap.
+const setLastWakeAt = (iso) => {
+  const kept = JSON.parse(fs.readFileSync(courierFile(P), 'utf8'));
+  fs.writeFileSync(courierFile(P), `${JSON.stringify({ ...kept, lastWakeAt: iso })}\n`);
+};
+
+test('a card still waiting REMIND_MS after its wake, not yet asked, wakes once more for the notification', () => opened(async () => {
+  const items = [cardItem('c-1', 4)];
+  const woke = await wake(items);
+  assert.deepEqual(woke.sent, ['card:c-1']);
+  // Nothing else holds the gap (an earlier wake's time, as the check's script set it).
+  setLastWakeAt(at(T0 - COURIER_GAP_MS).toISOString());
+  assert.deepEqual(await wake(items, { now: () => at(T0 + REMIND_MS - 1) }), { submit: null, sent: [] });
+  const reminder = await wake(items, { now: () => at(T0 + REMIND_MS) });
+  assert.equal(reminder.submit, `${LEADS.courier} card 4 is still waiting. ${REMIND('it')}`);
+  assert.deepEqual(reminder.sent, ['remind:c-1']);
+  assert.equal(reminder.at, at(T0 + REMIND_MS).toISOString());
+  assert.equal(lastWakeAt(), reminder.at);
+  // Once: a later tick, past the gap, in this session or another, wakes for it no more.
+  assert.deepEqual(await wake(items, { now: () => at(T0 + 3 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  await wake([], { session: 's-2', now: () => at(T0 - DAY) });
+  assert.deepEqual(await wake(items, { session: 's-2', now: () => at(T0 + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  assert.equal(REMIND_MS, 5 * MIN);
+}));
+
+test('a reminder waits for the gap after the card\'s own wake, and is held while STOP is on', () => opened(async () => {
+  const items = [cardItem('c-1', 4)];
+  await wake(items);
+  // The card's own wake holds the gap: at five minutes the reminder waits.
+  assert.deepEqual(await wake(items, { now: () => at(T0 + REMIND_MS) }), { submit: null, sent: [] });
+  assert.deepEqual(await wake(items, { now: () => at(T0 + COURIER_GAP_MS - 1) }), { submit: null, sent: [] });
+  const reminder = await wake(items, { now: () => at(T0 + COURIER_GAP_MS) });
+  assert.equal(reminder.submit, `${LEADS.courier} card 4 is still waiting. ${REMIND('it')}`);
+
+  // Under STOP the front desk's `cards` asks only Lift STOP, so a due reminder isn't sent or
+  // marked while STOP is on: STOP's own wake goes alone, and the reminder comes once STOP is
+  // lifted, after that wake's gap.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    await wake([cardItem('c-2', 2)]);
+    const stopped = [cardItem('c-2', 2), { id: 'stop:s', kind: 'stop' }];
+    const stop = await wake(stopped, { now: () => at(T0 + 6 * MIN) });
+    assert.equal(stop.submit, `${LEADS.courier} STOP is on. ${ASK}`);
+    assert.deepEqual(stop.sent, ['stop:s']);
+    assert.deepEqual(await wake(stopped, { now: () => at(T0 + 6 * MIN + 2 * COURIER_GAP_MS) }), { submit: null, sent: [] }, 'held while STOP is on');
+    assert.ok(!sentIds().includes('remind:c-2'));
+    const lifted = await wake([cardItem('c-2', 2)], { now: () => at(T0 + 6 * MIN + 2 * COURIER_GAP_MS + TICK_MS) });
+    assert.equal(lifted.submit, `${LEADS.courier} card 2 is still waiting. ${REMIND('it')}`);
+    assert.deepEqual(lifted.sent, ['remind:c-2']);
+  });
+  // STOP lifted inside the gap of STOP's wake: the reminder waits for that gap.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    await wake([cardItem('c-2', 2)]);
+    await wake([cardItem('c-2', 2), { id: 'stop:s', kind: 'stop' }], { now: () => at(T0 + 4 * MIN) });
+    assert.deepEqual(await wake([cardItem('c-2', 2)], { now: () => at(T0 + COURIER_GAP_MS) }), { submit: null, sent: [] }, 'STOP\'s wake holds the gap');
+    assert.deepEqual((await wake([cardItem('c-2', 2)], { now: () => at(T0 + 4 * MIN + COURIER_GAP_MS) })).sent, ['remind:c-2']);
+  });
+}));
+
+test('a build question no card asks yet gets its one reminder too, held while STOP is on (ruling 72)', () => opened(async () => {
+  const items = [cardItem('q:q-1', 1, true), cardItem('c-2', 2)];
+  assert.deepEqual((await wake(items)).sent, ['card:q:q-1', 'card:c-2']);
+  const later = await wake(items, { now: () => at(T0 + COURIER_GAP_MS) });
+  assert.equal(later.submit, `${LEADS.courier} cards 1 and 2 are still waiting. ${REMIND('them')}`);
+  assert.deepEqual(later.sent, ['remind:q:q-1', 'remind:c-2']);
+  // Once: a later tick wakes for it no more.
+  assert.deepEqual(await wake(items, { now: () => at(T0 + 3 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+
+  // Under STOP it is held, as a card's is, and comes once STOP is lifted.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    await wake([cardItem('q:q-1', 1, true)]);
+    const stopped = [cardItem('q:q-1', 1, true), { id: 'stop:s', kind: 'stop' }];
+    assert.deepEqual((await wake(stopped, { now: () => at(T0 + 6 * MIN) })).sent, ['stop:s']);
+    assert.deepEqual(await wake(stopped, { now: () => at(T0 + 6 * MIN + 2 * COURIER_GAP_MS) }), { submit: null, sent: [] }, 'held while STOP is on');
+    assert.ok(!sentIds().includes('remind:q:q-1'));
+    const lifted = await wake([cardItem('q:q-1', 1, true)], { now: () => at(T0 + 6 * MIN + 2 * COURIER_GAP_MS + TICK_MS) });
+    assert.equal(lifted.submit, `${LEADS.courier} card 1 is still waiting. ${REMIND('it')}`);
+    assert.deepEqual(lifted.sent, ['remind:q:q-1']);
+    assert.deepEqual(await wake([cardItem('q:q-1', 1, true)], { now: () => at(T0 + 6 * MIN + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  });
+}));
+
+test('no reminder for a card answered, set aside, asked or reminded already, or not woken by a wake', () => opened(async () => {
+  const items = [cardItem('c-1', 1), cardItem('c-2', 2), cardItem('c-3', 3)];
+  await wake(items);
+  // Answered (gone from the waiting cards), or asked or set aside by Not now (needsYou leaves it out).
+  const after = model({ cards: [{ ...card('c-2', 1), asked: true }, { ...card('c-3', 2), asked: false }] });
+  assert.deepEqual(needsYou({ after }), [cardItem('c-3', 2)]);
+  const reminder = await wake(needsYou({ after }), { now: () => at(T0 + COURIER_GAP_MS) });
+  assert.equal(reminder.submit, `${LEADS.courier} card 2 is still waiting. ${REMIND('it')}`);
+  assert.deepEqual(reminder.sent, ['remind:c-3']);
+  assert.deepEqual(await wake(needsYou({ after }), { now: () => at(T0 + 3 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+
+  // A card a session's opening found, never woken for, gets none.
+  await withHome(async () => {
+    await wake([cardItem('c-4', 4)]);
+    assert.deepEqual(await wake([cardItem('c-4', 4)], { now: () => at(T0 + 3 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  });
+  // STOP and an incident get none: they have their own wakes.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    const urgent = [{ id: 'stop:s', kind: 'stop' }, { id: 'incident:i', kind: 'incident' }, { id: 'finished:w', kind: 'finished' }];
+    assert.equal((await wake(urgent)).sent.length, 3);
+    assert.deepEqual(await wake(urgent, { now: () => at(T0 + 3 * COURIER_GAP_MS) }), { submit: null, sent: [] });
+  });
+}));
+
+test('a reminder obeys presence and quiet hours, and is held while a turn runs', () => opened(async () => {
+  const items = [cardItem('c-plain', 1), cardItem('c-block', 2, true)];
+  await wake(items);
+  const later = () => at(T0 + COURIER_GAP_MS);
+  assert.deepEqual(await wake(items, { now: later, idle: false }), { submit: null, sent: [] });
+  assert.deepEqual(await wake(items, { now: later, presence: { value: 'dnd' } }), { submit: null, sent: [] });
+  // Quiet hours from 12:00 to 14:00 in Sydney: 13:10 there is inside.
+  assert.deepEqual(await wake(items, { now: later, quiet: { from: '12:00', to: '14:00' } }), { submit: null, sent: [] });
+  // Away lets through only the card that holds up all work.
+  const away = await wake(items, { now: later, presence: { value: 'away' } });
+  assert.equal(away.submit, `${LEADS.courier} card 2 is still waiting. ${REMIND('it')}`);
+  assert.deepEqual(away.sent, ['remind:c-block']);
+  // Here again, the gap after that reminder passed, the other's comes, with new items beside it.
+  const both = await wake([...items, cardItem('c-new', 3)], { now: () => at(T0 + 2 * COURIER_GAP_MS) });
+  assert.equal(both.submit, `${LEADS.courier} 1 new card (3); card 1 is still waiting. ${REMIND('them')}`);
+  assert.deepEqual(both.sent, ['card:c-new', 'remind:c-plain']);
+}));
+
+test('two reminders at once name both cards', () => opened(async () => {
+  const items = [cardItem('c-1', 4), cardItem('c-2', 6)];
+  await wake(items);
+  const reminder = await wake(items, { now: () => at(T0 + COURIER_GAP_MS) });
+  assert.equal(reminder.submit, `${LEADS.courier} cards 4 and 6 are still waiting. ${REMIND('them')}`);
+}));
+
+test('a reminder the mod couldn\'t hand on is undone, and wakes again on the next idle tick', () => opened(async () => {
+  const items = [cardItem('c-1', 4)];
+  const first = await wake(items);
+  const reminder = await wake(items, { now: () => at(T0 + COURIER_GAP_MS) });
+  assert.deepEqual(reminder.sent, ['remind:c-1']);
+  assert.deepEqual(await unsent(reminder), { unsent: ['remind:c-1'] });
+  assert.equal(lastWakeAt(), first.at);
+  assert.deepEqual(sentIds(), ['card:c-1']);
+  const again = await wake(items, { now: () => at(T0 + COURIER_GAP_MS + TICK_MS) });
+  assert.equal(again.submit, reminder.submit);
+  assert.deepEqual(again.sent, ['remind:c-1']);
+  // A card wake undone takes its mark out, so no reminder is due for it: the card wakes again.
+  await withHome(async () => {
+    await wake([], { now: () => at(T0 - DAY) });
+    const woke = await wake(items);
+    await unsent(woke);
+    assert.equal((await wake(items, { now: () => at(T0 + REMIND_MS) })).submit, `${LEADS.courier} 1 new card (4). ${ASK}`);
+  });
+}));
+
+test('a reminder\'s mark is kept while its card waits, past SENT_KEPT too', () => opened(async () => {
+  const items = [cardItem('c-1', 4)];
+  await wake(items);
+  await wake(items, { now: () => at(T0 + COURIER_GAP_MS) });
+  const old = Array.from({ length: SENT_KEPT + 5 }, (_, i) => ({ id: `finished:w-${i}`, kind: 'finished' }));
+  await wake([...items, ...old], { now: () => at(T0 + 2 * COURIER_GAP_MS) });
+  await wake(items, { now: () => at(T0 + 3 * COURIER_GAP_MS) });
+  assert.ok(sentIds().includes('remind:c-1'));
+  assert.ok(sentIds().includes('card:c-1'));
+  assert.deepEqual(await wake(items, { now: () => at(T0 + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
 }));

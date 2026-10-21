@@ -444,6 +444,29 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
   assert.equal(eventsOf('confirmation', profileDir()).length, 2, 'each presence chosen is confirmed');
 }));
 
+test('a STOP wake the mod couldn\'t hand on is undone, and the next tick wakes for it again, once', { skip: SKIP }, () => onComputer({}, async (c) => {
+  assert.equal((await tick(c)).submit, undefined);
+  // STOP from the pane, as the director pressed it after Esc left the session interrupted.
+  assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'pane', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
+  const woke = await tick(c);
+  assert.deepEqual(woke.submit, [`${LEADS.courier} STOP is on. Send Claude's notification in one line, then ask any new cards now, once.`]);
+  assert.deepEqual(woke.woken, [`stop:${stopState().at}`]);
+  const { lastWakeAt } = JSON.parse(fs.readFileSync(courierFile(PROJECT), 'utf8'));
+  assert.equal(lastWakeAt, woke.wokeAt);
+
+  // The session took no prompt, so the mod says so.
+  assert.deepEqual(await bridge(c, { cmd: 'unsent', session: 'sess-front', cwd: c.folder, ids: woke.woken, at: woke.wokeAt }), { ok: true });
+  const undone = JSON.parse(fs.readFileSync(courierFile(PROJECT), 'utf8'));
+  assert.deepEqual(undone.sent.map((s) => s.id), []);
+  assert.equal(undone.lastWakeAt, null, 'lastWakeAt is what it was before the wake');
+
+  // The next idle tick wakes again, and once handed on, no more.
+  const again = await tick(c);
+  assert.deepEqual(again.submit, woke.submit);
+  assert.deepEqual(again.woken, woke.woken);
+  assert.equal((await tick(c)).submit, undefined);
+}));
+
 test('/digest gives the briefing, and a prompt within the next two hours brings none', { skip: SKIP }, () => onComputer({}, async (c) => {
   const now = Date.now();
   // The director's last message, three hours ago, brought a briefing; a card has come in since.
