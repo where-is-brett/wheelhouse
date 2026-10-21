@@ -29,16 +29,15 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { foremanTools } from './tools.js';
 import { isModelName } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../lib/build-loop.js';
-import { invocation, resolveClaude } from '../lib/claude.js';
 import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
+import { sessionsOfProject } from '../agents/project-agent.js';
 import { healthFile, lockFile, projectConfig } from '../watcher/main.js';
 import {
-  ROLE_VARIABLE, pidAlive, processStartTime, runningFile, sessionEnv, sessionModeOf, watcherFolder, writeJsonFile,
+  pidAlive, processStartTime, runningFile, sessionEnv, watcherFolder, writeJsonFile,
 } from '../watcher/waker.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -157,28 +156,27 @@ export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_R
   return { started: true };
 }
 
-// The foreman's long session (Shape 2): what to run, where, and with what. Writes its settings file.
-export function foremanSession({ project, config, pluginRoot = PLUGIN_ROOT, platform = process.platform, env = process.env, claude = null }) {
+// The foreman's long session (Shape 2): what to run, where, and with what. Writes its settings file. The
+// command line and environment are the project's adapter's (`sessions` is that part of it, given only by tests).
+export function foremanSession({
+  project, config, pluginRoot = PLUGIN_ROOT, platform = process.platform, env = process.env, claude = null, sessions = null,
+}) {
   const checkout = readProject(project)?.folder;
   if (typeof checkout !== 'string') refuse("The project's folder isn't known on this computer");
+  const adapter = sessions ?? sessionsOfProject(checkout);
   const model = config.routing?.foreman ?? null;
   if (model !== null && !isModelName(model)) refuse("The foreman's model can't be passed to claude");
   const settings = path.join(watcherFolder(project), 'foreman-settings.json');
   writeJsonFile(settings, { autoCompactWindow: FOREMAN_FALLBACK_COMPACT });
-  const args = [
-    '--settings', settings,
-    '--permission-mode', sessionModeOf(config),
-    ...(model ? ['--model', model] : []),
-    '--allowedTools', ...foremanTools(pluginRoot, { platform }),
-  ];
   const prompt = `${FOREMAN_PROMPT_LEAD} you are the long-lived foreman of ${project}. At each wake, follow the wheelhouse:foreman skill.`;
-  // The prompt goes first: --allowedTools takes every word after it.
-  const call = invocation(claude ?? resolveClaude({ platform, env }), [prompt], args);
+  const call = adapter.foremanCall({
+    config, pluginRoot, prompt, platform, env, claude, settings, long: true,
+  });
   return {
     file: call.file,
     args: call.args,
     options: {
-      cwd: checkout, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman' }, stdio: 'inherit', windowsVerbatimArguments: call.verbatim,
+      cwd: checkout, env: call.env, stdio: 'inherit', windowsVerbatimArguments: call.verbatim,
     },
   };
 }
