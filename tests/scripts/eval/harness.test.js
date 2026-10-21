@@ -29,6 +29,7 @@ import {
   parseArgs,
   runScenario,
   TURNED_AWAY,
+  NOT_SENT,
   turnAwayScript,
   turnAwayEntry,
 } from '../../../scripts/eval/harness.js';
@@ -337,6 +338,11 @@ test('runSession offers PushNotification only when asked and only when the proje
   const denied = deniedOf(await sawWith({ offered: ['PushNotification'] }, { dir }));
   assert.ok(!denied.includes('PushNotification'));
   assert.deepEqual(denied, DENIED_TOOLS.filter((t) => t !== 'PushNotification'));
+  // The phone's other known answer, the app's own words when the notification isn't sent, is the
+  // known hook too (scenario 37's not-sent legs).
+  assert.equal(NOT_SENT, 'Not sent \u2014 this terminal is active, so your output here already reaches the user; a separate notification would be redundant.');
+  hooks(turnAwayEntry('PushNotification', script('push-not-sent.mjs', turnAwayScript(NOT_SENT))));
+  assert.ok(!deniedOf(await sawWith({ offered: ['PushNotification'] }, { dir })).includes('PushNotification'));
   await assert.rejects(sawWith({ offered: ['ListAgents'] }, { dir }), /only PushNotification can be offered/);
 });
 

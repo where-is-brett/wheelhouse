@@ -419,6 +419,75 @@ test('backslashes: refused unquoted off Windows, literal in single quotes, folde
   });
 });
 
+test('under STOP, each reading command may end in one 2>/dev/null, and in no other redirect', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const desk = `"${PLUGIN}/scripts/frontdesk/cli.js"`;
+      const file = '.wheelhouse/foreman/wakes/one.json';
+      const reads = [
+        `node ${PLUGIN}/scripts/runbook/runbook.js status`,
+        `node "${PLUGIN}/scripts/feature/cli.js" report`,
+        `node '${PLUGIN}/scripts/foreman/wake.js' read ${file}`,
+        `node '${PLUGIN}/scripts/foreman/wake.js' done ${file} --idle`,
+        `node ${desk} cards`,
+        `node ${desk} views waiting`,
+        `node ${desk} similar "Could we export the orders?"`,
+        `node "${PLUGIN}/scripts/setup/cli.js" status`,
+        `node "${PLUGIN}/scripts/setup/cli.js" uninstall plan`,
+      ];
+      const ask = (command, platform = 'linux') => guard(bash(main, command), { ...deps(base), platform });
+      for (const read of reads) {
+        assert.equal(await ask(read), undefined, read);
+        for (const tail of [' 2>/dev/null', '   2>/dev/null', ' 2>/dev/null  ']) {
+          assert.equal(await ask(`${read}${tail}`), undefined, `${read}${tail}`);
+          assert.equal(await ask(`${read}${tail}`, 'darwin'), undefined, `${read}${tail} on darwin`);
+          assert.equal(await ask(`${read}${tail}`, 'win32'), undefined, `${read}${tail} on Windows`);
+        }
+        // On Windows the null device is NUL too, in any case; elsewhere NUL is a file.
+        for (const nul of [' 2>NUL', ' 2>nul', ' 2>Nul ']) {
+          assert.equal(await ask(`${read}${nul}`, 'win32'), undefined, `${read}${nul} on Windows`);
+          assert.ok(denied(await ask(`${read}${nul}`)), `${read}${nul} off Windows`);
+        }
+        for (const tail of [
+          '2>/dev/null', ' 2>/dev/nullx', ' 2>/dev/null; rm x', ' 2>/dev/null 2>/dev/null', ' 2>/dev/null|cat', ' 2>/dev/null | cat',
+          ' 2>/dev/null &', ' 2>/dev/null && ls', ' 2>/dev/null\n', ' 2>/dev/null\nls', ' 2>/dev/null\r', ' > /dev/null', ' >/dev/null',
+          ' 1>/dev/null', ' 2> /dev/null', ' 2>&1', ' 2>&1 | grep -v ERROR', ' &>/dev/null', ' 2>>/dev/null', ' 2>/tmp/x', ' 2>/dev/zero',
+          ' 2>/DEV/NULL', ' 2>NUL.txt', ' 2>/dev/null\u00a0', '\u00a02>/dev/null', ' 2>$(id)', ' 2>`id`', ' 2</dev/null', ' </dev/null',
+        ]) {
+          for (const platform of ['linux', 'win32']) {
+            assert.ok(denied(await ask(`${read}${tail}`, platform)), `${JSON.stringify(read + tail)} on ${platform}`);
+          }
+        }
+      }
+      // Only at the end: before the words, or with the words after it, it is refused.
+      for (const bad of [
+        `node ${desk} 2>/dev/null cards`,
+        `node 2>/dev/null ${desk} cards`,
+        `2>/dev/null node ${desk} cards`,
+        `node ${desk} similar "a 2>/dev/null"`,
+        `node ${desk} similar "a 2>/dev/null`,
+        `node ${desk} similar 'a' 'b 2>/dev/null`,
+        // An escaped space joins the 2 to the word before it, and the redirect is then of the output.
+        `node ${desk} similar export\\ 2>/dev/null`,
+        `node ${desk} card 2>/dev/null`,
+        `node ${desk} record idea 2>/dev/null`,
+        `node ${desk} review 2>/dev/null`,
+        `node ${PLUGIN}/scripts/runbook/runbook.js 2>/dev/null`,
+        `node "${PLUGIN}/scripts/feature/cli.js" open-pr --title x 2>/dev/null`,
+        `node '${PLUGIN}/scripts/foreman/wake.js' measures 2>/dev/null`,
+        `node "${PLUGIN}/scripts/setup/cli.js" apply 2>/dev/null`,
+        `node /elsewhere/scripts/frontdesk/cli.js cards 2>/dev/null`,
+      ]) {
+        for (const platform of ['linux', 'win32']) assert.ok(denied(await ask(bad, platform)), `${bad} on ${platform}`);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('the runbook command splits on space and tab only; other whitespace is refused', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();
@@ -472,6 +541,29 @@ test('Claude Code\'s notification tool is let through under STOP, by its exact n
       // Outside STOP it passes, as every tool does.
       liftStop();
       assert.equal(await guard(call(main, 'PushNotification'), deps(base)), undefined);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('the tool search that loads a tool\'s schema is let through under STOP; the tools it loads still meet the guard', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      assert.ok(READ_TOOLS.includes('ToolSearch'));
+      // The courier's STOP wake: the session loads the notification tool, then sends it.
+      for (const query of ['select:PushNotification', 'select:Edit,Write', 'notification']) {
+        assert.equal(await guard(call(main, 'ToolSearch', { tool_input: { query, max_results: 5 } }), deps(base)), undefined, query);
+      }
+      assert.equal(await guard(call(main, 'PushNotification', { tool_input: { message: 'STOP is on', status: 'proactive' } }), deps(base)), undefined);
+      // What it loads is refused as before.
+      for (const tool of ['Edit', 'Write', 'SendMessage', 'RemoteTrigger', 'Bash', 'toolsearch']) {
+        const out = await guard(call(main, tool, { tool_input: { command: 'ls' } }), deps(base));
+        assert.ok(denied(out), tool);
+        assert.equal(out.hookSpecificOutput.permissionDecisionReason, DENIED);
+      }
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }

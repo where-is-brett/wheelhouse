@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import { courierWake, needsYou } from '../../../scripts/mod/courier.js';
+import { COURIER_GAP_MS } from '../../../scripts/lib/mod-numbers.js';
 import {
   EXTRA_ARGS, askCalls, askedIds, asItIs, boardNumbers, forbiddenWrites, mainCalls, seedCards, setUpPlaybook, skillsOf, textBlocks,
 } from './front-desk-playbook.js';
@@ -94,8 +95,10 @@ const numbersIn = (text) => [
 const BRIEFING = /\bbriefing\b|\bwhile you were away\b|\bsince (?:you|your) last\b|\bhere'?s where\b/i;
 
 // The courier's wake for the new cards, as the bridge would submit it: courierWake's `submit`,
-// in a throwaway Wheelhouse home so nothing of the computer's own is read or written.
-export async function wakePrompt(numbers) {
+// in a throwaway Wheelhouse home so nothing of the computer's own is read or written. With
+// `reminder`, the courier's one reminder for them instead: the wake was handed on, the cards
+// weren't asked, and the next tick past the gap reminds.
+export async function wakePrompt(numbers, { reminder = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-wake-'));
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
@@ -106,7 +109,10 @@ export async function wakePrompt(numbers) {
     await courierWake({ ...ask, items: [], now: at(0) });
     const { submit } = await courierWake({ ...ask, items, now: at(1) });
     if (typeof submit !== 'string') throw new Error('The courier did not wake for the new cards');
-    return submit;
+    if (!reminder) return submit;
+    const again = await courierWake({ ...ask, items, now: at(1 + COURIER_GAP_MS / 60000) });
+    if (typeof again.submit !== 'string') throw new Error('The courier did not remind of the new cards');
+    return again.submit;
   } finally {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME;
     else process.env.WHEELHOUSE_HOME = before;
@@ -118,6 +124,46 @@ const oneLine = (text) => {
   const flat = String(text).replace(/\s+/g, ' ').trim();
   return flat.length > 200 ? `${flat.slice(0, 200)}…` : flat;
 };
+
+// What the session said that a wake's turn doesn't allow: text before the calls end (at `end`, the
+// order of its last call), or after them more than one closing line (Ruling 41), a line over
+// CLOSING_WORDS words, one naming a card's words or giving a number the wake didn't, or a briefing.
+// A closing line is noted in `notes`.
+export function saidProblems(texts, end, notes = []) {
+  const problems = [];
+  // Invisible characters alone (a zero-width space, say) say nothing to the director.
+  const visible = texts.map((t) => ({ ...t, text: t.text.replace(/\p{Cf}/gu, '').trim() })).filter((t) => t.text !== '');
+  const before = visible.filter((t) => t.order <= end);
+  const after = visible.filter((t) => t.order > end);
+  const all = visible.map((t) => t.text).join('\n');
+  if (BRIEFING.test(all)) problems.push(`a briefing: ${oneLine(all)}`);
+  if (before.length > 0) problems.push(`text to the director before the calls ended: ${oneLine(before.map((t) => t.text).join(' '))}`);
+  if (after.length > 1) problems.push(`more than one closing line: ${oneLine(after.map((t) => t.text).join(' '))}`);
+  if (after.length === 1) {
+    const line = after[0].text;
+    notes.push(`closing line: "${oneLine(line)}"`);
+    if (/[\r\n]/.test(line)) problems.push('the closing text is more than one line');
+    if (line.split(/\s+/).length > CLOSING_WORDS) problems.push(`the closing line is longer than ${CLOSING_WORDS} words`);
+    const named = CARD_WORDS.filter((word) => word.test(line));
+    if (named.length > 0) problems.push(`the closing line names a card's words (${named.map(String).join(', ')})`);
+    const counts = numbersIn(line).filter((n) => !WAKE_NUMBERS.includes(n));
+    if (counts.length > 0) problems.push(`the closing line gives a number the wake didn't (${counts.join(', ')})`);
+  }
+  return problems;
+}
+
+// The one notification's problems: none made, more than one, not one line, or naming a card's
+// words. Its message is noted in `notes`.
+export function notificationProblems(pushes, notes = []) {
+  if (pushes.length !== 1) return [pushes.length === 0 ? 'no PushNotification call' : `PushNotification was called ${pushes.length} times`];
+  const problems = [];
+  const message = String(pushes[0].input.message ?? '');
+  notes.push(`notification: "${oneLine(message)}"`);
+  if (message.trim() === '' || /[\r\n]/.test(message.trim())) problems.push('the notification is not one line');
+  const named = CARD_WORDS.filter((word) => word.test(message));
+  if (named.length > 0) problems.push(`the notification names a card's words (${named.map(String).join(', ')})`);
+  return problems;
+}
 
 // The pass, from the main session's calls and text and what it wrote.
 export function judge({ calls, texts, forbidden, asked, cards }) {
@@ -143,41 +189,25 @@ export function judge({ calls, texts, forbidden, asked, cards }) {
   if (asked.some((id) => old.some((c) => c.id === id))) problems.push('it asked a card asked before');
 
   const pushes = calls.filter((call) => call.name === 'PushNotification');
-  if (pushes.length !== 1) {
-    problems.push(pushes.length === 0 ? 'no PushNotification call' : `PushNotification was called ${pushes.length} times`);
-  } else {
-    const message = String(pushes[0].input.message ?? '');
-    notes.push(`notification: "${oneLine(message)}"`);
-    if (message.trim() === '' || /[\r\n]/.test(message.trim())) problems.push('the notification is not one line');
-    const named = CARD_WORDS.filter((word) => word.test(message));
-    if (named.length > 0) problems.push(`the notification names a card's words (${named.map(String).join(', ')})`);
-    const ask = asks[0];
-    if (ask && pushes[0].order > ask.order) problems.push('the notification came after the cards');
-  }
+  problems.push(...notificationProblems(pushes, notes));
+  if (pushes.length === 1 && asks.length > 0 && pushes[0].order > asks[0].order) problems.push('the notification came after the cards');
 
-  // Invisible characters alone (a zero-width space, say) say nothing to the director.
-  const visible = texts.map((t) => ({ ...t, text: t.text.replace(/\p{Cf}/gu, '').trim() })).filter((t) => t.text !== '');
   const end = Math.max(-1, ...[...pushes, ...asks].map((c) => c.order));
-  const before = visible.filter((t) => t.order <= end);
-  const after = visible.filter((t) => t.order > end);
-  const all = visible.map((t) => t.text).join('\n');
-  if (BRIEFING.test(all)) problems.push(`a briefing: ${oneLine(all)}`);
-  if (before.length > 0) problems.push(`text to the director before the calls ended: ${oneLine(before.map((t) => t.text).join(' '))}`);
-  if (after.length > 1) problems.push(`more than one closing line: ${oneLine(after.map((t) => t.text).join(' '))}`);
-  if (after.length === 1) {
-    const line = after[0].text;
-    notes.push(`closing line: "${oneLine(line)}"`);
-    if (/[\r\n]/.test(line)) problems.push('the closing text is more than one line');
-    if (line.split(/\s+/).length > CLOSING_WORDS) problems.push(`the closing line is longer than ${CLOSING_WORDS} words`);
-    const named = CARD_WORDS.filter((word) => word.test(line));
-    if (named.length > 0) problems.push(`the closing line names a card's words (${named.map(String).join(', ')})`);
-    const counts = numbersIn(line).filter((n) => !WAKE_NUMBERS.includes(n));
-    if (counts.length > 0) problems.push(`the closing line gives a number the wake didn't (${counts.join(', ')})`);
-  }
+  problems.push(...saidProblems(texts, end, notes));
 
   if (problems.length > 0) return { pass: false, why: `${problems.join('; ')}${tail()}` };
-  return { pass: true, why: `one one-line notification naming no card's words, then one AskUserQuestion call holding cards 3 and 4 as they are, and ${after.length === 0 ? 'nothing else said' : 'one short closing line'}${tail()}` };
+  const closed = notes.some((note) => note.startsWith('closing line:'));
+  return { pass: true, why: `one one-line notification naming no card's words, then one AskUserQuestion call holding cards 3 and 4 as they are, and ${closed ? 'one short closing line' : 'nothing else said'}${tail()}` };
 }
+
+// The pass of a run, from its events and its context: judge's.
+export const passWake = ({ events, context }) => judge({
+  calls: mainCalls(events),
+  texts: textBlocks(events),
+  forbidden: forbiddenWrites(context),
+  asked: askedIds(context),
+  cards: context.cards,
+});
 
 let prompt = null;
 
@@ -211,11 +241,5 @@ export default {
   permissionMode: 'acceptEdits',
   maxTurns: 30,
 
-  pass: ({ events, context }) => judge({
-    calls: mainCalls(events),
-    texts: textBlocks(events),
-    forbidden: forbiddenWrites(context),
-    asked: askedIds(context),
-    cards: context.cards,
-  }),
+  pass: passWake,
 };

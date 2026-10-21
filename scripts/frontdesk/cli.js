@@ -6,7 +6,7 @@
 //                   card asks yet, the card for each click the merge gate waits for, and one for
 //                   each lineage hold. Under STOP, the Lift STOP card alone
 //   card            composes one card from the composer's input and records it ({ question, id })
-//   again <n>       the card the board numbers n, to ask again
+//   again <n>       the card the board numbers n, with its id, to ask again
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
 //                   for a work event's document and an amendment, it works out the hash and prints it
 //   similar [words] the open work, ideas and rejections that share words with a request: its
@@ -386,12 +386,13 @@ export async function card({ client, cwd, input, now }) {
 
 // --- again ---
 
-// The card the board numbers n, as it was composed (in plain words then), recorded as asked again.
+// The card the board numbers n, as it was composed (in plain words then), with its id, recorded as
+// asked again. The id lets a press that names a card by number and id be checked against it.
 export async function again({ client, cwd, n }) {
   const { views, stop, cards: events } = await viewsOf(client, cwd, { cards: true });
   const found = cardNumbered(views, n, { events });
   if (found === null) throw new CliError(`The board has no card ${n} to ask again; a question from the build is asked once \`cards\` has made its card`);
-  return { questions: [asQuestion(found)], ...withProblems(await markAsked(client, cwd, [found.id], stop)) };
+  return { questions: [asQuestion(found)], id: found.id, ...withProblems(await markAsked(client, cwd, [found.id], stop)) };
 }
 
 // --- record ---
@@ -681,12 +682,14 @@ export async function view({ client, cwd, name, now }) {
     return listed(rules.map((r) => `${flat(r.words)} (${r.status === 'accepted' ? 'in force' : 'waiting for the director to confirm it'})`), 'The rulebook is empty.');
   }
   if (name === 'waiting') {
-    // Numbered as the board numbers them; a composed card is named by its first part.
+    // Numbered as the board numbers them; a composed card is named by its first part, and each
+    // card by its id, which a press's prompt names beside its number.
     const firstPart = (id) => {
       const text = views.waiting.find((c) => c.id === id)?.data?.question;
       return typeof text === 'string' && text.startsWith(`${PART_LABELS[0]} `) ? text.slice(PART_LABELS[0].length + 1).split('\n')[0] : null;
     };
-    const items = numberedWaiting(views, events).map((item) => `${item.n}. ${(item.card && firstPart(item.card)) || item.what}`);
+    const items = numberedWaiting(views, events)
+      .map((item) => `${item.n}. ${(item.card && firstPart(item.card)) || item.what}${item.card ? ` (card ${item.card})` : ''}`);
     return listed(items, 'Nothing is waiting for the director.');
   }
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');

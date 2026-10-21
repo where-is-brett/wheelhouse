@@ -1,9 +1,11 @@
 // scripts/hooks/stop-guard.js
 // Marks bypass mode for the session on every call, and while STOP is on lets
-// only reading, reporting, Claude Code's notification, the runbook, the foreman's reading and
-// closing of a wake, and the front desk's and setup's reading commands (uninstall's among them)
-// through. On SessionEnd it clears the session's bypass marker and says nothing. It acts in a registered project and in a folder
-// being set up (kit.js's beingSetUp), as in a project.
+// only reading, reporting, loading a tool's schema (ToolSearch), Claude Code's notification, the
+// runbook, the foreman's reading and closing of a wake, and the front desk's and setup's reading
+// commands (uninstall's among them) through, each command with nothing chained, piped or
+// redirected but one trailing ` 2>/dev/null` (QUIET). On SessionEnd it clears the session's bypass
+// marker and says nothing. It acts in a registered project and in a folder being set up (kit.js's
+// beingSetUp), as in a project.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
@@ -17,7 +19,9 @@ import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
-export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite'];
+// ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
+// nothing, and every tool it loads still meets this guard and the lineage hold.
+export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite', 'ToolSearch'];
 // They only halt work that is already running.
 export const HALT_TOOLS = ['TaskStop', 'KillShell'];
 // Claude Code's own notification, so the courier's wake for STOP can still reach the director's
@@ -35,12 +39,20 @@ const CONTROL = /[;&|`<>\n\r]|\$\(/;
 // Whitespace other than a space or tab (no-break space, U+2028, U+3000 and the like).
 const ODD_SPACE = /[^\S \t]/u;
 
+// One trailing ` 2>/dev/null`, which sessions add to hide the sandbox's certificate lines: one
+// space or more before it, the first not escaped by a backslash, and nothing after it but spaces.
+// On Windows ` 2>NUL` too, in any case.
+const QUIET = /(?<!\\) +2>\/dev\/null *$/;
+const QUIET_WINDOWS = /(?<!\\) +2>(?:\/dev\/null|[Nn][Uu][Ll]) *$/;
+
 // The words after the script when `command` is `node <pluginRoot>/<script> …` with no shell
-// syntax at all and the script in a real plugin root; null for anything else.
+// syntax but one trailing QUIET, and the script in a real plugin root; null for anything else.
 export function scriptArguments(command, pluginRoots, platform, script) {
-  if (typeof command !== 'string' || CONTROL.test(command) || ODD_SPACE.test(command)) return null;
+  if (typeof command !== 'string') return null;
   const windows = platform === 'win32';
-  const parts = words(command, windows);
+  const bare = command.replace(windows ? QUIET_WINDOWS : QUIET, '');
+  if (CONTROL.test(bare) || ODD_SPACE.test(bare)) return null;
+  const parts = words(bare, windows);
   if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
   const fold = (p) => {
     const slashed = windows ? p.replaceAll('\\', '/') : p;

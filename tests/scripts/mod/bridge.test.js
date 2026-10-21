@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELPER_MS, COURIER_MS } from '../../../scripts/mod/bridge.js';
+import { handle, runBridge, lineOf, limitFor, BRIDGE_MS, MAX_REQUEST_BYTES, HELPER_MS, COURIER_MS, SAYS } from '../../../scripts/mod/bridge.js';
 import { readPaneStatus, hashOf } from '../../../scripts/mod/status.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
@@ -486,13 +486,18 @@ test('the front desk\'s tick gives the pane, the glance and the status line, and
 
 test('the front desk\'s tick carries the courier\'s wake as submit, after the session\'s first tick marks what waits', () => withHome(async (home) => {
   const repo = registered(home);
-  const waiting = (...ids) => {
+  // The waiting cards, those in `asked` handed out by the front desk.
+  const waitingAsked = (asked, ...ids) => {
     const dir = path.join(home, 'projects', P, 'views');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'waiting.json'), JSON.stringify(ids.map((id, i) => ({
-      id, at: new Date(Date.UTC(2026, 9, 18, 9 + i)).toISOString(), data: { kind: 'question', header: 'Question', options: ['Yes'], question: `The words of ${id}?`, level: 3 }, asked: null,
+      id,
+      at: new Date(Date.UTC(2026, 9, 18, 9 + i)).toISOString(),
+      data: { kind: 'question', header: 'Question', options: ['Yes'], question: `The words of ${id}?`, level: 3 },
+      asked: asked.includes(id) ? { at: NOW.toISOString(), label: null } : null,
     }))));
   };
+  const waiting = (...ids) => waitingAsked([], ...ids);
   const later = (ticks) => () => new Date(NOW.getTime() + ticks * TICK_MS);
   waiting('c-old');
   // The session's first tick finds card 1 already waiting: the visit asks it, so nothing wakes.
@@ -523,15 +528,66 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   assert.equal(asked, false);
   assert.equal('submit' in late, false);
   assert.ok(!late.pane.missing.includes('The courier couldn\'t run this time'));
+  // Card 2, which the wake named, was never asked (its notification wasn't sent): its reminder
+  // comes with card 3's wake.
   const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
-  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3). Send Claude\'s notification in one line, then ask any new cards now, once.']);
+  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3); card 2 is still waiting. Send Claude\'s notification in one line, then ask them now, once.']);
+  assert.deepEqual(woken3.woken, ['card:c-third', 'remind:c-new']);
 
-  // A second front desk opening now marks nothing and wakes for nothing.
-  waiting('c-old', 'c-new', 'c-third', 'c-fourth');
+  // A second front desk opening now marks nothing and wakes for nothing. That wake's turn asked
+  // cards 2 and 3.
+  waitingAsked(['c-new', 'c-third'], 'c-old', 'c-new', 'c-third', 'c-fourth');
   const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
   assert.equal('submit' in second, false);
   const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));
   assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Send Claude\'s notification in one line, then ask any new cards now, once.']);
+}));
+
+test('the tick names the ids its wake marked; the mod\'s unsent puts them back, so the next idle tick wakes again', () => withHome(async (home) => {
+  const repo = registered(home);
+  const later = (ms) => () => new Date(NOW.getTime() + ms);
+  // The session's first tick, a day before, found nothing.
+  await handle(tickOf(repo, { idle: true }), live({ now: later(-24 * 60 * 60 * 1000) }));
+  const dir = path.join(home, 'projects', P, 'views');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'waiting.json'), JSON.stringify([{
+    id: 'c-new', at: '2026-10-19T04:00:00.000Z', data: { kind: 'question', header: 'Question', options: ['Yes'], question: 'Which one?', level: 3 }, asked: null,
+  }]));
+  const WAKE = ['Wheelhouse courier: 1 new card (1). Send Claude\'s notification in one line, then ask any new cards now, once.'];
+  const woken = await handle(tickOf(repo, { idle: true }), live());
+  assert.deepEqual(woken.submit, WAKE);
+  assert.deepEqual(woken.woken, ['card:c-new']);
+  assert.equal(woken.wokeAt, NOW.toISOString());
+  assert.deepEqual(JSON.parse(lineOf(woken)).woken, ['card:c-new']);
+  assert.equal(JSON.parse(lineOf(woken)).wokeAt, NOW.toISOString());
+
+  // The mod couldn't hand it on: its unsent, from the session woken with the wake's stamp, takes
+  // the mark out, however long after.
+  assert.deepEqual(await handle({ cmd: 'unsent', session: 'sess-1', cwd: repo, ids: woken.woken, at: woken.wokeAt }, live({ now: later(TICK_MS - 1) })), { ok: true });
+  const again = await handle(tickOf(repo, { idle: true }), live({ now: later(TICK_MS) }));
+  assert.deepEqual(again.submit, WAKE);
+  assert.deepEqual(again.woken, ['card:c-new']);
+  // One from another session, with the first wake's stamp, or for a folder outside a project,
+  // changes nothing.
+  assert.deepEqual(await handle({ cmd: 'unsent', session: 'sess-2', cwd: repo, ids: again.woken, at: again.wokeAt }, live()), { ok: true });
+  assert.deepEqual(await handle({ cmd: 'unsent', session: 'sess-1', cwd: repo, ids: again.woken, at: woken.wokeAt }, live()), { ok: true });
+  assert.deepEqual(await handle({ cmd: 'unsent', session: 'sess-1', cwd: tempFolder('wh-bridge-out-'), ids: again.woken, at: again.wokeAt }, live({ projectOf: () => null })), { ok: false, says: SAYS.notProject });
+  // A tick with no wake names no ids.
+  const after = await handle(tickOf(repo, { idle: true }), live({ now: later(2 * TICK_MS) }));
+  assert.equal('submit' in after, false);
+  assert.equal('woken' in after, false);
+  assert.equal('wokeAt' in after, false);
+}));
+
+test('unsent hands the courier the session, its project, the ids and the stamp, and nothing else', () => withHome(async (home) => {
+  const repo = registered(home);
+  const asked = [];
+  const courierUnsent = async (args) => { asked.push(args); return { unsent: args.ids }; };
+  const answer = await handle({ cmd: 'unsent', session: 'sess-1', cwd: repo, ids: ['stop:s', 'remind:c-1'], at: '2026-10-20T09:12:55.000Z', origin: 'pane', extra: 'x' }, live({ courierUnsent }));
+  assert.deepEqual(answer, { ok: true });
+  assert.deepEqual(asked, [{ project: P, session: 'sess-1', ids: ['stop:s', 'remind:c-1'], at: '2026-10-20T09:12:55.000Z' }]);
+  // A courier that fails says so.
+  assert.deepEqual(await handle({ cmd: 'unsent', session: 'sess-1', cwd: repo, ids: ['stop:s'] }, live({ courierUnsent: async () => { throw new Error('x'); } })), { ok: false, says: SAYS.failed });
 }));
 
 test('the model is written to status.json before the tick answers', () => withHome(async (home) => {
@@ -829,14 +885,14 @@ test('a tick holds the watcher back while setup\'s journal can\'t be read, at th
 
 test('the answer line carries only its own fields', () => {
   const full = {
-    ok: true, says: 'x', role: 'front-desk', every: 15000, pane: { v: 1 }, glance: 'g', status: 's', submit: ['one', 'two'], rows: [{ key: 'k' }], text: 'digest',
+    ok: true, says: 'x', role: 'front-desk', every: 15000, pane: { v: 1 }, glance: 'g', status: 's', submit: ['one', 'two'], woken: ['stop:s'], wokeAt: '2026-10-20T09:12:55.000Z', rows: [{ key: 'k' }], text: 'digest',
   };
   assert.deepEqual(JSON.parse(lineOf({ ...full, secret: 'no', cards: [], watcher: 'running', nested: { x: 1 } })), full);
   // `submit` is always a list of prompts: a lone string isn't one.
   assert.equal('submit' in JSON.parse(lineOf({ ...full, submit: 'one prompt' })), false);
   // Each only when it is of its type.
   assert.deepEqual(JSON.parse(lineOf({
-    ok: true, says: 5, role: 7, every: '15000', pane: [], glance: 1, status: {}, submit: [1], rows: ['x'], text: null,
+    ok: true, says: 5, role: 7, every: '15000', pane: [], glance: 1, status: {}, submit: [1], woken: [2], wokeAt: 3, rows: ['x'], text: null,
   })), { ok: true });
   assert.deepEqual(JSON.parse(lineOf({ ok: true, every: -1 })), { ok: true });
   assert.deepEqual(JSON.parse(lineOf({ ok: true, every: Infinity })), { ok: true });

@@ -13,8 +13,12 @@
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
 //   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
-//                                                   courier's wake, or a Shape 2 foreman's wakes from
-//                                                   one watcher loop, or nothing while setup runs
+//                                                   courier's wake, with the ids it marked sent and its
+//                                                   stamp, or a Shape 2 foreman's wakes from one
+//                                                   watcher loop, or nothing while setup runs
+//   { cmd: 'unsent', session, cwd, ids, at }        the mod couldn't hand on the courier's wake stamped
+//                                                   `at`: its marks are undone, so the next tick wakes
+//                                                   again
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
 //   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
@@ -46,7 +50,7 @@ import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
-import { needsYou, courierWake as defaultCourierWake, LOCK_WAIT_MS } from './courier.js';
+import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -116,6 +120,7 @@ const DEFAULTS = {
   paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
   courierWake: defaultCourierWake,
+  courierUnsent: defaultCourierUnsent,
   // A clock for the time a request has taken.
   elapsedClock: () => performance.now(),
   watchTick: defaultWatchTick,
@@ -327,13 +332,16 @@ async function foremanTick(found, d) {
   return { ok: true, role: 'foreman', every: FOREMAN_TICK_MS, submit: strings(watched?.submit) ? watched.submit : [] };
 }
 
-// The courier's wake for this tick, or null (courier.js), from this tick's pane model; presence
-// and the quiet hours are the settings in force. A courier that fails wakes for nothing this tick
-// and says so in the pane; what it found waits for the next tick.
+// The courier's wake for this tick, as { submit, woken, wokeAt }, or null (courier.js), from this
+// tick's pane model; presence and the quiet hours are the settings in force. `woken` names the ids
+// the wake marked sent and `wokeAt` its stamp, which the mod sends back as `unsent` when it can't
+// hand the wake on. A courier
+// that fails wakes for nothing this tick and says so in the pane; what it found waits for the next
+// tick.
 async function courier(found, pane, req, d) {
   try {
     const effective = d.readEffective({ project: found.project, now: d.now });
-    const { submit } = await d.courierWake({
+    const { submit, sent, at } = await d.courierWake({
       project: found.project,
       session: req.session,
       items: needsYou({ after: pane }),
@@ -344,7 +352,8 @@ async function courier(found, pane, req, d) {
       timeZone: d.timeZone,
     });
     // One shape for every submit: a list of prompts.
-    return typeof submit === 'string' ? [submit] : null;
+    if (typeof submit !== 'string') return null;
+    return { submit: [submit], woken: strings(sent) ? sent : [], ...(typeof at === 'string' ? { wokeAt: at } : {}) };
   } catch {
     pane.missing = [...pane.missing, SAYS.noCourier];
     return null;
@@ -386,7 +395,7 @@ async function tick(req, d) {
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
   // With too little of BRIDGE_MS left, the courier waits for the next tick, marking nothing.
-  const submit = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, req, d);
+  const wake = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, req, d);
   try {
     d.writePaneStatus(found.project, pane);
   } catch {
@@ -394,11 +403,25 @@ async function tick(req, d) {
   }
   const answer = { ok: true, role, every: TICK_MS, pane, glance: pane.glance };
   if (!(req.surface === 'terminal' && ownStatusLine(found.record))) answer.status = pane.glance;
-  if (submit !== null) answer.submit = submit;
+  if (wake !== null) {
+    answer.submit = wake.submit;
+    answer.woken = wake.woken;
+    if (wake.wokeAt !== undefined) answer.wokeAt = wake.wokeAt;
+  }
   return answer;
 }
 
-const COMMANDS = { usage, reply, press, settings, setting, go, stop, digest, tick };
+// The mod couldn't hand on the courier's wake stamped `at` that marked `ids`: the courier takes
+// out those marks that are still that session's wake's (courier.js courierUnsent), so the next idle
+// tick wakes again. The session's own folder names the project.
+async function unsent(req, d) {
+  const found = siteOf(req.cwd, d);
+  if (found === null) return no(SAYS.notProject);
+  await d.courierUnsent({ project: found.project, session: req.session, ids: req.ids, at: req.at });
+  return { ok: true };
+}
+
+const COMMANDS = { usage, reply, press, settings, setting, go, stop, digest, tick, unsent };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {
@@ -438,9 +461,9 @@ async function requestFrom(stdin) {
 const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 // The answer's one line: { ok } and `says` when there is one, then only the fields the mod reads
-// (role, every, pane, glance, status, submit, rows, text), each when it is present and of its
-// type; `submit` is always a list of prompts. Nothing else a command put in its answer reaches
-// the mod.
+// (role, every, pane, glance, status, submit, woken, wokeAt, rows, text), each when it is present
+// and of its type; `submit` and `woken` are always lists of strings. Nothing else a command put in its
+// answer reaches the mod.
 export function lineOf(answer) {
   const out = { ok: answer?.ok === true };
   if (typeof answer?.says === 'string') out.says = answer.says;
@@ -450,6 +473,8 @@ export function lineOf(answer) {
   if (typeof answer?.glance === 'string') out.glance = answer.glance;
   if (typeof answer?.status === 'string') out.status = answer.status;
   if (strings(answer?.submit)) out.submit = answer.submit;
+  if (strings(answer?.woken)) out.woken = answer.woken;
+  if (typeof answer?.wokeAt === 'string') out.wokeAt = answer.wokeAt;
   if (Array.isArray(answer?.rows) && answer.rows.every(isRecord)) out.rows = answer.rows;
   if (typeof answer?.text === 'string') out.text = answer.text;
   return JSON.stringify(out);

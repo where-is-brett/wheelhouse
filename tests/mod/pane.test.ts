@@ -59,6 +59,9 @@ function world(on: any, answer: (request: any) => Reply) {
   const clock = mock.clock(on, { now: START })
   const panes = new Map<string, string>()
   const current = { session: SESSION }
+  // The surfaces the session has attached, and how ui.open answers: a refusal's words, or with
+  // `unplaced` the engine's resolved no-surface answer.
+  const attached = { surfaces: ['a surface'] as string[], refuseOpen: null as string | null, unplaced: false }
   let sessions = 0
   const seen = { ticks: [] as any[], opens: [] as any[], closes: [] as string[], statuses: [] as (string | undefined)[], registered: [] as any[], toasts: [] as string[] }
   on('session.id', () => ({ value: current.session }))
@@ -66,7 +69,14 @@ function world(on: any, answer: (request: any) => Reply) {
   on('session.usage', () => ({ value: { startedAt: 0, context: CONTEXT, rateLimits: [], cost: undefined } }))
   on('command.register', ($: any, e: any) => { seen.registered.push(e); return { value: { command: e.name } } })
   on('ui.toast', ($: any, e: any) => { seen.toasts.push(e.text); return { value: undefined } })
-  on('ui.open', ($: any, e: any) => { seen.opens.push(e); panes.set(e.id, e.title ?? e.id); return { value: { isPlaced: true } } })
+  on('session.surfaces', () => ({ value: attached.surfaces }))
+  on('ui.open', ($: any, e: any) => {
+    if (attached.refuseOpen !== null) return { deny: attached.refuseOpen }
+    seen.opens.push(e)
+    panes.set(e.id, e.title ?? e.id)
+    if (attached.unplaced) return { value: { isPlaced: false, reason: 'no-surface: no surface is attached' } }
+    return { value: { isPlaced: true } }
+  })
   on('ui.close', ($: any, e: any) => { seen.closes.push(e.id); panes.delete(e.id); return { value: undefined } })
   on('ui.panes', () => ({ value: [...panes].map(([id, title]) => ({ id, title, isShown: true, isFocused: false, isPlaced: true })) }))
   on('ui.status', ($: any, e: any) => { seen.statuses.push(e.text); return { value: undefined } })
@@ -97,7 +107,7 @@ function world(on: any, answer: (request: any) => Reply) {
     await $.session.start({ cwd: ROOT, surface, isInteractive: true })
     await clock.settle()
   }
-  return { seen, clear, start, clock, panes, current, newSession }
+  return { seen, clear, start, clock, panes, current, newSession, attached }
 }
 
 // "14:01" for the clock's milliseconds, as the pane says a time: in the computer's own time zone,
@@ -638,3 +648,71 @@ for (const surface of SURFACES) {
     await ui.unmount()
   })
 }
+
+test('before a surface is attached nothing opens, and the first tick with one opens the pane once', async ($, on) => {
+  const reply: object = frontDesk('2 cards wait')
+  const { seen, clear, start, clock, panes, attached } = world(on, () => reply)
+  attached.surfaces = []
+  await start($, 'desktop')
+  expect(seen.ticks).toHaveLength(1)
+  expect(seen.opens).toEqual([])
+  expect(seen.toasts).toEqual([])
+  expect(seen.statuses).toEqual(['2 cards wait'])
+  expect(panes.has(PANE_ID)).toBe(false)
+  // Still none on the next tick.
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.opens).toEqual([])
+  // A surface attaches: the next tick opens the pane, and the one after only retitles it.
+  attached.surfaces = ['a surface']
+  await clock.advance(TICK_MS)
+  expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+  // A pane the director closed stays closed.
+  panes.delete(PANE_ID)
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.opens).toEqual([])
+})
+
+test('a no-surface refusal from ui.open is quiet, and the next tick opens the pane', async ($, on) => {
+  const reply: object = frontDesk('2 cards wait')
+  const { seen, clear, start, clock, panes, attached } = world(on, () => reply)
+  attached.refuseOpen = 'no-surface: no surface is attached ($.session.surfaces() is empty)'
+  await start($, 'desktop')
+  expect(seen.toasts).toEqual([])
+  expect(seen.statuses).toEqual(['2 cards wait'])
+  expect(panes.has(PANE_ID)).toBe(false)
+  attached.refuseOpen = null
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+})
+
+test('a ui.open refusal that is not no-surface is not tried again on every tick, and the status line is set', async ($, on) => {
+  const reply: object = frontDesk('2 cards wait')
+  const { seen, clear, start, clock, attached } = world(on, () => reply)
+  attached.refuseOpen = 'the pane may not open'
+  await start($, 'desktop')
+  expect(seen.statuses).toEqual([])
+  attached.refuseOpen = null
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.opens).toEqual([])
+  expect(seen.statuses).toEqual(['2 cards wait'])
+})
+
+test('a ui.open that resolves unplaced for want of a surface keeps the pane, and the next tick only retitles it', async ($, on) => {
+  const reply: object = frontDesk('2 cards wait')
+  const { seen, clear, start, clock, attached } = world(on, () => reply)
+  attached.unplaced = true
+  await start($, 'desktop')
+  expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+  expect(seen.toasts).toEqual([])
+  expect(seen.statuses).toEqual(['2 cards wait'])
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
+})

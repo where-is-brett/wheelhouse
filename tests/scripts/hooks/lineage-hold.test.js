@@ -92,6 +92,39 @@ test('while held, Edit, Write and Bash are refused, and reading and halting are 
   });
 });
 
+test('while held, the tool search that loads a schema runs, and the notification tool stays held', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    assert.equal(await decide(call(main, 'ToolSearch', { query: 'select:PushNotification', max_results: 1 }), deps(home)), undefined);
+    for (const tool of ['PushNotification', 'Edit', 'SendMessage']) {
+      assert.ok(denied(await decide(call(main, tool, { message: 'x' }), deps(home))), tool);
+    }
+  });
+});
+
+test('while held, the check, the runbook and the front desk\'s reads may end in one 2>/dev/null, and in no other redirect', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    const reads = [
+      `node ${PLUGIN}/scripts/lineage/check.js`,
+      `node "${PLUGIN}/scripts/lineage/check.js" "${main}"`,
+      `node ${PLUGIN}/scripts/runbook/runbook.js 1`,
+      `node "${PLUGIN}/scripts/frontdesk/cli.js" cards`,
+    ];
+    for (const read of reads) {
+      assert.equal(await decide(bash(main, `${read} 2>/dev/null`), deps(home)), undefined, read);
+      assert.equal(await decide(bash(main, `${read} 2>NUL`), deps(home, { platform: 'win32' })), undefined, `${read} on Windows`);
+      for (const tail of [' 2>NUL', ' 2>/dev/nullx', ' 2>/dev/null; rm -rf x', ' 2>/dev/null 2>/dev/null', ' 2>/dev/null|cat', ' 2>&1', ' > /dev/null', ' 2> /dev/null']) {
+        assert.ok(denied(await decide(bash(main, `${read}${tail}`), deps(home))), `${read}${tail}`);
+      }
+    }
+    assert.ok(denied(await decide(bash(main, `node "${PLUGIN}/scripts/frontdesk/cli.js" record idea 2>/dev/null`), deps(home))));
+    assert.ok(denied(await decide(bash(main, `node ${PLUGIN}/scripts/lineage/check.js --write 2>/dev/null`), deps(home))));
+  });
+});
+
 test('a folder with only .claude/wheelhouse.json and no registration is neither warned nor held', async () => {
   await withHome(async (home) => {
     makeProject();
