@@ -2,7 +2,7 @@
 
 # Check 64: usage figures from Copilot
 
-**Answer:** Deferred. A session's own output carries per-session usage: a headless run reports it on its final `result` event, in one usage checkpoint event, and in a usage file it can be told to write. Those are enough to show a session's use on the board. The other half, the month's total for the signed-in person, was not read. GitHub's two documented calls for it answered 404 because the `gh` sign-in lacks the `user` scope, and the director's ruling is that Wheelhouse does not ask for that scope.
+**Answer:** Deferred. A session's own output carries per-session usage: a headless run reports it on its final `result` event, in one usage checkpoint event, and in a usage file it can be told to write. Those are enough to show a session's use on the board. The other half, the month's total for the signed-in person, is not reachable with this sign-in. GitHub's two documented calls for it answered 404, and the `gh` sign-in lacks the `user` scope those calls accept.
 
 ## Question
 
@@ -10,7 +10,7 @@ Which credit and token fields a Copilot session's JSON output carries, and what 
 
 ## Tested on
 
-21 October 2026, on macOS, with Copilot CLI 1.0.101 (the pinned copy under `~/.wheelhouse-probes/`), signed in through a scratch Copilot home. Two real model runs by `probes/64-usage/run.js` (one plain, one using the `view` tool), each with `--output-format json` and `--usage-output-file`; both exited 0 on the first attempt of the probe's rerun (the first run of the probe failed before any model call, because the Mac's network was blocked, and gave nothing to record). Also `copilot help billing`, which needs no network, and two read-only calls with `gh api` as the person's own `gh` sign-in. The model's name is written `<MODEL>` below; the person's login is not recorded.
+21 October 2026, on macOS, with Copilot CLI 1.0.101 (the pinned copy under `~/.wheelhouse-probes/`), signed in through a scratch Copilot home. Two real model runs by `probes/64-usage/run.js` (one plain, one using the `view` tool), each with `--output-format json` and `--usage-output-file`; both exited 0 on the probe's rerun (the controller's account is that the probe's first run failed before any model call because the Mac's network was blocked; that run's raw results were not kept, so the results file cannot show it). Also `copilot help billing`, which needs no network, and two read-only calls with `gh api` as the person's own `gh` sign-in. The model's name is written `<MODEL>` below; the person's login is not recorded.
 
 ## Method
 
@@ -31,18 +31,20 @@ The last line of the JSON output. Both runs had the same fields:
 | `usage.codeChanges.linesAdded`, `.linesRemoved` | number |
 | `usage.codeChanges.filesModified` | array |
 
-It carries no token counts and no credit figure. `premiumRequests` is the old request-based measure; the credit measure is in the checkpoint and the usage file.
+It carries no token counts and no credit figure. `premiumRequests` looks like the old request-based measure (inferred from its name and from the help text's mention of legacy premium requests); the credit measure is in the checkpoint and the usage file.
 
 ### The `session.usage_checkpoint` event
 
-One per session, just before `assistant.idle`. Its `data` holds:
+One per session, just before `assistant.idle`. Its `data` holds the following, and cache fields besides:
 
-- `totalNanoAiu` (number) and `totalPremiumRequests` (number): the session's totals. `NanoAiu` is the credit unit in billionths.
+- `totalNanoAiu` (number) and `totalPremiumRequests` (number): the session's totals. `NanoAiu` is presumably the credit unit in billionths (inferred from the name; not stated in the output or the help).
 - `usageAccountingWatermarks.<id>` (number): one counter, keyed by an id.
-- `providerModelMetrics[]`: one entry per model, with `modelId`, `modelDisplayName`, `provider.{id,kind,label}` (strings) and `metrics`, which has the same fields as a model's entry in the usage file (below).
-- `accountingSnapshot`: the same figures as the usage file (below) in one object: `modelMetrics.<MODEL>`, `agentMetrics.main.modelMetrics.<MODEL>`, `agentMetrics.main.{totalNanoAiu,totalApiDurationMs}`, `aiCreditsStatus`, `currentModel`, `lastCallInputTokens`, `lastCallOutputTokens`, `codeChanges`, `providerModelMetrics[]`.
+- `providerModelMetrics[]`: one entry per model, with `modelId`, `modelDisplayName`, `provider.{id,kind,label}` (strings) and `metrics`, which has the same fields as a model's entry in the usage file (below) except `cacheExpiresAt`.
+- `modelCacheState[]`: per model, `modelId` (string), `cacheExpiresAt` (string) and `cacheTtlSeconds` (number).
+- `promptCacheBreakState[]`: per model under `models.<MODEL>`, among others `prompt_tokens`, `frontier_tokens`, `cache_read`, `cache_write`, `tool_tokens` (numbers) and `system_segments[].tokens`; it also holds hashes, request ids and cache settings.
+- `accountingSnapshot`: the same figures as the usage file (below) in one object: `modelMetrics.<MODEL>`, `agentMetrics.main.modelMetrics.<MODEL>`, `agentMetrics.main.{totalNanoAiu,totalApiDurationMs}`, `aiCreditsStatus`, `currentModel`, `lastCallInputTokens`, `lastCallOutputTokens`, `codeChanges`, `providerModelMetrics[]`, and the file's session totals (`totalNanoAiu`, `totalPremiumRequestCost`, `totalUserRequests`, `totalApiDurationMs`, `tokenDetails`, `sessionStartTime`).
 
-The `tool` run added `tool.execution_start`, `tool.execution_complete` and `assistant.tool_call_delta` events; none of them carries usage fields. Of the `model.call_*` events, `model.call_finished` has only `dispatchDurationMs` (number) and `containsBuiltInFileEditRequest` (boolean); `model.call_start` and `model.call_final_result` have no usage-like fields. `assistant.message` has a `toolRequests` array and nothing else of use.
+The `tool` run added `tool.execution_start`, `tool.execution_complete` and `assistant.tool_call_delta` events; none carries a credit or billing figure. `tool.execution_complete` carries `data.toolTelemetry.metrics.{context_current_tokens, context_token_limit, result_token_count, resultLength, resultForLlmLength}` (numbers): context-size figures for the call, not billing usage. Of the `model.call_*` events, `model.call_finished` has only `dispatchDurationMs` (number) and `containsBuiltInFileEditRequest` (boolean); `model.call_start` and `model.call_final_result` have no usage-like fields. `assistant.message` has a `toolRequests` array and nothing else of use.
 
 ### The usage file (`--usage-output-file`)
 
@@ -70,7 +72,7 @@ The documented calls are `GET /users/{username}/settings/billing/ai_credit/usage
 
 ### What was not tested
 
-- The REST call with the `user` scope (the director ruled that Wheelhouse does not ask for it), so the month's total and the shape of a successful reply are unknown.
+- The month's total, so the shape of a successful reply is unknown.
 - Longer sessions, several models, sub-agents (`agentMetrics` had only `main`) and resumed sessions; whether the usage file is written when a session is stopped early.
 - The legacy billing platform's output.
 - Whether the amounts in the file agree with what GitHub bills.
@@ -80,8 +82,8 @@ The documented calls are `GET /users/{username}/settings/billing/ai_credit/usage
 - **Part 8 Task 2 (usage on the board).** The brief's "If the answer differs" paragraph applies: per-session figures exist, and the month's total is not reachable with this sign-in. Usage on Copilot shows each session's use only. The starter passes `--usage-output-file <path>` to every session and reads `totalNanoAiu` for credits, `tokenDetails.*.tokenCount` for tokens, and `totalPremiumRequestCost` for legacy requests; it falls back to the `session.usage_checkpoint` event, then to the `result` event's `usage.premiumRequests`, if the file is missing. It sums those across sessions itself.
 - **The board's wording.** The board says "this session's use" and "the sessions Wheelhouse started", and does not claim to show the person's whole month, because sessions the person starts by hand are not counted.
 - **Reading by field name.** Fields are read by name and a missing one shows as "not available", not as zero, because the file's layout is Copilot's and may change.
-- **The month's total** can be added later if the director chooses to give `gh` the `user` scope; the call and its docs link are above.
+- **The month's total** is not reachable with this sign-in, and the design does not show it.
 
 ## Needs the director
 
-Nothing now. The month's total stays deferred until the director decides to grant the `user` scope; they have ruled not to ask for it.
+Nothing now.
