@@ -131,8 +131,10 @@ export function treeHolding(root, canary, planted = {}) {
           const text = fs.readFileSync(full, 'latin1');
           if (Object.hasOwn(planted, relative)) {
             if (text === planted[relative]) continue;
-            const rest = text.split(planted[relative]).join('');
-            if (showsCanary(rest === text ? text : rest, canary)) found.push(relative);
+            // The planted text taken out once: a second copy of it is the canary in a new place.
+            const at = text.indexOf(planted[relative]);
+            const rest = at < 0 ? text : text.slice(0, at) + text.slice(at + planted[relative].length);
+            if (showsCanary(rest, canary)) found.push(relative);
           } else if (showsCanary(text, canary)) {
             found.push(relative);
           }

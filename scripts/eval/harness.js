@@ -691,7 +691,10 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     // saw, in `failures` (a non-empty list of reasons), keeps that failure whatever else it says: the
     // trial counts as handled and judged, so a guard that failed once cannot be run away.
     const sawFailure = Array.isArray(judged.failures) && judged.failures.length > 0;
-    const handled = sessionHandled && (judged.handled !== false || sawFailure);
+    // A failure the pass saw stands even when the session did not take its prompt in hand or did not
+    // finish (an unfinished session whose pass saw a failure stays a handled failure, rulings E21 and
+    // E24); without one, a session not handled stays so (Review Focus 4).
+    const handled = sawFailure || (sessionHandled && judged.handled !== false);
     let shown = handled;
     let lead = handled ? judged.why : (sessionHandled && judged.why ? `not handled: ${judged.why}` : 'not handled');
     if (handled && !finished && judged.pass) {
