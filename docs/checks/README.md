@@ -2,7 +2,7 @@
 
 # Design checks
 
-The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
+The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), and checks 54 to 72, which are the Copilot design's C1 to C19 (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, "Check numbers"), one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
 
 | # | Check | Answer | Note |
 |---|---|---|---|
