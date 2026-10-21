@@ -733,9 +733,10 @@ export function makeWaker({
     }
   }
 
-  // The sessions part of the adapter for the agent this computer runs for the project (its configuration's
-  // `agents` map; Claude Code when it names none), unless one was given.
-  const sessionsOf = () => sessions ?? sessionsOfProject(readProject(project)?.folder);
+  // The sessions part of the adapter for the agent this computer runs for the project (the `agents` map of the
+  // configuration from the default branch, which the mode and the models come from too; Claude Code when it
+  // names none), unless one was given.
+  const sessionsOf = () => sessions ?? sessionsOfProject(config);
 
   // Starts the session `call` describes (the adapter's { file, args, env, input, verbatim }) for `target`,
   // recording it as starting first and as running after. Resolves with the pid; the exit code settles `entries`.
@@ -795,6 +796,7 @@ export function makeWaker({
   // again here, so a grant goes to one run whatever windowsBuilds answers. At Guarded the worktree
   // is labelled first; if it can't be, the run gets the Ask rules (failing closed) and says so.
   const featureRules = async (work, worktree) => {
+    sessionsOf().checkFeature(config); // before anything is labelled or recorded
     let allowed;
     let runs = [];
     if (platform === 'win32') {

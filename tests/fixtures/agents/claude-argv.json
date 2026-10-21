@@ -519,6 +519,396 @@
     }
   },
   {
+    "case": "foreman-wake/darwin/direct/no-model",
+    "kind": "foreman-wake",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "-p",
+        "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json. First run: node '/fixture/plugin/scripts/foreman/wake.js' read /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Read"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json. First run: node '/fixture/plugin/scripts/foreman/wake.js' read /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "tools": [
+        "Read"
+      ]
+    }
+  },
+  {
+    "case": "feature-start/darwin/direct/no-model",
+    "kind": "feature-start",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "-p",
+        "Read .wheelhouse/feature/brief.md and follow it.",
+        "--session-id",
+        "a1b2c3d4-e5f6-4789-8abc-def012345678",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Bash(npm test:*)",
+        "Bash(npm run:*)",
+        "Bash(node:*)"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Read .wheelhouse/feature/brief.md and follow it.",
+      "sessionId": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+      "allowed": [
+        "Bash(npm test:*)",
+        "Bash(npm run:*)",
+        "Bash(node:*)"
+      ]
+    }
+  },
+  {
+    "case": "feature-resume/darwin/direct/no-model",
+    "kind": "feature-resume",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "-p",
+        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "--resume",
+        "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Bash(npm test:*)",
+        "Bash(npm run:*)",
+        "Bash(node:*)"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "sessionId": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "allowed": [
+        "Bash(npm test:*)",
+        "Bash(npm run:*)",
+        "Bash(node:*)"
+      ]
+    }
+  },
+  {
+    "case": "foreman-long/darwin/direct/no-model",
+    "kind": "foreman-long",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "--settings",
+        "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Read",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ],
+      "input": null,
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+      "pluginRoot": "/plugins/wheelhouse",
+      "tools": [
+        "Read",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ]
+    }
+  },
+  {
+    "case": "foreman-wake/darwin/direct/no-rules",
+    "kind": "foreman-wake",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "-p",
+        "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json. First run: node '/fixture/plugin/scripts/foreman/wake.js' read /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-a",
+        "--allowedTools",
+        "Read"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json. First run: node '/fixture/plugin/scripts/foreman/wake.js' read /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "tools": [
+        "Read"
+      ]
+    }
+  },
+  {
+    "case": "feature-start/darwin/direct/no-rules",
+    "kind": "feature-start",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "-p",
+        "Read .wheelhouse/feature/brief.md and follow it.",
+        "--session-id",
+        "a1b2c3d4-e5f6-4789-8abc-def012345678",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-b"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Read .wheelhouse/feature/brief.md and follow it.",
+      "sessionId": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+      "allowed": []
+    }
+  },
+  {
+    "case": "feature-resume/darwin/direct/no-rules",
+    "kind": "feature-resume",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "-p",
+        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "--resume",
+        "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-b"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "sessionId": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "allowed": []
+    }
+  },
+  {
+    "case": "foreman-long/darwin/direct/no-rules",
+    "kind": "foreman-long",
+    "platform": "darwin",
+    "shim": "direct",
+    "argv": {
+      "file": "claude",
+      "args": [
+        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "--settings",
+        "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-a",
+        "--allowedTools",
+        "Read",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ],
+      "input": null,
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "claude"
+      },
+      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+      "pluginRoot": "/plugins/wheelhouse",
+      "tools": [
+        "Read",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node '/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ]
+    }
+  },
+  {
     "case": "foreman-wake/win32/cmd/full",
     "kind": "foreman-wake",
     "platform": "win32",
@@ -1114,6 +1504,348 @@
   },
   {
     "case": "foreman-long/win32/cmd/unattended",
+    "kind": "foreman-long",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+      ],
+      "input": null,
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+      "pluginRoot": "C:\\plugins\\wheelhouse",
+      "tools": [
+        "Read",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ]
+    }
+  },
+  {
+    "case": "foreman-wake/win32/cmd/no-model",
+    "kind": "foreman-wake",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd -p --permission-mode acceptEdits --allowedTools Read\""
+      ],
+      "input": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "tools": [
+        "Read"
+      ]
+    }
+  },
+  {
+    "case": "feature-start/win32/cmd/no-model",
+    "kind": "feature-start",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits\""
+      ],
+      "input": "Read .wheelhouse/feature/brief.md and follow it.",
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Read .wheelhouse/feature/brief.md and follow it.",
+      "sessionId": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+      "allowed": []
+    }
+  },
+  {
+    "case": "feature-resume/win32/cmd/no-model",
+    "kind": "feature-resume",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits\""
+      ],
+      "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "sessionId": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "allowed": []
+    }
+  },
+  {
+    "case": "foreman-long/win32/cmd/no-model",
+    "kind": "foreman-long",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+      ],
+      "input": null,
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+      "pluginRoot": "C:\\plugins\\wheelhouse",
+      "tools": [
+        "Read",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ]
+    }
+  },
+  {
+    "case": "foreman-wake/win32/cmd/no-rules",
+    "kind": "foreman-wake",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd -p --permission-mode acceptEdits --model model-a --allowedTools Read\""
+      ],
+      "input": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "tools": [
+        "Read"
+      ]
+    }
+  },
+  {
+    "case": "feature-start/win32/cmd/no-rules",
+    "kind": "feature-start",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits --model model-b\""
+      ],
+      "input": "Read .wheelhouse/feature/brief.md and follow it.",
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Read .wheelhouse/feature/brief.md and follow it.",
+      "sessionId": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+      "allowed": []
+    }
+  },
+  {
+    "case": "feature-resume/win32/cmd/no-rules",
+    "kind": "feature-resume",
+    "platform": "win32",
+    "shim": "cmd",
+    "argv": {
+      "file": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits --model model-b\""
+      ],
+      "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "verbatim": true,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "cmd",
+        "file": "C:\\npm\\claude.cmd"
+      },
+      "prompt": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "sessionId": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "allowed": []
+    }
+  },
+  {
+    "case": "foreman-long/win32/cmd/no-rules",
     "kind": "foreman-long",
     "platform": "win32",
     "shim": "cmd",
@@ -1842,6 +2574,380 @@
   },
   {
     "case": "foreman-long/win32/direct/unattended",
+    "kind": "foreman-long",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "--settings",
+        "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-a",
+        "--allowedTools",
+        "Read",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ],
+      "input": null,
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+      "pluginRoot": "C:\\plugins\\wheelhouse",
+      "tools": [
+        "Read",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ]
+    }
+  },
+  {
+    "case": "foreman-wake/win32/direct/no-model",
+    "kind": "foreman-wake",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "-p",
+        "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Read"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "tools": [
+        "Read"
+      ]
+    }
+  },
+  {
+    "case": "feature-start/win32/direct/no-model",
+    "kind": "feature-start",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "-p",
+        "Read .wheelhouse/feature/brief.md and follow it.",
+        "--session-id",
+        "a1b2c3d4-e5f6-4789-8abc-def012345678",
+        "--permission-mode",
+        "acceptEdits"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Read .wheelhouse/feature/brief.md and follow it.",
+      "sessionId": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+      "allowed": []
+    }
+  },
+  {
+    "case": "feature-resume/win32/direct/no-model",
+    "kind": "feature-resume",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "-p",
+        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "--resume",
+        "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+        "--permission-mode",
+        "acceptEdits"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "sessionId": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "allowed": []
+    }
+  },
+  {
+    "case": "foreman-long/win32/direct/no-model",
+    "kind": "foreman-long",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "--settings",
+        "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Read",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ],
+      "input": null,
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {}
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
+      "pluginRoot": "C:\\plugins\\wheelhouse",
+      "tools": [
+        "Read",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",
+        "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)",
+        "Skill(wheelhouse:foreman)"
+      ]
+    }
+  },
+  {
+    "case": "foreman-wake/win32/direct/no-rules",
+    "kind": "foreman-wake",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "-p",
+        "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-a",
+        "--allowedTools",
+        "Read"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "foreman"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
+      "tools": [
+        "Read"
+      ]
+    }
+  },
+  {
+    "case": "feature-start/win32/direct/no-rules",
+    "kind": "feature-start",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "-p",
+        "Read .wheelhouse/feature/brief.md and follow it.",
+        "--session-id",
+        "a1b2c3d4-e5f6-4789-8abc-def012345678",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-b"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Read .wheelhouse/feature/brief.md and follow it.",
+      "sessionId": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+      "allowed": []
+    }
+  },
+  {
+    "case": "feature-resume/win32/direct/no-rules",
+    "kind": "feature-resume",
+    "platform": "win32",
+    "shim": "direct",
+    "argv": {
+      "file": "C:\\npm\\claude.exe",
+      "args": [
+        "-p",
+        "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+        "--resume",
+        "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "model-b"
+      ],
+      "input": "",
+      "verbatim": false,
+      "env": {
+        "PATH": "/bin"
+      }
+    },
+    "inputs": {
+      "config": {
+        "sessionMode": null,
+        "routing": {
+          "foreman": "model-a",
+          "builder": "model-b"
+        }
+      },
+      "env": {
+        "PATH": "/bin",
+        "WHEELHOUSE_ROLE": "front-desk",
+        "CLAUDECODE": "1",
+        "wheelhouse_role": "x"
+      },
+      "claude": {
+        "kind": "direct",
+        "file": "C:\\npm\\claude.exe"
+      },
+      "prompt": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
+      "sessionId": "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
+      "allowed": []
+    }
+  },
+  {
+    "case": "foreman-long/win32/direct/no-rules",
     "kind": "foreman-long",
     "platform": "win32",
     "shim": "direct",

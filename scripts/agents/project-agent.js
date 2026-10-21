@@ -23,31 +23,41 @@ export function sessionsFor(name) {
   return SESSIONS[name];
 }
 
-// The agent this computer runs for `project` (a folder), from the `agents` map in the project's
-// .claude/wheelhouse.json ({ "<computer id>": "copilot" }). A missing or unreadable file, or no
-// entry for the computer, gives 'claude-code'.
-export function agentOfProject(project, { computerId: id } = {}) {
-  try {
-    const config = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'wheelhouse.json'), 'utf8'));
-    const agents = config?.agents;
-    if (agents !== null && typeof agents === 'object' && !Array.isArray(agents) && typeof id === 'string' && Object.hasOwn(agents, id)) {
-      const name = agents[id];
-      if (typeof name === 'string' && name !== '') return name;
-    }
-  } catch {
-    // Missing or unreadable: the default.
+const isMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// The agent this computer runs, from the `agents` map of a project's configuration ({ "<computer id>":
+// "copilot" }). No map, or no entry for the computer, gives 'claude-code'.
+export function agentOfConfig(config, { computerId: id } = {}) {
+  const agents = config?.agents;
+  if (isMap(agents) && typeof id === 'string' && Object.hasOwn(agents, id)) {
+    const name = agents[id];
+    if (typeof name === 'string' && name !== '') return name;
   }
   return 'claude-code';
 }
 
-// The sessions part for the project whose main checkout is `folder` (null when the folder is not known:
-// the default agent). This computer's id is read from its own record; one that cannot be read gives the default.
-export function sessionsOfProject(folder) {
+// The same, read from the working copy: the `agents` map in `project`'s (a folder) .claude/wheelhouse.json.
+// For a caller that holds no configuration from the default branch (setup). A missing or unreadable file gives
+// 'claude-code'. The waker and the foreman's start never use this: they take the agent from the default
+// branch's configuration, as they take the mode and the models, never from the working copy.
+export function agentOfProject(project, options = {}) {
+  try {
+    return agentOfConfig(JSON.parse(fs.readFileSync(path.join(project, '.claude', 'wheelhouse.json'), 'utf8')), options);
+  } catch {
+    return 'claude-code';
+  }
+}
+
+// The sessions part for the project whose default-branch configuration is `config`. This computer's id is read
+// from its own record. When the id can't be read and the configuration has an `agents` map, which agent this
+// computer runs can't be told, so nothing is chosen (the caller keeps the wake); with no map, Claude Code.
+export function sessionsOfProject(config) {
   let id;
   try {
     id = computerId();
   } catch {
+    if (isMap(config?.agents)) throw new Error("This computer's id can't be read, so which agent the project runs here can't be told; no session is started");
     id = undefined;
   }
-  return sessionsFor(typeof folder === 'string' ? agentOfProject(folder, { computerId: id }) : 'claude-code');
+  return sessionsFor(agentOfConfig(config, { computerId: id }));
 }

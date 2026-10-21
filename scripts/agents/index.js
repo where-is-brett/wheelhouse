@@ -4,7 +4,7 @@ import claudeCode from '../../adapters/claude-code/index.js';
 import { AGENTS, noAdapter } from './project-agent.js';
 
 export { ADAPTER_PARTS, checkAdapter } from './contract.js';
-export { AGENTS, agentOfProject } from './project-agent.js';
+export { AGENTS, agentOfConfig, agentOfProject } from './project-agent.js';
 export { agentOfInput } from './of-input.js';
 
 const ADAPTERS = Object.freeze({ 'claude-code': claudeCode });

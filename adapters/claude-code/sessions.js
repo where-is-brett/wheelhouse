@@ -62,6 +62,14 @@ export function foremanCall({
   return { ...call, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman' } };
 }
 
+// Whether a feature session can be started under `config`: throws, in plain words, when its mode or its
+// builder's model can't be passed. The waker asks before it does anything for the session (labelling its
+// worktree, recording grants), so a refusal leaves nothing behind.
+export function checkFeature(config) {
+  modelOf(config, 'builder');
+  featureModeOf(config);
+}
+
 // A feature session: `lead` is the words that name which session it is. `allowed` are the allow rules
 // to pass to --allowedTools, when there are any.
 function featureCall({ lead, config, prompt, allowed = [], platform = process.platform, env = process.env, claude = null }) {
@@ -102,4 +110,4 @@ export function finalAnswer(stdout) {
   return last;
 }
 
-export default Object.freeze({ foremanCall, featureStartCall, featureResumeCall, finalAnswer });
+export default Object.freeze({ checkFeature, foremanCall, featureStartCall, featureResumeCall, finalAnswer });

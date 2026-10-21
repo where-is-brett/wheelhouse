@@ -163,7 +163,7 @@ export function foremanSession({
 }) {
   const checkout = readProject(project)?.folder;
   if (typeof checkout !== 'string') refuse("The project's folder isn't known on this computer");
-  const adapter = sessions ?? sessionsOfProject(checkout);
+  const adapter = sessions ?? sessionsOfProject(config);
   const model = config.routing?.foreman ?? null;
   if (model !== null && !isModelName(model)) refuse("The foreman's model can't be passed to claude");
   const settings = path.join(watcherFolder(project), 'foreman-settings.json');
