@@ -34,7 +34,7 @@ const GIT_WAIT_MS = 5 * 60 * 1000;
 // without these settings and with the submodule's own; the core settings that name a program set
 // to ones that do nothing (a failing `false`, or `cat`); and https certificates checked (a setting
 // given this way outranks the repository's own `http.sslVerify`).
-const FENCE = [
+export const FENCE = [
   ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'], ['maintenance.auto', 'false'],
   ['submodule.recurse', 'false'], ['fetch.recurseSubmodules', 'false'], ['push.recurseSubmodules', 'no'],
   ['core.sshCommand', 'false'], ['core.askPass', 'false'], ['core.editor', 'false'], ['core.pager', 'cat'],
@@ -171,7 +171,7 @@ export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', c
 }
 
 // git's subcommand among its arguments: the first that is neither an option nor the value of `-c`.
-function subcommandOf(args) {
+export function subcommandOf(args) {
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === '-c' || args[i] === '-C') i += 1;
     else if (!String(args[i]).startsWith('-')) return args[i];

@@ -10,12 +10,14 @@
 import { run as realRun, withoutGitVars } from './run.js';
 import path from 'node:path';
 import {
-  isolated, refuseUnlistedSettings, setupGitEnv, NULL_FILE,
+  isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, FENCE, NULL_FILE,
 } from '../setup/git.js';
 
 export { NULL_FILE };
 
 const GIT_WAIT_MS = 5 * 60 * 1000;
+// Variables that would outrank the fence's settings or point git elsewhere.
+const DROPPED = new Set(['GIT_CONFIG_PARAMETERS', 'GIT_DIR', 'GIT_EXEC_PATH', 'GIT_CONFIG', 'GIT_WORK_TREE']);
 const TRANSPORT = { https: 'https', local: 'https:file', ssh: 'https:ssh' };
 
 // How a remote's address is reached: 'local' for a path on this computer (absolute, relative, a
@@ -34,16 +36,24 @@ export function reachFor(url, { platform = process.platform } = {}) {
 export function safeGitEnv(env = {}, { reach = 'https' } = {}) {
   const transport = TRANSPORT[reach];
   if (transport === undefined) throw new Error(`safeGitEnv: unknown reach ${String(reach)}`);
-  return { ...isolated({ ...env, GIT_ALLOW_PROTOCOL: TRANSPORT.https }), GIT_ALLOW_PROTOCOL: transport };
-}
-
-// git's subcommand among its arguments: the first that is neither an option nor the value of `-c`/`-C`.
-function subcommandOf(args) {
-  for (let i = 0; i < args.length; i += 1) {
-    if (args[i] === '-c' || args[i] === '-C') i += 1;
-    else if (!String(args[i]).startsWith('-')) return args[i];
+  // Variables that outrank or redirect the fence are dropped, whatever the caller gave.
+  const kept = Object.fromEntries(Object.entries(env).filter(([name]) => !DROPPED.has(name.toUpperCase())));
+  // Every setting of the fence goes last, and a caller's setting of the same key is dropped, so the
+  // fence's value is the one git ends with.
+  const fenceKeys = new Set(FENCE.map(([key]) => key.toLowerCase()));
+  const count = Number.parseInt(kept.GIT_CONFIG_COUNT ?? '0', 10);
+  const own = [];
+  for (let i = 0; Number.isInteger(count) && i < count; i += 1) {
+    const key = kept[`GIT_CONFIG_KEY_${i}`];
+    if (!fenceKeys.has(String(key).toLowerCase())) own.push([key, kept[`GIT_CONFIG_VALUE_${i}`]]);
   }
-  return '';
+  for (const name of Object.keys(kept)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/i.test(name)) delete kept[name];
+  own.forEach(([key, value], i) => {
+    kept[`GIT_CONFIG_KEY_${i}`] = key;
+    kept[`GIT_CONFIG_VALUE_${i}`] = value;
+  });
+  kept.GIT_CONFIG_COUNT = String(own.length);
+  return { ...isolated({ ...kept, GIT_ALLOW_PROTOCOL: TRANSPORT.https }), GIT_ALLOW_PROTOCOL: transport };
 }
 
 // git in `cwd`: `git(args, options)` gives run's answer. `look` is 'each' (look at the repository's
@@ -63,10 +73,12 @@ export function safeGit({
       looked ??= lookNow();
       await looked;
     }
+    // The factory's folder and base environment stand: a call cannot give its own.
+    if ('cwd' in options || 'baseEnv' in options) throw new Error('safeGit: cwd and baseEnv are given once, to safeGit, not to a call');
     const { env: extra, ...rest } = options;
     const fenced = safeGitEnv({ ...env, ...extra }, { reach });
     const callEnv = workTree === null || subcommandOf(args) === 'init' ? fenced : { ...fenced, GIT_WORK_TREE: workTree };
-    return run(gitPath, args, { cwd, baseEnv: withoutGitVars(), timeoutMs, ...rest, env: callEnv });
+    return run(gitPath, args, { timeoutMs, ...rest, cwd, baseEnv: withoutGitVars(), env: callEnv });
   };
 }
 
@@ -94,5 +106,6 @@ export const RAW_GIT_EXCEPTIONS = Object.freeze([
   ['scripts/eval/front-desk.js', later(11)],
   ['scripts/eval/harness.js', later(11)],
   ['scripts/eval/run.js', later(11)],
+  ['scripts/setup/project-files.js', "setup's own fenced route (rulings R109 to R113)"],
   ['scripts/setup/tools.js', 'runs `git --version` only and reads no repository'],
 ].map(([file, reason]) => Object.freeze({ file, reason })));

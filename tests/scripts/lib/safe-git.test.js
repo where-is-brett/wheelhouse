@@ -100,6 +100,31 @@ test('a caller\'s options.env cannot lift the fence', async () => {
   assert.equal(seen[0].GIT_CONFIG_GLOBAL, NULL_FILE);
   assert.equal(seen[0].GIT_ALLOW_PROTOCOL, 'https');
   assert.equal(seen[0].KEEP, 'me');
+
+  // With real git: what git ends up with for core.hooksPath, whatever the caller passes.
+  const r = await repo();
+  const git2 = safeGit({ cwd: r.root, look: 'never' });
+  const hooksPath = async (env) => (await git2(['config', '--get', 'core.hooksPath'], { env })).stdout.trim();
+  assert.equal(await hooksPath({}), NULL_FILE);
+  assert.equal(await hooksPath({ GIT_CONFIG_PARAMETERS: "'core.hooksPath=/evil'" }), NULL_FILE);
+  assert.equal(await hooksPath({ GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: NULL_FILE, GIT_CONFIG_KEY_1: 'core.hooksPath', GIT_CONFIG_VALUE_1: '/evil' }), NULL_FILE);
+  assert.equal(await hooksPath({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'CORE.hookspath', GIT_CONFIG_VALUE_0: '/evil' }), NULL_FILE);
+  const other = fs.realpathSync.native(tempFolder('wh-safe-git-other-'));
+  await plain(['init', '-q', other], other);
+  const top = async (env, options) => (await git2(['rev-parse', '--show-toplevel'], { env, ...options })).stdout.trim();
+  assert.equal(await top({ GIT_DIR: path.join(other, '.git') }), r.root);
+  assert.equal(await top({ GIT_WORK_TREE: other }), r.root);
+  // A caller's own settings are kept.
+  const own = (await git2(['config', '--get', 'x.y'], { env: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'x.y', GIT_CONFIG_VALUE_0: 'kept' } })).stdout.trim();
+  assert.equal(own, 'kept');
+  // cwd and baseEnv are the factory's, never a call's.
+  await assert.rejects(git2(['status'], { cwd: other }), /given once/);
+  await assert.rejects(git2(['status'], { baseEnv: {} }), /given once/);
+  // The look and the run use the same cwd.
+  const cwds = [];
+  const g3 = safeGit({ cwd: r.root, run: (f, a, o) => { cwds.push(o.cwd); return run(f, a, o); } });
+  await g3(['status']);
+  assert.deepEqual(cwds, [r.root, r.root]);
 });
 
 test('workTree is git\'s working tree, except for init', async () => {
@@ -121,7 +146,7 @@ test('a hook named in config and a url.insteadOf are refused by name, and an ext
   await assert.rejects(safeGit({ cwd: r.root })(['fetch', 'https://example.invalid/x']), (e) => e.message === unlistedSettingsLine(['url./nowhere/.insteadof']));
   await plain(['config', '--unset-all', 'url./nowhere/.insteadOf'], r.root);
   // The fence alone (look never): the ext transport is not allowed, so nothing runs.
-  const got = await safeGit({ cwd: r.root, look: 'never' })(['fetch', `ext::sh -c 'echo ran >> "${r.mark}"'`, 'main']);
+  const got = await safeGit({ cwd: r.root, look: 'never' })(['-c', 'protocol.ext.allow=always', 'fetch', `ext::sh -c 'echo ran >> "${r.mark}"'`, 'main']);
   assert.notEqual(got.code, 0);
   assert.equal(fs.existsSync(r.mark), false);
 });
