@@ -14,11 +14,15 @@
 //                    and which events of Copilot's JSON output hold them, says which fields reach the agent.
 //   compact-log      only if markers gave a session id: that session resumed with the prompt /compact, the preCompact
 //                    hooks only logging. Shows whether a slash command can be given to -p, and what preCompact gets.
+//                    (Copilot says a compaction in its debug log, "Compacted conversation history", not in its JSON.)
 //   compact-fresh    only if compact-log did not fire preCompact: /compact as the first prompt of a new session.
-//   compact-block    only if preCompact fired: the resumed session again, the camelCase preCompact hook answering
-//                    {"decision":"block"}. Whether Copilot still compacts says whether it can block.
-//   compact-exit2    only if the compaction still happened: the same with the hook exiting 2.
-//   compact-block-pascal  only if it still happened: the PascalCase hook answering block.
+//   refill-N         before each block attempt, one resumed turn ("Reply with the single word ok") so the session has
+//                    history again: /compact on a session with none stops with "Nothing to compact", which would hide
+//                    whether a hook's block did anything.
+//   compact-block    the camelCase preCompact hook answering {"decision":"block"}. If compaction happens it did not block;
+//                    if Copilot says "Nothing to compact" the attempt proves nothing and the next one is tried.
+//   compact-exit2    the same with the hook exiting 2.
+//   compact-block-pascal  the PascalCase hook answering block.
 //   subagent         the agent is asked to run the custom agent probe-agent with the task tool, the subagentStart and
 //                    subagentStop hooks logging: does the stop input name the agent?
 // How a run is judged: from Copilot's own events in its JSON output and the hook log, never from words in the reply,
@@ -28,7 +32,7 @@
 //        node probes/60-other-hooks/run.js --dry-run    the same plumbing against a stand-in Copilot
 // Options: --bin <path>, --timeout-ms <n> (one run, default 300000), --results-dir <dir>
 //
-// Model runs: 3 to 7 (markers, compact-log, [compact-fresh], [compact-block, compact-exit2, compact-block-pascal],
+// Model runs: 3 to 10 (markers, compact-log, [compact-fresh], then up to three pairs of refill-N and a block attempt,
 // subagent); the first compaction run is only made when markers finishes with a session id. Everything it makes is
 // under the temporary folder and is removed when it ends, also on Ctrl-C. It never reads or writes the real
 // ~/.copilot or ~/.wheelhouse.
@@ -60,6 +64,7 @@ const FAKE = fileURLToPath(new URL('./fake-copilot.js', import.meta.url));
 
 export const AGENT_FILE = '---\nname: probe-agent\ndescription: Replies with the single word ok\n---\nReply with the single word ok and nothing else.\n';
 export const MARKER_PROMPT = 'Without using any tool, list every code you were given that starts with WHMARK, each on its own line with the sentence it came with. If you were given none, say only: none.';
+export const REFILL_PROMPT = 'Reply with the single word ok.';
 export const COMPACT_PROMPT = '/compact';
 export const SUBAGENT_PROMPT = 'Use the task tool to run the custom agent probe-agent with the prompt "Reply ok". Then say done.';
 
@@ -183,7 +188,20 @@ export function compactionEventTypes(events) {
   return [...new Set(events.filter((event) => /compact/i.test(String(event?.type))).map((event) => event.type))];
 }
 
-// Whether Copilot compacted: an event about compaction that says it finished.
+// Copilot 1.0.101 reports a compaction in its debug log ("Compacted conversation history"), not in the JSON output.
+export function compactedInLog(dir) {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return false; }
+  return names.some((name) => {
+    try { return /Compacted conversation history/.test(fs.readFileSync(path.join(dir, name), 'utf8')); } catch { return false; }
+  });
+}
+
+export function nothingToCompact(stderr) {
+  return /Nothing to compact/i.test(String(stderr));
+}
+
+// Whether Copilot compacted, if its JSON output has an event about compaction that says it finished (the real one has none).
 export function compactionHappened(events) {
   return events.some((event) => /compact/i.test(String(event?.type)) && /complete|finish|done|end/i.test(String(event.type)) && event.data?.success !== false);
 }
@@ -310,7 +328,7 @@ export async function main(argv = process.argv.slice(2), { out = console.log, se
         toolEvents: toolEvents(result.events), toolOutcomes: toolOutcomes(result.events),
         eventTypes: [...new Set(result.events.map((event) => event.type))],
         hookCounts: countHooks(hookEntries), hookEntries, copilotLogLines: copilotLogLines(logDir),
-        compaction: { preCompactRan: preCompactRan(hookEntries), eventTypes: compactionEventTypes(result.events), happened: compactionHappened(result.events) },
+        compaction: { preCompactRan: preCompactRan(hookEntries), eventTypes: compactionEventTypes(result.events), happened: compactionHappened(result.events) || compactedInLog(logDir), nothingToCompact: nothingToCompact(result.stderr) },
       };
       if (withMarkers) {
         run.markerOutcomes = markerOutcomes(markers, result.events, hookEntries);
@@ -325,27 +343,37 @@ export async function main(argv = process.argv.slice(2), { out = console.log, se
     const first = await runOne({ id: 'markers', prompt: MARKER_PROMPT, withMarkers: true });
     const session = first.sessionId;
 
-    // Compaction: a resumed session given /compact, then (if that fires nothing) a new session given it.
-    let compactor = null;
+    // Compaction: the markers session resumed and given /compact; /compact needs history, and a compaction empties it,
+    // so each blocking attempt is preceded by a resumed turn that gives the session something to compact again.
+    // If the resumed one fires no preCompact hook, a new session is given /compact (it only shows the hook fires).
+    let compactor = false;
     if (session) {
       const logged = await runOne({ id: 'compact-log', prompt: COMPACT_PROMPT, resume: session });
-      if (logged.compaction.preCompactRan) compactor = { resume: session };
+      if (logged.compaction.preCompactRan) compactor = true;
       else {
         results.notes.push('compact-log: the resumed session given /compact did not run any preCompact hook.');
         const fresh = await runOne({ id: 'compact-fresh', prompt: COMPACT_PROMPT });
-        if (fresh.compaction.preCompactRan) compactor = { resume: null };
+        if (fresh.compaction.preCompactRan) results.compactionTriggerable = true;
         else results.notes.push('compact-fresh: a new session given /compact did not run any preCompact hook either.');
+        results.notes.push('A new session has no history to compact, so blocking could not be tested from it.');
       }
+      results.firstCompactionHappened = logged.compaction.happened;
     } else {
       results.notes.push('The markers run gave no session id, so no resumed session was tried for /compact.');
     }
-    results.compactionTriggerable = compactor !== null;
+    results.compactionTriggerable = results.compactionTriggerable === true || compactor;
     if (compactor) {
+      let n = 0;
       for (const [id, compactMode, compactActs] of [['compact-block', 'block', 'camel'], ['compact-exit2', 'exit2', 'camel'], ['compact-block-pascal', 'block', 'pascal']]) {
-        const run = await runOne({ id, prompt: COMPACT_PROMPT, resume: compactor.resume, compactMode, compactActs });
-        if (!run.compaction.happened) { results.preCompactCanBlock = id; break; }
+        n += 1;
+        await runOne({ id: `refill-${n}`, prompt: REFILL_PROMPT, resume: session });
+        const run = await runOne({ id, prompt: COMPACT_PROMPT, resume: session, compactMode, compactActs });
+        if (run.compaction.happened) continue;
+        if (run.compaction.nothingToCompact) { results.notes.push(`${id}: Copilot said there was nothing to compact, so the block was not tested.`); continue; }
+        results.preCompactCanBlock = id;
+        break;
       }
-      if (results.preCompactCanBlock === null) results.notes.push('Compaction still happened with every blocking answer tried.');
+      if (results.preCompactCanBlock === null) results.notes.push('No blocking answer stopped a compaction that had history to compact.');
     }
 
     await runOne({ id: 'subagent', prompt: SUBAGENT_PROMPT });

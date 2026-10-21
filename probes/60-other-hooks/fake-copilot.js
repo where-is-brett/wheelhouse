@@ -5,8 +5,9 @@
 //   - it reads $COPILOT_HOME/hooks/*.json (flat entries, either spelling)
 //   - sessionStart and userPromptSubmitted hooks that answer additionalContext or hookSpecificOutput add to what it
 //     "reads"; a prompt mentioning WHMARK gets a reply listing the marker codes it read
-//   - a prompt of /compact runs the preCompact hooks; one that prints decision block or exits 2 stops the compaction,
-//     otherwise it prints compaction events; the /compact is only understood on a resumed session
+//   - a prompt of /compact runs the preCompact hooks; one that prints decision block or exits 2 stops the compaction
+//     (exit 1); with no history since the last compaction it says "Nothing to compact" (exit 1); otherwise it compacts,
+//     which shows only as a line in the debug log, and the history is empty again. Every other prompt adds history
 //   - a prompt naming the task tool runs the subagentStart and subagentStop hooks with an input that names the agent
 //   - every prompt run reports session id stand-in-session
 // Environment: WHEELHOUSE_FAKE_FAIL=1 makes a prompt run exit 1 without running any hook; WHEELHOUSE_FAKE_NO_COMPACT=1
@@ -76,18 +77,28 @@ if (first === '--version' || first === '-v') {
   take(fire('userPromptSubmitted', { prompt }));
   emit({ type: 'user.message', data: { content: prompt } });
   let reply = 'done';
+  const stateFile = path.join(home ?? cwd, 'fake-history.json');
+  const history = readJson(stateFile)?.messages ?? 0;
+  const saveHistory = (messages) => fs.writeFileSync(stateFile, JSON.stringify({ messages }));
   if (prompt.trim() === '/compact' && process.env.WHEELHOUSE_FAKE_NO_COMPACT !== '1') {
-    if (!resumed) {
-      reply = 'Nothing to compact.';
-    } else {
-      const answers = fire('preCompact', { trigger: 'manual' });
-      const blocked = answers.some((a) => a.status === 2 || a.json?.decision === 'block');
-      if (!blocked) {
-        emit({ type: 'session.compaction_start', data: {} });
-        emit({ type: 'session.compaction_complete', data: { success: true } });
-      }
-      reply = blocked ? 'Compaction blocked.' : 'Compacted.';
+    const answers = fire('preCompact', { trigger: 'manual' });
+    const blocked = answers.some((a) => a.status === 2 || a.json?.decision === 'block');
+    if (blocked) {
+      console.error('Error executing prompt: Error: Compaction blocked by a hook.');
+      process.exit(1);
     }
+    if (history === 0) {
+      console.error('Error executing prompt: Error: Nothing to compact.');
+      process.exit(1);
+    }
+    // Like Copilot 1.0.101, a compaction shows in its debug log and not in the JSON output.
+    const logDir = args[args.indexOf('--log-dir') + 1];
+    if (logDir) {
+      fs.mkdirSync(logDir, { recursive: true });
+      fs.appendFileSync(path.join(logDir, 'process.log'), '2026-10-21T00:00:00.000Z [INFO] Compacted conversation history {"messages_removed":1}\n');
+    }
+    saveHistory(0);
+    reply = 'Compacted.';
   } else if (/task tool/i.test(prompt)) {
     fire('subagentStart', { agentName: 'probe-agent' });
     emit({ type: 'tool.execution_start', data: { toolCallId: 't1', toolName: 'task' } });
@@ -97,6 +108,7 @@ if (first === '--version' || first === '-v') {
     const codes = read.map((text) => text.match(/WHMARK-\w+/)?.[0]).filter(Boolean);
     reply = codes.length ? codes.map((code, i) => `${code} line ${i}`).join('\n') : 'none';
   }
+  if (prompt.trim() !== '/compact') saveHistory(history + 1);
   emit({ type: 'assistant.message', data: { content: reply } });
   emit({ type: 'result', sessionId: 'stand-in-session', exitCode: 0, usage: { premiumRequests: 0 } });
 } else {

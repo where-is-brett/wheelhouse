@@ -9,7 +9,7 @@ import { tempFolder } from '../../helpers/homes.js';
 import { answerFor, promptOf, sentence } from '../../../probes/60-other-hooks/hook.js';
 import {
   CHECK, MARKER_PROMPT, SPELLINGS, assistantText, compactionEventTypes, compactionHappened, copilotArgs, countHooks, eventName, fieldTable,
-  hookCommand, hookFiles, main, makeMarkers, markerOutcomes, parseOptions, preCompactRan, projectFiles, subagentFindings, summarise,
+  compactedInLog, hookCommand, hookFiles, main, nothingToCompact, makeMarkers, markerOutcomes, parseOptions, preCompactRan, projectFiles, subagentFindings, summarise,
 } from '../../../probes/60-other-hooks/run.js';
 
 const unix = process.platform !== 'win32';
@@ -143,6 +143,18 @@ test('the analysis reads markers, compaction and subagent hooks from events and 
   assert.deepEqual(found.namedIn, ['camel:log:agentName']);
 });
 
+test('a compaction is read from the debug log, and "nothing to compact" from stderr', () => {
+  const logs = tempFolder('wh-logs60-');
+  assert.equal(compactedInLog(logs), false);
+  fs.writeFileSync(path.join(logs, 'a.log'), '[INFO] Persisted compaction checkpoint {}\n');
+  assert.equal(compactedInLog(logs), false);
+  fs.writeFileSync(path.join(logs, 'b.log'), '[INFO] Compacted conversation history {"messages_removed":1}\n');
+  assert.equal(compactedInLog(logs), true);
+  assert.equal(compactedInLog(path.join(logs, 'missing')), false);
+  assert.equal(nothingToCompact('Error executing prompt: Error: Nothing to compact.\n'), true);
+  assert.equal(nothingToCompact(''), false);
+});
+
 test('parseOptions takes the options and refuses what it does not know', () => {
   assert.deepEqual({ ...parseOptions(['--dry-run', '--bin', '/b', '--timeout-ms', '5', '--results-dir', '/r']) }, { dryRun: true, bin: '/b', timeoutMs: 5, resultsDir: '/r' });
   assert.equal(parseOptions([]).dryRun, false);
@@ -170,13 +182,15 @@ t('--dry-run runs the whole plan against the stand-in, writes the raw results, a
   assert.equal(file, path.join(resultsDir, `${CHECK}.dry-run.json`));
   assert.equal(results.error, null);
   // The stand-in compacts a resumed session and honours block and exit 2, so every compaction step runs and block works.
-  assert.deepEqual(results.runs.map((run) => run.id), ['markers', 'compact-log', 'compact-block', 'subagent']);
+  assert.deepEqual(results.runs.map((run) => run.id), ['markers', 'compact-log', 'refill-1', 'compact-block', 'subagent']);
   const byId = Object.fromEntries(results.runs.map((run) => [run.id, run]));
   assert.equal(results.compactionTriggerable, true);
   assert.equal(results.preCompactCanBlock, 'compact-block');
   assert.equal(byId['compact-log'].compaction.happened, true);
   assert.equal(byId['compact-block'].compaction.happened, false);
   assert.equal(byId['compact-block'].compaction.preCompactRan, true);
+  assert.equal(byId['compact-block'].compaction.nothingToCompact, false);
+  assert.equal(byId['compact-log'].compaction.eventTypes.length, 0);
   assert.ok(byId['compact-log'].args.includes('--resume=stand-in-session'));
   // Stand-in rule: additionalContext and hookSpecificOutput reach the reply; the other fields do not.
   const table = byId.markers.fieldTable;
@@ -190,7 +204,7 @@ t('--dry-run runs the whole plan against the stand-in, writes the raw results, a
   for (const run of results.runs) assert.ok(run.args.includes('--allow-all-tools'), run.id);
   assert.equal(results.copilotVersion.includes('stand-in'), true);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).runs.map((run) => run.id), results.runs.map((run) => run.id));
-  assert.match(printed[0], /4 model run/);
+  assert.match(printed[0], /5 model run/);
   assert.equal(printed.at(-1), `Raw results: ${file}`);
   for (const run of results.runs) assert.ok(!fs.existsSync(run.cwd), run.cwd);
   assert.ok(!fs.existsSync(path.dirname(results.bin)));
@@ -210,5 +224,5 @@ t('--dry-run tries a fresh /compact when the resumed one fires nothing, and says
   assert.deepEqual(results.runs.map((run) => run.id), ['markers', 'compact-log', 'compact-fresh', 'subagent']);
   assert.equal(results.compactionTriggerable, false);
   assert.equal(results.preCompactCanBlock, null);
-  assert.equal(results.notes.length, 2);
+  assert.equal(results.notes.length, 3);
 });
