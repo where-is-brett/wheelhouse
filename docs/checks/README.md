@@ -67,5 +67,5 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 68 | An approval on the host | Not run yet | None yet |
 | 69 | Lean's guards without Node.js | Yes, on the Mac, with two surprises | [69-guards-without-node.md](69-guards-without-node.md) |
 | 70 | Lean in VS Code with nothing added | Not run yet | None yet |
-| 71 | GitLab on the company's own servers | Not run yet | None yet |
+| 71 | GitLab on the company's own servers | Partly, at Free: a commit status posted with the project key can stand in for a pipeline that never ran; Premium's half Deferred, held for the director (H3) | [71-gitlab-self-managed.md](71-gitlab-self-managed.md) |
 | 72 | The add-on at Lean | Not run yet | None yet |

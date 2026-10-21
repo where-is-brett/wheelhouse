@@ -1,0 +1,121 @@
+{
+  "step": 7,
+  "title": "Unreachable",
+  "trials": [
+    {
+      "what": "docker stop on the GitLab container",
+      "result": "exit 0"
+    },
+    {
+      "what": "adapter.defaultBranch() while GitLab is stopped",
+      "result": "throws: glab api projects/wh71-probe%2Ftrial failed: ERROR Get \"https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial\": dial tcp [::1]:8929: connect: connection refused."
+    },
+    {
+      "what": "adapter.prState(1) while GitLab is stopped",
+      "result": "throws: glab mr view failed: ERROR Failed to get merge request 1: Get \"https://localhost:8929/api/v4/projects/wh71- probe%2Ftrial/merge_requests/<ID>?include_diverged_commits_count=true&include_rebase_in_progress=true&render_html=true\" : dial tcp [::1]:8929: connect: connection refused."
+    },
+    {
+      "what": "adapter.branchHead(\"main\") while GitLab is stopped",
+      "result": "throws: glab api projects/wh71-probe%2Ftrial/repository/branches/main failed: ERROR Get \"https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/repository/branches/main\": dial tcp [::1]:8929: connect: connection refused."
+    },
+    {
+      "what": "adapter.merge({ number: 1, sha }) while GitLab is stopped",
+      "result": "{\"returned\":{\"merged\":false,\"reason\":\"GitLab did not merge the merge request\"}}"
+    },
+    {
+      "what": "gitlabApi while GitLab is stopped",
+      "result": "throws: Could not reach GitLab"
+    },
+    {
+      "what": "git ls-remote while GitLab is stopped",
+      "result": "exit 128: fatal: unable to access 'https://localhost:8929/wh71-probe/trial.git/': Failed to connect to localhost port 8929 after 0 ms: Couldn't connect to server"
+    },
+    {
+      "what": "docker start on the GitLab container",
+      "result": "exit 0"
+    },
+    {
+      "what": "GitLab ready again after",
+      "result": "51 seconds"
+    },
+    {
+      "what": "docker restart on the runner container",
+      "result": "exit 0"
+    },
+    {
+      "what": "the instance runner is online again",
+      "result": "yes"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "root: GET /runners/all",
+      "request": {
+        "as": "root",
+        "method": "GET",
+        "path": "/runners/all?type=instance_type"
+      },
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "<ID>",
+            "description": "wheelhouse-probe-runner",
+            "ip_address": null,
+            "active": true,
+            "paused": false,
+            "is_shared": true,
+            "runner_type": "instance_type",
+            "name": null,
+            "online": true,
+            "created_by": {
+              "id": "<ID>",
+              "username": "root",
+              "public_email": null,
+              "name": "Administrator",
+              "state": "active",
+              "locked": false,
+              "avatar_url": "<URL>",
+              "web_url": "https://localhost:8929/root"
+            },
+            "created_at": "<TIMESTAMP>",
+            "status": "online",
+            "job_execution_status": "active"
+          }
+        ]
+      }
+    }
+  ],
+  "commands": [
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  Get \"https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial\": dial tcp [::1]:8929: connect: connection refused."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr view 1 -R wh71-probe/trial --output json",
+      "exitCode": 1,
+      "output": "{\"error\":{\"message\":\"failed to get merge request 1: Get \\\"https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>?include_diverged_commits_count=true\\u0026include_rebase_in_progress=true\\u0026render_html=true\\\": dial tcp [::1]:8929: connect: connection refused\"}}\n\n          \n   ERROR  \n          \n  Failed to get merge request 1: Get \"https://localhost:8929/api/v4/projects/wh71-                                    \n  probe%2Ftrial/merge_requests/<ID>?include_diverged_commits_count=true&include_rebase_in_progress=true&render_html=true\"\n  : dial tcp [::1]:8929: connect: connection refused."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab api projects/wh71-probe%2Ftrial/repository/branches/main",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  Get \"https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/repository/branches/main\": dial tcp [::1]:8929:      \n  connect: connection refused."
+    },
+    {
+      "label": "the adapter as maintainer runs glab",
+      "command": "glab mr merge 1 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  Failed to get merge request 1: Get \"https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>\":    \n  dial tcp [::1]:8929: connect: connection refused."
+    },
+    {
+      "label": "git ls-remote",
+      "command": "git ls-remote --heads https://localhost:8929/wh71-probe/trial.git",
+      "exitCode": 128,
+      "output": "fatal: unable to access 'https://localhost:8929/wh71-probe/trial.git/': Failed to connect to localhost port 8929 after 0 ms: Couldn't connect to server"
+    }
+  ]
+}

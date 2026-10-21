@@ -1,0 +1,529 @@
+{
+  "step": 3,
+  "title": "The project key",
+  "trials": [
+    {
+      "what": "the group setting resource_access_token_creation_allowed, as the group stands",
+      "result": "true"
+    },
+    {
+      "what": "makeProjectKey as the maintainer, setting on",
+      "result": "created (a Developer-level key, one day, scopes api and write_repository)"
+    },
+    {
+      "what": "who the key is",
+      "result": "HTTP 200, a bot user named like project_<id>_bot_<suffix>, bot=true"
+    },
+    {
+      "what": "PUT /groups/:id with resource_access_token_creation_allowed=false",
+      "result": "HTTP 200; the group's JSON does not carry the field; the setting reads true afterwards"
+    },
+    {
+      "what": "the setting switched off (written in the database, as the Permissions checkbox \"Allow group and project access tokens\" would write it)",
+      "result": "false"
+    },
+    {
+      "what": "makeProjectKey as the maintainer, setting off",
+      "result": "refused with Wheelhouse's message: GitLab refused the request for a project key (HTTP 400)"
+    },
+    {
+      "what": "POST /projects/:id/access_tokens as the maintainer, setting off",
+      "result": "HTTP 400, body {\"message\":\"400 Bad request - User does not have permission to create project access token\"}"
+    },
+    {
+      "what": "GET /projects/:id/access_tokens as the maintainer, setting off",
+      "result": "HTTP 200"
+    },
+    {
+      "what": "the key made before, used while the setting is off",
+      "result": "HTTP 200"
+    },
+    {
+      "what": "the setting switched back on",
+      "result": "true"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "maintainer: POST /projects/<ID>/access_tokens",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/access_tokens",
+        "body": {
+          "name": "wh71-project-key",
+          "scopes": [
+            "api",
+            "write_repository"
+          ],
+          "access_level": 30,
+          "expires_at": "<DATE>"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "name": "wh71-project-key",
+          "revoked": false,
+          "created_at": "<TIMESTAMP>",
+          "description": null,
+          "scopes": [
+            "api",
+            "write_repository"
+          ],
+          "user_id": "<ID>",
+          "last_used_at": null,
+          "last_used_ips": [],
+          "active": true,
+          "granular": false,
+          "expires_at": "<DATE>",
+          "access_level": 30,
+          "resource_type": "project",
+          "resource_id": "<ID>",
+          "token": "<TOKEN>"
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/access_tokens",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/access_tokens"
+      },
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "<ID>",
+            "name": "wh71-project-key",
+            "revoked": false,
+            "created_at": "<TIMESTAMP>",
+            "description": null,
+            "scopes": [
+              "api",
+              "write_repository"
+            ],
+            "user_id": "<ID>",
+            "last_used_at": null,
+            "last_used_ips": [],
+            "active": true,
+            "granular": false,
+            "expires_at": "<DATE>",
+            "access_level": 30,
+            "resource_type": "project",
+            "resource_id": "<ID>"
+          }
+        ]
+      }
+    },
+    {
+      "label": "bot: GET /user",
+      "request": {
+        "as": "bot",
+        "method": "GET",
+        "path": "/user"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "username": "project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+          "public_email": null,
+          "name": "wh71-project-key",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "<URL>",
+          "web_url": "https://localhost:8929/project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+          "created_at": "<TIMESTAMP>",
+          "bio": "",
+          "location": "",
+          "linkedin": "",
+          "twitter": "",
+          "discord": "",
+          "website_url": "",
+          "github": "",
+          "job_title": "",
+          "pronouns": null,
+          "organization": "",
+          "bot": true,
+          "work_information": null,
+          "local_time": null,
+          "last_sign_in_at": null,
+          "confirmed_at": "<TIMESTAMP>",
+          "last_activity_on": "<DATE>",
+          "email": "<EMAIL>",
+          "theme_id": "<ID>",
+          "color_scheme_id": "<ID>",
+          "projects_limit": 100000,
+          "current_sign_in_at": null,
+          "identities": [],
+          "can_create_group": true,
+          "can_create_project": true,
+          "two_factor_enabled": false,
+          "external": false,
+          "private_profile": false,
+          "commit_email": "<EMAIL>",
+          "preferred_language": "en",
+          "shared_runners_minutes_limit": null,
+          "extra_shared_runners_minutes_limit": null,
+          "scim_identities": []
+        }
+      }
+    },
+    {
+      "label": "root: PUT /groups/<ID>",
+      "request": {
+        "as": "root",
+        "method": "PUT",
+        "path": "/groups/<ID>",
+        "body": {
+          "resource_access_token_creation_allowed": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "web_url": "https://localhost:8929/groups/wh71-probe",
+          "name": "Wheelhouse probe 71",
+          "path": "wh71-probe",
+          "description": null,
+          "visibility": "private",
+          "share_with_group_lock": false,
+          "require_two_factor_authentication": false,
+          "two_factor_grace_period": 48,
+          "project_creation_level": "developer",
+          "auto_devops_enabled": null,
+          "subgroup_creation_level": "maintainer",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "mentions_disabled": null,
+          "lfs_enabled": true,
+          "archived": false,
+          "math_rendering_limits_enabled": true,
+          "lock_math_rendering_limits_enabled": false,
+          "crm_enabled": true,
+          "resource_access_token_notify_inherited": false,
+          "lock_resource_access_token_notify_inherited": false,
+          "default_branch": null,
+          "default_branch_protection": 2,
+          "avatar_url": null,
+          "request_access_enabled": true,
+          "full_name": "Wheelhouse probe 71",
+          "full_path": "wh71-probe",
+          "created_at": "<TIMESTAMP>",
+          "parent_id": null,
+          "organization_id": "<ID>",
+          "shared_runners_setting": "enabled",
+          "max_artifacts_size": null,
+          "marked_for_deletion_on": null,
+          "ldap_cn": null,
+          "ldap_access": null,
+          "wiki_access_level": "enabled",
+          "runners_token": "<TOKEN>",
+          "enabled_git_access_protocol": "all",
+          "prevent_sharing_groups_outside_hierarchy": false,
+          "shared_runners_minutes_limit": null,
+          "extra_shared_runners_minutes_limit": null,
+          "prevent_forking_outside_group": null,
+          "service_access_tokens_expiration_enforced": true,
+          "membership_lock": false,
+          "otherFields": [
+            "default_branch_protection_defaults",
+            "duo_namespace_access_rules",
+            "shared_with_groups",
+            "projects",
+            "shared_projects"
+          ]
+        }
+      }
+    },
+    {
+      "label": "root: GET /groups/<ID>",
+      "request": {
+        "as": "root",
+        "method": "GET",
+        "path": "/groups/<ID>"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "web_url": "https://localhost:8929/groups/wh71-probe",
+          "name": "Wheelhouse probe 71",
+          "path": "wh71-probe",
+          "description": null,
+          "visibility": "private",
+          "share_with_group_lock": false,
+          "require_two_factor_authentication": false,
+          "two_factor_grace_period": 48,
+          "project_creation_level": "developer",
+          "auto_devops_enabled": null,
+          "subgroup_creation_level": "maintainer",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "mentions_disabled": null,
+          "lfs_enabled": true,
+          "archived": false,
+          "math_rendering_limits_enabled": true,
+          "lock_math_rendering_limits_enabled": false,
+          "crm_enabled": true,
+          "resource_access_token_notify_inherited": false,
+          "lock_resource_access_token_notify_inherited": false,
+          "default_branch": null,
+          "default_branch_protection": 2,
+          "avatar_url": null,
+          "request_access_enabled": true,
+          "full_name": "Wheelhouse probe 71",
+          "full_path": "wh71-probe",
+          "created_at": "<TIMESTAMP>",
+          "parent_id": null,
+          "organization_id": "<ID>",
+          "shared_runners_setting": "enabled",
+          "max_artifacts_size": null,
+          "marked_for_deletion_on": null,
+          "ldap_cn": null,
+          "ldap_access": null,
+          "wiki_access_level": "enabled",
+          "runners_token": "<TOKEN>",
+          "enabled_git_access_protocol": "all",
+          "prevent_sharing_groups_outside_hierarchy": false,
+          "shared_runners_minutes_limit": null,
+          "extra_shared_runners_minutes_limit": null,
+          "prevent_forking_outside_group": null,
+          "service_access_tokens_expiration_enforced": true,
+          "membership_lock": false,
+          "otherFields": [
+            "default_branch_protection_defaults",
+            "duo_namespace_access_rules",
+            "shared_with_groups",
+            "projects",
+            "shared_projects"
+          ]
+        }
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/access_tokens",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/access_tokens",
+        "body": {
+          "name": "wh71-refused-key",
+          "scopes": [
+            "api",
+            "write_repository"
+          ],
+          "access_level": 30,
+          "expires_at": "<DATE>"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "message": "400 Bad request - User does not have permission to create project access token"
+        }
+      }
+    },
+    {
+      "label": "maintainer: POST /projects/<ID>/access_tokens",
+      "request": {
+        "as": "maintainer",
+        "method": "POST",
+        "path": "/projects/<ID>/access_tokens",
+        "body": {
+          "name": "wh71-raw",
+          "scopes": [
+            "api"
+          ],
+          "access_level": 30,
+          "expires_at": "<DATE>"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "message": "400 Bad request - User does not have permission to create project access token"
+        }
+      }
+    },
+    {
+      "label": "maintainer: GET /projects/<ID>/access_tokens",
+      "request": {
+        "as": "maintainer",
+        "method": "GET",
+        "path": "/projects/<ID>/access_tokens"
+      },
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "<ID>",
+            "name": "wh71-project-key",
+            "revoked": false,
+            "created_at": "<TIMESTAMP>",
+            "description": null,
+            "scopes": [
+              "api",
+              "write_repository"
+            ],
+            "user_id": "<ID>",
+            "last_used_at": "<TIMESTAMP>",
+            "last_used_ips": [],
+            "active": true,
+            "granular": false,
+            "expires_at": "<DATE>",
+            "access_level": 30,
+            "resource_type": "project",
+            "resource_id": "<ID>"
+          }
+        ]
+      }
+    },
+    {
+      "label": "bot: GET /projects/<ID>",
+      "request": {
+        "as": "bot",
+        "method": "GET",
+        "path": "/projects/<ID>"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "<ID>",
+          "description": null,
+          "name": "trial",
+          "name_with_namespace": "Wheelhouse probe 71 / trial",
+          "path": "trial",
+          "path_with_namespace": "wh71-probe/trial",
+          "created_at": "<TIMESTAMP>",
+          "default_branch": "main",
+          "tag_list": [],
+          "topics": [],
+          "ssh_url_to_repo": "git@localhost:wh71-probe/trial.git",
+          "http_url_to_repo": "https://localhost:8929/wh71-probe/trial.git",
+          "web_url": "https://localhost:8929/wh71-probe/trial",
+          "readme_url": "https://localhost:8929/wh71-probe/trial/-/blob/main/README.md",
+          "forks_count": 0,
+          "avatar_url": null,
+          "star_count": 0,
+          "last_activity_at": "<TIMESTAMP>",
+          "visibility": "private",
+          "namespace": {
+            "id": "<ID>",
+            "name": "Wheelhouse probe 71",
+            "path": "wh71-probe",
+            "kind": "group",
+            "full_path": "wh71-probe",
+            "parent_id": null,
+            "avatar_url": null,
+            "web_url": "https://localhost:8929/groups/wh71-probe"
+          },
+          "_links": {
+            "self": "https://localhost:8929/api/v4/projects/<ID>",
+            "issues": "https://localhost:8929/api/v4/projects/<ID>/issues",
+            "merge_requests": "https://localhost:8929/api/v4/projects/<ID>/merge_requests",
+            "repo_branches": "https://localhost:8929/api/v4/projects/<ID>/repository/branches",
+            "labels": "https://localhost:8929/api/v4/projects/<ID>/labels",
+            "events": "https://localhost:8929/api/v4/projects/<ID>/events",
+            "members": "https://localhost:8929/api/v4/projects/<ID>/members",
+            "cluster_agents": "https://localhost:8929/api/v4/projects/<ID>/cluster_agents"
+          },
+          "marked_for_deletion_at": null,
+          "marked_for_deletion_on": null,
+          "packages_enabled": true,
+          "empty_repo": false,
+          "archived": false,
+          "resolve_outdated_diff_discussions": false,
+          "container_expiration_policy": {
+            "cadence": "1d",
+            "enabled": false,
+            "keep_n": 10,
+            "older_than": "90d",
+            "name_regex": ".*",
+            "name_regex_keep": null,
+            "next_run_at": "<TIMESTAMP>"
+          },
+          "repository_object_format": "sha1",
+          "issues_enabled": true,
+          "merge_requests_enabled": true,
+          "wiki_enabled": true,
+          "jobs_enabled": true,
+          "snippets_enabled": true,
+          "container_registry_enabled": true,
+          "service_desk_enabled": false,
+          "service_desk_address": null,
+          "can_create_merge_request_in": true,
+          "issues_access_level": "enabled",
+          "repository_access_level": "enabled",
+          "merge_requests_access_level": "enabled",
+          "forking_access_level": "enabled",
+          "wiki_access_level": "enabled",
+          "builds_access_level": "enabled",
+          "snippets_access_level": "enabled",
+          "pages_access_level": "private",
+          "analytics_access_level": "enabled",
+          "container_registry_access_level": "enabled",
+          "security_and_compliance_access_level": "private",
+          "releases_access_level": "enabled",
+          "environments_access_level": "enabled",
+          "feature_flags_access_level": "enabled",
+          "infrastructure_access_level": "enabled",
+          "monitor_access_level": "enabled",
+          "model_experiments_access_level": "private",
+          "model_registry_access_level": "private",
+          "package_registry_access_level": "enabled",
+          "emails_disabled": false,
+          "emails_enabled": true,
+          "show_diff_preview_in_email": true,
+          "shared_runners_enabled": true,
+          "lfs_enabled": true,
+          "creator_id": "<ID>",
+          "import_status": "none",
+          "open_issues_count": 0,
+          "description_html": "",
+          "updated_at": "<TIMESTAMP>",
+          "ci_config_path": null,
+          "public_jobs": true,
+          "shared_with_groups": [],
+          "only_allow_merge_if_pipeline_succeeds": false,
+          "allow_merge_on_skipped_pipeline": null,
+          "request_access_enabled": true,
+          "only_allow_merge_if_all_discussions_are_resolved": false,
+          "remove_source_branch_after_merge": true,
+          "printing_merge_request_link_enabled": true,
+          "merge_method": "merge",
+          "squash_option": "default_off",
+          "automatic_rebase_enabled": false,
+          "enforce_auth_checks_on_uploads": true,
+          "suggestion_commit_message": null,
+          "merge_commit_template": null,
+          "squash_commit_template": null,
+          "mr_default_title_template": null,
+          "issue_branch_template": null,
+          "warn_about_potentially_unwanted_characters": true,
+          "autoclose_referenced_issues": true,
+          "max_artifacts_size": null,
+          "requirements_enabled": false,
+          "requirements_access_level": "enabled",
+          "security_and_compliance_enabled": true,
+          "compliance_frameworks": [],
+          "permissions": {
+            "project_access": {
+              "access_level": 30,
+              "notification_level": 3
+            },
+            "group_access": null
+          },
+          "cicd_catalog_enabled": false
+        }
+      }
+    }
+  ],
+  "commands": []
+}

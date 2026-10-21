@@ -1,0 +1,167 @@
+{
+  "step": 2,
+  "title": "Sign-in",
+  "trials": [
+    {
+      "what": "glab auth login --hostname --stdin --insecure-storage",
+      "result": "exit 0: ✓ Logged in as wh-maintainer ✓ Stored your credentials in the configuration file."
+    },
+    {
+      "what": "glab auth status afterwards",
+      "result": "exit 0: localhost:8929 ✓ Logged in to localhost:8929 as wh-maintainer (<PROBE>/state/scratch/glab-login/config.yml) ✓ Git operations for localhost:8929 configured to use ssh protocol. ✓ API calls for localhost:8929 are made over https protocol. ✓ REST API Endpoint: https://localhost:8929/api/v4/ ✓ GraphQL Endpoint: https://localhost:8929/api/graphql/ ✓ Token found in configuration file (plaintext): ************************** ! To store this token more securely, run glab auth login --hostname localhost:8929 to move it into the operating system keyring."
+    },
+    {
+      "what": "where glab kept the token",
+      "result": "config.yml: 1 time(s), under \"token\", mode 600"
+    },
+    {
+      "what": "files in the config folder",
+      "result": "aliases.yml, config.lock, config.yml"
+    },
+    {
+      "what": "glab using the stored sign-in alone",
+      "result": "signed in as wh-maintainer"
+    },
+    {
+      "what": "glab auth login --hostname, not at a terminal",
+      "result": "exit 1: ERROR '--Stdin', '--token', '--job-token', '--web', or '--device' required when not running interactively."
+    },
+    {
+      "what": "glab auth login --hostname --web with no OAuth application",
+      "result": "exit 1: - Signing into localhost:8929 ERROR Set 'client_id' first with `glab config set client_id <client_id> -g --host localhost:8929`."
+    },
+    {
+      "what": "glab auth login --hostname --device with no OAuth application",
+      "result": "exit 1: - Signing into localhost:8929 ERROR Set 'client_id' first with `glab config set client_id <client_id> -g --host localhost:8929`."
+    },
+    {
+      "what": "port 7171 afterwards",
+      "result": "free (glab was stopped)"
+    },
+    {
+      "what": "glab config set client_id",
+      "result": "exit 0"
+    },
+    {
+      "what": "glab auth login --hostname --web with an OAuth application the root made (scopes api, read_user, write_repository, openid, profile; not confidential)",
+      "result": "exit 1, still waiting for a person, stopped by the timeout: - Signing into localhost:8929 It asked to open https://localhost:8929/oauth/authorize?client_id=[hidden]&code_challenge=<VALUE>&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A7171%2Fauth%2Fredirect&response_type=code&scope=openid+profile+read_user+write_repository+api&state=<VALUE>."
+    },
+    {
+      "what": "glab auth login --hostname --device with an OAuth application the root made (scopes api, read_user, write_repository, openid, profile; not confidential)",
+      "result": "exit 1: - Signing into localhost:8929 ERROR Failed to start device authorization: oauth2: \"access_denied\" \"The resource owner or authorization server denied the request.\"."
+    },
+    {
+      "what": "port 7171 afterwards",
+      "result": "free (glab was stopped)"
+    }
+  ],
+  "exchanges": [
+    {
+      "label": "root: POST /applications",
+      "request": {
+        "as": "root",
+        "method": "POST",
+        "path": "/applications",
+        "body": {
+          "name": "wheelhouse-probe-glab",
+          "redirect_uri": "http://localhost:7171/auth/redirect",
+          "scopes": "api read_user write_repository openid profile",
+          "confidential": false
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "<ID>",
+          "application_id": "<ID>",
+          "application_name": "wheelhouse-probe-glab",
+          "callback_url": "http://localhost:7171/auth/redirect",
+          "confidential": false,
+          "scopes": [
+            "api",
+            "read_user",
+            "write_repository",
+            "openid",
+            "profile"
+          ],
+          "secret": "<TOKEN>"
+        }
+      }
+    }
+  ],
+  "commands": [
+    {
+      "label": "glab config set ca_cert",
+      "command": "glab config set ca_cert <PROBE>/state/tls/ca.pem --host localhost:8929",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "glab auth login with the token on standard input",
+      "command": "glab auth login --hostname localhost:8929 --stdin --insecure-storage",
+      "exitCode": 0,
+      "output": "✓ Logged in as wh-maintainer\n✓ Stored your credentials in the configuration file."
+    },
+    {
+      "label": "glab auth status",
+      "command": "glab auth status --hostname localhost:8929",
+      "exitCode": 0,
+      "output": "localhost:8929\n  ✓ Logged in to localhost:8929 as wh-maintainer (<PROBE>/state/scratch/glab-login/config.yml)\n  ✓ Git operations for localhost:8929 configured to use ssh protocol.\n  ✓ API calls for localhost:8929 are made over https protocol.\n  ✓ REST API Endpoint: https://localhost:8929/api/v4/\n  ✓ GraphQL Endpoint: https://localhost:8929/api/graphql/\n  ✓ Token found in configuration file (plaintext): **************************\n  ! To store this token more securely, run glab auth login --hostname localhost:8929 to move it into the operating system keyring."
+    },
+    {
+      "label": "glab api user from the stored sign-in",
+      "command": "glab api user",
+      "exitCode": 0,
+      "output": "<URL>"
+    },
+    {
+      "label": "glab config set ca_cert",
+      "command": "glab config set ca_cert <PROBE>/state/tls/ca.pem --host localhost:8929",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "glab auth login with nothing else, not at a terminal",
+      "command": "glab auth login --hostname localhost:8929 --insecure-storage",
+      "exitCode": 1,
+      "output": "ERROR  \n          \n  '--Stdin', '--token', '--job-token', '--web', or '--device' required when not running interactively."
+    },
+    {
+      "label": "glab config set ca_cert",
+      "command": "glab config set ca_cert <PROBE>/state/tls/ca.pem --host localhost:8929",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "glab auth login --web with no OAuth application",
+      "command": "glab auth login --hostname localhost:8929 --insecure-storage --web",
+      "exitCode": 1,
+      "output": "- Signing into localhost:8929\n          \n   ERROR  \n          \n  Set 'client_id' first with `glab config set client_id <client_id> -g --host localhost:8929`."
+    },
+    {
+      "label": "glab auth login --device with no OAuth application",
+      "command": "glab auth login --hostname localhost:8929 --insecure-storage --device",
+      "exitCode": 1,
+      "output": "- Signing into localhost:8929\n          \n   ERROR  \n          \n  Set 'client_id' first with `glab config set client_id <client_id> -g --host localhost:8929`."
+    },
+    {
+      "label": "glab config set client_id",
+      "command": "glab config set client_id <application id> --host localhost",
+      "exitCode": 0,
+      "output": ""
+    },
+    {
+      "label": "glab auth login --web with an OAuth application the root made (scopes api, read_user, write_repository, openid, profile; not confidential)",
+      "command": "glab auth login --hostname localhost:8929 --insecure-storage --web",
+      "exitCode": 1,
+      "timedOut": true,
+      "output": "- Signing into localhost:8929"
+    },
+    {
+      "label": "glab auth login --device with an OAuth application the root made (scopes api, read_user, write_repository, openid, profile; not confidential)",
+      "command": "glab auth login --hostname localhost:8929 --insecure-storage --device",
+      "exitCode": 1,
+      "output": "- Signing into localhost:8929\n          \n   ERROR  \n          \n  Failed to start device authorization: oauth2: \"access_denied\" \"The resource owner or authorization server denied the\n  request.\"."
+    }
+  ]
+}
