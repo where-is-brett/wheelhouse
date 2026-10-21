@@ -6,7 +6,7 @@
 //   pascal   probe-pascal.json   the same names with a capital letter (SessionStart, UserPromptSubmitted ...)
 //   claude   probe-claude.json   UserPromptSubmit, Claude Code's own name for the prompt event
 // The home's hooks folder is used (not the project's) because check 56 found it loads in every folder.
-// Runs, each a fresh Copilot with the scratch home (all with --allow-all-tools and --trust-folder, no tools wanted):
+// Runs, each a fresh Copilot with the scratch home (all with --allow-all-tools, no tools wanted; --trust-folder except on a resumed run, which Copilot refuses):
 //   markers          sessionStart and userPromptSubmitted hooks each answer with a marker sentence carrying a code
 //                    of its own, through one field each (additionalContext, hookSpecificOutput.additionalContext,
 //                    systemMessage, plain stdout, and for the prompt event modifiedPrompt), under each spelling.
@@ -133,8 +133,9 @@ export function copilotArgs({ prompt, logDir, resume }) {
   return [
     '-p', prompt,
     '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps',
-    '--allow-all-tools', '--trust-folder', '--no-ask-user',
-    ...(resume ? [`--resume=${resume}`] : []),
+    '--allow-all-tools', '--no-ask-user',
+    // Copilot refuses --trust-folder together with --resume; the person's hooks folder loads without trust (check 56).
+    ...(resume ? [`--resume=${resume}`] : ['--trust-folder']),
     '--log-dir', logDir, '--log-level', 'debug',
   ];
 }

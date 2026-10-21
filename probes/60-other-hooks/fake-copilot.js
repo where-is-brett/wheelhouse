@@ -56,6 +56,10 @@ if (first === '--version' || first === '-v') {
     console.error('Not signed in (stand-in).');
     process.exit(1);
   }
+  if (args.includes('--trust-folder') && args.some((arg) => arg.startsWith('--resume'))) {
+    console.error("error: the argument '--trust-folder' cannot be used with '--resume [<value>]'");
+    process.exit(1);
+  }
   const original = args[args.indexOf('-p') + 1];
   let prompt = original;
   const resumed = args.some((arg) => arg.startsWith('--resume'));

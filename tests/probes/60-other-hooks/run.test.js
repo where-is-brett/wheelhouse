@@ -85,9 +85,10 @@ test('the hook files register logging for every event and markers on the two eve
   assert.equal(hookCommand({ log: '/l', tag: 'x', event: 'e' }).endsWith(' x e log'), true);
 });
 
-test('the arguments allow all tools, trust the folder, and add --resume only for a resumed run', () => {
+test('the arguments allow all tools, trust the folder (not on a resumed run, which Copilot refuses), and add --resume only for a resumed run', () => {
   const args = copilotArgs({ prompt: 'p', logDir: '/logs' });
   for (const flag of ['--allow-all-tools', '--trust-folder', '--no-ask-user', '--output-format']) assert.ok(args.includes(flag), flag);
+  assert.ok(!copilotArgs({ prompt: 'p', logDir: '/l', resume: 'abc' }).includes('--trust-folder'));
   assert.equal(args[args.indexOf('--log-level') + 1], 'debug');
   assert.ok(!args.some((arg) => arg.startsWith('--resume')));
   assert.ok(copilotArgs({ prompt: 'p', logDir: '/l', resume: 'abc' }).includes('--resume=abc'));
