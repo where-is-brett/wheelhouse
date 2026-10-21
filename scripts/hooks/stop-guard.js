@@ -17,16 +17,17 @@ import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import claudeCode from '../../adapters/claude-code/index.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 // ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
 // nothing, and every tool it loads still meets this guard and the lineage hold.
-export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite', 'ToolSearch'];
+export const READ_TOOLS = claudeCode.tools.read;
 // They only halt work that is already running.
-export const HALT_TOOLS = ['TaskStop', 'KillShell'];
+export const HALT_TOOLS = claudeCode.tools.halt;
 // Claude Code's own notification, so the courier's wake for STOP can still reach the director's
 // phone. It only tells them. It is kept out of READ_TOOLS, so the lineage hold still holds it.
-export const NOTIFY_TOOLS = ['PushNotification'];
+export const NOTIFY_TOOLS = claudeCode.tools.notify;
 export const SANDBOX_NEEDED = 'Locked needs the sandbox on in this project\'s settings';
 export const DENIED = 'STOP is on: only reading, reporting and the runbook carry on';
 
