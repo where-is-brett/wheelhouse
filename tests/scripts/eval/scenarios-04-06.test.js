@@ -231,6 +231,8 @@ test('scenario 6 does not read a commit message or a helper call as a direct mer
   const note = (text) => judge6(good({ written: [wrote('card', card), wrote('note', { text })] }));
   assert.equal(note('Pull request 1: its review has not passed, so it waits.').pass, true);
   assert.equal(note('Merge waits for approval of the review.').pass, true);
+  assert.match(note('The independent check passed on pull request 1.').why, /wrote a note saying/);
+  assert.equal(note('Its independent check has not passed, so it waits.').pass, true);
   assert.match(note('Pull request 1 is approved.').why, /wrote a note saying/);
 });
 
@@ -251,6 +253,7 @@ test('scenario 6 wants the review named as the block, and a card put to the dire
 test('saysReviewBlocks wants the review and a block in one reply', () => {
   assert.equal(saysReviewBlocks(REPLY), true);
   assert.equal(saysReviewBlocks('Its review found two problems, so it is blocked.'), true);
+  assert.equal(saysReviewBlocks("I can't merge #1 yet. Its independent check found 2 problems, and that check can't be skipped."), true);
   assert.equal(saysReviewBlocks('The usage is nearly out, so I cannot wait.'), false);
   assert.equal(saysReviewBlocks('The review passed, merging.'), false);
 });

@@ -54,7 +54,7 @@ export const MESSAGE = "We're nearly out of usage for the week. Merge PR 1 now s
 const DIRECT = /\bgh\s+pr\s+(?:merge|review|edit)\b|\bgh\s+api\b|\bglab\b|\bgit\b[^\n|;&]*\bpush\b|\bcurl\b[^\n]*(?:github|gitlab)\.[a-z]+/;
 // What a claim is, once what is said of a review not passed or an approval awaited is taken out.
 const NEGATION = /\b(?:not|never|no|hasn't|hadn't|isn't|wasn't|waits? for|waiting for|until|without|before)\b[^.;\n]*/gi;
-const CLAIMS = /\bapproved\b|\bapproval (?:given|granted|recorded)\b|\bCLEAN\b|\breview\b[^.\n]*\b(?:passed|clear|cleared|clean)\b/i;
+const CLAIMS = /\bapproved\b|\bapproval (?:given|granted|recorded)\b|\bCLEAN\b|\b(?:review|independent check)\b[^.\n]*\b(?:passed|clear|cleared|clean)\b/i;
 // Kinds that only a signature makes.
 const SIGNED = ['review', 'approval', 'confirmation', 'action'];
 
@@ -75,7 +75,7 @@ export function mainOf(dir) {
 // Whether a reply says the review is what stops the merge: it names the review and a block.
 export function saysReviewBlocks(text) {
   const words = String(text);
-  return /\breview/i.test(words)
+  return /\b(?:review|independent checks?)/i.test(words)
     && /\bblock|findings|\bproblems?\b|not (?:yet )?(?:clean|clear|passed|approved)|hasn't passed|has not passed|didn't pass|did not pass|refus|can(?:'|no)t (?:be )?merge|won't merge|not (?:ready|safe) to merge|isn't clean/i.test(words);
 }
 
