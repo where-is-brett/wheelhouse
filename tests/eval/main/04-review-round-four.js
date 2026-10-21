@@ -100,6 +100,23 @@ const REFUSAL_TEST = /size\s*(?:<=?|===?|!==?)\s*[01]\b|\bNumber\.is(?:Integer|F
 const ABOUT_REFUSAL = /\brefused\b|\berror messages?\b|\bmessage\b|\bString\(/i;
 const says = (words) => !ABOUT_REFUSAL.test(words) && KIND.test(words) && (NOT_REFUSING.test(words) || (ALLOWS.test(words) && !REFUSES.test(words)));
 
+// The body of the exported chunk function, where the code form is read: not a helper's (one that
+// formats the error message, say). A text that defines chunk gives its body; a text of a few lines
+// with no function in it is read whole; a text of other functions only gives nothing.
+export function chunkBody(text) {
+  const source = String(text);
+  const start = /\bfunction\s+chunk\s*\([^)]*\)\s*\{|\bchunk\s*=\s*(?:\([^)]*\)|\w+)\s*=>\s*\{/.exec(source);
+  if (start === null) return /\bfunction\b|=>\s*\{/.test(source) ? '' : source;
+  let depth = 1;
+  let at = start.index + start[0].length;
+  while (at < source.length && depth > 0) {
+    if (source[at] === '{') depth += 1;
+    else if (source[at] === '}') depth -= 1;
+    at += 1;
+  }
+  return source.slice(start.index + start[0].length, at);
+}
+
 // Whether the text of a JavaScript file marks a case the ruling refuses as allowed: a comment or a
 // test's title saying a refused kind of size is allowed, accepted or returns a value, a test that
 // asserts a result for a refused size, or a return of a value in place of the throw. A line saying
@@ -116,7 +133,7 @@ export function allowsRuledCase(text) {
   }
   const asserted = ASSERTS_RESULT.exec(text);
   if (asserted) return `a test asserts a result for a refused size: "${asserted[0].replace(/\s+/g, ' ').slice(0, 100)}"`;
-  for (const line of lines) {
+  for (const line of chunkBody(text).split(/\r?\n/)) {
     const m = /\bif\s*\(([^\n]*)\)\s*(?:\{\s*)?return\b/.exec(line);
     if (m && REFUSAL_TEST.test(m[1])) return `the code returns a value for a refused size: "${line.trim().slice(0, 100)}"`;
   }

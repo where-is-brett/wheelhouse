@@ -143,6 +143,9 @@ test('allowsRuledCase reads comments, tests and returns, and leaves refusals and
   }
   assert.equal(allowsRuledCase('// Shows a refused size for the error message. Never throws: String() fails for\n'), null, 'the formatter of the message');
   assert.notEqual(allowsRuledCase('// chunk never throws for a size of 0\n'), null);
+  assert.match(allowsRuledCase('export function chunk(items, size) {\n  if (size <= 0) return [];\n  return [items];\n}\n'), /returns/);
+  const helper = "function describeSize(size) {\n  if (typeof size === 'number') return Object.is(size, -0) ? '-0' : String(size);\n  return typeof size;\n}\nexport function chunk(items, size) {\n  if (!Number.isInteger(size) || size < 1) throw new RangeError(describeSize(size));\n  return [];\n}\n";
+  assert.equal(allowsRuledCase(helper), null, 'a helper that formats the message');
   // Correct code and its history are not flagged.
   for (const fine of [
     '// Throws a RangeError unless size is a whole number of at least 1\n',
