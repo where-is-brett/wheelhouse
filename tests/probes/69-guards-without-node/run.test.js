@@ -40,6 +40,7 @@ t('guard.sh lets an allow answer through, refuses a deny answer, and logs that N
     assert.equal(records[0].node, '');
     assert.equal(records[0].tool, 'view');
     assert.equal(records[0].curl_exit, '0');
+    assert.equal(records[0].status, '200');
     assert.ok(!/node/.test(records[0].path.replace(/wh-guard69-/, '')), records[0].path);
     // The server was given the hook input.
     assert.equal(answers.state.requests.length, 1);
@@ -80,11 +81,17 @@ t('guard.sh refuses when nothing answers, on an error status, on an empty 200, o
     // An empty 200, a 200 holding neither answer, and a 200 holding both a deny and an allow.
     await denied('/empty', /not exactly allow/);
     await denied('/web-post', /not exactly allow/);
+    // A 302 that carries the exact allow answer, and an answer with whitespace inside its strings.
+    await denied('/redirect', /status was not 200/);
+    await denied('/split', /not exactly allow/);
     await denied('/mixed', /not exactly allow/);
     // A URL that is not one also refuses.
     ({ result } = await runGuard({ url: 'not a url' }));
     assert.equal(JSON.parse(result.stdout).permissionDecision, 'deny');
-    // Whitespace around an otherwise exact allow answer is fine.
+    // Whitespace around an otherwise exact allow answer is trimmed, and a plain allow answer allows.
+    const padded = await runGuard({ url: `http://127.0.0.1:${answers.port}/padded` });
+    assert.equal(padded.records[0].decision, 'allow');
+    assert.equal(padded.result.stdout, '');
     answers.state.answer = 'allow';
     const ok = await runGuard({ url: `http://127.0.0.1:${answers.port}/answer` });
     assert.equal(ok.records[0].decision, 'allow');

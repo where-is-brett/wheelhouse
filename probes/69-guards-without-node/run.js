@@ -127,12 +127,14 @@ export function startAnswerServer() {
     request.on('data', (chunk) => { body += chunk; });
     request.on('end', () => {
       state.requests.push({ at: new Date().toISOString(), method: request.method, url: request.url, contentType: request.headers['content-type'] ?? null, body: body.slice(0, 2000) });
-      // /error, /empty and /mixed are for the tests: an error status, an empty 200, and an answer holding both a deny and an allow.
-      const status = request.url === '/error' ? 500 : 200;
+      // /error, /redirect, /empty, /mixed, /padded and /split are for the tests: an error status and a 302 that carry the allow answer, an empty 200, an answer holding both a deny and an allow, the allow answer with whitespace around it, and one with whitespace inside its strings.
+      const status = request.url === '/error' ? 500 : request.url === '/redirect' ? 302 : 200;
       const text = request.url === '/answer' ? ANSWERS[state.answer] ?? ANSWERS.deny
         : request.url === '/web-pre' ? ANSWERS.deny
           : request.url === '/empty' ? ''
-            : request.url === '/error' ? ANSWERS.allow
+            : request.url === '/error' || request.url === '/redirect' ? ANSWERS.allow
+              : request.url === '/padded' ? `  \n${ANSWERS.allow}\r\n `
+                : request.url === '/split' ? '{"permission Decision":"al low"}'
               : request.url === '/mixed' ? '{"permissionDecision":"deny","why":{"permissionDecision":"allow"}}'
                 : '{}';
       response.writeHead(status, { 'content-type': 'application/json' });
