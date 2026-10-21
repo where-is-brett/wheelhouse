@@ -1,7 +1,8 @@
 // probes/69-guards-without-node/fake-copilot.js
 // A stand-in for Copilot CLI, used only by `run.js --dry-run` so the probe's plumbing (the PATH without Node.js,
 // the hook files, the answer server, the verdicts, the results file) can be tested where the real Copilot can't
-// run. Its rules are made up from the hooks reference and are not evidence of anything:
+// run. Its rules are made up from the hooks reference and are not evidence of anything. The real run
+// (docs/checks/69-guards-without-node.md) found the opposite of the two web-hook rules below:
 //   - it reads $COPILOT_HOME/hooks/*.json and, for a prompt that names the view tool, runs the preToolUse hooks,
 //     then reads README.md, then runs the postToolUse hooks
 //   - a command hook that exits non-zero, or prints permissionDecision deny, stops the call; one that runs past

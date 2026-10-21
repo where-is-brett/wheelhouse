@@ -57,7 +57,7 @@ t('guard.sh lets an allow answer through, refuses a deny answer, and logs that N
   }
 });
 
-t('guard.sh refuses when nothing answers, when the answer is an error, and when it is not one it knows', async () => {
+t('guard.sh refuses when nothing answers, on an error status, on an empty 200, on a mixed answer and on anything else', async () => {
   const port = await deadPort();
   let { result, records } = await runGuard({ url: `http://127.0.0.1:${port}/answer` });
   assert.equal(result.code, 0);
@@ -68,23 +68,36 @@ t('guard.sh refuses when nothing answers, when the answer is an error, and when 
 
   const answers = await startAnswerServer();
   try {
-    // /web-post answers {}: a 200 that is neither allow nor deny.
-    ({ result, records } = await runGuard({ url: `http://127.0.0.1:${answers.port}/web-post` }));
-    assert.equal(JSON.parse(result.stdout).permissionDecision, 'deny');
-    assert.match(JSON.parse(result.stdout).permissionDecisionReason, /not one the guard understands/);
-    // A URL the server does not answer sensibly at all (a bad address) also refuses.
+    const denied = async (route, reason) => {
+      const got = await runGuard({ url: `http://127.0.0.1:${answers.port}${route}` });
+      assert.equal(got.result.code, 0, route);
+      assert.equal(JSON.parse(got.result.stdout).permissionDecision, 'deny', route);
+      assert.match(JSON.parse(got.result.stdout).permissionDecisionReason, reason, route);
+      assert.equal(got.records[0].decision, 'deny', route);
+    };
+    // A 500 whose body is the allow answer: the error status alone refuses.
+    await denied('/error', /No answer/);
+    // An empty 200, a 200 holding neither answer, and a 200 holding both a deny and an allow.
+    await denied('/empty', /not exactly allow/);
+    await denied('/web-post', /not exactly allow/);
+    await denied('/mixed', /not exactly allow/);
+    // A URL that is not one also refuses.
     ({ result } = await runGuard({ url: 'not a url' }));
     assert.equal(JSON.parse(result.stdout).permissionDecision, 'deny');
+    // Whitespace around an otherwise exact allow answer is fine.
+    answers.state.answer = 'allow';
+    const ok = await runGuard({ url: `http://127.0.0.1:${answers.port}/answer` });
+    assert.equal(ok.records[0].decision, 'allow');
   } finally {
     answers.server.close();
   }
 });
 
-t('guard.sh keeps only Copilot\'s own variables, and hides the ones that look like secrets', async () => {
+t('guard.sh keeps only Copilot\'s own variables, and shows the values of the listed names only', async () => {
   const port = await deadPort();
-  const { records } = await runGuard({ url: `http://127.0.0.1:${port}/x`, env: { COPILOT_CLI_BINARY_VERSION: '9.9.9', COPILOT_API_TOKEN: 'sekret', OTHER_THING: 'nope' } });
+  const { records } = await runGuard({ url: `http://127.0.0.1:${port}/x`, env: { COPILOT_CLI_BINARY_VERSION: '9.9.9', COPILOT_AUTH: 'sekret', OTHER_THING: 'nope' } });
   assert.match(records[0].copilot_env, /COPILOT_CLI_BINARY_VERSION=9\.9\.9/);
-  assert.match(records[0].copilot_env, /COPILOT_API_TOKEN=\[set\]/);
+  assert.match(records[0].copilot_env, /COPILOT_AUTH=\[set\]/);
   assert.ok(!/sekret|OTHER_THING|nope/.test(JSON.stringify(records)));
 });
 
@@ -166,7 +179,7 @@ t('--dry-run runs the whole plan against the stand-in with no Node.js on the PAT
   assert.equal(byId['guard-allow'].serverCounts['/answer'], 1);
   assert.equal(byId['guard-down'].guardRecords[0].decision, 'deny');
   assert.notEqual(byId['guard-down'].guardRecords[0].curl_exit, '0');
-  // The web hooks, as the stand-in treats them (made-up rules): the preToolUse one is not called, the postToolUse one is.
+  // The web hooks, as the stand-in treats them (made-up rules; the real run found the opposite, see docs/checks/69-guards-without-node.md): the preToolUse one is not called, the postToolUse one is.
   assert.equal(byId['web-up'].serverCounts['/web-pre'], undefined);
   assert.equal(byId['web-up'].serverCounts['/web-post'], 1);
   assert.equal(byId['web-up'].env.COPILOT_HOOK_ALLOW_LOCALHOST, '1');
