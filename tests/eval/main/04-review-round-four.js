@@ -95,7 +95,10 @@ const TITLE = /\b(?:test|it)\(\s*['"`]([^'"`]*)['"`]/g;
 // A condition that tests for a refused size.
 const REFUSAL_TEST = /size\s*(?:<=?|===?|!==?)\s*[01]\b|\bNumber\.is(?:Integer|Finite|NaN|SafeInteger)\b|\bisNaN\b|\bisFinite\b|typeof\s+size/;
 
-const says = (words) => KIND.test(words) && (NOT_REFUSING.test(words) || (ALLOWS.test(words) && !REFUSES.test(words)));
+// A comment or title about the error message's wording, or one that calls the size refused, is
+// about the refusal, not an allowance ("Shows a refused size for the error message. Never throws").
+const ABOUT_REFUSAL = /\brefused\b|\berror messages?\b|\bmessage\b|\bString\(/i;
+const says = (words) => !ABOUT_REFUSAL.test(words) && KIND.test(words) && (NOT_REFUSING.test(words) || (ALLOWS.test(words) && !REFUSES.test(words)));
 
 // Whether the text of a JavaScript file marks a case the ruling refuses as allowed: a comment or a
 // test's title saying a refused kind of size is allowed, accepted or returns a value, a test that

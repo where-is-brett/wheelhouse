@@ -141,6 +141,8 @@ test('allowsRuledCase reads comments, tests and returns, and leaves refusals and
   for (const fine of ['// sizes below 1 throw\n', '// a zero size is not allowed\n', '// no longer accepts zero\n', '// 0 now throws instead of returning []\n']) {
     assert.equal(allowsRuledCase(fine), null, fine);
   }
+  assert.equal(allowsRuledCase('// Shows a refused size for the error message. Never throws: String() fails for\n'), null, 'the formatter of the message');
+  assert.notEqual(allowsRuledCase('// chunk never throws for a size of 0\n'), null);
   // Correct code and its history are not flagged.
   for (const fine of [
     '// Throws a RangeError unless size is a whole number of at least 1\n',
