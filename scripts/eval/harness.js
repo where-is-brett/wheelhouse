@@ -553,6 +553,25 @@ async function commitSetup(dir) {
   await git('-c', 'user.name=Wheelhouse eval', '-c', 'user.email=eval@wheelhouse.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'Scenario set-up');
 }
 
+// Writes a trial's record and answers where, and under which trial. A record is never written over
+// (ruling F105): when another run has saved this trial's record since, the next free trial number
+// is taken.
+function saveRecord({ home, date, scenario, variant, trial, record }) {
+  let saved = trial;
+  let file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (;;) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ ...record, trial: saved }, null, 2) + '\n', { flag: 'wx' });
+      return { file, trial: saved };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      saved += 1;
+      file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
+    }
+  }
+}
+
 // Runs one trial of one scenario in one variant: makes the scratch project, runs
 // the scenario's setup(dir, variant), commits it, runs the session, asks the
 // scenario to judge it, writes the whole record to the evaluations folder in
@@ -571,13 +590,46 @@ async function commitSetup(dir) {
 // (runSession). A scenario's own `extraArgs` go to the session's command line, and its `offered`
 // tools are taken off the denied list (runSession). Resolves with the verdict, its reasons,
 // the record's file, the trial it was saved under, whether the session was handled, its tokens
-// and its one printed line.
-export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
+// and its one printed line. `beforePrompt({ scenario, variant, dir, context, runner, home })`, when given,
+// runs after the set-up and may answer { why, usage?, evidence? } to refuse the trial (see above).
+export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession, beforePrompt }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
   let context = {};
   try {
     context = (await scenario.setup(project.dir, variant)) ?? {};
     await commitSetup(project.dir);
+    // A check the runner makes after set-up and before the prompt (run.js, needsSandbox). When it
+    // refuses, the session is never started: the trial is a failed one that was not handled, with
+    // the check's reason and the tokens the check itself spent.
+    const refusal = typeof beforePrompt === 'function'
+      ? await beforePrompt({ scenario, variant, dir: project.dir, context, runner, home })
+      : null;
+    if (refusal) {
+      const spent = refusal.usage ?? { input: 0, output: 0 };
+      const why = refusal.why;
+      const stopped = {
+        id: scenario.id,
+        ...(scenario.leg ? { leg: scenario.leg } : {}),
+        title: scenario.title,
+        variant,
+        trial,
+        date,
+        pass: false,
+        why,
+        handled: false,
+        exitCode: null,
+        usage: spent,
+        mainSessionUsage: spent,
+        models: [],
+        subagents: [],
+        finalText: '',
+        ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
+        ...(refusal.evidence ? { check: refusal.evidence } : {}),
+        events: [],
+      };
+      const kept = saveRecord({ home, date, scenario, variant, trial, record: stopped });
+      return { pass: false, why, file: kept.file, trial: kept.trial, handled: false, usage: spent, line: describeRun({ id: scenarioName(scenario), variant, pass: false, why, usage: spent }) };
+    }
     const prompts = Array.isArray(scenario.prompts) ? scenario.prompts : [scenario.prompt];
     const turns = [];
     let resume = null;
@@ -672,21 +724,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
       events: session.events,
     };
-    // A record is never written over (ruling F105): when another run has saved this trial's record
-    // since, the next free trial number is taken, and the answer says which.
-    let saved = trial;
-    let file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    for (;;) {
-      try {
-        fs.writeFileSync(file, JSON.stringify({ ...record, trial: saved }, null, 2) + '\n', { flag: 'wx' });
-        break;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        saved += 1;
-        file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
-      }
-    }
+    const { file, trial: saved } = saveRecord({ home, date, scenario, variant, trial, record });
     return { pass, why, file, trial: saved, handled: shown, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
   } finally {
     try {

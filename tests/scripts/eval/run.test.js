@@ -2,11 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  findScenario, findScenarioFiles, loadScenario, loadScenarios, main, parseTap,
+  checkSandbox, findScenario, findScenarioFiles, loadScenario, loadScenarios, main, parseTap, sandboxProbe, sandboxSettingsProblems,
 } from '../../../scripts/eval/run.js';
+import { summarise } from '../../../scripts/eval/summary.js';
 import { parseArgs, runScenario, runSession, scenarioName, today } from '../../../scripts/eval/harness.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -481,4 +483,177 @@ test('parseTap reads each test\'s name and result, nested ones and Windows line 
     { test: 'skipped', pass: false, skipped: true },
     { test: 'a back\\slash', pass: true },
   ]);
+});
+
+// ---------------------------------------------------------- needsSandbox (rulings E29, E30)
+
+const sandboxScenario = (over = {}) => ({
+  id: 95,
+  title: 'a scenario that needs the sandbox',
+  safety: true,
+  needsSandbox: true,
+  setup: async () => {},
+  prompt: 'x',
+  variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } },
+  pass: () => ({ pass: true, why: 'nothing bad happened' }),
+  ...over,
+});
+
+// A project folder holding the settings files given: { 'settings.json': {…} }.
+function projectWith(files = {}) {
+  const dir = tempFolder('eval-project-');
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  for (const [name, settings] of Object.entries(files)) fs.writeFileSync(path.join(dir, '.claude', name), JSON.stringify(settings));
+  return dir;
+}
+
+test('the settings check: the session\'s own settings switch the sandbox on, and the project\'s files may not undo it', () => {
+  assert.deepEqual(sandboxSettingsProblems({ dir: projectWith() }), []);
+  assert.deepEqual(sandboxSettingsProblems({ dir: projectWith({ 'settings.json': { sandbox: { enabled: true } } }) }), []);
+  const off = sandboxSettingsProblems({ dir: projectWith({ 'settings.local.json': { sandbox: { enabled: false } } }) });
+  assert.match(off.join(';'), /settings\.local\.json switches the sandbox off/);
+  const loose = sandboxSettingsProblems({ dir: projectWith({ 'settings.json': { sandbox: { allowUnsandboxedCommands: true } } }) });
+  assert.match(loose.join(';'), /settings\.json lets a command run outside the sandbox/);
+  const broken = tempFolder('eval-project-');
+  fs.mkdirSync(path.join(broken, '.claude'));
+  fs.writeFileSync(path.join(broken, '.claude', 'settings.json'), '{ not json');
+  assert.match(sandboxSettingsProblems({ dir: broken }).join(';'), /settings\.json cannot be read/);
+  // A socket in the real Wheelhouse home is refused by the session's settings, and so by the check.
+  const real = path.join(os.homedir(), '.wheelhouse', 'helper.sock');
+  assert.match(sandboxSettingsProblems({ dir: projectWith(), context: { helper: { address: real } } }).join(';'), /cannot be made/);
+});
+
+test('the sandbox check holds only when the settings hold and the probe ran the command without the canary', async () => {
+  const dir = projectWith();
+  const scenario = sandboxScenario();
+  const asked = [];
+  const probeOf = (answer) => async (args) => { asked.push(args.variant); return answer; };
+  assert.equal(await checkSandbox({ scenario, variant: 'with', dir }, { probe: probeOf({ ran: true, leaked: false, usage: { input: 5, output: 1 } }) }), null);
+  const leaked = await checkSandbox({ scenario, variant: 'without', dir }, { probe: probeOf({ ran: true, leaked: true, usage: { input: 5, output: 1 } }) });
+  assert.match(leaked.why, /^no sandbox: a command read a file the sandbox should deny/);
+  assert.deepEqual(leaked.usage, { input: 5, output: 1 });
+  const idle = await checkSandbox({ scenario, variant: 'with', dir }, { probe: probeOf({ ran: false, leaked: false }) });
+  assert.match(idle.why, /^no sandbox: the probe session did not run the command/);
+  assert.deepEqual(idle.usage, { input: 0, output: 0 });
+  // Settings that undo the sandbox end the check before any session is started.
+  asked.length = 0;
+  const off = await checkSandbox({ scenario, variant: 'with', dir: projectWith({ 'settings.json': { sandbox: { enabled: false } } }) }, { probe: probeOf({ ran: true, leaked: false }) });
+  assert.match(off.why, /^no sandbox: .*switches the sandbox off/);
+  assert.deepEqual(asked, []);
+});
+
+test('the probe puts a fresh canary under the denied folder, asks a session to cat it, reads the events, and removes the file', async () => {
+  const home = tempFolder('eval-home-');
+  const denied = path.join(home, '.wheelhouse-evals');
+  const seen = [];
+  const canaries = ['a'.repeat(32), 'b'.repeat(32)];
+  const runnerOf = (leak) => async (options) => {
+    const file = /cat "([^"]+)"/.exec(options.prompt)[1];
+    seen.push({ file, text: fs.readFileSync(file, 'utf8').trim(), options });
+    const id = 't1';
+    const out = leak ? seen.at(-1).text : 'Operation not permitted';
+    return { events: [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command: `cat "${file}"` } }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: out }] } },
+    ] };
+  };
+  const dir = projectWith();
+  const held = await sandboxProbe({ dir, scenario: sandboxScenario({ model: 'model-a' }), home, denied, runner: runnerOf(false), random: () => canaries[0], context: { env: { X: '1' } } });
+  assert.equal(held.ran, true);
+  assert.equal(held.leaked, false);
+  assert.equal(seen[0].text, canaries[0]);
+  assert.equal(seen[0].options.model, 'model-a');
+  assert.deepEqual(seen[0].options.pluginDirs, []);
+  assert.equal(seen[0].options.env.X, '1');
+  assert.equal(fs.existsSync(seen[0].file), false, 'the canary file is removed');
+  const broken = await sandboxProbe({ dir, scenario: sandboxScenario(), home, denied, runner: runnerOf(true), random: () => canaries[1] });
+  assert.equal(broken.leaked, true);
+  // A folder the sandbox does not deny proves nothing, so the probe says so and starts no session.
+  let started = false;
+  const elsewhere = await sandboxProbe({ dir, scenario: sandboxScenario(), home, denied: path.join(home, 'other'), runner: async () => { started = true; return { events: [] }; } });
+  assert.match(elsewhere.unusable, /not under the evaluations folder/);
+  assert.equal(started, false);
+  assert.match((await checkSandbox({ scenario: sandboxScenario(), variant: 'with', dir }, { probe: async () => elsewhere })).why, /not under the evaluations folder/);
+});
+
+test('runScenario refuses a trial its beforePrompt refuses: no session, a failed run that was not handled, and a record', async () => {
+  const home = tempFolder('eval-home-');
+  let ran = false;
+  const outcome = await runScenario({
+    scenario: sandboxScenario(), variant: 'with', trial: 1, home, date: '2026-10-21',
+    runner: async () => { ran = true; return { events: [], exitCode: 0 }; },
+    beforePrompt: async () => ({ why: 'no sandbox: the probe session did not run the command', usage: { input: 7, output: 2 }, evidence: { probe: { ran: false } } }),
+  });
+  assert.equal(ran, false);
+  assert.equal(outcome.pass, false);
+  assert.equal(outcome.handled, false);
+  assert.match(outcome.line, /^95 with: fail \(no sandbox: /);
+  assert.deepEqual(outcome.usage, { input: 7, output: 2 });
+  const written = JSON.parse(fs.readFileSync(outcome.file, 'utf8'));
+  assert.equal(written.pass, false);
+  assert.equal(written.handled, false);
+  assert.deepEqual(written.check, { probe: { ran: false } });
+});
+
+test('main gives only a scenario that needs the sandbox the check, and the check\'s refusal is a failed run that was not handled', async () => {
+  const root = suites({
+    main: {
+      '15-needs.js': scenarioSource(15, { safety: true }).replace('  prompt:', '  needsSandbox: true,\n  prompt:'),
+      '16-plain.js': scenarioSource(16),
+    },
+  });
+  const given = [];
+  const run = async (args) => {
+    given.push([args.scenario.id, typeof args.beforePrompt]);
+    const refused = args.beforePrompt ? await args.beforePrompt({ scenario: args.scenario, variant: args.variant, dir: projectWith(), context: {} }) : null;
+    return { pass: !refused, handled: !refused, why: refused?.why ?? 'ok', file: null, line: `${args.scenario.id} ${args.variant}`, usage: { input: 0, output: 0 } };
+  };
+  const home = tempFolder('eval-home-');
+  const code = await main(['15', '16', '--variant', 'with'], {
+    root, home, print: quiet, run, now: firstNow, commit: 'abc', version: '1.0.0', platform: 'darwin',
+    probe: async () => ({ ran: true, leaked: true, usage: { input: 3, output: 1 } }),
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(given, [[15, 'function'], [16, 'undefined']]);
+  const record = JSON.parse(fs.readFileSync(path.join(home, '.wheelhouse-evals', 'runs', fs.readdirSync(path.join(home, '.wheelhouse-evals', 'runs')).find((n) => n.endsWith('.json'))), 'utf8'));
+  const fifteen = record.runs.find((r) => r.id === 15);
+  assert.equal(fifteen.pass, false);
+  assert.equal(fifteen.handled, false);
+  assert.match(fifteen.why, /^no sandbox: a command read a file/);
+  assert.equal(record.runs.find((r) => r.id === 16).pass, true);
+});
+
+test('on Windows a scenario that needs the sandbox is not run: recorded not run, never a failure, and no session or set-up', async () => {
+  const root = suites({
+    main: {
+      '15-needs.js': scenarioSource(15, { safety: true }).replace('  prompt:', '  needsSandbox: true,\n  prompt:'),
+      '16-plain.js': scenarioSource(16),
+    },
+  });
+  const calls = [];
+  const lines = [];
+  const home = tempFolder('eval-home-');
+  const code = await main(['15', '16', '--variant', 'with', '--trials', '2'], {
+    root, home, print: (line) => lines.push(line), run: standInRun(calls), now: firstNow, commit: 'abc', version: '1.0.0', platform: 'win32',
+  });
+  assert.equal(code, 0, 'a trial not run is no failure');
+  assert.deepEqual(calls, ['16 with 1', '16 with 2']);
+  assert.ok(lines.includes('15 with: not run (no sandbox, check 10)'));
+  const runs = path.join(home, '.wheelhouse-evals', 'runs');
+  const record = JSON.parse(fs.readFileSync(path.join(runs, fs.readdirSync(runs).find((n) => n.endsWith('.json'))), 'utf8'));
+  const skippedRuns = record.runs.filter((r) => r.id === 15);
+  assert.equal(skippedRuns.length, 2);
+  for (const r of skippedRuns) {
+    assert.equal(r.notRun, 'no sandbox, check 10');
+    assert.equal(r.pass, false);
+    assert.equal(r.handled, true);
+  }
+  // The report shows the row as not run with its reason, and the gate is not passed.
+  const row = summarise(record, { root, e2eDir: e2eFolder(), designed: [] }).rows.find((x) => x.id === 15);
+  assert.equal(row.with, 'not run');
+  assert.deepEqual(row.again, []);
+  // On the Mac the same scenario is run.
+  const mac = [];
+  await main(['15', '--variant', 'with'], { root, home: tempFolder('eval-home-'), print: quiet, run: standInRun(mac), now: firstNow, commit: 'abc', version: '1.0.0', platform: 'darwin' });
+  assert.deepEqual(mac, ['15 with 1']);
 });

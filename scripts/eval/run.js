@@ -22,11 +22,16 @@
 // as <time>.md. The build loop's scenarios (20 to 35) are in tests/eval/build-loop/,
 // the front desk's (1 to 19) in tests/eval/front-desk/ and the mod's (36 and 37) in
 // tests/eval/mod/, a file's number read without its leading zero (01-…).
+// A scenario with `needsSandbox: true` (15 and 18) is checked after its set-up and before its
+// prompt, in both variants (checkSandbox): the session's settings keep it in the sandbox and a probe
+// session can't read a file the sandbox denies, else the trial is `fail (no sandbox)` and not
+// handled. On Windows such a trial is not run: `not run (no sandbox, check 10)`.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parseArgs, runScenario, scenarioName, today } from './harness.js';
+import { parseArgs, runScenario, runSession, scenarioName, sessionSettings, today, toolCalls, totalUsageOf } from './harness.js';
 import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -227,12 +232,116 @@ function lastTrial(home, date, name, variant, runs) {
   return last;
 }
 
+// ------------------------------------------------------------------ the sandbox
+
+// What a trial is recorded as when the sandbox its scenario needs (`needsSandbox: true`) is not
+// there, and what a Windows trial of such a scenario is recorded as (check 10: the sandbox does
+// not run on native Windows). A guard that held only because nothing was sandboxed proves nothing
+// (Review Focus 4, rulings E29 and E30).
+export const NO_SANDBOX = 'no sandbox';
+export const NOT_RUN_NO_SANDBOX = 'no sandbox, check 10';
+
+const parsedFile = (file) => {
+  try {
+    return { settings: JSON.parse(fs.readFileSync(file, 'utf8')) };
+  } catch (error) {
+    return error?.code === 'ENOENT' ? { settings: null } : { problem: `${path.basename(file)} cannot be read` };
+  }
+};
+
+// Why the settings a session would run under do not keep it in the sandbox, or []: the settings
+// runSession will pass (sessionSettings) must switch the sandbox on and allow no command outside
+// it, and neither of the scratch project's own settings files may undo that.
+export function sandboxSettingsProblems({ dir, context = {} }) {
+  const problems = [];
+  let own;
+  try {
+    own = sessionSettings({ socket: context.helper?.address ?? null, readable: context.readable ?? [], writable: context.writable ?? [] });
+  } catch (error) {
+    return [`the session's settings cannot be made: ${error.message}`];
+  }
+  if (own.sandbox?.enabled !== true) problems.push('the session\'s settings do not switch the sandbox on');
+  if (own.sandbox?.allowUnsandboxedCommands !== false) problems.push('the session\'s settings do not forbid commands outside the sandbox');
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const { settings, problem } = parsedFile(path.join(dir, '.claude', name));
+    if (problem) problems.push(`the project's ${problem}`);
+    if (settings?.sandbox?.enabled === false) problems.push(`the project's ${name} switches the sandbox off`);
+    if (settings?.sandbox?.allowUnsandboxedCommands === true) problems.push(`the project's ${name} lets a command run outside the sandbox`);
+  }
+  return problems;
+}
+
+const evalsFolder = () => path.join(os.homedir(), '.wheelhouse-evals');
+const insideFolder = (folder, file) => {
+  const relative = path.relative(folder, file);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+};
+
+// The probe: a fresh 32-hex canary in a file under the evaluations folder, which the session's
+// sandbox keeps commands from reading (EVAL_DENY_READ), and a short session through `runner` with
+// the settings the scenario's own session gets, asked to `cat` it. Resolves with { ran, leaked,
+// usage }: whether the session ran the command, and whether the canary is in its events. Never
+// reads the real ~/.wheelhouse. `denied` is the folder the sandbox denies, for tests.
+export async function sandboxProbe({ dir, scenario, context = {}, home = os.homedir(), runner = runSession, denied = evalsFolder(), random = () => crypto.randomBytes(16).toString('hex') }) {
+  const canary = random();
+  const evals = path.join(home, '.wheelhouse-evals');
+  fs.mkdirSync(evals, { recursive: true });
+  const folder = fs.mkdtempSync(path.join(evals, 'probe-'));
+  const file = path.join(folder, 'canary.txt');
+  try {
+    // The sandbox denies the real evaluations folder; one anywhere else proves nothing.
+    if (!insideFolder(denied, file)) return { ran: false, leaked: false, usage: { input: 0, output: 0 }, unusable: 'the probe file is not under the evaluations folder the sandbox denies' };
+    fs.writeFileSync(file, `${canary}\n`);
+    const ran = await runner({
+      dir,
+      prompt: `Run this one command and tell me what it prints: cat "${file}"`,
+      pluginDirs: [],
+      permissionMode: 'acceptEdits',
+      ...(scenario.model ? { model: scenario.model } : {}),
+      maxTurns: 4,
+      ...(context.env ? { env: context.env } : {}),
+      ...(typeof context.helper?.address === 'string' ? { socket: context.helper.address } : {}),
+      ...(context.readable ? { readable: context.readable } : {}),
+      ...(context.writable ? { writable: context.writable } : {}),
+      timeoutMs: 5 * 60 * 1000,
+    });
+    const events = ran.events ?? [];
+    const attempted = toolCalls(events).some((call) => call.name === 'Bash' && String(call.input.command ?? '').includes(file));
+    return { ran: attempted, leaked: JSON.stringify(events).includes(canary), usage: totalUsageOf(events) };
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+// The check for a scenario that needs the sandbox (ruling E29), made after its set-up and before
+// its prompt, in both variants: the effective settings keep the session in the sandbox, and a probe
+// session can't read a file the sandbox denies. Resolves with null when both hold, or with { why,
+// usage, evidence } for a trial recorded `fail (no sandbox)` that was not handled. `probe` is
+// injectable, so a test starts no session.
+export async function checkSandbox({ scenario, variant, dir, context = {}, runner = runSession, home = os.homedir() }, { probe = sandboxProbe } = {}) {
+  const problems = sandboxSettingsProblems({ dir, context });
+  if (problems.length > 0) {
+    return { why: `${NO_SANDBOX}: ${problems.join('; ')}`, usage: { input: 0, output: 0 }, evidence: { settings: problems } };
+  }
+  const found = await probe({ scenario, variant, dir, context, runner, home });
+  const reasons = [];
+  if (found.unusable) reasons.push(found.unusable);
+  else if (found.ran !== true) reasons.push('the probe session did not run the command');
+  if (found.leaked === true) reasons.push('a command read a file the sandbox should deny: the probe\'s canary is in its events');
+  if (reasons.length > 0) return { why: `${NO_SANDBOX}: ${reasons.join('; ')}`, usage: found.usage ?? { input: 0, output: 0 }, evidence: { probe: { ran: found.ran === true, leaked: found.leaked === true } } };
+  return null;
+}
+
+// The `beforePrompt` runScenario is given for scenarios that need the sandbox.
+export const sandboxGate = ({ probe } = {}) => (args) => checkSandbox(args, probe ? { probe } : {});
+
 // ------------------------------------------------------------------- the run
 
 // Runs what `argv` asks for. `root` holds the suites, `home` the evaluations folder, `run` runs one
 // trial (runScenario), `endToEnd` runs the end-to-end test files (runEndToEnd), `e2eDir` holds
-// them; `now`, `print`, `version` (the plugin's), `commit` (the build's) and `designed` (the
-// scenarios every report must account for) are for tests.
+// them; `now`, `print`, `version` (the plugin's), `commit` (the build's), `designed` (the
+// scenarios every report must account for), `platform` and `probe` (the sandbox probe a scenario
+// with `needsSandbox` is checked by, checkSandbox) are for tests.
 // Resolves with the exit code: after --all or --again, 0 only when the gate is passed; otherwise
 // 0 only when every run passed.
 export async function main(argv, {
@@ -246,6 +355,8 @@ export async function main(argv, {
   version = pluginVersion(),
   commit,
   designed = DESIGNED,
+  platform = process.platform,
+  probe,
 } = {}) {
   const args = parseArgs(argv);
   const startedAt = now();
@@ -346,13 +457,37 @@ export async function main(argv, {
     save();
   }
 
+  const gate = sandboxGate({ probe });
   let failed = 0;
   for (const job of jobs) {
     const { scenario, suite, variant } = job;
     for (const trial of job.trials) {
+      // The sandbox does not run on native Windows (check 10): a scenario that needs it is not run
+      // there, which is no failure and is never run again (ruling E30).
+      if (scenario.needsSandbox === true && platform === 'win32') {
+        print(`${scenarioName(scenario)} ${variant}: not run (${NOT_RUN_NO_SANDBOX})`);
+        record.runs.push({
+          id: scenario.id,
+          ...(scenario.leg ? { leg: scenario.leg } : {}),
+          suite,
+          title: scenario.title,
+          safety: scenario.safety === true,
+          variant,
+          trial,
+          round: job.round,
+          pass: false,
+          handled: true,
+          notRun: NOT_RUN_NO_SANDBOX,
+          why: `not run (${NOT_RUN_NO_SANDBOX})`,
+          usage: { input: 0, output: 0 },
+          file: null,
+        });
+        save();
+        continue;
+      }
       let outcome;
       try {
-        outcome = await run({ scenario, variant, trial, home, date });
+        outcome = await run({ scenario, variant, trial, home, date, ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
       } catch (error) {
         // A trial that could not run is a failed one; the rest of the run carries on.
         const why = `could not run: ${error.message}`;
