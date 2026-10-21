@@ -40,7 +40,7 @@ Names as the camelCase hook sees them, then as the PascalCase hook sees them. Th
 | PowerShell | not tried | not tried | |
 | `ask_user` | never offered | never offered | |
 
-- **Edit and create.** With this model the session said it had no `edit` or `create` tool, in the first run, the gap-fill and the extra runs. File changes (the new file, and the edit) went through `apply_patch` alone. A guard that watches for `edit` and `create` would watch for nothing. Which tools a session has may depend on the model; this was one model.
+- **Edit and create.** With this model the session said it had no `edit` or `create` tool, in the first run, the gap-fill and the extra runs. File changes (the new file, and the edit) went through `apply_patch` alone. A guard that watches for `edit` and `create` would watch for nothing. Which tools a session has may depend on the model; only one model was tried.
 - **`ask_user`.** In the run made without `--no-ask-user` the session said the tool "isn't available in this session". So it was not triggered headlessly (`-p`), and no hook input was seen for it.
 - **Web fetch to the local stand-in page** was refused by Copilot itself ("resolves to blocked address 127.0.0.1"), after the `preToolUse` hook had run; the hook then received a `postToolUseFailure` with an `error` field. A local page cannot be fetched; a real address would be needed for a success.
 - **MCP.** The name is `<server>-<tool>`, with no prefix and no change under PascalCase.
@@ -66,8 +66,8 @@ No input field names the permission mode, a sandbox or a version. The hook's env
 | --- | --- | --- |
 | Deny, `permissionDecision: deny` with a reason, on `view` | No. Both `view` calls failed with code `denied`. | "Denied by preToolUse hook: <reason>". Copilot's debug log shows it read the hook's stdout. |
 | Exit 1 (every tool) | No. `view`, `bash` and `apply_patch` all failed. | "Denied by preToolUse hook from <hook file> (hook errored)". The hook's stderr is not shown. |
-| Exit 2 (every tool) | No. | "Denied by preToolUse hook: hook exited with code 2". |
-| Sleep 10 s with `timeoutSec: 5` | Yes. `view` and `apply_patch` both completed, `out.txt` was written. | The call took about 7 seconds (5 for the time-out, and a little more); the hook never got to log that it woke, so it was killed. Nothing was shown to the model. |
+| Exit 2 (on `view` and `apply_patch`; the model did not try `bash` in this run) | No. | "Denied by preToolUse hook: hook exited with code 2". |
+| Sleep 10 s with `timeoutSec: 5` | Yes. `view` and `apply_patch` both completed, `out.txt` was written. | The call took about 7 seconds (5 for the time-out, and a little more); the hook never got to log that it woke, so it was killed. The completed calls carry no error or warning in their events. |
 
 - **Exit 1 did stop the tool**, it was not that the model did not retry: each refused call has a `tool.execution_complete` with `success: false` and the `denied` code, and the model said the hook "errored and blocked" it.
 - **The deny worked, and the first reading of the run was wrong.** The summary said the `view` "went through" because the secret word was in the output. It was not: both `view` calls were denied. The model then read `README.md` with `cat` in the shell, and wrote the file with `apply_patch`, which the deny did not cover. A guard that refuses one tool name is gone round by a session that picks another; a guard has to decide on what is done (a file read, a file written), across `bash`, `view`, `rg`, `glob`, `apply_patch` and the rest.
