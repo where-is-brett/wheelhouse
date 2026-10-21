@@ -128,7 +128,7 @@ scripts/agents/index.js                   adapterFor, agentOfInput, agentOfProje
 adapters/claude-code/                     index.js, answers.js, tools.js, sessions.js, settings.js, hooks.js, tool-sheet.md, safety-line.js
 adapters/copilot/                         index.js, translate.js, tools.js, hooks.js, sessions.js, permissions.js, settings.js,
                                           sandbox.js, tool-sheet.md, safety-line.js, eval-runner.js
-adapters/copilot/home/                    the Lean kit as copied into ~/.copilot/: skills/, agents/, instructions/, MANIFEST.txt
+adapters/copilot/home/                    the Lean kit as copied into ~/.copilot/: skills/, agents/, instructions/, hooks/ (from Part 5 Task 8: the hook file and the guard), MANIFEST.txt
 adapters/copilot/plugin/                  com.github.copilot/ (the Copilot-only parts; no hooks)
 plugin.json                               the root Agent Plugins manifest, beside .claude-plugin/
 scripts/agents/copilot/                   home.js (builds the Lean kit), tier.js, facts.js, versions.js, start-helper.js, sandbox-test.js
@@ -605,6 +605,7 @@ test('a Claude Code project\'s health line is unchanged', ...)
   - `skills/wheelhouse-front-desk/`, `wheelhouse-intake/`, `wheelhouse-lean/`, `wheelhouse-setup/`, and one skill per command the director calls by name: `wheelhouse-board`, `wheelhouse-briefing`, `wheelhouse-settings`, `wheelhouse-stop`, `wheelhouse-sources` (each a short skill pointing to the front desk's section for it);
   - `agents/wheelhouse-builder.agent.md`, `wheelhouse-reviewer.agent.md`, `wheelhouse-tester.agent.md`, `wheelhouse-foreman.agent.md`: the same prompt text as `agents/*.md`, with Copilot's front matter (`name`, `description`, `tools`); the reviewer's `tools` are `view`, `glob` and `rg` and nothing else (check 66's route b; not the whole of `tools.read`, which may name `skill`, `sql` and others);
   - `instructions/wheelhouse.instructions.md`: the tool sheet, and the line "In VS Code's Local harness Wheelhouse doesn't run: say so and ask the director to switch the chat to Copilot";
+  - `hooks/wheelhouse.json` and `hooks/wheelhouse-lean-guard.sh`: absent until Part 5 Task 8 adds them (prebuilt, check 69); setup copies them only on a Mac with no Node.js;
   - `MANIFEST.txt`: one line per file, `<git blob hash> <path>`, so the copy can be checked with `git hash-object` alone.
 - `--write` replaces `adapters/copilot/home/` with the map; with no flag it prints the paths that differ and exits 1.
 
@@ -646,7 +647,7 @@ test('every skill and agent name starts wheelhouse-', ...)
 - [ ] **Step 2: Run `npm test`:** FAIL. **Step 3: Write the playbook,** then `npm run copilot-home`. **Step 4: Run `npm test`:** PASS.
 - [ ] **Step 5: Commit** (`"Write Lean's playbook: record, board, build, merge, undo and copy with git alone"`).
 
-**Guards without Node.js (check 69).** A `/bin/sh` guard using `curl` runs as a `preToolUse` command hook on the Mac with no Node.js on the PATH, so the branch is taken. Lean's setup (Task 5) writes `~/.copilot/hooks/wheelhouse.json` (`HOOK_FILE`, the same file Part 5 Task 2 writes, so one replaces the other and nothing registers twice, check 56) holding one camelCase `preToolUse` entry that runs the shell guard Part 5 Task 8 builds. Every shell guard denies on a `curl` failure, on any status but 200 and on any answer that is not exactly the allow answer, and answers well inside the hook's `timeoutSec`, since Copilot lets a hook that times out through (checks 58, 69). A Copilot web hook is never the only guard (check 69: its behaviour at `127.0.0.1` and with the server down contradicts the documentation, on one run). The Windows half, a PowerShell 5.1 guard and a `powershell` hook entry, is sitting S2's; if it finds no route, Lean on Windows has no Wheelhouse guards, as the design already says.
+**Guards without Node.js (check 69).** A `/bin/sh` guard using `curl` runs as a `preToolUse` command hook on the Mac with no Node.js on the PATH, so the branch is taken. Lean's setup (Task 5) copies the kit's prebuilt `hooks/wheelhouse.json` to `~/.copilot/hooks/wheelhouse.json` (`HOOK_FILE`, the same file Part 5 Task 2 writes, so one replaces the other and nothing registers twice, check 56) holding one camelCase `preToolUse` entry that runs the shell guard Part 5 Task 8 builds. Every shell guard denies on a `curl` failure, on any status but 200 and on any answer that is not exactly the allow answer, and answers well inside the hook's `timeoutSec`, since Copilot lets a hook that times out through (checks 58, 69). A Copilot web hook is never the only guard (check 69: its behaviour at `127.0.0.1` and with the server down contradicts the documentation, on one run). The Windows half, a PowerShell 5.1 guard and a `powershell` hook entry, is sitting S2's; if it finds no route, Lean on Windows has no Wheelhouse guards, as the design already says.
 
 ### Task 4: Lean's record, read and moved up
 
@@ -672,7 +673,7 @@ test('every skill and agent name starts wheelhouse-', ...)
 **Interfaces:**
 - `skills/setup-lean/SKILL.md`, the steps the chat takes:
   1. Check `git --version`; without git, stop kindly.
-  2. Clone Wheelhouse's public repository at the release tag into `~/.copilot/wheelhouse/<tag>/`, then copy `adapters/copilot/home/` into `~/.copilot/` (skills, agents, instructions), and check each copied file against `MANIFEST.txt` with `git hash-object`.
+  2. Clone Wheelhouse's public repository at the release tag into `~/.copilot/wheelhouse/<tag>/`, then copy `adapters/copilot/home/` into `~/.copilot/` (skills, agents, instructions; not `hooks/`, which step 4 handles), and check each copied file against `MANIFEST.txt` with `git hash-object`.
   3. "Can Wheelhouse run here?" at Lean: git, `node --version`, `copilot --version`, the project's remote; say in one sentence which tier this is ("This computer runs Wheelhouse at Lean: everything stays here, and Copilot builds in your chat"), and if Node.js runs, that Part 5's helper can add more.
   4. In the project: `.vscode/settings.json` merged with `adapters/copilot/vscode-settings.json`; `.wheelhouse/record/`; `wheelhouse/board.md`; a first commit. On the Mac where `node --version` finds nothing, also copy `hooks/wheelhouse.json` and the shell guard it runs from the kit into `~/.copilot/` (check 69). Both are built when the kit is built (Node.js runs then, not on the person's machine) and ship prebuilt in `adapters/copilot/home/`, listed in `MANIFEST.txt`, so setup only copies and checks them. They come from Part 5 Task 8; until that task exists the kit holds neither, this step copies nothing, and the board's first line says no Wheelhouse guards run.
   5. The copy folder: ask where (a clickable question with **Choose a folder**, **Not now**); `git init --bare` there; `git remote add wheelhouse-copy <folder>`.
@@ -852,7 +853,7 @@ test('the project folder\'s .git is a pointer file into the store', ...)
 
 **Interfaces:**
 - Consumes: check 69's probe (`probes/69-guards-without-node/guard.sh`) as the model.
-- Produces: `leanGuardScript()`, a `/bin/sh` script that reads the `preToolUse` input, refuses a write to any `AGENT_CONTROL` path or credential folder (the tool guard's refusals that need no Wheelhouse state, with `CONTROL_FILE`'s words), and otherwise allows; it denies on a `curl` or read failure, on any status but 200 and on anything but the exact allow answer wherever it asks a local answer, and its own limits leave it well inside `GUARD_TIMEOUT_SEC` (check 69 used 3 seconds against 20). `leanHookFile({ root, platform }) -> object`, the `wheelhouse.json` of Part 4 Task 3 (one camelCase `preToolUse` entry, `timeoutSec: GUARD_TIMEOUT_SEC`). It decides on what is being done, never a tool name alone (check 58). Mac only; the Windows form is sitting S2's.
+- Produces: `leanGuardScript()`, a `/bin/sh` script that reads the `preToolUse` input, refuses a write to any `AGENT_CONTROL` path or credential folder (the tool guard's refusals that need no Wheelhouse state, with `CONTROL_FILE`'s words), and otherwise allows; it denies on a `curl` or read failure, on any status but 200 and on anything but the exact allow answer wherever it asks a local answer, and its own limits leave it well inside `GUARD_TIMEOUT_SEC` (check 69 used 3 seconds against 20). `leanHookFile({ platform }) -> object`, the `wheelhouse.json` of Part 4 Task 3 (one camelCase `preToolUse` entry, `timeoutSec: GUARD_TIMEOUT_SEC`). It takes no root, since the committed kit is the same for everyone: the guard is copied beside the hook file as `hooks/wheelhouse-lean-guard.sh`, and the entry's command is `/bin/sh -c 'exec /bin/sh "${COPILOT_HOME:-$HOME/.copilot}/hooks/wheelhouse-lean-guard.sh"'`, so an explicit shell expands the home at run time (kept as the same hash for every person, which `MANIFEST.txt` needs) and the double quotes keep a home with a space or apostrophe one word (Review Focus 5). A test runs the entry from a home named `Ann O'Neil`. It decides on what is being done, never a tool name alone (check 58). Mac only; the Windows form is sitting S2's.
 
 - [ ] **Step 1: Write the failing tests** with `PATH` holding no `node`:
 
@@ -862,6 +863,7 @@ test('a write to a control file is refused and a read is allowed', ...)
 test('no answer, a status other than 200 and an answer that is not allow each refuse', ...)
 test('the guard answers well inside the hook\'s timeoutSec', ...)
 test('the hook file is the same file Part 5 Task 2 writes, so only one is ever registered', ...)
+test('the entry runs the guard from a home with a space and an apostrophe', ...)   // Review Focus 5
 ```
 
 - [ ] **Step 2: Run, implement, run `npm test`:** PASS. **Step 3: Commit** (`"Add Lean's guards in shell, for a Mac with no Node.js"`).
