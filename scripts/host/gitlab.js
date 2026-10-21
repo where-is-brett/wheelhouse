@@ -48,7 +48,7 @@ const PIPELINE = {
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
 const ISSUE_ADDRESS = /(https?:\/\/\S+\/-\/(?:issues|work_items)\/(\d+))/;
 
-export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly }) {
+export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly, hostFault }) {
   const R = ['-R', repo];
   const project = `projects/${encodeURIComponent(repo)}`;
   const ask = async (args, input) => json(args, await call(args, input));
@@ -164,7 +164,13 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     // answer, not an error.
     async merge({ number, sha }) {
       const { code, stdout, stderr } = await attempt(['mr', 'merge', String(number), ...R, '--sha', sha, '--auto-merge=false', '--yes']);
-      if (code !== 0) return { merged: false, reason: refusal(`${stderr}\n${stdout}`, 'GitLab did not merge the merge request') };
+      if (code !== 0) {
+        // A merge that could not reach the host, or did not trust its certificate, is not a refusal:
+        // it says so, and its own flag tells the caller why.
+        const fault = hostFault(`${stderr}\n${stdout}`);
+        if (fault !== null) return { merged: false, [fault.kind]: true, reason: `Not merged. ${fault.line}` };
+        return { merged: false, reason: refusal(`${stderr}\n${stdout}`, 'GitLab did not merge the merge request') };
+      }
       return settle({
         state: async () => (await ask(['mr', 'view', String(number), ...R, '--output', 'json'])).state,
         merged: 'merged',

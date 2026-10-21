@@ -30,6 +30,7 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
+import { unreachableRefusal, awayLine, outputKind } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
@@ -476,7 +477,9 @@ async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = fa
     range = [sha, `^${tracking}`];
   } else {
     const listed = await git(['ls-remote', '--heads', REMOTE, `refs/heads/${branch}`]);
-    if (listed.code !== 0 || listed.stdout.trim() !== '') return { allowed: false, refused: PUSH_REFUSALS.unchecked };
+    // `away`: the host could not be reached at all, which the caller says in its own line.
+    if (listed.code !== 0) return { allowed: false, refused: PUSH_REFUSALS.unchecked, away: outputKind(`${fetched.stderr}\n${listed.stderr}`) === 'unreachable' };
+    if (listed.stdout.trim() !== '') return { allowed: false, refused: PUSH_REFUSALS.unchecked };
   }
   const listed = await git(['rev-list', '--parents', ...range, '--']);
   if (listed.code !== 0) return { allowed: false, refused: PUSH_REFUSALS.unchecked };
@@ -1017,7 +1020,7 @@ export async function startHelper({
         // A shallow marker came in with the objects: start the mirror afresh next time.
         fs.rmSync(mirror, { recursive: true, force: true });
       }
-      if (!checked.allowed) return { ok: false, refused: checked.refused };
+      if (!checked.allowed) return { ok: false, refused: (checked.away === true ? awayLine(recordOf(project)) : null) ?? checked.refused };
 
       // A code push that changes a CI file goes only with the director's click
       // for this commit, and then with the director's own sign-in.
@@ -1040,6 +1043,9 @@ export async function startHelper({
       const pushed = await pusher('git', ['push', '--no-verify', '--porcelain', REMOTE, `${checked.sha}:refs/heads/${branch}`], { cwd: mirror });
       if (pushed.code === 0) return { ok: true, sha: checked.sha };
       if (pushed.timedOut) return { ok: false, refused: 'the host did not answer the push in time' };
+      // A GitLab that cannot be reached is one line, and the push stays here to be sent later.
+      const away = unreachableRefusal(recordOf(project), pushed.stderr);
+      if (away !== null) return { ok: false, refused: away };
       const refused = pushed.stdout.split('\n').find((line) => line.startsWith('!') && line.includes(`refs/heads/${branch}`));
       // Another computer's push can land between ours: the host then declines to move the branch
       // ("failed to update ref", "incorrect old value provided"), which is the same as the branch having moved on.

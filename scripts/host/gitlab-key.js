@@ -7,6 +7,7 @@
 // returns, logs or throws a message holding a key, and errors never repeat
 // GitLab's own message text.
 import { DEFAULT_GITLAB } from './gitlab-base.js';
+import { causeCode, failureKind, CERTIFICATE_NOT_TRUSTED } from './company-ca.js';
 
 const DEVELOPER = 30;
 const MAINTAINER = 40;
@@ -48,9 +49,14 @@ export function gitlabApi({ baseUrl = DEFAULT_GITLAB, token, bearer = false, fet
         headers: { Accept: 'application/json', ...auth, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-    } catch {
-      // The underlying error can quote the request, so its text is not passed on.
-      throw new Error('Could not reach GitLab');
+    } catch (error) {
+      // The underlying error can quote the request, so its text is not passed on: only its code is
+      // kept, so a certificate this computer does not trust reads differently from a server that is
+      // not there (company-ca.js).
+      const code = causeCode(error);
+      const failure = new Error(failureKind({ code }) === 'certificate' ? CERTIFICATE_NOT_TRUSTED(address) : 'Could not reach GitLab');
+      if (code !== null) failure.code = code;
+      throw failure;
     }
     const text = await response.text();
     let parsed = null;

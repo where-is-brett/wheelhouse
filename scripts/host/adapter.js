@@ -9,7 +9,8 @@ import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
 import { publicHttps } from '../screens/pages.js';
-import { parseRemote, listed, isDefaultHost, hostWords } from './gitlab-base.js';
+import { parseRemote, listed, isDefaultHost, hostWords, DEFAULT_GITLAB } from './gitlab-base.js';
+import { hostFailure, outputKind, lineFor } from './company-ca.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
 
@@ -64,7 +65,8 @@ export function scrub(text, env = {}) {
 // What a refused merge says, in the adapter's own words: the host's text is read
 // to tell the kinds apart and is never repeated.
 function refusalOf(output, fallback) {
-  const text = String(output ?? '');
+  // glab wraps its error over lines, so a phrase can break between words ("SHA does not\n  match HEAD").
+  const text = String(output ?? '').replace(/\s+/g, ' ');
   if (/head branch was modified|sha does not match|match-head-commit|head commit/i.test(text)) return 'the head of the pull request has moved since it was checked';
   if (/conflict/i.test(text)) return 'the pull request has a merge conflict';
   if (/status check|required check|checks? .*(?:fail|pending|expected|not pass)|pipeline|ci must|must succeed/i.test(text)) return 'the host\'s required checks have not passed';
@@ -106,7 +108,8 @@ function text(value, what, { optional = false, empty = false } = {}) {
   return value;
 }
 
-export function makeAdapter({ host, repo, run, env }) {
+// `base` is the GitLab address, for the line said when it cannot be reached (company-ca.js).
+export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
   const commands = HOSTS[host];
   if (!commands) throw new Error('The host must be github or gitlab');
   if (typeof repo !== 'string' || !REPO.test(repo)) throw new Error('The repository must be written owner/name');
@@ -123,6 +126,9 @@ export function makeAdapter({ host, repo, run, env }) {
   async function call(args, input) {
     const { code, stdout, stderr } = await attempt(args, input);
     if (code !== 0) {
+      // A server that is not there, or a certificate not trusted, is said in our own words, with a code.
+      const failure = host === 'gitlab' ? hostFailure(`${stderr}\n${stdout}`, base) : null;
+      if (failure !== null) throw failure;
       const said = scrub(stderr || stdout, env);
       throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
     }
@@ -150,7 +156,13 @@ export function makeAdapter({ host, repo, run, env }) {
     }
     return { merged: false, queued: true, reason: QUEUE_LINE };
   }
-  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly };
+  // What a failed command says about reaching the host: null, or { kind, line } for a server that is
+  // not there or a certificate not trusted, which a merge reports apart from a refusal.
+  function hostFault(output) {
+    const kind = host === 'gitlab' ? outputKind(output) : null;
+    return kind === null ? null : { kind, line: lineFor(kind, base) };
+  }
+  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault };
   const c = commands(tools);
 
   return {

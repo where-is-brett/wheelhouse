@@ -35,11 +35,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { NODE_FLOOR } from '../lib/setup-numbers.js';
-import { HOST_TOOLS, toolFolder, fetchedPath } from '../lib/host-tools.js';
+import { HOST_TOOLS, toolFolder, fetchedPath, toolPath } from '../lib/host-tools.js';
+import { wheelhouseHome } from '../lib/paths.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
+import { caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig } from '../host/company-ca.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -367,6 +369,24 @@ export async function toolsStatus({ platform = process.platform, run = realRun, 
 export function nodeRefusal(node) {
   const found = node?.found ? `this computer's Node.js is ${node.version ?? 'one whose version could not be read'}` : 'Node.js was not found on this computer';
   return `${NODE_LINE} (Setup stopped here, and installed nothing: ${found}; it needs ${FLOOR} or later.)`;
+}
+
+// ---- The company's own certificate authority (check 71) ----
+
+// Gives a company GitLab's certificate authority to the tools, for that address only. The computer's
+// own certificates are copied into <home>/ca/company.pem when the file is not there yet (or `refresh`
+// asks for them again); `glab` is told the file for the host (`glab config set ca_cert`, in glab's own
+// configuration, as it runs today). Git is not run and nothing of the person's git configuration is
+// written: its settings come back as `gitConfig`, entries for the environment of a git call that
+// reaches this address (withGitConfig), and Node.js's as `nodeEnv`. A step that applies it adds it to
+// the journal as it does any other change.
+export async function applyCompanyCa({ base, home = wheelhouseHome(), platform = process.platform, run = realRun, refresh = false } = {}) {
+  const file = caFile(home);
+  if (refresh || !fs.existsSync(file)) writeCaFile({ home, pem: await exportSystemRoots({ platform, run }) });
+  const host = new URL(base).host;
+  const set = await quietly(run, toolPath('glab', { platform }), glabCaArgs(host, file));
+  if (set.code !== 0) throw new Error(`glab could not be given the company's certificate for ${host}`);
+  return { file, glabHost: host, nodeEnv: caEnv(home), gitConfig: gitCaConfig(base, file, platform) };
 }
 
 // ---- The installers ----

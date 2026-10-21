@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
+import { HOST_UNREACHABLE } from '../../../scripts/host/company-ca.js';
 import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
@@ -77,13 +78,13 @@ async function privateRepo() {
 
 // One computer: its own home, an enrolled signing key, a project record, and a
 // helper whose connection is the key. (In this process, so one call at a time.)
-async function computer(repo, { adapter = fakeAdapter(), envFor } = {}) {
+async function computer(repo, { adapter = fakeAdapter(), envFor, project = {} } = {}) {
   const home = shortHome();
   const entry = await as(home, async () => {
     const made = makeSigningKey();
     const e = { ...made, enrolledAt: '2026-10-18T00:00:00.000Z' };
     enrol(e);
-    writeProject(PROJECT, record(repo.url));
+    writeProject(PROJECT, { ...record(repo.url), ...project });
     return e;
   });
   let tick = 0; // each call to now() is a second later, so a touch is never the same as the take before it
@@ -638,6 +639,24 @@ test('a write while the host is away is kept, and a later sync pushes it', async
       const synced = await c.client.state.sync({ project: PROJECT });
       assert.deepEqual(synced, { ok: true, pulled: false, unpushed: 1 });
       assert.ok(!JSON.stringify([away, synced]).includes(TOKEN));
+    });
+  } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
+});
+
+test('a write while a company GitLab is away says so in the one line, and is kept for a later sync', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo, { project: { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } } });
+  try {
+    await c.as(async () => {
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+    });
+    await repo.host.close();
+    await c.as(async () => {
+      const away = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } });
+      assert.equal(away.ok, true);
+      assert.equal(away.pushed, false);
+      assert.equal(away.refused, HOST_UNREACHABLE(repo.host.url));
+      assert.deepEqual(await c.client.state.sync({ project: PROJECT }), { ok: true, pulled: false, unpushed: 1 });
     });
   } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
 });

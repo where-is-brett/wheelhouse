@@ -6,6 +6,7 @@
 // reaches the board through oneLine, as one capped line with no Markdown of its own.
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
+import { HOST_UNREACHABLE } from '../host/company-ca.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
@@ -252,10 +253,12 @@ function unusualLines(unusual) {
   return list(unusual).map(unusualLine).filter((line) => line !== null);
 }
 
-// What the build loop and the sources add to health: open incidents, a model the director's
+// What the build loop and the sources add to health: a host that can't be reached, open incidents, a model the director's
 // projects use retiring soon, and security advisories for the repositories it builds on.
-function extraHealth(incidents, sources) {
+function extraHealth(incidents, sources, unreachable) {
   const lines = [];
+  // A company's GitLab that can't be reached from here: one line, and work carries on.
+  if (typeof unreachable === 'string' && unreachable !== '') lines.push({ level: 'watch', text: cap(HOST_UNREACHABLE(oneLine(unreachable))) });
   // Each incident's line names its incident, so the pane can tell it from other stop lines.
   for (const i of list(incidents?.open)) lines.push({ level: 'stop', text: cap(`Incident ${oneLine(i.id)} is open, so nothing merges: ${oneLine(i.what)}`), incident: i.id });
   for (const r of list(sources?.retiring)) {
@@ -275,7 +278,8 @@ function part(missing, name, build, fallback) {
   }
 }
 
-export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, now } = {}) {
+// `hostUnreachable` is the GitLab address (a string) while the host can't be reached, else absent.
+export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, hostUnreachable, now } = {}) {
   const missing = [];
   // A clock that can't be read is named, never replaced by this computer's.
   // Only a Date, a finite number, or a function giving one of those, is a clock.
@@ -365,7 +369,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       what: oneLine(m.data.forUsers) || (isPr(m.data.pr) ? `Pull request #${m.data.pr} merged` : 'A pull request merged'), at: timeOf(m.at),
     })), []),
     ideas,
-    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'health', () => extraHealth(loop?.incidents, report), [])],
+    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
     budget: {
       week: week ? { from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd) } : null,
       share: numberOrNull(week?.share),
