@@ -169,16 +169,20 @@ t('scratchCopilotHome with a missing sign-in says the sign-in has not been done 
   // Its own temporary folder, so other tests making homes at the same time cannot show up in the listing.
   const own = tempFolder('wh-tmp-');
   const empty = tempFolder('wh-login-');
-  const saved = process.env.TMPDIR;
-  process.env.TMPDIR = own;
+  // os.tmpdir() reads TMPDIR on macOS and Linux and TEMP or TMP on Windows, so set all three.
+  const names = ['TMPDIR', 'TEMP', 'TMP'];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) process.env[name] = own;
   try {
     assert.equal(path.resolve(os.tmpdir()), path.resolve(own));
     assert.throws(() => scratchCopilotHome({ signedInFrom: path.join(empty, 'nope') }), /sign-in has not been done/);
     assert.throws(() => scratchCopilotHome({ signedInFrom: empty }), /sign-in has not been done/);
     assert.deepEqual(fs.readdirSync(own), []);
   } finally {
-    if (saved === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = saved;
+    for (const name of names) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
   }
 });
 
