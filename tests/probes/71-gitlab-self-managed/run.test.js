@@ -42,7 +42,7 @@ test('run with no --yes, or with --dry-run, starts no tool at all', async () => 
     assert.equal(done.code, 0, done.stderr);
     assert.match(done.stdout, /Nothing was run/);
   }
-  assert.deepEqual(stands.calls(), [], 'no real gh, glab, copilot, docker-adjacent or system tool ran');
+  assert.deepEqual(stands.calls(), [], 'none of the stand-ins (gh, glab, copilot and the other host tools) ran');
   const bad = await run(process.execPath, [SCRIPT, '--bogus'], { timeoutMs: 30000 });
   assert.equal(bad.code, 2);
   assert.deepEqual(stands.calls(), []);

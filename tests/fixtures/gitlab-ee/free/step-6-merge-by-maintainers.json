@@ -52,7 +52,7 @@
     },
     {
       "what": "glab's own refusal of the merge with the commit looked at",
-      "result": "exit 1: ERROR All attempts fail: #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not match HEAD of source branch: <TOKEN>}."
+      "result": "exit 1: ERROR All attempts fail: #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not match HEAD of source branch: <SHA>}."
     },
     {
       "what": "the maintainer's merge through the adapter, with the commit looked at (the new head's pipeline has passed)",
@@ -183,13 +183,13 @@
   "commands": [
     {
       "label": "the adapter as bot runs glab",
-      "command": "glab mr merge 6 -R wh71-probe/trial --sha <TOKEN> --auto-merge=false --yes",
+      "command": "glab mr merge 6 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
       "exitCode": 1,
       "output": "ERROR  \n          \n  You do not have permission to merge this merge request."
     },
     {
       "label": "the adapter as maintainer runs glab",
-      "command": "glab mr merge 6 -R wh71-probe/trial --sha <TOKEN> --auto-merge=false --yes",
+      "command": "glab mr merge 6 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
       "exitCode": 0,
       "output": "✓ Merged!\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
     },
@@ -305,13 +305,13 @@
       "label": "glab mr merge with the commit looked at",
       "command": "glab mr merge <n> -R wh71-probe/trial --sha <the earlier head> --auto-merge=false --yes",
       "exitCode": 1,
-      "output": "ERROR  \n          \n  All attempts fail:                                                                                                  \n  #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not\n  match HEAD of source branch: <TOKEN>}."
+      "output": "ERROR  \n          \n  All attempts fail:                                                                                                  \n  #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not\n  match HEAD of source branch: <SHA>}."
     },
     {
       "label": "the adapter as maintainer runs glab",
-      "command": "glab mr merge 7 -R wh71-probe/trial --sha <TOKEN> --auto-merge=false --yes",
+      "command": "glab mr merge 7 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
       "exitCode": 1,
-      "output": "ERROR  \n          \n  All attempts fail:                                                                                                  \n  #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not\n  match HEAD of source branch: <TOKEN>}."
+      "output": "ERROR  \n          \n  All attempts fail:                                                                                                  \n  #1: PUT https://localhost:8929/api/v4/projects/wh71-probe%2Ftrial/merge_requests/<ID>/merge: 409 {message: SHA does not\n  match HEAD of source branch: <SHA>}."
     }
   ]
 }

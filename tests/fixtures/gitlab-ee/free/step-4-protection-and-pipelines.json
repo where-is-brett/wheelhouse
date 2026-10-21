@@ -1319,13 +1319,13 @@
           "pipeline_id": "<ID>",
           "author": {
             "id": "<ID>",
-            "username": "project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+            "username": "project_<ID>_bot_<SUFFIX>",
             "public_email": null,
             "name": "****",
             "state": "active",
             "locked": false,
             "avatar_url": "<URL>",
-            "web_url": "https://localhost:8929/project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c"
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
           }
         }
       }
@@ -1360,13 +1360,13 @@
           "pipeline_id": "<ID>",
           "author": {
             "id": "<ID>",
-            "username": "project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+            "username": "project_<ID>_bot_<SUFFIX>",
             "public_email": null,
             "name": "****",
             "state": "active",
             "locked": false,
             "avatar_url": "<URL>",
-            "web_url": "https://localhost:8929/project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c"
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
           }
         }
       }
@@ -1396,13 +1396,13 @@
           "yaml_errors": null,
           "user": {
             "id": "<ID>",
-            "username": "project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+            "username": "project_<ID>_bot_<SUFFIX>",
             "public_email": null,
             "name": "****",
             "state": "active",
             "locked": false,
             "avatar_url": "<URL>",
-            "web_url": "https://localhost:8929/project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c"
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
           },
           "started_at": "<TIMESTAMP>",
           "finished_at": "<TIMESTAMP>",
@@ -1494,13 +1494,13 @@
           "yaml_errors": null,
           "user": {
             "id": "<ID>",
-            "username": "project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+            "username": "project_<ID>_bot_<SUFFIX>",
             "public_email": null,
             "name": "****",
             "state": "active",
             "locked": false,
             "avatar_url": "<URL>",
-            "web_url": "https://localhost:8929/project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c"
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
           },
           "started_at": "<TIMESTAMP>",
           "finished_at": "<TIMESTAMP>",
@@ -1554,13 +1554,13 @@
           "pipeline_id": "<ID>",
           "author": {
             "id": "<ID>",
-            "username": "project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+            "username": "project_<ID>_bot_<SUFFIX>",
             "public_email": null,
             "name": "****",
             "state": "active",
             "locked": false,
             "avatar_url": "<URL>",
-            "web_url": "https://localhost:8929/project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c"
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
           }
         }
       }
@@ -1595,13 +1595,13 @@
           "pipeline_id": "<ID>",
           "author": {
             "id": "<ID>",
-            "username": "project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c",
+            "username": "project_<ID>_bot_<SUFFIX>",
             "public_email": null,
             "name": "****",
             "state": "active",
             "locked": false,
             "avatar_url": "<URL>",
-            "web_url": "https://localhost:8929/project_13_bot_0d952f4907ac6e7dc198aec7e1a11c1c"
+            "web_url": "https://localhost:8929/project_<ID>_bot_<SUFFIX>"
           }
         }
       }
@@ -1730,7 +1730,7 @@
     },
     {
       "label": "the adapter as maintainer runs glab",
-      "command": "glab mr merge 1 -R wh71-probe/trial --sha <TOKEN> --auto-merge=false --yes",
+      "command": "glab mr merge 1 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
       "exitCode": 1,
       "output": "ERROR  \n          \n  This merge request requires a passing pipeline before merging."
     },
@@ -1742,7 +1742,7 @@
     },
     {
       "label": "the adapter as maintainer runs glab",
-      "command": "glab mr merge 1 -R wh71-probe/trial --sha <TOKEN> --auto-merge=false --yes",
+      "command": "glab mr merge 1 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
       "exitCode": 0,
       "output": "✓ Merged!\nhttps://localhost:8929/wh71-probe/trial/-/merge_requests/<ID>"
     },
@@ -1802,13 +1802,13 @@
     },
     {
       "label": "the adapter as maintainer runs glab",
-      "command": "glab mr merge 2 -R wh71-probe/trial --sha <TOKEN> --auto-merge=false --yes",
+      "command": "glab mr merge 2 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
       "exitCode": 1,
       "output": "ERROR  \n          \n  This merge request requires a passing pipeline before merging."
     },
     {
       "label": "the adapter as maintainer runs glab",
-      "command": "glab mr merge 2 -R wh71-probe/trial --sha <TOKEN> --auto-merge=false --yes",
+      "command": "glab mr merge 2 -R wh71-probe/trial --sha <SHA> --auto-merge=false --yes",
       "exitCode": 1,
       "output": "ERROR  \n          \n  This merge request requires a passing pipeline before merging."
     },

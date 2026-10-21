@@ -66,3 +66,10 @@ test('a prefixed token whose body is hex is hidden whole, not left as its prefix
   const out = scrubFixture({ note: `x gloas-${'ab12'.repeat(16)} y` });
   assert.equal(out.note, 'x <TOKEN> y');
 });
+
+test('a bot user\'s name (project id and hex suffix joined by underscores) and a commit id in text are hidden', () => {
+  const name = `project_13_bot_${'0d95'.repeat(8)}`;
+  assert.ok(tokenShaped(`x_${'0d95'.repeat(8)}`).length > 0);
+  assert.equal(scrubText(`as ${name} at ${'c'.repeat(40)}`), 'as project_<ID>_bot_<SUFFIX> at <SHA>');
+  assert.equal(scrubFixture({ username: name }).username, 'project_<ID>_bot_<SUFFIX>');
+});
