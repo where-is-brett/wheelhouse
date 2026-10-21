@@ -81,7 +81,9 @@ findings: 1
 // The kinds of size the ruling refuses, named in a comment or a test's title.
 const KIND = /\b(?:0|zero|negative|fraction(?:al)?|NaN|non-?numbers?|not a number|strings?)\b/i;
 // Words that make a comment or title say the kind is refused, or was, rather than allowed.
-const REFUSES = /\b(?:not|never|no longer|now|was|were|unless|only|refus\w*|reject\w*|throws?|rangeerror|fails?)\b/i;
+const REFUSES = /\b(?:throws?|refus\w*|reject\w*|rangeerror|fails?|no longer|not (?:allowed|accepted|permitted|tolerated|valid)|never (?:allowed|accepted|permitted)|(?:was|were) accepted|used to)\b/i;
+// Saying the code does not refuse: "does not throw", "never rejects".
+const NOT_REFUSING = /\b(?:does(?:n't| not)|do(?:n't| not)|never|won't|will not|no)\s+(?:longer\s+)?(?:throw|refuse|reject|fail)/i;
 // A comment or title saying the kind is allowed, or turned into a value.
 const ALLOWS = /\b(?:is|are)\s+(?:allowed|accepted|permitted|tolerated|fine|ok|valid)\b|\b(?:treated|rounded|coerced|converted|clamped)\b|\breturns?\b|\b(?:allows?|accepts?|tolerates?|permits?)\b/i;
 // A size the ruling refuses, as a literal argument.
@@ -93,7 +95,7 @@ const TITLE = /\b(?:test|it)\(\s*['"`]([^'"`]*)['"`]/g;
 // A condition that tests for a refused size.
 const REFUSAL_TEST = /size\s*(?:<=?|===?|!==?)\s*[01]\b|\bNumber\.is(?:Integer|Finite|NaN|SafeInteger)\b|\bisNaN\b|\bisFinite\b|typeof\s+size/;
 
-const says = (words) => KIND.test(words) && ALLOWS.test(words) && !REFUSES.test(words);
+const says = (words) => KIND.test(words) && (NOT_REFUSING.test(words) || (ALLOWS.test(words) && !REFUSES.test(words)));
 
 // Whether the text of a JavaScript file marks a case the ruling refuses as allowed: a comment or a
 // test's title saying a refused kind of size is allowed, accepted or returns a value, a test that
