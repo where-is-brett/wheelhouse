@@ -101,14 +101,14 @@ test('main refuses to run with no scenario named, before starting any session', 
 });
 
 test('loadScenarios finds the front desk\'s scenarios in tests/eval/front-desk/, by number, beside the build loop\'s', async () => {
-  for (const id of [1, 2, 3, 5, 7, 8, 9, 10, 16]) {
+  for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16]) {
     const found = await loadScenarios(id);
     assert.deepEqual(found.map((s) => s.id), [id], `scenario ${id}`);
   }
   // A build loop number finds only its own: 20 is not 2, nor 2 the 20s.
   assert.deepEqual((await loadScenarios(20)).map((s) => s.id), [20]);
   assert.deepEqual((await loadScenarios('27-route')).map((s) => s.leg), ['route']);
-  await assert.rejects(loadScenarios(4), /No scenario 4/);
+  await assert.rejects(loadScenarios(99), /No scenario 99/);
 });
 
 test('a scenario is found in its suite; one in two suites is refused', async () => {
