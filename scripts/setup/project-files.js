@@ -94,6 +94,7 @@ import { readConfig } from '../gate/guardrails.js';
 import { projectSettings, localSettings, mergeSettings, directorStatusLine } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
+import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
@@ -375,15 +376,15 @@ async function defaultBranchOf({ host, repo, run, gitlab }) {
 // The setup commit's author: the signed-in account, with its no-reply address, read with the
 // director's own sign-in (`gh api user`, `glab api user`). On GitLab, the account's own commit or
 // public address when it has one.
-export async function commitAuthor({ host, run = realRun }) {
-  const got = await quietly(run, toolPath(host === 'gitlab' ? 'glab' : 'gh'), ['api', 'user']);
+export async function commitAuthor({ host, run = realRun, base = DEFAULT_GITLAB }) {
+  // A company's GitLab is named to glab through GITLAB_HOST, which takes a port (check 71).
+  const got = await quietly(run, toolPath(host === 'gitlab' ? 'glab' : 'gh'), ['api', 'user'], host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: new URL(base).host } } : {});
   const user = got.code === 0 ? parsed(got.stdout) : null;
   const id = user?.id;
   if (host === 'gitlab') {
     const login = user?.username;
     if (typeof login === 'string' && login !== '' && Number.isInteger(id)) {
-      const own = [user.commit_email, user.public_email].find((e) => typeof e === 'string' && e.includes('@'));
-      return { name: typeof user.name === 'string' && user.name !== '' ? user.name : login, email: own ?? `${id}-${login}@users.noreply.gitlab.com` };
+      return { name: typeof user.name === 'string' && user.name !== '' ? user.name : login, email: commitEmailOf(user, base) };
     }
   } else {
     const login = user?.login;
@@ -808,7 +809,7 @@ export function projectFilesStep({
           if ((await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}'])) !== up.base) throw moved('This folder\'s latest commit');
           for (const rel of SETUP_FILES) if (!sameContent(rel, readText(at(rel)), wrote[rel])) throw moved(rel);
           if (tipNow !== up.base) throw moved(`${up.branch} on ${NAME[host]}`);
-          const author = await commitAuthor({ host, run });
+          const author = await commitAuthor({ host, run, base: record.connection?.baseUrl });
           // A file new to git is added with intent only, so the commit takes it and nothing is staged;
           // a commit that fails takes those entries out again.
           const added = [];

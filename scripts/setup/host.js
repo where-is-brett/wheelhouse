@@ -92,6 +92,7 @@ import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app
 import { installationCovers } from '../host/connection.js';
 import { gitlabApi, makeProjectKey, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
+import { DEFAULT_GITLAB, gitlabBase } from '../host/gitlab-base.js';
 import { readKey, writeKey } from '../host/keys.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
@@ -116,7 +117,6 @@ export const APP_FILE = fileURLToPath(new URL('../host/app.json', import.meta.ur
 export const PROFILE_REPO = 'wheelhouse-profile';
 // Wheelhouse's own branches, which are never the product's.
 const WHEELHOUSE_BRANCHES = [STATE_BRANCH, 'wheelhouse-lock', PROFILE_BRANCH];
-const GITLAB_URL = 'https://gitlab.com';
 
 // The answers' labels: step 4 (Task 9) reads the first two from `3.real-users` and `3.locked`.
 export const REAL_USERS = Object.freeze({ yes: 'Yes, real users', no: 'Not yet' });
@@ -125,9 +125,13 @@ export const HOST_LABELS = Object.freeze({ github: 'GitHub', gitlab: 'GitLab' })
 export const WAYS = Object.freeze({ wheelhouse: 'The Wheelhouse app', own: 'My own app', narrow: 'Narrow', quick: 'Quick' });
 
 const NAME = { github: 'GitHub', gitlab: 'GitLab' };
-const ADDRESS = { github: 'github.com', gitlab: 'gitlab.com' };
+const ADDRESS = { github: 'github.com', gitlab: new URL(DEFAULT_GITLAB).host };
+// The host's address as `glab` and `gh` name it: GitHub's, or the GitLab's host with its port when it has one.
+const addressOf = (host, base = DEFAULT_GITLAB) => (host === 'gitlab' ? new URL(base).host : ADDRESS[host]);
 const TOOL = { github: 'gh', gitlab: 'glab' };
-export const SIGN_UP = Object.freeze({ github: 'https://github.com/signup', gitlab: 'https://gitlab.com/users/sign_up' });
+export const SIGN_UP = Object.freeze({ github: 'https://github.com/signup', gitlab: `${DEFAULT_GITLAB}/users/sign_up` });
+// Where to make an account: GitHub's page, or the sign-up page of the GitLab at `base`.
+export const signUpUrl = (host, base = DEFAULT_GITLAB) => (host === 'gitlab' ? `${base.replace(/\/+$/, '')}/users/sign_up` : SIGN_UP[host]);
 
 // How long the browser sign-in may take (GitHub's codes last 15 minutes), and how long and how often
 // setup looks for the app's installation and its reach once the Install page is open.
@@ -311,12 +315,15 @@ function hasHistory(folder) {
 }
 
 // The product: an existing one, whose folder's `origin` names its repository, or a new one.
-export function productOf(folder) {
+// A company's own GitLab, named in `config.gitlabHosts`, gives its address as `base`; the public
+// service's is the default and is left out.
+export function productOf(folder, { config } = {}) {
   const origin = originUrl(folder);
   if (origin !== null) {
-    const host = detectHost(origin);
+    const host = detectHost(origin, { gitlabHosts: config?.gitlabHosts });
     const repo = repoOf(origin);
-    return { isNew: false, host, repo, name: repo.split('/').at(-1) };
+    const base = host === 'gitlab' ? gitlabBase({ config, remoteUrl: origin }) : DEFAULT_GITLAB;
+    return { isNew: false, host, repo, name: repo.split('/').at(-1), ...(base === DEFAULT_GITLAB ? {} : { base }) };
   }
   if (hasHistory(folder)) throw new Error(HISTORY_LINE);
   return { isNew: true, host: null, repo: null, name: repoName(folder) };
@@ -350,7 +357,7 @@ export function launchedIn(project) {
 }
 
 // The https address of a repository, which the record and the clones use.
-export const httpsRemote = ({ host, repo }) => `https://${ADDRESS[host]}/${repo}.git`;
+export const httpsRemote = ({ host, repo, base = DEFAULT_GITLAB }) => (host === 'gitlab' ? `${base.replace(/\/+$/, '')}/${repo}.git` : `https://${ADDRESS[host]}/${repo}.git`);
 
 // The project's folder name under ~/.wheelhouse/projects/: owner__name (nested groups joined the same way).
 export function slugFor(repo) {
@@ -561,11 +568,13 @@ export function connectionCard({ host, locked = false, realUsers = false, launch
 
 // ---- Signing in ----
 
-const ask = (run, host, args) => quietly(run, toolPath(TOOL[host]), args, {});
+// `glab` is told a company's GitLab through GITLAB_HOST, which takes a port; `--hostname` refuses one
+// on `glab api` (check 71). The public service needs no telling.
+const ask = (run, host, args, base = DEFAULT_GITLAB) => quietly(run, toolPath(TOOL[host]), args, host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: addressOf(host, base) } } : {});
 
 // Who the host's tool is signed in as, or null.
-async function whoAmI({ host, run }) {
-  const got = await ask(run, host, ['api', 'user']);
+async function whoAmI({ host, run, base }) {
+  const got = await ask(run, host, ['api', 'user'], base);
   if (got.code !== 0) return null;
   const body = json(got.stdout);
   const user = host === 'github' ? body?.login : body?.username;
@@ -574,20 +583,25 @@ async function whoAmI({ host, run }) {
 
 // Whether `gh` or `glab` is signed in to the host, and as whom. Reads only; never fails: a tool not
 // there yet is not signed in.
-export async function signInStatus({ host, run = realRun }) {
-  const status = await ask(run, host, ['auth', 'status', '--hostname', ADDRESS[host]]);
+export async function signInStatus({ host, run = realRun, base = DEFAULT_GITLAB }) {
+  const status = await ask(run, host, ['auth', 'status', '--hostname', addressOf(host, base)], base);
   if (status.code !== 0) return { signedIn: false, user: null };
-  const user = await whoAmI({ host, run });
+  const user = await whoAmI({ host, run, base });
   return { signedIn: user !== null, user };
 }
 
 // The existing sign-in, with no browser step; otherwise the tool's own browser sign-in, run with the
 // director's environment, whose one-time code is said as it is shown. STOP coming on while it waits
 // (`stopped`) ends it, and the step stops.
-export async function signIn({ host, run = realRun, say = () => {}, stopped = () => false }) {
-  const before = await signInStatus({ host, run });
-  if (before.signedIn) return before;
-  say(`Sign in to ${NAME[host]} in the browser page that opens. No account yet? Make one first at ${SIGN_UP[host]}`);
+export async function signIn({ host, run = realRun, say = () => {}, stopped = () => false, base = DEFAULT_GITLAB }) {
+  // glab defaults to ssh for git; a company's GitLab is set to https, as setup's git uses (check 71).
+  const withHttps = async (found) => {
+    if (host === 'gitlab' && base !== DEFAULT_GITLAB) await ask(run, host, ['config', 'set', 'git_protocol', 'https', '--host', addressOf(host, base)], base);
+    return found;
+  };
+  const before = await signInStatus({ host, run, base });
+  if (before.signedIn) return withHttps(before);
+  say(`Sign in to ${NAME[host]} in the browser page that opens. No account yet? Make one first at ${signUpUrl(host, base)}`);
   let said = false;
   const onOutput = (text) => {
     const code = /one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})/i.exec(text)?.[1];
@@ -598,18 +612,18 @@ export async function signIn({ host, run = realRun, say = () => {}, stopped = ()
   };
   const args = host === 'github'
     ? ['auth', 'login', '--hostname', ADDRESS.github, '--git-protocol', 'https', '--web']
-    : ['auth', 'login', '--hostname', ADDRESS.gitlab, '--git-protocol', 'https', '--web'];
+    : ['auth', 'login', '--hostname', addressOf('gitlab', base), '--git-protocol', 'https', '--web'];
   const controller = new AbortController();
   const watch = setInterval(() => { if (stopped()) controller.abort(); }, STOP_LOOK_MS);
   try {
-    await quietly(run, toolPath(TOOL[host]), args, { input: '\n', timeoutMs: SIGN_IN_WAIT_MS, onOutput, signal: controller.signal });
+    await quietly(run, toolPath(TOOL[host]), args, { input: '\n', timeoutMs: SIGN_IN_WAIT_MS, onOutput, signal: controller.signal, ...(host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: addressOf(host, base) } } : {}) });
   } finally {
     clearInterval(watch);
   }
   if (stopped()) throw new Error(STOPPED);
-  const after = await signInStatus({ host, run });
+  const after = await signInStatus({ host, run, base });
   if (!after.signedIn) throw new Error(`Setup could not sign in to ${NAME[host]}: the sign-in in the browser was not finished. A fresh Go ahead tries again`);
-  return after;
+  return withHttps(after);
 }
 
 // Opens a page in the director's browser; one that won't open is not fatal, since the line said
@@ -625,8 +639,8 @@ export async function openPage(url, { platform = process.platform, run = realRun
 // The director's GitLab sign-in, as glab holds it, read as check 22's trial read it: the token on
 // the "Token found:" line of `glab auth status --show-token`, or a glpat- value there. Held in
 // memory only; null when glab has none.
-async function directorGitlabToken({ run, host = ADDRESS.gitlab }) {
-  const got = await quietly(run, toolPath('glab'), ['auth', 'status', '--hostname', host, '--show-token'], {});
+async function directorGitlabToken({ run, host = ADDRESS.gitlab, base = DEFAULT_GITLAB }) {
+  const got = await quietly(run, toolPath('glab'), ['auth', 'status', '--hostname', host, '--show-token'], base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: host } } : {});
   const text = `${got.stdout ?? ''}\n${got.stderr ?? ''}`;
   const shown = /^[ \t]*\S*[ \t]*Token found\b[^:\n]*:[ \t]*(\S+)/im.exec(text)?.[1];
   return (shown && !/^\*+$/.test(shown) ? shown : null) ?? /\bglpat-[\w-]+/.exec(text)?.[0] ?? null;
@@ -634,9 +648,9 @@ async function directorGitlabToken({ run, host = ADDRESS.gitlab }) {
 
 // GitLab's API with the director's own sign-in, for making repositories and project keys, and for
 // protection (Task 13). The token goes only into the request's header.
-export async function directorGitlabApi({ run = realRun, fetch = globalThis.fetch, baseUrl = GITLAB_URL } = {}) {
+export async function directorGitlabApi({ run = realRun, fetch = globalThis.fetch, baseUrl = DEFAULT_GITLAB } = {}) {
   const root = checkBaseUrl(baseUrl);
-  const token = await directorGitlabToken({ run, host: new URL(root).host });
+  const token = await directorGitlabToken({ run, host: new URL(root).host, base: root });
   if (token === null) throw new Error('glab is not signed in to GitLab, so setup cannot use your GitLab sign-in');
   return gitlabApi({ baseUrl: root, token, bearer: true, fetch });
 }
@@ -883,12 +897,12 @@ function writeText(file, text) {
 
 // The connection a repository is reached with, as the project record and profile.json keep it; on
 // GitHub narrow, the project record's carries the app's installation on the project's account.
-function connectionFor({ host, mode, repo, id, locked = false, installationId = null }) {
+function connectionFor({ host, mode, repo, id, locked = false, installationId = null, base = DEFAULT_GITLAB }) {
   return {
     host,
     mode,
     project: repo,
-    ...(host === 'gitlab' ? { baseUrl: GITLAB_URL, ...(mode === 'narrow' ? { projectId: id } : {}) } : {}),
+    ...(host === 'gitlab' ? { baseUrl: base, ...(mode === 'narrow' ? { projectId: id } : {}) } : {}),
     ...(locked ? { locked: true } : {}),
     ...(host === 'github' && mode === 'narrow' && validId(installationId) ? { installationId } : {}),
   };
@@ -902,10 +916,10 @@ function connectionFor({ host, mode, repo, id, locked = false, installationId = 
 // scripts/profile/store.js reads, and the profile's clone, made again when an earlier attempt left
 // it part-way. An existing product keeps its repository. `owner` is the product's owner (for a new
 // product, `user`); `api` is GitLab's with the director's sign-in; `env` the director's git
-// environment; `hostUrl` gives a repository's address. Gives the changes made.
+// environment; `hostUrl` gives a repository's address on the GitLab at `base`. Gives the changes made.
 export async function makeRepos({
   host, owner, user = owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {},
-  hostUrl = httpsRemote, mode = 'quick',
+  hostUrl = httpsRemote, mode = 'quick', base = DEFAULT_GITLAB,
 }) {
   const made = [];
   const keep = (change) => {
@@ -928,12 +942,12 @@ export async function makeRepos({
   if (isNew) {
     if (owner !== user) throw new Error('A new product\'s repository is made on your own account');
     const info = await ensure(user, name, true);
-    await connectFolder({ folder, remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, run, record: keep });
+    await connectFolder({ folder, remoteUrl: hostUrl({ host, repo: info.repo, base }), gitPath, env, run, record: keep });
   }
   let profile = profileRemote();
   if (profile === null) {
     const info = await ensure(user, PROFILE_REPO, false);
-    profile = { remoteUrl: hostUrl({ host, repo: info.repo }), host, repo: info.repo, connection: connectionFor({ host, mode, repo: info.repo, id: info.id }) };
+    profile = { remoteUrl: hostUrl({ host, repo: info.repo, base }), host, repo: info.repo, connection: connectionFor({ host, mode, repo: info.repo, id: info.id, base }) };
     const file = profileFile();
     const text = `${JSON.stringify(profile, null, 2)}\n`;
     keep({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: text });
@@ -1210,7 +1224,7 @@ async function connectGitlabKeys({ api, projects, owner, platform, say, open, as
   }
   if (!refused || waiting.length === 0) return;
   say('GitLab would not make a project key, so make a token on the page that opens, then paste it into the box your computer shows: never into the chat');
-  await open(tokenUrl({ host: 'gitlab', owner, repos: waiting.map((p) => p.repo), name: KEY_NAME, days: KEY_DAYS }));
+  await open(tokenUrl({ host: 'gitlab', owner, repos: waiting.map((p) => p.repo), name: KEY_NAME, days: KEY_DAYS, base: api.baseUrl }));
   let token;
   try {
     token = await askSecret({ title: 'Wheelhouse: GitLab token', prompt: 'Paste the GitLab token you just made. It goes straight to Wheelhouse\'s keys, never the chat.' }, platform);
@@ -1248,10 +1262,10 @@ export async function switchOnAsDirector({ host, repo, run = realRun, api }) {
 
 // ---- Step 3 ----
 
-function cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts = false }) {
+function cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts = false, base = DEFAULT_GITLAB }) {
   const name = NAME[host];
   const parts = [];
-  if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${SIGN_UP[host]})`);
+  if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)})`);
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
     parts.push(`a private repository ${where} with a README, this folder connected to it, its files kept`);
@@ -1318,7 +1332,7 @@ function directorFor({ signedIn, way, host, app, appKeys, joining = false, twoAc
 export function hostStep({
   run = realRun, fetch = globalThis.fetch, sleep = pause, open, askSecret = realAskSecret, appFile = APP_FILE,
   hostUrl = httpsRemote, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
-  gitlab = ({ run: r, fetch: f }) => directorGitlabApi({ run: r, fetch: f }),
+  gitlab = ({ run: r, fetch: f, baseUrl }) => directorGitlabApi({ run: r, fetch: f, baseUrl }),
   profileRoutes = null, views = readProfileViews,
 } = {}) {
   // The profile's routes through the helper, for the person's own app's record: `profileRoutes`
@@ -1371,7 +1385,8 @@ export function hostStep({
         way = got.label;
       }
       const mode = way === WAYS.quick ? 'quick' : 'narrow';
-      const { signedIn, user } = await signInStatus({ host, run });
+      const base = product.base ?? DEFAULT_GITLAB;
+      const { signedIn, user } = await signInStatus({ host, run, base });
       const owner = product.isNew ? user : (product.repo === null ? null : product.repo.split('/').slice(0, -1).join('/'));
       const repo = product.isNew ? (user ? `${user}/${product.name}` : null) : product.repo;
       let app = null;
@@ -1447,7 +1462,7 @@ export function hostStep({
       // Their own app, made or found, and kept in the profile.
       if (app?.own && typeof app.clientId !== 'string') changes.push({ kind: 'host', target: 'github', action: 'own-app', account: app.account, name: app.name });
       changes.push({
-        kind: 'host', target: host, action: 'connection', mode, locked,
+        kind: 'host', target: host, action: 'connection', mode, locked, ...(host === 'gitlab' && base !== DEFAULT_GITLAB ? { base } : {}),
         ...(mode === 'narrow' && host === 'github' ? { app, ...(appKeys === null ? {} : { appKeys }) } : {}),
       });
       const slug = repo === null ? null : slugFor(repo);
@@ -1457,7 +1472,7 @@ export function hostStep({
       changes.push(enrolmentChange({ host }));
       return {
         changes,
-        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts }),
+        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts, base }),
         director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, twoAccounts }),
       };
     },
@@ -1488,6 +1503,8 @@ export function hostStep({
       const connection = changes.find((c) => c.action === 'connection');
       if (!connection) throw new Error('Step 3\'s list names no connection');
       const host = connection.target;
+      const base = host === 'gitlab' && typeof connection.base === 'string' ? checkBaseUrl(connection.base) : DEFAULT_GITLAB;
+      const urlFor = (a) => hostUrl({ ...a, base });
       const narrowApp = host === 'github' && connection.mode === 'narrow' ? connection.app : null;
       if (narrowApp !== null && typeof narrowApp?.clientId !== 'string' && !(narrowApp?.own === true && changes.some((c) => c.action === 'own-app'))) throw new Error(NO_APP_LISTED);
       // The product as the list names it, never read again from the folder, which this step changes.
@@ -1512,18 +1529,18 @@ export function hostStep({
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform });
-      const { user } = await signIn({ host, run, say, stopped });
+      const { user } = await signIn({ host, run, say, stopped, base });
       // A repository the card named on one account is never made on another.
       for (const c of changes.filter((x) => (x.action === 'repository' || x.action === 'profile-repository') && typeof x.repo === 'string')) {
         if (c.repo.split('/')[0] !== user) throw new Error(`You are signed in to ${NAME[host]} as ${user}, not the account the card named; ask for step 3's card again`);
       }
       halt();
-      const api = host === 'gitlab' ? await gitlab({ run, fetch }) : null;
+      const api = host === 'gitlab' ? await gitlab({ run, fetch, baseUrl: base }) : null;
       // The product a joining computer's answer names: exactly one repository holding Wheelhouse's
       // records, or a refusal saying to type owner/name, recorded so the question asks again.
       let joined = null;
       if (join !== null) {
-        const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, hostUrl });
+        const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, hostUrl: urlFor });
         // The repository this folder is checked out to is checked again, never searched for.
         if (fixed !== null && found.length !== 1) {
           throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or no longer holds Wheelhouse's records, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
@@ -1551,20 +1568,20 @@ export function hostStep({
       const appReachesProfile = !narrowApp?.own || sameLogin(narrowApp.owner ?? projectOwner, user);
       // An existing product's repository must hold a branch of its own before the state branch goes
       // up, or the state branch would become its default (ruling R34).
-      if (made === null && joined === null) await productBranchOn({ host, repo: projectRepo, remoteUrl: hostUrl({ host, repo: projectRepo }), gitPath: git.path, env: gitEnv, run });
+      if (made === null && joined === null) await productBranchOn({ host, repo: projectRepo, remoteUrl: urlFor({ host, repo: projectRepo }), gitPath: git.path, env: gitEnv, run });
       // A joining computer's folder, checked out to the project in place, on its default branch.
       if (joined !== null) {
         const branch = joined.defaultBranch;
         if (typeof branch !== 'string' || branch === '' || WHEELHOUSE_BRANCHES.includes(branch)) {
           throw new Error(`${joined.repo}'s default branch on ${NAME[host]} is ${branch || 'not set'}, not a branch of the product's, so setup has not checked it out: make the product's own branch the default in the repository's settings, then ask again`);
         }
-        await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: hostUrl({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, run, record });
+        await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: urlFor({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, run, record });
         halt();
       }
       // The product under its owner; the profile always on the director's own account.
       await makeRepos({
         host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: made !== null,
-        run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, mode: appReachesProfile ? connection.mode : 'quick',
+        run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, mode: appReachesProfile ? connection.mode : 'quick', base,
       });
       const project = await repoInfo({ host, repo: projectRepo, run, api });
       if (project === null) throw new Error(`${projectRepo} on ${NAME[host]} can't be found with your sign-in`);
@@ -1572,7 +1589,7 @@ export function hostStep({
       if (profile === null) throw new Error('The profile could not be read back after it was written');
       halt();
       const slug = slugFor(project.repo);
-      const remoteUrl = hostUrl({ host, repo: project.repo });
+      const remoteUrl = urlFor({ host, repo: project.repo });
       const cloneRecords = async () => {
         record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { clone: remoteUrl, branch: STATE_BRANCH } });
         await refuseSettingsIn({ dir: stateDir(slug), run, gitPath: git.path });
@@ -1631,7 +1648,7 @@ export function hostStep({
         }
       }
       halt();
-      const kept = { folder: ctx.folder, remoteUrl, host, repo: project.repo, connection: connectionFor({ host, mode: connection.mode, repo: project.repo, id: project.id, locked: connection.locked === true, installationId }) };
+      const kept = { folder: ctx.folder, remoteUrl, host, repo: project.repo, connection: connectionFor({ host, mode: connection.mode, repo: project.repo, id: project.id, locked: connection.locked === true, installationId, base }) };
       const file = projectFile(slug);
       record({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: `${JSON.stringify(kept, null, 2)}\n` });
       writeProject(slug, kept);

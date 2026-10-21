@@ -164,7 +164,7 @@ test('step 3 records the key, the setting switched off and the refusal, and prin
   const said = lines.join('\n');
   assert.match(said, new RegExp(`the group setting ${TOKEN_SETTING}, as the group stands \\| true`));
   assert.match(said, /makeProjectKey as the maintainer, setting on \| created/);
-  assert.match(said, /setting off \| refused with Wheelhouse's message: GitLab refused the request for a project key \(HTTP 400\)/);
+  assert.match(said, /setting off \| refused with Wheelhouse's message: GitLab refused a project key because the company's group has switched project keys off/);
   assert.match(said, /User does not have permission to create project access token/);
   assert.match(said, /the setting switched back on \| true/);
   assert.deepEqual(tokenShaped(said), []);

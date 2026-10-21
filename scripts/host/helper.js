@@ -29,6 +29,7 @@ import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
+import { DEFAULT_GITLAB } from './gitlab-base.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
@@ -2470,7 +2471,7 @@ export async function startHelper({
     const protection = async () => {
       try {
         const token = ctx.env?.GITLAB_TOKEN;
-        const api = host === 'gitlab' ? gitlabApi({ baseUrl: checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com'), token, fetch }) : undefined;
+        const api = host === 'gitlab' ? gitlabApi({ baseUrl: checkBaseUrl(connection.baseUrl ?? DEFAULT_GITLAB), token, fetch }) : undefined;
         const status = await protectionStatus({ host, repo, run, api, env: ctx.env });
         return status.on ? 'on' : (status.available ? 'unknown' : 'none');
       } catch { return 'unknown'; }

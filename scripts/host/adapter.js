@@ -9,6 +9,7 @@ import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
 import { publicHttps } from '../screens/pages.js';
+import { parseRemote, listed, isDefaultHost, hostWords } from './gitlab-base.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
 
@@ -79,25 +80,13 @@ const httpsOnly = publicHttps;
 
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
-function hostOf(remoteUrl) {
-  const text = String(remoteUrl ?? '').trim();
-  const scp = /^[^@/\s]+@([^:/\s]+):/.exec(text); // git@host:owner/name.git
-  if (scp) return scp[1].toLowerCase();
-  try {
-    const url = new URL(text);
-    if (url.hostname) return url.hostname.toLowerCase();
-  } catch { /* not a URL */ }
-  throw new Error('That is not a repository address this can read');
-}
-
-// 'github' for github.com; 'gitlab' for gitlab.com, or for another address when
-// the project setting `gitlabHosts` names it.
+// 'github' for github.com; 'gitlab' for the public GitLab service, or for another address when
+// the project setting `gitlabHosts` names it (a host name, with its port when it has one).
 export function detectHost(remoteUrl, { gitlabHosts = [] } = {}) {
-  const host = hostOf(remoteUrl);
-  if (host === 'github.com') return 'github';
-  if (host === 'gitlab.com') return 'gitlab';
-  if (gitlabHosts.map((h) => String(h).toLowerCase()).includes(host)) return 'gitlab';
-  throw new Error(`The repository is at ${host}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`);
+  const parts = parseRemote(remoteUrl);
+  if (parts.hostname === 'github.com') return 'github';
+  if (isDefaultHost(parts) || listed(parts, gitlabHosts)) return 'gitlab';
+  throw new Error(`The repository is at ${hostWords(parts)}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`);
 }
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;

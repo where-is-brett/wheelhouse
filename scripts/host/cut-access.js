@@ -15,9 +15,10 @@
 import { deleteKey, readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi, projectPath } from './gitlab-key.js';
 import { installationOf } from './connection.js';
+import { DEFAULT_GITLAB } from './gitlab-base.js';
 
 export const INSTALLATIONS_PAGE = 'https://github.com/settings/installations';
-export const GITLAB_URL = 'https://gitlab.com';
+export const GITLAB_URL = DEFAULT_GITLAB;
 
 // The settings page of one installation of the app, or the list of them when its number isn't known.
 export const installationPage = (id) => (Number.isSafeInteger(id) && id > 0 ? `${INSTALLATIONS_PAGE}/${id}` : INSTALLATIONS_PAGE);
