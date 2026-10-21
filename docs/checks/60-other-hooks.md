@@ -2,7 +2,7 @@
 
 # Check 60: what Copilot's other hooks can do
 
-**Answer:** Partly. `sessionStart` and `userPromptSubmitted` can add text the agent reads, through `additionalContext` (and `userPromptSubmitted` can also rewrite the prompt with `modifiedPrompt`), registered in Copilot's own spelling; `subagentStop` names the agent that stopped. `/compact` works from a script and runs `preCompact`, but whether `preCompact` can block is not settled: the one blocked attempt ended in "Nothing to compact", which does not tell a block from an empty session.
+**Answer:** Partly. `sessionStart` and `userPromptSubmitted` can add text the agent reads, through `additionalContext` (and `userPromptSubmitted` can also rewrite the prompt with `modifiedPrompt`), registered in Copilot's own spelling; `subagentStop` names the agent that stopped. `/compact` works from a script and runs `preCompact`, but `preCompact` cannot block: `decision: block` (camelCase and PascalCase) and exit 2 were all read, and the session compacted anyway.
 
 ## Question
 
@@ -10,7 +10,7 @@ Can a `sessionStart` or `userPromptSubmitted` hook answer with text the agent re
 
 ## Tested on
 
-21 October 2026, on macOS, with Copilot CLI 1.0.101 (the pinned copy under `~/.wheelhouse-probes/`), signed in through a scratch Copilot home. Nine real model runs by `probes/60-other-hooks/run.js`, in two goes. First go (5): `markers` and `subagent` exit 0; the three compaction runs exit 1 (one for an argument fault of the probe's, two for "Nothing to compact"). Second go, after the probe's fix (4): `markers`, `compact-log` and `subagent` exit 0, `compact-block` exit 1. The raw results (every run's arguments, output, hook log lines and counts) are kept with the build's working papers, not in the repository.
+21 October 2026, on macOS, with Copilot CLI 1.0.101 (the pinned copy under `~/.wheelhouse-probes/`), signed in through a scratch Copilot home. Eighteen real model runs by `probes/60-other-hooks/run.js`, in three goes. First go (5): `markers` and `subagent` exit 0; the three compaction runs exit 1 (one for an argument fault of the probe's, two for "Nothing to compact"). Second go, after the probe's fix (4): `markers`, `compact-log` and `subagent` exit 0, `compact-block` exit 1 (no history left). Third go, with a one-turn refill before each blocking attempt (9): all exit 0. The raw results (every run's arguments, output, hook log lines and counts) are kept with the build's working papers, not in the repository.
 
 ## Method
 
@@ -49,7 +49,11 @@ The probe makes everything under the system's temporary folder and removes it it
 - **`/compact` is understood by `-p`, and it runs `preCompact`.** In every go it ran the camelCase and PascalCase `preCompact` hooks. The input has `trigger` (`manual`), `customInstructions` and the transcript path (`transcriptPath`, or `transcript_path` with `hook_event_name: PreCompact` under the PascalCase name).
 - **A resumed session with history did compact.** `compact-log` (exit 0, 23 seconds) made a summary call and Copilot's debug log says "Persisted compaction checkpoint" and "Compacted conversation history" (one message removed). **The JSON output has no compaction event at all** (its only event was `result`), so a script cannot see a compaction from the output; the debug log is the only place. The probe's first detector looked for events and found none.
 - **A new session has nothing to compact.** `/compact` as a first prompt stopped with "Nothing to compact" and exit 1, after running the `preCompact` hooks.
-- **The block is not settled.** `compact-block` ran straight after `compact-log` on the same session, so there was nothing left to compact. Copilot's debug log shows the hook's `{"decision":"block","reason":...}` read, then "Nothing to compact" and exit 1: the same error an empty session gives, so it does not show whether the block did anything. Exit 2 and the PascalCase block were not reached. The probe has been changed to refill the session before each attempt; the answer waits for that run.
+- **`preCompact` cannot block.** In the third go each blocking attempt followed a refill turn, so there was history, and each one compacted ("Compacted conversation history" in the debug log) with exit 0. Copilot's debug log shows each answer was read:
+  - camelCase `preCompact` printing `{"decision":"block","reason":...}`: the stdout line is logged, then the compaction ran.
+  - camelCase `preCompact` exiting 2: stderr shows as a "Hook warning" in the log, then the compaction ran.
+  - PascalCase `PreCompact` printing the same block JSON: logged, then the compaction ran.
+  (The second go's single block attempt, straight after a compaction, ended in "Nothing to compact", which proved nothing; the refill is what made the third go a fair test.)
 - **Compaction is slow:** about 23 seconds, with a model call for the summary.
 
 ### `subagentStop`
@@ -58,7 +62,7 @@ Both spellings ran once per sub-agent, and `subagentStart` too. The stop input n
 
 ### What was not tested
 
-- Blocking a compaction (any shape) on a session that has history to compact. Exit 2 on `preCompact` and the PascalCase block were not reached.
+- Other answer shapes for `preCompact` (for example `continue: false`, or `hookSpecificOutput`), and the automatic compaction of a long session, which may differ from `/compact`.
 - Why `UserPromptSubmit` answers were ignored; `UserPromptSubmit` registered alone.
 - `additionalContext` from other events, a `modifiedPrompt` that differs from the typed prompt, and an `additionalContext` over the size caps.
 - Whether text added by `sessionStart` survives a compaction.
@@ -67,7 +71,7 @@ Both spellings ran once per sub-agent, and `subagentStart` too. The stop input n
 ## What it means for the design
 
 - **Part 5 Task 3 (the STOP word's reply and the briefing).** The brief's "if the answer differs" paragraph applies in part. `userPromptSubmitted` can add text the agent reads, so the STOP word's reply can come from the hook, but only from the camelCase registration through `additionalContext` (it arrives as a system reminder after the prompt) or `modifiedPrompt`. Register under `$COPILOT_HOME/hooks` with the camelCase names, not `UserPromptSubmit` and not `UserPromptSubmitted`. The `systemMessage` and plain-stdout answers do nothing, so the hook cannot show the person text directly. The briefing at the start of a session can use `sessionStart` with `additionalContext` (either spelling). Because the front desk's own skill (`wheelhouse-briefing`) is the fallback the brief names, the plan should keep the STOP word's reply readable by the front desk from the helper's answer, as the brief says, until `UserPromptSubmit` is understood.
-- **Part 4 Task 3 (hooks that depend on compaction and sub-agents).** `subagentStop` names the agent that stopped in `agentName` / `agentType`, so a hook can act on a named agent. `preCompact` fires on `/compact` (also from a script, on a resumed session) and says its trigger, but whether it can stop a compaction is not settled: design as if it cannot until it is tested, and do not rely on it to keep the briefing or a rule in context. A script cannot see a compaction in the JSON output; the debug log says it.
+- **Part 4 Task 3 (hooks that depend on compaction and sub-agents).** `subagentStop` names the agent that stopped in `agentName` / `agentType`, so a hook can act on a named agent. `preCompact` fires on `/compact` (also from a script, on a resumed session) and says its trigger, and it cannot stop a compaction (three answers tried): do not rely on it to keep the briefing or a rule in context. If something must survive a compaction, put it where the agent reads it again (an instruction file, or text added by `sessionStart`, which was not tested across a compaction). A script cannot see a compaction in the JSON output; the debug log says it.
 - **Register once, in one spelling.** Registered under two spellings, the same event runs both hooks (check 58), and here the two spellings did not behave alike for the prompt event. Use the camelCase names throughout.
 
 ## Needs the director
