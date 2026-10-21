@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 import { tempFolder } from '../../helpers/homes.js';
 import {
-  COPILOT_VERSION, LOGIN_HOME, copilotBin, copilotEnv, defaultPrefix, installCopilot, jsonEvents, loginHome, runCopilot, scratchCopilotHome, signedIn,
+  COPILOT_VERSION, LOGIN_HOME, assertProbeHome, copilotBin, copilotEnv, defaultPrefix, installCopilot, jsonEvents, launch, loginHome, runCopilot, scratchCopilotHome, signedIn,
 } from '../../../probes/lib/copilot.js';
 import * as numbers from '../../../scripts/lib/copilot-numbers.js';
 
@@ -225,4 +225,47 @@ test('the numbers are the design\'s, exactly', () => {
   assert.equal(numbers.BOARD_FILE, 'wheelhouse/board.md');
   assert.equal(numbers.HOOK_FILE, 'wheelhouse.json');
   assert.equal(COPILOT_VERSION, '1.0.101');
+});
+
+test('copilotEnv drops more token names and the steering variables a caller\'s shell holds, unless passed on purpose', () => {
+  const baseEnv = {
+    PATH: '/bin', GITHUB_PAT: 'a', OAUTH_TOKEN: 'b', CI_JOB_TOKEN: 'c', GITLAB_PASSWORD: 'd',
+    COPILOT_ALLOW_ALL: 'true', COPILOT_CUSTOM_INSTRUCTIONS_DIRS: '/x', COPILOT_SKILLS_DIRS: '/y', COPILOT_MODEL: 'keep',
+  };
+  const out = copilotEnv({ home: '/h', baseEnv });
+  assert.deepEqual(Object.keys(out).sort(), ['COPILOT_HOME', 'COPILOT_MODEL', 'PATH']);
+  assert.equal(copilotEnv({ home: '/h', baseEnv, env: { COPILOT_ALLOW_ALL: 'false' } }).COPILOT_ALLOW_ALL, 'false');
+});
+
+test('copilotEnv on Windows matches names without regard to case', () => {
+  const out = copilotEnv({ home: 'C:/h', platform: 'win32', baseEnv: { Path: 'inherited', SystemRoot: 'C:/Windows' }, env: { PATH: 'given', copilot_home: 'other' } });
+  assert.equal(out.PATH, 'given');
+  assert.ok(!('Path' in out));
+  assert.ok(!('copilot_home' in out));
+  assert.equal(out.COPILOT_HOME, 'C:/h');
+  assert.equal(out.SystemRoot, 'C:/Windows');
+  // Elsewhere the names stay apart.
+  const unixEnv = copilotEnv({ home: '/h', platform: 'linux', baseEnv: { Path: 'a' }, env: { PATH: 'b' } });
+  assert.equal(unixEnv.Path, 'a');
+  assert.equal(unixEnv.PATH, 'b');
+});
+
+test('runCopilot refuses a home outside the temporary folder and ~/.wheelhouse-probes', async () => {
+  const user = path.resolve(path.sep, 'nobody-here');
+  assert.throws(() => assertProbeHome(path.join(user, '.copilot'), { userHome: user }), /not under the temporary folder/);
+  assert.throws(() => assertProbeHome(os.tmpdir()), /not under the temporary folder/);
+  assert.throws(() => assertProbeHome(path.join(os.tmpdir(), '..', 'elsewhere')), /not under the temporary folder/);
+  assert.doesNotThrow(() => assertProbeHome(tempFolder('wh-home-')));
+  assert.doesNotThrow(() => assertProbeHome(path.join(user, '.wheelhouse-probes', 'login-home'), { userHome: user }));
+  await assert.rejects(() => runCopilot({ args: [], home: path.join(os.homedir(), '.copilot'), bin: 'copilot' }), /not under the temporary folder/);
+});
+
+test('launch starts a Windows .cmd shim through cmd.exe and anything else as it is', () => {
+  assert.deepEqual(launch('copilot', ['-p', 'hi'], { platform: 'win32' }), { file: 'copilot', args: ['-p', 'hi'], windowsVerbatimArguments: false });
+  assert.deepEqual(launch('C:\\p\\copilot.cmd', ['-p', 'a b'], { platform: 'linux' }).file, 'C:\\p\\copilot.cmd');
+  const call = launch('C:\\p\\copilot.cmd', ['-p', 'a b'], { platform: 'win32' });
+  assert.equal(call.file, 'cmd.exe');
+  assert.deepEqual(call.args, ['/d', '/s', '/c', '"C:\\p\\copilot.cmd -p "a b""']);
+  assert.equal(call.windowsVerbatimArguments, true);
+  assert.throws(() => launch('copilot.cmd', ['say "x"'], { platform: 'win32' }), /safely/);
 });

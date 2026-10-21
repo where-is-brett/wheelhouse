@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run } from '../../scripts/lib/run.js';
+import { quoteForCmd } from '../../scripts/lib/claude.js';
 import { COPILOT_VERSION } from '../../scripts/lib/copilot-numbers.js';
 import { assertUnderTmp } from './scratch.js';
 
@@ -18,7 +19,11 @@ export { COPILOT_VERSION };
 
 const VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 // Variables that carry a host's token. A probe's Copilot never inherits these; it gets its sign-in from its own home.
-const TOKEN_VARIABLE = /^(GH|GITHUB|COPILOT_GITHUB|GITLAB|GLAB)_[A-Z0-9_]*TOKEN$/i;
+// Any name ending _TOKEN or _PAT (GITHUB_PAT, OAUTH_TOKEN, CI_JOB_TOKEN), and the host families' own secrets and keys.
+const TOKEN_VARIABLE = /(^|_)(TOKEN|PAT)$|^(GH|GITHUB|COPILOT_GITHUB|GITLAB|GLAB)_[A-Z0-9_]*(TOKEN|PAT|SECRET|KEY|PASSWORD)$/i;
+// Variables that change what a session may do or load. A probe's Copilot never inherits these from the caller's
+// shell; a probe that wants one passes it in `env` on purpose.
+const STEERING_VARIABLE = /^(COPILOT_ALLOW_ALL|COPILOT_CUSTOM_INSTRUCTIONS_DIRS|COPILOT_SKILLS_DIRS)$/i;
 
 // Where a version is installed: ~/.wheelhouse-probes/copilot/<version>/.
 export function defaultPrefix(version = COPILOT_VERSION, home = os.homedir()) {
@@ -33,6 +38,17 @@ export function loginHome(home = os.homedir()) {
 
 export const LOGIN_HOME = loginHome();
 
+// How to start `file` with `args`. A Windows .cmd shim cannot be spawned directly by current Node.js, so it
+// goes through cmd.exe with the command line quoted by quoteForCmd (which refuses an argument holding a
+// double quote, a percent sign or a line break). Anything else is started as it is.
+export function launch(file, args, { platform = process.platform } = {}) {
+  if (platform === 'win32' && /\.cmd$/i.test(file)) {
+    const line = [file, ...args].map(quoteForCmd).join(' ');
+    return { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], windowsVerbatimArguments: true };
+  }
+  return { file, args, windowsVerbatimArguments: false };
+}
+
 // The program npm puts in the prefix.
 export function copilotBin(prefix, { platform = process.platform } = {}) {
   return path.join(prefix, 'node_modules', '.bin', platform === 'win32' ? 'copilot.cmd' : 'copilot');
@@ -44,7 +60,8 @@ export async function installCopilot({ version = COPILOT_VERSION, prefix, platfo
   const into = prefix ?? defaultPrefix(version);
   await fs.promises.mkdir(into, { recursive: true });
   const npm = platform === 'win32' ? 'npm.cmd' : 'npm';
-  const result = await run(npm, ['install', '--prefix', into, `@github/copilot@${version}`], { cwd: into });
+  const call = launch(npm, ['install', '--prefix', into, `@github/copilot@${version}`], { platform });
+  const result = await run(call.file, call.args, { cwd: into, windowsVerbatimArguments: call.windowsVerbatimArguments });
   if (result.code !== 0) throw new Error(`npm could not install Copilot CLI ${version}: ${result.stderr.trim().slice(0, 300)}`);
   const bin = copilotBin(into, { platform });
   if (!fs.existsSync(bin)) throw new Error(`npm finished, but there is no Copilot CLI at ${bin}`);
@@ -84,17 +101,35 @@ export function scratchCopilotHome({ signedInFrom } = {}) {
 // The environment a probe's Copilot gets: the inherited environment without any host token, then the
 // variables the caller passes explicitly in `env` (a probe may hand it a token on purpose), with
 // COPILOT_HOME set.
-export function copilotEnv({ env = {}, home, baseEnv = process.env } = {}) {
+// On Windows names are matched without regard to case, so a caller's `PATH` replaces the inherited `Path`
+// rather than sitting beside it.
+export function copilotEnv({ env = {}, home, baseEnv = process.env, platform = process.platform } = {}) {
   if (!home) throw new Error('A probe runs Copilot from a home of its own: pass `home`');
   const merged = {};
+  const same = (a, b) => (platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const forget = (name) => {
+    for (const existing of Object.keys(merged)) if (same(existing, name)) delete merged[existing];
+  };
   for (const [name, value] of Object.entries(baseEnv)) {
-    if (!TOKEN_VARIABLE.test(name) && value !== undefined && value !== null) merged[name] = value;
+    if (TOKEN_VARIABLE.test(name) || STEERING_VARIABLE.test(name)) continue;
+    if (value !== undefined && value !== null) merged[name] = value;
   }
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || value === null) delete merged[name];
-    else merged[name] = value;
+    forget(name);
+    if (value !== undefined && value !== null) merged[name] = value;
   }
+  forget('COPILOT_HOME');
   return { ...merged, COPILOT_HOME: home };
+}
+
+// Where a probe's Copilot home may be: under the system's temporary folder, or under ~/.wheelhouse-probes
+// (the login home). Never the person's real ~/.copilot.
+export function assertProbeHome(home, { userHome = os.homedir() } = {}) {
+  const resolved = path.resolve(home);
+  const roots = [path.resolve(os.tmpdir()), fs.realpathSync(os.tmpdir()), path.join(path.resolve(userHome), '.wheelhouse-probes')];
+  const real = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
+  const inside = roots.some((root) => [resolved, real].some((candidate) => candidate !== root && candidate.startsWith(root + path.sep)));
+  if (!inside) throw new Error(`Refusing to run Copilot with ${resolved} as its home: it is not under the temporary folder or ~/.wheelhouse-probes`);
 }
 
 // The lines of `text` as JSON objects when every non-empty line is one; otherwise [].
@@ -116,8 +151,11 @@ export function jsonEvents(text) {
 
 // Runs Copilot once. `bin` is a path from copilotBin, or the name `copilot` found on the PATH.
 // A run still going at `timeoutMs` is stopped and the result says `timedOut: true`.
-export async function runCopilot({ args = [], cwd, env, home, timeoutMs = 120000, bin = 'copilot' } = {}) {
-  const result = await run(bin, args, { cwd, env: copilotEnv({ env, home }), baseEnv: {}, timeoutMs });
+export async function runCopilot({ args = [], cwd, env, home, timeoutMs = 120000, bin = 'copilot', platform = process.platform } = {}) {
+  const environment = copilotEnv({ env, home, platform });
+  assertProbeHome(home);
+  const call = launch(bin, args, { platform });
+  const result = await run(call.file, call.args, { cwd, env: environment, baseEnv: {}, timeoutMs, windowsVerbatimArguments: call.windowsVerbatimArguments });
   return {
     code: result.code,
     stdout: result.stdout,
