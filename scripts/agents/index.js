@@ -18,16 +18,7 @@ export function adapterFor(name) {
   return ADAPTERS[name];
 }
 
-// Claude Code's hook input carries `hook_event_name`. Copilot's camelCase input carries `toolName` or
-// `sessionId` and no `hook_event_name`. Wheelhouse registers Copilot's hooks in camelCase only, since
-// the same event registered under two spellings runs twice, so anything with `hook_event_name` is
-// Claude Code's, including a PascalCase payload. Anything else is null.
-export function agentOfInput(raw) {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  if (Object.hasOwn(raw, 'hook_event_name')) return 'claude-code';
-  if (Object.hasOwn(raw, 'toolName') || Object.hasOwn(raw, 'sessionId')) return 'copilot';
-  return null;
-}
+export { agentOfInput } from './of-input.js';
 
 // The agent this computer runs for `project` (a folder), from the `agents` map in the project's
 // .claude/wheelhouse.json ({ "<computer id>": "copilot" }). A missing or unreadable file, or no

@@ -10,6 +10,8 @@ import { resolveClaude, invocation } from '../../scripts/lib/claude.js';
 import { CLAUDE_CODE_FLOOR } from '../../scripts/lib/build-loop.js';
 import { projectSettings, localSettings } from '../../scripts/protection/settings.js';
 import { SETUP_FILES } from '../../scripts/setup/project-files.js';
+import tools from './tools.js';
+import translate from './translate.js';
 import { main as runEvals } from '../../scripts/eval/run.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -53,17 +55,8 @@ export default Object.freeze({
     file: () => HOOKS_FILE,
   }),
   // Claude Code's input and answers are the guards' own shape.
-  translate: Object.freeze({
-    toGuardInput: (raw) => raw,
-    fromGuardAnswer: (out) => out,
-  }),
-  tools: Object.freeze({
-    read: Object.freeze(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite', 'ToolSearch']),
-    halt: Object.freeze(['TaskStop', 'KillShell']),
-    notify: Object.freeze(['PushNotification']),
-    ask: 'AskUserQuestion',
-    shell: Object.freeze(['Bash', 'PowerShell']),
-  }),
+  translate,
+  tools,
   settings: Object.freeze({ project: projectSettings, local: localSettings }),
   sessions: Object.freeze({
     foremanCall: async (opts) => (await import('../../scripts/foreman/start.js')).foremanSession(opts),
