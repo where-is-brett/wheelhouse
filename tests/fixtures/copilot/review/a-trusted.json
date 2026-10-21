@@ -1,5 +1,28 @@
 {
  "route": "a-trusted",
+ "args": [
+  "-p",
+  "--output-format",
+  "json",
+  "--no-auto-update",
+  "--no-ask-user",
+  "--agent",
+  "reviewer",
+  "--log-dir",
+  "<log dir>",
+  "--log-level",
+  "debug",
+  "--no-custom-instructions",
+  "--disable-builtin-mcps",
+  "--available-tools",
+  "view",
+  "glob",
+  "rg",
+  "--allow-tool=view",
+  "--allow-tool=glob",
+  "--allow-tool=rg",
+  "--trust-folder"
+ ],
  "events": [
   {
    "type": "session.skills_loaded",
@@ -123,5 +146,63 @@
   "[DEBUG] Plugin activation [agents]: fingerprint=4c956228f3a2, plugins=0, loaded=2",
   "[WARNING] Loading repo hooks in prompt mode (folder is trusted or opt-in set)",
   "[WARNING] Loading workspace MCP sources in prompt mode (folder is trusted or opt-in set)"
- ]
+ ],
+ "listings": {
+  "instructions": {
+   "code": 0,
+   "json": [
+    {
+     "id": "repo-copilot",
+     "location": "repository"
+    },
+    {
+     "id": "model-agents-md",
+     "location": "repository"
+    },
+    {
+     "id": "model-claude-md",
+     "location": "repository"
+    },
+    {
+     "id": "model-gemini-md",
+     "location": "repository"
+    },
+    {
+     "id": "vscode-instructions/.github/instructions/review.instructions.md",
+     "location": "working-directory"
+    },
+    {
+     "id": "vscode-instructions/.github/instructions/ts.instructions.md",
+     "location": "working-directory"
+    },
+    {
+     "id": "nested-agents",
+     "location": "working-directory"
+    }
+   ]
+  },
+  "lsp": {
+   "code": 0,
+   "json": [
+    {
+     "id": "planted-lsp-github",
+     "fileExtensions": [
+      ".ts"
+     ]
+    }
+   ]
+  },
+  "mcp": {
+   "code": 0,
+   "json": {
+    "mcpServers": {
+     "github-mcp-server": {}
+    }
+   }
+  },
+  "skills": {
+   "code": 0,
+   "text": "Project skills:\n  skill-github\n  skill-agents\n  skill-claude\n\nCustom skills:\n  env-skill\n\nBuiltin skills:\n  customize-cloud-agent\n  github-pr-media\n"
+  }
+ }
 }

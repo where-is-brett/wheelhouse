@@ -7,7 +7,7 @@ import path from 'node:path';
 import { tempFolder } from '../../helpers/homes.js';
 import {
   CHANGED_RANGE, BASE_RANGE, CHECK, COPILOT_EVENTS, CLAUDE_EVENTS, REVIEWER_FILE, ROUTES, SOURCES, TAGS,
-  checkoutFiles, cleanCheck, debugLogFacts, finalAnswer, homeFiles, main, mcpEvents, obeyedIn, parseOptions, plantedReads, promptFor, readAnswer,
+  EXPECTED_DISABLED_TOOLS, checkoutFiles, cleanCheck, debugLogFacts, finalAnswer, homeFiles, main, mcpEvents, obeyedIn, parseOptions, plantedReads, promptFor, readAnswer,
   reachedIn, reviewerWithField, scrubber, sessionFacts, summarise, tagsIn, toolCalls, writeAttempts,
 } from '../../../probes/66-clean-review/run.js';
 import { answerFor } from '../../../probes/66-clean-review/hook.js';
@@ -151,21 +151,22 @@ function checkOf(route, { dropLines = false } = {}) {
   const facts = sessionFacts(fx.events);
   const debug = debugLogFacts(dir);
   const servers = mcpEvents(fx.events);
-  return { fx, facts, debug, servers, check: cleanCheck({ facts, debug, servers }) };
+  const inputs = { args: fx.args, environment: [], listings: fx.listings, ignoreEnvironment: true };
+  return { fx, facts, debug, servers, inputs, check: cleanCheck({ facts, debug, servers, ...inputs }) };
 }
 
 test('real events: the clean copy passes the clean check; the untrusted checkout does not, because of its agent and language-server config', () => {
   const b = checkOf('b-clean-copy');
   assert.equal(b.debug.agentsLoaded, 1);
   assert.equal(b.facts.lspToolPresent, false);
-  assert.deepEqual(b.check, { clean: true, reasons: [] });
+  assert.deepEqual(b.check, { clean: true, reasons: [], ignoredEnvironment: true });
   const a = checkOf('a-clean-home');
   assert.equal(a.check.clean, false);
   assert.equal(a.debug.agentsLoaded, 2);
   assert.equal(a.facts.lspToolPresent, true);
   assert.equal(a.facts.agents.length, 0, 'an untrusted session reports no agent list');
   assert.ok(a.check.reasons.some((r) => /2 agents loaded, expected 1/.test(r)));
-  assert.ok(a.check.reasons.some((r) => /lsp tool/.test(r)));
+  assert.ok(a.check.reasons.some((r) => /beyond route b's set.*\blsp\b/.test(r)));
   assert.equal(a.debug.repoHooksWarning, false);
 });
 
@@ -173,13 +174,46 @@ test('real events: a trusted checkout fails the check for its hooks, its server,
   const t = checkOf('a-trusted');
   assert.equal(t.check.clean, false);
   const text = t.check.reasons.join(' | ');
-  for (const part of [/repo hooks/, /workspace MCP/, /claude-reviewer \(project\)/, /skill-github \(project\)/, /planted-mcp-dotmcp/, /MCP servers started: planted-mcp-dotmcp/, /lsp tool/]) assert.match(text, part);
+  for (const part of [/repo hooks/, /workspace MCP/, /claude-reviewer \(project\)/, /skill-github \(project\)/, /planted-mcp-dotmcp/, /MCP servers started: planted-mcp-dotmcp/, /beyond route b's set.*\blsp\b/, /instruction sources/, /language server/]) assert.match(text, part);
   const reached = reachedIn({ answerText: '', seen: [], logLines: [], servers: t.servers, debug: t.debug, facts: t.facts, lspSources: ['lsp-github'] });
   assert.deepEqual(reached['claude-agent'], ['agent-event']);
   assert.deepEqual(reached['skill-github'], ['skill-event']);
   assert.deepEqual(reached['lsp-github'], ['lsp-tool']);
   assert.ok('mcp-dotmcp' in reached);
   assert.equal(checkOf('control').check.clean, false);
+});
+
+test('real events: a recorded instruction leak fails the check, from the flags and from Copilot\'s own listing', () => {
+  const leak = checkOf('agent-field');
+  assert.equal(leak.check.clean, false);
+  const text = leak.check.reasons.join(' | ');
+  assert.match(text, /not started with --no-custom-instructions/);
+  assert.match(text, /started with --trust-folder/);
+  // The same clean session, but Copilot lists an instruction source for the folder: not clean, for that reason alone.
+  const b = checkOf('b-clean-copy');
+  const listed = structuredClone(b.inputs.listings);
+  listed.instructions.json.push({ id: 'repo-copilot', location: 'repository' });
+  const onlyListing = cleanCheck({ facts: b.facts, debug: b.debug, servers: b.servers, ...b.inputs, listings: listed });
+  assert.deepEqual(onlyListing.reasons, ['Copilot lists instruction sources for this folder and home']);
+  // Or started without the flag.
+  const noFlag = cleanCheck({ facts: b.facts, debug: b.debug, servers: b.servers, ...b.inputs, args: b.inputs.args.filter((a) => a !== '--no-custom-instructions') });
+  assert.deepEqual(noFlag.reasons, ['the session was not started with --no-custom-instructions']);
+  // Or with the instruction-folder variable set (the probe sets it on purpose; a real session must not).
+  const env = cleanCheck({ facts: b.facts, debug: b.debug, servers: b.servers, ...b.inputs, environment: ['COPILOT_CUSTOM_INSTRUCTIONS_DIRS'], ignoreEnvironment: false });
+  assert.ok(env.reasons.includes('COPILOT_CUSTOM_INSTRUCTIONS_DIRS is set'));
+});
+
+test('the clean check compares the disabled tools exactly, so an unknown extra tool or a missing one fails it', () => {
+  const b = checkOf('b-clean-copy');
+  assert.deepEqual(b.facts.disabledTools.slice().sort(), EXPECTED_DISABLED_TOOLS.slice().sort());
+  const extra = cleanCheck({ facts: { ...b.facts, disabledTools: [...b.facts.disabledTools, 'some_new_project_tool'] }, debug: b.debug, servers: b.servers, ...b.inputs });
+  assert.equal(extra.clean, false);
+  assert.match(extra.reasons.join(), /some_new_project_tool/);
+  const fewer = cleanCheck({ facts: { ...b.facts, disabledTools: b.facts.disabledTools.slice(1) }, debug: b.debug, servers: b.servers, ...b.inputs });
+  assert.equal(fewer.clean, false);
+  assert.match(fewer.reasons.join(), /not/);
+  // The two memory tools show only in a trusted session.
+  assert.match(checkOf('a-trusted').check.reasons.join(), /store_memory, vote_memory/);
 });
 
 test('the clean check fails closed when the log or the info line no longer says what it should', () => {
@@ -258,10 +292,10 @@ t('--dry-run makes a run for each route, finds the tags each route lets in, keep
   assert.equal(by['a-clean-home'].answer.where.eventType, 'assistant.message');
   assert.equal(by['a-clean-home'].answer.where.field, 'data.content');
   assert.equal(by['a-clean-home'].answer.where.lastTextBeforeResult, true);
-  assert.equal(by.control.listings.instructions.json.length, 2);
+  assert.equal(by.control.listings.instructions.json.length, 3);
   assert.equal(by['a-clean-home'].listings.lsp.json[0].id, 'planted-lsp-github');
   assert.ok(by['a-clean-home'].debugLog.lines.length > 0);
-  assert.deepEqual(by['b-clean-copy'].listings.instructions.json, []);
+  assert.deepEqual(by['b-clean-copy'].listings.instructions.json.map((i) => i.id), ['nested-agents'], 'only the environment folder\'s entry');
 
   const raw = fs.readFileSync(file, 'utf8');
   assert.ok(!raw.includes(os.homedir()));

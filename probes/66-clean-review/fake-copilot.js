@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+const EXPECTED_DISABLED = ['bash', 'create', 'dynamic_workflows_manage', 'edit', 'fetch_copilot_cli_documentation', 'list_agents', 'list_bash', 'read_agent', 'read_bash', 'run_dynamic_workflow', 'semantic_code_search', 'session_store_sql', 'skill', 'sql', 'stop_bash', 'task', 'web_fetch', 'write_agent'];
 const args = process.argv.slice(2);
 const home = process.env.COPILOT_HOME ?? '';
 const cwd = process.cwd();
@@ -24,6 +25,7 @@ if (['instruction', 'lsp', 'mcp', 'skill', 'plugin'].includes(sub) && args[1] ==
   if (sub === 'instruction') {
     const list = [];
     if (fs.existsSync(path.join(cwd, 'AGENTS.md'))) list.push({ id: 'model-agents-md', label: 'AGENTS.md', location: 'repository', type: 'model', sourcePath: 'AGENTS.md' });
+    if (process.env.COPILOT_CUSTOM_INSTRUCTIONS_DIRS) list.push({ id: 'nested-agents', location: 'working-directory', sourcePath: 'AGENTS.md' });
     if (fs.existsSync(path.join(home, 'copilot-instructions.md'))) list.push({ id: 'home-copilot', label: 'Home copilot-instructions.md', location: 'user', type: 'home', sourcePath: path.join(home, 'copilot-instructions.md') });
     console.log(JSON.stringify(list, null, 2));
   } else if (sub === 'lsp') {
@@ -32,7 +34,12 @@ if (['instruction', 'lsp', 'mcp', 'skill', 'plugin'].includes(sub) && args[1] ==
   } else if (sub === 'mcp') {
     const mcp = readJson(path.join(home, 'mcp-config.json'));
     console.log(JSON.stringify({ mcpServers: { ...(mcp?.mcpServers ?? {}), 'github-mcp-server': { source: 'builtin' } } }, null, 2));
-  } else if (sub === 'skill') console.log('Builtin skills:\n  stand-in-skill - made up');
+  } else if (sub === 'skill') {
+    const sections = [];
+    if (fs.existsSync(path.join(cwd, '.github', 'skills'))) sections.push('Project skills:\n  skill-github - made up\n');
+    if (process.env.COPILOT_SKILLS_DIRS) sections.push('Custom skills:\n  env-skill - made up\n');
+    console.log([...sections, 'Builtin skills:\n  stand-in-skill - made up'].join('\n'));
+  }
   else console.log('No plugins installed.');
   process.exit(0);
 }
@@ -66,7 +73,7 @@ const hasFile = (...parts) => fs.existsSync(path.join(...parts));
 const projectAgent = hasFile(cwd, '.claude', 'agents', 'claude-reviewer.md');
 const homeAgent = hasFile(home, 'agents', 'home-reviewer.agent.md');
 const agentCount = 1 + (projectAgent ? 1 : 0) + (homeAgent ? 1 : 0);
-const disabled = ['bash', 'edit', 'skill', 'task', ...(hasFile(cwd, '.github', 'lsp.json') ? ['lsp'] : []), ...(trusted && hasFile(cwd, '.mcp.json') ? ['planted-mcp-dotmcp-planted_mcp_dotmcp'] : [])];
+const disabled = [...EXPECTED_DISABLED, ...(hasFile(cwd, '.github', 'lsp.json') ? ['lsp'] : []), ...(trusted && hasFile(cwd, '.mcp.json') ? ['planted-mcp-dotmcp-planted_mcp_dotmcp'] : [])];
 if (trusted) {
   emit('session.skills_loaded', { skills: [{ name: 'skill-github', source: 'project' }, { name: 'stand-in-skill', source: 'builtin' }] });
   emit('session.custom_agents_updated', { agents: [{ name: 'reviewer', source: 'user' }, ...(projectAgent ? [{ name: 'claude-reviewer', source: 'project' }] : [])], warnings: [], errors: [] });

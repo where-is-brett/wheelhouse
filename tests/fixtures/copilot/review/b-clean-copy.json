@@ -1,5 +1,27 @@
 {
  "route": "b-clean-copy",
+ "args": [
+  "-p",
+  "--output-format",
+  "json",
+  "--no-auto-update",
+  "--no-ask-user",
+  "--agent",
+  "reviewer",
+  "--log-dir",
+  "<log dir>",
+  "--log-level",
+  "debug",
+  "--no-custom-instructions",
+  "--disable-builtin-mcps",
+  "--available-tools",
+  "view",
+  "glob",
+  "rg",
+  "--allow-tool=view",
+  "--allow-tool=glob",
+  "--allow-tool=rg"
+ ],
  "events": [
   {
    "type": "session.info",
@@ -61,5 +83,32 @@
  ],
  "debugLines": [
   "[DEBUG] Plugin activation [agents]: fingerprint=95d437a4a0b2, plugins=0, loaded=1"
- ]
+ ],
+ "listings": {
+  "instructions": {
+   "code": 0,
+   "json": [
+    {
+     "id": "nested-agents",
+     "location": "working-directory"
+    }
+   ]
+  },
+  "lsp": {
+   "code": 0,
+   "json": []
+  },
+  "mcp": {
+   "code": 0,
+   "json": {
+    "mcpServers": {
+     "github-mcp-server": {}
+    }
+   }
+  },
+  "skills": {
+   "code": 0,
+   "text": "Custom skills:\n  env-skill\n\nBuiltin skills:\n  customize-cloud-agent\n  github-pr-media\n"
+  }
+ }
 }
