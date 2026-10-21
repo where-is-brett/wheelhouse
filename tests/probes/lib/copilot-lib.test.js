@@ -166,12 +166,20 @@ t('scratchCopilotHome with signedInFrom copies config.json only, with mode 0600'
 });
 
 t('scratchCopilotHome with a missing sign-in says the sign-in has not been done and leaves no folder', () => {
-  const before = fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('wheelhouse-probe-copilot-home-')).sort();
+  // Its own temporary folder, so other tests making homes at the same time cannot show up in the listing.
+  const own = tempFolder('wh-tmp-');
   const empty = tempFolder('wh-login-');
-  assert.throws(() => scratchCopilotHome({ signedInFrom: path.join(empty, 'nope') }), /sign-in has not been done/);
-  assert.throws(() => scratchCopilotHome({ signedInFrom: empty }), /sign-in has not been done/);
-  const left = fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('wheelhouse-probe-copilot-home-')).sort();
-  assert.deepEqual(left, before);
+  const saved = process.env.TMPDIR;
+  process.env.TMPDIR = own;
+  try {
+    assert.equal(path.resolve(os.tmpdir()), path.resolve(own));
+    assert.throws(() => scratchCopilotHome({ signedInFrom: path.join(empty, 'nope') }), /sign-in has not been done/);
+    assert.throws(() => scratchCopilotHome({ signedInFrom: empty }), /sign-in has not been done/);
+    assert.deepEqual(fs.readdirSync(own), []);
+  } finally {
+    if (saved === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = saved;
+  }
 });
 
 t('scratchCopilotHome with no signedInFrom stays an empty folder even when a login home exists', () => {
