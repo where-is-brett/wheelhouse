@@ -50,3 +50,22 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |
+| 54 | VS Code's Claude harness | Not run yet | None yet |
+| 55 | What an add-on's contributions reach | Not run yet | None yet |
+| 56 | Registration: what Copilot loads, and twice | Not run yet | None yet |
+| 57 | Copilot's sandbox | Not run yet | None yet |
+| 58 | The guards' input | Not run yet | None yet |
+| 59 | Clickable questions: whose answer | Not run yet | None yet |
+| 60 | The other hooks | Not run yet | None yet |
+| 61 | Sessions from a script | Not run yet | None yet |
+| 62 | Setup's tools on Windows, and the timed run | Not run yet | None yet |
+| 63 | Superpowers and Matt Pocock's skills on Copilot | Not run yet | None yet |
+| 64 | Usage figures | Not run yet | None yet |
+| 65 | The phone | Not run yet | None yet |
+| 66 | A clean reviewer session | Not run yet | None yet |
+| 67 | The pane's place | Not run yet | None yet |
+| 68 | An approval on the host | Not run yet | None yet |
+| 69 | Lean's guards without Node.js | Not run yet | None yet |
+| 70 | Lean in VS Code with nothing added | Not run yet | None yet |
+| 71 | GitLab on the company's own servers | Not run yet | None yet |
+| 72 | The add-on at Lean | Not run yet | None yet |
