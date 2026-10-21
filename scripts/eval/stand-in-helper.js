@@ -177,15 +177,18 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
         return { ok: false, refused, reasons: [refused], guardrailPaths: [], criticalAreas: [] };
       }
       const held = views();
+      // As the real mergeAnswer: the caller may only raise STOP, bypass and the approval and
+      // guardrail conditions; the review is always required.
+      const touchesGuardrails = body.touchesGuardrails === true;
       const decision = gateDecision({
-        stop: false,
-        bypass: false,
+        stop: body.stop === true,
+        bypass: body.bypass === true,
         holdsLock: true,
         headSha: sha,
         ci: { sha, state: 'success' },
         reviewRequired: true,
-        approvalRequired: false,
-        touchesGuardrails: false,
+        approvalRequired: body.approvalRequired === true || touchesGuardrails,
+        touchesGuardrails,
         review: latestFor(held.reviews, number),
         approval: latestFor(held.approvals, number),
         enrolled,

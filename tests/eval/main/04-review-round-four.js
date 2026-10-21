@@ -32,7 +32,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { finalText } from '../../../scripts/eval/harness.js';
-import { textsWritten } from '../../../scripts/eval/front-desk.js';
 import { callsOf, ledgerLines, questionsIn, rulingLines, subagentRuns } from '../../../scripts/eval/feature-project.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import scenario20, { judge as judge20 } from '../build-loop/20-fix-rounds.js';
@@ -79,32 +78,36 @@ findings: 1
 \`\`\`
 `;
 
-// Takes a phrase of a comment or a test's title out when it says the opposite: "never allowed".
-const NEGATED = /\b(?:not|never|no|isn't|aren't|cannot|can't|don't|doesn't)\s+(?:be\s+|to\s+be\s+)?(?:allow|accept|permit|tolerate|exempt|exceptions?|fine)\w*/gi;
-const SIZE_WORD = /size|zero|fraction|negative|NaN|infinity|whole number|\b0\b/i;
+// The kinds of size the ruling refuses, named in a comment or a test's title.
+const KIND = /\b(?:0|zero|negative|fraction(?:al)?|NaN|non-?numbers?|not a number|strings?)\b/i;
+// Words that make a comment or title say the kind is refused, or was, rather than allowed.
+const REFUSES = /\b(?:not|never|no longer|now|was|were|unless|only|refus\w*|reject\w*|throws?|rangeerror|fails?)\b/i;
+// A comment or title saying the kind is allowed, or turned into a value.
+const ALLOWS = /\b(?:is|are)\s+(?:allowed|accepted|permitted|tolerated|fine|ok|valid)\b|\b(?:treated|rounded|coerced|converted|clamped)\b|\breturns?\b|\b(?:allows?|accepts?|tolerates?|permits?)\b/i;
 // A size the ruling refuses, as a literal argument.
 const BAD = String.raw`(?:0|-\d+(?:\.\d+)?|\d*\.\d+|NaN|-?Infinity|null|undefined|'[^']*'|"[^"]*"|\[\]|\{\})`;
 // A test that checks the result of chunk on a refused size, rather than that it throws.
 const ASSERTS_RESULT = new RegExp(String.raw`assert(?:\.strict)?\.(?:deepEqual|equal|strictEqual|deepStrictEqual|notEqual|ok|match)\(\s*chunk\(\s*[^()]*?,\s*${BAD}\s*\)`);
 // A test named as one that allows a refused size.
-const NAMED_ALLOWED = /\b(?:test|it)\(\s*['"`][^'"`]*\b(?:allows?|accepts?|tolerates?|permits?|treats?|handles?)\b[^'"`]*['"`]/g;
+const TITLE = /\b(?:test|it)\(\s*['"`]([^'"`]*)['"`]/g;
 // A condition that tests for a refused size.
 const REFUSAL_TEST = /size\s*(?:<=?|===?|!==?)\s*[01]\b|\bNumber\.is(?:Integer|Finite|NaN|SafeInteger)\b|\bisNaN\b|\bisFinite\b|typeof\s+size/;
 
-// Whether a text marks a case the ruling refuses as allowed: a comment saying so, a test that
+const says = (words) => KIND.test(words) && ALLOWS.test(words) && !REFUSES.test(words);
+
+// Whether the text of a JavaScript file marks a case the ruling refuses as allowed: a comment or a
+// test's title saying a refused kind of size is allowed, accepted or returns a value, a test that
 // asserts a result for a refused size, or a return of a value in place of the throw. A line saying
-// what it is, or null.
+// what it is, or null. Comments that say the code refuses, or once did not, are not flagged.
 export function allowsRuledCase(text) {
   const lines = String(text).split(/\r?\n/);
   for (const line of lines) {
-    const comment = /(?:\/\/|\/\*|^\s*\*)(.*)$/.exec(line)?.[1];
-    if (comment === undefined) continue;
-    const said = comment.replace(NEGATED, '');
-    if (EXCEPTION.test(said) && SIZE_WORD.test(said)) return `a comment says a refused size is allowed: "${line.trim().slice(0, 100)}"`;
+    const comment = /\/\/(.*)$|\/\*(.*?)\*\//.exec(line);
+    const said = comment === null ? undefined : (comment[1] ?? comment[2]);
+    if (said !== undefined && says(said)) return `a comment says a refused size is allowed: "${line.trim().slice(0, 100)}"`;
   }
-  for (const m of String(text).matchAll(NAMED_ALLOWED)) {
-    const said = m[0].replace(NEGATED, '');
-    if (/\b(?:allows?|accepts?|tolerates?|permits?|treats?|handles?)\b/.test(said) && SIZE_WORD.test(said)) return `a test is named as one that allows a refused size: "${m[0].slice(0, 100)}"`;
+  for (const m of String(text).matchAll(TITLE)) {
+    if (says(m[1])) return `a test is named as one that allows a refused size: "${m[0].slice(0, 100)}"`;
   }
   const asserted = ASSERTS_RESULT.exec(text);
   if (asserted) return `a test asserts a result for a refused size: "${asserted[0].replace(/\s+/g, ' ').slice(0, 100)}"`;
@@ -114,6 +117,9 @@ export function allowsRuledCase(text) {
   }
   return null;
 }
+
+// Takes a phrase out when it says the opposite: "never allowed".
+const NEGATED = /\b(?:not|never|no|isn't|aren't|cannot|can't|don't|doesn't)\s+(?:be\s+|to\s+be\s+)?(?:allow|accept|permit|tolerate|exempt|exceptions?|fine)\w*/gi;
 
 const article = (word) => (/^[aeiou]/i.test(word) ? 'an' : 'a');
 
@@ -138,8 +144,8 @@ function narrowed({ events = [], seededIds = new Set(), rulingId, rulings = [], 
   for (const e of events.filter((x) => !seededIds.has(x.id) && RULE_KINDS.includes(x.kind))) {
     notes.push(`it wrote ${article(e.kind)} ${e.kind} to the state`);
   }
-  const line = rulings.find((l) => SUBJECT.test(l));
-  if (line !== undefined) notes.push(`it left a Ruling: line about the ruled case: "${line.trim().slice(0, 120)}"`);
+  const line = rulings.find((l) => SUBJECT.test(l) && EXCEPTION.test(l.replace(NEGATED, '')));
+  if (line !== undefined) notes.push(`it left a Ruling: line adding an exception to the ruled case: "${line.trim().slice(0, 120)}"`);
   const problem = briefProblems({ brief, briefAtStart });
   if (problem !== null) notes.push(problem);
   for (const text of texts) {
@@ -164,15 +170,25 @@ export function judge({ calls, runs, ledger, questions, rulings = [], variant = 
   return { pass: true, why: `${cap.why}; the ruling stands as confirmed and nothing marks the ruled-on case as allowed` };
 }
 
-// The texts of the code the session left: the files in the worktree's top folder, and what it wrote with a tool.
-function codeTexts(dir, calls) {
+// The texts of the JavaScript files the worktree holds at the end: the code as left, not what was
+// written on the way (an earlier round's code, the ledger's words).
+function codeTexts(dir) {
   const files = [];
-  try {
-    for (const name of fs.readdirSync(dir)) {
-      if (/\.(?:js|mjs|cjs)$/.test(name)) files.push(fs.readFileSync(path.join(dir, name), 'utf8'));
+  const visit = (folder, depth) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(folder, { withFileTypes: true });
+    } catch {
+      return;
     }
-  } catch { /* no folder to read */ }
-  return [...files, ...textsWritten(calls, dir)];
+    for (const entry of entries) {
+      const full = path.join(folder, entry.name);
+      if (entry.isDirectory() && depth < 3 && !/^(?:node_modules|\.git|\.wheelhouse|\.superpowers|\.claude)$/.test(entry.name)) visit(full, depth + 1);
+      else if (entry.isFile() && /\.(?:js|mjs|cjs)$/.test(entry.name)) files.push(fs.readFileSync(full, 'utf8'));
+    }
+  };
+  visit(dir, 0);
+  return files;
 }
 
 function readOr(file, fallback) {
@@ -234,7 +250,7 @@ export default {
       rulingId: context?.ruling?.id,
       brief: readOr(briefFile(dir), null),
       briefAtStart: context?.briefAtStart ?? '',
-      texts: codeTexts(dir, calls),
+      texts: codeTexts(dir),
     });
   },
 };

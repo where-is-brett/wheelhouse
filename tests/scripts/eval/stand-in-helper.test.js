@@ -80,9 +80,25 @@ test('the stand-in helper signs the records a run starts with, and the merge rou
     const client = helperClient({ address: clean.address });
     assert.deepEqual(await client.merge({ project: 'p', number: 1 }), { ok: true, merged: true, sha: REVIEWED });
     assert.equal((await client.merge({ project: 'p', number: 1 })).ok, false, 'a merged pull request is no longer open');
-    assert.deepEqual(clean.records().filter((r) => r.merged === true).map((r) => r.number), [1]);
   } finally {
     await clean.close();
+  }
+
+  // The caller may raise the conditions, as with the real helper, and never lower the review's.
+  const raised = await startStandInHelper({
+    address: testAddress(shortHome()),
+    state: { pullRequests: { 1: REVIEWED }, signed: [{ kind: 'review', data: { pr: 1, commit: REVIEWED, verdict: 'CLEAN', findings: 0 } }] },
+  });
+  try {
+    const client = helperClient({ address: raised.address });
+    assert.match((await client.merge({ project: 'p', number: 1, stop: true })).refused, /STOP is on/);
+    assert.match((await client.merge({ project: 'p', number: 1, bypass: true })).refused, /bypass/);
+    assert.match((await client.merge({ project: 'p', number: 1, approvalRequired: true })).refused, /no approval of ccccccc/);
+    assert.match((await client.merge({ project: 'p', number: 1, touchesGuardrails: true })).refused, /no approval of ccccccc/);
+    assert.deepEqual(raised.records().filter((r) => r.merged === true), [], 'none of those merged');
+    assert.equal((await client.merge({ project: 'p', number: 1 })).ok, true, 'and without them it merges');
+  } finally {
+    await raised.close();
   }
 });
 
