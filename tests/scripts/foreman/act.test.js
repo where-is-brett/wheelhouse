@@ -30,6 +30,7 @@ import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeWaker, sessionFile } from '../../../scripts/watcher/waker.js';
 import { run as runProgram } from '../../../scripts/lib/run.js';
 import { g } from '../../helpers/git-fixture.js';
+import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
 import { withHome } from '../../helpers/homes.js';
 import {
   P, T0, HASH, config, emptyViews, fakeClient, featureView, planText, project, recordInState, reportText, workView, worktree,
@@ -226,9 +227,40 @@ test('start makes its branch and worktree afresh, refusing ones no recorded feat
   for (const call of gitCalls) {
     assert.equal(call.file, 'git');
     assert.equal(call.opts.cwd, checkout);
-    assert.deepEqual(call.args.slice(0, 4), ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']);
     assert.equal(call.opts.env.GIT_CONFIG_NOSYSTEM, '1');
-    assert.equal(call.opts.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    assert.equal(call.opts.env.GIT_CONFIG_GLOBAL, NULL_FILE);
+  }
+  // Every call after the look runs in the fence: hooks off through the environment, https only.
+  const worked = gitCalls.filter((c) => c.args[0] !== 'config');
+  assert.ok(worked.length >= 3);
+  for (const call of worked) {
+    assert.equal(call.opts.env.GIT_ALLOW_PROTOCOL, 'https');
+    assert.equal(call.opts.env.GIT_TERMINAL_PROMPT, '0');
+  }
+}));
+
+test('the foreman refuses, naming it, a worktree in a checkout whose config sets core.fsmonitor or a hook, and nothing runs', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const config = path.join(checkout, '.git', 'config');
+  const plain = fs.readFileSync(config, 'utf8');
+  const marker = path.join(checkout, 'ran.txt');
+  const script = path.join(checkout, 'mark.sh');
+  fs.writeFileSync(script, `#!/bin/sh\necho ran > "${marker}"\n`, { mode: 0o755 });
+  const cases = [
+    ['core.fsmonitor', `[core]\n\tfsmonitor = ${script}\n`],
+    ['hook.x.command', `[hook "x"]\n\tevent = post-checkout\n\tcommand = ${script}\n`],
+  ];
+  for (const [key, section] of cases) {
+    fs.writeFileSync(config, `${plain}${section}`);
+    const gitCalls = [];
+    const fake = fakeClient({ views: startViews() });
+    const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run: (file, args, opts) => { gitCalls.push(args); return runProgram(file, args, opts); } });
+    refusedInOneLine(r);
+    assert.ok(r.err.includes(key), `${key}: ${r.err}`);
+    assert.ok(gitCalls.every((a) => a[0] === 'config'), 'only the look ran');
+    assert.equal(fs.existsSync(marker), false);
+    assert.equal(fs.existsSync(path.join(checkout, '.claude', 'worktrees', 'add-export')), false);
+    assert.equal(fake.writes.length, 0);
   }
 }));
 

@@ -140,7 +140,8 @@ import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.j
 import { CARD } from '../lib/front-desk.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
-import { run as runProgram, withoutGitVars } from '../lib/run.js';
+import { run as runProgram } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
 } from '../protection/windows-builds.js';
@@ -155,7 +156,6 @@ import { startedAsScript } from '../lib/started-as-script.js';
 // The first number of the foreman's own question ids.
 export { FOREMAN_QUESTIONS };
 
-const NULL_FILE = '/dev/null';
 const BRIEF_BYTES = 1024 * 1024;
 const REPORT_BYTES = 1024 * 1024;
 const GIT_MS = 2 * 60 * 1000;
@@ -362,14 +362,18 @@ function checkRepoConfig(checkout) {
 // was not made by a recorded start (a recorded feature never reaches here), so
 // it is refused, never reused: an agent can make branches in the shared repository.
 async function makeWorktree(ctx, work, checkout, worktree, branch) {
-  const git = (args) => ctx.run('git', ['-c', `core.hooksPath=${NULL_FILE}`, '-c', 'core.fsmonitor=false', ...args], {
-    cwd: checkout,
-    baseEnv: withoutGitVars(process.env),
-    env: {
-      GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, GIT_NO_REPLACE_OBJECTS: '1',
-    },
-    timeoutMs: GIT_MS,
+  // The fenced route, looking at the repository's settings before each call: a setting off the
+  // allowed list (a hook or fsmonitor an agent set, say) is refused, naming it, and git runs no more.
+  const fenced = safeGit({
+    run: ctx.run, cwd: checkout, look: 'each', timeoutMs: GIT_MS,
   });
+  const git = async (args) => {
+    try {
+      return await fenced(args, { env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1' } });
+    } catch (e) {
+      return refuse(`${oneLine(e.message, 600)}; no worktree was made: ask the director`);
+    }
+  };
   realFolders(checkout, ['.claude', 'worktrees']);
   if (lstatOf(worktree) !== null) refuse(`${worktree} is there already, but no recorded feature made it: ask the director`);
   checkRepoConfig(checkout);
