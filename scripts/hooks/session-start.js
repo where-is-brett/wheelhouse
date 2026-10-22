@@ -40,7 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
+import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
@@ -122,6 +122,13 @@ export function toolSheetLines(agent, { pluginRoot, platform = process.platform 
   const command = frontDeskCommand(pluginRoot, { platform });
   if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
   return lines;
+}
+
+// The folder the Wheelhouse command is named from: the plugin's own folder, which the allow rules written at
+// setup name. In a Locked project this hook is the managed copy, whose folder is not the plugin's, so the
+// plugin folder recorded when Locked was installed is used (kit.js's pluginRoots); with no record, the hook's own.
+function commandRoot({ dir, self = SELF } = {}, pluginRoot) {
+  return pluginRoots(dir, self, pluginRoot).at(-1);
 }
 
 // Claude Code's version as the newest transcript entry that carries one gives it, as three
@@ -461,7 +468,7 @@ function setupNote(setup) {
 // they speak of a project's deny rules and its build-command level, and a folder with no project
 // record has neither until setup writes them (a registered folder being set up gets the project's
 // reload, Windows lines included).
-async function setupStart(input, setup, { given, spawn, pluginRoot, platform, startWaitMs, totalMs, pause, stopOf, now }) {
+async function setupStart(input, setup, { given, spawn, pluginRoot, root, platform, startWaitMs, totalMs, pause, stopOf, now }) {
   firstKey(now);
   const end = Date.now() + totalMs;
   const lines = [];
@@ -472,7 +479,7 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, platform, st
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   if (!up) lines.push(NO_HELPER);
   // The setup playbook runs the Wheelhouse command, so a folder being set up is told where it is.
-  lines.push(...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot, platform }));
+  lines.push(...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: root, platform }));
   const note = setupNote(setup);
   if (note !== null) lines.push(note);
   // Once step 3 is done, another computer's key may be trusted here, so its records count.
@@ -506,10 +513,10 @@ export async function decide(input, deps = {}) {
   const found = find(input.cwd, { dir });
   if (!found) {
     const setup = beingSetUp(input.cwd);
-    if (setup !== null) return setupStart(input, setup, { given, spawn, pluginRoot, platform, startWaitMs, totalMs, pause, stopOf, now });
+    if (setup !== null) return setupStart(input, setup, { given, spawn, pluginRoot, root: commandRoot({ dir, self }, pluginRoot), platform, startWaitMs, totalMs, pause, stopOf, now });
     if (removedFrom(input.cwd) === null) return undefined;
     // Setting up again follows the setup playbook, which runs the Wheelhouse command.
-    return answer.context('SessionStart', [REMOVED, ...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot, platform })].join('\n'));
+    return answer.context('SessionStart', [REMOVED, ...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform })].join('\n'));
   }
   const { project, locked } = found;
   markManaged(project, input.session_id, { self, dir: dir ?? managedDir(), now });
@@ -600,7 +607,7 @@ export async function decide(input, deps = {}) {
   if (frontDesk) keepOutOfGit(found);
   const text = reload({
     views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk,
-    sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot, platform }),
+    sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

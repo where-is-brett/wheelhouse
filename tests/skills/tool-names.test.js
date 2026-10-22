@@ -84,12 +84,13 @@ const client = (views) => ({
   health: async () => ({ ok: true }),
   state: { sync: async () => ({ ok: true }), views: async () => ({ ok: true, views }), write: async () => ({ ok: true }), record: async () => ({ ok: true }) },
 });
-const start = (views, { event = 'SessionStart' } = {}) => decide(
+const start = (views, { event = 'SessionStart', deps = {} } = {}) => decide(
   { cwd: '/x', session_id: 's1', ...(event === null ? {} : { hook_event_name: event }) },
   {
     pluginRoot: PLUGIN_ROOT, client: client(views), spawn: () => ({ unref() {}, on() {} }), platform: 'darwin', projectOf: () => ({ project: 'owner__name' }),
     stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }),
     lineage: () => ({ ok: true, mismatches: [], manifest: true, upstreams: {}, kept: true }), guardedSelfTest: async () => null, startLowNodeCopy: () => true,
+    ...deps,
   },
 );
 const textOf = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
@@ -120,5 +121,29 @@ test('a session start at MAX_CHARS keeps the whole tool sheet', async () => {
     const t = textOf(await start({ ...BASE, damaged: mk('d').map((x) => x.words), waiting: mk('w'), unconfirmed: mk('u'), rulebook: mk('r') }));
     assert.equal(t.length, MAX_CHARS, 'the briefing was cut');
     assert.ok(t.includes(SHEET()), 'the sheet and the command line are whole');
+  });
+});
+
+test('in a Locked project the managed copy names the plugin folder recorded in installed.json, not its own', async () => {
+  await withHome(async (home) => {
+    const managed = path.join(home, 'managed');
+    fs.mkdirSync(path.join(managed, 'wheelhouse', 'scripts', 'hooks'), { recursive: true });
+    const self = path.join(managed, 'wheelhouse', 'scripts', 'hooks', 'session-start.js');
+    fs.writeFileSync(self, '');
+    const plugin = '/plugin/folder';
+    // The managed copy runs from its own folder; the allow rules written at setup name the plugin's.
+    const ownRoot = path.join(managed, 'wheelhouse');
+    fs.writeFileSync(path.join(managed, 'wheelhouse', 'installed.json'), JSON.stringify({ version: '1', pluginRoot: plugin }));
+    const named = textOf(await start(BASE, { deps: { dir: managed, self, pluginRoot: ownRoot } }));
+    assert.ok(named.includes(`The Wheelhouse command is ${frontDeskCommand(plugin, { platform: 'darwin' })}`), named);
+    assert.ok(!named.includes(ownRoot), 'the managed copy\'s own folder is not named');
+    // With no record, the hook's own folder.
+    fs.rmSync(path.join(managed, 'wheelhouse', 'installed.json'));
+    const own = textOf(await start(BASE, { deps: { dir: managed, self, pluginRoot: ownRoot } }));
+    assert.ok(own.includes(`The Wheelhouse command is ${frontDeskCommand(ownRoot, { platform: 'darwin' })}`), own);
+    // The plugin's own copy (not inside the managed folder) names its own folder even when a record exists.
+    fs.writeFileSync(path.join(managed, 'wheelhouse', 'installed.json'), JSON.stringify({ version: '1', pluginRoot: plugin }));
+    const pluginCopy = textOf(await start(BASE, { deps: { dir: managed, self: '/plugin/root/scripts/hooks/session-start.js' } }));
+    assert.ok(pluginCopy.includes(`The Wheelhouse command is ${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}`), pluginCopy);
   });
 });

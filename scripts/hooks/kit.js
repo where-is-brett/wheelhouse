@@ -307,6 +307,23 @@ export function lockedByPath(cwd, { dir = managedDir() } = {}) {
 
 const SELF = fileURLToPath(import.meta.url);
 
+// The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed:
+// the folders a plugin command may be run from. The record comes last, so the plugin's folder is
+// `.at(-1)` (the hook's own folder when there is no record).
+export function pluginRoots(dir, self, pluginRoot) {
+  const roots = [pluginRoot];
+  try {
+    const managed = dir ?? managedDir();
+    if (isInside(managed, self)) {
+      const recorded = JSON.parse(fs.readFileSync(path.join(managed, 'wheelhouse', 'installed.json'), 'utf8')).pluginRoot;
+      if (typeof recorded === 'string' && path.isAbsolute(recorded)) roots.push(recorded);
+    }
+  } catch {
+    // No record: only the copy's own folder counts.
+  }
+  return roots;
+}
+
 // Whether `file` lies inside `folder`: the test for a script being the managed copy.
 export function isInside(folder, file) {
   const base = keyOf(realPath(folder));

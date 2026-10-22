@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import fs from 'node:fs';
-import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir, beingSetUp } from './kit.js';
+import { answer, runAndExit, pluginRoots, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir, beingSetUp } from './kit.js';
 import { words } from './shell-words.js';
 import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
@@ -149,21 +149,8 @@ function sandboxOn(cwd) {
   return (read('settings.local.json') ?? read('settings.json')) === true;
 }
 
-// The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed:
-// the folders a plugin command may be run from.
-export function pluginRoots(dir, self, pluginRoot) {
-  const roots = [pluginRoot];
-  try {
-    const managed = dir ?? managedDir();
-    if (isInside(managed, self)) {
-      const recorded = JSON.parse(fs.readFileSync(path.join(managed, 'wheelhouse', 'installed.json'), 'utf8')).pluginRoot;
-      if (typeof recorded === 'string' && path.isAbsolute(recorded)) roots.push(recorded);
-    }
-  } catch {
-    // No record: only the copy's own folder counts.
-  }
-  return roots;
-}
+// The folders a plugin command may be run from (kit.js, shared with the session start).
+export { pluginRoots };
 
 export async function decide(input, { dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform } = {}) {
   const cwd = input.cwd;

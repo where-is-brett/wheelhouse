@@ -267,6 +267,9 @@ test('the playbook records the private note\'s figures only by the baseline comm
   const [, line, rest] = /```\n(<the measures command> baseline ([^\n]+))\n```/.exec(playbook) ?? [];
   assert.ok(line, 'the playbook shows the baseline command');
   assert.ok(line.replace('<the measures command>', MEASURES).startsWith(`${MEASURES} baseline `));
+  // The measures command is named from the session start's command, with its script swapped.
+  assert.match(playbook, /`<the measures command>` is the Wheelhouse command the session start named, with `scripts\/measures\/cli\.js` in place of `scripts\/frontdesk\/cli\.js`\./);
+  assert.equal(frontDeskCommand('/plugin', { platform: 'linux' }).replace('scripts/frontdesk/cli.js', 'scripts/measures/cli.js'), MEASURES);
   const asked = [];
   const client = { measures: { baseline: async (body) => { asked.push(body); return { ok: true, hash: 'a'.repeat(64), card: { question: 'q' } }; } } };
   let out = '';
@@ -324,7 +327,7 @@ test('a press of Explain more finds the pressed card by its id in views waiting,
   assert.ok(press.indexOf('`views waiting`') < press.indexOf('`again <its number now>`'), 'views waiting before again');
   assert.ok(press.indexOf('`again <its number now>`') < press.indexOf('`explain <term>`'), 'again before explain');
   // The one sentence, with the AskUserQuestion call, and nothing else in front of the director.
-  assert.match(press, /one sentence to the director, at most 30 words, in the message with the call of your clickable-question tool, before it/);
+  assert.match(press, /one sentence to the director, at most 30 words, in the same message as your call to your clickable-question tool, before it/);
   assert.match(press, /Only that one sentence: Claude shows longer text before a card only as a summary\./);
   assert.match(press, /^  - \*\*"pressed Explain more on card n \(id\)"\*\*: write no text until the one sentence below, not even a note to yourself\./);
   assert.match(press, /Never a card's id\./);
