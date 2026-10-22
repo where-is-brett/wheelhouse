@@ -32,7 +32,7 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { directorGitlabApi } from '../../../scripts/setup/host.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
-import { g, push as fixturePush } from '../../helpers/git-fixture.js';
+import { g, push as fixturePush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const T0 = new Date('2026-10-20T03:00:00.000Z');
@@ -676,7 +676,7 @@ test('the setup clicks reach the state branch once', async () => {
     await realRun('git', ['init', '--bare', '-q', bare]);
     const folder = fs.realpathSync.native(tempFolder('wh-proj-'));
     writeProject(SLUG, { folder, remoteUrl: bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
-    await cloneState({ project: SLUG, remoteUrl: bare, env: {} });
+    await cloneState({ project: SLUG, remoteUrl: bare, env: LOCAL_PATHS });
 
     const run = startRun({ folder, now: () => T0 });
     const other = startRun({ folder: tempFolder('wh-other-'), now: () => T0 });

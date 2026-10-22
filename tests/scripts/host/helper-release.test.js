@@ -19,7 +19,7 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { RELEASE_WHY, briefingLine, releaseBranch, releaseChange, settingsText, undoBranch } from '../../../scripts/lineage/release.js';
-import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
 
@@ -102,8 +102,8 @@ async function mergeRelease({ pr, headRef, repo, before = () => {}, ci = 'succes
       });
       const { computer, publicKey } = makeSigningKey();
       enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-      await cloneState({ project: 'o__p', remoteUrl: pr.remote.url });
-      assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: pr.remote.url });
+      assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
       before(pr.head);
       const adapter = {
         defaultBranch: async () => 'main',

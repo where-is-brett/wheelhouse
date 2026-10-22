@@ -17,7 +17,7 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
-import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
@@ -94,8 +94,8 @@ async function project({ lock = true } = {}) {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    if (lock) assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    if (lock) assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return { remote, home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
 }
@@ -595,8 +595,8 @@ test('merge is refused when this computer has lost the lock', async () => {
   try {
     // Another computer takes the stale lock three hours later.
     await as(otherHome, async () => {
-      await cloneState({ project: 'o__p', remoteUrl: p.remote.url });
-      assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(3 * HOUR) })).taken, true);
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: p.remote.url });
+      assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(3 * HOUR) })).taken, true);
     });
     const adapter = fakeAdapter();
     await as(p.home, async () => {

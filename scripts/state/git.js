@@ -1,19 +1,24 @@
 // scripts/state/git.js
 import path from 'node:path';
 import { run, withoutGitVars } from '../lib/run.js';
+import { safeGitEnv } from '../lib/safe-git.js';
 
 // Every git call for the state and lock clones goes through here: no shell, a
 // fixed author so the director's own name and address never reach the branch,
 // no prompting, replace refs ignored, and no GIT_* variable inherited from
 // whatever started this process. `env`, when given (the helper passes the
 // connection's), is added on top; these clones are Wheelhouse's own, under
-// ~/.wheelhouse/, so a key may travel there.
+// ~/.wheelhouse/, so a key may travel there. The whole is fenced through
+// safeGitEnv: git's global and system config shut out, hooks off, and one
+// transport allowed: https, with a local path as well where the caller's
+// GIT_ALLOW_PROTOCOL already allows `file` (a local stand-in host).
 export function git(dir, args, env = {}) {
+  const reach = String(env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file') ? 'local' : 'https';
   return run('git', ['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args], {
     cwd: dir,
     baseEnv: withoutGitVars(),
     timeoutMs: 5 * 60 * 1000, // a hung remote reads as a failure, not a wait without end
-    env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', ...env },
+    env: safeGitEnv({ GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', ...env }, { reach }),
   });
 }
 

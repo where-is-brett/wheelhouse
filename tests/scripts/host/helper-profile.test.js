@@ -19,7 +19,7 @@ import { profileRemote, PROFILE_HOLDS_KEYS } from '../../../scripts/profile/stor
 import { keysDir } from '../../../scripts/lib/paths.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
-import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 
 const PROJECT = 'o__p';
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -498,4 +498,37 @@ test('a keys/enrolled.json pushed to the profile changes no computer\'s trust: t
       assert.equal(readEnrolled().length, 1);
     });
   } finally { await b.close(); await a.close(); }
+});
+
+test('the helper\'s state, profile and backup git never reads the director\'s global config', async () => {
+  const scratch = tempFolder('wh-globalcfg-');
+  const hooks = path.join(scratch, 'hooks');
+  const marker = path.join(scratch, 'marker');
+  fs.mkdirSync(hooks);
+  // The hooks the clones' commits, checkouts, merges and rebases run. The helper's own pushes and ref
+  // updates take the fenced route in Task 3 of the plan, so pre-push and reference-transaction are not here.
+  for (const name of ['pre-commit', 'commit-msg', 'post-commit', 'post-checkout', 'post-merge', 'pre-rebase', 'post-rewrite']) {
+    fs.writeFileSync(path.join(hooks, name), `#!/bin/sh\necho ${name} >> '${marker}'\n`, { mode: 0o755 });
+  }
+  const home = path.join(scratch, 'home');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[core]\n\thooksPath = ${hooks.replaceAll('\\', '/')}\n`);
+  const c = await computer();
+  const keep = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  try {
+    await c.as(async () => {
+      // The global config is named only after the clones are made, as the director's would be.
+      process.env.HOME = home;
+      process.env.USERPROFILE = home;
+      process.env.XDG_CONFIG_HOME = path.join(home, '.config');
+      assert.equal((await c.client.state.backup({ project: PROJECT })).ok, true);
+      const wrote = await c.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short' } });
+      assert.equal(wrote.pushed, true, JSON.stringify(wrote));
+      assert.equal((await c.client.profile.sync({})).ok, true);
+      assert.equal(fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : '', '', 'no hook of the global config ran');
+    });
+  } finally {
+    for (const [k, v] of Object.entries(keep)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    await c.close();
+  }
 });

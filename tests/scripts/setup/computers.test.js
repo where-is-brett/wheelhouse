@@ -30,7 +30,7 @@ import { run as realRun } from '../../../scripts/lib/run.js';
 import { ensureProfileClone, profileRemote, PROFILE_BRANCH } from '../../../scripts/profile/store.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { makeBareRemote, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { withHome, as, shortHome, testAddress } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
@@ -154,7 +154,7 @@ test('an enrolment found in the profile is not trusted until the director clicks
     // Trusted, it is offered no more.
     assert.deepEqual(trustOffers({ enrolments: readSeen().enrolments, enrolled: readEnrolled(), own: ownKey() }), { offers: [], clashes: [] });
     // The state never takes a trust click.
-    await assert.rejects(writeEvent({ project: P, event, push: async () => ({ ok: true }) }), { message: TRUST_KEPT_HERE });
+    await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: P, event, push: async () => ({ ok: true }) }), { message: TRUST_KEPT_HERE });
   });
 });
 
@@ -318,7 +318,7 @@ async function profileHere() {
   fs.writeFileSync(path.join(wheelhouseHome(), 'profile.json'), JSON.stringify({
     remoteUrl: remote.url, host: 'github', repo: PROFILE_REPO, connection: { host: 'github', mode: 'quick', project: PROFILE_REPO },
   }));
-  await ensureProfileClone({ remote: profileRemote(), env: {} });
+  await ensureProfileClone({ remote: profileRemote(), env: LOCAL_PATHS });
   return remote;
 }
 

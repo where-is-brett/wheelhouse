@@ -34,6 +34,7 @@ import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
+import { reachFor } from '../lib/safe-git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
@@ -851,8 +852,9 @@ export async function startHelper({
       mode,
       env,
       signedOut,
-      // What git gets in the helper's own repositories for this connection.
-      gitEnv: mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env },
+      // What git gets in the helper's own repositories for this connection, and the transport the
+      // project's recorded remote needs (a local path only for a stand-in host).
+      gitEnv: { ...(mode === 'narrow' ? { ...ISOLATED, ...env } : env), ...reachEnv(readProject(project)?.remoteUrl) },
       secrets: secretsOf(env),
       adapter: async () => {
         adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now }));
@@ -1193,6 +1195,12 @@ export async function startHelper({
     return record;
   }
 
+  // The transport the clones' git may use: a local path only where the recorded remote is one (a
+  // stand-in host), https otherwise. The fence in state/git.js reads it from GIT_ALLOW_PROTOCOL.
+  const LOCAL_PATHS = { GIT_ALLOW_PROTOCOL: 'https:file' };
+  const reachEnv = (remoteUrl) => (reachFor(remoteUrl) === 'local' ? LOCAL_PATHS : {});
+  const profileGit = (dir, args, env = {}) => stateGit(dir, args, { ...env, ...reachEnv(profileRemote()?.remoteUrl) });
+
   async function ensureStateClone(project, ctx) {
     await cloneState({ project, remoteUrl: recordOf(project).remoteUrl, env: ctx.gitEnv });
   }
@@ -1308,7 +1316,7 @@ export async function startHelper({
       mode,
       env,
       signedOut: false,
-      gitEnv: mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env },
+      gitEnv: { ...(mode === 'narrow' ? { ...ISOLATED, ...env } : env), ...reachEnv(profileRemote()?.remoteUrl) },
       secrets: secretsOf(env),
       adapter: async () => refuse('the profile makes no requests of the host'),
     };
@@ -1326,27 +1334,27 @@ export async function startHelper({
   async function pullProfile(ctx) {
     const dir = profileDir();
     const env = ctx.gitEnv;
-    const fetched = await stateGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], env);
+    const fetched = await profileGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], env);
     if (fetched.code !== 0) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
     const keys = await holdsKeys(dir, PROFILE_TRACKING);
     if (keys !== false) return { ok: false, keys: true, why: keys === null ? 'the profile\'s branch could not be read, so nothing was taken from it' : PROFILE_HOLDS_KEYS };
-    const pulled = await stateGit(dir, ['rebase', PROFILE_TRACKING], env);
+    const pulled = await profileGit(dir, ['rebase', PROFILE_TRACKING], env);
     if (pulled.code === 0) return { ok: true };
     if (!inRebase(dir)) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
     for (let round = 0; round < 100 && inRebase(dir); round++) {
-      const listed = await stateGit(dir, ['diff', '--name-only', '--diff-filter=U', '-z']);
+      const listed = await profileGit(dir, ['diff', '--name-only', '--diff-filter=U', '-z']);
       const paths = listed.stdout.split('\0').filter(Boolean);
       if (listed.code !== 0 || paths.length === 0 || !paths.every((p) => BUNDLE_PATH.test(p))) break;
       // During a rebase "ours" is the remote's side.
       for (const p of paths) {
-        const taken = await stateGit(dir, ['checkout', '--ours', '--', p]);
-        await stateGit(dir, taken.code === 0 ? ['add', '--', p] : ['rm', '-q', '--', p]);
+        const taken = await profileGit(dir, ['checkout', '--ours', '--', p]);
+        await profileGit(dir, taken.code === 0 ? ['add', '--', p] : ['rm', '-q', '--', p]);
       }
-      const nothingLeft = (await stateGit(dir, ['diff', '--cached', '--quiet'])).code === 0;
-      await stateGit(dir, nothingLeft ? ['rebase', '--skip'] : ['-c', 'core.editor=true', 'rebase', '--continue'], env);
+      const nothingLeft = (await profileGit(dir, ['diff', '--cached', '--quiet'])).code === 0;
+      await profileGit(dir, nothingLeft ? ['rebase', '--skip'] : ['-c', 'core.editor=true', 'rebase', '--continue'], env);
     }
     if (!inRebase(dir)) return { ok: true };
-    await stateGit(dir, ['rebase', '--abort'], env);
+    await profileGit(dir, ['rebase', '--abort'], env);
     return { ok: false, why: 'the profile here and in its repository differ in a way that needs looking at, so nothing more was pushed' };
   }
 
@@ -1408,22 +1416,22 @@ export async function startHelper({
   // short, a slip) or changed in place is put back from the branch; any other file is left alone.
   async function commitBackups() {
     const dir = profileDir();
-    const listed = await stateGit(dir, ['status', '--porcelain=v1', '-z', '-uall', '--', 'backups/']);
+    const listed = await profileGit(dir, ['status', '--porcelain=v1', '-z', '-uall', '--', 'backups/']);
     if (listed.code !== 0) refuse('the profile\'s backups could not be read');
     const entries = listed.stdout.split('\0').filter((entry) => BUNDLE_PATH.test(entry.slice(3)));
     const having = (code) => entries.filter((entry) => entry.startsWith(code)).map((entry) => entry.slice(3));
     const deleted = having(' D ');
     const pruned = deleted.filter(prunedByKeepRule);
     const putBack = [...having(' M '), ...deleted.filter((f) => !pruned.includes(f))];
-    if (putBack.length > 0 && (await stateGit(dir, ['checkout', '-q', '--', ...putBack])).code !== 0) {
+    if (putBack.length > 0 && (await profileGit(dir, ['checkout', '-q', '--', ...putBack])).code !== 0) {
       refuse('the profile\'s backups could not be put back');
     }
     const changed = [...having('?? '), ...pruned];
     if (changed.length === 0) return;
-    const committed = (await stateGit(dir, ['add', '-A', '--', ...changed])).code === 0
-      && (await stateGit(dir, ['commit', '-q', '-m', 'Back up the state', '--', ...changed])).code === 0;
+    const committed = (await profileGit(dir, ['add', '-A', '--', ...changed])).code === 0
+      && (await profileGit(dir, ['commit', '-q', '-m', 'Back up the state', '--', ...changed])).code === 0;
     if (!committed) {
-      await stateGit(dir, ['reset', '-q', '--', ...changed]);
+      await profileGit(dir, ['reset', '-q', '--', ...changed]);
       refuse('the profile\'s backups could not be committed');
     }
   }
@@ -1453,7 +1461,7 @@ export async function startHelper({
   async function profileWritten(made) {
     const answer = written(made);
     if (answer.pushed) return answer;
-    const ahead = await stateGit(profileDir(), ['rev-list', '--count', `${PROFILE_TRACKING}..HEAD`]);
+    const ahead = await profileGit(profileDir(), ['rev-list', '--count', `${PROFILE_TRACKING}..HEAD`]);
     const count = Number.parseInt(ahead.stdout.trim(), 10);
     return { ...answer, unpushed: ahead.code === 0 && Number.isInteger(count) ? count : 1 };
   }
@@ -1484,8 +1492,8 @@ export async function startHelper({
   // offers each on a card, and only the director's click there trusts it.
   async function doProfileEnrolments(_body, ctx) {
     const dir = profileDir();
-    const fetched = (await stateGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], ctx.gitEnv)).code === 0;
-    const listed = await stateGit(dir, ['ls-tree', '-z', '--full-tree', PROFILE_TRACKING, '--', 'enrolments/']);
+    const fetched = (await profileGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], ctx.gitEnv)).code === 0;
+    const listed = await profileGit(dir, ['ls-tree', '-z', '--full-tree', PROFILE_TRACKING, '--', 'enrolments/']);
     if (listed.code !== 0) return { ok: true, fetched, enrolments: [] };
     const enrolments = [];
     for (const entry of listed.stdout.split('\0').filter(Boolean)) {
@@ -1493,9 +1501,9 @@ export async function startHelper({
       const m = /^100644 blob ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/s.exec(entry);
       const file = m === null ? null : ENROLMENT_FILE.exec(m[2]);
       if (file === null) continue;
-      const size = await stateGit(dir, ['cat-file', '-s', m[1]]);
+      const size = await profileGit(dir, ['cat-file', '-s', m[1]]);
       if (size.code !== 0 || Number(size.stdout.trim()) > MAX_ENROLMENT_BYTES) continue;
-      const blob = await stateGit(dir, ['cat-file', 'blob', m[1]]);
+      const blob = await profileGit(dir, ['cat-file', 'blob', m[1]]);
       const found = blob.code === 0 ? enrolmentOf(blob.stdout, file[1]) : null;
       if (found !== null) enrolments.push(found);
     }
@@ -1531,7 +1539,7 @@ export async function startHelper({
     await commitBackups();
     await pullProfile(profileCtx);
     const today = `backups/${project}/${now().toISOString().slice(0, 10)}.bundle`;
-    if ((await stateGit(profileDir(), ['cat-file', '-e', `HEAD:${today}`])).code === 0) {
+    if ((await profileGit(profileDir(), ['cat-file', '-e', `HEAD:${today}`])).code === 0) {
       return { ok: true, file: today, made: false, why: 'The profile already holds today\'s backup of this project' };
     }
     let before = [];
@@ -2310,7 +2318,7 @@ export async function startHelper({
       ...ctx,
       mode: 'quick',
       env: {},
-      gitEnv: {},
+      gitEnv: reachEnv(readProject(project)?.remoteUrl),
       signedOut: true,
       adapter: async () => {
         own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now }));
@@ -2337,14 +2345,16 @@ export async function startHelper({
     return oneAtATime(`state:${project}`, async () => {
       await ensureStateClone(project, ctx);
       const dir = stateDir(project);
-      const plain = (args) => stateGit(dir, args);
+      // A bundle is a file on this computer, so these steps allow a local path whatever the remote is.
+      const plain = (args) => stateGit(dir, args, LOCAL_PATHS);
       if ((await plain(['bundle', 'verify', bundle])).code !== 0) return { ok: false, refused: 'the newest backup could not be verified, so nothing was put back' };
       let fetched = await plain(['fetch', '-q', '--no-tags', bundle, `+refs/heads/${STATE_BRANCH}:${BACKUP_REF}`]);
       if (fetched.code !== 0) fetched = await plain(['fetch', '-q', '--no-tags', bundle, `+refs/remotes/${REMOTE}/${STATE_BRANCH}:${BACKUP_REF}`]);
       if (fetched.code !== 0) return { ok: false, refused: 'the newest backup could not be read, so nothing was put back' };
       try {
-        const pulled = await stateGit(dir, ['pull', '--rebase', REMOTE, STATE_BRANCH], ctx.gitEnv);
-        if (pulled.code !== 0) await stateGit(dir, ['rebase', '--abort'], ctx.gitEnv);
+        const reached = { ...ctx.gitEnv, ...reachEnv(recordOf(project).remoteUrl) };
+        const pulled = await stateGit(dir, ['pull', '--rebase', REMOTE, STATE_BRANCH], reached);
+        if (pulled.code !== 0) await stateGit(dir, ['rebase', '--abort'], reached);
         const listedAt = async (rev) => {
           const listed = await plain(['ls-tree', '-r', '-z', '--name-only', rev, '--', 'events/']);
           if (listed.code !== 0) throw new Error('listing the events failed');

@@ -456,7 +456,10 @@ export function paneOrigin(sources) {
   return problems.length === 0 ? { ok: true } : { ok: false, why: [...new Set(problems)].join('; ') };
 }
 
-const NEVER_REACHED = (file) => file === 'scripts/protection/locked.js' || file.startsWith('scripts/setup/');
+// scripts/setup/git.js is the one file of scripts/setup/ the bridge may reach: it is git's fence (an
+// environment and an allowed list, importing only scripts/lib/), the state and profile clones' git
+// takes through scripts/lib/safe-git.js, and it writes no settings. It is to move into scripts/lib/.
+const NEVER_REACHED = (file) => file === 'scripts/protection/locked.js' || (file.startsWith('scripts/setup/') && file !== 'scripts/setup/git.js');
 const SETTINGS = 'scripts/protection/settings.js';
 const WRITERS = ['writeSettings', 'mergeSettings'];
 // managed.js is reached for its two readers, through hooks/kit.js's projectOf; it may be

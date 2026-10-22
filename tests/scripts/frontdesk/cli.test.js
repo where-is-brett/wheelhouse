@@ -19,7 +19,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { makeBareRemote } from '../../helpers/git-fixture.js';
+import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { approvalLine, answerLine, ciPushLine, confirmLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
@@ -1269,7 +1269,7 @@ test('through the real helper, the command places the project from its folder an
       });
       const { computer, publicKey } = makeSigningKey();
       enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const adapter = { defaultBranch: async () => 'main', prState: async () => ({ headSha: FULL, state: 'open' }) };
       const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}) });
       try {

@@ -14,7 +14,7 @@ import { setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { dataHash, eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { makeBareRemote } from '../../helpers/git-fixture.js';
+import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -36,7 +36,7 @@ async function project() {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
   });
   return { home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
 }

@@ -10,7 +10,7 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
-import { makeBareRemote, push } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 // Each "computer" is a home folder (with a space and an accent, to prove paths cope).
@@ -58,10 +58,10 @@ test('writeEvent commits one new file and pushes it', async () => {
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       assert.equal(dir, stateDir('o__p'));
       const event = makeEvent({ kind: 'note', data: { text: 'one' } });
-      const r = await writeEvent({ project: 'o__p', event, push });
+      const r = await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push });
       assert.equal(r.pushed, true);
       assert.ok(fs.existsSync(r.path));
       const log = await git(dir, ['log', '--format=%s|%an|%ae', '-1']);
@@ -79,10 +79,10 @@ test('writeEvent refuses to overwrite an existing event file', async () => {
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const event = makeEvent({ kind: 'note', data: { text: 'one' } });
-      await writeEvent({ project: 'o__p', event, push });
-      await assert.rejects(writeEvent({ project: 'o__p', event: { ...event, data: { text: 'two' } }, push }), /exists/);
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push });
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: { ...event, data: { text: 'two' } }, push }), /exists/);
       const kept = JSON.parse(fs.readFileSync(path.join(stateDir('o__p'), eventPath(event)), 'utf8'));
       assert.equal(kept.data.text, 'one');
     });
@@ -93,9 +93,9 @@ test('writeEvent refuses an unsigned protected event', async () => {
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const event = { v: 1, id: 'x', at: '2026-10-18T01:02:03.000Z', computer: computerId(), kind: 'review', data: {} };
-      await assert.rejects(writeEvent({ project: 'o__p', event, push }), /signed/);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push }), /signed/);
     });
   } finally { remote.cleanup(); }
 });
@@ -104,10 +104,10 @@ test('writeEvent refuses an event holding a secret, naming the pattern only', as
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const secret = ['gh', 'p_', 'a1B2'.repeat(10)].join('');
       const event = makeEvent({ kind: 'note', data: { text: secret } });
-      await assert.rejects(writeEvent({ project: 'o__p', event, push }), (e) => {
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push }), (e) => {
         assert.match(e.message, /github-token/);
         assert.ok(!e.message.includes(secret));
         return true;
@@ -123,7 +123,7 @@ test('writeEvent refuses a key that follows a newline, a tab or an underscore in
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const github = ['gh', 'p_', 'a1B2'.repeat(10)].join('');
       const aws = ['AK', 'IA', 'Q7'.repeat(8)].join('');
       for (const [text, pattern] of [
@@ -133,7 +133,7 @@ test('writeEvent refuses a key that follows a newline, a tab or an underscore in
         [`MY_${github}`, /github-token/],
       ]) {
         const event = makeEvent({ kind: 'note', data: { text } });
-        await assert.rejects(writeEvent({ project: 'o__p', event, push }), (e) => {
+        await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push }), (e) => {
           assert.match(e.message, pattern);
           assert.ok(!e.message.includes(github) && !e.message.includes(aws));
           return true;
@@ -151,11 +151,11 @@ test('two clones writing at the same moment both land, and neither is lost', asy
     const fixed = at(9);
     let idA; let idB; let homeB; let dirA; let dirB;
     await withHome(async () => {
-      dirA = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      dirA = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     });
     await withHome(async (home) => {
       homeB = home;
-      dirB = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      dirB = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     });
     const inHome = async (home, fn) => {
       const before = process.env.WHEELHOUSE_HOME;
@@ -166,18 +166,18 @@ test('two clones writing at the same moment both land, and neither is lost', asy
     await inHome(homeA, async () => {
       const e = makeEvent({ kind: 'note', data: { text: 'A' }, now: fixed });
       idA = e.id;
-      assert.equal((await writeEvent({ project: 'o__p', event: e, push })).pushed, true);
+      assert.equal((await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: e, push })).pushed, true);
     });
     await inHome(homeB, async () => {
       const e = makeEvent({ kind: 'note', data: { text: 'B' }, now: fixed });
       idB = e.id;
       let pushes = 0;
       const counting = (d, b) => { pushes += 1; return push(d, b); };
-      assert.equal((await writeEvent({ project: 'o__p', event: e, push: counting })).pushed, true);
+      assert.equal((await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: e, push: counting })).pushed, true);
       assert.equal(pushes, 2); // rejected once, pulled, pushed
     });
-    await inHome(homeA, () => syncState({ project: 'o__p', push }));
-    await inHome(homeB, () => syncState({ project: 'o__p', push }));
+    await inHome(homeA, () => syncState({ env: LOCAL_PATHS, project: 'o__p', push }));
+    await inHome(homeB, () => syncState({ env: LOCAL_PATHS, project: 'o__p', push }));
     for (const d of [dirA, dirB]) {
       assert.deepEqual(listEvents(d).map((e) => e.id).sort(), [idA, idB].sort());
     }
@@ -188,16 +188,16 @@ test('an event committed while the push failed is pushed by the next sync', asyn
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const event = makeEvent({ kind: 'note', data: { text: 'late' } });
       const refusing = async () => ({ ok: false, refused: 'protected branch' });
-      const r = await writeEvent({ project: 'o__p', event, push: refusing });
+      const r = await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push: refusing });
       assert.equal(r.pushed, false);
       assert.equal(r.refused, 'protected branch');
       const before = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-state']);
       assert.ok(!before.stdout.includes(event.id));
-      assert.deepEqual(await syncState({ project: 'o__p', push: refusing }), { pulled: true, unpushed: 1 }, 'the commit is still the remote\'s to receive');
-      assert.deepEqual(await syncState({ project: 'o__p', push }), { pulled: true, unpushed: 0 });
+      assert.deepEqual(await syncState({ env: LOCAL_PATHS, project: 'o__p', push: refusing }), { pulled: true, unpushed: 1 }, 'the commit is still the remote\'s to receive');
+      assert.deepEqual(await syncState({ env: LOCAL_PATHS, project: 'o__p', push }), { pulled: true, unpushed: 0 });
       const after = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-state']);
       assert.ok(after.stdout.includes(event.id));
     });
@@ -225,10 +225,10 @@ test('writeEvent gives up after three retries and leaves the commit unpushed', a
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       let pushes = 0;
       const never = async () => { pushes += 1; return { ok: false, rejected: 'non-fast-forward' }; };
-      const r = await writeEvent({ project: 'o__p', event: makeEvent({ kind: 'note', data: {} }), push: never });
+      const r = await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: makeEvent({ kind: 'note', data: {} }), push: never });
       assert.equal(r.pushed, false);
       assert.equal(pushes, 4);
     });
@@ -239,7 +239,7 @@ test('an unreadable event file is refused, naming the file and leaving nothing c
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const event = makeEvent({ kind: 'note', data: { text: 'plain' } });
       const name = path.basename(eventPath(event));
       const real = fs.readFileSync;
@@ -248,7 +248,7 @@ test('an unreadable event file is refused, naming the file and leaving nothing c
         return real(f, ...rest);
       };
       try {
-        await assert.rejects(writeEvent({ project: 'o__p', event, push }), (e) => {
+        await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push }), (e) => {
           assert.ok(e.message.includes(name));
           assert.match(e.message, /unreadable/);
           return true;
@@ -279,19 +279,19 @@ test('a failed commit leaves no empty month folder', async () => {
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
-      const hook = path.join(dir, '.git', 'hooks', 'pre-commit');
-      fs.mkdirSync(path.dirname(hook), { recursive: true });
-      fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+      // Hooks are switched off for the helper's own clones, so a held index lock is what fails the commit.
+      const hook = path.join(dir, '.git', 'index.lock');
+      fs.writeFileSync(hook, '');
       const event = makeEvent({ kind: 'note', data: { text: 'plain' }, now: () => new Date('2031-03-04T05:06:07.000Z') });
-      await assert.rejects(writeEvent({ project: 'o__p', event, push }), /could not be committed/);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push }), /could not be committed/);
       assert.equal(fs.existsSync(path.join(dir, 'events', '2031')), false, 'the year and month folders are gone');
       // an earlier month's folder, with an event in it, stays
       fs.rmSync(hook);
       const earlier = makeEvent({ kind: 'note', data: { text: 'first' }, now: () => new Date('2031-02-04T05:06:07.000Z') });
-      await writeEvent({ project: 'o__p', event: earlier, push });
-      fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-      await assert.rejects(writeEvent({ project: 'o__p', event, push }), /could not be committed/);
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: earlier, push });
+      fs.writeFileSync(hook, '');
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push }), /could not be committed/);
       assert.deepEqual(fs.readdirSync(path.join(dir, 'events', '2031')), ['02']);
     });
   } finally { remote.cleanup(); }

@@ -37,7 +37,7 @@ import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
-import { g } from '../../helpers/git-fixture.js';
+import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
@@ -1634,7 +1634,7 @@ async function applyIn(step, folder, runId, changes, extra = {}) {
   return lines;
 }
 
-const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl, env: {} });
+const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl, env: LOCAL_PATHS });
 
 const joinedOf = (folder) => findRun(folder).changes.filter((c) => c.kind === 'answer' && c.after && Object.hasOwn(c.after, 'joined')).map((c) => c.after);
 

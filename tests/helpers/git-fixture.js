@@ -30,3 +30,7 @@ export async function g(dir, ...args) {
   if (r.code !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout.trim();
 }
+
+// What a caller adds to let the state and profile git reach a local-path remote (a stand-in host):
+// the same transport setup's reaching() asks for.
+export const LOCAL_PATHS = { GIT_ALLOW_PROTOCOL: 'https:file' };

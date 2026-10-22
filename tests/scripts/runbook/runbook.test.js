@@ -24,7 +24,7 @@ import { parseArgs, runbook, USAGE } from '../../../scripts/runbook/runbook.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { approvalLine, runbookLine } from '../../../scripts/state/card-lines.js';
 import { listEvents } from '../../../scripts/state/events.js';
-import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
 
@@ -83,8 +83,8 @@ async function scenario({ headFiles = { 'a.txt': '3\n' }, headRemove = [], first
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: () => new Date(NOW.getTime() - HOUR) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: () => new Date(NOW.getTime() - HOUR) })).taken, true);
   });
   s.cleanup = () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(work, { recursive: true, force: true }); };
   return s;
@@ -400,8 +400,8 @@ test('restore-state adds back the events missing from the branch, and only adds'
       const note = (text, ms) => makeEvent({ kind: 'note', data: { text }, now: () => new Date(NOW.getTime() - ms) });
       const kept = note('kept', 3 * HOUR);
       const lost = note('lost', 2 * HOUR);
-      await writeEvent({ project: 'o__p', event: kept, push });
-      await writeEvent({ project: 'o__p', event: lost, push });
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: kept, push });
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: lost, push });
       // An action whose data was changed after signing.
       const bad = sign({ v: 1, id: crypto.randomUUID(), at: new Date(NOW.getTime() - HOUR).toISOString(), computer: computerId(), kind: 'action', data: { action: 'runbook', step: 5, question: 'q', label: 'l' } });
       bad.data.step = 4;

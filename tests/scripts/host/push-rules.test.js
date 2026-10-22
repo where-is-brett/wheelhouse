@@ -17,7 +17,7 @@ import { eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { ciPushLine } from '../../../scripts/state/card-lines.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
-import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { matchingProvenance, writeSessionProvenance } from '../../helpers/provenance.js';
 import { parseProvenance, removeProvenance } from '../../../scripts/lineage/provenance.js';
 
@@ -223,8 +223,8 @@ test('the default branch is read from the host, not assumed to be main', async (
     writeProject('o__p', {
       folder: work.dir, remoteUrl: work.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
-    await cloneState({ project: 'o__p', remoteUrl: work.remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: work.remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush })).taken, true);
     write(work.dir, 'a.txt', 'a\n');
     await work.commit('First');
     await g(work.dir, 'branch', 'trunk');
@@ -272,8 +272,8 @@ async function scenario({ base = { 'README.md': 'x\n' }, change, files = {} }) {
     writeSessionProvenance('o__p', SESSION);
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: () => NOW })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: () => NOW })).taken, true);
     await g(work, 'init', '-q', '-b', 'main');
     for (const [name, text] of Object.entries(base)) write(work, name, text);
     await g(work, 'add', '-A');
