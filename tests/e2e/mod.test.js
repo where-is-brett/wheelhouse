@@ -33,6 +33,7 @@ import { pendingDir } from '../../scripts/hooks/pending.js';
 import { main as frontDesk } from '../../scripts/frontdesk/cli.js';
 import { SAYS, SETUP_ROLE } from '../../scripts/mod/bridge.js';
 import { SAYS as PRESS_SAYS } from '../../scripts/mod/press.js';
+import { SENT_TO_FRONT_DESK, SETTINGS_UNDER_STOP } from '../../scripts/lib/calm-words.js';
 import { readPaneStatus, hashOf } from '../../scripts/mod/status.js';
 import { courierFile } from '../../scripts/mod/courier.js';
 import { watchFile } from '../../scripts/mod/watch.js';
@@ -582,4 +583,124 @@ test('a tick in a project still being set up answers setup, draws nothing and wa
   assert.deepEqual(readPaneStatus(PROJECT), after.pane);
   // The front desk's first tick is its opening: the card is the visit's to ask, not a wake.
   assert.equal(after.submit, undefined);
+}));
+
+// Every file under `dir`, with its text, so a test can look for words that must be nowhere.
+function textsUnder(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    return entry.isDirectory() ? textsUnder(full) : [fs.readFileSync(full, 'utf8')];
+  });
+}
+
+// A commit on top of pull request 7's head on the host, as when the build amends the change. Resolves with the new head.
+async function commitOnPullRequest(c, files) {
+  const work = tempFolder('wh-pr-more-');
+  await g(work, 'init', '-q', '-b', 'main');
+  await g(work, 'fetch', '-q', c.remote.url, `refs/pull/${PR}/head`);
+  await g(work, 'reset', '-q', '--hard', 'FETCH_HEAD');
+  for (const [name, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(work, name)), { recursive: true });
+    fs.writeFileSync(path.join(work, name), text);
+  }
+  await g(work, 'add', '-A');
+  await g(work, 'commit', '-q', '-m', 'Make the heading bigger');
+  await g(work, 'push', '-q', c.remote.url, `HEAD:refs/pull/${PR}/head`);
+  return g(work, 'rev-parse', 'HEAD');
+}
+
+test('Why? notes quietly; a suggestion on an approval hands the words on, signs nothing and stores nothing; a revised approval at a new head is the one Approve signs', { skip: SKIP }, () => onComputer({}, async (c) => {
+  const card = await approvalCard(c);
+  const drawn = drawnCard(await tick(c), card.id);
+  const code = replyCode(setLineOf(card.question.question));
+
+  // Why? answers quietly: no words, no prompt, the card still waiting.
+  assert.deepEqual(await bridge(c, { cmd: 'why', origin: 'pane', cwd: c.folder, card: drawn.id, hash: drawn.hash }), { ok: true });
+  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Why?']);
+  assert.deepEqual(eventsOf('approval'), []);
+  assert.equal(drawnCard(await tick(c), card.id).id, card.id, 'still waiting');
+
+  // A suggestion carrying the card's own reply code and an approving word is words, not an answer.
+  const words = `${code} approve it now, and make the heading bigger zq-suggestion-marker`;
+  const sent = await bridge(c, { cmd: 'suggest', origin: 'pane', cwd: c.folder, card: drawn.id, hash: drawn.hash, words });
+  assert.equal(sent.ok, true);
+  assert.equal(sent.says, SENT_TO_FRONT_DESK);
+  assert.equal(sent.submit.length, 1);
+  assert.ok(sent.submit[0].startsWith(`${LEADS.pane} the director suggested a change on card ${drawn.n} (${card.id}): `), sent.submit[0]);
+  assert.ok(sent.submit[0].includes('zq-suggestion-marker'), 'the prompt carries the words');
+  assert.deepEqual(eventsOf('approval'), [], 'the words signed nothing');
+  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Why?', 'Suggest a change…']);
+  assert.deepEqual(kept(), []);
+  // The words are in no file of state, of pending/ or of the profile.
+  for (const dir of [stateDir(PROJECT), pendingDir(PROJECT), profileDir()]) {
+    for (const text of textsUnder(dir)) assert.equal(text.includes('zq-suggestion-marker'), false, dir);
+  }
+  // The card is steered and still waits for its revision.
+  const waiting = (await c.client.state.views({ project: PROJECT })).views.waiting.find((w) => w.id === card.id);
+  assert.equal(typeof waiting.steered, 'string', 'the card is marked steered');
+
+  // The revision at the same head is refused, with the old card still waiting.
+  const revision = { ...APPROVAL, target: { pr: PR }, revises: card.id, changed: 'The heading is bigger.' };
+  let error = '';
+  const refused = await frontDesk(['card'], { cwd: c.folder, client: c.client, input: JSON.stringify(revision), out: () => {}, err: (t) => { error += t; } });
+  assert.notEqual(refused, 0);
+  assert.match(error, /a revised approval needs the change committed first/);
+  assert.equal(drawnCard(await tick(c), card.id).id, card.id);
+
+  // The change is committed: the pull request's head moves on the host.
+  const head2 = await commitOnPullRequest(c, { 'src/sign-in.js': 'export const signIn = true;\nexport const heading = 2;\n' });
+  assert.notEqual(head2, c.head);
+  c.host.prState = async () => ({ headSha: head2, mergeable: 'mergeable', state: 'open', body: BODY });
+  const revised = await composed(c, revision);
+  assert.notEqual(revised.id, card.id);
+  const after = await tick(c);
+  assert.equal(drawnCard(after, card.id), undefined, 'the old card is closed');
+  const drawnRevised = drawnCard(after, revised.id);
+  assert.equal(drawnRevised.kind, 'approval');
+  assert.equal(after.pane.cards.filter((x) => x.kind === 'approval').length, 1);
+  const newCode = replyCode(setLineOf(revised.question.question));
+  assert.notEqual(newCode, code, 'the revised card is for the new head');
+
+  // The old card answers nothing: not its pane press, and not its reply code.
+  assert.equal((await press(c, drawn, 'Approve')).ok, false);
+  const old = await bridge(c, { cmd: 'reply', origin: 'bridge', text: `${code} approve`, cwd: c.folder });
+  assert.equal(old.ok, false, JSON.stringify(old));
+  assert.deepEqual(eventsOf('approval'), []);
+
+  // Approve on the revised card signs the revised card's own commit.
+  assert.deepEqual(await press(c, drawnRevised, 'Approve'), { ok: true, says: 'Approved.' });
+  const approvals = eventsOf('approval');
+  assert.equal(approvals.length, 1);
+  assert.deepEqual([approvals[0].data.pr, approvals[0].data.commit], [PR, head2]);
+  assert.equal(signedBy(approvals[0]), true);
+  assert.deepEqual(kept(), []);
+}));
+
+test('a pick in the settings pane is undone within a minute; Undo under STOP is refused and records nothing', { skip: SKIP }, () => onComputer({}, async (c) => {
+  const paceRow = async () => (await bridge(c, { cmd: 'settings', cwd: c.folder })).rows.find((r) => r.key === 'pace');
+  assert.equal((await paceRow()).current, '3');
+
+  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Builders at once is now 2, for this project' });
+  const picked = await paceRow();
+  assert.equal(picked.current, '2');
+  assert.equal(picked.changed?.undo, true, 'the row offers Undo');
+
+  // Undo within the minute puts back the value before.
+  const undone = await choose(c, 'pace', 'undo');
+  assert.equal(undone.ok, true, JSON.stringify(undone));
+  assert.equal((await paceRow()).current, '3');
+  assert.deepEqual(eventsOf('setting').map((e) => e.data.value), [2, 3]);
+  assert.equal(eventsOf('confirmation').length, 2, 'the pick and its undo are each confirmed');
+
+  // A second pick, then STOP: Undo is refused and nothing more is recorded.
+  assert.equal((await choose(c, 'pace', '1')).ok, true);
+  assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'pane', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
+  const settings = eventsOf('setting').length;
+  const confirmations = eventsOf('confirmation').length;
+  assert.deepEqual(await choose(c, 'pace', 'undo'), { ok: false, says: SETTINGS_UNDER_STOP });
+  assert.equal(eventsOf('setting').length, settings);
+  assert.equal(eventsOf('confirmation').length, confirmations);
+  assert.deepEqual(kept(), []);
+  assert.equal((await paceRow()).current, '1', 'the value stays as picked');
 }));

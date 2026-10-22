@@ -598,3 +598,56 @@ test('an update after an approval with identical pages merges; with a changed pa
     assert.deepEqual(visit.questions.map((q) => setLineOf(q.question)), [approvalLine(8, moved.head)]);
   });
 });
+
+test('an approval card steered with Suggest a change… is revised once the change is committed; the old code answers nothing and the click on the revised card lets the gate merge its commit', async () => {
+  await onComputer(async (world) => {
+    const head = await openPr(world, 7, 'banner', { 'src/home.js': 'export const banner = \'Hot cross buns are back\';\n' });
+    world.at(MINUTE);
+    const { question, id } = await frontDesk(world, ['card'], approvalCard(7, 'changes the banner on the shop\'s home page.'));
+    const oldCode = replyCode(approvalLine(7, head));
+    // The director asks for a change; the words are not a decision, so nothing is approved and the card waits.
+    await ask(world, [question], { [question.question]: 'Suggest a change…' });
+    assert.deepEqual(eventsOf('approval'), []);
+    assert.ok((await viewsOf(world)).waiting.some((c) => c.id === id), 'the card waits for its revision');
+
+    // The revision at the same head describes a change the code doesn't hold, so it is refused.
+    const revision = { ...approvalCard(7, 'changes the banner on the shop\'s home page, in bigger type.'), revises: id, changed: 'The banner is in bigger type.' };
+    const said = { err: '' };
+    const refused = await sandboxed(world, () => cli(['card'], {
+      cwd: world.checkout, client: world.client, now: world.now, input: JSON.stringify(revision), out: () => {}, err: (t) => { said.err += t; },
+    }));
+    assert.notEqual(refused, 0);
+    assert.match(said.err, /a revised approval needs the change committed first/);
+
+    // The build commits the change; the revised card names the new head and closes the old card.
+    await g(world.work, 'checkout', '-q', 'feature/banner');
+    writeFiles(world.work, { 'src/home.js': 'export const banner = \'Hot cross buns are back, in bigger type\';\n' });
+    await g(world.work, 'add', '-A');
+    await g(world.work, 'commit', '-q', '-m', 'Bigger banner type');
+    await g(world.work, 'push', '-q', 'origin', 'feature/banner');
+    const head2 = await g(world.work, 'rev-parse', 'HEAD');
+    assert.notEqual(head2, head);
+    const reviewed = await world.client.state.record({
+      project: P, event: makeEvent({ kind: 'review', data: { pr: 7, commit: head2, verdict: 'CLEAN' }, now: world.now }),
+    });
+    assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+    const revised = await frontDesk(world, ['card'], revision);
+    assert.equal(setLineOf(revised.question.question), approvalLine(7, head2));
+    const waiting = (await viewsOf(world)).waiting;
+    assert.ok(!waiting.some((c) => c.id === id), 'the old card is closed');
+    assert.ok(waiting.some((c) => c.id === revised.id));
+
+    // The old card's code answers nothing.
+    const reply = JSON.parse(await runBridge({
+      stdin: Readable.from([JSON.stringify({ cmd: 'reply', origin: 'bridge', text: `${oldCode.toLowerCase()} approve`, cwd: world.checkout })]),
+      deps: { client: world.client, now: world.now },
+    }));
+    assert.equal(reply.ok, false, JSON.stringify(reply));
+    assert.deepEqual(eventsOf('approval'), []);
+
+    // The click on the revised card signs its own commit, and the gate merges that.
+    await ask(world, [revised.question], { [revised.question.question]: 'Approve' });
+    assert.deepEqual(eventsOf('approval').map((e) => [e.data.pr, e.data.commit]), [[7, head2]]);
+    assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head2, guardrailPaths: [], criticalAreas: [] });
+  });
+});
