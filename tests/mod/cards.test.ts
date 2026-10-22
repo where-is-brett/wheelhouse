@@ -776,3 +776,93 @@ test('an approval card shows what it is under the ask while Why? is closed, and 
     await ui.unmount()
   }
 })
+
+// Suggest a change…: the box in the card. The words typed into it reach the pane through the
+// Input's onInput and onSubmit, which this build's test kit does not deliver (ui.input never
+// settles, even for an Input holding a single trivial handler), so Send with words and Enter are
+// not run here.
+const SUGGEST_KEY = cardKey('card-1', 'Suggest a change…')
+const BOX = 'suggest:card-1'
+const suggestBridge = (request: any) => (request.cmd === 'suggest' ? { ok: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggests a change to card 1 (card-1).'] } : { ok: true })
+
+test('Suggest a change… opens a box with What would you change?, Send and Cancel', async ($, on) => {
+  const { seen, clear, start } = world(on, suggestBridge, withCards([partsCard()]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    expect(await ui.find({ key: BOX })).toBeUndefined()
+    clear()
+    await ui.press({ key: SUGGEST_KEY })
+    await ui.redraw()
+    const box = await ui.find({ key: BOX })
+    expect(box?.type).toBe('Input')
+    expect(box?.props.label).toBe('What would you change?')
+    expect(box?.props.autoFocus).toBe(true)
+    expect(box?.props.value).toBe('')
+    expect((await ui.find({ key: 'suggest-cancel' }))?.props.variant).toBe('secondary')
+    expect((await ui.find({ key: 'suggest-cancel' }))?.text).toBe('Cancel')
+    // Pressing the button again keeps the one box.
+    await ui.press({ key: SUGGEST_KEY })
+    await ui.redraw()
+    expect(await ui.findAll({ type: 'Input' })).toHaveLength(1)
+    expect(seen.requests).toEqual([])
+    expect(seen.submits).toEqual([])
+    await ui.press({ key: 'suggest-cancel' })
+    await ui.unmount()
+  }
+})
+
+test('Send is plain text while the box is empty', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, suggestBridge, withCards([partsCard()]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: SUGGEST_KEY })
+    await ui.redraw()
+    expect(await ui.find({ key: 'suggest-send' })).toBeUndefined()
+    const send = (await textNodes(ui)).find((n: any) => n.text === 'Send')
+    expect(send?.props.dimColor).toBe(true)
+    clear()
+    await clock.settle()
+    expect(seen.requests).toEqual([])
+    await ui.press({ key: 'suggest-cancel' })
+    await ui.unmount()
+  }
+})
+
+test('Cancel closes the box and sends nothing', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, suggestBridge, withCards([partsCard()]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: SUGGEST_KEY })
+    await ui.redraw()
+    clear()
+    await ui.press({ key: 'suggest-cancel' })
+    await clock.settle()
+    await ui.redraw()
+    expect(await ui.find({ key: BOX })).toBeUndefined()
+    expect(await ui.find({ key: 'suggest-cancel' })).toBeUndefined()
+    expect(seen.requests).toEqual([])
+    expect(seen.submits).toEqual([])
+    expect(seen.toasts).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('on the phone the button says to type the change in the chat', async ($, on) => {
+  const { seen, clear, start } = world(on, suggestBridge, withCards([partsCard()]))
+  await start($, 'mobile')
+  const ui = await mount($, 'mobile')
+  const NOTE = 'Type your change in the chat, and I\'ll know it\'s about card 1.'
+  expect(await texts(ui)).not.toContain(NOTE)
+  clear()
+  await ui.press({ key: SUGGEST_KEY })
+  await ui.redraw()
+  expect(await ui.findAll({ type: 'Input' })).toHaveLength(0)
+  expect(await ui.find({ key: 'suggest-cancel' })).toBeUndefined()
+  const note = (await textNodes(ui)).find((n: any) => n.text === NOTE)
+  expect(note?.props.size).toBe('footnote')
+  expect(seen.requests).toEqual([])
+  await ui.unmount()
+})

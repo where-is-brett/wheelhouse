@@ -422,11 +422,14 @@ function namedFunctions(code) {
 }
 
 const PANE_FILES = ['cards.tsx', 'settings.tsx'];
-// A press is passed as a Button's onPress, or as the last argument of the drawing kit's button
+// A press is passed as a Button's onPress, an Input's onSubmit, or as the last argument of the drawing kit's button
 // functions (hooks/mod/calm.tsx), and only as an arrow that calls it on a click: a press called
 // while drawing, or in any other argument, would send as the pane draws.
 const ARROW = '(?:async\\s*)?\\(\\)\\s*=>\\s*$';
-const ON_PRESS = new RegExp(`(?:onPress\\s*=\\s*\\{\\s*|\\b(?:filled|outlined|small)\\(\\s*t\\s*,[^,()]+,[^,()]+,\\s*|\\bstopButton\\(\\s*t\\s*,\\s*)${ARROW}`);
+// A box's Enter hands the arrow the words typed, so an `onSubmit` arrow takes that one parameter
+// (a plain name, typed string or not) and nothing else.
+const ARROW_OF_WORDS = '(?:async\\s*)?\\(\\s*[A-Za-z_$][\\w$]*(?:\\s*:\\s*string)?\\s*\\)\\s*=>\\s*$';
+const ON_PRESS = new RegExp(`(?:onPress\\s*=\\s*\\{\\s*|\\b(?:filled|outlined|small)\\(\\s*t\\s*,[^,()]+,[^,()]+,\\s*|\\bstopButton\\(\\s*t\\s*,\\s*)${ARROW}|onSubmit\\s*=\\s*\\{\\s*${ARROW_OF_WORDS}`);
 
 // paneOrigin(sources) -> { ok, why? }: `origin: 'pane'` appears only inside functions whose
 // names begin `press` in cards.tsx and settings.tsx, which those files pass as `onPress` (or to the

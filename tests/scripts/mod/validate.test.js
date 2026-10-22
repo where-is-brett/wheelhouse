@@ -245,6 +245,9 @@ test('the pane origin outside a press handler fails', () => {
     "const a = outlined(t, key, 'Label', async () => pressStop($, after))",
     "const a = small(t, 'k', 'Label', () => pressStop($, after))",
     "const a = stopButton(t, () => pressStop($, after))",
+    "const a = <Input onSubmit={(v) => pressStop($, after, v)} />",
+    "const a = <Input onSubmit={async (words) => pressStop($, after, words)} />",
+    "const a = <Input onSubmit={(v: string) => pressStop($, after, v)} />",
   ]) {
     assert.equal(paneOrigin({ 'hooks/mod/cards.tsx': `${press}${use}` }).ok, true, use);
   }
@@ -256,6 +259,15 @@ test('the pane origin outside a press handler fails', () => {
     "const a = [small(t, 'a', 'b', noop), pressStop($, after)]",
     "const a = filled(t, 'k', pressStop($, after), () => noop())",
     "const a = stopButton(t, pressStop($, after))",
+    "const a = <Input onSubmit={pressStop} />",
+    "const a = <Input onSubmit={pressStop($, after)} />",
+    "const a = <Input onSubmit={v => pressStop($, after, v)} />",
+    "const a = <Input onSubmit={(v, w) => pressStop($, after, v)} />",
+    "const a = <Input onSubmit={() => pressStop($, after)} />",
+    "const a = <Input onInput={(v) => pressStop($, after, v)} />",
+    "const a = <Input onSubmit={(v = pressStop($, after)) => v} />",
+    "const a = <Button onPress={(v) => pressStop($, after, v)} />",
+    "const a = filled(t, 'k', 'L', (v) => pressStop($, after, v))",
   ]) {
     assert.equal(paneOrigin({ 'hooks/mod/cards.tsx': `${press}${use}` }).ok, false, use);
   }
@@ -375,7 +387,7 @@ test('the mod reads a reply code from the code alphabet', () => {
 test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
   const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'ONLY_YOU_LIFT', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHY']);
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'ONLY_YOU_LIFT', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
   const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
   assert.equal(value('PANE_ID'), PANE_ID);
   assert.equal(value('TICK_MS'), TICK_MS);
@@ -388,7 +400,7 @@ test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numb
   // The Calm set words are scripts/lib/calm-words.js's, written as the mod says them (a quoted
   // string may hold an escaped apostrophe, so each is read as the string it is).
   const word = (name) => new Function(`return ${written[name]}`)();
-  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP', 'WHY', 'HIDE_WHY', 'SHOW_ME', 'WHAT_CHANGED', 'NOT_HANDED']) {
+  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP', 'WHY', 'HIDE_WHY', 'SHOW_ME', 'WHAT_CHANGED', 'NOT_HANDED', 'SUGGEST', 'WHAT_WOULD_YOU_CHANGE', 'SENT_TO_FRONT_DESK']) {
     assert.equal(word(name), calmWords[name], name);
   }
   const staleLine = /^export const staleLine = (.*)$/m.exec(source);
@@ -401,6 +413,10 @@ test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numb
   assert.ok(suggested, 'hooks/mod/numbers.ts names suggestedAt on one line');
   const modSuggested = new Function(`return ${suggested[1].replace(/\(hhmm: string\)/, '(hhmm)')}`)();
   for (const hhmm of ['14:10', '09:01']) assert.equal(modSuggested(hhmm), calmWords.suggestedAt(hhmm));
+  const typeYour = /^export const typeYourChange = (.*)$/m.exec(source);
+  assert.ok(typeYour, 'hooks/mod/numbers.ts names typeYourChange on one line');
+  const modTypeYour = new Function(`return ${typeYour[1].replace(/\(n: number \| string\)/, '(n)')}`)();
+  for (const n of [1, 12, 'card-3']) assert.equal(modTypeYour(n), calmWords.typeYourChange(n));
   // The waits are the bridge's limits and the time node takes to start (ruling 26).
   assert.equal(written.ASK_MS, 'BRIDGE_MS + 1500');
   assert.equal(written.TICK_ASK_MS, 'WATCH_BRIDGE_MS + 5000');

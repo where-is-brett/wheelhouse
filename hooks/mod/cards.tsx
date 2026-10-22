@@ -7,12 +7,12 @@
 // buttons stay live during a turn. One press is recorded at a time: while one is, every other
 // button but STOP is drawn as plain text, so a double press sends once. STOP is never held back.
 // The origin `pane` is written only inside the press… functions below and in settings.tsx, each
-// passed as a Button's onPress; scripts/mod/validate.js checks it.
+// passed as a Button's onPress or an Input's onSubmit; scripts/mod/validate.js checks it.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask, FAILED, type Answer, type PaneModel } from './ask'
 import { body, caption, filled, footnote, heading, link, outlined, small, stop as stopButton } from './calm'
 import type { Table } from './calm'
-import { HIDE_WHY, NOT_HANDED, PANE_LEAD, RECORDING, SHOW_ME, WHY, suggestedAt, WHAT_CHANGED } from './numbers'
+import { HIDE_WHY, NOT_HANDED, PANE_LEAD, RECORDING, SHOW_ME, SUGGEST, WHAT_WOULD_YOU_CHANGE, WHY, suggestedAt, typeYourChange, WHAT_CHANGED } from './numbers'
 
 // A card of the pane's model. It comes from another process, so each field is read as anything.
 type Card = Record<string, unknown>
@@ -30,6 +30,8 @@ export const WAIT = 'Wait for Claude to finish, or type stop'
 export const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
 const LIFT = 'lift-stop'
 const WHY_OPEN = { plugin: 'wheelhouse', key: 'why' } as const
+const SUGGESTING = { plugin: 'wheelhouse', key: 'suggesting' } as const
+const SUGGEST_BOX = (id: string) => `suggest:${id}`
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -56,6 +58,7 @@ export async function release($: EngineInterface) {
 export async function releaseAll($: EngineInterface) {
   await $.state.set(PRESSING, null)
   await $.state.set(STOPPING, false)
+  await $.state.set(SUGGESTING, null)
 }
 
 // Hands the session each prompt, in order, once. Each prompt stands alone: one the engine drops,
@@ -124,6 +127,39 @@ async function pressWhy($: EngineInterface, card: Card, turn: boolean) {
   const open = (await $.state.get(WHY_OPEN)).value === id
   if (!open) void ask($, quiet)
   await $.state.set(WHY_OPEN, open ? null : id)
+}
+
+// Suggest a change… on a card opens its box (or, where the surface has no box, the note to type
+// the change in the chat). The words already typed for that card stay.
+async function openSuggest($: EngineInterface, card: Card) {
+  const kept = (await $.state.get(SUGGESTING)).value
+  if (kept?.card === card.id) return
+  await $.state.set(SUGGESTING, { card: card.id as string, words: '' })
+}
+
+// The words typed in the box, kept in the session's state while the box is open.
+async function keepWords($: EngineInterface, id: string, words: string) {
+  await $.state.set(SUGGESTING, { card: id, words })
+}
+
+// Cancel: the box closes and its words are gone. Nothing is sent.
+async function closeSuggest($: EngineInterface) {
+  await $.state.set(SUGGESTING, null)
+}
+
+// Send, or Enter in the box (which hands over the words as typed): the words steer a new proposal
+// and never approve anything. Nothing is sent while the words are empty or another press is being
+// recorded. The box closes once the bridge has answered, and its `submit` prompt goes to the front desk.
+async function pressSuggest($: EngineInterface, card: Card, after: After, typed?: string) {
+  const id = card.id as string
+  const kept = (await $.state.get(SUGGESTING)).value
+  const words = (typed ?? (kept?.card === id ? kept.words : '')).trim()
+  if (words === '') return
+  if (!(await claim($, { on: id, label: SUGGEST }))) return
+  await carry($, { cmd: 'suggest', origin: 'pane', card: id, hash: card.hash, words }, RECORDING, async () => {
+    await closeSuggest($)
+    await release($)
+  }, after)
 }
 
 // STOP: never held back by another press, only by its own.
@@ -221,6 +257,12 @@ function drawButton($: EngineInterface, t: Table, card: Card, id: string, b: Giv
   if (pressing?.on === id && pressing.label === b.label) return body(t, RECORDING)
   if (pressing !== null) return footnote(t, b.label)
   const key = `card:${id}:${b.label}`
+  if (b.does === 'suggest') {
+    const open = () => openSuggest($, card)
+    if (b.shape === 'filled') return filled(t, key, b.label, open)
+    if (b.shape === 'outlined') return outlined(t, key, b.label, open)
+    return small(t, key, b.label, open)
+  }
   const label = b.does === 'why' && open ? HIDE_WHY : b.label
   // Each press is written out beside its shape, since scripts/mod/validate.js reads a press only as
   // the last argument of filled, outlined or small.
@@ -231,9 +273,35 @@ function drawButton($: EngineInterface, t: Table, card: Card, id: string, b: Giv
   return why ? small(t, key, label, () => pressWhy($, card, turn)) : small(t, key, label, () => pressButton($, card, b.label, after))
 }
 
+// The box for a suggested change: the words typed so far, Send (plain while there are none or
+// another press is recorded) and Cancel. Where the surface has no Input, the note says to type it
+// in the chat instead.
+function drawSuggest($: EngineInterface, t: Table, typeable: boolean, card: Card, id: string, words: string, pressing: Pressing, after: After) {
+  if (!typeable) return footnote(t, typeYourChange(typeof card.n === 'number' ? card.n : id))
+  const recording = pressing?.on === id && pressing.label === SUGGEST
+  const send = words.trim() === '' || pressing !== null ? (recording ? body(t, RECORDING) : footnote(t, 'Send')) : filled(t, 'suggest-send', 'Send', () => pressSuggest($, card, after))
+  return (
+    <t.Box flexDirection="column" gap="xs">
+      <t.Input
+        key={SUGGEST_BOX(id)}
+        label={WHAT_WOULD_YOU_CHANGE}
+        value={words}
+        autoFocus
+        onInput={(v: string) => keepWords($, id, v)}
+        onSubmit={(v: string) => pressSuggest($, card, after, v)}
+      />
+      <t.Box flexDirection="row" gap="sm">
+        {send}
+        {outlined(t, 'suggest-cancel', 'Cancel', () => closeSuggest($))}
+      </t.Box>
+    </t.Box>
+  )
+}
+
 // A card with parts, part by part (design section 23.3). `place` is "1 of 2". Nothing in its words
-// is a link or a heading but the ask.
-function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts: Card, place: string | null, pressing: Pressing, open: boolean, live: boolean, after: After) {
+// is a link or a heading but the ask. `suggesting` is the words typed in its Suggest a change… box
+// while that is open, else null.
+function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts: Card, place: string | null, pressing: Pressing, open: boolean, suggesting: string | null, live: boolean, after: After) {
   const t = $.ui.resolve(e)
   const { Box } = t
   const id = typeof card.id === 'string' ? card.id : null
@@ -265,6 +333,7 @@ function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts
       {open && reasons.filter((r) => r !== null).map((r) => body(t, r as string))}
       {typeof card.steered === 'string' && footnote(t, suggestedAt(card.steered))}
       {answers.length > 0 && <Box flexDirection="row" gap="sm" flexWrap="wrap">{answers.map(draw)}</Box>}
+      {suggesting !== null && id !== null && given.some((b) => b.does === 'suggest') && drawSuggest($, t, e.surface !== 'mobile', card, id, suggesting, pressing, after)}
       {typeof card.note === 'string' && footnote(t, card.note)}
       {checking !== '' && caption(t, checking)}
     </Box>
@@ -275,5 +344,7 @@ function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts
 export async function drawCard($: EngineInterface, e: RenderInput<'Pane'>, card: Card, place: string | null, pressing: Pressing, live: boolean, after: After) {
   if (!isRecord(card.parts)) return drawWhole($, e, card, pressing, live, after)
   const open = typeof card.id === 'string' && (await $.state.get(WHY_OPEN)).value === card.id
-  return drawParts($, e, card, card.parts, place, pressing, open, live, after)
+  const suggest = (await $.state.get(SUGGESTING)).value
+  const suggesting = typeof card.id === 'string' && suggest?.card === card.id ? suggest.words : null
+  return drawParts($, e, card, card.parts, place, pressing, open, suggesting, live, after)
 }

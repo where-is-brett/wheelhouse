@@ -136,6 +136,9 @@ declare module 'claude-code' {
       // The press the bridge is recording, or null: while one is, every other button but STOP is
       // drawn as plain text, so a double press sends once.
       pressing: WheelhousePressing | null;
+      // The card whose Suggest a change… box is open, and the words typed in it so far, or null.
+      // Kept only while the box is open; cleared on Send, on Cancel and at a session's start.
+      suggesting: { card: string; words: string } | null;
       // Whether a press of STOP is being recorded.
       stopping: boolean;
       // The session whose courier wake last couldn't be handed on, or null: its toast has shown, and
