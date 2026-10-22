@@ -11,6 +11,7 @@ import {
 } from '../../../scripts/mod/validate.js';
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
+import * as calmWords from '../../../scripts/lib/calm-words.js';
 import { PANE_ID, TICK_MS, STALE_TICKS, WATCH_BRIDGE_MS, LEADS, MESSAGE_LEAD } from '../../../scripts/lib/mod-numbers.js';
 import { BRIDGE_MS } from '../../../scripts/mod/bridge.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
@@ -350,7 +351,7 @@ test('the mod reads a reply code from the code alphabet', () => {
 test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
   const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'MESSAGE_LEAD', 'PANE_ID', 'PANE_LEAD', 'STALE_TICKS', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS']);
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'MESSAGE_LEAD', 'NOTHING_NEEDS_YOU', 'NOT_HERE', 'ONLY_YOU_LIFT', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SETTING_UP', 'STALE_TICKS', 'STOP_HALTS', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS']);
   const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
   assert.equal(value('PANE_ID'), PANE_ID);
   assert.equal(value('TICK_MS'), TICK_MS);
@@ -360,6 +361,18 @@ test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numb
   assert.equal(value('PANE_LEAD'), LEADS.pane);
   assert.equal(value('FOREMAN_LEAD'), FOREMAN_PROMPT_LEAD);
   assert.equal(written.MESSAGE_LEAD, String(MESSAGE_LEAD));
+  // The Calm set words are scripts/lib/calm-words.js's, written as the mod says them (a quoted
+  // string may hold an escaped apostrophe, so each is read as the string it is).
+  const word = (name) => new Function(`return ${written[name]}`)();
+  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP']) {
+    assert.equal(word(name), calmWords[name], name);
+  }
+  const staleLine = /^export const staleLine = (.*)$/m.exec(source);
+  assert.ok(staleLine, 'hooks/mod/numbers.ts names staleLine on one line');
+  const modStale = new Function(`return ${staleLine[1].replace(/\(failedAt: string, shownAt: string\)/, '(failedAt, shownAt)')}`)();
+  for (const [failed, shown] of [['14:05', '14:02'], ['09:01', '08:59']]) {
+    assert.equal(modStale(failed, shown), calmWords.staleLine(failed, shown));
+  }
   // The waits are the bridge's limits and the time node takes to start (ruling 26).
   assert.equal(written.ASK_MS, 'BRIDGE_MS + 1500');
   assert.equal(written.TICK_ASK_MS, 'WATCH_BRIDGE_MS + 5000');

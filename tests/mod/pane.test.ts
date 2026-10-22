@@ -13,6 +13,7 @@ const SESSION = '0b6a4e1c-4f3a-4d7e-9a51-2f3c8d9e1a77'
 const PANE_ID = 'wheelhouse'
 const TICK_MS = 15000
 const TICK_ASK_MS = 50000
+const STOP_HALTS = 'Halts every builder at once.'
 // 03:00:50 UTC on 19 October 2026, so a tick fifteen seconds on reads a minute later.
 const START = Date.parse('2026-10-19T03:00:50.000Z')
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
@@ -32,12 +33,18 @@ const model = (glance: string) => ({
   project: 'shop',
   at: '2026-10-19T03:00:50.000Z',
   glance,
+  verdict: 'Two things need you. Nothing is broken.',
+  since: 'Since you were last here at 09:10.',
+  launch: { resolved: 3, total: 5, gained: 1, next: [{ text: 'Connect the payments account', yours: true }, { text: 'Write the privacy page', yours: false }] },
+  ideas: { count: 4, fresh: 1 },
+  updated: '14:02',
+  healthNote: { allWell: false, protection: 'Standard', week: 'This week: 34% of the allowance' },
   stop: { on: true, since: '2026-10-19T02:00:00.000Z' },
   cards: [
     { id: 'card-1', n: 1, header: 'Approve', kind: 'approve', text: FIRST, hash: 'aaaaaaaaaaaa', buttons: [{ label: 'Approve', does: 'record' }], note: null, blocking: false, asked: false },
-    { id: 'card-2', n: 2, header: 'Question', kind: 'question', text: SECOND, hash: 'bbbbbbbbbbbb', buttons: [], note: null, blocking: false, asked: true },
+    { id: 'card-2', n: 2, header: 'Question', kind: 'question', text: SECOND, hash: 'bbbbbbbbbbbb', buttons: [], note: null, blocking: false, asked: true, parts: { ask: 'how exported files are named', optional: 3 } },
   ],
-  building: ['Building the banner, slice 1 of 3'],
+  building: [{ text: 'Building the banner, slice 1 of 3', see: 'You\'ll see it tomorrow' }],
   health: [
     { level: 'watch', text: 'CI is failing on main', of: null },
     { level: 'stop', text: 'STOP is on, since 19 October 2026', of: 'stop' },
@@ -114,6 +121,9 @@ function world(on: any, answer: (request: any) => Reply) {
 // worked out here from the zone's offset rather than the local clock readings the mod uses.
 const timeOf = (ms: number) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(11, 16)
 
+// The first line drawn when nothing is out of date: the STOP is on group's title, since STOP is on.
+const FIRST_LINE = 'STOP is on'
+
 const mount = ($: any, surface: string) => $.ui.mount({ plugin: 'wheelhouse', surface, component: 'Pane', requestId: PANE_ID, props: PANE_PROPS })
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
 
@@ -166,17 +176,38 @@ test('the pane draws each card\'s text as plain text, one card at a time', async
     await start($, surface)
     const ui = await mount($, surface)
     const drawn = await texts(ui)
-    // The glance, STOP's line, the card, then the building, health and usage lines, then what
-    // couldn't be read.
+    // The STOP is on group, the verdict and its since line, the card, the next card's subject,
+    // Next, then each group in turn and the foot.
     expect(drawn).toEqual([
-      '2 cards wait',
-      'STOP is on, since 19 October 2026',
+      'STOP is on',
+      'Since 19 October 2026',
+      'Only you can lift it.',
+      'Two things need you. Nothing is broken.',
+      'Since you were last here at 09:10.',
       'Card 1 of 2',
       FIRST,
+      'Next: how exported files are named · optional · 3 min',
+      'Next',
+      'Being built',
       'Building the banner, slice 1 of 3',
+      'You\'ll see it tomorrow',
+      'Launch',
+      '3 of 5 blockers cleared',
+      '+1 since 09:10',
+      'What\'s next',
+      'Connect the payments account (yours)',
+      'Write the privacy page',
+      'Health and this week',
+      'To watch',
       'CI is failing on main',
+      'Protection: Standard',
+      'This week: 34% of the allowance',
       'Usage: 23% of the five-hour window',
+      '4 ideas · 1 new since yesterday',
       'The helper isn\'t answering',
+      'Board',
+      'Settings',
+      'Updated 14:02',
     ])
     expect(await ui.findAll({ type: 'Markdown' })).toHaveLength(0)
     expect(await ui.find({ key: 'back' })).toBeUndefined()
@@ -215,7 +246,7 @@ test('a failed tick shows the last picture under a line saying it is old', async
     expect(seen.ticks).toHaveLength(1)
     await ui.redraw()
     const drawn = await texts(ui)
-    expect(drawn[0]).toBe(`Couldn't read the latest at ${timeOf(failed)}; showing ${timeOf(read)}'s`)
+    expect(drawn[0]).toBe(`Couldn't read the latest at ${timeOf(failed)}. Showing ${timeOf(read)}'s.`)
     // The clock starts at 03:00:50 UTC, so the first surface's times are these, in the computer's
     // zone (14:01 and 14:00 in Sydney's summer), never named as UTC.
     if (surface === SURFACES[0]) {
@@ -224,10 +255,10 @@ test('a failed tick shows the last picture under a line saying it is old', async
         const m = (((utcMinutes - offset) % 1440) + 1440) % 1440
         return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
       }
-      expect(drawn[0]).toBe(`Couldn't read the latest at ${local(3 * 60 + 1)}; showing ${local(3 * 60)}'s`)
+      expect(drawn[0]).toBe(`Couldn't read the latest at ${local(3 * 60 + 1)}. Showing ${local(3 * 60)}'s.`)
       expect(drawn[0]).not.toContain('UTC')
     }
-    expect(drawn.slice(1)).toContain('2 cards wait')
+    expect(drawn.slice(1)).toContain('Two things need you. Nothing is broken.')
     expect(drawn.slice(1)).toContain(FIRST)
     expect(seen.statuses).toEqual([undefined])
     expect(seen.opens).toEqual([{ id: PANE_ID, title: 'Wheelhouse' }])
@@ -243,7 +274,7 @@ test('a failed tick shows the last picture under a line saying it is old', async
     expect(seen.ticks).toHaveLength(1)
     expect(seen.statuses).toEqual([undefined])
     await ui.redraw()
-    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(read)}'s`)
+    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}. Showing ${timeOf(read)}'s.`)
 
     // The next answer clears the line and sets the status line and the title again.
     clear()
@@ -251,7 +282,7 @@ test('a failed tick shows the last picture under a line saying it is old', async
     await clock.advance(TICK_MS)
     const reread = clock.now()
     await ui.redraw()
-    expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect((await texts(ui))[0]).toBe(FIRST_LINE)
     expect(seen.statuses).toEqual(['2 cards wait'])
     expect(seen.opens).toEqual([{ id: PANE_ID, title: '2 cards wait' }])
 
@@ -260,15 +291,15 @@ test('a failed tick shows the last picture under a line saying it is old', async
     reply = { hold: 4 * TICK_MS, then: frontDesk('2 cards wait') }
     await clock.advance(TICK_MS)
     await ui.redraw()
-    expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect((await texts(ui))[0]).toBe(FIRST_LINE)
     clear()
     await clock.advance(2 * TICK_MS)
     await ui.redraw()
-    expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect((await texts(ui))[0]).toBe(FIRST_LINE)
     expect(seen.statuses).toEqual([])
     await clock.advance(TICK_MS)
     await ui.redraw()
-    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(reread)}'s`)
+    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}. Showing ${timeOf(reread)}'s.`)
     expect(seen.statuses).toEqual([undefined])
     expect(seen.opens).toEqual([{ id: PANE_ID, title: 'Wheelhouse' }])
     reply = frontDesk('2 cards wait')
@@ -401,7 +432,7 @@ for (const surface of SURFACES) {
     expect(panes.has(PANE_ID)).toBe(false)
     // The pane, if mounted, shows only why there is no pane yet, and no buttons.
     const ui = await mount($, surface)
-    expect(await texts(ui)).toEqual(['This project is still being set up: its pane opens once setup finishes'])
+    expect(await texts(ui)).toEqual([SETTING_UP])
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
     await ui.unmount()
 
@@ -542,27 +573,27 @@ test('the stale line comes by itself while a tick hangs', async ($, on) => {
     await start($, surface)
     const read = clock.now()
     const ui = await mount($, surface)
-    expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect((await texts(ui))[0]).toBe(FIRST_LINE)
     // The next tick hangs for 48 seconds, within the most the mod waits for one (TICK_ASK_MS, 50
     // seconds). Nothing is drawn again by the test: the pane redraws itself once the picture is
     // more than three ticks old, at the timer's fire while that tick still runs.
     reply = { hold: 48000, then: frontDesk('2 cards wait') }
     await clock.advance(3 * TICK_MS)
-    expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect((await texts(ui))[0]).toBe(FIRST_LINE)
     await clock.advance(TICK_MS)
-    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}; showing ${timeOf(read)}'s`)
+    expect((await texts(ui))[0]).toBe(`Couldn't read the latest at ${timeOf(clock.now())}. Showing ${timeOf(read)}'s.`)
     // The tick's answer clears it.
     reply = frontDesk('2 cards wait')
     await clock.advance(3000)
-    expect((await texts(ui))[0]).toBe('2 cards wait')
+    expect((await texts(ui))[0]).toBe(FIRST_LINE)
     await clock.advance(TICK_MS)
     await ui.unmount()
   }
 })
 
 // What /wheelhouse says where the session has no pane of its own.
-const NOT_HERE = 'Wheelhouse\'s pane belongs to the project\'s front desk: type /wheelhouse there'
-const SETTING_UP = 'This project is still being set up: its pane opens once setup finishes'
+const NOT_HERE = 'This pane lives in the front desk\'s chat. Type /wheelhouse there.'
+const SETTING_UP = 'Setup is still running. This pane opens when it finishes.'
 const NO_PROJECT = 'This folder isn\'t a Wheelhouse project, so it has no pane'
 
 test('/wheelhouse in a session that isn\'t the front desk\'s says whose the pane is, and opens nothing', async ($, on) => {
@@ -599,7 +630,7 @@ for (const surface of SURFACES) {
     expect(result).toMatchObject({ text: 'Wheelhouse' })
     expect(seen.opens).toEqual([{ id: PANE_ID, title: 'Wheelhouse' }])
     const ui = await mount($, surface)
-    expect(await texts(ui)).toEqual(['Reading how the project stands…'])
+    expect(await texts(ui)).toEqual(['STOP', STOP_HALTS, 'Reading how the project stands…'])
     await clock.advance(60000)
     await ui.unmount()
   })
@@ -616,7 +647,7 @@ for (const surface of SURFACES) {
       await clock.settle()
       await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
       const ui = await mount($, surface)
-      expect(await texts(ui)).toEqual(['Reading how the project stands…'])
+      expect(await texts(ui)).toEqual(['STOP', STOP_HALTS, 'Reading how the project stands…'])
       expect((await ui.find({ key: 'stop' }))?.type).toBe('Button')
       await clock.advance(20000)
       expect(await texts(ui)).toEqual([says])

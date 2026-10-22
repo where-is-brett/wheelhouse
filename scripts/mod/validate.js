@@ -422,11 +422,13 @@ function namedFunctions(code) {
 }
 
 const PANE_FILES = ['cards.tsx', 'settings.tsx'];
-const ON_PRESS = /onPress\s*=\s*\{\s*(?:async\s*)?(?:\([^)]*\)\s*=>\s*)?$/;
+// A press is passed as a Button's onPress, directly or through the drawing kit's button functions
+// (hooks/mod/calm.tsx), which take it as their last argument and set it as the Button's onPress.
+const ON_PRESS = /(?:onPress\s*=\s*\{|\b(?:filled|outlined|small|stopButton)\([^\n]*,)\s*(?:async\s*)?(?:\([^)]*\)\s*=>\s*)?$/;
 
 // paneOrigin(sources) -> { ok, why? }: `origin: 'pane'` appears only inside functions whose
-// names begin `press` in cards.tsx and settings.tsx, which those files pass as `onPress` and
-// nothing else calls. Read by name, without a TypeScript parser.
+// names begin `press` in cards.tsx and settings.tsx, which those files pass as `onPress` (or to the
+// kit's button functions) and nothing else calls. Read by name, without a TypeScript parser.
 export function paneOrigin(sources) {
   const problems = [];
   for (const [file, text] of entriesOf(sources)) {

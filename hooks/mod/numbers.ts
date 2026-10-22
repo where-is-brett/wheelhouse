@@ -23,3 +23,12 @@ export const FOREMAN_LEAD = 'Wheelhouse foreman:'
 // tell a foreman's from a front desk's before the answer, so every tick waits a foreman's time.
 export const ASK_MS = BRIDGE_MS + 1500
 export const TICK_ASK_MS = WATCH_BRIDGE_MS + 5000
+// The Calm interface's set words (scripts/lib/calm-words.js), written as the pane says them.
+export const STOP_HALTS = 'Halts every builder at once.'
+export const ONLY_YOU_LIFT = 'Only you can lift it.'
+export const NOTHING_NEEDS_YOU = 'Nothing needs you.'
+export const RECORDING = 'Recording…'
+export const NOT_HERE = 'This pane lives in the front desk\'s chat. Type /wheelhouse there.'
+export const SETTING_UP = 'Setup is still running. This pane opens when it finishes.'
+// The line shown when the latest state could not be read: when it failed and which reading is shown.
+export const staleLine = (failedAt: string, shownAt: string) => `Couldn't read the latest at ${failedAt}. Showing ${shownAt}'s.`

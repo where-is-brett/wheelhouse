@@ -10,6 +10,8 @@
 // passed as a Button's onPress; scripts/mod/validate.js checks it.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask, FAILED, type Answer, type PaneModel } from './ask'
+import { body, filled, footnote, stop as stopButton } from './calm'
+import { RECORDING } from './numbers'
 
 // A card of the pane's model. It comes from another process, so each field is read as anything.
 type Card = Record<string, unknown>
@@ -20,7 +22,6 @@ export type After = () => Promise<unknown>
 const PRESSING = { plugin: 'wheelhouse', key: 'pressing' } as const
 const STOPPING = { plugin: 'wheelhouse', key: 'stopping' } as const
 
-export const RECORDING = 'Recording…'
 // Drawn in place of every button while a turn runs, when pane.tsx's HIDE_WHILE_BUSY is on.
 export const WAIT = 'Wait for Claude to finish, or type stop'
 // A toast for a prompt that couldn't be handed on: to the front desk, or a Shape 2 foreman's
@@ -121,20 +122,21 @@ function labelsOf(card: Card): string[] {
   return [...new Set(given.map((b) => (isRecord(b) && typeof b.label === 'string' ? b.label : '')).filter((label) => label !== ''))]
 }
 
-// The pane's top line: STOP while STOP is off, Lift STOP while it is on. `live` is false while
-// HIDE_WHILE_BUSY holds every button back.
+// STOP's control, which the pane lays out: STOP while STOP is off, Lift STOP while it is on, or
+// the word that the press is being recorded. `live` is false while HIDE_WHILE_BUSY holds every
+// button back.
 export async function drawStop($: EngineInterface, e: RenderInput<'Pane'>, model: PaneModel, pressing: Pressing, live: boolean, after: After) {
-  const { Text, Button } = $.ui.resolve(e)
-  if (!live) return <Text dimColor>{WAIT}</Text>
+  const t = $.ui.resolve(e)
+  if (!live) return footnote(t, WAIT)
   const stop = isRecord(model.stop) ? model.stop : {}
   if (stop.on === true) {
-    if (pressing?.on === LIFT) return <Text>{RECORDING}</Text>
-    if (pressing !== null) return <Text dimColor>Lift STOP</Text>
+    if (pressing?.on === LIFT) return body(t, RECORDING)
+    if (pressing !== null) return footnote(t, 'Lift STOP')
     const since = stop.since
-    return <Button key={LIFT} label="Lift STOP" onPress={() => pressLift($, since, after)} />
+    return filled(t, LIFT, 'Lift STOP', () => pressLift($, since, after))
   }
-  if ((await $.state.get(STOPPING)).value === true) return <Text>{RECORDING}</Text>
-  return <Button key="stop" label="STOP" onPress={() => pressStop($, after)} />
+  if ((await $.state.get(STOPPING)).value === true) return body(t, RECORDING)
+  return stopButton(t, () => pressStop($, after))
 }
 
 // A card: its text, drawn whole as plain text, its note under it, and one button per entry of

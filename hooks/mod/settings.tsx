@@ -7,8 +7,8 @@
 // desk a prompt naming the row and asks the bridge nothing.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask } from './ask'
-import { PANE_LEAD } from './numbers'
-import { carry, claim, release, submitAll, RECORDING, type After } from './cards'
+import { PANE_LEAD, RECORDING } from './numbers'
+import { carry, claim, release, submitAll, type After } from './cards'
 
 type Pressing = PluginState['wheelhouse']['pressing']
 type Settings = PluginState['wheelhouse']['settings']
