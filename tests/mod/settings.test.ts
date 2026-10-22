@@ -20,7 +20,7 @@ const PANE_PROPS = {
   title: 'Wheelhouse', isFocused: false, bodyColumns: 48, placement: 'dock' as const,
   scroll: { offset: 0, bodyRows: 40 }, view: {},
 }
-const FAILED = 'Wheelhouse couldn\'t record that'
+const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 const ADVANCED = 'Advanced settings: ask the front desk'
 
 const model = {

@@ -27,7 +27,7 @@ const STOPPING = { plugin: 'wheelhouse', key: 'stopping' } as const
 export const WAIT = 'Wait for Claude to finish, or type stop'
 // A Shape 2 foreman's watcher lines that couldn't be handed to the foreman. NOT_HANDED, for a
 // prompt that couldn't be handed to the front desk, is in numbers.ts.
-export const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
+export const NOT_HANDED_FOREMAN = 'The watcher\'s news didn\'t reach the foreman.'
 const LIFT = 'lift-stop'
 const WHY_OPEN = { plugin: 'wheelhouse', key: 'why' } as const
 const SUGGESTING = { plugin: 'wheelhouse', key: 'suggesting' } as const
@@ -167,13 +167,13 @@ async function pressStop($: EngineInterface, after: After) {
   const held = await $.state.get(STOPPING)
   if (held.value === true) return
   if (!(await $.state.set(STOPPING, true, { ifVersion: held.version })).isSet) return
-  await carry($, { cmd: 'stop', origin: 'pane' }, 'Recording STOP', () => $.state.set(STOPPING, false), after)
+  await carry($, { cmd: 'stop', origin: 'pane' }, RECORDING, () => $.state.set(STOPPING, false), after)
 }
 
 // Lift STOP, carrying the start of the STOP the pane drew: the bridge lifts only that one.
 async function pressLift($: EngineInterface, since: unknown, after: After) {
   if (!(await claim($, { on: LIFT, label: 'Lift STOP' }))) return
-  await carry($, { cmd: 'go', origin: 'pane', since: typeof since === 'string' ? since : null }, 'Recording Lift STOP', () => release($), after)
+  await carry($, { cmd: 'go', origin: 'pane', since: typeof since === 'string' ? since : null }, RECORDING, () => release($), after)
 }
 
 // The labels of the buttons the bridge gave a card, in its order, each once.

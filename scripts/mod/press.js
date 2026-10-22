@@ -39,14 +39,14 @@
 // step goes ahead only by the director's click on the very card setup showed.
 import fs from 'node:fs';
 import path from 'node:path';
-import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
+import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { keep, taken, withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
-import { SUGGEST, WHY, SENT_TO_FRONT_DESK, CHANGED_WHILE_READING } from '../lib/calm-words.js';
+import { SUGGEST, WHY, SENT_TO_FRONT_DESK, CHANGED_WHILE_READING, WRITE_FIRST, decidedToast } from '../lib/calm-words.js';
 import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
 import { cardButtons, kindOf, isSetupCard } from './buttons.js';
@@ -76,7 +76,7 @@ export const SAYS = {
   buildsByClick: 'That setting is set only by a click on its own card when the front desk asks it, so nothing was recorded',
   setupByClick: 'A setup step goes ahead only by a click on its own card when setup asks it, so nothing was recorded',
   elsewhere: ALLOWED_ELSEWHERE,
-  noWords: 'Write what you\'d change first',
+  noWords: WRITE_FIRST,
 };
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -195,7 +195,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
 
   // Not now and Keep as is sign nothing: each writes the plain card answer alone, as a click does.
   if (label !== NOT_NOW && label !== KEEP_AS_IS && button.does === 'record') {
-    return signed({ project, question, label, what, markers, shownAt: entry.at, api, left, now, liftStop, stopState });
+    return signed({ project, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, left, now, liftStop, stopState });
   }
 
   const prompt = [promptOf(kindOf(data), label, n, card)];
@@ -223,7 +223,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
 // which closes the card on its own. Under STOP the plain answer is left out.
 // The card's own time goes to earned as `shownAt`, as a reply's does: the pane drew the card
 // then, so a Lift STOP card from before this STOP began can't lift it.
-async function signed({ project, question, label, what, markers, shownAt, api, left, now, liftStop, stopState }) {
+async function signed({ project, question, label, what, meanwhile, markers, shownAt, api, left, now, liftStop, stopState }) {
   const held = [];
   for (const id of markers) {
     const file = claim(project, id);
@@ -272,7 +272,7 @@ async function signed({ project, question, label, what, markers, shownAt, api, l
     // Kept in pending/ for the next session start to send.
   }
   if (!stopState().on) await writeAnswer(project, api, left, question, label, now);
-  return { made: true, says: kept(`Recorded: ${what}`, sent) };
+  return { made: true, says: kept(SIGNED_LABELS.includes(label) ? decidedToast(label, meanwhile) : `Recorded: ${what}`, sent) };
 }
 
 // The waiting card a Why? or Suggest a change… names, when the pane drew it as it is now and

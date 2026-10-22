@@ -1,4 +1,6 @@
 // tests/scripts/lib/calm-words.test.js
+import fs from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as words from '../../../scripts/lib/calm-words.js';
@@ -27,9 +29,10 @@ test('every set word is one line of British English with no exclamation mark', (
   lines.push(
     ['suggestedAt', words.suggestedAt('14:10')], ['typeYourChange', words.typeYourChange(1)],
     ['staleLine', words.staleLine('14:05', '14:02')], ['sinceLine', words.sinceLine('09:10')],
-    ['verdict', words.verdict({ waiting: 3, broken: 2 })],
+    ['verdict', words.verdict({ waiting: 3, broken: 2 })], ['askedAgo', words.askedAgo(2, 'hour')],
+    ['decidedToast', words.decidedToast('Approve', 'It goes live within the hour.')], ['awayToast', words.awayToast('Away until 18:00', true)],
   );
-  assert.equal(lines.length, 25, 'every word is held');
+  assert.equal(lines.length, 33, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
@@ -74,5 +77,59 @@ test('PUT_OFF holds Why? and Suggest a change… and keeps Explain more', () => 
   assert.deepEqual([...PUT_OFF], ['Not now', 'Explain more', 'Show me', 'Why?', 'Suggest a change…']);
   for (const label of [words.WHY, words.SUGGEST, words.SHOW_ME, words.NOT_NOW, 'Explain more']) {
     assert.ok(PUT_OFF.includes(label), `${label} never answers a card`);
+  }
+});
+
+test('each pane message reads as section 23.7 has it', () => {
+  assert.equal(words.RECORDING, 'Recording…');
+  assert.equal(words.NOT_HANDED, 'That didn\'t reach the front desk. Type it in the chat instead.');
+  assert.equal(words.SETTING_UP, 'Setup is still running. This pane opens when it finishes.');
+  assert.equal(words.NOT_HERE, 'This pane lives in the front desk\'s chat. Type /wheelhouse there.');
+  assert.equal(words.SETTINGS_UNDER_STOP, 'Settings can\'t change while STOP is on. Lift STOP first.');
+  assert.equal(words.staleLine('14:05', '14:02'), 'Couldn\'t read the latest at 14:05. Showing 14:02\'s.');
+  assert.equal(words.NOT_RECORDED, 'That wasn\'t recorded. Try again, or type it in the chat.');
+});
+
+test('a deciding toast is the label in the past, then what happens where the card says when', () => {
+  assert.equal(words.decidedToast('Approve', 'It goes live within the hour.'), 'Approved. It goes live within the hour.');
+  assert.equal(words.decidedToast('Approve', 'Nothing is released; the agents carry on with other work.'), 'Approved.');
+  assert.equal(words.decidedToast('Confirm', 'that feature waits; the others carry on'), 'Confirmed.');
+  assert.equal(words.decidedToast('Confirm', 'The change is in force; it applies by 18:00.'), 'Confirmed. It applies by 18:00.');
+  assert.equal(words.decidedToast('Do it', undefined), 'Done.');
+  assert.equal(words.decidedToast('Lift STOP', 'Builders start again within the hour.'), 'STOP lifted. Builders start again within the hour.');
+  assert.equal(words.awayToast('Away until 18:00', true), 'Away until 18:00. Undo in the pane for a minute.');
+  assert.equal(words.awayToast('Here', false), 'Here.');
+});
+
+test('no message in the mod or the bridge has an exclamation mark, Oops or Great news', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..', '..');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      // validate.js is the mod's checker for its maintainers: its source is regular expressions and code patterns, not messages.
+      else if (/\.(js|ts|tsx)$/.test(entry.name) && entry.name !== 'validate.js') files.push(full);
+    }
+  };
+  walk(path.join(root, 'hooks'));
+  walk(path.join(root, 'scripts', 'mod'));
+  assert.ok(files.length > 14, 'the mod and the bridge are read');
+  for (const file of files) {
+    const text = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(text, /\b(?:oops|great news)\b/i, `${file} has no Oops or Great news`);
+    // A quoted string is a message; a "!" in code (not, not-equal) is not inside one. Comments go first.
+    let code = text.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s\/\/ .*$/gm, '');
+    // A template's ${...} is code, so it goes too, innermost first.
+    for (let before = ''; before !== code;) {
+      before = code;
+      code = code.replace(/\$\{(?:[^{}`]|`[^`]*`)*\}/g, '');
+    }
+    const quotes = /'((?:\\.|[^'\\\n])*)'|"((?:\\.|[^"\\\n])*)"|`((?:\\.|\$\{[^}]*\}|[^`\\])*)`/g;
+    for (const match of code.matchAll(quotes)) {
+      const quoted = (match[1] ?? match[2] ?? match[3]).replaceAll('(?!', '');
+      // A string with no word in it is a list of characters for code to test, not a message.
+      assert.ok(!/[a-z]{3}/i.test(quoted) || !quoted.includes('!'), `${path.relative(root, file)} has an exclamation mark in "${quoted}"`);
+    }
   }
 });

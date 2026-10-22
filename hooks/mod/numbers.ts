@@ -39,6 +39,7 @@ export const WHAT_WOULD_YOU_CHANGE = 'What would you change?'
 export const SENT_TO_FRONT_DESK = 'Sent to the front desk. A new proposal will follow.'
 export const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.'
 export const NOT_HERE = 'This pane lives in the front desk\'s chat. Type /wheelhouse there.'
+export const NOT_RECORDED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 export const SETTING_UP = 'Setup is still running. This pane opens when it finishes.'
 // The line shown when the latest state could not be read: when it failed and which reading is shown.
 export const staleLine = (failedAt: string, shownAt: string) => `Couldn't read the latest at ${failedAt}. Showing ${shownAt}'s.`

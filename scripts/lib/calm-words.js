@@ -33,6 +33,8 @@ export const typeYourChange = (n) => `Type your change in the chat, and I'll kno
 export const RECORDING = 'Recording…';
 // The note shown when a suggestion could not be handed to the front desk.
 export const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.';
+// The note shown when a press could not be written down at all.
+export const NOT_RECORDED = 'That wasn\'t recorded. Try again, or type it in the chat.';
 // The note shown in place of the pane while setup is still running.
 export const SETTING_UP = 'Setup is still running. This pane opens when it finishes.';
 // The note shown in a chat that is not the front desk's.
@@ -59,3 +61,31 @@ export function verdict({ waiting, broken }) {
 }
 // The line shown when the director returns, naming when they were last here.
 export const sinceLine = (hhmm) => `Since you were last here at ${hhmm}.`;
+
+// The note shown when Suggest a change… is sent with nothing written in it.
+export const WRITE_FIRST = 'Write what you\'d change first';
+// The note shown when Undo is pressed after its minute has passed.
+export const NOTHING_TO_UNDO = 'There\'s nothing to undo now';
+// What Undo is offered as, said after a setting's pick that can be undone.
+export const UNDO_IN_PANE = 'Undo in the pane for a minute.';
+// How long ago a card was asked: "asked just now", "asked 2 hours ago".
+export const ASKED_JUST_NOW = 'asked just now';
+export const askedAgo = (n, unit) => `asked ${n} ${unit}${n === 1 ? '' : 's'} ago`;
+
+// What each deciding button is said to have done, in the past.
+const DECIDED = { Approve: 'Approved', Confirm: 'Confirmed', 'Lift STOP': 'STOP lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };
+const decidedWord = (label) => DECIDED[label];
+// A meanwhile that says when something happens ("It goes live within the hour"), as opposed to
+// one that says only what waits.
+const SAYS_WHEN = /\b(within (?:the|an?) (?:hour|day|week|minute)|within \d+ (?:minutes?|hours?|days?)|in \d+ (?:minutes?|hours?|days?)|in an? (?:minute|hour)|(?:by|at|until|before) \d{1,2}:\d{2}|today|tomorrow|tonight|this (?:morning|afternoon|evening)|shortly)\b/i;
+// The toast for a deciding press that was recorded (one of DECIDED's labels): "<Label>d." and then what happens, taken from
+// the card's meanwhile when it says when, else nothing more. The first sentence that says when.
+export function decidedToast(label, meanwhile) {
+  const sentence = typeof meanwhile === 'string'
+    ? meanwhile.split(/(?<=[.;])\s+/).map((part) => part.trim().replace(/[.;]$/, '')).find((part) => SAYS_WHEN.test(part))
+    : undefined;
+  const said = `${decidedWord(label)}.`;
+  return sentence === undefined ? said : `${said} ${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
+}
+// The toast for a pick of Availability: what it is now, and that it can be undone for a minute.
+export const awayToast = (said, undoable) => (undoable ? `${said}. ${UNDO_IN_PANE}` : `${said}.`);

@@ -34,7 +34,7 @@ export const HIDE_WHILE_BUSY: boolean = false
 const FRONT_DESK = 'front-desk'
 const FOREMAN = 'foreman'
 const SETUP = 'setup'
-const NOT_OPENED = 'Wheelhouse couldn\'t open its pane'
+const NOT_OPENED = 'The pane didn\'t open. Type /wheelhouse to try again.'
 const FIRST_READING = 'Reading how the project stands…'
 // The pane's title while what it shows is old: no figures, so none is taken for current.
 const PLAIN_TITLE = 'Wheelhouse'

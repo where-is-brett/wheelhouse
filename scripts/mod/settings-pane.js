@@ -21,7 +21,7 @@
 import { SETTINGS, definitionOf, checkSetting, say } from '../settings/catalogue.js';
 import { effectiveSettings, sayTime, sayValue } from '../settings/effective.js';
 import { AWAY, UNDO_MS } from '../lib/mod-numbers.js';
-import { SETTINGS_UNDER_STOP, STOP_HALTS, ONLY_YOU_LIFT } from '../lib/calm-words.js';
+import { SETTINGS_UNDER_STOP, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_TO_UNDO, awayToast } from '../lib/calm-words.js';
 import { stopState as defaultStopState } from '../lib/stop.js';
 import { confirmationFor, listEvents } from '../state/events.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
@@ -44,7 +44,7 @@ const DAY_MS = 24 * HOUR_MS;
 export const SAYS = {
   notOffered: 'That choice isn\'t offered now',
   stopOn: SETTINGS_UNDER_STOP,
-  nothingToUndo: 'There\'s nothing to undo now',
+  nothingToUndo: NOTHING_TO_UNDO,
   notTaken: 'That setting couldn\'t be changed now: the helper didn\'t take it',
   late: 'The helper didn\'t answer in time; if the change lands, it waits for your Confirm',
   failed: 'That setting couldn\'t be changed this time',
@@ -476,6 +476,10 @@ async function press({ project, key, choice, client, now, timeZone, budget, chan
     sent = await sendKept(api, left, record);
   } catch {
     // Kept in pending/ for the next session start to send.
+  }
+  if (key === 'presence') {
+    const said = awayToast(sayPresence(picked, instantOf(clock), timeZone), !undoing);
+    return { made: true, says: sent ? said : `${said} (kept until the helper takes it)` };
   }
   const where = home === 'profile' ? 'for all your projects' : 'for this project';
   return { made: true, says: `${label} is now ${lower(labelOf(key, choice, picked.value, { nowMs: instantOf(clock), timeZone }))}, ${where}${sent ? '' : ' (kept until the helper takes it)'}` };

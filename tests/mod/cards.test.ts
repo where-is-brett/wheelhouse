@@ -19,7 +19,7 @@ const PANE_PROPS = {
   title: 'Wheelhouse', isFocused: false, bodyColumns: 48, placement: 'dock' as const,
   scroll: { offset: 0, bodyRows: 40 }, view: {},
 }
-const FAILED = 'Wheelhouse couldn\'t record that'
+const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.'
 
 const FIRST = 'Merge the banner change?'
@@ -296,7 +296,7 @@ test('STOP shows while STOP is off, Lift STOP while it is on, each sending pane'
     stopOn = true
     await ui.press({ key: 'stop' })
     expect(seen.requests).toEqual([{ cmd: 'stop', origin: 'pane', cwd: ROOT }])
-    expect(seen.toasts).toEqual(['Recording STOP', 'STOP is on.'])
+    expect(seen.toasts).toEqual(['Recording…', 'STOP is on.'])
     expect(seen.ticks).toHaveLength(1)
 
     // The tick after the press drew STOP on: Lift STOP now, carrying the STOP the pane drew.
@@ -307,7 +307,7 @@ test('STOP shows while STOP is off, Lift STOP while it is on, each sending pane'
     stopOn = false
     await ui.press({ key: 'lift-stop' })
     expect(seen.requests).toEqual([{ cmd: 'go', origin: 'pane', cwd: ROOT, since: SINCE }])
-    expect(seen.toasts).toEqual(['Recording Lift STOP', 'STOP is off. In progress: 1 feature building.'])
+    expect(seen.toasts).toEqual(['Recording…', 'STOP is off. In progress: 1 feature building.'])
     expect(seen.ticks).toHaveLength(1)
     await ui.redraw()
     expect((await ui.find({ key: 'stop' }))?.type).toBe('Button')
@@ -385,14 +385,14 @@ test('Lift STOP on a picture with no STOP start sends since null, and the bridge
       clear()
       await ui.press({ key: 'lift-stop' })
       expect(seen.requests).toEqual([{ cmd: 'go', origin: 'pane', cwd: ROOT, since: null }])
-      expect(seen.toasts).toEqual(['Recording Lift STOP', UNDATED])
+      expect(seen.toasts).toEqual(['Recording…', UNDATED])
       await ui.redraw()
       expect((await ui.find({ key: 'lift-stop' }))?.type).toBe('Button')
       // No answer at all says so too.
       clear()
       reply = { exitCode: 1 }
       await ui.press({ key: 'lift-stop' })
-      expect(seen.toasts).toEqual(['Recording Lift STOP', FAILED])
+      expect(seen.toasts).toEqual(['Recording…', FAILED])
       await ui.unmount()
     }
   }
@@ -474,7 +474,7 @@ for (const surface of SURFACES) {
       clear()
       await ui.press({ key: 'stop' })
       expect(seen.requests).toEqual([{ cmd: 'stop', origin: 'pane', cwd: ROOT }])
-      expect(seen.toasts).toEqual(['Recording STOP', 'STOP is on.'])
+      expect(seen.toasts).toEqual(['Recording…', 'STOP is on.'])
       tickReply = frontDesk()
       await clock.advance(60000)
       await ui.unmount()

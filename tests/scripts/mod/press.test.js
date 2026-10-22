@@ -117,13 +117,13 @@ test('Approve on an approval card signs the approval a click earns, then writes 
   let keptFirst = null;
   const helper = fake({ refuse: true, onWrite: () => { keptFirst = pendingFiles().length; } });
   const out = await press(card, helper, 'Approve');
-  assert.deepEqual(out, { made: true, says: 'Recorded: Approve on card 1 (kept until the helper takes it)' });
+  assert.deepEqual(out, { made: true, says: 'Approved. (kept until the helper takes it)' });
   assert.equal(keptFirst, 1);
 
   // Taken by the helper: the same record a click earns, signed, and then the plain answer.
   const other = putCard(approvalCard(14), 1);
   const client = fake();
-  assert.deepEqual(await press(other, client, 'Approve'), { made: true, says: 'Recorded: Approve on card 2' });
+  assert.deepEqual(await press(other, client, 'Approve'), { made: true, says: 'Approved.' });
   assert.deepEqual(client.calls.order, ['prState', 'record', 'write']);
   assert.deepEqual(signed(client), [{ kind: 'approval', data: { pr: 14, commit: FULL, words: 'Approve', question: other.data.question } }]);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
@@ -325,12 +325,19 @@ test('an approval whose pull request the helper couldn\'t answer records nothing
   assert.equal((await press(card, fake(), 'Approve')).made, true);
 }));
 
+test('a recorded approval\'s toast is Approved. It goes live within the hour.', () => withKey(async () => {
+  const live = composeCard({ ...common, meanwhile: 'It goes live within the hour.', kind: 'approval', recommend: 'Approve', what: 'Pull request #15 changes the wording on the sign-in page.', options: [says('Approve')], target: { pr: 15, sha: FULL } }).card;
+  assert.equal((await press(putCard(live), fake(), 'Approve')).says, 'Approved. It goes live within the hour.');
+  // A meanwhile that says only what waits adds nothing.
+  assert.equal((await press(putCard(approvalCard(16), 1), fake(), 'Approve')).says, 'Approved.');
+}));
+
 test('under STOP, Approve still records and closes its card; Not now says it was not noted', () => withKey(async () => {
   setStop({ by: 'prompt', now: () => NOW });
   const approval = putCard(approvalCard());
   const other = putCard(approvalCard(14), 1);
   const client = fake({ stop: true });
-  assert.deepEqual(await press(approval, client, 'Approve'), { made: true, says: 'Recorded: Approve on card 1' });
+  assert.deepEqual(await press(approval, client, 'Approve'), { made: true, says: 'Approved.' });
   assert.equal(client.calls.record.length, 1);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
   // The record closes the card on its own; the helper would refuse the plain answer.
@@ -354,7 +361,7 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   // A Lift STOP press lifts it, and its answer is then written.
   const lift = putCard(liftStopCard(), 2);
   const lifting = fake();
-  assert.deepEqual(await press(lift, lifting, 'Lift STOP', { liftStop }), { made: true, says: 'Recorded: Lift STOP on card 2' });
+  assert.deepEqual(await press(lift, lifting, 'Lift STOP', { liftStop }), { made: true, says: 'STOP lifted.' });
   assert.equal(stopState().on, false);
   assert.deepEqual(lifting.calls.order, ['record', 'write']);
 }));

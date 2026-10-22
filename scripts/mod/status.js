@@ -26,7 +26,7 @@ import { STOP_LINE } from '../board/health.js';
 import { cardButtons, kindOf } from './buttons.js';
 import { previewFor } from './previews.js';
 import { readSeen } from '../briefing/seen.js';
-import { SHOW_ME, verdict, sinceLine } from '../lib/calm-words.js';
+import { SHOW_ME, verdict, sinceLine, askedAgo, ASKED_JUST_NOW } from '../lib/calm-words.js';
 
 const VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the front desk will ask it';
@@ -118,11 +118,10 @@ function waitedWords(at, clock) {
   const then = typeof at === 'string' ? Date.parse(at) : Number.NaN;
   if (Number.isNaN(then) || clock === null || then > clock.getTime()) return null;
   const minutes = Math.floor((clock.getTime() - then) / 60000);
-  const unit = (n, name) => `asked ${n} ${name}${n === 1 ? '' : 's'} ago`;
-  if (minutes < 1) return 'asked just now';
-  if (minutes < 60) return unit(minutes, 'minute');
-  if (minutes < 60 * 24) return unit(Math.floor(minutes / 60), 'hour');
-  return unit(Math.floor(minutes / (60 * 24)), 'day');
+  if (minutes < 1) return ASKED_JUST_NOW;
+  if (minutes < 60) return askedAgo(minutes, 'minute');
+  if (minutes < 60 * 24) return askedAgo(Math.floor(minutes / 60), 'hour');
+  return askedAgo(Math.floor(minutes / (60 * 24)), 'day');
 }
 
 function clockOf(now) {

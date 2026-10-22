@@ -299,7 +299,7 @@ test('a tick draws a waiting approval card; Approve from the pane lets the gate 
     { label: 'Show me', does: 'turn', shape: 'small' },
   ]);
 
-  assert.deepEqual(await press(c, drawn, 'Approve'), { ok: true, says: 'Recorded: Approve on card 1' });
+  assert.deepEqual(await press(c, drawn, 'Approve'), { ok: true, says: 'Approved.' });
   const approvals = eventsOf('approval');
   assert.equal(approvals.length, 1);
   assert.deepEqual([approvals[0].data.pr, approvals[0].data.commit], [PR, c.head]);
@@ -434,7 +434,7 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
 
   // The director steps away until the evening.
   const presence = await choose(c, 'presence', 'away-evening');
-  assert.deepEqual(presence, { ok: true, says: 'Availability is now away until 18:00, for all your projects' });
+  assert.deepEqual(presence, { ok: true, says: 'Away until 18:00. Undo in the pane for a minute.' });
   const second = await waitingCard(c, 'Which colour goes on the sign-in button?');
   // When the front desk's session last ticked, by courier.json, which only a courier that ran moves on.
   const tickedAt = () => JSON.parse(fs.readFileSync(file, 'utf8')).sessions.find((s) => s.id === 'sess-front')?.at;
@@ -445,7 +445,7 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
   assert.equal(held.submit, undefined, 'a card that blocks nothing waits while the director is away');
 
   // Back: the card held wakes then, and the one already sent doesn't.
-  assert.deepEqual(await choose(c, 'presence', 'here'), { ok: true, says: 'Availability is now here, for all your projects' });
+  assert.deepEqual(await choose(c, 'presence', 'here'), { ok: true, says: 'Here. Undo in the pane for a minute.' });
   assert.deepEqual((await tick(c)).submit, [`${LEADS.courier} 1 new card (2). ${ask}`]);
   assert.equal(eventsOf('confirmation', profileDir()).length, 2, 'each presence chosen is confirmed');
 }));
@@ -548,7 +548,7 @@ test('the bridge run where the signing key cannot be read signs nothing for a pr
   // The card still waits, with its buttons.
   const again = drawnCard(await tick(c), card.id);
   assert.deepEqual(again.buttons.map((b) => b.label), drawn.buttons.map((b) => b.label));
-  assert.deepEqual(await press(c, again, 'Approve'), { ok: true, says: 'Recorded: Approve on card 1' });
+  assert.deepEqual(await press(c, again, 'Approve'), { ok: true, says: 'Approved.' });
   assert.equal(eventsOf('approval').length, 1);
 }));
 

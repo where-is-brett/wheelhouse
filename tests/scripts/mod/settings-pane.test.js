@@ -254,10 +254,10 @@ test('until 09:00 is the next 09:00 to come, worked out at the press, after midn
 
   // The press says it as the label does.
   const client = fake();
-  assert.deepEqual(await press(client, 'presence', 'dnd-morning', after), { made: true, says: 'Availability is now do not disturb until 09:00, for all your projects' });
+  assert.deepEqual(await press(client, 'presence', 'dnd-morning', after), { made: true, says: 'Do not disturb until 09:00. Undo in the pane for a minute.' });
   assert.deepEqual(client.calls.profileWrite, [{ kind: 'setting', data: { key: 'presence', value: 'dnd', until: '2026-10-19T22:00:00.000Z' } }]);
   const next = fake();
-  assert.equal((await press(next, 'presence', 'away-morning', sydney('2026-10-19T23:00:00.000Z'))).says, 'Availability is now away until 09:00 tomorrow, for all your projects');
+  assert.equal((await press(next, 'presence', 'away-morning', sydney('2026-10-19T23:00:00.000Z'))).says, 'Away until 09:00 tomorrow. Undo in the pane for a minute.');
   assert.equal(next.calls.profileWrite[0].data.until, '2026-10-20T22:00:00.000Z');
 
   // In UTC, just after midnight, it is this morning.

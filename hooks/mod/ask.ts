@@ -5,12 +5,13 @@
 // sign (check 32). scripts/mod/validate.js checks that this is the mod's only such call and that
 // it runs nothing but the bridge.
 import type { EngineInterface, PluginState } from 'claude-code'
-import { ASK_MS } from './numbers'
+import { ASK_MS, NOT_RECORDED } from './numbers'
 
 // The pane's model as the bridge sends it (scripts/mod/status.js), declared in types/index.d.ts.
 export type PaneModel = PluginState['wheelhouse']['pane']['model']
 
-export const FAILED = 'Wheelhouse couldn\'t record that'
+// The toast for a press the bridge gave no answer to.
+export const FAILED = NOT_RECORDED
 
 // The bridge's answer line, as scripts/mod/bridge.js lineOf writes it.
 export type Answer = {

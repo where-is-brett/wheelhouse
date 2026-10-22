@@ -58,6 +58,7 @@ import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatu
 import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { NOT_RECORDED } from '../lib/calm-words.js';
 
 // The whole run for most requests, from reading the request to the answer.
 export const BRIDGE_MS = 5000;
@@ -80,7 +81,7 @@ export const SETUP_ROLE = 'setup';
 export const SAYS = {
   unreadable: 'Wheelhouse couldn\'t read that request',
   unknown: 'Wheelhouse doesn\'t know that request',
-  failed: 'Wheelhouse couldn\'t do that this time',
+  failed: NOT_RECORDED,
   late: 'Wheelhouse couldn\'t do that in time',
   notKept: 'That usage reading couldn\'t be kept',
   notDirector: 'Only the director\'s own messages count',
