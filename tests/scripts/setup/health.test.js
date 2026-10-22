@@ -477,6 +477,31 @@ test('trials not handed in, lines that aren\'t trials\', a step 10 that failed, 
   });
 });
 
+test('the verdict counts only the checks that print a line, so its figures match the lines shown', async () => {
+  const sessionChecks = Object.keys(SESSION_CHECKS).length;
+  const every = Object.keys(HELPER_CHECKS).length + sessionChecks;
+  await withProject(async ({ folder }) => {
+    // Step 10 not run: no helper record, so the helper's checks print nothing and are not counted;
+    // the line saying step 10 hasn't run is.
+    const got = await healthCheck({ folder, run: runWith(folder, { upTo: 9 }), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.lines.filter((l) => /^(Passed|Failed|Not yet):/.test(l)).length, sessionChecks + 1, got.lines.join('\n'));
+    assert.equal(got.verdict, `${sessionChecks} of ${sessionChecks + 1} checks passed. Here is what to do.`);
+  });
+  await withProject(async ({ folder }) => {
+    // A STOP line on the board is shown and counted, once.
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const stopped = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'stop', text: 'STOP is on' }]) });
+    assert.equal(stopped.verdict, `${every} of ${every + 1} checks passed. Here is what to do.`);
+  });
+  await withProject(async ({ folder }) => {
+    // Step 10 marked done with no record of its checks: one line says so, and it is counted.
+    const got = await healthCheck({ folder, run: runWith(folder), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.green, false);
+    assert.ok(got.lines.some((l) => l.startsWith('Failed: step 10\'s record of its checks is missing.')), got.lines.join('\n'));
+    assert.equal(got.verdict, `${sessionChecks} of ${sessionChecks + 1} checks passed. Here is what to do.`);
+  });
+});
+
 test('a trial pull request left open by a failed close is a watch line, not a failure', async () => {
   await withProject(async ({ folder }) => {
     const run = runWith(folder, { checks: GREEN_CHECKS });

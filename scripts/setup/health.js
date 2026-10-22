@@ -570,7 +570,8 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   const here = run ?? runIn(folder);
   const lines = [];
   let green = true;
-  // Every check that holds the board, and how many of them passed: the verdict says so.
+  // Every check that holds the board and prints a line, and how many of them passed: the verdict
+  // says so, so its figures match the lines shown.
   let total = 0;
   let passed = 0;
   const count = (ok) => { total += 1; if (ok) passed += 1; };
@@ -583,12 +584,19 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
       ? `Failed: step 10 did not finish: ${entry.failed}. ${RERUN} once each line below is seen to.`
       : 'Not yet: step 10\'s checks haven\'t run. They run once its card is clicked.');
   }
+  // Step 10 done with no record of its checks: one line says so, in place of the checks' own.
+  if (applied(here) && record === null) {
+    count(false);
+    green = false;
+    lines.push(`Failed: step 10's record of its checks is missing. ${RERUN}.`);
+  }
   // The helper's checks: each as recorded, and any not tried named.
   const tried = new Map((record?.checks ?? []).map((c) => [c.name, c.result]));
   for (const [name, check] of Object.entries(HELPER_CHECKS)) {
     if (!tried.has(name)) {
-      count(false);
+      // With no record, a line above says so for every check, and this one prints nothing.
       if (record !== null) {
+        count(false);
         green = false;
         lines.push(`Failed: setup couldn't try ${check.what} before step 10 stopped. ${RERUN}.`);
       }
