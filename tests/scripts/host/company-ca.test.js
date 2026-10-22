@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, withGitConfig, HOST_UNREACHABLE,
-  CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog, stageCaFile, certificateRefusal,
+  CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog, stageCaFile, certificateRefusal, awayLine,
 } from '../../../scripts/host/company-ca.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
 import { gitlabApi } from '../../../scripts/host/gitlab-key.js';
@@ -319,6 +319,42 @@ test('a certificate failure and an unreachable server are different cards', asyn
   assert.equal(outputKind('remote: HTTP Basic: Access denied'), null);
   assert.notEqual(CERTIFICATE_NOT_TRUSTED(BASE), HOST_UNREACHABLE(BASE));
   assert.match(CERTIFICATE_NOT_TRUSTED(BASE), /never switches/i);
+});
+
+test('the lines for gitlab.com carry no company wording, and a company address keeps its own', async () => {
+  const PUBLIC = 'https://gitlab.com';
+  const record = (baseUrl) => ({ host: 'gitlab', connection: baseUrl === undefined ? {} : { baseUrl } });
+  const gitAway = 'fatal: unable to access \'https://gitlab.com/o/p.git/\': Failed to connect to gitlab.com port 443 after 3 ms: Couldn\'t connect to server';
+  const gitCertificate = 'fatal: unable to access \'https://gitlab.com/o/p.git/\': SSL certificate problem: unable to get local issuer certificate';
+  const NO_COMPANY = /company|certificate for that address|add your/i;
+
+  // The unreachable line: said plainly for the public service, never "perhaps off the company network".
+  assert.equal(HOST_UNREACHABLE(PUBLIC), "GitLab (gitlab.com) can't be reached from here. Work carries on here and is sent when it can be.");
+  assert.equal(HOST_UNREACHABLE(`${PUBLIC}/`), HOST_UNREACHABLE(PUBLIC));
+  assert.doesNotMatch(HOST_UNREACHABLE(PUBLIC), NO_COMPANY);
+  for (const r of [record(), record(PUBLIC)]) {
+    assert.equal(awayLine(r), HOST_UNREACHABLE(PUBLIC));
+    assert.equal(unreachableRefusal(r, gitAway), HOST_UNREACHABLE(PUBLIC));
+    assert.doesNotMatch(unreachableRefusal(r, gitAway), NO_COMPANY);
+    assert.equal(certificateRefusal(r, gitCertificate), CERTIFICATE_NOT_TRUSTED(PUBLIC));
+  }
+
+  // The certificate line: no promise of a certificate step setup never offers for the default address.
+  assert.doesNotMatch(CERTIFICATE_NOT_TRUSTED(PUBLIC), NO_COMPANY);
+  assert.match(CERTIFICATE_NOT_TRUSTED(PUBLIC), /GitLab \(gitlab\.com\).*isn't one this computer trusts.*never switches certificate checks off.*ask whoever looks after/i);
+  assert.match(CERTIFICATE_NOT_TRUSTED(BASE), /can add your company's own certificate for that address/);
+  assert.match(HOST_UNREACHABLE(BASE), /^Your company's GitLab, https:\/\/git\.example\.org:8443, can't be reached from here, perhaps off the company network\./);
+
+  // Where the lines are said: the adapter and the API for gitlab.com, and the board's away line.
+  const publicAdapter = makeAdapter({ host: 'gitlab', repo: 'o/p', run: glabRun(() => ({ code: 1, stdout: '', stderr: GLAB_UNREACHABLE[0] })), env: {}, base: PUBLIC });
+  await assert.rejects(publicAdapter.defaultBranch(), (error) => error.message === HOST_UNREACHABLE(PUBLIC) && error.code === 'HOST_UNREACHABLE');
+  const publicCertificate = makeAdapter({ host: 'gitlab', repo: 'o/p', run: glabRun(() => ({ code: 1, stdout: '', stderr: GLAB_CERTIFICATE })), env: {}, base: PUBLIC });
+  await assert.rejects(publicCertificate.defaultBranch(), (error) => error.message === CERTIFICATE_NOT_TRUSTED(PUBLIC) && !NO_COMPANY.test(error.message));
+  const api = gitlabApi({ baseUrl: PUBLIC, token: TOKEN, fetch: async () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }) }); } });
+  await assert.rejects(api.get('/user'), (error) => error.message === CERTIFICATE_NOT_TRUSTED(PUBLIC));
+  const board = boardModel({ project: 'demo', hostUnreachable: PUBLIC, now: () => new Date('2026-10-22T00:00:00.000Z') });
+  assert.ok(JSON.stringify(board).includes("GitLab (gitlab.com) can't be reached from here"));
+  assert.doesNotMatch(JSON.stringify(board), /company network/);
 });
 
 test('a merge that could not reach the host says so, and a stale head says the head has moved', async () => {

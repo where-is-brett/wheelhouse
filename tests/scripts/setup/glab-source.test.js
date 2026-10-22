@@ -234,6 +234,55 @@ test('a company source is used when set', async () => {
   });
 });
 
+// ---- A list inside the project's folder is never used ----
+
+test('a company list written as a relative path, or lying inside the project folder in any way, is refused and the card names a shown source', async () => {
+  const INSIDE = /inside this project's folder.*keep the list outside the project/;
+  await withHome(async () => {
+    const { dir, list } = listFolder();
+    const m = computer();
+    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+
+    // A relative path: refused at the plan, and by the fetch.
+    const relative = projectWith('company tools/list.json');
+    await assert.rejects(step.plan(ctxFor(relative)), /must be written as a full path or an https address/);
+    await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: noFetch, run: m.run, source: glabSource({ setting: 'company tools/list.json' }), folder: relative }), /full path/);
+
+    // The list and its files copied into the folder: refused, with nothing unpacked.
+    const folder = projectWith();
+    const inFolder = path.join(folder, 'tools');
+    fs.cpSync(dir, inFolder, { recursive: true });
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: `company ${path.join(inFolder, 'list.json')}` }));
+    await assert.rejects(step.plan(ctxFor(folder)), INSIDE);
+    await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: noFetch, run: m.run, source: glabSource({ setting: `company ${path.join(inFolder, 'list.json')}` }), folder }), INSIDE);
+
+    // A link outside the folder that comes to a list inside it: refused (the real path is read).
+    const toInside = path.join(dir, 'link.json');
+    fs.symlinkSync(path.join(inFolder, 'list.json'), toInside);
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: `company ${toInside}` }));
+    await assert.rejects(step.plan(ctxFor(folder)), INSIDE);
+
+    // A link in the folder that comes to a list outside it: refused too, since an agent in the folder can point it elsewhere.
+    const linkInFolder = path.join(folder, 'outside.json');
+    fs.symlinkSync(list, linkInFolder);
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: `company ${linkInFolder}` }));
+    await assert.rejects(step.plan(ctxFor(folder)), INSIDE);
+
+    // The folder itself reached through a link: still inside.
+    const folderLink = path.join(dir, 'project-link');
+    fs.symlinkSync(folder, folderLink);
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: `company ${path.join(folderLink, 'tools', 'list.json')}` }));
+    await assert.rejects(step.plan(ctxFor(folder)), INSIDE);
+    assert.deepEqual(m.unpacked, []);
+
+    // The same list outside the folder is used, on the card with its source named even in the terse form.
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: `company ${list}` }));
+    const planned = await step.plan(ctxFor(folder));
+    assert.equal(fetchChange(planned).source, list);
+    assert.ok(planned.card.what.includes(list));
+  });
+});
+
 // ---- Test 2 ----
 
 test('a copy with no checksum is named on the card', async () => {
@@ -349,14 +398,17 @@ test('step 2\'s card composes in the worst first run, and the no-checksum warnin
       const glab = fetchChange(planned);
       assert.equal(glab.source, long);
       assert.equal(glab.checksum, checksums === 'none' ? 'none' : 'listed');
-      // It composes, with the source off the card but kept in the change under the plan hash.
+      // It composes, with the source named in short on the card (its beginning and end) and kept whole in
+      // the change under the plan hash.
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
       assert.ok(question.question.length <= 1200);
       assert.ok(!planned.card.what.includes(long));
+      const shown = `${long.slice(0, 40)}…${long.slice(-23)}`;
+      assert.ok(planned.card.what.includes(shown), planned.card.what);
       if (checksums === 'none') {
-        assert.match(planned.card.what, /glab: from your company's list, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
+        assert.match(planned.card.what, /glab: from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
       } else {
-        assert.match(planned.card.what, /glab: from your company's list, checked/);
+        assert.match(planned.card.what, /glab: from your company's list at .*, checked/);
         assert.doesNotMatch(planned.card.what, /no checksum/);
       }
       assert.deepEqual(termsIn(planned.card.what, glossaryOf({})), []);

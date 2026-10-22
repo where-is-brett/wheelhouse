@@ -13,6 +13,8 @@ const PER_PAGE = 100;
 const MOST_PAGES = 20;
 const MOST_PIPELINES = 20;
 const MERGE_REF = /^refs\/merge-requests\/\d+\/merge$/;
+// A commit ID as GitLab gives it, before it goes into a path.
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const TITLE_CHARS = 160;
 const WHAT_CHARS = 160;
 
@@ -86,7 +88,7 @@ export function gitlabHistory({ ask, read, project }) {
 
   // Whether a pipeline ran on the commit: on it, or on a merged-results commit whose parent it is.
   async function ranOnCommit(pipeline, sha) {
-    if (typeof pipeline?.sha !== 'string') return false;
+    if (typeof pipeline?.sha !== 'string' || !FULL_SHA.test(pipeline.sha)) return false;
     if (pipeline.sha === sha) return true;
     if (typeof pipeline.ref !== 'string' || !MERGE_REF.test(pipeline.ref)) return false;
     const commit = await ask(['api', `${project}/repository/commits/${pipeline.sha}`]);

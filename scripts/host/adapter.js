@@ -123,13 +123,16 @@ function text(value, what, { optional = false, empty = false } = {}) {
   return value;
 }
 
-// `base` is the GitLab address, for the line said when it cannot be reached (company-ca.js).
-export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
+// `base` is the GitLab address: for a company's own, glab is told its host (GITLAB_HOST, under any the
+// given `env` already names), and it is the address in the line said when it cannot be reached
+// (company-ca.js).
+export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB }) {
   const commands = HOSTS[host];
   if (!commands) throw new Error('The host must be github or gitlab');
   if (typeof repo !== 'string' || !REPO.test(repo)) throw new Error('The repository must be written owner/name');
   if (typeof run !== 'function') throw new Error('The adapter needs a run function');
   const file = host === 'github' ? 'gh' : 'glab';
+  const env = host === 'gitlab' && base !== DEFAULT_GITLAB && given?.GITLAB_HOST === undefined ? { GITLAB_HOST: new URL(base).host, ...given } : given;
 
   // Runs one command, with the copy setup fetched into Wheelhouse's tools folder when there is one
   // (scripts/lib/host-tools.js). Resolves with the exit code and output.

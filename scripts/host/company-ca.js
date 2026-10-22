@@ -122,6 +122,7 @@ export function stageCaFile({ home, pem }) {
   fs.writeFileSync(temporary, text, { mode: 0o644 });
   return {
     file,
+    temporary,
     commit: () => fs.renameSync(temporary, file),
     discard: () => fs.rmSync(temporary, { force: true }),
   };
@@ -186,8 +187,17 @@ export function withGitConfig(env, pairs) {
 
 // ---- Two failures, two cards ----
 
-export const HOST_UNREACHABLE = (base) => `Your company's GitLab, ${base}, can't be reached from here, perhaps off the company network. Work carries on here and is sent when it can be.`;
-export const CERTIFICATE_NOT_TRUSTED = (base) => `The certificate GitLab, ${base}, shows isn't one this computer trusts. Wheelhouse never switches certificate checks off; it can add your company's own certificate for that address instead.`;
+// Whether the address is the public service's: its lines carry no "company" wording.
+const isPublic = (base) => String(base ?? '').replace(/\/+$/, '') === DEFAULT_GITLAB;
+export const HOST_UNREACHABLE = (base) => (isPublic(base)
+  ? `GitLab (${new URL(DEFAULT_GITLAB).host}) can't be reached from here. Work carries on here and is sent when it can be.`
+  : `Your company's GitLab, ${base}, can't be reached from here, perhaps off the company network. Work carries on here and is sent when it can be.`);
+// Said when the certificates this computer's store holds do not cover the company's GitLab, so the file setup
+// would keep is of no use: someone who looks after the computers adds the company's authority to the store.
+export const CERTIFICATE_NOT_IN_STORE = `Your company's certificate isn't in this computer's system store, so Wheelhouse can't use it yet. Ask whoever looks after your computers to add it to the System keychain (Mac) or the Local Machine store (Windows), then ask for step 3's card again.`;
+export const CERTIFICATE_NOT_TRUSTED = (base) => (isPublic(base)
+  ? `The certificate GitLab (${new URL(DEFAULT_GITLAB).host}) shows isn't one this computer trusts, which a network filter or security software can cause. Wheelhouse never switches certificate checks off: ask whoever looks after this computer or its network.`
+  : `The certificate GitLab, ${base}, shows isn't one this computer trusts. Wheelhouse never switches certificate checks off; it can add your company's own certificate for that address instead.`);
 
 // The codes Node.js puts on the cause of a failed request.
 const CERTIFICATE_CODES = new Set(['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY']);
@@ -297,11 +307,12 @@ export function makeAwayLog({ now = () => new Date(), keepMs = 15 * 60 * 1000 } 
 // With the company's file made (`home` holds `ca/company.pem`) the question is whether that file
 // covers GitLab's certificate, so an authority added after the file was made, or a file that did not
 // take, is found out; without it, whether the certificates Node.js already trusts do.
-export async function probeCertificate({ fetch = globalThis.fetch, base, home, get = httpsGet, timeoutMs = 8000 } = {}) {
+// `file` names the certificates to trust instead (setup tries a file it has staged before keeping it).
+export async function probeCertificate({ fetch = globalThis.fetch, base, home, file: given, get = httpsGet, timeoutMs = 8000 } = {}) {
   try {
     const address = addressOf(base);
     const url = `${address}/api/v4/version`;
-    const file = home === undefined ? null : caFile(home);
+    const file = given ?? (home === undefined ? null : caFile(home));
     if (file !== null && address.startsWith('https:') && fs.existsSync(file)) {
       await get({ url, ca: fs.readFileSync(file, 'utf8'), timeoutMs });
       return 'ok';

@@ -35,6 +35,7 @@ import { keepAnswer, keepUninstallClick, uninstallShownFor, freshUninstallClicks
 import { withdrawEnrolment } from '../../../scripts/setup/computers.js';
 import { madeBySetup, joinedFolder } from '../../../scripts/setup/host.js';
 import { writeKey, readKey } from '../../../scripts/host/keys.js';
+import { caFile } from '../../../scripts/host/company-ca.js';
 import { openInstaller } from '../../../scripts/setup/tools.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
@@ -1228,6 +1229,47 @@ test('a second project keeps the helper, telemetry and the signing key when the 
       assert.ok(f.seen.pages.includes('https://github.com/settings/installations/77'));
       assert.ok(done.lines.some((l) => l.includes(`untick ${REPO}`)));
       assert.equal(readJournal().runs[0].closedBy, 'uninstall');
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('uninstall on a company GitLab gives git the certificate for its address, and glab its host, for the pull request and the branches', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      writeProject(SLUG, { folder: world.folder, remoteUrl: host.product.url, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'quick', project: REPO, baseUrl: COMPANY } });
+      const file = caFile(wheelhouseHome());
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'CERTIFICATES\n');
+      const f = fakes(world);
+      // The host work is setup's own: only git, glab and the pages are stood in for.
+      delete f.ops.adapterFor;
+      const gitEnvs = [];
+      const glab = [];
+      const inner = f.run;
+      f.run = async (command, args = [], options = {}) => {
+        if (path.basename(command) === 'git') gitEnvs.push(options.env ?? {});
+        if (path.basename(command) === 'glab') {
+          glab.push({ args: [...args], env: options.env });
+          return { code: 0, stdout: `${COMPANY}/${REPO}/-/merge_requests/12\n`, stderr: '' };
+        }
+        return inner(command, args, options);
+      };
+      const asked = [];
+      f.ops.findOpenPr = async (a) => { asked.push(a.baseUrl); return null; };
+      const { done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      // The pull request was made through glab told the company's host.
+      assert.ok(glab.some((c) => c.args[0] === 'mr' && c.args[1] === 'create'), JSON.stringify(glab));
+      assert.ok(glab.every((c) => c.env?.GITLAB_HOST === 'git.example.org:8443'), JSON.stringify(glab.map((c) => c.env)));
+      assert.deepEqual([...new Set(asked)], [COMPANY]);
+      // Every git call that reached the host carried the certificate for that address.
+      const withPair = gitEnvs.filter((env) => Object.values(env).includes(`http.${COMPANY}/.sslCAInfo`));
+      assert.ok(withPair.length > 0, 'git was given the certificate');
     });
   } finally {
     host.cleanup();

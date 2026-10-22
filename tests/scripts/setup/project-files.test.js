@@ -25,7 +25,8 @@ import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '..
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand } from '../../../scripts/protection/settings.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { caFile } from '../../../scripts/host/company-ca.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
@@ -101,9 +102,9 @@ function kits(root) {
 // line of the director's in their user settings. `w.duringInstall(plugin)` runs while each pin is
 // installed, and `w.gitFails(args)` makes a git call fail.
 async function world({
-  defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = null, ownStatusLine = null,
+  defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = null, ownStatusLine = null, baseUrl = null,
 } = {}) {
-  const w = { calls: [], protection: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o) };
+  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o) };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
@@ -125,7 +126,7 @@ async function world({
   }
   // Step 2 wrote setup's own allow rule into this computer's local settings (ruling R43).
   fs.writeFileSync(path.join(w.folder, '.claude', 'settings.local.json'), `${JSON.stringify({ permissions: { allow: [`Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`] } }, null, 2)}\n`);
-  writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host, repo: REPO, connection: { host, mode: host === 'gitlab' ? 'narrow' : 'quick', project: REPO } });
+  writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host, repo: REPO, connection: { host, mode: host === 'gitlab' ? 'narrow' : 'quick', project: REPO, ...(baseUrl === null ? {} : { baseUrl }) } });
   w.claudeHome = path.join(w.user, 'claude config');
   fs.mkdirSync(w.claudeHome, { recursive: true });
   // The install line declared Wheelhouse's marketplace at its release in the user's settings (check 37).
@@ -195,7 +196,7 @@ async function world({
   w.step = projectFilesStep({
     run: (...args) => w.run(...args), findGit: async () => ({ ok: true, path: 'git' }), claude: () => ({ kind: 'direct', file: 'claude' }),
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
-    gitlab: ({ run }) => directorGitlabApi({ run, fetch: w.fetch }),
+    gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, fetch: w.fetch, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
@@ -632,7 +633,10 @@ test('on GitLab, a project with real users is switched on as one, and the gaps f
     const said = done.run.steps[7].say.line;
     assert.ok(said.length <= 500);
     assert.match(said, /merged by Maintainers only on GitLab/);
-    for (const gap of w.gaps) assert.ok(said.includes(gap.replace(/\.$/, '')), gap);
+    // The faked-tests line comes before the secrets' names; with the pipelines prompt before them too the
+    // line is full, so the one secret is counted rather than named.
+    assert.ok(said.includes(w.gaps[1].replace(/\.$/, '')), w.gaps[1]);
+    assert.ok(said.includes(w.gaps[0]) || / \(and 1 more\)$/.test(said), said);
   });
   // Many gaps still fit one line: the ones that do not are counted.
   await withHome(async () => {
@@ -646,6 +650,70 @@ test('on GitLab, a project with real users is switched on as one, and the gaps f
     assert.match(said, /SECRET_NUMBER_0 is a project secret/);
     assert.match(said, / \(and \d+ more\)$/);
   });
+});
+
+test('on a company GitLab, step 7 reads and protects through the company address, and the setup commit\'s git carries the certificate for it', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab', baseUrl: COMPANY });
+    // Setup made the company's certificate file (step 3): git then gets it for that address.
+    const file = caFile(wheelhouseHome());
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'CERTIFICATES\n');
+    const planned = await w.plan();
+    assert.ok(Array.isArray(planned.changes), planned.why);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    // The API is asked at the company's address (the default branch, then protection), never gitlab.com.
+    assert.deepEqual(w.asked, [COMPANY, COMPANY]);
+    assert.ok(w.api.length > 0 && w.api.every((a) => a.url.startsWith(`${COMPANY}/api/v4/`)), JSON.stringify(w.api));
+    // glab is named the company's host wherever it is asked, and the author is read from it.
+    const glab = w.calls.filter((c) => c.tool === 'glab');
+    assert.ok(glab.length >= 2);
+    assert.ok(glab.every((c) => c.env?.GITLAB_HOST === 'git.example.org:8443'), JSON.stringify(glab.map((c) => c.env)));
+    // Every git call of the step carries the certificate pair for that address and no other (the push too).
+    const pushed = w.gitCalls.find((c) => c.args.includes('push'));
+    const pairs = Object.entries(pushed.env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([k, key]) => [key, pushed.env[k.replace('KEY', 'VALUE')]]);
+    assert.ok(pairs.some(([key, value]) => key === `http.${COMPANY}/.sslCAInfo` && value === file), JSON.stringify(pairs));
+    assert.ok(w.gitCalls.every((c) => !JSON.stringify(c.env).match(/sslVerify["',]*\s*[:=]\s*["']?(false|0)/i)), 'checks stay on');
+  });
+  // Without the file the pair is not added, and the public service is asked at its own address.
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab' });
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.deepEqual(w.asked, [undefined, undefined]);
+    assert.ok(w.api.every((a) => a.url.startsWith('https://gitlab.com/api/v4/')));
+    assert.ok(w.gitCalls.every((c) => !JSON.stringify(c.env).includes('sslCAInfo')));
+  });
+});
+
+test('step 7\'s line puts everything but the secrets\' names first, so "(and N more)" only ever counts secrets', async () => {
+  const secrets = Array.from({ length: 5 }, (_, i) => `SECRET_NUMBER_${i} is a project secret that a merge request's pipeline could read`);
+  const skipped = 'A merge request whose pipeline was skipped still counts as passed';
+  const faked = "With real users, the project's tests on the host could be faked with Wheelhouse's key; GitLab Premium's approval step would close that";
+  // [real users, the host's other gaps, what must come before the first secret]
+  for (const [realUsers, others, before] of [
+    [true, [faked], ['GitLab blocks direct pushes to main', 'merged by Maintainers only on GitLab', '"Pipelines must succeed" is left off on main', 'faked with Wheelhouse']],
+    [false, [skipped], ['GitLab blocks direct pushes to main', '"Pipelines must succeed" is left off on main', skipped]],
+  ]) {
+    await withHome(async () => {
+      const w = await world({ host: 'gitlab' });
+      if (realUsers) w.answers['3.real-users'] = { label: REAL_USERS.yes, text: null, at: T0.toISOString() };
+      // The host reads the secrets first and the other gaps after them, as protection.js gives them.
+      w.gaps = [...secrets, ...others];
+      const done = await w.apply((await w.plan()).changes);
+      assert.equal(done.ok, true, done.reason);
+      const said = done.run.steps[7].say.line;
+      assert.ok(said.length <= 500, String(said.length));
+      const shown = secrets.filter((x) => said.includes(x)).length;
+      const firstSecret = shown === 0 ? said.length : said.indexOf('SECRET_NUMBER_0');
+      for (const part of before) assert.ok(said.includes(part) && said.indexOf(part) < firstSecret, part);
+      // What is left out is only secrets, counted: with all of the others in, none or some are named.
+      assert.ok(shown < secrets.length && (realUsers || shown >= 1), `${shown} secrets shown`);
+      assert.equal(Number(/\(and (\d+) more\)$/.exec(said)?.[1]), secrets.length - shown);
+    });
+  }
 });
 
 test('a director with a status line of their own keeps it: none is written for this computer', async () => {

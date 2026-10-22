@@ -1647,7 +1647,11 @@ export function hostStep({
       const certificate = changes.find((c) => c.action === 'certificate') ?? null;
       if (certificate !== null) {
         if (host !== 'gitlab' || certificate.base !== base) throw new Error('Step 3\'s list gives a certificate for an address other than the connection\'s, so nothing was done: ask for step 3\'s card again');
-        const given = await trustCertificate({ base, platform, run, refresh: certificate.refresh === true });
+        const given = await trustCertificate({
+          base, platform, run, refresh: certificate.refresh === true,
+          // The staged certificates alone, tried against GitLab before they are kept (company-ca.js).
+          verify: ({ file }) => certificateProbe({ fetch, base, file }),
+        });
         record({
           id: newId('chg'), kind: 'answer', target: `step 3: the company's certificate`, before: null,
           after: { certificate: { base, file: given.file, glabHost: given.glabHost, gitConfig: given.gitConfig } },

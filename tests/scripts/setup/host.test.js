@@ -17,7 +17,7 @@ import {
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
 } from '../../../scripts/setup/host.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
-import { caFile, probeCertificate } from '../../../scripts/host/company-ca.js';
+import { caFile, probeCertificate, CERTIFICATE_NOT_IN_STORE } from '../../../scripts/host/company-ca.js';
 import { applyCompanyCa } from '../../../scripts/setup/tools.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setupGit } from '../../../scripts/setup/git.js';
@@ -1235,7 +1235,8 @@ test('a company GitLab whose certificate is not trusted gets a certificate step 
       return file === 'security' ? { code: 0, stdout: authorityFixture(), stderr: '' } : { code: 0, stdout: '', stderr: '' };
     };
     const step = stepFor(w, {
-      certificateProbe: async (a) => { probed.push([a.base, a.home]); return answer; },
+      // A staged file (`file`) is tried against GitLab alone, and here it covers GitLab's certificate.
+      certificateProbe: async (a) => { if (a.file !== undefined) return 'ok'; probed.push([a.base, a.home]); return answer; },
       trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
     });
     let answer = 'certificate';
@@ -1284,7 +1285,7 @@ test('the certificate step is offered again whenever GitLab still does not trust
     };
     let answer = 'certificate';
     const step = stepFor(w, {
-      certificateProbe: async () => answer,
+      certificateProbe: async (a) => (a.file !== undefined ? 'ok' : answer),
       trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
     });
     const first = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
@@ -1321,6 +1322,56 @@ test('the certificate step is offered again whenever GitLab still does not trust
   });
 });
 
+test('a staged certificate file that GitLab still does not trust is thrown away with a plain line, glab is not run and nothing is journaled; one that passes is kept as before', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = await companyProduct();
+    const calls = [];
+    const certificateRun = async (file, args) => {
+      calls.push([path.basename(file), ...args]);
+      return file === 'security' ? { code: 0, stdout: authorityFixture(), stderr: '' } : { code: 0, stdout: '', stderr: '' };
+    };
+    const tried = [];
+    let staged = 'certificate';
+    const step = stepFor(w, {
+      certificateProbe: async (a) => {
+        if (a.file === undefined) return 'certificate';
+        tried.push(a.file);
+        assert.ok(fs.existsSync(a.file), 'the staged file is there to be tried');
+        assert.notEqual(a.file, caFile(wheelhouseHome()), 'it is tried before it is put in place');
+        return staged;
+      },
+      trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
+    });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+
+    // The store does not hold the company's authority: a plain line, the staged file gone, no file,
+    // glab not run, nothing journaled, and the same card offered again with the same honest result.
+    for (let again = 0; again < 2; again += 1) {
+      await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => {
+        assert.equal(error.message, CERTIFICATE_NOT_IN_STORE);
+        assert.match(error.message, /isn't in this computer's system store.*System keychain \(Mac\) or the Local Machine store \(Windows\).*ask for step 3's card again/);
+        return true;
+      });
+    }
+    assert.equal(tried.length, 2);
+    assert.ok(!fs.existsSync(caFile(wheelhouseHome())));
+    assert.deepEqual(fs.readdirSync(path.dirname(caFile(wheelhouseHome()))), [], 'no staged file is left');
+    assert.ok(!calls.some((c) => c[0] === 'glab'), 'glab was not run');
+    assert.equal(findRun(folder).changes.filter((c) => c.after?.certificate).length, 0, 'nothing is journaled');
+
+    // One that passes: kept, glab told, journaled, as before.
+    staged = 'ok';
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => {
+      assert.equal(error.message, CERTIFICATE_GIVEN(COMPANY_ORIGIN));
+      return true;
+    });
+    assert.ok(fs.existsSync(caFile(wheelhouseHome())));
+    assert.ok(calls.some((c) => c[0] === 'glab'));
+    assert.equal(findRun(folder).changes.filter((c) => c.after?.certificate).length, 1);
+  });
+});
+
 test('the probe uses the company\'s file when it is there, and the certificates Node.js trusts otherwise', async () => {
   await withHome(async () => {
     const home = wheelhouseHome();
@@ -1334,6 +1385,13 @@ test('the probe uses the company\'s file when it is there, and the certificates 
     assert.deepEqual(asked, ['fetch', authorityFixture()]);
     const refuses = async () => { throw Object.assign(new Error('unable to verify'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }); };
     assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get: refuses }), 'certificate');
+    // A named file is tried on its own, whether or not the company's file is in place.
+    const only = path.join(home, 'staged.pem');
+    fs.writeFileSync(only, 'STAGED');
+    asked.length = 0;
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, file: only, fetch, get }), 'ok');
+    assert.deepEqual(asked, ['STAGED']);
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, file: only, fetch, get: refuses }), 'certificate');
   });
 });
 

@@ -51,7 +51,7 @@ import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
-import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind } from '../host/company-ca.js';
+import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind, CERTIFICATE_NOT_IN_STORE } from '../host/company-ca.js';
 import { composeCard, isTooLong } from '../cards/compose.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
@@ -223,6 +223,40 @@ export function readGlabFrom(folder) {
 
 const isAddress = (from) => /^https:\/\//i.test(from);
 
+// The real path of a company's list on this computer. It must be written as a full path, and neither the
+// path as written nor the real one it comes to (a symbolic link out of or into the folder is followed) may
+// lie inside the project's folder: what is in the folder can be written by an agent working there, and glab
+// runs with the director's own sign-in.
+function outsideProject(from, folder) {
+  if (!path.isAbsolute(from)) {
+    throw new Error(`Your company's list at ${from} must be written as a full path or an https address, so setup did not fetch glab`);
+  }
+  let file;
+  try {
+    file = fs.realpathSync(from);
+  } catch {
+    throw new Error(`Your company's list at ${from} could not be read, so setup did not fetch glab`);
+  }
+  if (typeof folder === 'string') {
+    const roots = [path.resolve(folder)];
+    try {
+      roots.push(fs.realpathSync(folder));
+    } catch { /* the folder as given */ }
+    const inside = (target, root) => {
+      const rel = path.relative(root, target);
+      return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+    };
+    if ([path.resolve(from), file].some((target) => roots.some((root) => inside(target, root)))) {
+      throw new Error(`Your company's list at ${from} is inside this project's folder, where an agent could change it, so setup did not fetch glab: keep the list outside the project`);
+    }
+  }
+  return file;
+}
+
+// A source for a card: as it is when short, else its beginning and end with an ellipsis between.
+const SHOWN_SOURCE = 64;
+const shownSource = (from) => (from.length <= SHOWN_SOURCE ? from : `${from.slice(0, 40)}…${from.slice(-(SHOWN_SOURCE - 41))}`);
+
 // The company's list read, on disk or at its address, as the release the fetch needs: its version
 // (or null), the checksums it gives (from a `checksums.txt` link and from `sha256` on the links), the
 // names, and how to read one file. Only the list and its checksum file are read here.
@@ -256,7 +290,7 @@ async function companyRelease({ from, folder, fetch }) {
     listText = await (await get(from)).text();
     bytesOf = { resolve, bytes: async (url) => Buffer.from(await (await get(url)).arrayBuffer()), text: async (url) => (await get(url)).text() };
   } else {
-    const file = path.resolve(folder ?? '.', from);
+    const file = outsideProject(from, folder);
     const beside = path.dirname(file);
     const resolve = (name, link) => {
       const leaf = link ?? name;
@@ -541,14 +575,28 @@ export function nodeRefusal(node) {
 // configuration, as it runs today). Git is not run and nothing of the person's git configuration is
 // written: its settings come back as `gitConfig`, entries for the environment of a git call that
 // reaches this address (withGitConfig), and Node.js's as `nodeEnv`. A step that applies it adds it to
-// the journal as it does any other change.
-export async function applyCompanyCa({ base, home = wheelhouseHome(), platform = process.platform, run = realRun, refresh = false } = {}) {
+// the journal as it does any other change. `verify({ file })`, when given, tries GitLab with the staged
+// certificates alone and says 'certificate' when they still do not cover it: the file is then thrown away,
+// glab is not run, and the step stops with CERTIFICATE_NOT_IN_STORE.
+export async function applyCompanyCa({ base, home = wheelhouseHome(), platform = process.platform, run = realRun, refresh = false, verify } = {}) {
   // The address is checked first (https, or http on this computer): nothing is written or run for another.
   const address = addressOf(base);
   const file = caFile(home);
   // New certificates are staged beside the file and put in place only once glab has accepted it, so a
   // failure leaves the file as it was (or none), never one that says the work is done.
   const staged = refresh || !fs.existsSync(file) ? stageCaFile({ home, pem: await exportSystemRoots({ platform, run }) }) : null;
+  if (staged !== null && typeof verify === 'function') {
+    let kind;
+    try {
+      kind = await verify({ file: staged.temporary });
+    } catch {
+      kind = 'other';
+    }
+    if (kind === 'certificate') {
+      staged.discard();
+      throw new Error(CERTIFICATE_NOT_IN_STORE);
+    }
+  }
   const host = new URL(address).host;
   const set = await quietly(run, toolPath('glab', { platform }), glabCaArgs(host, file));
   if (set.code !== 0) {
@@ -694,7 +742,7 @@ function directorFor(changes, platform) {
 // The card of a list with something on it: an empty list settles the step (ruling R75). A card is
 // limited in length (CARD.chars), and a first run can list git's installer, both host tools and the
 // permission rule at once, so the full wording is tried first and, when it does not compose, a terse one:
-// one short clause for each, the source of a company's list left off the card (it stays in the change,
+// one short clause for each, the source of a company's list shortened (all of it stays in the change,
 // and so under the plan hash). The warning that a company's copy has no checksum is in both.
 function cardFor(changes, status, platform) {
   const processes = changes.filter((x) => x.kind === 'process');
@@ -719,8 +767,8 @@ function cardFor(changes, status, platform) {
   if (official.length > 0) terse.push(`${official.join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
   for (const c of company) {
     terse.push(c.checksum === 'listed'
-      ? `${c.tool}: from your company's list, checked`
-      : `${c.tool}: from your company's list, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
+      ? `${c.tool}: from your company's list at ${shownSource(c.source)}, checked`
+      : `${c.tool}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
   }
   if (rule) terse.push('one permission rule');
   const card = (what) => ({

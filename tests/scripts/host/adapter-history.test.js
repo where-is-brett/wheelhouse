@@ -142,6 +142,21 @@ test('a head pipeline that did not run on the commit is not kept; one on a merge
   assert.deepEqual(await elsewhere.a.pipelinesFor(SHA, { number: 7 }), []);
 });
 
+test('a head pipeline whose sha is not a full commit ID is never put into a path', async () => {
+  for (const sha of ['../../personal_access_tokens/self', `${OTHER}?x=1`, OTHER.slice(0, 12), OTHER.toUpperCase(), `${OTHER}/../..`, 7]) {
+    const results = { id: 21, status: 'success', source: 'merge_request_event', ref: 'refs/merge-requests/7/merge', sha };
+    const { a, calls } = adapter('gitlab', [['/pipelines?sha=', json([])], ['/merge_requests/7', json({ head_pipeline: results })]]);
+    assert.deepEqual(await a.pipelinesFor(SHA, { number: 7 }), [], String(sha));
+    assert.ok(calls.every((c) => !String(c.args[1]).includes('/repository/commits/')), `${sha}: no commit was asked about`);
+  }
+  // A 64-character ID (a repository using SHA-256) is a commit ID too.
+  const long = 'c'.repeat(64);
+  const results = { id: 22, status: 'success', source: 'merge_request_event', ref: 'refs/merge-requests/7/merge', sha: long };
+  const { a, calls } = adapter('gitlab', [['/pipelines?sha=', json([])], [`/repository/commits/${long}`, json({ id: long, parent_ids: [SHA] })], ['/merge_requests/7', json({ head_pipeline: results })]]);
+  assert.deepEqual((await a.pipelinesFor(SHA, { number: 7 })).map((p) => p.id), [22]);
+  assert.ok(calls.some((c) => String(c.args[1]).includes(`/repository/commits/${long}`)));
+});
+
 test('a status the project key posted reads as a pipeline whose source is external (the recorded answer)', async () => {
   const { a } = adapter('gitlab', [['/pipelines?sha=', { stdout: POSTED }]]);
   const [posted] = await a.pipelinesFor(SHA);
