@@ -66,7 +66,7 @@ import { startWatcher } from '../foreman/start.js';
 import { projectConfig } from '../watcher/main.js';
 import { readJournal, newId } from './journal.js';
 import { HEALTH_STEP } from '../lib/setup-run.js';
-import { directorGitEnv, directorGitlabApi, STOPPED } from './host.js';
+import { directorGitEnv, directorGitlabApi, STOPPED, launchedIn } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 
@@ -414,9 +414,9 @@ function checkPinsNow({ folder }) {
 
 // The host's protection, read back with the director's own sign-in: 'on', 'off', or 'not offered'
 // on a plan without it.
-async function readProtectionNow({ host, repo, run }) {
+async function readProtectionNow({ host, repo, run, realUsers = false }) {
   const api = host === 'gitlab' ? await directorGitlabApi({ run }) : undefined;
-  const read = await protectionStatus({ host, repo, run, api, env: {} });
+  const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
   if (read.on === true) return 'on';
   return read.available === false ? 'not offered' : 'off';
 }
@@ -427,7 +427,7 @@ const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 // Step 10. `run` runs git and the host's tools; `adapterFor({ host, repo })` the adapter, with the
 // director's own sign-in; `client` the helper's client the merge is asked through; `findGit` the
 // git step 2 found; `gitEnvFor({ host, gitPath, platform })` git's environment; `trySTOP`,
-// `checkPins({ folder })` and `readProtection({ host, repo })` the other checks. All for tests.
+// `checkPins({ folder })` and `readProtection({ host, repo, realUsers })` the other checks. All for tests.
 export function healthStep({
   run = realRun,
   adapterFor = ({ host, repo }) => makeAdapter({ host, repo, run, env: {} }),
@@ -436,7 +436,7 @@ export function healthStep({
   gitEnvFor = directorGitEnv,
   trySTOP = () => stopTrial({ run }),
   checkPins = checkPinsNow,
-  readProtection = ({ host, repo }) => readProtectionNow({ host, repo, run }),
+  readProtection = ({ host, repo, realUsers }) => readProtectionNow({ host, repo, run, realUsers }),
 } = {}) {
   return {
     n: HEALTH_STEP,
@@ -521,7 +521,7 @@ export function healthStep({
         add('installed skills', pins);
         let protection = 'could not run';
         try {
-          protection = await readProtection({ host: record.host, repo: record.repo });
+          protection = await readProtection({ host: record.host, repo: record.repo, realUsers: launchedIn(project) });
         } catch { /* could not run */ }
         add('host protection', protection);
       } catch (error) {

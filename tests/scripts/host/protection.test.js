@@ -36,7 +36,7 @@ const project = (flag) => ({ status: 200, body: { id: 7, only_allow_merge_if_pip
 const freePlan = { status: 403, body: {} };
 const noVariables = { status: 200, body: [] };
 const projectReads = (flag) => [project(flag), freePlan, noVariables];
-const extras = { skippedPipelineCounts: false, plan: 'free', variablesUnprotected: [], variablesKnown: true };
+const extras = { skippedPipelineCounts: false, plan: 'free', variablesUnprotected: [], variablesProtected: [], variablesKnown: true };
 
 test('readGitlabProtection reports push and merge access and the pipeline rule', async () => {
   const { api, calls } = fakeApi(protectedMain(noOne, maintainers), ...projectReads(true));

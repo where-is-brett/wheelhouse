@@ -6,6 +6,7 @@
 import { projectPath } from './gitlab-key.js';
 import { scrub } from './adapter.js';
 import { toolPath } from '../lib/host-tools.js';
+import { hostApprovalReady } from './approval-ready.js';
 
 const NO_ONE = 0;
 const DEVELOPERS = 30;
@@ -79,30 +80,36 @@ export async function readGitlabPlan({ api, projectId }) {
   return 'unknown';
 }
 
-// The project's variables that a merge request's pipeline could read (not protected). A Maintainer's
-// list carries each variable's value as well; every entry is cut down to its name as it is read, so
-// a value is never held, returned or logged. A key that cannot read the list (a Developer's) is
-// `known: false`, which is not the same as having no such variable.
+// The project's variables, by name. A Maintainer's list carries each variable's value as well;
+// every entry is cut down to its name and its protected flag as it is read, so a value is never
+// held, returned or logged. `unprotected` are the ones a merge request's pipeline could read;
+// `protectedNames` are the ones a pipeline on a protected branch could read, and Wheelhouse's own
+// state and lock branches are protected branches that take its key's pushes. A key that cannot read
+// the list (a Developer's) is `known: false`, which is not the same as having no variables.
 const VARIABLE_PAGE = 100;
 const VARIABLE_PAGES = 20;
-async function readUnprotectedVariables({ api, projectId }) {
-  const names = new Set();
+async function readVariables({ api, projectId }) {
+  const unprotected = new Set();
+  const protectedNames = new Set();
   for (let page = 1; page <= VARIABLE_PAGES; page += 1) {
     const answer = await api.get(`${projectPath(projectId)}/variables?per_page=${VARIABLE_PAGE}&page=${page}`);
-    if (answer.status !== 200 || !Array.isArray(answer.body)) return { known: false, names: [] };
+    if (answer.status !== 200 || !Array.isArray(answer.body)) return { known: false, unprotected: [], protectedNames: [] };
     for (const entry of answer.body) {
-      if (typeof entry?.key === 'string' && entry.key !== '' && entry.protected !== true) names.add(entry.key);
+      if (typeof entry?.key !== 'string' || entry.key === '') continue;
+      (entry.protected === true ? protectedNames : unprotected).add(entry.key);
     }
-    if (answer.body.length < VARIABLE_PAGE) return { known: true, names: [...names] };
+    if (answer.body.length < VARIABLE_PAGE) return { known: true, unprotected: [...unprotected], protectedNames: [...protectedNames] };
   }
-  return { known: false, names: [] };
+  return { known: false, unprotected: [], protectedNames: [] };
 }
 
 export async function readGitlabProtection({ api, projectId, branch }) {
   const rule = await readBranchAndProject(api, projectId, branch);
   const plan = await readGitlabPlan({ api, projectId });
-  const variables = await readUnprotectedVariables({ api, projectId });
-  return { ...rule, plan, variablesUnprotected: variables.names, variablesKnown: variables.known };
+  const variables = await readVariables({ api, projectId });
+  return {
+    ...rule, plan, variablesUnprotected: variables.unprotected, variablesProtected: variables.protectedNames, variablesKnown: variables.known,
+  };
 }
 
 // mergeAccess is Developers + Maintainers (30) unless Maintainers (40) is asked
@@ -400,29 +407,43 @@ async function gitlabHasPipelines(api, repo, branch) {
 
 const sameList = (got, want) => got.length === 1 && got[0] === want;
 
-// What the board says of a project on GitLab's free plan that has real users: Wheelhouse's key can
-// post a commit status that stands in for a pipeline that never ran (check 71, step 4), so the
-// project's tests cannot be trusted, and such a project is held to Maintainers' merges.
+// What the board says of a project with real users when GitLab's plan is not Premium: Wheelhouse's
+// key can post a commit status that stands in for a pipeline that never ran (check 71, step 4), so
+// the project's tests cannot be trusted.
 export const FAKED_TESTS_LINE = "the project's tests on the host could be faked with Wheelhouse's key";
 
-// Each gap in the host's protection, in plain words, for setup's card and the board.
-function gitlabGaps(main, realUsers) {
+// The gap for a project with real users, or null where the plan is Premium (or not GitLab's).
+export function fakedTestsGap(plan) {
+  if (plan === 'free') return `With real users, ${FAKED_TESTS_LINE}; GitLab Premium's approval step would close that`;
+  if (plan === 'unknown') return `Wheelhouse could not tell GitLab's plan; with real users, ${FAKED_TESTS_LINE}`;
+  return null;
+}
+
+// Each gap in the host's protection, in plain words, for setup's card and the board. While the state
+// and lock branches take Wheelhouse's key's pushes (a Developer's, which can commit a pipeline file
+// there through the API), GitLab gives protected variables to a pipeline on those branches, so a
+// protected variable is a gap as well as an unprotected one. `director` is whether the read was made
+// with the director's own sign-in, which can read the list; the project key's cannot.
+function gitlabGaps(main, { realUsers, director }) {
   const gaps = main.variablesUnprotected.map((name) => `${name} is a project secret that a merge request's pipeline could read`);
+  for (const name of main.variablesProtected) gaps.push(`${name} is a project secret that a pipeline on Wheelhouse's own state branch could read`);
+  if (director && !main.variablesKnown) gaps.push("Wheelhouse could not look at the project's secrets, so it cannot say which ones a pipeline could read");
   if (main.skippedPipelineCounts) gaps.push('A merge request whose pipeline was skipped still counts as passed');
-  if (realUsers && main.plan === 'free') gaps.push(`With real users, ${FAKED_TESTS_LINE}; GitLab Premium's approval step would close that`);
+  const faked = realUsers ? fakedTestsGap(main.plan) : null;
+  if (faked !== null) gaps.push(faked);
   return gaps;
 }
 
-// A project with real users is held to Maintainers' merges unless GitLab said it is on Premium (whose
-// approval is another route); a plan that could not be told is held the same way.
-const mergesByMaintainers = (realUsers, plan) => realUsers === true && plan !== 'premium';
+// A project with real users merges by Maintainers on every plan until the host's approval route is
+// ready (hostApprovalReady), and then not on Premium; Free and a plan that could not be told stay so.
+const mergesByMaintainers = (realUsers, plan) => realUsers === true && !(plan === 'premium' && hostApprovalReady({ host: 'gitlab', plan }));
 
-async function gitlabStatus(api, repo, { realUsers = false } = {}) {
+async function gitlabStatus(api, repo, { realUsers = false, director = false } = {}) {
   const defaultBranch = await gitlabDefaults(api, repo);
   const main = await readGitlabProtection({ api, projectId: repo, branch: defaultBranch });
   const side = [];
   for (const branch of [STATE_BRANCH, LOCK_BRANCH]) side.push(await readBranchAndProject(api, repo, branch));
-  const gaps = gitlabGaps(main, realUsers);
+  const gaps = gitlabGaps(main, { realUsers, director });
   const mergeLevel = mergesByMaintainers(realUsers, main.plan) ? 'Maintainers' : null;
   const on = main.protected && sameList(main.pushAccess, 'No one') && !main.allowForcePush
     && (mergeLevel === null || sameList(main.mergeAccess, mergeLevel))
@@ -440,7 +461,7 @@ async function gitlabStatus(api, repo, { realUsers = false } = {}) {
 }
 
 // The default branch takes no pushes, and merges by Developers and Maintainers, or by Maintainers
-// alone for a project with real users that is not known to be on Premium. The state and lock
+// alone for a project with real users (until the host's approval route is ready). The state and lock
 // branches take Wheelhouse's own pushes with its project key (a Developer, unless the key was made
 // as a Maintainer), so they stay at Developers + Maintainers push on every plan: "Maintainers" push
 // there would lock the key out, and main is the branch that takes no one.
@@ -462,14 +483,15 @@ function unknownHost(host) {
 }
 
 // `realUsers` is whether the project's `phase` setting says it is launched; GitLab's answer then
-// also holds merges to Maintainers on Free and names the gap of tests that could be faked.
-export async function protectionStatus({ host, repo, run, api, env, realUsers = false }) {
+// also holds merges to Maintainers and names the gap of tests that could be faked. `director` is
+// whether `api` is the director's own sign-in (which can read the project's variables).
+export async function protectionStatus({ host, repo, run, api, env, realUsers = false, director = false }) {
   if (host === 'github') {
     const { available, on, line } = await githubStatus(ghApiFor(run, env), repo);
     return { available, on, line };
   }
   if (host === 'gitlab') {
-    const { available, on, line, gaps, plan } = await gitlabStatus(api, repo, { realUsers });
+    const { available, on, line, gaps, plan } = await gitlabStatus(api, repo, { realUsers, director });
     return { available, on, line, gaps, plan };
   }
   throw unknownHost(host);

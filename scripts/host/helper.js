@@ -68,6 +68,10 @@ import { baselineRoutes } from '../measures/baseline.js';
 import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from '../lib/trust-clicks.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
+// The adapter's refusal of a merge by a key GitLab does not let merge (adapter.js), and what the
+// director is told on GitLab, where a project with real users merges by Maintainers only.
+const NOT_ALLOWED_TO_MERGE = 'this sign-in is not allowed to merge it';
+export const GITLAB_MAINTAINERS_ONLY = `${NOT_ALLOWED_TO_MERGE}: a project with real users is merged by Maintainers only on GitLab, so a person who is a Maintainer presses Merge there`;
 export const LOCK_BRANCH = 'wheelhouse-lock';
 const REMOTE = 'origin';
 const INCOMING = 'refs/wheelhouse/incoming';
@@ -2124,7 +2128,10 @@ export async function startHelper({
     else if (merged?.merged === true) awayLog.clear(project);
     // The front desk adds the briefing line for a pins-only release.
     if (merged?.merged === true) return { ok: true, merged: true, sha: headSha, ...found, ...(pinsOnly ? { ...release, briefing: briefingLine(releaseCheck.ref) } : {}) };
-    return { ok: false, refused: merged?.reason || 'the host did not merge the pull request', ...found };
+    // On GitLab a project with real users is merged by Maintainers only, which refuses this key; the
+    // adapter's plain refusal is given its reason and what to do.
+    const reason = merged?.reason === NOT_ALLOWED_TO_MERGE && recordOf(project).host === 'gitlab' ? GITLAB_MAINTAINERS_ONLY : merged?.reason;
+    return { ok: false, refused: reason || 'the host did not merge the pull request', ...found };
   }
 
   // Records a CI push the director may be asked about, one entry per branch,
@@ -2501,11 +2508,15 @@ export async function startHelper({
   // host would not say is 'unknown'.
   async function hostFacts({ project }, ctx) {
     const { host, repo, connection } = recordOf(project);
+    // On GitLab the plan and the gaps the key could read come along (the board adds the line for a
+    // project with real users, which it knows from the settings).
+    let more = {};
     const protection = async () => {
       try {
         const token = ctx.env?.GITLAB_TOKEN;
         const api = host === 'gitlab' ? gitlabApi({ baseUrl: checkBaseUrl(connection.baseUrl ?? DEFAULT_GITLAB), token, fetch }) : undefined;
         const status = await protectionStatus({ host, repo, run, api, env: ctx.env });
+        if (host === 'gitlab') more = { plan: status.plan, gaps: status.gaps };
         return status.on ? 'on' : (status.available ? 'unknown' : 'none');
       } catch { return 'unknown'; }
     };
@@ -2522,7 +2533,7 @@ export async function startHelper({
       }
     };
     const [onOrNot, checks] = await Promise.all([protection(), ci()]);
-    return { ok: true, protection: onOrNot, ci: checks };
+    return { ok: true, protection: onOrNot, ci: checks, ...more };
   }
   const pass = (call) => async (body, ctx) => ({ ok: true, result: await call(await ctx.adapter(), body) });
   // Setup's routes act on a folder, not a registered project, and check it themselves. Plan and

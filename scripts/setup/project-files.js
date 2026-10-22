@@ -96,11 +96,11 @@ import { protectionStatus as realProtectionStatus } from '../host/protection.js'
 import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
-import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
+import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA } from './questions.js';
-import { newId, readJournal } from './journal.js';
+import { newId, readJournal, SAY_CHARS } from './journal.js';
 
 export const COMMIT_MESSAGE = 'Set up Wheelhouse';
 // The setup commit's files, and only these (ruling R42). This computer's local settings never go in.
@@ -558,6 +558,21 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
 // 3's record of it in the run's journal.
 const joiningRun = (ctx) => typeof ctx.runId === 'string' && joinedRepo(readJournal().runs.find((r) => r?.id === ctx.runId) ?? null) !== null;
 
+// The parts of a line a step says, joined into one that fits what the journal keeps; the parts that
+// do not fit are counted, not cut in the middle.
+function sayFit(parts) {
+  const more = (n) => ` (and ${n} more)`;
+  const clean = parts.map((p) => String(p).trim().replace(/\.$/, ''));
+  let out = '';
+  for (let i = 0; i < clean.length; i += 1) {
+    const next = out === '' ? clean[i] : `${out}. ${clean[i]}`;
+    const rest = clean.length - i - 1;
+    if (next.length + (rest > 0 ? more(rest).length : 0) > SAY_CHARS) return out === '' ? clean[0].slice(0, SAY_CHARS) : `${out}${more(clean.length - i)}`;
+    out = next;
+  }
+  return out;
+}
+
 // `run` runs git, the host's tool and `claude`; `findGit` gives the git step 2 found; `gitlab`
 // GitLab's API with the director's sign-in; `claude` finds Claude Code's command line (lib/claude.js:
 // on Windows its .exe or .cmd on the path); `manifest`, `claudeHome` and `locate` are the lineage
@@ -857,18 +872,25 @@ export function projectFilesStep({
       // 4. Protection, with the same sign-in, then read back and said as it is.
       const protect = changes.find((c) => c.kind === 'host' && c.action === 'protect');
       if (protect) {
+        // Real users: the project's phase says launched (step 4), or step 3 was told so.
+        const realUsers = launchedIn(project) || ctx.answers?.['3.real-users']?.label === REAL_USERS.yes;
         const api = host === 'gitlab' ? await gitlab({ run }) : undefined;
         let before = null;
         try {
-          before = await protectionStatus({ host, repo, run, api, env: {} });
+          before = await protectionStatus({ host, repo, run, api, env: {}, realUsers });
         } catch { /* recorded as not known */ }
         ctx.record({
           id: newId('chg'), kind: 'host', target: protect.target, before: { on: before?.on ?? null, available: before?.available ?? null },
           after: { action: 'protect', branch: protect.branch, on: true }, project,
         });
-        const got = await switchOn({ host, repo, run, api });
-        say(got.line);
-        if (got.askPipelines) say(`"Pipelines must succeed" is left off on ${protect.branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
+        const got = await switchOn({ host, repo, run, api, realUsers });
+        // What a step says is its latest line, so protection's read-back, what the real users
+        // changed and each gap the read-back found go in one line, in plain words.
+        const parts = [got.line];
+        if (realUsers && host === 'gitlab') parts.push('A project with real users is merged by Maintainers only on GitLab, so Wheelhouse\'s key is refused and a person presses Merge');
+        parts.push(...(got.gaps ?? []));
+        if (got.askPipelines) parts.push(`"Pipelines must succeed" is left off on ${protect.branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
+        say(sayFit(parts));
       }
       return [];
     },

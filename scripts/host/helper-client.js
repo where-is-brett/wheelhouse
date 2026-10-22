@@ -67,7 +67,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       provenance: post('/lineage/provenance'), // { project | cwd, session } -> { ok, block: text | null, stop }: the block a pull request from the session is stamped with, and whether STOP is on; read-only, answered under STOP
     },
     host: {
-      facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown' }
+      facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown', plan?, gaps? } (the last two on GitLab)
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     state: {

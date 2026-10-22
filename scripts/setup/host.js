@@ -1303,17 +1303,18 @@ export function protectionPlanLine(host) {
 
 // Switches the host's protection on with the director's own sign-in, never the narrow key (`run`
 // with their environment for gh; `api`, GitLab's with their sign-in, for GitLab, where `repo` may
-// be the project's number), then reads it back and says it as it is. On GitLab, `askPipelines`
+// be the project's number; `realUsers` is whether the project's phase is launched), then reads it back and says it as it is. On GitLab, `askPipelines`
 // says the project has no pipeline, so "pipelines must succeed" was left off and the director is
 // asked (design section 12.3).
-export async function switchOnAsDirector({ host, repo, run = realRun, api }) {
-  await switchOnProtection({ host, repo, run, api, env: {} });
-  const read = await protectionStatus({ host, repo, run, api, env: {} });
+export async function switchOnAsDirector({ host, repo, run = realRun, api, realUsers = false }) {
+  await switchOnProtection({ host, repo, run, api, env: {}, realUsers });
+  const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
   if (host !== 'gitlab') return { available: read.available, on: read.on, line: read.line };
   const project = await api.get(projectPath(repo));
   const branch = project.body?.default_branch;
   const rule = typeof branch === 'string' ? await readGitlabProtection({ api, projectId: repo, branch }) : null;
-  return { available: read.available, on: read.on, line: read.line, askPipelines: rule?.pipelinesMustSucceed !== true };
+  // `gaps` are each thing the read-back found that the director should hear, in plain words.
+  return { available: read.available, on: read.on, line: read.line, askPipelines: rule?.pipelinesMustSucceed !== true, gaps: read.gaps ?? [] };
 }
 
 // ---- Step 3 ----

@@ -81,6 +81,29 @@ test('the board says GitLab can\'t be reached when the helper says so for this p
   });
 });
 
+test('the board says the project\'s tests could be faked, and names each secret, from the plan and gaps kept for GitLab', async () => {
+  const FAKED = "the project's tests on the host could be faked with Wheelhouse's key";
+  const gap = "DEPLOY_KEY is a project secret that a pipeline on Wheelhouse's own state branch could read";
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    // What the helper's host facts left in the cache on GitLab.
+    put(path.join(stateDir(P), '..', 'host-facts.json'), { at: NOW.toISOString(), facts: { protection: 'on', ci: 'present', plan: 'free', gaps: [gap] } });
+    const settings = path.join(wheelhouseHome(), 'projects', P, 'views', 'settings.json');
+    const board = async () => texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), address: testAddress(home), now: () => NOW }));
+    // Real users (the phase setting says launched): the line, and the secret.
+    put(settings, { phase: { key: 'phase', id: 's1', at: '2026-10-01T00:00:00.000Z', value: 'launched', before: null } });
+    const launched = await board();
+    assert.ok(launched.some((t) => t.includes(FAKED)), 'the faked-tests line');
+    assert.ok(launched.includes(gap), 'the secret');
+    // Not launched: the secret is still named, the tests line is not.
+    put(settings, {});
+    const before = await board();
+    assert.equal(before.some((t) => t.includes(FAKED)), false);
+    assert.ok(before.includes(gap));
+  });
+});
+
 test('outside a Wheelhouse project the inputs say so', async () => {
   const home = shortHome();
   await as(home, async () => {

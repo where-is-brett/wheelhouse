@@ -792,6 +792,35 @@ test('GitLab pipelines must succeed only where a pipeline exists', async () => {
   assert.match(ruled.line, /requires pipelines to pass/);
 });
 
+test('a project with real users is switched on to merge by Maintainers, and every gap the read-back found comes back for the director', async () => {
+  const plain = gitlabProtection({ pipelines: true });
+  // The director's own sign-in: Free (the approval rules are refused) and a list of variables.
+  const asFree = (inner, variables) => ({
+    ...inner,
+    async get(p) {
+      if (/\/approval_rules$/.test(p)) return { status: 403, body: {} };
+      if (/\/variables\?/.test(p)) return variables;
+      return inner.get(p);
+    },
+  });
+  const list = { status: 200, body: [{ key: 'DEPLOY_KEY', value: 'a-value-never-shown', protected: true }, { key: 'DEBUG', value: 'another-value', protected: false }] };
+  const got = await switchOnAsDirector({ host: 'gitlab', repo: 41, api: asFree(plain, list), realUsers: true });
+  assert.equal(got.on, true);
+  assert.deepEqual(got.gaps, [
+    "DEBUG is a project secret that a merge request's pipeline could read",
+    "DEPLOY_KEY is a project secret that a pipeline on Wheelhouse's own state branch could read",
+    "With real users, the project's tests on the host could be faked with Wheelhouse's key; GitLab Premium's approval step would close that",
+  ]);
+  assert.equal(JSON.stringify(got).includes('never-shown'), false);
+  assert.equal(JSON.stringify(got).includes('another-value'), false);
+  // Without real users the project merges as before, and the faked-tests line is not said.
+  const before = await switchOnAsDirector({ host: 'gitlab', repo: 41, api: asFree(gitlabProtection({ pipelines: true }), { status: 200, body: [] }) });
+  assert.deepEqual(before.gaps, []);
+  // A list the director's sign-in could not read is said.
+  const blind = await switchOnAsDirector({ host: 'gitlab', repo: 41, api: asFree(gitlabProtection({ pipelines: true }), { status: 403, body: {} }) });
+  assert.deepEqual(blind.gaps, ["Wheelhouse could not look at the project's secrets, so it cannot say which ones a pipeline could read"]);
+});
+
 test('protection is read back and said as it is', async () => {
   // GitHub took the rulesets without error, but reading them back shows none: said as not on.
   const calls = [];

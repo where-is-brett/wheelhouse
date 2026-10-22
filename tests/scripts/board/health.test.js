@@ -192,6 +192,22 @@ test('a project with no pipeline on its default branch is said to have no CI', (
   assert.deepEqual(texts({ facts: null }), ['Protection: Standard'], 'missing facts add no line');
 });
 
+test('GitLab\'s gaps and the faked-tests line reach the board: the line only for real users whose plan is not Premium', () => {
+  const FAKED = "the project's tests on the host could be faked with Wheelhouse's key";
+  const gap = "DEBUG is a project secret that a merge request's pipeline could read";
+  const lines = (facts, realUsers) => texts({ facts: { protection: 'on', ci: 'present', ...facts }, realUsers, platform: 'linux' });
+  const withFaked = lines({ plan: 'free', gaps: [gap] }, true);
+  assert.equal(withFaked.length, 3);
+  assert.ok(withFaked[1].includes(FAKED));
+  assert.equal(withFaked[2], gap);
+  assert.ok(lines({ plan: 'unknown' }, true).some((t) => t.startsWith("Wheelhouse could not tell GitLab's plan") && t.includes(FAKED)));
+  assert.deepEqual(lines({ plan: 'premium' }, true), ['Protection: Standard']);
+  assert.deepEqual(lines({ plan: 'free' }, false), ['Protection: Standard']);
+  // A GitHub project has no plan to tell, and a gap is said whoever the users are.
+  assert.deepEqual(lines({}, true), ['Protection: Standard']);
+  assert.deepEqual(lines({ gaps: [gap] }, false), ['Protection: Standard', gap]);
+});
+
 // --- host facts ---
 
 const NOW = new Date('2026-10-19T00:00:00.000Z');
@@ -242,6 +258,16 @@ test('host facts are read from the cache for a day, then asked again, and missin
     const future = fakeClient({ ok: true, protection: 'unknown', ci: 'unknown' });
     assert.deepEqual(await readHostFacts('o__p', { client: future, now: at(-60 * 1000) }), { protection: 'unknown', ci: 'unknown' });
     assert.equal(future.calls.length, 1);
+  });
+});
+
+test('host facts keep the plan and the gaps the helper read on GitLab, and drop what is not a plan or a line', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const sent = { ok: true, protection: 'on', ci: 'present', plan: 'free', gaps: ['DEBUG is a project secret', 42, '', 'x'.repeat(401)] };
+    assert.deepEqual(await readHostFacts('o__p', { client: fakeClient(sent), now: at(0) }), { protection: 'on', ci: 'present', plan: 'free', gaps: ['DEBUG is a project secret'] });
+    fs.rmSync(path.dirname(cacheFile('o__p')), { recursive: true, force: true });
+    assert.deepEqual(await readHostFacts('o__p', { client: fakeClient({ ok: true, protection: 'on', ci: 'present', plan: 'gold' }), now: at(0) }), { protection: 'on', ci: 'present' });
   });
 });
 

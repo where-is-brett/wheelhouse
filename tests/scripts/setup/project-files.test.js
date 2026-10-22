@@ -30,7 +30,7 @@ import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { directorGitlabApi } from '../../../scripts/setup/host.js';
+import { directorGitlabApi, REAL_USERS } from '../../../scripts/setup/host.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { g, push as fixturePush } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -178,10 +178,11 @@ async function world({
   };
   // Protection as Task 8's switchOnAsDirector gives it: here it notes what the host held when it
   // was asked, so the order can be read.
-  w.switchOn = async ({ host: on, repo, api }) => {
+  w.switchOn = async ({ host: on, repo, api, realUsers }) => {
+    w.switched = { realUsers };
     w.protection.push({ host: on, repo, tip: await lsRemote(w.bare, defaultBranch), ...(api ? { api: (await api.get(`/projects/${encodeURIComponent(repo)}`)).status } : {}) });
     return on === 'gitlab'
-      ? { available: true, on: true, line: `GitLab blocks direct pushes to ${defaultBranch}.`, askPipelines: true }
+      ? { available: true, on: true, line: `GitLab blocks direct pushes to ${defaultBranch}.`, askPipelines: true, gaps: w.gaps ?? [] }
       : { available: true, on: true, line: `GitHub blocks direct pushes to ${defaultBranch}.` };
   };
   // GitLab's API, reached as directorGitlabApi reaches it with glab's sign-in: the token only in the header.
@@ -618,6 +619,33 @@ test('on GitLab: the default branch and protection through glab\'s sign-in, the 
   // An account's own commit address is used where it has one.
   const run = async () => ({ code: 0, stdout: JSON.stringify({ ...GITLAB_USER, commit_email: 'me@example.invalid' }), stderr: '' });
   assert.deepEqual(await commitAuthor({ host: 'gitlab', run }), { name: GITLAB_USER.name, email: 'me@example.invalid' });
+});
+
+test('on GitLab, a project with real users is switched on as one, and the gaps found are said in one line', async () => {
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab' });
+    w.answers['3.real-users'] = { label: REAL_USERS.yes, text: null, at: T0.toISOString() };
+    w.gaps = ["DEBUG is a project secret that a merge request's pipeline could read", "With real users, the project's tests on the host could be faked with Wheelhouse's key; GitLab Premium's approval step would close that"];
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.deepEqual(w.switched, { realUsers: true });
+    const said = done.run.steps[7].say.line;
+    assert.ok(said.length <= 500);
+    assert.match(said, /merged by Maintainers only on GitLab/);
+    for (const gap of w.gaps) assert.ok(said.includes(gap.replace(/\.$/, '')), gap);
+  });
+  // Many gaps still fit one line: the ones that do not are counted.
+  await withHome(async () => {
+    const w = await world({ host: 'gitlab' });
+    w.gaps = Array.from({ length: 30 }, (_, i) => `SECRET_NUMBER_${i} is a project secret that a merge request's pipeline could read`);
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.deepEqual(w.switched, { realUsers: false });
+    const said = done.run.steps[7].say.line;
+    assert.ok(said.length <= 500);
+    assert.match(said, /SECRET_NUMBER_0 is a project secret/);
+    assert.match(said, / \(and \d+ more\)$/);
+  });
 });
 
 test('a director with a status line of their own keeps it: none is written for this computer', async () => {

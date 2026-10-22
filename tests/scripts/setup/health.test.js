@@ -29,6 +29,7 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
 import { withProject, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
 
 // The session's seven trial lines, every one as expected.
@@ -181,6 +182,27 @@ const stepWith = (adapter, client, extra = {}) => healthStep({
   adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
 });
 const cleanups = (recorded) => recorded.filter((c) => c.kind === 'answer' && c.after?.cleanup).map((c) => c.after.cleanup);
+
+test('step 10 reads the host\'s protection knowing whether the project has real users', async () => {
+  for (const launched of [false, true]) {
+    await withProject(async ({ folder }) => {
+      if (launched) {
+        const file = path.join(stateDir(SLUG), 'events', '2026', 'phase.json');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ v: 1, id: '0f1e2d3c-0000-4000-8000-000000000009', at: '2026-10-19T00:00:00.000Z', computer: 'c-first', kind: 'setting', data: { key: 'phase', value: 'launched' } }));
+      }
+      const { remote } = await productOnRemote(folder);
+      const { adapter } = standIn(remote);
+      const { client } = merges(REFUSED);
+      const seen = [];
+      const step = stepWith(adapter, client, { readProtection: async (asked) => { seen.push(asked); return 'on'; } });
+      const { changes } = await step.plan({ folder });
+      const { ctx } = ctxFor(folder, remote);
+      await step.apply(ctx, changes);
+      assert.deepEqual(seen, [{ host: 'github', repo: REPO, realUsers: launched }]);
+    });
+  }
+});
 
 test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, STOP holds, and the pull request is left open for the session', async () => {
   await withProject(async ({ folder }) => {
