@@ -134,19 +134,30 @@ function callsTo(source, name) {
   return found;
 }
 
-// What is wrong with a test file's way of starting the helper: a call that names no guarded runner
-// (`run: hostGuard` or `run: guardedRun(...)`; a bare `run` shorthand counts only where the file
-// has no fall-through to a real run), and any `realRun(file, ...)` / `run(file, ...)` that isn't
-// taken for git alone or for the Node.js binary.
-function unguardedHelper(source) {
+// What is wrong with a test file's way of starting the helper: a call with more than one `run` key
+// (the later wins), a call that names no guarded runner (`run: hostGuard` or `run: guardedRun(...)`;
+// a bare `run` shorthand counts only where the file has no unguarded call to a real run; setup-e2e's
+// `run: c.run` is its own refuser), a default or assignment of the real run (`= realRun`), and any
+// call to `realRun(x, ...)` / `run(x, ...)` that isn't guarded by `=== 'git'` or for the Node.js
+// binary. A fall-through is safe only through hostGuard or guardedRun.
+function unguardedHelper(source, { file = '' } = {}) {
   const problems = [];
   const calls = callsTo(source, 'startHelper');
   if (calls.length === 0) return problems;
   const lineOf = (at) => source.slice(0, at).split('\n').length;
-  const fallThroughs = source.split('\n').flatMap((text, i) => (/(?<![\w.])(realRun|run)\(file\b/.test(text) && !/'git'|process\.execPath|const git =/.test(text) ? [i + 1] : []));
+  const lines = source.split('\n');
+  // `run` is the real run only where the file imports it under that name.
+  const names = /import \{ run \} from '[^']*lib\/run\.js'/.test(source) ? 'realRun|run' : 'realRun';
+  const fallThroughs = lines.flatMap((text, i) => (new RegExp(`(?<![\\w.])(${names})\\(\\w+,`).test(text) && !/===\s*'git'|process\.execPath|const git =/.test(text) ? [i + 1] : []));
   for (const n of fallThroughs) problems.push(`${n}: a run falls through to a real run`);
+  const defaults = lines.flatMap((text, i) => (new RegExp(`(?<![=!<>])=\\s*(${names})\\b(?!\\s*[(.\\w])`).test(text) && !/^\s*(import|\/\/)/.test(text) ? [i + 1] : []));
+  for (const n of defaults) problems.push(`${n}: the real run is a default or assignment`);
   for (const { at, text } of calls) {
-    const guarded = /\brun\s*:\s*(hostGuard\b|guardedRun\()/.test(text) || (/[{,]\s*run\s*[,}]/.test(text) && fallThroughs.length === 0);
+    const keys = (text.match(/(?<![\w.])run\s*[:,}]|(?<![\w.])run\s*$/gm) ?? []).length;
+    if (keys > 1) problems.push(`${lineOf(at)}: startHelper with more than one run`);
+    const own = path.basename(file) === 'setup-e2e.js' && /\brun\s*:\s*c\.run\b/.test(text);
+    const named = /\brun\s*:\s*(\w+)\s*[,}\s]/.exec(text)?.[1];
+    const guarded = own || (named !== undefined && new RegExp(`\\b${named}\\s*=\\s*hostGuard\\b`).test(source)) || /\brun\s*:\s*(hostGuard\b|guardedRun\()/.test(text) || (/[{,]\s*run\s*[,}]/.test(text) && fallThroughs.length === 0);
     if (!guarded) problems.push(`${lineOf(at)}: startHelper without a guarded run`);
   }
   return problems;
@@ -156,19 +167,26 @@ test('the scan flags a helper started with a real run, or a run that falls throu
   assert.equal(unguardedHelper('await startHelper({ run: realRun, address });').length, 1);
   assert.equal(unguardedHelper('// run\nawait startHelper({ address });').length, 1);
   assert.equal(unguardedHelper('const r = (file, args) => realRun(file, args, o);\nawait startHelper({ address, run: r });').length, 2);
+  assert.equal(unguardedHelper('const r = (f, a, o) => realRun(f, a, o);\nawait startHelper({ run: hostGuard });').length, 1);
+  assert.equal(unguardedHelper("if (file !== 'git') return realRun(file, args);\nawait startHelper({ run: hostGuard });").length, 1);
+  assert.equal(unguardedHelper('await startHelper({ run: hostGuard, address, run: other });').length, 1);
+  assert.equal(unguardedHelper("import { run } from '../scripts/lib/run.js';\nasync function via({ runWith = run } = {}) {\n await startHelper({ run: runWith });\n}").length >= 2, true);
+  assert.deepEqual(unguardedHelper('async function via({ runWith = hostGuard } = {}) {\n await startHelper({ run: runWith });\n}'), []);
+  assert.equal(unguardedHelper('const base = realRun;\nawait startHelper({ run: hostGuard });').length, 1);
   assert.deepEqual(unguardedHelper('await startHelper({ run: hostGuard, address });'), []);
   assert.deepEqual(unguardedHelper("await startHelper({ run: guardedRun(realRun, { log }) });"), []);
   assert.deepEqual(unguardedHelper("if (file === 'git') return realRun(file, args);\nawait startHelper({ run: hostGuard });"), []);
+  assert.deepEqual(unguardedHelper('await startHelper({ run: c.run });', { file: 'x/setup-e2e.js' }), []);
+  assert.equal(unguardedHelper('await startHelper({ run: c.run });', { file: 'x/other.js' }).length, 1);
 });
 
 test('no test starts the real helper without a guarded run, or runs the trials without a spawn', () => {
   const missing = [];
   for (const file of testFiles()) {
-    // setup-e2e.js hands the helper its c.run, which refuses everything but git and its own fakes.
-    if (file === SELF || file === path.join(TESTS, 'helpers', 'setup-e2e.js')) continue;
+    if (file === SELF) continue;
     const source = fs.readFileSync(file, 'utf8');
     const line = (at) => source.slice(0, at).split('\n').length;
-    for (const problem of unguardedHelper(source)) missing.push(`${path.relative(TESTS, file)}:${problem}`);
+    for (const problem of unguardedHelper(source, { file })) missing.push(`${path.relative(TESTS, file)}:${problem}`);
     // The trials test's own fakes() hands every run a spawn; its calls name no spawn themselves.
     const fakesSpawn = /function fakes\([\s\S]*?\n {4}spawn:/.test(source);
     for (const { at, text } of callsTo(source, 'runTrials')) {

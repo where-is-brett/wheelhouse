@@ -31,7 +31,9 @@
 // handed a guarded run or spawn instead of relying on the PATH.
 // NODE_OPTIONS reads a backslash inside quotes as an escape, so the preload's path is written with
 // forward slashes, which Node.js on Windows accepts. `platform` lets a test build the Windows form
-// (`.exe` names, that path) on any system.
+// (`.exe` names, that path) on any system. A `platform` other than this system's is for building the
+// form only: off Windows it creates only the `.exe` stand-ins, so a bare `gh` on the PATH still finds
+// the real tool, and it guards nothing.
 // The node form is tested on every system (tests/helpers/stand-ins.test.js); its first real run on
 // Windows is still to come, at the Windows sitting.
 import fs from 'node:fs';

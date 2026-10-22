@@ -311,9 +311,9 @@ function click(overrides = {}, ago = 1) {
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
 
-async function viaHelper(s, fn, { env = {}, runWith = run } = {}) {
+async function viaHelper(s, fn, { env = {}, runWith = hostGuard } = {}) {
   await as(s.home, async () => {
-    const helper = await startHelper({ run: hostGuard, address: testAddress(s.home), adapterFor, envFor: async () => env, now: () => NOW, run: runWith });
+    const helper = await startHelper({ address: testAddress(s.home), adapterFor, envFor: async () => env, now: () => NOW, run: runWith });
     try { await fn(helperClient({ address: helper.address }), helper); } finally { await helper.close(); }
   });
 }
