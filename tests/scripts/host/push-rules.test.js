@@ -367,9 +367,11 @@ test('a CI change with the director\'s fresh click for this commit is pushed wit
     const pushes = calls.filter((c) => c.args.includes('push'));
     assert.equal(pushes.length, 1);
     assert.equal(pushes[0].env.GH_TOKEN, undefined);
-    assert.equal(pushes[0].env.GIT_CONFIG_VALUE_0, undefined);
-    assert.equal(pushes[0].env.GIT_CONFIG_NOSYSTEM, undefined, 'the system and global git configuration stay');
-    assert.equal(pushes[0].env.GIT_CONFIG_GLOBAL, undefined);
+    assert.equal(pushes[0].env.GIT_CONFIG_NOSYSTEM, '1', 'the system and global git configuration stay shut out');
+    assert.equal(pushes[0].env.GIT_CONFIG_GLOBAL, '/dev/null');
+    const values = Object.entries(pushes[0].env).filter(([k]) => /^GIT_CONFIG_VALUE_/.test(k)).map(([, v]) => v);
+    assert.ok(values.some((v) => / auth git-credential$/.test(v)), 'signed in through the host tool');
+    assert.ok(!values.some((v) => v.includes(Buffer.from(`x:${FAKE_KEY}`).toString('base64'))), 'not the key');
   } finally { s.cleanup(); }
 });
 

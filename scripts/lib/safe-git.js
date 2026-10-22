@@ -111,7 +111,7 @@ export function directorSignIn(host, { platform = process.platform } = {}) {
 // its own rows.
 const later = (n) => `moves in Task ${n} of the security-gaps plan`;
 export const RAW_GIT_EXCEPTIONS = Object.freeze([
-  ['scripts/host/helper.js', later(3)],
+  ['scripts/host/helper.js', 'every call fenced in gitIn through safeGitEnv (security-gaps Task 3)'],
   ['scripts/foreman/act.js', later(5)],
   ['scripts/feature/cli.js', later(5)],
   ['scripts/install/survey.js', later(6)],

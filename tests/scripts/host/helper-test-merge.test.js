@@ -219,10 +219,10 @@ test('a hook named in git\'s configuration is refused, not run, by /test-merge a
     fs.rmSync(marks);
 
     const home = await project(remote);
-    // In the connection's configuration (the quick connection's carries the director's own).
+    // In the director's global configuration: shut out of the helper's git in every connection, so the hook neither runs nor needs refusing.
     await withHelper(home, async (client) => {
       const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
-      assert.deepEqual(answer, { ok: false, refused: 'the git configuration names a hook, filter or merge driver, so nothing is merged' });
+      assert.deepEqual(answer, { ok: true, clean: true, conflicts: [] });
       assert.equal(fs.existsSync(marks), false);
     }, { env: { GIT_CONFIG_GLOBAL: config } });
 

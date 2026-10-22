@@ -688,7 +688,7 @@ test('a push or merge refusal never includes a key', async () => {
       // The copy from the folder runs with no key at all.
       const copies = calls.filter((c) => c.args.includes('fetch') && c.args.includes(dir));
       assert.ok(copies.length > 0);
-      assert.ok(copies.every((c) => c.env?.GH_TOKEN === undefined && c.env?.GIT_CONFIG_VALUE_0 === undefined));
+      assert.ok(copies.every((c) => c.env?.GH_TOKEN === undefined && !pairsOf(c.env ?? {}).some(([, v]) => v.includes(basic))));
     });
   } finally { p.cleanup(); }
   assert.equal(seen.length, 5);
@@ -750,7 +750,11 @@ async function withProcessEnv(vars, fn) {
   }
 }
 
-test('quick keeps the system and user git config for keyed calls; narrow switches both off', async () => {
+const EXTRA = `AUTHORIZATION: basic ${Buffer.from(`x:${FAKE_KEY}`).toString('base64')}`;
+const KEY_PAIR = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraheader', GIT_CONFIG_VALUE_0: EXTRA };
+const pairsOf = (env) => Array.from({ length: Number(env.GIT_CONFIG_COUNT ?? 0) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+
+test('quick and narrow both shut out the system and user git config; quick signs in through the host tool', async () => {
   const p = await project();
   try {
     await withProcessEnv({ GIT_SSH_COMMAND: 'inherited-should-not-reach-git', GIT_CONFIG_PARAMETERS: "'core.hookspath'='/tmp'" }, () => as(p.home, async () => {
@@ -759,8 +763,8 @@ test('quick keeps the system and user git config for keyed calls; narrow switche
       const cases = [
         ['quick, bare', async () => ({}), 'quick'],
         ['quick, said', async () => ({ mode: 'quick', env: {} }), 'quick'],
-        ['narrow, said', async () => ({ mode: 'narrow', env: { GH_TOKEN: FAKE_KEY } }), 'narrow'],
-        ['narrow, bare', async () => ({ GH_TOKEN: FAKE_KEY }), 'narrow'],
+        ['narrow, said', async () => ({ mode: 'narrow', env: { GH_TOKEN: FAKE_KEY, ...KEY_PAIR } }), 'narrow'],
+        ['narrow, bare', async () => ({ GH_TOKEN: FAKE_KEY, ...KEY_PAIR }), 'narrow'],
       ];
       for (const [label, envFor, mode] of cases) {
         const calls = [];
@@ -771,13 +775,16 @@ test('quick keeps the system and user git config for keyed calls; narrow switche
           assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }, label);
         }, { envFor, run: recordingRun });
         const push = calls.find((c) => c.args.includes('push'));
+        const penv = push.options.env;
+        assert.equal(penv.GIT_CONFIG_NOSYSTEM, '1', label);
+        assert.equal(penv.GIT_CONFIG_GLOBAL, '/dev/null', label);
+        const pairs = pairsOf(penv);
         if (mode === 'quick') {
-          assert.equal(push.options.env.GIT_CONFIG_NOSYSTEM, undefined, label);
-          assert.equal(push.options.env.GIT_CONFIG_GLOBAL, undefined, label);
+          assert.ok(pairs.some(([k, v]) => k === 'credential.helper' && / auth git-credential$/.test(v)), `${label}: signs in through the host tool`);
         } else {
-          assert.equal(push.options.env.GIT_CONFIG_NOSYSTEM, '1', label);
-          assert.equal(push.options.env.GIT_CONFIG_GLOBAL, '/dev/null', label);
-          assert.equal(push.options.env.GH_TOKEN, FAKE_KEY, label);
+          assert.equal(penv.GH_TOKEN, FAKE_KEY, label);
+          assert.ok(pairs.some(([k, v]) => k.toLowerCase() === 'http.extraheader' && v === EXTRA), `${label}: the key's pair`);
+          assert.ok(!pairs.some(([k, v]) => k === 'credential.helper' && v !== ''), `${label}: no host-tool helper`);
         }
         const copy = calls.find((c) => c.args.includes('fetch') && c.args.includes(dir));
         assert.equal(copy.options.env.GIT_NO_LAZY_FETCH, '1', label);
@@ -1072,6 +1079,67 @@ test('/host/facts says unknown for what the host would not tell, and still answe
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'unknown', ci: 'present' });
       }, { run: refused });
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a hostile global git config reaches none of the helper\'s git, in quick or narrow', async () => {
+  for (const [label, envFor] of [['quick', async () => ({})], ['narrow', async () => ({ GH_TOKEN: FAKE_KEY, ...KEY_PAIR })]]) {
+    const p = await project();
+    const other = await makeBareRemote({ repo: 'x/y' });
+    const scratch = tempFolder('wh-hostile-');
+    const marker = path.join(scratch, 'marker');
+    try {
+      const hooks = path.join(scratch, 'hooks');
+      fs.mkdirSync(hooks);
+      const hook = (name, body) => { fs.writeFileSync(path.join(hooks, name), body, { mode: 0o755 }); };
+      hook('pre-push', `#!/bin/sh\necho hook >> "${marker}"\n`);
+      hook('reference-transaction', `#!/bin/sh\necho hook >> "${marker}"\n`);
+      const helperScript = path.join(scratch, 'cred.sh');
+      fs.writeFileSync(helperScript, `#!/bin/sh\necho cred >> "${marker}"\n`, { mode: 0o755 });
+      const slash = (f) => f.replaceAll('\\', '/');
+      fs.writeFileSync(path.join(scratch, '.gitconfig'), [
+        `[core]\n\thooksPath = ${slash(hooks)}`,
+        `[url "${slash(other.url)}"]\n\tinsteadOf = ${slash(p.remote.url)}`,
+        `[credential]\n\thelper = !${slash(helperScript)}`,
+      ].join('\n') + '\n');
+      await as(p.home, async () => {
+        const dir = stateDir('o__p');
+        await g(dir, 'branch', 'feature');
+        await g(dir, 'commit', '-q', '--allow-empty', '-m', label);
+        await g(dir, 'branch', '-f', 'feature');
+        // Only the helper and its git see the hostile home; the test's own git calls do not.
+        await withProcessEnv({ HOME: scratch, USERPROFILE: scratch, XDG_CONFIG_HOME: path.join(scratch, 'xdg') }, () => withHelper(fakeAdapter(), async (client) => {
+          assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }, label);
+        }, { envFor }));
+      });
+      const heads = async (url) => (await run('git', ['ls-remote', '--heads', url], { env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } })).stdout;
+      assert.match(await heads(p.remote.url), /refs\/heads\/feature/, `${label}: lands on the recorded remote`);
+      assert.equal(await heads(other.url), '', `${label}: not on the rewritten one`);
+      assert.equal(fs.existsSync(marker), false, `${label}: no hook or credential helper ran`);
+    } finally { p.cleanup(); other.cleanup(); fs.rmSync(scratch, { recursive: true, force: true }); }
+  }
+});
+
+test('a local path is reached only for a project whose recorded remote is one', async () => {
+  const p = await project({ lock: false });
+  try {
+    await as(p.home, async () => {
+      const dir = stateDir('o__p');
+      const calls = [];
+      const recordingRun = async (file, args, options) => { calls.push({ args, options }); return run(file, args, options); };
+      const protocolOfFetch = async () => {
+        calls.length = 0;
+        await withHelper(fakeAdapter(), async (client) => {
+          await client.testMerge({ project: 'o__p', a: 'main', b: 'wheelhouse-state' });
+        }, { run: recordingRun });
+        return calls.find((c) => c.args.includes('fetch') && c.args.includes('origin'))?.options.env.GIT_ALLOW_PROTOCOL;
+      };
+      assert.equal(await protocolOfFetch(), 'https:file', 'a local-path remote: a local path is reached');
+      const remoteUrl = 'https://example.invalid/o/p.git';
+      writeProject('o__p', { folder: os.tmpdir(), remoteUrl, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await g(dir, 'remote', 'set-url', 'origin', remoteUrl);
+      assert.equal(await protocolOfFetch(), 'https', 'an https remote: https only');
     });
   } finally { p.cleanup(); }
 });

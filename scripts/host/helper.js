@@ -34,7 +34,7 @@ import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
-import { reachFor } from '../lib/safe-git.js';
+import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
@@ -159,10 +159,6 @@ const HOST_MS = 5 * 60 * 1000;
 // Every git call the helper makes: no prompting, no replace refs. Each starts
 // from the helper's environment with every inherited GIT_* variable removed.
 const GIT_BASE = { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1' };
-// No system or user config: for calls that need no sign-in, and for the narrow
-// connection, whose key travels in the environment. The quick connection keeps
-// them, because the director's own sign-in is found through them.
-const ISOLATED = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NO_FILE };
 
 const UNREADABLE_CHANGES = 'the changed files couldn\'t be read, so this needs the director\'s approval';
 const BASE_REF = 'refs/wheelhouse/base';
@@ -854,7 +850,8 @@ export async function startHelper({
       signedOut,
       // What git gets in the helper's own repositories for this connection, and the transport the
       // project's recorded remote needs (a local path only for a stand-in host).
-      gitEnv: { ...(mode === 'narrow' ? { ...ISOLATED, ...env } : env), ...reachEnv(readProject(project)?.remoteUrl) },
+      gitEnv: gitEnvOf(mode, env, readProject(project)?.host, readProject(project)?.remoteUrl),
+      reach: reachFor(readProject(project)?.remoteUrl),
       secrets: secretsOf(env),
       adapter: async () => {
         adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now }));
@@ -889,12 +886,20 @@ export async function startHelper({
     return next;
   }
 
-  // A runner for git with the given environment over the clean base, and a
-  // time limit, so a hung remote or folder cannot hold up a queue.
-  const gitIn = (env, timeoutMs = HOST_MS) => (file, args, options = {}) => run(file, args, {
-    timeoutMs, ...options, baseEnv: withoutGitVars(process.env), env: { ...GIT_BASE, ...env, ...options.env },
+  // A runner for git with the given environment over the clean base, and a time limit, so a hung
+  // remote or folder cannot hold up a queue. Every call goes through the shared fence (safeGitEnv):
+  // the director's global and system git config never reach it, hooks are off, only an allowed list
+  // of GIT_ variables passes, and the one transport is the one `reach` names, which comes from the
+  // project's recorded remote and never from `env`. The quick connection signs in through the host
+  // tool (directorSignIn, as the sole credential helper) rather than through the director's own
+  // git config, which stays shut out (design section 12.9's git item); the narrow connection's key
+  // travels in `env`.
+  const gitIn = (env, timeoutMs = HOST_MS, reach = 'https') => (file, args, options = {}) => run(file, args, {
+    timeoutMs, ...options, baseEnv: withoutGitVars(process.env), env: safeGitEnv({ ...GIT_BASE, ...env, ...options.env }, { reach }),
   });
-  const unkeyed = gitIn(ISOLATED);
+  const unkeyed = gitIn({});
+  // The connection's git over the project's (or profile's) recorded remote.
+  const keyedFor = (ctx) => gitIn(ctx.gitEnv, HOST_MS, ctx.reach);
 
   // The lock clone is used by pushes and merges alike: one git call at a time.
   function lockHeld(project, ctx) {
@@ -987,7 +992,7 @@ export async function startHelper({
     const hooked = await configSets(unkeyed, mirror, '^hook\\.');
     if (hooked !== 'none') return 'the mirror\'s git configuration names a hook, or could not be read, so nothing is copied into it';
     await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
-    const fetched = await gitIn({ ...ISOLATED, GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS)('git', [
+    const fetched = await gitIn({ GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS, 'local')('git', [
       '-c', `core.hooksPath=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
       'fetch', '-q', '--no-tags', '--no-recurse-submodules', source, `+refs/heads/${branch}:${INCOMING}`,
     ], { cwd: mirror });
@@ -1012,7 +1017,7 @@ export async function startHelper({
       const copied = await copyIn(mirror, source, branch);
       if (copied !== null) return { ok: false, refused: copied };
 
-      const keyed = gitIn(ctx.gitEnv);
+      const keyed = keyedFor(ctx);
       const checked = await checkPush({ refspec, dir: mirror, defaultBranch, run: keyed, sha: INCOMING });
       if (checked.refused === PUSH_REFUSALS.shallow) {
         // A shallow marker came in with the objects: start the mirror afresh next time.
@@ -1022,7 +1027,8 @@ export async function startHelper({
 
       // A code push that changes a CI file goes only with the director's click
       // for this commit, and then with the director's own sign-in.
-      let pusher = asOwn ? gitIn({}) : keyed;
+      const directorGit = () => gitIn(directorSignIn(signInHost(project)), HOST_MS, ctx.reach);
+      let pusher = asOwn ? directorGit() : keyed;
       if (ciGuard) {
         let changes;
         try {
@@ -1032,7 +1038,7 @@ export async function startHelper({
         }
         if (touchesCi(changes.paths, changes.config)) {
           if (!ciClick(project, branch, checked.sha)) return { ok: false, refused: PUSH_REFUSALS.ciFile };
-          pusher = gitIn({});
+          pusher = directorGit();
         }
       }
       const asDirector = pusher !== keyed;
@@ -1201,6 +1207,11 @@ export async function startHelper({
   const LOOPBACK_HTTP = { GIT_ALLOW_PROTOCOL: 'https:http' };
   // Always an explicit value, laid last, so a GIT_ALLOW_PROTOCOL in a connection's env never widens an https remote.
   const reachEnv = (remoteUrl) => ({ local: LOCAL_PATHS, loopback: LOOPBACK_HTTP })[reachFor(remoteUrl)] ?? { GIT_ALLOW_PROTOCOL: 'https' };
+  // The git environment of a connection: the key's own pairs (narrow), or the director's sign-in
+  // through the host tool (quick), with the transport the recorded remote needs laid last.
+  const signInHost = (project) => hostOf(readProject(project)?.host);
+  const hostOf = (host) => (host === 'github' || host === 'gitlab' ? host : null);
+  const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(mode === 'narrow' ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
   const profileGit = (dir, args, env = {}) => stateGit(dir, args, { ...env, ...reachEnv(profileRemote()?.remoteUrl) });
 
   async function ensureStateClone(project, ctx) {
@@ -1318,7 +1329,8 @@ export async function startHelper({
       mode,
       env,
       signedOut: false,
-      gitEnv: { ...(mode === 'narrow' ? { ...ISOLATED, ...env } : env), ...reachEnv(profileRemote()?.remoteUrl) },
+      gitEnv: gitEnvOf(mode, env, profileRemote()?.connection?.host, profileRemote()?.remoteUrl),
+      reach: reachFor(profileRemote()?.remoteUrl),
       secrets: secretsOf(env),
       adapter: async () => refuse('the profile makes no requests of the host'),
     };
@@ -1377,7 +1389,7 @@ export async function startHelper({
   async function pushProfileOnce(ctx) {
     if (stopped()) return STOP_REFUSAL;
     const dir = profileDir();
-    const keyed = gitIn(ctx.gitEnv);
+    const keyed = keyedFor(ctx);
     const inClone = (args) => keyed('git', args, { cwd: dir });
     const shallow = await inClone(['rev-parse', '--is-shallow-repository']);
     if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
@@ -1562,7 +1574,7 @@ export async function startHelper({
     return oneAtATime(`mirror:${project}`, async () => {
       const mirror = await mirrorFor(project);
       return changedPaths({
-        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: gitIn(ctx.gitEnv), read: [SETTINGS_FILE],
+        mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: keyedFor(ctx), read: [SETTINGS_FILE],
       });
     });
   }
@@ -1581,7 +1593,7 @@ export async function startHelper({
     const change = changes === null ? null : pinsOnlyChange(changes.paths, changes.files?.[SETTINGS_FILE]);
     if (change === null) return { matched: true, ok: false, why: `it changes more than the Wheelhouse marketplace's ref in ${SETTINGS_FILE}` };
     const checked = await oneAtATime('wheelhouse-release', () => checkRelease({
-      ref: change.ref, sha, mirror: path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), url: wheelhouseRepo, git: (args, options) => unkeyed('git', args, options),
+      ref: change.ref, sha, mirror: path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), url: wheelhouseRepo, git: (args, options) => gitIn({}, HOST_MS, reachFor(wheelhouseRepo))('git', args, options),
     }));
     return checked.ok ? { matched: true, ok: true, ref: change.ref, sha } : { matched: true, ok: false, why: checked.why };
   }
@@ -2179,7 +2191,7 @@ export async function startHelper({
   // A runner for git in the mirror with the connection's key.
   async function inMirror(project, ctx, fn) {
     const mirror = await mirrorFor(project);
-    const keyed = gitIn(ctx.gitEnv);
+    const keyed = keyedFor(ctx);
     const must = async (args, what) => {
       const answer = await keyed('git', args, { cwd: mirror, input: '' });
       if (answer.code !== 0) throw new Error(ctx.signedOut && AUTH_FAILURE.test(answer.stderr) ? PUSH_REFUSALS.ciSignIn : `${what} failed`);
@@ -2320,7 +2332,8 @@ export async function startHelper({
       ...ctx,
       mode: 'quick',
       env: {},
-      gitEnv: reachEnv(readProject(project)?.remoteUrl),
+      gitEnv: gitEnvOf('quick', {}, readProject(project)?.host, readProject(project)?.remoteUrl),
+      reach: reachFor(readProject(project)?.remoteUrl),
       signedOut: true,
       adapter: async () => {
         own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now }));
