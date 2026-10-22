@@ -37,6 +37,8 @@ function scan(command, windows, strict, operators = []) {
       operators.push(operator);
     } else if (operator === '<' || operator === '>') {
       operators[operators.length - 1] = operator; // a redirect written before the command
+    } else if (operator === '(' && ['<', '>'].includes(operators.at(-1))) {
+      operators[operators.length - 1] = operator; // <( ) and >( ) run a command
     }
   };
   const add = (text) => { current = (current ?? '') + text; };

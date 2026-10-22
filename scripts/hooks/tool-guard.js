@@ -217,8 +217,8 @@ const SNIFF = 4096;
 
 // The index of a segment's command word: past assignments, options (and the
 // values of a wrapper's options), durations and wrappers such as env, sudo and
-// timeout. `command -v x` only looks a name up, so it has none. It is seg.length
-// when there is none.
+// timeout, and the `function NAME` of a definition. A comment, and `command -v x`
+// which only looks a name up, have none. It is seg.length when there is none.
 function commandAt(seg, names) {
   let wrapper = null;
   for (let i = 0; i < seg.length; i += 1) {
@@ -226,7 +226,12 @@ function commandAt(seg, names) {
       if (wrapper !== null && (WRAPPER_VALUES[wrapper] ?? []).includes(seg[i])) i += 1;
       continue;
     }
+    if (seg[i].startsWith('#')) return seg.length; // a comment
     if (ASSIGNMENT.test(seg[i]) || DURATION.test(seg[i])) continue;
+    if (names[i] === 'function') {
+      i += 1; // and the function's name
+      continue;
+    }
     if (WRAPPERS.has(names[i])) {
       if (names[i] === 'command' && /^-[A-Za-z]*[vV]/.test(seg[i + 1] ?? '')) return seg.length;
       wrapper = names[i];
@@ -246,27 +251,6 @@ function shebangShell(text) {
   let name = lastPart(words[0] ?? '');
   if (name === 'env') name = lastPart(words.slice(1).find((w) => !w.startsWith('-')) ?? '');
   return POSIX_SHELLS.has(name);
-}
-
-// A script text without its comment lines (the shebang line is one).
-const withoutComments = (text) => text.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
-
-// A command without the bodies of its here-documents whose terminator is
-// quoted (<<'X', <<"X", <<-'X'): nothing in them runs or expands, and they are
-// often prose. An unquoted body expands, so it stays.
-function withoutQuotedHeredocs(command) {
-  const lines = command.split('\n');
-  const kept = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    kept.push(lines[i]);
-    const m = /<<(-?)\s*(?:'([^']*)'|"([^"]*)")/.exec(lines[i]);
-    if (!m) continue;
-    const end = m[2] ?? m[3];
-    let j = i + 1;
-    while (j < lines.length && (m[1] ? lines[j].replace(/^\t+/, '') : lines[j]) !== end) j += 1;
-    i = j;
-  }
-  return kept.join('\n');
 }
 
 // Reads one script file: 'missing' when it is not there, true when it is
@@ -302,9 +286,11 @@ function readScript(abs, ctx, depth, mode) {
         result = false;
       } else if (mode === 'path' && !shebangShell(head.toString('utf8'))) {
         result = false;
+      } else if (mode === 'path' && !ctx.windows && (stat.mode & 0o111) === 0 && !head.toString('utf8').startsWith('#!')) {
+        result = false; // the shell won't run a text file with no shebang that is not executable
       } else {
         const text = buffer.subarray(0, got).toString('utf8');
-        result = bashRefused(withoutComments(text), { ...ctx, dirs: [path.dirname(abs)], wordsOnly: mode === 'batch' }, depth + 1);
+        result = bashRefused(text, { ...ctx, dirs: [path.dirname(abs)], wordsOnly: mode === 'batch' }, depth + 1);
       }
     }
   } catch {
@@ -377,60 +363,31 @@ function movedDirs(dirs, to, ctx) {
 // substitution, and a script file that a shell, `source` or a path runs, are
 // read and held to the same rules; a script that can't be read yet is refused.
 // A script run by another program (`node x.js`, `npm run`, `make`) is not looked
-// into. The files read in one decision are kept by path and capped in size.
+// into, and neither is code made at run time that the words don't show (`$VAR` or
+// a backtick substitution as a command, `sh -c "true; $(...)"`). The files read in one decision are kept by path and capped in size.
 function bashRefused(command, ctx, depth = 0) {
   const { windows, fold } = ctx;
   if (depth > MAX_DEPTH) return true;
-  const split = segmentsWithOperators(withoutQuotedHeredocs(command), windows);
+  const split = segmentsWithOperators(command, windows);
   if (split === null) return true;
   const { segments: segs, operators } = split;
   const inContext = (dirs) => ({ ...ctx, dirs });
   let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
   const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
-  const lastParts = segs.flat().map((w) => fold(lastPart(w)));
-  for (const [index, whole] of segs.entries()) {
-    // The first word after < or > is a redirect's file; the words after it are a command.
-    const redirect = operators[index] === '<' || operators[index] === '>';
-    const names = whole.map(nameOf);
-    for (let i = 0; i < whole.length; i += 1) {
-      const seg = whole;
-      const word = seg[i];
-      const value = word.slice(word.indexOf('=') + 1);
-      if (['gh', 'glab'].includes(names[i]) || ['gh', 'glab'].includes(nameOf(value))) return true;
-      if (GIT_PUSHERS.has(names[i])) return true;
-      if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
-      for (const candidate of [word, value]) {
-        // A '<rev>:' prefix, as in HEAD:.env, is a path boundary too; on Windows
-        // `.env:stream` and `.env::$DATA` name the file, so the name before the
-        // colon counts as well.
-        for (const name of [fold(lastPart(candidate)), fold(candidate.split(/[\\/:]/).at(-1))]) {
-          if (envName(name, fold) || (name.startsWith('.e') && /[*?[]/.test(name))) return true;
-        }
-      }
-      if (names[i] === 'eval' && again(seg.slice(i + 1).join(' '))) return true;
-      if (SHELL_FLAG.test(word) && i + 1 < seg.length && (seg[i + 1] === '' || again(seg[i + 1]))) return true;
-      if (PWSH.has(names[i]) && seg.slice(i + 1).some((w) => encodedFlag(w, windows))) return true;
-      if (SHELLS.has(names[i]) && seg.slice(i + 1).some((w) => !OPTION.test(w) && again(w))) return true;
-      if (names[i] === 'env') {
-        for (const w of seg.slice(i + 1)) {
-          if (!OPTION.test(w) && again(w)) return true;
-          const split = /^(?:--split-string=|-S)(.+)$/s.exec(w);
-          if (split && again(split[1])) return true;
-        }
-      }
-    }
-    if (ctx.wordsOnly) continue;
-    const seg = redirect ? whole.slice(1) : whole;
-    const segNames = redirect ? names.slice(1) : names;
+  const counts = new Map();
+  for (const w of segs.flat()) counts.set(fold(lastPart(w)), (counts.get(fold(lastPart(w))) ?? 0) + 1);
+  const commandRefused = (seg) => {
+    const segNames = seg.map(nameOf);
     const k = commandAt(seg, segNames);
-    if (k >= seg.length) continue;
+    if (k >= seg.length) return false;
     const name = segNames[k];
     const lname = name.toLowerCase();
     const args = seg.slice(k + 1);
-    if (seg[k] === '' || /[$`]/.test(seg[k])) return true;
+    // Code made at run time: an empty word, or an unquoted $( that leaves a lone $.
+    if (seg[k] === '' || seg[k].endsWith('$')) return true;
     const script = (file, mode) => {
-      const named = lastParts.filter((p) => p === fold(lastPart(file))).length > 1;
+      const named = (counts.get(fold(lastPart(file))) ?? 0) > 1;
       return scriptRefused(file, inContext(dirs), depth, mode, named);
     };
     const runner = RUNNERS.has(name) ? k : seg.findIndex((w) => RUNNER_FLAGS.has(w));
@@ -472,14 +429,62 @@ function bashRefused(command, ctx, depth = 0) {
     } else if (name === 'eval') {
       if (args.every((w) => w === '')) return true;
     } else if (name === 'source' || seg[k] === '.') {
-      if (args.length > 0 && script(args[0], 'shell')) return true;
+      // With no file, it reads a redirect or a process substitution.
+      if (args.length === 0 || script(args[0], 'shell')) return true;
     } else if (MOVERS.has(lname)) {
       dirs = movedDirs(dirs, args.find((w) => !OPTION.test(w)), ctx);
     } else if (/[\\/]/.test(seg[k]) && !seg[k].startsWith('#') && script(seg[k], 'path')) {
       return true;
     }
+    return false;
+  };
+  // A redirect's first word is its file; the words after it belong to the command
+  // before it, or are the command when the redirect comes first.
+  let pending = null;
+  for (const [index, whole] of segs.entries()) {
+    const redirect = operators[index] === '<' || operators[index] === '>';
+    const names = whole.map(nameOf);
+    const comment = whole[0]?.startsWith('#');
+    for (let i = 0; i < whole.length; i += 1) {
+      const seg = whole;
+      const word = seg[i];
+      const value = word.slice(word.indexOf('=') + 1);
+      if (['gh', 'glab'].includes(names[i]) || ['gh', 'glab'].includes(nameOf(value))) return true;
+      if (GIT_PUSHERS.has(names[i])) return true;
+      if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
+      for (const candidate of [word, value]) {
+        // A '<rev>:' prefix, as in HEAD:.env, is a path boundary too; on Windows
+        // `.env:stream` and `.env::$DATA` name the file, so the name before the
+        // colon counts as well.
+        for (const name of [fold(lastPart(candidate)), fold(candidate.split(/[\\/:]/).at(-1))]) {
+          if (envName(name, fold) || (name.startsWith('.e') && /[*?[]/.test(name))) return true;
+        }
+      }
+      // The rest of a comment is not run, so only the names above are looked for in it.
+      if (comment) continue;
+      if (names[i] === 'eval' && again(seg.slice(i + 1).join(' '))) return true;
+      if (SHELL_FLAG.test(word) && i + 1 < seg.length && (seg[i + 1] === '' || again(seg[i + 1]))) return true;
+      if (PWSH.has(names[i]) && seg.slice(i + 1).some((w) => encodedFlag(w, windows))) return true;
+      if (SHELLS.has(names[i]) && seg.slice(i + 1).some((w) => !OPTION.test(w) && again(w))) return true;
+      if (names[i] === 'env') {
+        for (const w of seg.slice(i + 1)) {
+          if (!OPTION.test(w) && again(w)) return true;
+          const split = /^(?:--split-string=|-S)(.+)$/s.exec(w);
+          if (split && again(split[1])) return true;
+        }
+      }
+    }
+    if (ctx.wordsOnly) continue;
+    if (!redirect) {
+      if (pending !== null && commandRefused(pending)) return true;
+      pending = [...whole];
+    } else if (pending === null) {
+      pending = whole.slice(1);
+    } else {
+      pending.push(...whole.slice(1));
+    }
   }
-  return false;
+  return pending !== null && commandRefused(pending);
 }
 
 // The servers the project allows, or null when the configuration cannot be read.
