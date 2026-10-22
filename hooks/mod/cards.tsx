@@ -257,6 +257,7 @@ function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts
         {corner !== undefined && draw(corner)}
       </Box>
       {text(parts.ask) !== null && heading(t, parts.ask as string)}
+      {text(parts.what) !== null && text(parts.what) !== text(parts.ask) && body(t, parts.what as string)}
       {smallLine !== '' && footnote(t, smallLine)}
       {text(parts.recommendation) !== null && body(t, parts.recommendation as string)}
       {card.revised === true && changed !== null && body(t, `${WHAT_CHANGED} ${changed}`)}

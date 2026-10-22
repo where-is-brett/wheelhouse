@@ -543,7 +543,7 @@ test('an approval card draws its header row with Not now in the corner, its ask 
     const drawn = nodes.map(textOfNode)
     const at = drawn.indexOf('Approval · 1 of 2')
     expect(at).toBeGreaterThan(-1)
-    expect(drawn.slice(at, at + 4)).toEqual(['Approval · 1 of 2', 'Not now', 'Put pull request #42 live?', 'Small feature · changes what users see · asked 2 hours ago'])
+    expect(drawn.slice(at, at + 5)).toEqual(['Approval · 1 of 2', 'Not now', 'Put pull request #42 live?', 'The banner change.', 'Small feature · changes what users see · asked 2 hours ago'])
     expect(drawn).toContain('Approve, because the checks passed.')
     const by = (text: string) => nodes.find((n: any) => n.text === text)
     expect(by('Put pull request #42 live?').props.size).toBe('heading')
@@ -750,6 +750,29 @@ test('while a press records, the others are plain text and a double press sends 
     reply = { ok: true }
     await Promise.all([ui.press({ key: cardKey('card-1', 'Approve') }), ui.press({ key: cardKey('card-1', 'Approve') })])
     expect(seen.requests).toHaveLength(1)
+    await ui.unmount()
+  }
+})
+
+test('an approval card shows what it is under the ask while Why? is closed, and a card whose ask is its what shows it once', async ($, on) => {
+  let cards: object[] = [partsCard()]
+  const { start } = world(on, () => ({ ok: true }), () => withCards(cards)())
+  for (const surface of SURFACES) {
+    cards = [partsCard()]
+    await start($, surface)
+    let ui = await mount($, surface)
+    let nodes = await textNodes(ui)
+    let drawn = nodes.map(textOfNode)
+    expect(drawn.indexOf('The banner change.')).toBe(drawn.indexOf('Put pull request #42 live?') + 1)
+    expect(nodes.find((n: any) => n.text === 'The banner change.').props.size).toBe('body')
+    expect(drawn).not.toContain('It changes what your users see.')
+    await ui.unmount()
+
+    cards = [partsCard({ parts: { ...PARTS, ask: 'The banner change.' } })]
+    await start($, surface)
+    ui = await mount($, surface)
+    drawn = (await textNodes(ui)).map(textOfNode)
+    expect(drawn.filter((x: string) => x === 'The banner change.')).toHaveLength(1)
     await ui.unmount()
   }
 })
